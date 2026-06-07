@@ -1,0 +1,131 @@
+# casey — case-tracking system of record (thatcher config)
+#
+# Three entities:
+#   case        — one tracked case, opened from a channel conversation
+#   event       — append-only timeline: inbound msgs, outbound replies, agent
+#                 observations, and human/agent actions (full audit trail)
+#   contact     — a person/identity across channels (whatsapp number, discord id)
+#
+# The workflow drives case lifecycle. The agent is fully autonomous: it may
+# create cases, append events, and transition stages via tools. Every change is
+# an `event` row, so the dashboard can observe and a human can override.
+
+roles:
+  admin:
+    hierarchy: 0
+    label: Admin
+    permissions_scope: global
+  agent:
+    hierarchy: 1
+    label: Agent
+    permissions_scope: global
+  operator:
+    hierarchy: 2
+    label: Operator
+    permissions_scope: global
+  viewer:
+    hierarchy: 3
+    label: Viewer
+    permissions_scope: global
+
+permission_templates:
+  case_perms:
+    admin:    [list, view, create, edit, delete, manage_settings]
+    agent:    [list, view, create, edit]
+    operator: [list, view, create, edit]
+    viewer:   [list, view]
+  event_perms:
+    admin:    [list, view, create, edit, delete]
+    agent:    [list, view, create]
+    operator: [list, view, create]
+    viewer:   [list, view]
+
+# Shared system fields. thatcher's migration builds columns ONLY from declared
+# fields (it does not auto-inject a primary key), while its write engine always
+# writes id/created_at/created_by/updated_at/status — so every entity must
+# declare them or inserts fail with "no column named id".
+_system_fields: &system_fields
+  id:         { type: id }
+  created_at: { type: timestamp }
+  created_by: { type: text }
+  updated_at: { type: timestamp }
+
+entities:
+  contact:
+    label: Contact
+    label_plural: Contacts
+    permission_template: case_perms
+    fields:
+      <<: *system_fields
+      status:       { type: text, default: active }
+      display_name: { type: text }
+      channel:      { type: enum, options: [whatsapp, discord, sim, other] }
+      external_id:  { type: text, required: true }   # phone number / discord user id
+      handle:       { type: text }
+      notes:        { type: textarea }
+
+  case:
+    label: Case
+    label_plural: Cases
+    permission_template: case_perms
+    fields:
+      <<: *system_fields
+      ref:         { type: text }                    # human ref e.g. CASE-1024
+      channel:     { type: enum, options: [whatsapp, discord, sim, other], required: true }
+      external_id: { type: text, required: true }    # conversation key (chat/channel id)
+      contact_id:  { type: text }
+      subject:     { type: text }
+      summary:     { type: textarea }                # agent-maintained rolling summary
+      priority:    { type: enum, options: [low, normal, high, urgent], default: normal }
+      tags:        { type: text }                    # comma-separated, agent-managed
+      assignee:    { type: text }                    # operator handle, or 'agent'
+      autonomy:    { type: enum, options: [auto, assisted, observe], default: auto }
+      status:      { type: enum, options: [new, triaging, in_progress, waiting, resolved, closed], default: new }
+      transition_reason: { type: text }              # written by thatcher's workflow engine on transition
+      last_event_at: { type: text }
+
+  event:
+    label: Event
+    label_plural: Events
+    permission_template: event_perms
+    fields:
+      <<: *system_fields
+      status:   { type: text, default: active }
+      case_id:  { type: text, required: true }
+      kind:     { type: enum, options: [inbound, outbound, observation, action, transition, note], required: true }
+      actor:    { type: enum, options: [contact, agent, operator, system], default: system }
+      channel:  { type: enum, options: [whatsapp, discord, sim, other] }
+      text:     { type: textarea }
+      data:     { type: textarea }                   # JSON blob: raw payload / tool args
+      msg_id:   { type: text }                       # platform message id, for inbound dedup
+
+workflows:
+  # Stage shape per thatcher workflow-engine: each stage is an object with
+  # `forward`/`backward` allow-lists and optional `requires_role`. A transition
+  # is valid iff the target appears in the source stage's forward/backward set
+  # (and the user's role satisfies the target's requires_role, if any).
+  case_lifecycle:
+    entity: case
+    stages:
+      - name: new
+        forward: [triaging, in_progress]
+      - name: triaging
+        forward: [in_progress, waiting, resolved]
+        backward: [new]
+      - name: in_progress
+        forward: [waiting, resolved]
+        backward: [triaging]
+      - name: waiting
+        forward: [in_progress, resolved]
+      - name: resolved
+        forward: [closed]
+        backward: [in_progress]        # reopen
+      - name: closed
+        requires_role: [operator, admin]
+        backward: [resolved]           # reopen a closed case (operator/admin only)
+
+thresholds:
+  system:
+    pagination:
+      default_page_size: 25
+      max_page_size: 200

@@ -1,0 +1,13 @@
+node_modules/
+data/
+*.log
+
+# editor / agent session state
+.claude/
+
+# gm-plugkit runtime working state (machine-local tooling, not casey source)
+.gm/
+
+# this repo has no lockfile committed yet; ignore stray npm lock
+package-lock.json
+.gm/pw-sock-*/

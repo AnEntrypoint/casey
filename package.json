@@ -1,0 +1,23 @@
+{
+  "name": "casey",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agentic case tracking, observation and manual editing over WhatsApp/Discord — freddie (agent harness) + thatcher (case system of record) + anentrypoint-design (dashboard UI).",
+  "bin": {
+    "casey": "bin/casey.js"
+  },
+  "scripts": {
+    "start": "node bin/casey.js up",
+    "sim": "node bin/casey.js sim",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "freddie": "file:../freddie",
+    "thatcher": "^1.0.7",
+    "anentrypoint-design": "file:../anentrypoint-design",
+    "express": "^4.19.2",
+    "js-yaml": "^4.1.0",
+    "ws": "^8.18.0"
+  }
+}

@@ -1,0 +1,143 @@
+// casey.js  --  top-level assembly. Boots the case store, registers casey's
+// freddie plugin (case-tools), wires a freddie Gateway with the chosen channel
+// adapters + casey's case hooks, and exposes start/stop.
+//
+// Channels:
+//   whatsapp  --  freddie's Meta Graph webhook adapter (real)
+//   discord   --  freddie's adapter + our WS receive (real simulation)
+//   sim       --  MockAdapter (offline, no credentials)
+
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+const pathToFileUrl = (p) => pathToFileURL(p).href
+import { Gateway, bootHost } from 'freddie'
+import { createCaseStore } from './case-store.js'
+import { setCaseStore } from './case-runtime.js'
+import { makeCaseHandler } from './gateway-hooks.js'
+import { MockAdapter } from './sim/inject.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const CASEY_PLUGINS = path.resolve(__dirname, '..', 'plugins')
+// freddie's package "exports" map blocks subpath imports, so we reach its
+// platform adapter classes by absolute path under node_modules.
+const FREDDIE_ROOT = path.resolve(__dirname, '..', 'node_modules', 'freddie')
+const freddieFile = (rel) => pathToFileUrl(path.join(FREDDIE_ROOT, rel))
+
+export class Casey {
+  constructor(opts = {}) {
+    this.opts = opts
+    this.channels = opts.channels || ['sim']
+    this.store = null
+    this.gateway = null
+    this.adapters = {}
+    this._inflight = new Set()      // track inbound turns for deterministic sim
+    this._disconnects = []
+  }
+
+  async init() {
+    this.log = this.opts.log || makeLogger()
+    // 1) case store (thatcher) up first so plugin handlers have it.
+    this.store = createCaseStore({ config: this.opts.config, log: this.log })
+    await this.store.init()
+    setCaseStore(this.store)
+
+    // 2) boot freddie host with casey's plugin root so case_* tools register.
+    //    bootHost is memoised; doing it here means freddie's later internal
+    //    bootHost() calls reuse this fully-loaded host.
+    await bootHost([CASEY_PLUGINS])
+
+    // 3) build adapters for the requested channels.
+    const platforms = {}
+    for (const ch of this.channels) platforms[ch] = await this._makeAdapter(ch)
+    this.adapters = platforms
+
+    // 4) gateway. casey REPLACES handleInbound with its case-aware handler
+    //    (see gateway-hooks.js) rather than layering hooks around freddie's
+    //    context-free turn. We then wrap it to track in-flight turns so the sim
+    //    can await them (freddie fires inbound handling without awaiting).
+    this.gateway = new Gateway({ platforms, callLLM: this.opts.callLLM || null })
+    const handler = makeCaseHandler(this.store, {
+      callLLM: this.opts.callLLM || null,
+      autoRespond: this.opts.autoRespond !== false,
+      log: this.log,
+    })
+    this.gateway.handleInbound = handler.bind(this.gateway)
+    this._wrapInflight()
+    return this
+  }
+
+  async _makeAdapter(ch) {
+    if (ch === 'sim') return new MockAdapter('sim')
+    // whatsapp / discord come from freddie's platform plugins, registered on the
+    // host's pi.platforms registry. We instantiate their adapter classes directly
+    // for gateway use.
+    if (ch === 'discord') {
+      const { DiscordAdapter } = await import(freddieFile('plugins/platform-discord/handler.js'))
+      const a = new DiscordAdapter()
+      // freddie's DiscordAdapter now opens the gateway WebSocket itself (it
+      // emits a 'message' event after IDENTIFY/RESUME). Older freddie builds
+      // only did the gateway lookup, so if the adapter has no native receive we
+      // attach casey's connectDiscordReceive as a fallback.
+      const hasNativeReceive = typeof a._connect === 'function' || a.receive !== undefined
+      if (!hasNativeReceive) {
+        const { connectDiscordReceive } = await import('./discord-receive.js')
+        const orig = a.start.bind(a)
+        a.start = async () => { await orig(); this._disconnects.push(connectDiscordReceive(a)) }
+      }
+      return a
+    }
+    if (ch === 'whatsapp') {
+      const { WhatsappAdapter } = await import(freddieFile('plugins/platform-whatsapp/handler.js'))
+      return new WhatsappAdapter({ port: this.opts.whatsappPort || 0 })
+    }
+    throw new Error(`unknown channel "${ch}"`)
+  }
+
+  // Wrap gateway.handleInbound so every invocation is tracked + awaitable.
+  _wrapInflight() {
+    const orig = this.gateway.handleInbound.bind(this.gateway)
+    this.gateway.handleInbound = (platform, msg) => {
+      const p = orig(platform, msg).finally(() => this._inflight.delete(p))
+      this._inflight.add(p)
+      return p
+    }
+  }
+
+  // Await all in-flight inbound turns (used by sim for determinism).
+  async drain() { await Promise.all([...this._inflight]) }
+
+  async start() { await this.gateway.start() }
+
+  // Graceful shutdown: stop accepting input, let in-flight agent turns finish,
+  // close channel receivers, then close the store so the DB flushes cleanly
+  // (avoids the WAL/libuv teardown race seen on abrupt exit).
+  async stop() {
+    for (const d of this._disconnects) { try { d() } catch { /* ignore */ } }
+    await this.gateway?.stop()
+    try { await this.drain() } catch { /* in-flight turn errored; already logged */ }
+    await this.store?.close()
+  }
+}
+
+export async function createCasey(opts) {
+  const c = new Casey(opts)
+  await c.init()
+  return c
+}
+
+// Minimal structured logger: one JSON line per event with a level + message +
+// context. Quiet when CASEY_LOG=silent.
+export function makeLogger(component = 'casey') {
+  const silent = process.env.CASEY_LOG === 'silent'
+  const emit = (level, msg, ctx) => {
+    if (silent) return
+    const line = JSON.stringify({ t: new Date().toISOString(), level, component, msg, ...(ctx || {}) })
+    if (level === 'error') console.error(line)
+    else console.log(line)
+  }
+  return {
+    info: (m, c) => emit('info', m, c),
+    warn: (m, c) => emit('warn', m, c),
+    error: (m, c) => emit('error', m, c),
+  }
+}
