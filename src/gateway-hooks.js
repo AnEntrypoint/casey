@@ -120,20 +120,22 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       return { to: msg.from, text: '', platform, error: e.message }
     }
 
-    // Dedup: a redelivered platform message (webhook retry, gateway replay) is
-    // recorded and answered exactly once.
-    if (msgId && await store.hasInboundMessage(caseRow.id, msgId)) {
-      log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
-      return { to: msg.from, text: '', platform, caseId: caseRow.id, duplicate: true }
-    }
-
+    // Dedup: a redelivered platform message (webhook retry, gateway replay, or
+    // the same message duplicated in one tick) is recorded and answered exactly
+    // once. recordInbound runs on the per-conversation lock so the dedup check
+    // and the append are atomic -- duplicates are structurally unrepresentable,
+    // not merely improbable.
     const inboundText = (msg.text || '').trim()
     const media = describeMedia(msg)
-    await store.appendEvent(caseRow.id, {
-      kind: 'inbound', actor: 'contact', channel,
+    const inboundEvent = await store.recordInbound(caseRow, {
+      channel,
       text: inboundText || (media ? `[${media}]` : '[empty message]'),
       data: { from: msg.from, raw: msg.raw }, msg_id: msgId,
     })
+    if (!inboundEvent) {
+      log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
+      return { to: msg.from, text: '', platform, caseId: caseRow.id, duplicate: true }
+    }
     if (created) {
       if (!caseRow.subject) {
         const subj = truncate(inboundText || media || 'New conversation', 80)

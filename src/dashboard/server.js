@@ -45,6 +45,26 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   const clampLimit = (v, d) => Math.min(PAGE_MAX, Math.max(1, parseInt(v, 10) || d))
   const offsetOf = (v) => Math.max(0, parseInt(v, 10) || 0)
 
+  // Adversarial-Structural: reject malformed mutations with a clear 4xx before
+  // thatcher is touched. No framework, no dependency. MAX_LEN is a product cap
+  // on operator-entered text length (UTF-16 units), NOT a security boundary --
+  // express.json()'s 100KB default already bounds the body.
+  const MAX_LEN = 4000
+  const AUTONOMY = new Set(['auto', 'assisted', 'observe'])
+  const PRIORITY = new Set(['low', 'normal', 'high', 'urgent'])
+  // Returns a validated string, or sends a 4xx and returns undefined so the
+  // caller short-circuits: `const x = str(...); if (x === undefined) return`.
+  const str = (res, body, field, { required = true } = {}) => {
+    const v = body[field]
+    if (v == null) {
+      if (required) { res.status(400).json({ error: `${field} required` }); return undefined }
+      return ''
+    }
+    if (typeof v !== 'string') { res.status(400).json({ error: `${field} must be a string` }); return undefined }
+    if (v.length > MAX_LEN) { res.status(413).json({ error: `${field} too long (max ${MAX_LEN})` }); return undefined }
+    return v
+  }
+
   app.get('/api/cases', async (req, res) => {
     try {
       const where = {}
@@ -83,7 +103,13 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     try {
       const allowed = ['subject', 'summary', 'priority', 'tags', 'assignee', 'autonomy']
       const patch = {}
-      for (const k of allowed) if (k in req.body) patch[k] = req.body[k]
+      for (const k of allowed) {
+        if (!(k in req.body)) continue
+        const v = str(res, req.body, k); if (v === undefined) return
+        if (k === 'autonomy' && !AUTONOMY.has(v)) return res.status(400).json({ error: `invalid autonomy: ${v}` })
+        if (k === 'priority' && !PRIORITY.has(v)) return res.status(400).json({ error: `invalid priority: ${v}` })
+        patch[k] = v
+      }
       if (!Object.keys(patch).length) return res.status(400).json({ error: 'no editable fields' })
       const updated = await store.updateCase(req.params.id, patch, OPERATOR)
       if (!updated) return res.status(404).json({ error: 'not found' })
@@ -94,13 +120,23 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
 
   app.post('/api/cases/:id/transition', async (req, res) => {
     try {
-      await store.transition(req.params.id, req.body.to, { user: OPERATOR, reason: req.body.reason || 'operator override' })
+      const to = str(res, req.body, 'to'); if (to === undefined) return
+      const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      // availableTransitions excludes the current stage; transition() itself
+      // no-ops a same-stage move, so let it through rather than 400 a no-op.
+      const legal = store.availableTransitions(c, OPERATOR)
+      if (to !== c.status && !legal.includes(to)) {
+        return res.status(400).json({ error: `cannot transition to '${to}'`, allowed: legal })
+      }
+      await store.transition(req.params.id, to, { user: OPERATOR, reason: reason || 'operator override' })
       res.json(await store.getCase(req.params.id))
     } catch (e) { res.status(400).json({ error: e.message }) }
   })
 
   app.post('/api/cases/:id/note', async (req, res) => {
-    const text = (req.body.text || '').toString()
+    const text = str(res, req.body, 'text'); if (text === undefined) return
     if (!text.trim()) return res.status(400).json({ error: 'empty note' })
     await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text })
     res.json({ ok: true })
@@ -110,7 +146,8 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   // their channel and record it as an outbound event.
   app.post('/api/cases/:id/reply', async (req, res) => {
     try {
-      const text = (req.body.text || '').toString().trim()
+      const raw = str(res, req.body, 'text'); if (raw === undefined) return
+      const text = raw.trim()
       if (!text) return res.status(400).json({ error: 'empty reply' })
       const c = await store.getCase(req.params.id)
       if (!c) return res.status(404).json({ error: 'not found' })

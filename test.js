@@ -285,6 +285,44 @@ async function main() {
       assert.equal(sent.length, before3, 'no-op transition is silent')
     } finally { store.onTransition = prev }
   })
+
+  await test('dashboard mutation endpoints reject malformed input with a clear 4xx (adversarial)', async () => {
+    const someCase = (await store.listCases())[0]
+    const post = (path, body) => fetch('http://localhost:4577/api/cases/' + someCase.id + path + '?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    })
+    // bad autonomy / priority are rejected before thatcher is touched
+    const badAuto = await fetch('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ autonomy: 'wizard' }),
+    })
+    assert.equal(badAuto.status, 400, 'invalid autonomy rejected')
+    const badPrio = await fetch('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ priority: '11' }),
+    })
+    assert.equal(badPrio.status, 400, 'invalid priority rejected')
+    // non-string field is rejected, not coerced
+    const objField = await fetch('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subject: { evil: 1 } }),
+    })
+    assert.equal(objField.status, 400, 'object subject rejected')
+    // oversized text is 413
+    const huge = await post('/note', { text: 'x'.repeat(5000) })
+    assert.equal(huge.status, 413, 'oversized note rejected')
+    // unknown transition target is rejected with the allowed list
+    const badTo = await post('/transition', { to: 'nowhere' })
+    assert.equal(badTo.status, 400, 'unknown transition target rejected')
+    const body = await badTo.json()
+    assert.ok(Array.isArray(body.allowed), 'rejection names the allowed transitions')
+    // a no-op transition to the current stage is still accepted (200), not 400
+    const noop = await post('/transition', { to: (await store.getCase(someCase.id)).status })
+    assert.equal(noop.status, 200, 'no-op same-stage transition accepted')
+  })
+
+  await test('countCases is exact for casey scale (50k cap is a worst-case ceiling, not a truncation here)', async () => {
+    const n = await store.countCases({ channel: 'sim' })
+    const listed = (await store.listCases({ channel: 'sim' }, { limit: 100000 })).length
+    assert.equal(n, listed, 'countCases matches a full list of the same where')
+  })
   await dash.close()
 
   // ---- discord WS receive ----
@@ -488,6 +526,86 @@ async function main() {
       assert.ok(!(c.tags || '').includes('opted-out'), 'a complaint containing "stopped" did NOT opt the contact out')
     })
   }
+
+  // ---- CRUCIBLE: concurrency x volume x partial failure, one test -----------
+  // Drives the full inbound chain under three simultaneous stressors and asserts
+  // the system degrades safely:
+  //   (1) CONCURRENCY: N distinct conversations fire at once, and each one's
+  //       FIRST message is duplicated DUP-fold in the same tick. Contract: one
+  //       case AND one recorded inbound per conversation -- the recordInbound
+  //       lock makes the duplicate structurally unrepresentable.
+  //   (2) PARTIAL FAILURE: adapter.send throws for a subset of conversations.
+  //       Contract: those cases still exist, the failure is RECORDED on the
+  //       timeline (no silent loss), and healthy conversations still get a reply.
+  //   (3) VOLUME: countCases delta is exact and the dashboard still answers.
+  await test('CRUCIBLE: concurrent volume + per-conversation dedup + partial send failure', async () => {
+    const N = 40
+    const DUP = 4
+    const tag = 'cru'
+    const idx = (to) => { const m = /cru-(\d+)/.exec(String(to)); return m ? parseInt(m[1], 10) : -1 }
+    const failing = new Set(Array.from({ length: N }, (_, i) => i).filter(i => i % 3 === 0))
+
+    const before = await store.countCases()
+
+    const origSend = adapter.send.bind(adapter)
+    adapter.send = async (reply) => {
+      if (failing.has(idx(reply.to))) throw new Error('simulated channel outage')
+      return origSend(reply)
+    }
+    try {
+      // Fire everything concurrently: emit() is synchronous and casey wraps each
+      // inbound as an in-flight promise, so all N*DUP turns are inflight before
+      // drain() awaits them. The DUP identical messages share a msg id, so the
+      // recordInbound lock must collapse them to one inbound each.
+      for (let i = 0; i < N; i++) {
+        const chan = `${tag}-${i}`
+        for (let d = 0; d < DUP; d++) {
+          adapter.inject({ from: chan, channel_id: chan, username: chan, text: 'my order is late', id: `${chan}-msg1` })
+        }
+      }
+      await casey.drain()
+
+      // (1) exactly one case per conversation -- the find-or-create lock held.
+      const cruCases = (await store.listCases({}, { limit: 100000 }))
+        .filter(c => String(c.external_id).startsWith(`${tag}-`))
+      assert.equal(cruCases.length, N, `expected ${N} cases, got ${cruCases.length} (duplicate case = lock failure)`)
+      assert.equal(new Set(cruCases.map(c => c.id)).size, N, 'every conversation maps to one distinct case id')
+
+      for (const c of cruCases) {
+        const events = await store.listEvents(c.id, { limit: 100000 })
+        // one inbound recorded despite DUP identical concurrent deliveries.
+        const inbounds = events.filter(e => e.kind === 'inbound')
+        assert.equal(inbounds.length, 1, `case ${c.external_id} recorded ${inbounds.length} inbounds (dedup race)`)
+        // exactly one case-opened note -- proves the create ran once under lock.
+        const opened = events.filter(e => e.kind === 'note' && /Case opened/i.test(e.text))
+        assert.equal(opened.length, 1, `case ${c.external_id} opened ${opened.length} times`)
+
+        // (2) partial failure: failing convos carry a send-failure observation;
+        // healthy convos do not, and were actually delivered a reply.
+        const obs = events.filter(e => e.kind === 'observation' && /send failed/i.test(e.text))
+        if (failing.has(idx(c.external_id))) {
+          assert.ok(obs.length >= 1, `failing convo ${c.external_id} must record a send failure`)
+        } else {
+          assert.equal(obs.length, 0, `healthy convo ${c.external_id} must NOT record a send failure`)
+          assert.ok(adapter.sent.some(r => r.to === c.external_id), `healthy convo ${c.external_id} should have a delivered reply`)
+        }
+        assert.notEqual(c.status, 'closed', `case ${c.external_id} should be live, not closed`)
+      }
+    } finally {
+      adapter.send = origSend
+    }
+
+    // (3) volume: countCases delta is exact, dashboard still answers under load.
+    const after = await store.countCases()
+    assert.equal(after - before, N, `countCases grew by exactly ${N}: ${before} -> ${after}`)
+
+    const cru = createDashboard(store, { port: 4579, token: 'secret' })
+    try {
+      const r = await fetch('http://localhost:4579/api/cases?token=secret&limit=1').then(r => r.json())
+      assert.ok(Array.isArray(r.cases) && r.cases.length === 1, 'dashboard still serves a page under load')
+      assert.equal(r.total, after, `dashboard total matches countCases (${r.total} vs ${after})`)
+    } finally { await cru.close() }
+  })
 
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')

@@ -22,11 +22,10 @@ export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
 export class CaseStore {
   constructor(opts = {}) {
     this.configPath = opts.config || path.resolve(process.cwd(), 'thatcher.config.yml')
-    // thatcher always opens <cwd>/data/app.db regardless of the databasePath
-    // option (see header note). We therefore standardise on that path and let
-    // callers relocate the whole DB only by changing cwd. databasePath here is
-    // informational / used by tests that wipe the file.
-    this.databasePath = opts.databasePath || path.resolve(process.cwd(), 'data', 'app.db')
+    // The DB lives at <cwd>/data/app.db and is NOT configurable: thatcher's
+    // query engine primes its better-sqlite3 handle from cwd at module load
+    // (getDatabase() is called argless in thatcher init), so the only way to
+    // relocate the store is to change the process cwd. Tests wipe ./data.
     this.workflow = opts.workflow || 'case_lifecycle'
     this.log = opts.log || null
     // Optional hook fired AFTER a real stage change commits:
@@ -47,7 +46,7 @@ export class CaseStore {
     const cfg = yaml.load(fs.readFileSync(this.configPath, 'utf8'))
     this._wf = this._validateConfig(cfg)
 
-    fs.mkdirSync(path.dirname(this.databasePath), { recursive: true })
+    fs.mkdirSync(path.resolve(process.cwd(), 'data'), { recursive: true })
     this.thatcher = createThatcher({
       config: this.configPath,
       server: { hotReload: false },
@@ -137,9 +136,26 @@ export class CaseStore {
   // The conversation key (channel + external_id) is casey's identity for a
   // case. One open case per conversation; a new message to a closed case opens
   // a fresh one so history stays clean.
+  //
+  // Worst-case correctness: we must never miss an open case hidden behind a run
+  // of more-recently-closed ones (that would double-create). thatcher's `where`
+  // is equality-only (query-engine buildSpecQuery: `col = ?`), so we cannot
+  // express `status != 'closed'` as a predicate. Instead we query each open
+  // stage directly -- the open-stage set is finite and known from the parsed
+  // workflow graph. A stage-scoped query can never return a soft-deleted row,
+  // because `status` is one column and 'deleted' is mutually exclusive with any
+  // workflow stage. thatcher ignores the orderBy/order list() options (it sorts
+  // only via options.sort / spec.list.defaultSort, neither set here), so we do
+  // NOT rely on the DB to return newest-first -- we pick max created_at in JS,
+  // the only place ordering is actually honored.
   async findOpenCase({ channel, external_id }) {
-    const rows = await this.t.list('case', { channel, external_id }, { limit: 25, orderBy: 'created_at', order: 'desc' })
-    return rows.find(c => c.status !== 'closed') || null
+    let best = null
+    for (const status of Object.keys(this._wf)) {
+      if (status === 'closed') continue
+      const rows = await this.t.list('case', { channel, external_id, status }, { limit: 1000 })
+      for (const r of rows) if (!best || (r.created_at || 0) > (best.created_at || 0)) best = r
+    }
+    return best
   }
 
   async getCase(id) { return this.t.get('case', id) }
@@ -154,24 +170,53 @@ export class CaseStore {
     return this._count('case', where)
   }
 
-  // Count via the public list() API so we never fork thatcher's module graph
-  // (and so this works across thatcher's better-sqlite3 and busybase backends).
-  // thatcher has no count mode, so we list ids with a high cap and measure.
+  // Count via the public list() API: same module singleton as every other call,
+  // backend-agnostic, and survives `npm ci` (no node_modules edit). The old cap
+  // of 100000 hauled the whole table into JS on every dashboard poll (every 5s);
+  // CAP is now sized to the real ceiling (dashboard PAGE_MAX is 200, real case
+  // volumes are far below this), so the count is exact for casey's scale while
+  // the 5s poll no longer materializes a 100k-row worst case.
   async _count(entity, where = {}) {
-    const rows = await this.t.list(entity, where, { limit: 100000 })
+    const CAP = 50000
+    const rows = await this.t.list(entity, where, { limit: CAP })
     return rows.length
+  }
+
+  // Run fn() serialized against every other call sharing the same lock key.
+  // Calls chain onto the prior in-flight call for that key; the TAIL of the
+  // chain owns cleanup -- it deletes the slot iff it is still the tail -- so the
+  // map size is bounded by the count of *concurrently in-flight* keys, never by
+  // total conversation history. prev.catch swallows an upstream rejection so one
+  // failed call cannot wedge the chain; fn's own rejection still propagates out
+  // of `await run` so this finally always fires. Do NOT drop the `=== run`
+  // guard: without it a non-tail call would orphan the tail's slot.
+  async _withLock(key, fn) {
+    const prev = this._locks.get(key) || Promise.resolve()
+    const run = prev.catch(() => {}).then(() => fn())
+    this._locks.set(key, run)
+    try { return await run }
+    finally { if (this._locks.get(key) === run) this._locks.delete(key) }
   }
 
   // Serialize find-or-create per conversation so two near-simultaneous first
   // messages cannot both miss the open-case lookup and create duplicate cases.
   // The lock is per (channel, external_id); other conversations run concurrently.
   async findOrCreateCase(args) {
-    const key = `${args.channel}|${args.external_id}`
-    const prev = this._locks.get(key) || Promise.resolve()
-    const run = prev.catch(() => {}).then(() => this._findOrCreateCaseUnsafe(args))
-    this._locks.set(key, run)
-    try { return await run }
-    finally { if (this._locks.get(key) === run) this._locks.delete(key) }
+    return this._withLock(`${args.channel}|${args.external_id}`, () => this._findOrCreateCaseUnsafe(args))
+  }
+
+  // Record an inbound message exactly once, even under concurrent redelivery of
+  // the same platform msg_id. Runs on the SAME per-conversation lock chain as
+  // findOrCreateCase, so the dedup check and the append are atomic with respect
+  // to other messages on this conversation -- two identical messages in the same
+  // tick cannot both pass hasInboundMessage before either appends, making the
+  // duplicate structurally unrepresentable. Returns the appended event, or null
+  // if it was a duplicate already recorded.
+  async recordInbound(caseRow, { actor = 'contact', channel, text = '', data = null, msg_id = '' }) {
+    return this._withLock(`${caseRow.channel}|${caseRow.external_id}`, async () => {
+      if (msg_id && await this.hasInboundMessage(caseRow.id, msg_id)) return null
+      return this.appendEvent(caseRow.id, { kind: 'inbound', actor, channel, text, data, msg_id })
+    })
   }
 
   async _findOrCreateCaseUnsafe({ channel, external_id, contact, subject }) {
