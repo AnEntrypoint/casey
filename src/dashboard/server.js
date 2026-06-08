@@ -116,6 +116,12 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       if (!c) return res.status(404).json({ error: 'not found' })
       if (sendReply) await sendReply(c, text)
       await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id } })
+      // The operator personally answered, so the "wants a human" flag is satisfied;
+      // clear it or the triage inbox keeps this case pinned at the top forever.
+      const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+      if (tags.includes('needs-human')) {
+        await store.updateCase(c.id, { tags: tags.filter(t => t !== 'needs-human').join(',') }, OPERATOR)
+      }
       res.json({ ok: true, sent: !!sendReply })
     } catch (e) { res.status(400).json({ error: e.message }) }
   })
@@ -217,9 +223,38 @@ const PAGE = /* html */ `<!doctype html>
   .icon-btn.active{background:var(--accent-soft);color:var(--fg);border-color:var(--accent)}
   .todo{background:var(--accent-soft);border:1px solid var(--border);border-left:3px solid var(--accent);
         border-radius:6px;padding:9px 12px;margin:10px 0 14px;font-size:13px;color:var(--fg);line-height:1.5}
+  /* --- triage inbox (pinned top of list) + coaching buttons --- */
+  .triage{border-bottom:1px solid var(--border);background:var(--accent-soft)}
+  .triage h2{font-size:13px;margin:0;padding:10px 14px 6px;display:flex;align-items:center;gap:8px}
+  .triage h2 .n{background:var(--danger);color:#fff;border-radius:10px;padding:1px 8px;font-size:12px}
+  .triage .calm{padding:14px;color:var(--muted);font-size:13px;line-height:1.5}
+  .tcase{padding:12px 14px;border-top:1px solid var(--border-soft);cursor:pointer}
+  .tcase:hover{background:var(--hover)}
+  .tcase.active{outline:2px solid var(--accent);outline-offset:-2px}
+  .tcase .why{font-size:13px;color:var(--fg);font-weight:600;margin-bottom:3px}
+  .tcase .meta{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* canned-reply coaching buttons: big touch targets, theme-aware (readable in light mode) */
+  .canned{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 0}
+  .canned button{margin:0;background:var(--panel);color:var(--fg);border:1px solid var(--border);
+        border-radius:8px;padding:10px 14px;font-size:14px;min-height:44px;text-align:left;flex:0 1 auto}
+  .canned button:hover{background:var(--hover);border-color:var(--accent)}
+  .canned-lab{font-size:12px;color:var(--muted);margin:12px 0 0}
+  /* --- handoff alert banner: loud, sticky, dismiss-per-case --- */
+  .handoff{display:none;background:var(--danger);color:#fff;padding:10px 14px;font-size:14px;
+        line-height:1.4;align-items:center;gap:10px;cursor:pointer;border-bottom:1px solid rgba(0,0,0,.3)}
+  .handoff.show{display:flex;animation:handoff-pulse 1.3s ease-in-out infinite}
+  .handoff b{font-weight:700}
+  .handoff .x{margin-left:auto;background:rgba(255,255,255,.15);border:0;color:#fff;border-radius:6px;
+        padding:4px 10px;margin:0;cursor:pointer;font-size:13px}
+  .handoff .x:hover{background:rgba(255,255,255,.3)}
+  @keyframes handoff-pulse{0%,100%{opacity:1}50%{opacity:.72}}
 </style></head>
 <body>
 <div id="conn" class="conn">Connection lost - retrying...</div>
+<div id="handoff" class="handoff" title="Click to open the person who needs help">
+  <span id="handoff-msg"></span>
+  <button class="x" id="handoff-dismiss" title="Hide this message">Hide</button>
+</div>
 <div class="wrap" id="wrap">
   <div class="list">
     <div class="topbar">
@@ -234,6 +269,7 @@ const PAGE = /* html */ `<!doctype html>
         <select id="statusf"><option value="">all stages</option></select>
       </div>
     </div>
+    <div class="triage" id="triage"></div>
     <div class="caselist" id="cases"><div class="empty">Loading cases...</div></div>
   </div>
   <div class="detail" id="detail"><p class="empty">Select a case to observe, edit, reply, or override its workflow stage.</p></div>
@@ -268,6 +304,65 @@ const $ = (s,r=document)=>r.querySelector(s)
 // attacker-controlled, so it is escaped here, not trusted. Every render path
 // below -- list, search results, timeline, deep-link restore -- goes through esc.
 const esc = (s)=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+// --- handoff notification: a contact asked for a human (needs-human tag) ---
+// Fires ONCE per case (tracked in handoffSeen, persisted to localStorage so a
+// reload does not re-nag). Pure client-side off the existing 5s poll: the tag is
+// set server-side in gateway-hooks (intent==='human').
+const hasHandoff = (c)=>String(c.tags||'').split(',').map(s=>s.trim()).includes('needs-human')
+let handoffSeen = (()=>{ try{ return new Set(JSON.parse(localStorage.casey_handoff_seen||'[]')) }catch{ return new Set() } })()
+function rememberHandoff(id){ handoffSeen.add(id); try{ localStorage.casey_handoff_seen=JSON.stringify([...handoffSeen].slice(-500)) }catch{} }
+let handoffQueue = []                         // cases needing a human, freshest last
+const baseTitle = document.title              // one source of truth
+let titleFlip = false, titleTimer = null
+function flashTitle(on){
+  if(on){ if(titleTimer) return
+    titleTimer=setInterval(()=>{ titleFlip=!titleFlip
+      document.title = titleFlip ? (handoffQueue.length+' waiting for you') : baseTitle }, 1100) }
+  else { clearInterval(titleTimer); titleTimer=null; document.title=baseTitle }
+}
+// Two-tone chime via WebAudio so there is no asset/dependency. try/catch because
+// browsers block audio until the operator interacts; that silent failure must
+// never break the visual alert.
+function handoffSound(){
+  try{
+    const Ctx=window.AudioContext||window.webkitAudioContext; if(!Ctx) return
+    const ac=new Ctx(); const t=ac.currentTime
+    ;[ [880,t,t+0.16], [1320,t+0.18,t+0.42] ].forEach(([f,s,e])=>{
+      const o=ac.createOscillator(), g=ac.createGain()
+      o.type='sine'; o.frequency.value=f
+      g.gain.setValueAtTime(0.0001,s); g.gain.exponentialRampToValueAtTime(0.2,s+0.02)
+      g.gain.exponentialRampToValueAtTime(0.0001,e)
+      o.connect(g); g.connect(ac.destination); o.start(s); o.stop(e+0.02)
+    })
+    setTimeout(()=>{ try{ac.close()}catch{} }, 700)
+  }catch{}
+}
+function renderHandoff(){
+  const el=$('#handoff'); if(!el) return
+  if(!handoffQueue.length){ el.classList.remove('show'); flashTitle(false); return }
+  const c=handoffQueue[handoffQueue.length-1]
+  const extra=handoffQueue.length>1 ? (' (and '+(handoffQueue.length-1)+' more)') : ''
+  $('#handoff-msg').innerHTML='<b>Someone needs a person.</b> '+esc(c.ref)
+    +' - '+esc(c.subject||c.external_id||c.channel)+esc(extra)+'. Click to open it.'
+  el.classList.add('show'); flashTitle(true)
+}
+// Called from loadCases with the freshly polled cases.
+function checkHandoffs(cases){
+  for(const c of cases){
+    if(!hasHandoff(c)) continue
+    if(handoffSeen.has(c.id)) continue        // already alerted this case once
+    rememberHandoff(c.id)
+    if(handoffQueue.some(q=>q.id===c.id)) continue
+    handoffQueue.push(c)
+    if(!firstLoad){ handoffSound() }          // no chime for the backlog on first paint
+  }
+  // refresh subject text and drop resolved/closed handoffs
+  handoffQueue = handoffQueue
+    .map(q=>cases.find(c=>c.id===q.id)||q)
+    .filter(q=>q.status!=='resolved' && q.status!=='closed')
+  renderHandoff()
+}
+function clearHandoff(id){ handoffQueue=handoffQueue.filter(q=>q.id!==id); renderHandoff() }
 // --- plain-language / simple mode ---
 // Maps the workflow's technical stage names to friendly labels for low-literacy
 // operators. simple mode is a view-only relabel: the real status value still
@@ -310,7 +405,51 @@ let editing = false                         // pause polling while operator type
 let connDown = false, firstLoad = true
 const filt = { q:'', status:'' }
 
-function attn(c){ return c.autonomy==='observe' || c.autonomy==='assisted' }
+function attn(c){ return c.autonomy==='observe' || c.autonomy==='assisted'
+  || String(c.tags||'').split(',').map(s=>s.trim()).includes('needs-human') }
+// --- triage: which cases need a HUMAN now, and why, in plain words ---
+// Deterministic, enum-derived (status/autonomy/tags/age); no LLM. Higher = more urgent.
+function tagList(c){ return String(c.tags||'').split(',').map(t=>t.trim()).filter(Boolean) }
+function ageHours(c){ const d=toDate(c.updated_at||c.created_at); return d?(Date.now()-d.getTime())/3.6e6:0 }
+function tMs(c){ const d=toDate(c.updated_at||c.created_at); return d?d.getTime():0 }
+// attnScore: 0 means "no human action needed" (hidden from the inbox).
+function attnScore(c){
+  if(c.status==='resolved'||c.status==='closed') return 0
+  const tags=tagList(c)
+  if(tags.includes('opted-out')) return 0             // contact left; never chase them
+  let s=0
+  if(tags.includes('needs-human')) s+=100             // contact explicitly asked for a person
+  if(c.status==='waiting' && ageHours(c)>=24) s+=40   // genuinely stuck over a day
+  if(c.autonomy==='observe') s+=20                    // casey only listens; soft nudge
+  if(c.autonomy==='assisted') s+=15                   // person in the loop; soft nudge
+  if(c.priority==='urgent') s+=15
+  else if(c.priority==='high') s+=8
+  s += Math.min(20, Math.floor(ageHours(c)))
+  return s
+}
+// One honest, plain reason this case is in the inbox. First match wins.
+function attnReason(c){
+  const tags=tagList(c)
+  if(tags.includes('needs-human')) return 'This person asked to talk to a real person.'
+  if(c.status==='waiting' && ageHours(c)>=24) return 'No answer for over a day. A check-in may help.'
+  if(c.autonomy==='observe') return 'casey is only listening here. A reply has to come from you.'
+  if(c.autonomy==='assisted') return 'casey can draft, but you send. Open it to check.'
+  return 'This one is worth a look.'
+}
+// Light heuristic: does the contact's most recent inbound look like it is NOT
+// plain English? We only flag the operator to mirror the contact's language --
+// the agent already replies in-language; this is a nudge for HUMAN replies, where
+// a low-literacy operator might default to English. Non-latin script or a few
+// common non-English words trip it. False negatives are fine; this never blocks.
+const NON_EN_WORDS = /\\b(hola|gracias|por favor|bonjour|merci|danke|obrigad|ngiyabonga|sawubona|namaste|shukran|ayuda|pedido|mensaje)\\b/i
+function contactMaybeNonEnglish(events){
+  const lastIn = (events||[]).filter(e=>e.kind==='inbound').slice(-1)[0]
+  const txt = lastIn && lastIn.text
+  if(!txt) return false
+  // Non-ASCII character (accented/non-latin script) or a common non-English word.
+  for(let i=0;i<txt.length;i++){ if(txt.charCodeAt(i)>127) return true }
+  return NON_EN_WORDS.test(txt)
+}
 function matches(c){
   if(filt.status && c.status!==filt.status) return false
   if(!filt.q) return true
@@ -335,6 +474,26 @@ function renderList(){
     </div>\`).join('')
   document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
 }
+function renderTriage(){
+  const el=$('#triage'); if(!el) return
+  const inbox = allCases.map(c=>({c,score:attnScore(c)}))
+    .filter(x=>x.score>0)
+    .sort((a,b)=> b.score-a.score || tMs(b.c)-tMs(a.c))
+    .slice(0,12).map(x=>x.c)
+  if(!inbox.length){
+    el.innerHTML='<h2>Needs you now</h2>'+
+      '<div class="calm">All caught up. Nothing needs a person right now. '+
+      'A new one will show up here the moment someone needs you.</div>'
+    return
+  }
+  el.innerHTML='<h2>Needs you now <span class="n">'+inbox.length+'</span></h2>'+
+    inbox.map(c=>\`
+      <div class="tcase \${c.id===activeId?'active':''}" data-id="\${esc(c.id)}">
+        <div class="why">\${esc(attnReason(c))}</div>
+        <div class="meta">\${esc(c.ref)} - \${esc(c.channel)} - \${esc(c.subject||'(no subject)')} - \${esc(rel(c.updated_at||c.created_at))}</div>
+      </div>\`).join('')
+  el.querySelectorAll('.tcase').forEach(d=>d.onclick=()=>openCase(d.dataset.id))
+}
 function fillStatusFilter(){
   const cur=$('#statusf').value
   const stages=[...new Set(allCases.map(c=>c.status))].sort()
@@ -354,12 +513,13 @@ async function loadCases(){
   const json = JSON.stringify(cases.map(c=>[c.id,c.ref,c.priority,c.channel,c.status,c.subject,c.autonomy,c.updated_at]))
   // notice genuinely-new cases (after first load) so an idle operator sees work
   if(!firstLoad){ const fresh=cases.filter(c=>!known.has(c.id)); if(fresh.length) toast(fresh.length+' new case'+(fresh.length>1?'s':'')) }
+  checkHandoffs(cases)                         // detect needs-human, alert once per case
   for(const c of cases) known.add(c.id)
   firstLoad=false
   if(json===lastCasesJson){ // counts/rel-time may still drift; cheap refresh of relative labels
     document.querySelectorAll('.case .when').forEach(()=>{}); return }
   lastCasesJson = json; allCases = cases
-  fillStatusFilter(); renderCounts(); renderList()
+  fillStatusFilter(); renderCounts(); renderList(); renderTriage()
 }
 function opt(val,cur){ return \`<option\${val===cur?' selected':''}>\${esc(val)}</option>\` }
 const AUTONOMY_HELP = 'auto = agent replies on its own - assisted = agent drafts, human sends - observe = agent only logs, never replies'
@@ -367,7 +527,9 @@ const AUTONOMY_HELP = 'auto = agent replies on its own - assisted = agent drafts
 // matching rule wins so the most action-needed state shows. Derives purely from
 // enum-safe c.status / c.autonomy.
 function todoHint(c){
+  if(tagList(c).includes('opted-out')) return 'This person asked to stop. Do not message them. Leave this one alone.'
   if(c.status==='closed') return 'This one is finished. Nothing to do.'
+  if(tagList(c).includes('needs-human')) return 'This person asked for a real person. Reply to them below.'
   if(c.status==='resolved') return 'This one is marked done. Close it if you are finished.'
   if(c.autonomy==='observe') return 'This one is waiting for you. Read it and reply, or set Who answers to auto so casey can answer.'
   if(c.autonomy==='assisted') return 'casey prepared a reply but waits for a person. Check it, then send.'
@@ -375,8 +537,25 @@ function todoHint(c){
   if(c.status==='new'||c.status==='triaging') return 'A new message came in. casey is sorting it out.'
   return 'casey is handling this one on its own. Step in only if you need to.'
 }
+// 2-4 canned replies for this case. Plain, warm, short. Clicking fills (never sends).
+// Returns [] for opted-out contacts so the UI never nudges the operator to message them.
+function cannedReplies(c){
+  if(tagList(c).includes('opted-out')) return []
+  const tags=tagList(c)
+  if(tags.includes('needs-human'))
+    return ['Hi, this is a real person now. How can I help you?',
+            'I am here to help. Can you tell me a bit more?',
+            'Thank you for waiting. I am looking into this for you now.']
+  if(c.status==='waiting')
+    return ['Just checking in - are you still there? Reply when you can.',
+            'No rush. I am still here whenever you are ready.']
+  return ['Thanks for your message. I am looking into this now.',
+          'Got it - I will get back to you shortly.',
+          'Can you tell me a little more so I can help?']
+}
 async function openCase(id){
   activeId = id
+  clearHandoff(id)                             // operator is now handling it
   // deep-link the open case in the hash only; the ?token= stays in the real
   // query string (location.search is preserved by replaceState's relative URL),
   // so the hash is shareable without leaking the secret.
@@ -406,11 +585,15 @@ async function openCase(id){
     <label>Summary</label><textarea id="f-summary" rows="3">\${esc(c.summary||'')}</textarea>
     <button id="save">Save edits</button>
     <div style="margin-top:14px"><label>\${simple?'Change the stage':'Override workflow stage'}</label>
-      \${simple?'<p class="hint">Move this case to a new stage. The contact is not told.</p>':''}
+      \${simple?'<p class="hint">Move this case to a new stage. For some stages the contact gets a short automatic note; for internal stages they are not told.</p>':''}
       \${transitions.map(t=>\`<button class="trans" data-to="\${esc(t)}" title="\${esc(t)}" style="background:#2a3340">-&gt; \${esc(stageLabel(t))}</button>\`).join(' ')||'<span class="hint">no transitions available</span>'}
     </div>
     <div style="margin-top:14px"><label>Reply to contact on \${esc(c.channel)}</label>
       <textarea id="f-reply" rows="2" placeholder="Send a message as a human operator... (Ctrl+Enter to send)"></textarea>
+      \${contactMaybeNonEnglish(events)?'<p class="canned-lab" style="color:var(--danger)">This person may not be writing in English. Please reply in their language.</p>':''}
+      \${cannedReplies(c).length ? \`<p class="canned-lab">Or tap a ready-made reply to start with:</p>
+      <div class="canned" id="canned">\${cannedReplies(c).map((t,i)=>
+        \`<button type="button" data-i="\${i}">\${esc(t)}</button>\`).join('')}</div>\` : ''}
       <button id="send-reply">Send reply</button>
     </div>
     <h3 style="margin:18px 0 6px">Timeline\${events_total!=null?\` (\${events.length}/\${events_total})\`:''}</h3>
@@ -445,6 +628,14 @@ async function openCase(id){
   }
   $('#send-reply').onclick = send
   $('#f-reply').addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); send() } })
+  const canEl = $('#canned')
+  if(canEl){
+    const cans = cannedReplies(c)
+    canEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{
+      const ta=$('#f-reply'); ta.value=cans[+b.dataset.i]; ta.focus()
+      ta.setSelectionRange(ta.value.length,ta.value.length)
+    })
+  }
   const moreBtn = $('#more-events')
   if(moreBtn) moreBtn.onclick = async ()=>{
     const off = events.length
@@ -458,9 +649,12 @@ async function openCase(id){
     if(reason===null) return                // operator cancelled
     const r = await api('/api/cases/'+encodeURIComponent(id)+'/transition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({to:b.dataset.to,reason:reason||undefined})})
     if(!r.ok){ toast(await failMsg(r,'transition failed'),'err'); return }
-    toast('moved to '+toLabel,'ok'); lastCasesJson=''; await loadCases(); await openCase(id)
+    const updated = await r.json().catch(()=>({}))
+    const NOTIFIED=['in_progress','waiting','resolved']
+    toast(NOTIFIED.includes(updated.status)?'Moved to '+toLabel+'. The contact was sent a short note.':'Moved to '+toLabel+'. The contact was not told.','ok')
+    lastCasesJson=''; await loadCases(); await openCase(id)
   })
-  renderList()                              // reflect the new active row
+  renderList(); renderTriage()              // reflect the new active row in both lists
 }
 function renderEvents(events){
   return events.map(e=>\`<div class="ev \${esc(e.kind)}"><span class="k">\${esc(e.kind)}/\${esc(e.actor)}</span> \${esc(e.text||'')} <span class="when" title="\${esc(fmtTime(e.created_at))}">\${esc(rel(e.created_at))}</span></div>\`).join('')
@@ -507,6 +701,10 @@ document.addEventListener('keydown',e=>{
 })
 // --- deep-link restore + poll ---
 function restoreFromHash(){ const m=/#case=([^&]+)/.exec(location.hash); if(m) return decodeURIComponent(m[1]) }
+// Handoff banner click handlers (attached here so openCase is defined).
+$('#handoff').onclick=(e)=>{ if(e.target.id==='handoff-dismiss') return
+  const c=handoffQueue[handoffQueue.length-1]; if(c) openCase(c.id) }
+$('#handoff-dismiss').onclick=(e)=>{ e.stopPropagation(); handoffQueue=[]; renderHandoff() }
 async function boot(){ await loadCases(); const id=restoreFromHash(); if(id) openCase(id) }
 boot(); setInterval(loadCases, 5000)
 window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme,
@@ -514,6 +712,10 @@ window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple}, setFilter(q){filt.q=q;renderList()},
   // help overlay + per-case hint, exposed for browser-witness
-  showHelp, hideHelp, helpSeen, todoHint, get helpOpen(){return helpOpen} }   // exposed for browser-witness
+  showHelp, hideHelp, helpSeen, todoHint, get helpOpen(){return helpOpen},
+  // triage inbox + coaching + handoff, exposed for browser-witness
+  attnScore, attnReason, cannedReplies, renderTriage,
+  checkHandoffs, clearHandoff, hasHandoff, contactMaybeNonEnglish,
+  get handoffQueue(){return handoffQueue}, get handoffSeen(){return handoffSeen} }   // exposed for browser-witness
 </script>
 </body></html>`

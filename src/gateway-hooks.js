@@ -71,6 +71,12 @@ function caseSystemPrompt(caseRow, events, contact) {
     `   them know they are being helped and are not alone.`,
     `5. NO JARGON: never say case, ticket, triage, status, priority, workflow,`,
     `   escalate, transition, or autonomy. Speak like a helpful person, not a system.`,
+    `6. MIRROR THEIR EFFORT: if they wrote one word or an emoji, keep your reply to`,
+    `   one or two short lines. Do not flood a worried person with text.`,
+    `7. NO PROMISES YOU CANNOT KEEP: never give a specific time, date, or guaranteed`,
+    `   outcome. Say a real person will follow up, not "by tomorrow" or "it is fixed".`,
+    `8. ONE NEXT STEP: if you need something from them, ask for exactly one thing,`,
+    `   in the simplest words (for example a name, an address, or a photo).`,
     ``,
     firstMessage
       ? [`THIS IS THEIR FIRST MESSAGE. Greet them warmly and thank them for getting in`,
@@ -96,7 +102,7 @@ function caseSystemPrompt(caseRow, events, contact) {
 // opts.autoRespond=false to track-only (no agent turn / reply).
 const FALLBACK_REPLY = "Thanks for your message. We've logged it and someone will follow up shortly."
 
-export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log = console } = {}) {
+export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
   return async function handleInbound(platform, msg) {
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
     const external_id = conversationKey(msg)
@@ -155,10 +161,10 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     const isFirstMessage = (await store.listEvents(fresh.id)).filter(e => e.kind === 'inbound').length <= 1
     const optedOut = (fresh.tags || '').split(',').map(s => s.trim()).includes('opted-out')
     let intent = detectContactIntent(inboundText)
-    // A brand-new contact whose very first word is "help"/"?" still deserves the
-    // warm greeting+reference from the agent, not a bare menu -- so on the first
-    // message we let the agent handle 'help' (but still honor human/status/stop).
-    if (intent === 'help' && isFirstMessage) intent = null
+    // On a brand-new contact, greeting/help deserve the agent's warm intro +
+    // reference, not a canned line -- so defer them to the agent on message one.
+    // (status/human/stop/thanks still answered deterministically.)
+    if (['help', 'greeting'].includes(intent) && isFirstMessage) intent = null
     // Respect a prior opt-out: once someone said STOP, do not auto-reply again
     // unless they explicitly ask for help or a human.
     if (optedOut && intent !== 'help' && intent !== 'human') {
@@ -168,10 +174,19 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     if (intent) {
       if (intent === 'human') {
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'HANDOFF REQUESTED: contact asked for a human. Needs an operator.' })
+        // detectContactIntent returns 'human' for EVERY message with a human
+        // keyword, so the notify must fire only on the FIRST handoff for this
+        // case -- otherwise a contact repeating "person?" re-pings every time.
+        // mergeTag is idempotent; the notify is not.
+        const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
         try {
           const patch = { tags: mergeTag(fresh.tags, 'needs-human') }
           if (fresh.priority === 'low' || fresh.priority === 'normal') patch.priority = 'high'
           await store.updateCase(fresh.id, patch)
+          if (notifyHandoff && !alreadyFlagged) {
+            try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
+            catch (e) { log.warn?.('[casey] handoff notify failed', { caseId: fresh.id, error: e.message }) }
+          }
         } catch (e) { log.warn?.('[casey] handoff flag failed', { caseId: fresh.id, error: e.message }) }
       } else if (intent === 'stop') {
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'OPT-OUT: contact asked to stop messaging.' })
@@ -280,48 +295,131 @@ function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) +
 export function detectContactIntent(text) {
   const t = normalizeIntentText(text)
   if (!t) return null
-  const has = (words) => words.some(w => t === w || t.includes(w))
+  const words = t.split(' ')
+  const wordSet = new Set(words)
+  const padded = ` ${t} `
 
-  if (has([
-    'stop', 'unsubscribe', 'cancel', 'quit', 'leave me alone', 'go away',
-    'no more', 'remove me', 'opt out', 'optout',
-    'basta', 'alto', 'pare', 'parar', 'detener',           // es/pt/it
-    'arret', 'arreter', 'stopp', 'aufhoren', 'halt',        // fr/de
-  ])) return 'stop'
+  // Forgiving match for the READ-ONLY intents (status/help/thanks/greeting):
+  // a whole-word/phrase hit, OR a key that appears as a substring of a token so
+  // inflected forms still match ("ayuda" inside "ayudame", "thank" inside
+  // "thanks"). Safe here because these intents never mutate the case; the
+  // irreversible STOP/HUMAN use the strict negation-guarded matcher below.
+  // Very short keys (<=3 chars: "ty", "yo", "hi", "?") match as whole tokens
+  // only, so they do not fire inside unrelated words ("ty" in "party"). Longer
+  // single-word keys also match as a substring of a token to catch inflections.
+  const hit = (keys) => keys.some(k =>
+    k.includes(' ') ? padded.includes(` ${k} `)
+      : k.length <= 3 ? wordSet.has(k)
+      : (wordSet.has(k) || words.some(w => w.includes(k))))
 
-  if (has([
-    'human', 'person', 'someone', 'somebody', 'real person', 'operator',
-    'representative', 'staff', 'manager', 'speak to', 'talk to', 'call me',
-    'real human', 'agent',
-    'humano', 'persona', 'agente', 'alguien', 'pessoa', 'atendente',  // es/pt
-    'humain', 'personne', 'quelqu', 'mensch', 'jemand',     // fr/de
-  ])) return 'human'
+  // A negator immediately before a key blanks that key, so "dont stop",
+  // "no human", "not now" cannot trip the irreversible intents.
+  const NEGATORS = new Set(['no', 'not', 'dont', 'never', 'nao', 'nicht', 'pas', 'cha'])
+  const guarded = new Set()
+  for (let i = 1; i < words.length; i++) if (NEGATORS.has(words[i - 1])) guarded.add(i)
+  const liveWords = new Set(words.filter((_, i) => !guarded.has(i)))
+  const live = (keys) => keys.some(k =>
+    k.includes(' ') ? padded.includes(` ${k} `) : liveWords.has(k))
 
-  if (has([
-    'status', 'update', 'progress', 'how long', 'any news', 'news', 'eta',
-    'whats happening', 'what is happening', 'still waiting',
-    'estado', 'estatus', 'actualizacion', 'novidade',       // es/pt
-    'statut', 'nouvelle', 'stand',                          // fr/de
-  ])) return 'status'
+  // STOP / HUMAN drive irreversible actions (opt-out, handoff): negation-guarded,
+  // and blocked by explicit exclude phrases ("no problem", "in person").
+  if (live(STOP_KEYS)  && !STOP_EXCLUDE.some(p => padded.includes(` ${p} `)))  return 'stop'
+  if (live(HUMAN_KEYS) && !HUMAN_EXCLUDE.some(p => padded.includes(` ${p} `))) return 'human'
 
-  if (has([
-    'help', 'menu', 'options', 'what can', 'how do', 'confused', 'lost',
-    'dont understand', 'huh', '?',
-    'ayuda', 'auxilio', 'socorro',                          // es/pt
-    'aide', 'aidez', 'hilfe',                               // fr/de
-  ])) return 'help'
+  // STATUS / HELP are read-only replies, so the plain matcher is fine.
+  if (hit(STATUS_KEYS)) return 'status'
+  // A run of '?' ("?", "???", "????") from a confused contact is a help signal;
+  // normalize collapses it to a single '?' token (see normalizeIntentText).
+  if (hit(HELP_KEYS)) return 'help'
+
+  // Short, content-free social turns get a warm canned nudge instead of an LLM
+  // turn -- but ONLY greeting and thanks. We deliberately do NOT classify
+  // yes/no or bare numbers: those are almost always answers to a question the
+  // agent just asked, so they must fall through to the agent with full context.
+  if (words.length <= 3) {
+    if (hit(THANKS_KEYS))   return 'thanks'
+    if (hit(GREETING_KEYS)) return 'greeting'
+  }
 
   return null
 }
 
-// Lowercase, strip diacritics/emoji/punctuation (keep '?' as a help signal),
-// collapse whitespace, so "AYUDAME!!", "ayudame" and "  Ayuda  " all match.
+// Keyword tables. Single-word keys match as whole tokens; multi-word keys as
+// space-bounded phrases. Accent-stripped, lowercase (see normalizeIntentText).
+// Languages: en, es, pt, it, fr, de, zu (Zulu), xh (Xhosa), ar (transliterated),
+// hi (transliterated).
+const STOP_KEYS = [
+  'stop', 'unsubscribe', 'cancel', 'quit', 'leave me alone', 'go away',
+  'no more', 'remove me', 'opt out', 'optout', 'enough',
+  'basta', 'alto', 'pare', 'parar', 'detener', 'dejar',
+  'arret', 'arreter', 'stopp', 'aufhoren', 'halt',
+  'yeka', 'misa', 'hambani',
+  'khalas', 'tawaqaf', 'kafi',
+  'bas', 'band karo', 'mat bhejo',
+]
+const STOP_EXCLUDE = [
+  'no stop', 'dont stop', 'do not stop', 'please dont stop', 'never stop',
+  'bus stop',
+]
+
+const HUMAN_KEYS = [
+  'human', 'person', 'someone', 'somebody', 'real person', 'operator',
+  'representative', 'staff', 'manager', 'speak to', 'talk to', 'call me',
+  'real human', 'agent',
+  'humano', 'persona', 'agente', 'alguien', 'pessoa', 'atendente',
+  'humain', 'personne', 'quelqu', 'mensch', 'jemand',
+  'umuntu', 'umsebenzi',
+  'insan', 'shakhs', 'muwazzaf',
+  'insaan', 'aadmi', 'vyakti',
+]
+const HUMAN_EXCLUDE = [
+  'a person told me', 'person told me', 'someone told me', 'another person',
+  'in person', 'no person', 'wrong person',
+]
+
+const STATUS_KEYS = [
+  'status', 'update', 'progress', 'how long', 'any news', 'news', 'eta',
+  'whats happening', 'what is happening', 'still waiting', 'where is',
+  'estado', 'estatus', 'actualizacion', 'novidade',
+  'statut', 'nouvelle', 'stand',
+  'isimo', 'kuphi',
+  'halat', 'wein', 'akhbar',
+  'sthiti', 'kahan', 'kya hua',
+]
+
+const HELP_KEYS = [
+  'help', 'menu', 'options', 'what can', 'how do', 'confused', 'lost',
+  'dont understand', 'do not understand', 'huh', '?',
+  'ayuda', 'auxilio', 'socorro', 'ajuda',
+  'aide', 'aidez', 'hilfe',
+  'usizo', 'ncedo',
+  'musaada', 'madad',
+]
+
+const THANKS_KEYS = [
+  'thanks', 'thank you', 'thank', 'thx', 'ty', 'cheers', 'appreciate',
+  'gracias', 'obrigado', 'obrigada', 'merci', 'danke', 'grazie',
+  'ngiyabonga', 'enkosi',
+  'shukran', 'dhanyavad', 'shukriya',
+]
+
+const GREETING_KEYS = [
+  'hi', 'hello', 'hey', 'hallo', 'hiya', 'yo', 'good morning',
+  'good afternoon', 'good evening', 'greetings',
+  'hola', 'ola', 'bonjour', 'salut', 'guten tag', 'ciao',
+  'sawubona', 'molo', 'salam', 'salaam', 'namaste', 'namaskar',
+]
+
+// Lowercase, strip diacritics/emoji/punctuation, COLLAPSE any run of '?' to a
+// single '?' token (so "???" is a help signal, not an unmatchable "???" token),
+// collapse whitespace.
 function normalizeIntentText(text) {
   return (text || '')
     .toString()
     .toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9?\s]/g, ' ')
+    .replace(/\?+/g, ' ? ')
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -338,12 +436,65 @@ export function mergeTag(tags, tag) {
 function plainStatus(status) {
   return ({
     new:         'We have it and will look at it very soon.',
-    triaging:    'We are reviewing it now.',
-    in_progress: 'Someone is working on it.',
-    waiting:     'We are waiting on something to continue.',
-    resolved:    'It is sorted. Tell us if anything is still wrong.',
-    closed:      'It is finished. Reply if you need more help.',
-  })[status] || 'We are looking into it.'
+    triaging:    'We are looking at it right now.',
+    in_progress: 'Someone is working on it for you now.',
+    waiting:     'We have started, and we are waiting on one step before we finish. We will keep you posted.',
+    resolved:    'It is sorted. If anything is still not right, just tell us.',
+    closed:      'It is all finished. Reply any time if you need more help.',
+  })[status] || 'We are looking into it for you.'
+}
+
+// Proactive, contact-safe note sent when a request MOVES to a new stage on an
+// OPERATOR's action. Warm, no jargon, no dashes-as-punctuation (reads as a bot).
+// Internal stages (new, triaging) and closed return '' and are not sent:
+//   - new/triaging are internal review steps the contact need not hear about.
+//   - closed is silent because `resolved` already told them it is done; an
+//     operator moving resolved->closed seconds later would otherwise double-send.
+export function stageNote(status) {
+  return ({
+    in_progress: 'Good news. Someone is working on your request now.',
+    waiting:     'A quick update: your request is in progress and we are waiting on one step. We will be in touch.',
+    resolved:    'Good news. Your request is sorted. If anything is still not right, just reply here.',
+  })[status] || ''
+}
+
+// Build a CaseStore onTransition hook that sends the contact a proactive,
+// plain-language note when an OPERATOR moves their request to a stage worth
+// announcing. Reuses the dashboard's sendReply(caseRow, text) adapter.
+//
+// Guards (all must pass to send):
+//   - agent transitions  -- skipped; the agent already replies to the contact
+//                           in its own warm, contextual message (no double-send).
+//   - opted-out tag      -- the contact said STOP; stay silent.
+//   - stageNote empty    -- nothing worth announcing for this stage.
+//   - dedup              -- skip if the most recent outbound is this exact note.
+// "Only on real stage change" is guaranteed by transition() skipping no-ops.
+export function makeTransitionNotifier(store, sendReply, { log = console } = {}) {
+  if (!sendReply) return null
+  return async function onTransition({ caseRow, to, user }) {
+    // Only operator-driven moves notify. Agent self-transitions during a turn
+    // would otherwise send a canned note ON TOP of the agent's own reply.
+    if (user?.role === 'agent') return
+    const tags = (caseRow.tags || '').split(',').map(s => s.trim())
+    if (tags.includes('opted-out')) return
+    const text = stageNote(to)
+    if (!text) return
+    try {
+      const recent = await store.listEventsPage(caseRow.id, { limit: 8, offset: 0 })
+      const lastOut = recent.find(e => e.kind === 'outbound')
+      if (lastOut && (lastOut.text || '').trim() === text) return
+    } catch (e) { log.warn?.('[casey] transition-note dedup check failed', { caseId: caseRow.id, error: e.message }) }
+    try {
+      await sendReply(caseRow, text)
+      await store.appendEvent(caseRow.id, {
+        kind: 'outbound', actor: 'system', channel: caseRow.channel,
+        text, data: { to: caseRow.external_id, proactive: 'stage-note', stage: to },
+      })
+    } catch (e) {
+      log.error?.('[casey] transition note send failed', { caseId: caseRow.id, error: e.message })
+      await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `proactive note send failed: ${e.message}` })
+    }
+  }
 }
 
 // Build a clear, deterministic reply for a recognized intent. Every reply names
@@ -351,16 +502,41 @@ function plainStatus(status) {
 export function intentReply(intent, caseRow) {
   const ref = caseRow?.ref ? ` Your reference is ${caseRow.ref}.` : ''
   if (intent === 'help') {
-    return `Hi! Reply with a word: STATUS to check progress, HUMAN to talk to a person, or STOP to stop messages. Or just tell us what you need.${ref}`
+    return `We are here to help. Reply STATUS to check progress, HUMAN for a real person, or STOP to end messages. Or just tell us what you need.${ref}`
   }
   if (intent === 'status') {
     return `${plainStatus(caseRow.status)} Reply HUMAN any time to talk to a person.${ref}`
   }
   if (intent === 'stop') {
-    return `Okay, we will stop messaging you. Reply HELP any time if you change your mind.${ref}`
+    return `Okay, we will not message you again. Reply HELP any time if you change your mind.${ref}`
   }
   if (intent === 'human') {
-    return `No problem. I am asking a real person to help you now. They will reply here as soon as they can.${ref}`
+    return `Of course. We are asking a real person to help you now. They will reply right here as soon as they can.${ref}`
+  }
+  if (intent === 'thanks') {
+    // Terminal acknowledgement -- no invitation to reply, so we don't trigger a
+    // politeness ping-pong loop. (Note no dash punctuation: keep it plain.)
+    return `You're welcome, take care.${ref}`
+  }
+  if (intent === 'greeting') {
+    // Warm, NOT a command menu -- a contact who said "hi" should not get jargon.
+    return `Hello! Good to hear from you. How can we help today?${ref}`
   }
   return ''
+}
+
+// Posts a one-line operator alert to a Discord webhook. Returns null if no URL is
+// configured, so handoff flagging works with or without Discord wired up.
+// allowed_mentions.parse:[] blocks a contact injecting @everyone via the subject.
+export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WEBHOOK) {
+  if (!webhookUrl) return null
+  return async ({ case: c, channel, from }) => {
+    const content = `A person is needed - case ${c.ref} on ${channel} (${from})`
+      + (c.subject ? ` - ${c.subject}` : '')
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+    })
+  }
 }

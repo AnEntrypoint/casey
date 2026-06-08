@@ -42,6 +42,16 @@ export const SCENARIOS = {
     description: 'Non-native, broken grammar, order is late.',
     lines: ['order no come yet many day', 'when it arrive me', 'please you help fast'],
   },
+  'full-lifecycle': {
+    name: 'full-lifecycle',
+    description: 'End-to-end: intake, a status check, then asks for a human. The operator side is driven by the test via the dashboard API.',
+    lines: ['hi my parcel never arrived', 'any update please', 'i want to speak to a real person'],
+  },
+  'false-positive-guard': {
+    name: 'false-positive-guard',
+    description: 'Real complaints that merely contain trigger substrings (personal/stopped/updated). With word-boundary intent matching these must reach the agent, never a stop/handoff shortcut.',
+    lines: ['my personal details are wrong on the order', 'the website stopped my payment', 'the courier updated nothing and lost my package'],
+  },
 }
 
 // Return a persona by name (case-insensitive), or null.

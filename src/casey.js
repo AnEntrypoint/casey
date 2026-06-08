@@ -13,7 +13,7 @@ const pathToFileUrl = (p) => pathToFileURL(p).href
 import { Gateway, bootHost } from 'freddie'
 import { createCaseStore } from './case-store.js'
 import { setCaseStore } from './case-runtime.js'
-import { makeCaseHandler } from './gateway-hooks.js'
+import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier } from './gateway-hooks.js'
 import { MockAdapter } from './sim/inject.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -60,9 +60,16 @@ export class Casey {
       callLLM: this.opts.callLLM || null,
       autoRespond: this.opts.autoRespond !== false,
       log: this.log,
+      notifyHandoff: this.opts.notifyHandoff || discordHandoffNotifier(),
     })
     this.gateway.handleInbound = handler.bind(this.gateway)
     this._wrapInflight()
+
+    // 5) proactive contact notes on OPERATOR stage changes. sendReply resolves
+    //    the channel adapter and sends -- the same path the dashboard uses for
+    //    operator replies. Null-safe: agent transitions and opted-out contacts
+    //    are skipped inside the notifier.
+    this.store.onTransition = makeTransitionNotifier(this.store, this.sendReply.bind(this), { log: this.log })
     return this
   }
 
@@ -101,6 +108,14 @@ export class Casey {
       this._inflight.add(p)
       return p
     }
+  }
+
+  // Send a message to a case's contact on their channel. Shared by the proactive
+  // transition notifier and available to the dashboard wiring. No-op (resolves)
+  // when the channel adapter is absent, so logging-only setups never throw.
+  async sendReply(caseRow, text) {
+    const a = this.adapters[caseRow.channel]
+    if (a?.send) await a.send({ to: caseRow.external_id, text })
   }
 
   // Await all in-flight inbound turns (used by sim for determinism).

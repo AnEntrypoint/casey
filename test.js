@@ -159,6 +159,132 @@ async function main() {
       assert.ok(true, 'no transition available from ' + cur + ' — skipped')
     }
   })
+
+  await test('OPERATOR FLOW: needs-human case, canned reply sends once as operator, transition + reason surface', async () => {
+    const chan = 'op-flow-1'
+    await runScript(adapter, ['please get me a real human'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const opCase = (await store.listCases()).find(c => c.external_id === chan)
+    assert.ok(opCase, 'case opened for operator-flow contact')
+    assert.ok((opCase.tags || '').includes('needs-human'), 'contact flagged needs-human')
+
+    const detail = await fetch('http://localhost:4577/api/cases/' + opCase.id + '?token=secret').then(r => r.json())
+    assert.ok((detail.case.tags || '').includes('needs-human'), 'dashboard surfaces needs-human tag')
+
+    const sentBefore = adapter.sent.length
+    const reply = await fetch('http://localhost:4577/api/cases/' + opCase.id + '/reply?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Hi, this is Sam from the team. I am looking after this for you now.' }),
+    }).then(r => r.json())
+    assert.equal(reply.sent, true, 'canned reply delivered on channel')
+    assert.equal(adapter.sent.length, sentBefore + 1, 'exactly one message sent')
+    const lastOut = (await store.listEvents(opCase.id)).filter(e => e.kind === 'outbound').pop()
+    assert.equal(lastOut.actor, 'operator', 'outbound attributed to operator')
+    // operator personally replied -> needs-human cleared so the inbox stops pinning it
+    assert.ok(!((await store.getCase(opCase.id)).tags || '').includes('needs-human'), 'needs-human cleared after operator reply')
+
+    const avail = store.availableTransitions(await store.getCase(opCase.id), { id: 'op', role: 'operator' })
+    assert.ok(avail.length, 'operator has a stage to move to')
+    const target = avail.includes('in_progress') ? 'in_progress' : avail[0]
+    const tr = await fetch('http://localhost:4577/api/cases/' + opCase.id + '/transition?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ to: target, reason: 'operator picked it up' }),
+    })
+    assert.equal(tr.status, 200)
+    const after = await fetch('http://localhost:4577/api/cases/' + opCase.id + '?token=secret').then(r => r.json())
+    assert.equal(after.case.status, target, 'dashboard surfaces the transitioned stage')
+    // The reason lives on a TRANSITION EVENT, not in the available-transitions list.
+    const trEv = (await store.listEvents(opCase.id)).filter(e => e.kind === 'transition').pop()
+    assert.ok(trEv && JSON.stringify(trEv).includes('operator picked it up'), 'reason recorded on the transition event')
+  })
+
+  await test('END-TO-END LIFECYCLE: intake -> handoff -> operator reply -> resolve -> plain status reflects resolved', async () => {
+    const chan = 'e2e-1'
+    const JARGON = /\b(triage|triaging|autonomy|transition|workflow|escalate)\b/i
+
+    await runScript(adapter, ['hi my parcel never arrived'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    let c = (await store.listCases()).find(x => x.external_id === chan)
+    assert.ok(c, 'intake opened a case')
+    const greet = adapter.sent[adapter.sent.length - 1]
+    assert.ok(greet.text.includes(c.ref), 'intake reply cites the reference')
+    c = await store.getCase(c.id)
+    assert.notEqual(c.status, 'closed')
+
+    await runScript(adapter, ['can i talk to a real person'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    c = await store.getCase(c.id)
+    assert.ok((c.tags || '').includes('needs-human'), 'handoff flagged needs-human')
+    assert.equal(c.priority, 'high', 'handoff keeps/raises priority to high')
+
+    const beforeOp = adapter.sent.length
+    await fetch('http://localhost:4577/api/cases/' + c.id + '/reply?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Hi, a person here now, checking the courier for you.' }),
+    })
+    assert.equal(adapter.sent.length, beforeOp + 1, 'operator reply reached the contact')
+
+    const op = { id: 'op', role: 'operator' }
+    for (let i = 0; i < 6 && (await store.getCase(c.id)).status !== 'resolved'; i++) {
+      const cur = await store.getCase(c.id)
+      const avail = store.availableTransitions(cur, op)
+      const step = avail.includes('resolved') ? 'resolved'
+        : avail.includes('in_progress') ? 'in_progress'
+        : avail.find(s => s !== 'closed')
+      if (!step) break
+      await store.transition(c.id, step, { user: op, reason: 'lifecycle test' })
+    }
+    assert.equal((await store.getCase(c.id)).status, 'resolved', 'reached resolved')
+
+    const beforeStatus = adapter.sent.length
+    await runScript(adapter, ['any update?'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const status = adapter.sent[adapter.sent.length - 1]
+    assert.ok(adapter.sent.length > beforeStatus, 'status produced a reply')
+    assert.ok(/sorted|still/i.test(status.text), `status reflects resolved stage: ${status.text}`)
+    assert.ok(status.text.includes(c.ref), 'status reply cites the reference')
+    assert.ok(!JARGON.test(status.text), `status reply stays jargon-free: ${status.text}`)
+  })
+
+  await test('proactive stage notes are jargon-free and not bot-styled', async () => {
+    const { stageNote } = await import('./src/gateway-hooks.js')
+    const JARGON = /\b(triage|triaging|autonomy|transition|workflow|escalate)\b/i
+    for (const s of ['in_progress', 'waiting', 'resolved']) {
+      const t = stageNote(s)
+      assert.ok(t && !JARGON.test(t), `stageNote(${s}) avoids jargon: ${t}`)
+      assert.ok(!t.includes('--'), `stageNote(${s}) has no dash punctuation: ${t}`)
+    }
+    assert.equal(stageNote('triaging'), '', 'internal stages are silent')
+    assert.equal(stageNote('closed'), '', 'closed is silent (resolved already told them)')
+  })
+
+  await test('PROACTIVE NOTE: operator transition sends a plain note; opted-out and observe stay silent', async () => {
+    const { makeTransitionNotifier } = await import('./src/gateway-hooks.js')
+    const sent = []
+    const notifier = makeTransitionNotifier(store, (cRow, text) => { sent.push({ id: cRow.id, text }); return Promise.resolve() })
+    const prev = store.onTransition
+    store.onTransition = notifier
+    try {
+      // a plain auto case: a real operator move to in_progress sends a note
+      const { case: c1 } = await store.findOrCreateCase({ channel: 'sim', external_id: 'pn-auto', contact: { display_name: 'pn' } })
+      await store.transition(c1.id, 'in_progress', { user: { id: 'op', role: 'operator' }, reason: 'picked up' })
+      assert.ok(sent.some(s => s.id === c1.id && /working on your request/i.test(s.text)), 'proactive note sent on operator transition')
+
+      // an AGENT transition must NOT notify (agent already replies itself)
+      const before1 = sent.length
+      const { case: c2 } = await store.findOrCreateCase({ channel: 'sim', external_id: 'pn-agent', contact: { display_name: 'pn2' } })
+      await store.transition(c2.id, 'in_progress', { user: { id: 'casey-agent', role: 'agent' }, reason: 'auto' })
+      assert.equal(sent.length, before1, 'agent transition does not send a proactive note')
+
+      // an opted-out contact is never messaged
+      const before2 = sent.length
+      const { case: c3 } = await store.findOrCreateCase({ channel: 'sim', external_id: 'pn-optout', contact: { display_name: 'pn3' } })
+      await store.updateCase(c3.id, { tags: 'opted-out' })
+      await store.transition(c3.id, 'in_progress', { user: { id: 'op', role: 'operator' }, reason: 'x' })
+      assert.equal(sent.length, before2, 'opted-out contact gets no proactive note')
+
+      // a no-op transition to the current stage sends nothing
+      const before3 = sent.length
+      await store.transition(c1.id, 'in_progress', { user: { id: 'op', role: 'operator' }, reason: 'noop' })
+      assert.equal(sent.length, before3, 'no-op transition is silent')
+    } finally { store.onTransition = prev }
+  })
   await dash.close()
 
   // ---- discord WS receive ----
@@ -262,6 +388,104 @@ async function main() {
       const last = adapter.sent[adapter.sent.length - 1]
       assert.ok(adapter.sent.length > before, 'help produced a reply')
       assert.ok(/STATUS|HUMAN|STOP/.test(last.text), `help menu shown: ${last.text}`)
+    })
+
+    await test('intent: irreversible-action false positives stay safe (substrings do not trigger stop/handoff)', async () => {
+      const { detectContactIntent } = await import('./src/gateway-hooks.js')
+      const cases = [
+        ['dont stop', null], ['no stop', null],
+        ['bus stop near me', null], ['not now', null], ['nothing yet', null],
+        ['now what', null], ['personal details', null],
+        ['a person told me to message you', null], ['someone told me my case is ready', null],
+        ['in person at the office', null],
+        ['no problem', null], ['no human needed thanks', null],
+        ['yes', null], ['nope', null], ['55', null], ['ab-4471', null],
+      ]
+      for (const [inp, exp] of cases)
+        assert.equal(detectContactIntent(inp), exp, `"${inp}" -> ${detectContactIntent(inp)} expected ${exp}`)
+      // The load-bearing safety contract: a negated stop never opts the contact
+      // out and never forces a handoff (a benign help/menu outcome is fine).
+      for (const inp of ['please dont stop helping', 'do not stop', 'never stop'])
+        assert.ok(!['stop', 'human'].includes(detectContactIntent(inp)), `"${inp}" must not trigger stop/human`)
+    })
+
+    await test('intent: true positives across languages and the "???" help signal', async () => {
+      const { detectContactIntent } = await import('./src/gateway-hooks.js')
+      const cases = [
+        ['STOP', 'stop'], ['basta!!', 'stop'], ['yeka', 'stop'], ['khalas', 'stop'],
+        ['i want to talk to a human', 'human'], ['umuntu', 'human'], ['insan', 'human'],
+        ['call me please', 'human'],
+        ['any news?', 'status'], ['kahan hai', 'status'],
+        ['AYUDAME!!', 'help'], ['???', 'help'], ['usizo', 'help'],
+        ['thank you', 'thanks'], ['ngiyabonga', 'thanks'],
+        ['hi', 'greeting'], ['sawubona', 'greeting'], ['namaste', 'greeting'],
+        ['stop i need a human', 'stop'], ['help me reach a person', 'human'],
+      ]
+      for (const [inp, exp] of cases)
+        assert.equal(detectContactIntent(inp), exp, `"${inp}" -> ${detectContactIntent(inp)} expected ${exp}`)
+    })
+
+    await test('STATUS on a later message hits the deterministic status reply (offers a person, cites ref)', async () => {
+      const chan = 'fp-status'
+      await runScript(adapter, ['hello'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const before = adapter.sent.length
+      await runScript(adapter, ['status'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const last = adapter.sent[adapter.sent.length - 1]
+      assert.ok(adapter.sent.length > before)
+      assert.ok(/HUMAN/.test(last.text), `status shortcut taken: ${last.text}`)
+      const id = (await store.listCases()).find(c => c.external_id === chan).id
+      const ev = (await store.listEvents(id)).pop()
+      assert.equal(ev.data && JSON.parse(ev.data).deterministic, true, 'answered deterministically')
+    })
+
+    await test('HELP on the FIRST message is NOT shortcut: the agent greeting wins and cites the reference', async () => {
+      const chan = 'fp-help-first'
+      const before = adapter.sent.length
+      await runScript(adapter, ['help'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const c = (await store.listCases()).find(x => x.external_id === chan)
+      const last = adapter.sent[adapter.sent.length - 1]
+      assert.ok(adapter.sent.length > before, 'first-message help got a reply')
+      const lastEv = (await store.listEvents(c.id)).filter(e => e.kind === 'outbound').pop()
+      assert.notEqual(lastEv.actor, 'system', 'first-message help handled by the agent, not the deterministic menu')
+      assert.ok(last.text.includes(c.ref), 'greeting cites the reference')
+    })
+
+    await test('OPT-OUT respected: STOP then a status-like message stays silent; HUMAN still breaks through', async () => {
+      const chan = 'respect-optout'
+      await runScript(adapter, ['stop'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const afterStop = adapter.sent.length
+      await runScript(adapter, ['any update on this'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      assert.equal(adapter.sent.length, afterStop, 'opted-out contact not messaged on a status follow-up')
+      const c = (await store.listCases()).find(x => x.external_id === chan)
+      const obs = (await store.listEvents(c.id)).filter(e => e.kind === 'observation').map(e => e.text)
+      assert.ok(obs.some(t => /opt.?out|stop messaging/i.test(t)), 'opt-out respected and noted')
+      const beforeHuman = adapter.sent.length
+      await runScript(adapter, ['i need a human'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      assert.equal(adapter.sent.length, beforeHuman + 1, 'HUMAN overrides opt-out so a stuck contact can reach a person')
+      assert.ok(/person|HUMAN/i.test(adapter.sent[adapter.sent.length - 1].text), 'override reply offers a person')
+    })
+
+    await test('OBSERVE autonomy respected: an intent keyword still sends nothing, only an observation', async () => {
+      const chan = 'respect-observe'
+      await runScript(adapter, ['hello there'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const c = (await store.listCases()).find(x => x.external_id === chan)
+      await store.updateCase(c.id, { autonomy: 'observe' }, { id: 'op', role: 'operator' })
+      const before = adapter.sent.length
+      await runScript(adapter, ['status please'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      assert.equal(adapter.sent.length, before, 'observe mode sends nothing automatically')
+      const obs = (await store.listEvents(c.id)).filter(e => e.kind === 'observation').map(e => e.text)
+      assert.ok(obs.some(t => /observe/i.test(t)), 'observe mode noted for the operator')
+    })
+
+    await test('false-positive-guard persona: complaints with trigger substrings reach the agent, never opt-out', async () => {
+      const chan = 'scn-fpg'
+      const sentBefore = adapter.sent.length
+      await runScript(adapter, SCENARIOS['false-positive-guard'].lines, { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const replies = adapter.sent.slice(sentBefore).filter(r => r.text != null)
+      const c = (await store.listCases()).find(x => x.external_id === chan)
+      assert.ok(replies.length >= 1)
+      for (const r of replies) assert.ok(r.text.trim().length > 0 && r.text.includes(c.ref), `safe reply: ${r.text}`)
+      assert.ok(!(c.tags || '').includes('opted-out'), 'a complaint containing "stopped" did NOT opt the contact out')
     })
   }
 

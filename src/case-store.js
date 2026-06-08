@@ -29,6 +29,11 @@ export class CaseStore {
     this.databasePath = opts.databasePath || path.resolve(process.cwd(), 'data', 'app.db')
     this.workflow = opts.workflow || 'case_lifecycle'
     this.log = opts.log || null
+    // Optional hook fired AFTER a real stage change commits:
+    //   onTransition({ caseRow, from, to, user, reason }) -> Promise|void
+    // Best-effort: failures are caught and logged, never block the transition.
+    // Null in the dashboard-only and test wirings, so transition() must tolerate it.
+    this.onTransition = opts.onTransition || null
     this.thatcher = null
     this._wf = null            // parsed workflow stage graph
     this._locks = new Map()    // per-conversation find-or-create serialization
@@ -273,6 +278,9 @@ export class CaseStore {
   async transition(caseId, toState, { user = AGENT_USER, reason = '' } = {}) {
     const before = await this.getCase(caseId)
     if (!before) throw new Error(`no case ${caseId}`)
+    // A no-op move to the current stage is not a real change: skip it so we do
+    // not record a junk event or re-notify the contact.
+    if (before.status === toState) return before
     this._validateTransition(before.status, toState, user)
     await this.t.update('case', caseId, {
       status: toState,
@@ -283,9 +291,15 @@ export class CaseStore {
     await this.appendEvent(caseId, {
       kind: 'transition',
       actor: user.role === 'agent' ? 'agent' : 'operator',
-      text: `${before?.status} -> ${toState}${reason ? ` (${reason})` : ''}`,
-      data: { from: before?.status, to: toState, by: user.id, reason },
+      text: `${before.status} -> ${toState}${reason ? ` (${reason})` : ''}`,
+      data: { from: before.status, to: toState, by: user.id, reason },
     })
+    // Proactive contact note. Isolated: a notify failure must not fail the
+    // operator's transition (the stage change already committed).
+    if (this.onTransition) {
+      try { await this.onTransition({ caseRow: result, from: before.status, to: toState, user, reason }) }
+      catch (e) { this.log?.warn?.('onTransition hook failed', { caseId, to: toState, error: e.message }) }
+    }
     return result
   }
 }

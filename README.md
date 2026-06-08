@@ -56,12 +56,25 @@ well, and may not speak English as a first language. So casey:
 
 **The operator watching the dashboard.** They may not understand workflow jargon either. So:
 
+- a **"Needs you now" inbox** is pinned to the top of the list. It is a guided queue of only the
+  cases that need a person right now (someone asked for a human, a case casey will not answer on
+  its own, a request stuck waiting over a day), each shown with the plain reason it is there
+  ("This person asked to talk to a real person.") and ranked by urgency, so the operator never
+  has to hunt. When nothing needs a person it shows a calm "All caught up" message, not a blank box.
 - a one-time **plain-words help overlay** (re-openable with the `?` button) explains, with no
   jargon, what each row is, what the amber dot means, and what every button does.
 - a **plain-language mode** (the `Aa` button, remembered across visits) relabels stages to
   friendly names (`Looking into it`, `Working on it`, `Done`, ...) everywhere.
-- each open case shows a **"what to do now"** line derived from its state (e.g. "This one is
-  waiting for you. Read it and reply.").
+- each open case shows a **"what to do now"** line derived from its state (e.g. "This person asked
+  for a real person. Reply to them below."), plus **ready-made replies** the operator can tap to
+  fill the reply box (then edit before sending) — no blank-page problem.
+- if the person wrote in another language, the reply box **warns the operator to answer in their
+  language**, and the ready-made replies are not offered for someone who asked to stop.
+- when someone asks for a human, a **loud red banner** (with a soft chime and a flashing browser
+  tab) appears once for that case so an idle operator notices; opening the case clears it.
+- when the operator moves a case to a new stage, casey can send the person a **short plain-language
+  note** ("Good news. Someone is working on your request now.") so they are kept informed without
+  having to ask. Internal stages stay silent, and a person who opted out is never messaged.
 
 ### Try the personas
 
@@ -75,6 +88,8 @@ node bin/casey.js sim --scenario asks-for-human          # wants a real person
 node bin/casey.js sim --scenario emoji-only              # emoji / punctuation only
 node bin/casey.js sim --scenario impatient               # repeated "any update"
 node bin/casey.js sim --scenario broken-grammar-order-late
+node bin/casey.js sim --scenario full-lifecycle          # intake -> status -> asks for a human
+node bin/casey.js sim --scenario false-positive-guard    # complaints that look like keywords
 node bin/casey.js sim --help                             # list every persona
 ```
 
@@ -102,14 +117,22 @@ so you can see the flow and a case appear.
 
 The dashboard is the whole operator surface — one page, no build step:
 
+- **"Needs you now" inbox (top of the list):** a ranked, plain-worded queue of just the cases that
+  need a person now — someone asked for a human, a case casey will not auto-answer, or a request stuck
+  waiting over a day. Each row leads with the reason; opting-out contacts are never listed. It reads
+  "All caught up" when there is nothing to do.
 - **Case list (left):** every case, with a priority badge, last-activity time, and an amber dot on
-  cases that need a human (autonomy `observe`/`assisted`). A live **search** box (press `/`) filters by
-  ref/subject/summary/contact, and a **stage** dropdown filters by workflow status. `j`/`k` move the
-  selection, `Enter` opens, `Esc` clears.
+  cases that need a human (autonomy `observe`/`assisted`, or someone who asked for a person). A live
+  **search** box (press `/`) filters by ref/subject/summary/contact, and a **stage** dropdown filters
+  by workflow status. `j`/`k` move the selection, `Enter` opens, `Esc` clears.
 - **Detail (right):** edit subject/summary/priority/tags/assignee/**autonomy** (with an inline
   explainer of what each autonomy mode does) and **Save**. **Override** the workflow stage with an
-  optional reason. **Reply** to the contact on their channel as a human (`Ctrl`/`Cmd`+`Enter` to send);
-  the toast tells you whether it was delivered or only logged.
+  optional reason. **Reply** to the contact on their channel as a human (`Ctrl`/`Cmd`+`Enter` to send),
+  with **ready-made replies** you can tap to start from and a warning to answer in the contact's
+  language when they did not write in English; the toast tells you whether it was delivered or only
+  logged, and whether the stage change sent the person a note.
+- **Handoff alert:** when a contact asks for a real person, a loud banner (chime + flashing tab) fires
+  once for that case so an idle operator notices; opening the case clears it.
 - **Timeline:** every inbound/outbound/note/action/transition/observation as an append-only row,
   colour-coded by kind, with relative timestamps (hover for the absolute time).
 - **Plain-language help:** a first-run **help overlay** (re-open with `?`) explains everything in plain
