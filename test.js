@@ -199,6 +199,72 @@ async function main() {
     await assert.rejects(() => bad.init(), /missing workflow/)
   })
 
+  // ---- low-literacy scenario harness ----
+  // Replays each persona from src/sim/scenarios.js through the full agent path
+  // and asserts the contract that protects confused / non-native / impatient
+  // contacts: a reply always comes, it stays short and jargon-free, it quotes
+  // the reference, and it offers a person exactly when one is requested.
+  {
+    const { SCENARIOS } = await import('./src/sim/scenarios.js')
+    const JARGON = /\b(triage|triaging|autonomy|transition|workflow|escalate)\b/i
+    const HUMAN = /\b(person|human|team|someone)\b/i
+
+    for (const persona of Object.values(SCENARIOS)) {
+      await test(`scenario "${persona.name}": replies are non-blank, simple, and cite the reference`, async () => {
+        const chan = `scn-${persona.name}`
+        const sentBefore = adapter.sent.length
+        await runScript(adapter, persona.lines, { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+        const replies = adapter.sent.slice(sentBefore).filter(r => r.text != null)
+        assert.ok(replies.length >= 1, 'at least one reply was sent')
+        const caseRow = (await store.listCases()).find(c => c.external_id === chan)
+        assert.ok(caseRow, 'a case was opened for the persona')
+        for (const r of replies) {
+          assert.ok(r.text && r.text.trim().length > 0, 'reply is never blank')
+          assert.ok(r.text.length <= 240, `reply stays short (${r.text.length}): ${r.text}`)
+          assert.ok(!JARGON.test(r.text), `reply avoids jargon: ${r.text}`)
+          assert.ok(r.text.includes(caseRow.ref), `reply cites reference ${caseRow.ref}: ${r.text}`)
+        }
+      })
+    }
+
+    await test('scenario "asks-for-human": at least one reply offers a person', async () => {
+      const chan = 'scn-human-offer'
+      const sentBefore = adapter.sent.length
+      await runScript(adapter, SCENARIOS['asks-for-human'].lines, { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const replies = adapter.sent.slice(sentBefore).map(r => r.text || '')
+      assert.ok(replies.some(t => HUMAN.test(t)), `expected a human-handoff reply in: ${JSON.stringify(replies)}`)
+      const caseRow = (await store.listCases()).find(c => c.external_id === chan)
+      assert.ok((caseRow.tags || '').includes('needs-human'), 'case flagged needs-human')
+    })
+
+    await test('scenario "non-english-spanish": at least one reply is in Spanish', async () => {
+      const chan = 'scn-es'
+      const sentBefore = adapter.sent.length
+      await runScript(adapter, SCENARIOS['non-english-spanish'].lines, { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const replies = adapter.sent.slice(sentBefore).map(r => r.text || '')
+      assert.ok(replies.some(t => /\b(persona|gracias|ayudar|mensaje|referencia)\b/i.test(t)), `expected a Spanish reply in: ${JSON.stringify(replies)}`)
+    })
+
+    await test('STOP then a later message: contact is not auto-replied again', async () => {
+      const chan = 'scn-stop'
+      await runScript(adapter, ['stop'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const afterStop = adapter.sent.length
+      await runScript(adapter, ['ok thanks'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      assert.equal(adapter.sent.length, afterStop, 'no auto-reply after opt-out')
+    })
+
+    await test('HELP keyword returns a plain menu without an LLM turn', async () => {
+      const chan = 'scn-help'
+      // first message must NOT be help (first-message greeting wins), so seed one
+      await runScript(adapter, ['hi there'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const before = adapter.sent.length
+      await runScript(adapter, ['help'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const last = adapter.sent[adapter.sent.length - 1]
+      assert.ok(adapter.sent.length > before, 'help produced a reply')
+      assert.ok(/STATUS|HUMAN|STOP/.test(last.text), `help menu shown: ${last.text}`)
+    })
+  }
+
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
   process.exit(failures ? 1 : 0)

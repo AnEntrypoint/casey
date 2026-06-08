@@ -34,6 +34,53 @@ casey is a thin orchestrator that composes three existing projects:
 - Fully observable: every inbound/outbound/observation/action/transition is an append-only `event` row.
 - Fully interactible: operators edit fields, force transitions, and reply to the contact from the dashboard; the agent picks up the new state on the next turn.
 
+## Built for low tech literacy (both sides)
+
+casey assumes the people on both ends may not be technical. That shapes two surfaces:
+
+**The person messaging in (WhatsApp/Discord).** They may be elderly, may not read
+well, and may not speak English as a first language. So casey:
+
+- replies in **plain, short, warm** language — one idea per sentence, one question at
+  a time, and never any internal jargon (case, triage, workflow, status, priority).
+- **mirrors their language**: if they write in Spanish, it answers in Spanish.
+- on first contact, **greets them and gives their reference number in plain words**, and
+  sets the expectation that a real person will follow up.
+- understands a few **simple keywords in any phrasing or language** and answers instantly,
+  without an LLM turn, where a fixed answer is better: `HELP` (a short menu), `STATUS`
+  (where their request stands, in plain words), `HUMAN` (hands off to a person — flags the
+  case `needs-human`, raises priority, and reassures them), `STOP` (opts them out; casey
+  will not message again unless they ask for `HELP`/`HUMAN`).
+- never sends a blank or dead-end reply — empty, emoji-only, and media-only messages still
+  get a gentle, helpful answer.
+
+**The operator watching the dashboard.** They may not understand workflow jargon either. So:
+
+- a one-time **plain-words help overlay** (re-openable with the `?` button) explains, with no
+  jargon, what each row is, what the amber dot means, and what every button does.
+- a **plain-language mode** (the `Aa` button, remembered across visits) relabels stages to
+  friendly names (`Looking into it`, `Working on it`, `Done`, ...) everywhere.
+- each open case shows a **"what to do now"** line derived from its state (e.g. "This one is
+  waiting for you. Read it and reply.").
+
+### Try the personas
+
+`casey sim --scenario <name>` replays a built-in low-literacy persona offline so you can see
+how casey handles each one:
+
+```sh
+node bin/casey.js sim --scenario non-english-spanish    # writes only in Spanish
+node bin/casey.js sim --scenario confused-elderly        # vague, one-word, polite
+node bin/casey.js sim --scenario asks-for-human          # wants a real person
+node bin/casey.js sim --scenario emoji-only              # emoji / punctuation only
+node bin/casey.js sim --scenario impatient               # repeated "any update"
+node bin/casey.js sim --scenario broken-grammar-order-late
+node bin/casey.js sim --help                             # list every persona
+```
+
+The same personas run in the test suite, asserting every reply stays non-blank, short,
+jargon-free, cites the reference, and offers a person exactly when one is asked for.
+
 ## Quickstart (operator)
 
 You do not need to be a developer to run casey day-to-day:
@@ -65,6 +112,9 @@ The dashboard is the whole operator surface — one page, no build step:
   the toast tells you whether it was delivered or only logged.
 - **Timeline:** every inbound/outbound/note/action/transition/observation as an append-only row,
   colour-coded by kind, with relative timestamps (hover for the absolute time).
+- **Plain-language help:** a first-run **help overlay** (re-open with `?`) explains everything in plain
+  words, an **`Aa` plain-mode** toggle relabels stages to friendly names everywhere (remembered), and
+  each open case shows a **"what to do now"** hint derived from its state.
 - Non-blocking **toasts** replace alert popups, a banner appears if the connection drops, the list
   auto-refreshes every 5s (paused while you're typing so it never clobbers an edit), new cases raise a
   toast, the open case is **deep-linked** in the URL (shareable), and a **light/dark** toggle persists.
@@ -77,6 +127,7 @@ node bin/casey.js init          # scaffold a .env
 node bin/casey.js doctor        # preflight: what's ready, what's missing
 node bin/casey.js up            # gateway (sim + any channel with creds) + dashboard on :4000
 node bin/casey.js sim "msg" ... # offline simulated conversation (stub model, no creds)
+node bin/casey.js sim --scenario <name>  # replay a built-in low-literacy persona
 node bin/casey.js dashboard     # observe/edit dashboard only, on :4000
 node bin/casey.js cases         # list cases (empty -> hint on how to make one)
 node bin/casey.js show <ref|id> # show a case + full timeline
@@ -114,12 +165,13 @@ casey/
     case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation
     case-runtime.js          process singleton so the plugin reaches the live CaseStore
     case-tools.js            case_* tool definitions (get/list/update/observe/transition), autonomy-enforced
-    gateway-hooks.js         makeCaseHandler: case-aware inbound (dedup, media, observe, graceful fallback)
+    gateway-hooks.js         makeCaseHandler: case-aware inbound (plain-language prompt, intent keywords, dedup, media, observe, fallback)
     discord-receive.js       fallback Discord WS receive for older freddie builds
     sim/inject.js            MockAdapter + scripted-conversation runner (offline)
-    sim/stub-llm.js          deterministic model for sim + tests (never used in production)
-    dashboard/server.js      express API + anentrypoint-design-styled SPA (observe + edit + override + reply)
-  test.js                    end-to-end suite (17 assertions, all green)
+    sim/scenarios.js         named low-literacy personas for `casey sim --scenario` and tests
+    sim/stub-llm.js          deterministic model for sim + tests (plain/Spanish/human-aware; never used in production)
+    dashboard/server.js      express API + anentrypoint-design-styled SPA (observe + edit + override + reply, plain-language mode + help overlay)
+  test.js                    end-to-end suite (29 assertions, all green)
 ```
 
 ## thatcher

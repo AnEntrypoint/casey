@@ -158,6 +158,7 @@ const PAGE = /* html */ `<!doctype html>
   .icon-btn{background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;
         padding:3px 8px;cursor:pointer;margin:0;font-size:12px;line-height:1}
   .icon-btn:hover{background:var(--hover);color:var(--fg)}
+  .icon-btn.active{background:var(--accent-soft);color:var(--fg);border-color:var(--accent)}
   .filters{display:flex;gap:6px}
   .filters input{flex:2}.filters select{flex:1}
   .caselist{overflow:auto;flex:1;min-height:0}
@@ -199,6 +200,23 @@ const PAGE = /* html */ `<!doctype html>
     .back{display:inline-block}
   }
   .back{display:none}
+  /* --- plain-words help overlay + per-case "what to do now" hint --- */
+  .help-ovl{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;display:none;
+        align-items:flex-start;justify-content:center;overflow:auto;padding:40px 16px}
+  .help-ovl.show{display:flex}
+  .help-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+        max-width:560px;width:100%;padding:22px 24px;box-shadow:0 8px 40px rgba(0,0,0,.45);font-size:14px;line-height:1.55}
+  .help-card h2{margin:0 0 4px;font-size:18px}
+  .help-card h3{margin:16px 0 4px;font-size:14px;color:var(--fg)}
+  .help-card p{margin:6px 0;color:var(--muted)}
+  .help-card .lead{color:var(--fg)}
+  .help-card ul{margin:6px 0;padding-left:18px;color:var(--muted)}
+  .help-card li{margin:4px 0}
+  .help-card .swatch{display:inline-block;width:9px;height:9px;border-radius:50%;background:#d8a000;vertical-align:middle;margin-right:4px}
+  .help-card .foot{font-size:12px;color:var(--faint);margin-top:10px}
+  .icon-btn.active{background:var(--accent-soft);color:var(--fg);border-color:var(--accent)}
+  .todo{background:var(--accent-soft);border:1px solid var(--border);border-left:3px solid var(--accent);
+        border-radius:6px;padding:9px 12px;margin:10px 0 14px;font-size:13px;color:var(--fg);line-height:1.5}
 </style></head>
 <body>
 <div id="conn" class="conn">Connection lost - retrying...</div>
@@ -206,8 +224,10 @@ const PAGE = /* html */ `<!doctype html>
   <div class="list">
     <div class="topbar">
       <h1>casey <span class="counts" id="counts"></span>
-        <button class="icon-btn" id="refresh" title="Refresh now" style="margin-left:auto">&#x21bb;</button>
+        <button class="icon-btn" id="help" title="What does this screen mean?" style="margin-left:auto">?</button>
+        <button class="icon-btn" id="refresh" title="Refresh now">&#x21bb;</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">&#x263d;</button>
+        <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names">Aa</button>
       </h1>
       <div class="filters">
         <input id="q" placeholder="Search ref, subject, contact... ( / )" autocomplete="off">
@@ -218,6 +238,28 @@ const PAGE = /* html */ `<!doctype html>
   </div>
   <div class="detail" id="detail"><p class="empty">Select a case to observe, edit, reply, or override its workflow stage.</p></div>
 </div>
+<div class="help-ovl" id="help-ovl">
+  <div class="help-card">
+    <h2>Welcome to casey</h2>
+    <p class="lead">casey watches your messages on WhatsApp and Discord and helps you answer them. Here is what this screen shows you, in plain words.</p>
+    <h3>What is each row?</h3>
+    <p>Each row on the left is one person who messaged you, and the whole story of what they need. Click a row to open it.</p>
+    <h3>What is the yellow dot?</h3>
+    <p><span class="swatch"></span> A yellow dot means this one is waiting for a person. casey will not answer it on its own. Open it, read it, and reply.</p>
+    <h3>The buttons when you open one</h3>
+    <ul>
+      <li><b>How urgent</b> - mark how important it is, so you know what to do first.</li>
+      <li><b>Who answers</b> - choose who replies to the person: casey on its own, casey writes a draft for you to send, or only you (casey just listens).</li>
+      <li><b>Reply to contact</b> - type a message and send it to the person yourself.</li>
+      <li><b>Change the stage</b> - move it along by hand, like marking it Done. The person is not told.</li>
+    </ul>
+    <h3>How do I answer someone?</h3>
+    <p>Open the row. Scroll to <b>Reply to contact</b>, type your message, and press <b>Send reply</b>. The person gets it on WhatsApp or Discord.</p>
+    <p class="hint">Tip: the <b>Aa</b> button at the top turns on plain-language labels everywhere.</p>
+    <button id="help-close">Got it</button>
+    <p class="foot">You can open this help again any time with the <b>?</b> button at the top.</p>
+  </div>
+</div>
 <div id="toasts"></div>
 <script type="module">
 const $ = (s,r=document)=>r.querySelector(s)
@@ -226,6 +268,16 @@ const $ = (s,r=document)=>r.querySelector(s)
 // attacker-controlled, so it is escaped here, not trusted. Every render path
 // below -- list, search results, timeline, deep-link restore -- goes through esc.
 const esc = (s)=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+// --- plain-language / simple mode ---
+// Maps the workflow's technical stage names to friendly labels for low-literacy
+// operators. simple mode is a view-only relabel: the real status value still
+// flows through the API unchanged, so transitions/filters keep working. Reuse
+// esc() on every label before it hits innerHTML, same as raw stage names.
+let simple = false
+const STAGE_LABEL = { new:'New', triaging:'Looking into it', in_progress:'Working on it',
+  waiting:'Waiting', resolved:'Done', closed:'Closed' }
+// stageLabel(s): friendly label in simple mode, raw stage name otherwise.
+function stageLabel(s){ return simple ? (STAGE_LABEL[s] || s) : s }
 // Carry the ?token= through every API call so the auth gate passes. Kept out of
 // the visible URL hash so deep-links can be shared without leaking the secret.
 const TOKEN = new URLSearchParams(location.search).get('token')
@@ -279,14 +331,15 @@ function renderList(){
       <div class="top">\${attn(c)?'<span class="dot attn" title="needs attention (autonomy: '+esc(c.autonomy)+')"></span>':''}
         <span class="ref">\${esc(c.ref)}</span><span class="badge \${esc(c.priority)}">\${esc(c.priority)}</span>
         <span class="when" style="margin-left:auto" title="\${esc(fmtTime(c.updated_at||c.created_at))}">\${esc(rel(c.updated_at||c.created_at))}</span></div>
-      <div class="sub">\${esc(c.channel)} - \${esc(c.status)} - \${esc(c.subject||'(no subject)')}</div>
+      <div class="sub">\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}</div>
     </div>\`).join('')
   document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
 }
 function fillStatusFilter(){
   const cur=$('#statusf').value
   const stages=[...new Set(allCases.map(c=>c.status))].sort()
-  $('#statusf').innerHTML='<option value="">all stages</option>'+stages.map(s=>\`<option\${s===cur?' selected':''}>\${esc(s)}</option>\`).join('')
+  const allLabel = simple ? 'all stages (everything)' : 'all stages'
+  $('#statusf').innerHTML='<option value="">'+esc(allLabel)+'</option>'+stages.map(s=>\`<option value="\${esc(s)}"\${s===cur?' selected':''}>\${esc(stageLabel(s))}</option>\`).join('')
 }
 function setConn(down){
   if(down===connDown) return; connDown=down; $('#conn').classList.toggle('show',down)
@@ -310,6 +363,18 @@ async function loadCases(){
 }
 function opt(val,cur){ return \`<option\${val===cur?' selected':''}>\${esc(val)}</option>\` }
 const AUTONOMY_HELP = 'auto = agent replies on its own - assisted = agent drafts, human sends - observe = agent only logs, never replies'
+// Plain-words "what to do now" line, picked from the case state. The first
+// matching rule wins so the most action-needed state shows. Derives purely from
+// enum-safe c.status / c.autonomy.
+function todoHint(c){
+  if(c.status==='closed') return 'This one is finished. Nothing to do.'
+  if(c.status==='resolved') return 'This one is marked done. Close it if you are finished.'
+  if(c.autonomy==='observe') return 'This one is waiting for you. Read it and reply, or set Who answers to auto so casey can answer.'
+  if(c.autonomy==='assisted') return 'casey prepared a reply but waits for a person. Check it, then send.'
+  if(c.status==='waiting') return 'Waiting on the person to reply. Nothing to do until they answer.'
+  if(c.status==='new'||c.status==='triaging') return 'A new message came in. casey is sorting it out.'
+  return 'casey is handling this one on its own. Step in only if you need to.'
+}
 async function openCase(id){
   activeId = id
   // deep-link the open case in the hash only; the ?token= stays in the real
@@ -325,13 +390,14 @@ async function openCase(id){
   const more = events_total!=null && events.length<events_total
   $('#detail').innerHTML = \`
     <button class="icon-btn back" id="back">&larr; cases</button>
-    <h2 style="margin:6px 0 4px">\${esc(c.ref)} <span class="badge">\${esc(c.status)}</span>
+    <h2 style="margin:6px 0 4px">\${esc(c.ref)} <span class="badge" title="\${esc(c.status)}">\${esc(stageLabel(c.status))}</span>
       <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">&#x2398;</button></h2>
+    <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
     <div style="color:var(--muted);margin-bottom:12px">\${esc(c.channel)}/\${esc(c.external_id)}
       <button class="copy" data-copy="\${esc(c.external_id)}" title="copy contact">&#x2398;</button></div>
     <div class="row">
-      <div><label>Priority</label><select id="f-priority">\${['low','normal','high','urgent'].map(p=>opt(p,c.priority)).join('')}</select></div>
-      <div><label>Autonomy</label><select id="f-autonomy" title="\${esc(AUTONOMY_HELP)}">\${['auto','assisted','observe'].map(p=>opt(p,c.autonomy)).join('')}</select></div>
+      <div><label>Priority</label><select id="f-priority">\${['low','normal','high','urgent'].map(p=>opt(p,c.priority)).join('')}</select>\${simple?'<p class="hint">How urgent this is.</p>':''}</div>
+      <div><label>Autonomy</label><select id="f-autonomy" title="\${esc(AUTONOMY_HELP)}">\${['auto','assisted','observe'].map(p=>opt(p,c.autonomy)).join('')}</select>\${simple?'<p class="hint">Who answers the contact: the robot, a draft for you, or nobody.</p>':''}</div>
       <div><label>Assignee</label><input id="f-assignee" value="\${esc(c.assignee||'')}"></div>
     </div>
     <p class="hint">\${esc(AUTONOMY_HELP)}</p>
@@ -339,8 +405,9 @@ async function openCase(id){
     <label>Tags</label><input id="f-tags" value="\${esc(c.tags||'')}">
     <label>Summary</label><textarea id="f-summary" rows="3">\${esc(c.summary||'')}</textarea>
     <button id="save">Save edits</button>
-    <div style="margin-top:14px"><label>Override workflow stage</label>
-      \${transitions.map(t=>\`<button class="trans" data-to="\${esc(t)}" style="background:#2a3340">-&gt; \${esc(t)}</button>\`).join(' ')||'<span class="hint">no transitions available</span>'}
+    <div style="margin-top:14px"><label>\${simple?'Change the stage':'Override workflow stage'}</label>
+      \${simple?'<p class="hint">Move this case to a new stage. The contact is not told.</p>':''}
+      \${transitions.map(t=>\`<button class="trans" data-to="\${esc(t)}" title="\${esc(t)}" style="background:#2a3340">-&gt; \${esc(stageLabel(t))}</button>\`).join(' ')||'<span class="hint">no transitions available</span>'}
     </div>
     <div style="margin-top:14px"><label>Reply to contact on \${esc(c.channel)}</label>
       <textarea id="f-reply" rows="2" placeholder="Send a message as a human operator... (Ctrl+Enter to send)"></textarea>
@@ -386,11 +453,12 @@ async function openCase(id){
     if(!older.events||!older.events.length||off+older.events.length>=events_total) moreBtn.remove()
   }
   document.querySelectorAll('.trans').forEach(b=>b.onclick=async()=>{
-    const reason = prompt('Reason for moving to "'+b.dataset.to+'"? (optional)')
+    const toLabel = stageLabel(b.dataset.to)
+    const reason = prompt('Reason for moving to "'+toLabel+'"? (optional)')
     if(reason===null) return                // operator cancelled
     const r = await api('/api/cases/'+encodeURIComponent(id)+'/transition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({to:b.dataset.to,reason:reason||undefined})})
     if(!r.ok){ toast(await failMsg(r,'transition failed'),'err'); return }
-    toast('moved to '+b.dataset.to,'ok'); lastCasesJson=''; await loadCases(); await openCase(id)
+    toast('moved to '+toLabel,'ok'); lastCasesJson=''; await loadCases(); await openCase(id)
   })
   renderList()                              // reflect the new active row
 }
@@ -402,6 +470,22 @@ function applyTheme(t){ document.documentElement.dataset.theme=t; try{localStora
   $('#theme').innerHTML = t==='light'?'&#x263c;':'&#x263d;' }
 applyTheme((()=>{ try{return localStorage.casey_theme}catch{} })() || (matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'))
 $('#theme').onclick=()=>applyTheme(document.documentElement.dataset.theme==='light'?'dark':'light')
+// --- plain-language / simple mode toggle (persisted like the theme) ---
+function applySimple(on){ simple=!!on; try{localStorage.casey_simple=on?'1':''}catch{}
+  $('#simple').classList.toggle('active',simple)
+  $('#simple').title = simple ? 'Plain-language mode ON - click for technical stage names' : 'Plain-language mode: show friendly stage names'
+  fillStatusFilter(); renderList(); if(activeId) openCase(activeId) }
+applySimple((()=>{ try{return localStorage.casey_simple}catch{} })()==='1')
+$('#simple').onclick=()=>applySimple(!simple)
+// --- first-run help overlay (remembered in localStorage; re-openable via ? ) ---
+let helpOpen = false
+function helpSeen(){ try{ return localStorage.casey_help_seen==='1' }catch{ return false } }
+function showHelp(){ helpOpen=true; $('#help-ovl').classList.add('show') }
+function hideHelp(){ helpOpen=false; $('#help-ovl').classList.remove('show'); try{ localStorage.casey_help_seen='1' }catch{} }
+$('#help').onclick = showHelp
+$('#help-close').onclick = hideHelp
+$('#help-ovl').addEventListener('click', e=>{ if(e.target===$('#help-ovl')) hideHelp() })
+if(!helpSeen()) showHelp()
 // --- filters ---
 let qTimer
 $('#q').addEventListener('input',e=>{ clearTimeout(qTimer); qTimer=setTimeout(()=>{ filt.q=e.target.value; renderList() },120) })
@@ -411,7 +495,7 @@ $('#refresh').onclick=()=>{ lastCasesJson=''; loadCases() }
 document.addEventListener('keydown',e=>{
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)
   if(e.key==='/' && !typing){ e.preventDefault(); $('#q').focus(); return }
-  if(e.key==='Escape'){ if(typing){document.activeElement.blur()} else if($('#q').value){filt.q='';$('#q').value='';renderList()} return }
+  if(e.key==='Escape'){ if(helpOpen){hideHelp()} else if(typing){document.activeElement.blur()} else if($('#q').value){filt.q='';$('#q').value='';renderList()} return }
   if(typing) return
   if(e.key==='j'||e.key==='k'||e.key==='ArrowDown'||e.key==='ArrowUp'){
     const shown=allCases.filter(matches); if(!shown.length)return
@@ -426,7 +510,10 @@ function restoreFromHash(){ const m=/#case=([^&]+)/.exec(location.hash); if(m) r
 async function boot(){ await loadCases(); const id=restoreFromHash(); if(id) openCase(id) }
 boot(); setInterval(loadCases, 5000)
 window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme,
+  applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
-  get editing(){return editing}, setFilter(q){filt.q=q;renderList()} }   // exposed for browser-witness
+  get editing(){return editing}, get simple(){return simple}, setFilter(q){filt.q=q;renderList()},
+  // help overlay + per-case hint, exposed for browser-witness
+  showHelp, hideHelp, helpSeen, todoHint, get helpOpen(){return helpOpen} }   // exposed for browser-witness
 </script>
 </body></html>`

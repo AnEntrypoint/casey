@@ -94,7 +94,7 @@ ${bold('usage:')}
   casey doctor                                  preflight: what's ready, what's missing
   casey up [--channels sim,discord,whatsapp] [--port 4000]   start gateway + dashboard
   casey dashboard [--port 4000]                 start only the observe/edit dashboard
-  casey sim ["message" ...]                     run an offline simulated conversation
+  casey sim ["message" ...] [--scenario <name>] run a simulated conversation (or a built-in persona)
   casey cases [--status <stage>]                list cases
   casey show <ref|id>                           show a case + timeline
 
@@ -187,15 +187,37 @@ async function main() {
   if (cmd === 'sim') {
     const { runScript } = await import('../src/sim/inject.js')
     const { stubLLM } = await import('../src/sim/stub-llm.js')
+    const { getScenario, scenarioNames } = await import('../src/sim/scenarios.js')
+    if (flags.help) {
+      console.log('casey sim ["message" ...] [--scenario <name>]')
+      console.log('  Run an offline simulated conversation against the stub model.')
+      console.log('  --scenario replays a built-in low-literacy persona. Available:')
+      for (const n of scenarioNames()) console.log(`    ${cyan(n)}`)
+      return
+    }
+    // Decide the script: --scenario <name> wins; else positional messages; else
+    // the default order-is-late demo. Positional args keep working unchanged.
+    let script
+    if (flags.scenario) {
+      const picked = getScenario(flags.scenario === true ? '' : flags.scenario)
+      if (!picked) {
+        console.log(red(`unknown scenario: ${flags.scenario}`))
+        console.log(dim('  available: ') + scenarioNames().map(cyan).join(', '))
+        process.exit(1)
+      }
+      console.log(bold(`scenario: ${picked.name}`) + dim(`  -- ${picked.description}`))
+      script = picked.lines
+    } else {
+      const lines = rest.filter(a => !a.startsWith('--'))
+      script = lines.length ? lines : [
+        'Hi, my order #55 still has not arrived',
+        'It was supposed to come yesterday',
+        'Thanks for looking into it',
+      ]
+    }
     const casey = await createCasey({ channels: ['sim'], callLLM: stubLLM() })
     await casey.start()
     const adapter = casey.adapters.sim
-    const lines = rest.filter(a => !a.startsWith('--'))
-    const script = lines.length ? lines : [
-      'Hi, my order #55 still has not arrived',
-      'It was supposed to come yesterday',
-      'Thanks for looking into it',
-    ]
     const transcript = await runScript(adapter, script, { wait: () => casey.drain() })
     for (const t of transcript) console.log(`${t.role === 'contact' ? cyan('USER: ') : green('BOT:  ')} ${t.text}`)
     const [caseRow] = await casey.store.listCases()
