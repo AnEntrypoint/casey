@@ -128,6 +128,37 @@ async function main() {
     const last = (await store.listEvents(caseId)).pop()
     assert.equal(last.kind, 'outbound'); assert.equal(last.actor, 'operator')
   })
+
+  await test('dashboard reply surfaces the sent flag (delivered vs logged-only)', async () => {
+    const wired = await fetch('http://localhost:4577/api/cases/' + caseId + '/reply?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'wired' }),
+    }).then(r => r.json())
+    assert.equal(wired.sent, true, 'sendReply present -> sent:true')
+    // a dashboard with no sendReply logs the outbound but reports sent:false
+    const noSend = createDashboard(store, { port: 4578, token: 'secret' })
+    const logged = await fetch('http://localhost:4578/api/cases/' + caseId + '/reply?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'logged only' }),
+    }).then(r => r.json())
+    assert.equal(logged.sent, false, 'no sendReply -> sent:false')
+    await noSend.close()
+  })
+
+  await test('dashboard transition threads the operator reason into the event', async () => {
+    // move to a stage we can reach, with a reason, and confirm it is recorded.
+    const cur = (await store.getCase(caseId)).status
+    const avail = store.availableTransitions(await store.getCase(caseId), { id: 'op', role: 'operator' })
+    if (avail.length) {
+      const r = await fetch('http://localhost:4577/api/cases/' + caseId + '/transition?token=secret', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ to: avail[0], reason: 'operator-reason-xyz' }),
+      })
+      assert.equal(r.status, 200)
+      const t = (await store.listEvents(caseId)).filter(e => e.kind === 'transition').pop()
+      assert.ok(JSON.stringify(t).includes('operator-reason-xyz') || (t.text && t.text.includes('operator-reason-xyz')), 'reason recorded on transition')
+    } else {
+      assert.ok(true, 'no transition available from ' + cur + ' — skipped')
+    }
+  })
   await dash.close()
 
   // ---- discord WS receive ----

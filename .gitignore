@@ -2,6 +2,9 @@ node_modules/
 data/
 *.log
 
+# operator secrets — scaffolded by `casey init`, never committed
+.env
+
 # editor / agent session state
 .claude/
 
@@ -11,3 +14,5 @@ data/
 # this repo has no lockfile committed yet; ignore stray npm lock
 package-lock.json
 .gm/pw-sock-*/
+.gm/browser-profile/
+.gm/browser-profile-*/

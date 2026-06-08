@@ -34,15 +34,53 @@ casey is a thin orchestrator that composes three existing projects:
 - Fully observable: every inbound/outbound/observation/action/transition is an append-only `event` row.
 - Fully interactible: operators edit fields, force transitions, and reply to the contact from the dashboard; the agent picks up the new state on the next turn.
 
-## Run
+## Quickstart (operator)
+
+You do not need to be a developer to run casey day-to-day:
 
 ```sh
 npm install
+node bin/casey.js init       # writes a .env you fill in (channel tokens, dashboard secret)
+node bin/casey.js doctor     # green/red preflight: deps, channels, port, token — fix the reds
+node bin/casey.js up         # starts the gateway + dashboard, prints the dashboard URL
+```
+
+Then open the dashboard URL it printed (default `http://localhost:4000`). `casey init` and
+`casey doctor` exist so the first run tells you exactly what is and isn't ready before you start;
+`doctor` flags partial WhatsApp credentials and an unset dashboard token instead of failing silently.
+No channel connected yet? `node bin/casey.js sim "my order is late"` runs a full conversation offline
+so you can see the flow and a case appear.
+
+### The dashboard
+
+The dashboard is the whole operator surface — one page, no build step:
+
+- **Case list (left):** every case, with a priority badge, last-activity time, and an amber dot on
+  cases that need a human (autonomy `observe`/`assisted`). A live **search** box (press `/`) filters by
+  ref/subject/summary/contact, and a **stage** dropdown filters by workflow status. `j`/`k` move the
+  selection, `Enter` opens, `Esc` clears.
+- **Detail (right):** edit subject/summary/priority/tags/assignee/**autonomy** (with an inline
+  explainer of what each autonomy mode does) and **Save**. **Override** the workflow stage with an
+  optional reason. **Reply** to the contact on their channel as a human (`Ctrl`/`Cmd`+`Enter` to send);
+  the toast tells you whether it was delivered or only logged.
+- **Timeline:** every inbound/outbound/note/action/transition/observation as an append-only row,
+  colour-coded by kind, with relative timestamps (hover for the absolute time).
+- Non-blocking **toasts** replace alert popups, a banner appears if the connection drops, the list
+  auto-refreshes every 5s (paused while you're typing so it never clobbers an edit), new cases raise a
+  toast, the open case is **deep-linked** in the URL (shareable), and a **light/dark** toggle persists.
+  All contact-supplied text is HTML-escaped before render.
+
+## Commands
+
+```sh
+node bin/casey.js init          # scaffold a .env
+node bin/casey.js doctor        # preflight: what's ready, what's missing
 node bin/casey.js up            # gateway (sim + any channel with creds) + dashboard on :4000
 node bin/casey.js sim "msg" ... # offline simulated conversation (stub model, no creds)
 node bin/casey.js dashboard     # observe/edit dashboard only, on :4000
-node bin/casey.js cases         # list cases
+node bin/casey.js cases         # list cases (empty -> hint on how to make one)
 node bin/casey.js show <ref|id> # show a case + full timeline
+node bin/casey.js --version     # print the version  (also --help / -h on any command)
 node test.js                    # end-to-end suite (real thatcher + freddie, stub model)
 ```
 
@@ -69,7 +107,7 @@ returns nothing, and records the failure as an observation rather than leaking i
 ```
 casey/
   thatcher.config.yml        entities (case/event/contact) + case workflow (system of record)
-  bin/casey.js               CLI: up / dashboard / sim / cases / show
+  bin/casey.js               CLI: init / doctor / up / dashboard / sim / cases / show (colorized, --help/--version)
   plugins/case-tools/        freddie plugin registering case_* tools (auto-discovered at boot)
   src/
     casey.js                 top-level assembly: store + host + gateway + adapters + logger
