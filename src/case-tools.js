@@ -29,7 +29,10 @@ export function buildCaseToolset(storeOrNull) {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const events = await store().listEvents(id, { limit: 30 })
-        return { case: c, events: events.map(slimEvent) }
+        // slimCase parses the report into structured fields so the agent sees
+        // what it already has and never re-asks the farmer (matches case_list /
+        // case_update, which both slim; case_get must not be the odd one out).
+        return { case: slimCase(c), events: events.map(slimEvent) }
       },
     },
     {
@@ -92,6 +95,56 @@ export function buildCaseToolset(storeOrNull) {
         const updated = await store().updateCase(id, clean, AGENT_USER)
         await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `updated ${Object.keys(clean).join(', ')}`, data: clean })
         return { ok: true, case: slimCase(updated) }
+      },
+    },
+    {
+      name: 'case_report',
+      toolset: 'cases',
+      schema: {
+        name: 'case_report',
+        description: 'Record what you have learned about an animal-disease report, one field at a time, as the farmer gives it. Pass ONLY the fields you actually learned this turn -- they merge into the running report, so you never lose earlier facts and never need to repeat a field the farmer already gave. This is how the organisers see a structured, organised report without the farmer being interrogated. Leave a field out if you do not know it yet; do not guess.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: str('Case id'),
+            species: str('Animal(s): cattle, sheep, goats, pigs, etc.'),
+            symptoms: str('What the farmer sees: drooling, blisters, lameness, sudden death, etc.'),
+            location: str('Where: farm name, nearest town, district, GPS, or the farmer\'s own description'),
+            how_to_find: str('Directions / landmarks to reach the place in the bush'),
+            affected_count: str('How many animals are affected (number or "a few"/"many")'),
+            dead_count: str('How many have died, if any'),
+            onset: str('When it started and how fast it is spreading'),
+            suspected_disease: str('A disease the farmer names or you reasonably infer (record, do not diagnose or alarm)'),
+            recent_movement: str('Recent animal movement/contact: auctions, new stock, shared grazing'),
+            identifying_traits: str('Markings, ear tags, breed -- anything to identify the animals'),
+            access_notes: str('Access/travel notes: gate, road condition, 4x4 needed, permission'),
+            farmer_available: str('Will the farmer be there on arrival? When are they reachable?'),
+            contact_fallback: str('Who else to contact / another number if the farmer is unreachable'),
+            photos: str('Note that the farmer sent a photo (set to a short description)'),
+            notes: str('Anything else worth recording for the organisers'),
+          },
+          required: ['id'],
+        },
+      },
+      handler: async ({ id, ...fields }) => {
+        const REPORT_KEYS = ['species', 'symptoms', 'location', 'how_to_find', 'affected_count',
+          'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits',
+          'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'notes']
+        const incoming = pick(fields, REPORT_KEYS)
+        if (!Object.keys(incoming).length) return { error: 'no report fields supplied' }
+        const c = await store().getCase(id)
+        if (!c) return { error: `no case ${id}` }
+        if (c.autonomy === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
+        // Merge into the running report so later messages refine earlier ones and a
+        // field already given is never lost. Non-empty incoming values win; we never
+        // overwrite a known field with blank.
+        let current = {}
+        try { current = c.report ? JSON.parse(c.report) : {} } catch { current = {} }
+        const merged = { ...current, ...incoming }
+        const report = JSON.stringify(merged)
+        const updated = await store().updateCase(id, { report }, AGENT_USER)
+        await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `recorded report fields: ${Object.keys(incoming).join(', ')}`, data: incoming })
+        return { ok: true, report: merged, fieldsRecorded: Object.keys(incoming) }
       },
     },
     {
@@ -160,8 +213,12 @@ export function buildCaseToolset(storeOrNull) {
 
 function slimCase(c) {
   if (!c) return null
-  const { id, ref, channel, status, priority, subject, summary, tags, assignee, autonomy, last_event_at } = c
-  return { id, ref, channel, status, priority, subject, summary, tags, assignee, autonomy, last_event_at }
+  const { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at } = c
+  // Parse the report so the agent reads it as structured fields (and knows which
+  // it already has, so it never re-asks). Tolerate a malformed/empty report.
+  let reportObj = null
+  try { reportObj = report ? JSON.parse(report) : null } catch { reportObj = null }
+  return { id, ref, channel, status, priority, subject, summary, report: reportObj, tags, assignee, autonomy, last_event_at }
 }
 function slimEvent(e) {
   return { kind: e.kind, actor: e.actor, text: e.text, at: e.created_at }

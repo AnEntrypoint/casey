@@ -28,13 +28,22 @@ const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 // the contact), and it spells out plain-language REPLY rules -- mirror the
 // contact's language, short warm sentences, one question, no jargon, greet+give
 // the reference on first contact, and reassure when a human is requested.
-function caseSystemPrompt(caseRow, events, contact) {
+function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = {}) {
   const recent = events.slice(-20).map(e =>
     `- [${e.created_at}] ${e.kind}/${e.actor}: ${truncate(e.text, 280)}`).join('\n')
   const firstMessage = events.filter(e => e.kind === 'inbound').length <= 1
+  let reportObj = null
+  try { reportObj = caseRow.report ? JSON.parse(caseRow.report) : null } catch { reportObj = null }
+  const haveFields = reportObj ? Object.keys(reportObj).filter(k => reportObj[k]) : []
+  const reportLine = haveFields.length ? haveFields.map(k => `${k}=${truncate(String(reportObj[k]), 80)}`).join('; ') : '(nothing recorded yet)'
   return [
     // --- Private structured context (for the agent's reasoning ONLY) ---
-    `You are casey, helping a person who messaged in on ${caseRow.channel}.`,
+    `You are casey, the friendly first point of contact for an animal-disease`,
+    `reporting service in rural South Africa. Farmers and field workers message in`,
+    `on ${caseRow.channel} to report sick or dead livestock (for example cattle,`,
+    `sheep, goats, or pigs). Your job is to make it easy for them to tell you what`,
+    `is happening, and to quietly gather a clear, organised report for the team who`,
+    `will follow up -- WITHOUT interrogating the person.`,
     `The block below is private background for your own reasoning. NEVER repeat it,`,
     `quote it, or use its words when you reply. The person must never see internal`,
     `terms like case, ticket, triage, workflow, autonomy, transition, status, or`,
@@ -53,39 +62,90 @@ function caseSystemPrompt(caseRow, events, contact) {
     `  summary: ${caseRow.summary || '(none yet)'}`,
     `  tags: ${caseRow.tags || '(none)'}`,
     `  first message from this person? ${firstMessage ? 'YES (brand new)' : 'no'}`,
+    `  report so far (private): ${reportLine}`,
     ``,
     `RECENT TIMELINE (private):`,
     recent || '  (no prior events)',
     ``,
+    // --- What to quietly COLLECT (records, not the reply) ---
+    `WHAT TO QUIETLY GATHER (private, for the team -- NEVER read this list to the`,
+    `person, never let them feel they are filling in a form or being assessed):`,
+    `As the person tells their story, quietly record what you learn with the`,
+    `case_report tool -- one or two fields at a time, only what they actually said.`,
+    `Useful things: which animals; what they are seeing (drooling, blisters,`,
+    `lameness, sudden death); how many are sick or have died; when it started; where`,
+    `the animals are and how to find the place; any disease they name; recent`,
+    `movement (auctions, new animals, shared grazing); photos; how to identify the`,
+    `animals; how to reach the place and the farmer; whether the farmer will be there.`,
+    `This recording is INVISIBLE to the person. They must never sense that you are`,
+    `working through a checklist or that gathering details is your job -- it must`,
+    `feel like a kind person who simply cares and is listening. Do this on your own,`,
+    `every turn, without anyone telling you to and without it changing your warm tone.`,
+    ``,
+    `KEEP THE RECORD WELL ORGANISED FOR THE TEAM. Each turn, as you learn more, also`,
+    `keep the case_update summary a short, clear, scannable picture of the situation`,
+    `so an operator can grasp the whole report at a glance -- the animals, the signs,`,
+    `the place, how many, and anything a field visit would need. Make it progressively`,
+    `richer and better structured as the conversation goes; this is purely behind the`,
+    `scenes and never appears in what you say to the person.`,
+    ``,
+    `THIS IS USUALLY YOUR ONE CHANCE. After this conversation the farmer or worker`,
+    `will likely leave the animals and be hard to reach, so facts you cannot get`,
+    `later matter most: WHERE the animals are and how to find the place, whether the`,
+    `farmer will be there on arrival, who else to call if not, how to get in (gate,`,
+    `road, 4x4), how to recognise the animals, and a photo. If one of THESE on-site`,
+    `facts is still missing and the person seems to be wrapping up, you may gently ask`,
+    `for the single most important one -- once -- before they go. Otherwise still`,
+    `NEVER interrogate: no list of questions, no demands, never re-ask something`,
+    `already in "report so far" above. Most facts come out on their own as they talk.`,
+    `Ask at most one gentle question per message, and it is fine to ask nothing and`,
+    `simply reassure them.`,
+    ``,
     // --- How to actually REPLY to the person ---
     `HOW TO REPLY:`,
-    `Write the way you would speak kindly to someone who is worried, may be elderly,`,
-    `may not be a strong reader, and may not speak English as a first language.`,
-    `1. LANGUAGE: Look at the words the person used and reply in that SAME language.`,
-    `   If they wrote in Spanish, reply in Spanish; Afrikaans, reply in Afrikaans; etc.`,
-    `   If you truly cannot tell, use simple English. Never switch languages on them.`,
+    `Write the way you would speak kindly to a worried farmer or field worker who`,
+    `may be far out in the bush, may not be a strong reader, and may not speak`,
+    `English as a first language.`,
+    `1. LANGUAGE: Reply in the SAME language the person actually wrote in. If their`,
+    `   words are English (even broken or with local terms), reply in simple English`,
+    `   -- do NOT switch them to another language. Only reply in a South African`,
+    `   language when THEIR OWN words were clearly in it: isiZulu words -> isiZulu;`,
+    `   Afrikaans words -> Afrikaans; isiXhosa, Sesotho, Setswana likewise. When in`,
+    `   any doubt, use simple English. Never switch`,
+    `   languages on them.`,
     `2. KEEP IT SHORT: short, plain sentences. One idea per sentence. No big or`,
     `   technical words. No lists or forms. Just a few warm lines.`,
-    `3. ONE QUESTION: ask at most ONE question per message, and only if you need it.`,
-    `4. BE WARM: sound calm, friendly, reassuring. Thank them for reaching out. Let`,
-    `   them know they are being helped and are not alone.`,
+    `3. ONE QUESTION: ask at most ONE question per message, and only if you need it`,
+    `   and do not already have the answer. No question at all is often best.`,
+    `4. BE WARM: sound calm, friendly, reassuring. Thank them for reporting it. Let`,
+    `   them know it matters and the team will look into it. Never alarm them.`,
     `5. NO JARGON: never say case, ticket, triage, status, priority, workflow,`,
     `   escalate, transition, or autonomy. Speak like a helpful person, not a system.`,
-    `6. MIRROR THEIR EFFORT: if they wrote one word or an emoji, keep your reply to`,
-    `   one or two short lines. Do not flood a worried person with text.`,
+    `6. MIRROR THEIR EFFORT: if they wrote one word, an emoji, or a photo only, keep`,
+    `   your reply to one or two short lines. Do not flood a worried person with text.`,
     `7. NO PROMISES YOU CANNOT KEEP: never give a specific time, date, or guaranteed`,
-    `   outcome. Say a real person will follow up, not "by tomorrow" or "it is fixed".`,
+    `   outcome, and never diagnose the disease yourself. Say the team will look`,
+    `   into it -- not "it is foot and mouth" or "someone will come tomorrow".`,
     `8. ONE NEXT STEP: if you need something from them, ask for exactly one thing,`,
-    `   in the simplest words (for example a name, an address, or a photo).`,
+    `   in the simplest words (for example which animals, the place, or a photo).`,
     ``,
     firstMessage
-      ? [`THIS IS THEIR FIRST MESSAGE. Greet them warmly and thank them for getting in`,
-         `touch. In plain words, tell them you have their message and a real person will`,
-         `follow up. Give them their reference simply, for example: "Thank you for`,
-         `reaching out. A member of our team will get back to you soon. If you need to`,
-         `remind us, your reference is ${caseRow.ref}." Then, if helpful, ask one gentle`,
-         `question about how you can help.`].join('\n')
+      ? [`THIS IS THEIR FIRST MESSAGE. Greet them warmly and thank them for reporting`,
+         `it. In plain words, tell them you have their message and the team will look`,
+         `into it. Give them their reference simply, for example: "Thank you for`,
+         `letting us know. Our team will look into this. If you need to remind us,`,
+         `your reference is ${caseRow.ref}." Then, if it helps, ask one gentle question`,
+         `about what they are seeing or where the animals are -- but only one.`].join('\n')
       : `Continue gently from the earlier messages above. Pick up where things left off.`,
+    ``,
+    closingCapture
+      ? [`THEY SEEM TO BE WRAPPING UP, and this is likely your last chance before they`,
+         `leave the animals. One important thing for the team is still missing:`,
+         `${closingCapture}. First warmly acknowledge their thanks, then -- in the same`,
+         `short message -- gently ask for just that one thing, in simple words. Ask`,
+         `only this once; if they do not give it, let them go kindly. Keep it warm and`,
+         `brief, never pushy, and do not list other questions.`].join('\n')
+      : '',
     ``,
     `IF THEY ASK FOR A PERSON (in any language or phrasing -- "talk to someone", "I`,
     `want a person", "real human", "is anyone there"): do NOT argue or stall. Warmly`,
@@ -100,7 +160,7 @@ function caseSystemPrompt(caseRow, events, contact) {
 // Returns an async (platform, msg) handler suitable to assign to
 // gateway.handleInbound. `store` is a CaseStore; opts.callLLM optional;
 // opts.autoRespond=false to track-only (no agent turn / reply).
-const FALLBACK_REPLY = "Thanks for your message. We've logged it and someone will follow up shortly."
+const FALLBACK_REPLY = 'Thank you for letting us know. We have your message and the team will look into it.'
 
 // Holding message in the contact's own language, for the worst-case path: the
 // LLM turn errored, timed out, or returned nothing. A low-literacy contact who
@@ -109,28 +169,31 @@ const FALLBACK_REPLY = "Thanks for your message. We've logged it and someone wil
 // lightweight cue detector over the languages casey already claims to support;
 // when no cue matches we keep the plain-English default. `ref` is appended when
 // known so even the fallback hands the contact their reference number.
+// Holding messages in the languages common to rural South Africa. The live model
+// handles any language; these are only the offline/degraded path, so we cover the
+// SA languages a farmer is likely to write in -- not Latin-American Spanish. Tone
+// fits a disease report: "we have your message, the team will look into it".
+// Offline holding messages cover en + af/zu/xh consistently (every one of these
+// languages also has full INTENT/STATUS tables below). Sesotho/Setswana and any
+// other SA language are handled by the live model, not hand-translated tables --
+// keeping the offline set to languages we cover end-to-end avoids the half-built
+// state where guessLang returns a language the status/intent replies cannot speak.
 const FALLBACK_BY_LANG = {
-  es: 'Gracias por su mensaje. Ya lo tenemos guardado y una persona le va a ayudar pronto.',
-  pt: 'Obrigado pela sua mensagem. Ja a registamos e uma pessoa vai ajuda-lo em breve.',
-  fr: 'Merci pour votre message. Nous l avons bien recu et une personne va vous aider bientot.',
-  af: 'Dankie vir u boodskap. Ons het dit ontvang en iemand sal u binnekort help.',
-  zu: 'Siyabonga ngomlayezo wakho. Siwutholile futhi umuntu uzokusiza maduze.',
-  ar: 'شكرا لرسالتك. لقد استلمناها وسيساعدك شخص ما قريبا.',
-  hi: 'आपके संदेश के लिए धन्यवाद। हमने इसे दर्ज कर लिया है और जल्द ही कोई व्यक्ति आपकी मदद करेगा।',
+  af: 'Dankie dat u laat weet het. Ons het u boodskap en die span sal hierna kyk.',
+  zu: 'Siyabonga ngokusazisa. Siwutholile umlayezo wakho futhi ithimba lizokubheka lokhu.',
+  xh: 'Enkosi ngokusazisa. Siwufumene umyalezo wakho kwaye iqela liza kukujonga oku.',
 }
 
 // Cheap, accent-stripped cue match. A wrong guess that flips a contact's language
 // is worse than defaulting to English (P6: make the wrong outcome hard), so cues
-// are DISTINCTIVE -- tokens that one language uses and its neighbours do not. We
+// are DISTINCTIVE -- tokens one SA language uses that its neighbours do not. We
 // score every language by how many of its distinctive cues appear and pick the
-// clear winner; ties or no hits fall back to English. Shared tokens (pedido,
-// por favor, ola/hola) are deliberately excluded because they collide es<->pt.
+// clear winner; ties or no hits fall back to English. (Sotho/Tswana are close,
+// so their cues are chosen to separate them; on a tie we fall back to English.)
 const LANG_CUES = {
-  es: [' gracias ', ' necesito ', ' ayuda ', ' usted ', ' senor ', ' donde ', ' cuando ', ' mi pedido ', ' esta ', ' pero '],
-  pt: [' obrigado ', ' preciso ', ' ajuda ', ' voce ', ' onde ', ' quando ', ' meu pedido ', ' nao ', ' esta a '],
-  fr: [' bonjour ', ' merci ', ' commande ', ' aide ', ' besoin ', ' vous ', ' ou est ', ' je ', ' mais '],
-  af: [' dankie ', ' asseblief ', ' hallo ', ' goeie ', ' bestelling ', ' het nie ', ' gekom ', ' ek '],
-  zu: [' sawubona ', ' ngiyabonga ', ' usizo ', ' siza ', ' yami ', ' ngicela '],
+  af: [' dankie ', ' asseblief ', ' hallo ', ' goeie ', ' siek ', ' beeste ', ' het nie ', ' gekom ', ' ek ', ' vrek ', ' diere '],
+  zu: [' sawubona ', ' ngiyabonga ', ' usizo ', ' siza ', ' yami ', ' ngicela ', ' izinkomo ', ' iyagula ', ' ngi '],
+  xh: [' molo ', ' enkosi ', ' nceda ', ' yam ', ' iinkomo ', ' iyagula ', ' ndi ', ' kwaye '],
 }
 
 function guessLang(text) {
@@ -156,10 +219,9 @@ export function fallbackReply(contactText, caseRow) {
   if (!ref) return base
   // Localised "your reference is X" tail, kept short.
   const tail = {
-    es: ` Su referencia es ${ref}.`, pt: ` A sua referencia e ${ref}.`,
-    fr: ` Votre reference est ${ref}.`, af: ` U verwysing is ${ref}.`,
+    af: ` U verwysingsnommer is ${ref}.`,
     zu: ` Inombolo yakho yereferensi ngu-${ref}.`,
-    ar: ` رقمك المرجعي هو ${ref}.`, hi: ` आपका संदर्भ नंबर ${ref} है।`,
+    xh: ` Inombolo yakho yesalathiso ngu-${ref}.`,
   }[lang] || ` Your reference is ${ref}.`
   return base + tail
 }
@@ -229,6 +291,25 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // reference, not a canned line -- so defer them to the agent on message one.
     // (status/human/stop/thanks still answered deterministically.)
     if (['help', 'greeting'].includes(intent) && isFirstMessage) intent = null
+    // One-shot closing capture: a "thanks" is usually the farmer wrapping up, and
+    // after this they leave the site and are hard to reach. If a visit-critical
+    // on-site fact is still missing AND we have not already made one closing ask,
+    // do NOT take the canned thanks-shortcut -- defer to the agent so it can ask
+    // for the single most important missing fact, once, before they go. Once we
+    // have asked (closing-nudged tag) or the report is visit-ready, thanks is
+    // answered deterministically as before (no nagging, never block a goodbye).
+    if (intent === 'thanks' && !optedOut) {
+      // "already nudged" is tracked via a durable observation marker, NOT a tag --
+      // the agent's own case_update can rewrite tags mid-turn and would clobber a
+      // tag set here. The observation is append-only, so the once-only guarantee
+      // holds regardless of what the agent does to the case fields.
+      const prior = await store.listEvents(fresh.id)
+      const alreadyNudged = prior.some(e => e.kind === 'observation' && /CLOSING-NUDGE/.test(e.text || ''))
+      if (!alreadyNudged && reportMissingVisitCritical(fresh.report)) {
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'CLOSING-NUDGE: deferred a closing thanks to gather one missing on-site fact (one-shot).' })
+        intent = null   // let the agent turn run the gentle one-shot ask
+      }
+    }
     // Respect a prior opt-out: once someone said STOP, do not auto-reply again
     // unless they explicitly ask for help or a human.
     if (optedOut && intent !== 'help' && intent !== 'human') {
@@ -244,8 +325,11 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         // mergeTag is idempotent; the notify is not.
         const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
         try {
+          // Flag needs-human as an OBSERVABLE signal; do NOT auto-raise priority.
+          // casey amplifies the organisers' intent, it does not impose escalation
+          // -- the operator decides urgency. The tag surfaces the request in the
+          // triage inbox; priority stays where the people set it.
           const patch = { tags: mergeTag(fresh.tags, 'needs-human') }
-          if (fresh.priority === 'low' || fresh.priority === 'normal') patch.priority = 'high'
           await store.updateCase(fresh.id, patch)
           if (notifyHandoff && !alreadyFlagged) {
             try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
@@ -277,11 +361,19 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     const events = await store.listEvents(fresh.id)
     const prompt = inboundText || (media ? `The contact sent ${media} with no text. Acknowledge and ask how you can help.` : 'The contact sent an empty message. Acknowledge politely.')
 
+    // If we deferred a closing "thanks" because an unrecoverable on-site fact is
+    // still missing, hand the agent an explicit one-shot directive so it reliably
+    // makes the single gentle ask (rather than hoping it infers it). We name the
+    // most important missing fact so the ask is concrete.
+    const closingCapture = detectContactIntent(inboundText) === 'thanks' && reportMissingVisitCritical(fresh.report)
+      ? mostImportantMissingField(fresh.report)
+      : null
+
     let result, errored = false
     try {
       result = await runTurn({
         prompt,
-        messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact) }],
+        messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, { closingCapture }) }],
         sessionKey: `case:${fresh.id}`,
         callLLM,
         enabledToolsets: ['cases', 'core'],
@@ -345,7 +437,7 @@ function messageId(msg) {
 function describeMedia(msg) {
   const r = msg.raw || {}
   if (Array.isArray(r.attachments) && r.attachments.length) return `${r.attachments.length} attachment(s)`
-  if (r.type && r.type !== 'text') return `a ${r.type} message`
+  if (r.type && r.type !== 'text') return `${/^[aeiou]/i.test(r.type) ? 'an' : 'a'} ${r.type} message`
   if (r.image) return 'an image'
   if (r.audio) return 'an audio message'
   if (r.sticker_items) return 'a sticker'
@@ -353,6 +445,35 @@ function describeMedia(msg) {
 }
 
 function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '...' : s }
+
+// The on-site facts a field visit needs that cannot be recovered once the worker
+// leaves -- the one-shot reality. Returns true when at least one is still absent,
+// which is the signal to let the agent make a single gentle closing ask instead
+// of taking the canned thanks-shortcut. Tolerates a missing/malformed report.
+const VISIT_CRITICAL_KEYS = ['species', 'symptoms', 'location', 'how_to_find', 'farmer_available', 'contact_fallback']
+export function reportMissingVisitCritical(reportRaw) {
+  let r = {}
+  try { r = reportRaw ? JSON.parse(reportRaw) : {} } catch { r = {} }
+  return VISIT_CRITICAL_KEYS.some(k => r[k] == null || String(r[k]).trim() === '')
+}
+
+// The single most important still-missing on-site fact, in priority order, with a
+// plain-language hint the agent can ask about. Location-first: without WHERE, a
+// field visit cannot happen at all.
+const VISIT_CRITICAL_ASK = [
+  ['location', 'where the animals are (the farm, nearest town, or area)'],
+  ['species', 'which animals are affected'],
+  ['symptoms', 'what they are seeing in the animals'],
+  ['how_to_find', 'how to find the place'],
+  ['farmer_available', 'whether they will be there if someone comes'],
+  ['contact_fallback', 'another number to reach them if they are away'],
+]
+function mostImportantMissingField(reportRaw) {
+  let r = {}
+  try { r = reportRaw ? JSON.parse(reportRaw) : {} } catch { r = {} }
+  const hit = VISIT_CRITICAL_ASK.find(([k]) => r[k] == null || String(r[k]).trim() === '')
+  return hit ? hit[1] : null
+}
 
 // --- Contact intent detection ------------------------------------------------
 //
@@ -423,11 +544,9 @@ export function detectContactIntent(text) {
 const STOP_KEYS = [
   'stop', 'unsubscribe', 'cancel', 'quit', 'leave me alone', 'go away',
   'no more', 'remove me', 'opt out', 'optout', 'enough',
-  'basta', 'alto', 'pare', 'parar', 'detener', 'dejar',
-  'arret', 'arreter', 'stopp', 'aufhoren', 'halt',
-  'yeka', 'misa', 'hambani',
-  'khalas', 'tawaqaf', 'kafi',
-  'bas', 'band karo', 'mat bhejo',
+  'hou op', 'los my', 'genoeg',                      // af
+  'yeka', 'hambani', 'ngeke',                        // zu
+  'yeka oku', 'hamba',                               // xh
 ]
 const STOP_EXCLUDE = [
   'no stop', 'dont stop', 'do not stop', 'please dont stop', 'never stop',
@@ -438,48 +557,48 @@ const HUMAN_KEYS = [
   'human', 'person', 'someone', 'somebody', 'real person', 'operator',
   'representative', 'staff', 'manager', 'speak to', 'talk to', 'call me',
   'real human', 'agent',
-  'humano', 'persona', 'agente', 'alguien', 'pessoa', 'atendente',
-  'humain', 'personne', 'quelqu', 'mensch', 'jemand',
-  'umuntu', 'umsebenzi',
-  'insan', 'shakhs', 'muwazzaf',
-  'insaan', 'aadmi', 'vyakti',
+  'mens', 'persoon', 'iemand', 'regte persoon',      // af
+  'umuntu', 'umsebenzi',                             // zu
+  'umntu',                                           // xh
 ]
 const HUMAN_EXCLUDE = [
   'a person told me', 'person told me', 'someone told me', 'another person',
   'in person', 'no person', 'wrong person',
 ]
 
+// Keyword lists focus on English + the SA languages a farmer is likely to type.
+// The live model handles anything else; these only drive the deterministic,
+// no-LLM shortcuts, so they cover en/af/zu/xh/st/tn rather than es/pt/fr/de.
 const STATUS_KEYS = [
   'status', 'update', 'progress', 'how long', 'any news', 'news', 'eta',
   'whats happening', 'what is happening', 'still waiting', 'where is',
-  'estado', 'estatus', 'actualizacion', 'novidade',
-  'statut', 'nouvelle', 'stand',
-  'isimo', 'kuphi',
-  'halat', 'wein', 'akhbar',
-  'sthiti', 'kahan', 'kya hua',
+  'enige nuus', 'hoe lank', 'wat gebeur',            // af
+  'izindaba', 'kuphi', 'isimo',                      // zu
+  'iindaba', 'kuphi na',                             // xh
 ]
 
 const HELP_KEYS = [
   'help', 'menu', 'options', 'what can', 'how do', 'confused', 'lost',
   'dont understand', 'do not understand', 'huh', '?',
-  'ayuda', 'auxilio', 'socorro', 'ajuda',
-  'aide', 'aidez', 'hilfe',
-  'usizo', 'ncedo',
-  'musaada', 'madad',
+  'hulp', 'verdwaal',                                // af
+  'usizo', 'ngidukile',                              // zu
+  'uncedo', 'ndilahlekile',                          // xh
+  'thusa',                                           // st/tn
 ]
 
 const THANKS_KEYS = [
   'thanks', 'thank you', 'thank', 'thx', 'ty', 'cheers', 'appreciate',
-  'gracias', 'obrigado', 'obrigada', 'merci', 'danke', 'grazie',
-  'ngiyabonga', 'enkosi',
-  'shukran', 'dhanyavad', 'shukriya',
+  'dankie', 'baie dankie',                           // af
+  'ngiyabonga', 'siyabonga',                         // zu
+  'enkosi', 'enkosi kakhulu',                        // xh
+  'kea leboha', 'ke a leboga',                       // st/tn
 ]
 
 const GREETING_KEYS = [
   'hi', 'hello', 'hey', 'hallo', 'hiya', 'yo', 'good morning',
   'good afternoon', 'good evening', 'greetings',
-  'hola', 'ola', 'bonjour', 'salut', 'guten tag', 'ciao',
-  'sawubona', 'molo', 'salam', 'salaam', 'namaste', 'namaskar',
+  'goeie more', 'goeie middag', 'goeie naand',       // af
+  'sawubona', 'molo', 'dumela', 'dumelang',          // zu/xh/st/tn
 ]
 
 // Lowercase, strip diacritics/emoji/punctuation, COLLAPSE any run of '?' to a
@@ -505,46 +624,40 @@ export function mergeTag(tags, tag) {
 
 // Plain-language, contact-safe description of where a request stands. Never
 // exposes the internal stage name.
+// Plain-language status, framed for a disease report: the team/field worker is
+// looking into it, not "your order". en + the SA languages guessLang can return.
 const STATUS_STRINGS = {
   en: {
-    new: 'We have it and will look at it very soon.', triaging: 'We are looking at it right now.',
-    in_progress: 'Someone is working on it for you now.',
-    waiting: 'We have started, and we are waiting on one step before we finish. We will keep you posted.',
-    resolved: 'It is sorted. If anything is still not right, just tell us.',
-    closed: 'It is all finished. Reply any time if you need more help.',
-    _: 'We are looking into it for you.',
-  },
-  es: {
-    new: 'Lo tenemos y lo revisaremos muy pronto.', triaging: 'Lo estamos revisando ahora mismo.',
-    in_progress: 'Alguien lo esta atendiendo para usted ahora.',
-    waiting: 'Ya empezamos y estamos esperando un paso antes de terminar. Le mantendremos al tanto.',
-    resolved: 'Esta resuelto. Si algo aun no esta bien, solo diganos.',
-    closed: 'Ya esta todo terminado. Responda cuando quiera si necesita mas ayuda.',
-    _: 'Lo estamos revisando para usted.',
-  },
-  pt: {
-    new: 'Ja temos e vamos ver muito em breve.', triaging: 'Estamos a ver agora mesmo.',
-    in_progress: 'Alguem esta a tratar disso para si agora.',
-    waiting: 'Ja comecamos e estamos a aguardar um passo antes de terminar. Manteremos voce informado.',
-    resolved: 'Esta resolvido. Se algo ainda nao estiver bem, e so dizer.',
-    closed: 'Esta tudo terminado. Responda quando quiser se precisar de mais ajuda.',
-    _: 'Estamos a ver isso para si.',
-  },
-  fr: {
-    new: 'Nous l avons et nous allons l examiner tres bientot.', triaging: 'Nous l examinons en ce moment.',
-    in_progress: 'Quelqu un s en occupe pour vous maintenant.',
-    waiting: 'Nous avons commence et nous attendons une etape avant de terminer. Nous vous tiendrons au courant.',
-    resolved: 'C est regle. Si quelque chose ne va toujours pas, dites-le-nous.',
-    closed: 'Tout est termine. Repondez a tout moment si vous avez besoin d aide.',
-    _: 'Nous examinons cela pour vous.',
+    new: 'We have your report and the team will look at it very soon.', triaging: 'The team is looking at your report now.',
+    in_progress: 'Someone from the team is working on this now.',
+    waiting: 'The team has started and is waiting on one step. We will keep you posted.',
+    resolved: 'This has been dealt with. If anything is still wrong with your animals, just tell us.',
+    closed: 'This report is closed. Message any time if you see something new.',
+    _: 'The team is looking into your report.',
   },
   af: {
-    new: 'Ons het dit en sal baie gou daarna kyk.', triaging: 'Ons kyk nou daarna.',
-    in_progress: 'Iemand werk nou daaraan vir u.',
-    waiting: 'Ons het begin en wag op een stap voordat ons klaarmaak. Ons sal u op hoogte hou.',
-    resolved: 'Dit is reggemaak. As iets steeds verkeerd is, se net vir ons.',
-    closed: 'Alles is klaar. Antwoord enige tyd as u meer hulp nodig het.',
-    _: 'Ons kyk daarna vir u.',
+    new: 'Ons het u verslag en die span sal baie gou daarna kyk.', triaging: 'Die span kyk nou na u verslag.',
+    in_progress: 'Iemand van die span werk nou hieraan.',
+    waiting: 'Die span het begin en wag op een stap. Ons sal u op hoogte hou.',
+    resolved: 'Dit is hanteer. As iets nog steeds fout is met u diere, se net vir ons.',
+    closed: 'Hierdie verslag is gesluit. Stuur enige tyd n boodskap as u iets nuuts sien.',
+    _: 'Die span kyk na u verslag.',
+  },
+  zu: {
+    new: 'Siwutholile umbiko wakho futhi ithimba lizowubheka maduzane.', triaging: 'Ithimba libheka umbiko wakho manje.',
+    in_progress: 'Othile ethimbeni usebenza kulokhu manje.',
+    waiting: 'Ithimba seliqalile futhi lilinde isinyathelo esisodwa. Sizokwazisa.',
+    resolved: 'Lokhu sekulungisiwe. Uma kukhona okusako ngezilwane zakho, sitshele nje.',
+    closed: 'Lo mbiko uvaliwe. Thumela umlayezo noma nini uma ubona okuthile okusha.',
+    _: 'Ithimba libheka umbiko wakho.',
+  },
+  xh: {
+    new: 'Siwufumene umbiko wakho kwaye iqela liza kuwujonga kungekudala.', triaging: 'Iqela lijonga umbiko wakho ngoku.',
+    in_progress: 'Umntu weqela usebenza koku ngoku.',
+    waiting: 'Iqela seliqalile kwaye lilinde inyathelo elinye. Siza kukwazisa.',
+    resolved: 'Oku kulungisiwe. Ukuba kukho into engalunganga ngezilwanyana zakho, sixelele nje.',
+    closed: 'Lo mbiko uvaliwe. Thumela umyalezo nanini na ukuba ubona into entsha.',
+    _: 'Iqela lijonga umbiko wakho.',
   },
 }
 
@@ -607,53 +720,42 @@ export function makeTransitionNotifier(store, sendReply, { log = console } = {})
 }
 
 // Build a clear, deterministic reply for a recognized intent. Every reply names
-// the reference so a low-literacy contact always has a handle on their request.
-// Deterministic intent replies, localised. A low-literacy contact who wrote
-// "gracias" must get a Spanish acknowledgement, not an English one mid-Spanish
-// conversation (P12 human value) -- so these mirror the contact's language just
-// as the LLM path does. `lang` comes from guessLang(inboundText) at the call
-// site; unknown languages fall through to English. status is composed from the
-// localised plainStatus so the whole reply stays in one language.
+// the reference so a low-literacy farmer always has a handle on their report.
+// Localised to the SA languages guessLang can return; `lang` comes from
+// guessLang(inboundText) at the call site and falls through to English. Framed
+// for a disease report (a team will look into it), no order/ticket language.
 const INTENT_STRINGS = {
   en: {
-    help: 'We are here to help. Reply STATUS to check progress, HUMAN for a real person, or STOP to end messages. Or just tell us what you need.',
+    help: 'We are here to help. Reply STATUS to check on your report, HUMAN to talk to a person, or STOP to end messages. Or just tell us what you are seeing with your animals.',
     stop: 'Okay, we will not message you again. Reply HELP any time if you change your mind.',
-    human: 'Of course. We are asking a real person to help you now. They will reply right here as soon as they can.',
-    thanks: "You're welcome, take care.",
-    greeting: 'Hello! Good to hear from you. How can we help today?',
+    human: 'Of course. We are asking a person from the team to help you now. They will reply right here as soon as they can.',
+    thanks: "You're welcome. Thank you for reporting it.",
+    greeting: 'Hello! Good to hear from you. Tell us what you are seeing with your animals.',
     statusTail: ' Reply HUMAN any time to talk to a person.', refLabel: (r) => ` Your reference is ${r}.`,
   },
-  es: {
-    help: 'Estamos aqui para ayudar. Responda ESTADO para ver el progreso, PERSONA para hablar con alguien, o PARAR para no recibir mas mensajes. O solo diganos que necesita.',
-    stop: 'De acuerdo, no le enviaremos mas mensajes. Responda AYUDA cuando quiera si cambia de idea.',
-    human: 'Por supuesto. Le estamos pidiendo a una persona real que le ayude ahora. Le responderan aqui mismo lo antes posible.',
-    thanks: 'De nada, cuidese.',
-    greeting: 'Hola! Que bueno saber de usted. Como podemos ayudarle hoy?',
-    statusTail: ' Responda PERSONA cuando quiera para hablar con alguien.', refLabel: (r) => ` Su referencia es ${r}.`,
-  },
-  pt: {
-    help: 'Estamos aqui para ajudar. Responda ESTADO para ver o progresso, PESSOA para falar com alguem, ou PARAR para nao receber mais mensagens. Ou apenas diga o que precisa.',
-    stop: 'Tudo bem, nao enviaremos mais mensagens. Responda AJUDA quando quiser se mudar de ideia.',
-    human: 'Claro. Estamos a pedir a uma pessoa real para o ajudar agora. Vao responder-lhe aqui mesmo assim que puderem.',
-    thanks: 'De nada, cuide-se.',
-    greeting: 'Ola! Que bom ter noticias suas. Como podemos ajudar hoje?',
-    statusTail: ' Responda PESSOA quando quiser para falar com alguem.', refLabel: (r) => ` A sua referencia e ${r}.`,
-  },
-  fr: {
-    help: 'Nous sommes la pour aider. Repondez STATUT pour voir l avancement, PERSONNE pour parler a quelqu un, ou STOP pour ne plus recevoir de messages. Ou dites-nous simplement ce qu il vous faut.',
-    stop: 'D accord, nous ne vous enverrons plus de messages. Repondez AIDE a tout moment si vous changez d avis.',
-    human: 'Bien sur. Nous demandons a une vraie personne de vous aider maintenant. Elle vous repondra ici des que possible.',
-    thanks: 'Je vous en prie, prenez soin de vous.',
-    greeting: 'Bonjour ! Content d avoir de vos nouvelles. Comment pouvons-nous vous aider aujourd hui ?',
-    statusTail: ' Repondez PERSONNE a tout moment pour parler a quelqu un.', refLabel: (r) => ` Votre reference est ${r}.`,
-  },
   af: {
-    help: 'Ons is hier om te help. Antwoord STATUS vir vordering, MENS vir n regte persoon, of STOP om nie meer boodskappe te kry nie. Of se net vir ons wat u nodig het.',
+    help: 'Ons is hier om te help. Antwoord STATUS om u verslag na te gaan, MENS om met n persoon te praat, of STOP om nie meer boodskappe te kry nie. Of se net vir ons wat u by u diere sien.',
     stop: 'Goed, ons sal u nie weer boodskap nie. Antwoord HELP enige tyd as u van plan verander.',
-    human: 'Natuurlik. Ons vra nou n regte persoon om u te help. Hulle sal hier antwoord sodra hulle kan.',
-    thanks: 'Plesier, sterkte.',
-    greeting: 'Hallo! Lekker om van u te hoor. Hoe kan ons vandag help?',
+    human: 'Natuurlik. Ons vra nou iemand van die span om u te help. Hulle sal hier antwoord sodra hulle kan.',
+    thanks: 'Plesier. Dankie dat u dit aangemeld het.',
+    greeting: 'Hallo! Lekker om van u te hoor. Vertel ons wat u by u diere sien.',
     statusTail: ' Antwoord MENS enige tyd om met n persoon te praat.', refLabel: (r) => ` U verwysing is ${r}.`,
+  },
+  zu: {
+    help: 'Silapha ukukusiza. Phendula u-STATUS ukuze ubheke umbiko wakho, u-HUMAN ukuze ukhulume nomuntu, noma u-STOP ukuze umise imilayezo. Noma usitshele nje ukuthi ubonani ezilwaneni zakho.',
+    stop: 'Kulungile, ngeke siphinde sikuthumelele. Phendula u-HELP noma nini uma ushintsha umqondo.',
+    human: 'Impela. Sicela umuntu wethimba ukuthi akusize manje. Uzophendula lapha ngokushesha angakwazi.',
+    thanks: 'Wamukelekile. Siyabonga ngokukubika.',
+    greeting: 'Sawubona! Kuhle ukuzwa kuwe. Sitshele ukuthi ubonani ezilwaneni zakho.',
+    statusTail: ' Phendula u-HUMAN noma nini ukuze ukhulume nomuntu.', refLabel: (r) => ` Inombolo yakho yereferensi ngu-${r}.`,
+  },
+  xh: {
+    help: 'Silapha ukukunceda. Phendula u-STATUS ukujonga umbiko wakho, u-HUMAN ukuthetha nomntu, okanye u-STOP ukuyeka imiyalezo. Okanye sixelele nje ukuba ubona ntoni kwizilwanyana zakho.',
+    stop: 'Kulungile, asisayi kuphinda sikuthumelele. Phendula u-HELP nanini na ukuba uyaguqula ingqondo.',
+    human: 'Ewe kakhulu. Sicela umntu weqela ukuba akuncede ngoku. Uya kuphendula apha kamsinya.',
+    thanks: 'Wamkelekile. Enkosi ngokuyixela.',
+    greeting: 'Molo! Kuhle ukuva kuwe. Sixelele ukuba ubona ntoni kwizilwanyana zakho.',
+    statusTail: ' Phendula u-HUMAN nanini na ukuthetha nomntu.', refLabel: (r) => ` Inombolo yakho yesalathiso ngu-${r}.`,
   },
 }
 

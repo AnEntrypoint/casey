@@ -2,6 +2,15 @@
 
 Agentic case tracking, observation, and manual editing over messaging channels.
 
+casey is used for **animal-disease surveillance in rural South Africa**. Farmers
+and NGO field workers report sick or dead livestock over WhatsApp, in their own
+language. casey greets them warmly, quietly gathers a structured report (which
+animals, the signs, where, how many, how to find the place, how to reach the
+farmer) **without interrogating them**, and gives the organising team one
+organised, observable view per report. It amplifies the team's own way of
+working -- it does not impose disease rules or escalation; priority stays with
+the people. Times are shown in SAST and phone numbers in +27 format.
+
 casey is a thin orchestrator that composes three existing projects:
 
 | Layer | Project | Role in casey |
@@ -82,14 +91,17 @@ well, and may not speak English as a first language. So casey:
 how casey handles each one:
 
 ```sh
-node bin/casey.js sim --scenario non-english-spanish    # writes only in Spanish
+node bin/casey.js sim --scenario fmd-cattle              # foot-and-mouth signs in cattle
+node bin/casey.js sim --scenario sudden-deaths           # animals dying suddenly
+node bin/casey.js sim --scenario afrikaans-farmer        # reports in Afrikaans
+node bin/casey.js sim --scenario isizulu-farmer          # reports in isiZulu
 node bin/casey.js sim --scenario confused-elderly        # vague, one-word, polite
 node bin/casey.js sim --scenario asks-for-human          # wants a real person
-node bin/casey.js sim --scenario emoji-only              # emoji / punctuation only
-node bin/casey.js sim --scenario impatient               # repeated "any update"
-node bin/casey.js sim --scenario broken-grammar-order-late
+node bin/casey.js sim --scenario photo-only              # sends a photo, few words
+node bin/casey.js sim --scenario location-logistics      # far in the bush, hard to reach
 node bin/casey.js sim --scenario full-lifecycle          # intake -> status -> asks for a human
-node bin/casey.js sim --scenario false-positive-guard    # complaints that look like keywords
+node bin/casey.js sim --scenario false-positive-guard    # reports that look like keywords
+node bin/casey.js sim --scenario afrikaans-farmer        # run live: add --real
 node bin/casey.js sim --help                             # list every persona
 ```
 
@@ -110,7 +122,7 @@ node bin/casey.js up         # starts the gateway + dashboard, prints the dashbo
 Then open the dashboard URL it printed (default `http://localhost:4000`). `casey init` and
 `casey doctor` exist so the first run tells you exactly what is and isn't ready before you start;
 `doctor` flags partial WhatsApp credentials and an unset dashboard token instead of failing silently.
-No channel connected yet? `node bin/casey.js sim "my order is late"` runs a full conversation offline
+No channel connected yet? `node bin/casey.js sim "my cattle are sick and some died"` runs a full conversation offline
 so you can see the flow and a case appear.
 
 ### The dashboard

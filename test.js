@@ -8,7 +8,7 @@ import { createCasey } from './src/casey.js'
 import { createDashboard } from './src/dashboard/server.js'
 import { runScript, MockAdapter } from './src/sim/inject.js'
 import { stubLLM } from './src/sim/stub-llm.js'
-import { intentReply, fallbackReply } from './src/gateway-hooks.js'
+import { intentReply, fallbackReply, reportMissingVisitCritical } from './src/gateway-hooks.js'
 
 process.env.CASEY_LOG = 'silent'
 
@@ -402,12 +402,14 @@ async function main() {
       assert.ok((caseRow.tags || '').includes('needs-human'), 'case flagged needs-human')
     })
 
-    await test('scenario "non-english-spanish": at least one reply is in Spanish', async () => {
-      const chan = 'scn-es'
+    await test('scenario "afrikaans-farmer": a deterministic reply comes back in Afrikaans', async () => {
+      const chan = 'scn-af'
       const sentBefore = adapter.sent.length
-      await runScript(adapter, SCENARIOS['non-english-spanish'].lines, { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      await runScript(adapter, SCENARIOS['afrikaans-farmer'].lines, { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
       const replies = adapter.sent.slice(sentBefore).map(r => r.text || '')
-      assert.ok(replies.some(t => /\b(persona|gracias|ayudar|mensaje|referencia)\b/i.test(t)), `expected a Spanish reply in: ${JSON.stringify(replies)}`)
+      // "dankie" is a deterministic THANKS intent -> Afrikaans reply (guessLang->af).
+      assert.ok(replies.some(t => /\b(Dankie|Plesier|span|verwysing|beeste|diere)\b/i.test(t)),
+        `expected an Afrikaans reply in: ${JSON.stringify(replies)}`)
     })
 
     await test('STOP then a later message: contact is not auto-replied again', async () => {
@@ -451,13 +453,13 @@ async function main() {
     await test('intent: true positives across languages and the "???" help signal', async () => {
       const { detectContactIntent } = await import('./src/gateway-hooks.js')
       const cases = [
-        ['STOP', 'stop'], ['basta!!', 'stop'], ['yeka', 'stop'], ['khalas', 'stop'],
-        ['i want to talk to a human', 'human'], ['umuntu', 'human'], ['insan', 'human'],
+        ['STOP', 'stop'], ['hou op', 'stop'], ['yeka', 'stop'], ['genoeg', 'stop'],
+        ['i want to talk to a human', 'human'], ['umuntu', 'human'], ['regte persoon', 'human'],
         ['call me please', 'human'],
-        ['any news?', 'status'], ['kahan hai', 'status'],
-        ['AYUDAME!!', 'help'], ['???', 'help'], ['usizo', 'help'],
-        ['thank you', 'thanks'], ['ngiyabonga', 'thanks'],
-        ['hi', 'greeting'], ['sawubona', 'greeting'], ['namaste', 'greeting'],
+        ['any news?', 'status'], ['enige nuus', 'status'],
+        ['???', 'help'], ['usizo', 'help'], ['hulp', 'help'],
+        ['thank you', 'thanks'], ['ngiyabonga', 'thanks'], ['dankie', 'thanks'],
+        ['hi', 'greeting'], ['sawubona', 'greeting'], ['goeie more', 'greeting'],
         ['stop i need a human', 'stop'], ['help me reach a person', 'human'],
       ]
       for (const [inp, exp] of cases)
@@ -608,33 +610,104 @@ async function main() {
     } finally { await cru.close() }
   })
 
-  // Language-aware deterministic replies (the regression class the live crucible
-  // exposed: a Spanish contact must not get an English canned reply). These are
-  // pure functions, asserted directly.
-  await test('localized intentReply: thanks mirrors the contact language', async () => {
+  // Language-aware deterministic replies, in the SA languages casey covers
+  // offline (en/af/zu/xh + Sotho/Tswana fallbacks). A farmer who writes in
+  // Afrikaans must not get an English canned reply. Pure functions, asserted
+  // directly. (The live model handles any other language.)
+  await test('localized intentReply: thanks mirrors the contact language (SA)', async () => {
     const c = { ref: 'CASE-9-x', status: 'new' }
-    assert.match(intentReply('thanks', c, 'es'), /De nada/, 'Spanish thanks')
-    assert.match(intentReply('thanks', c, 'es'), /Su referencia es CASE-9-x/, 'Spanish ref tail')
-    assert.match(intentReply('thanks', c, 'af'), /Plesier|sterkte/, 'Afrikaans thanks')
-    assert.match(intentReply('thanks', c, 'en'), /welcome/, 'English default')
-    assert.match(intentReply('thanks', c, 'zz'), /welcome/, 'unknown lang falls back to English')
+    assert.match(intentReply('thanks', c, 'af'), /Plesier|Dankie/, 'Afrikaans thanks')
+    assert.match(intentReply('thanks', c, 'af'), /U verwysing is CASE-9-x/, 'Afrikaans ref tail')
+    assert.match(intentReply('thanks', c, 'zu'), /Wamukelekile|Siyabonga/, 'isiZulu thanks')
+    assert.match(intentReply('thanks', c, 'xh'), /Wamkelekile|Enkosi/, 'isiXhosa thanks')
+    assert.match(intentReply('thanks', c, 'en'), /welcome|reporting/i, 'English default')
+    assert.match(intentReply('thanks', c, 'zz'), /welcome|reporting/i, 'unknown lang falls back to English')
   })
-  await test('localized intentReply: status reply stays in one language', async () => {
+  await test('localized intentReply: status reply stays in one language (SA)', async () => {
     const c = { ref: 'CASE-9-y', status: 'in_progress' }
-    const es = intentReply('status', c, 'es')
-    assert.match(es, /trabajando|atendiendo|revis/i, 'Spanish status body')
-    assert.match(es, /PERSONA/, 'Spanish status tail keyword')
-    assert.ok(!/Reply HUMAN/.test(es), 'no English tail leaking into Spanish status')
+    const af = intentReply('status', c, 'af')
+    assert.match(af, /span|werk/i, 'Afrikaans status body')
+    assert.match(af, /MENS/, 'Afrikaans status tail keyword')
+    assert.ok(!/Reply HUMAN/.test(af), 'no English tail leaking into Afrikaans status')
   })
-  await test('localized fallbackReply: holding message mirrors language + cites ref', async () => {
+  await test('localized fallbackReply: holding message mirrors language + cites ref (SA)', async () => {
     const c = { ref: 'CASE-9-z' }
-    const es = fallbackReply('hola, necesito ayuda con mi pedido', c)
-    assert.match(es, /Gracias/, 'Spanish fallback')
-    assert.match(es, /Su referencia es CASE-9-z/, 'Spanish ref')
-    const en = fallbackReply('hi there my order is late', c)
-    assert.match(en, /Thanks for your message/, 'English fallback default')
-    const pt = fallbackReply('ola, preciso de ajuda com o meu pedido', c)
-    assert.match(pt, /Obrigado/, 'Portuguese fallback')
+    const af = fallbackReply('hallo my beeste is siek en het nie geeet nie', c)
+    assert.match(af, /Dankie/, 'Afrikaans fallback')
+    assert.match(af, /verwysingsnommer is CASE-9-z/, 'Afrikaans ref')
+    const en = fallbackReply('hi my cattle are sick', c)
+    assert.match(en, /Thank you for letting us know/, 'English fallback default')
+    const zu = fallbackReply('sawubona izinkomo zami ziyagula ngicela usizo', c)
+    assert.match(zu, /Siyabonga/, 'isiZulu fallback')
+  })
+
+  // Domain: the structured report accretes across messages and is never lost.
+  await test('case_report: fields from several messages merge into one report', async () => {
+    const { buildCaseToolset } = await import('./src/case-tools.js')
+    // Unique external_id so this case is fresh and isolated from other tests.
+    const { case: rc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'report-merge-' + Date.now() })
+    const tools = buildCaseToolset(store)
+    const report = tools.find(t => t.name === 'case_report')
+    await report.handler({ id: rc.id, species: 'cattle', symptoms: 'drooling' })
+    await report.handler({ id: rc.id, location: 'near Musina', affected_count: '6' })
+    const r = await report.handler({ id: rc.id, dead_count: '2', suspected_disease: 'foot and mouth' })
+    assert.equal(r.report.species, 'cattle', 'species retained across merges')
+    assert.equal(r.report.dead_count, '2', 'later field recorded')
+    assert.equal(Object.keys(r.report).length, 6, `all six fields present, none lost: ${JSON.stringify(r.report)}`)
+    // idempotent: re-sending a known field must not duplicate or drop others
+    const r2 = await report.handler({ id: rc.id, species: 'cattle' })
+    assert.equal(Object.keys(r2.report).length, 6, 'idempotent re-send keeps the report whole')
+  })
+  await test('disease intake: stub records a report and asks at most one question per reply', async () => {
+    const chan = 'farmer-intake-' + Date.now()
+    const before = adapter.sent.length
+    const transcript = await runScript(adapter, ['my cattle are drooling and 2 died'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const replies = adapter.sent.slice(before).map(r => r.text || '')
+    for (const r of replies) assert.ok((r.match(/\?/g) || []).length <= 1, `at most one question per reply: ${r}`)
+    // Fetch THIS run's case by the caseId the reply carried (not listCases order).
+    const caseId = [...transcript].reverse().find(t => t.caseId)?.caseId
+    const c = caseId ? await store.getCase(caseId) : (await store.listCases()).find(x => x.external_id === chan)
+    let rep = {}; try { rep = JSON.parse(c.report || '{}') } catch {}
+    assert.ok(Object.keys(rep).length >= 1, `offline intake recorded report fields: ${JSON.stringify(rep)}`)
+  })
+
+  // One-shot capture: the worker leaves the site after the first conversation, so
+  // a closing "thanks" with a critical on-site fact still missing must NOT take the
+  // canned shortcut -- it defers to the agent for one gentle ask, exactly once.
+  await test('reportMissingVisitCritical flags incomplete reports, clears when ready', async () => {
+    assert.equal(reportMissingVisitCritical(null), true, 'no report -> missing')
+    assert.equal(reportMissingVisitCritical(JSON.stringify({ species: 'cattle' })), true, 'partial -> missing')
+    const full = { species: 'cattle', symptoms: 'drooling', location: 'Musina', how_to_find: 'past baobab', farmer_available: 'yes', contact_fallback: '0721234567' }
+    assert.equal(reportMissingVisitCritical(JSON.stringify(full)), false, 'all visit-critical present -> ready')
+  })
+  await test('closing "thanks" with a missing on-site fact defers (one-shot), fires once only', async () => {
+    const chan = 'closing-' + Date.now()
+    // intake: gives only symptoms (no location/availability/etc)
+    const t0 = await runScript(adapter, ['my cattle are drooling'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const caseId = [...t0].reverse().find(t => t.caseId)?.caseId
+    assert.ok(caseId, 'intake produced a case')
+    // first "thanks": report still missing visit-critical -> defer + tag closing-nudged.
+    const before1 = adapter.sent.length
+    await runScript(adapter, ['ok thank you'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const reply1 = (adapter.sent.slice(before1)[0] || {}).text || ''
+    const ev1 = await store.listEvents(caseId)
+    assert.ok(ev1.some(e => e.kind === 'observation' && /CLOSING-NUDGE/.test(e.text || '')), 'first closing thanks records the one-shot CLOSING-NUDGE marker')
+    assert.ok(reply1.length > 0, 'first thanks still produced a reply')
+    // second "thanks": already nudged -> canned shortcut, never nags, never silent
+    const before2 = adapter.sent.length
+    await runScript(adapter, ['thanks again'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    assert.ok((adapter.sent.slice(before2)[0] || {}).text, 'second thanks still gets a reply, never silence')
+  })
+  await test('closing "thanks" with a complete report just closes warmly (no extra question)', async () => {
+    const chan = 'closing-ready-' + Date.now()
+    const { case: rc } = await store.findOrCreateCase({ channel: 'sim', external_id: chan })
+    await store.updateCase(rc.id, { report: JSON.stringify({ species: 'goats', symptoms: 'sudden death', location: 'Musina', how_to_find: 'past baobab', farmer_available: 'yes', contact_fallback: '0721234567' }) })
+    const before = adapter.sent.length
+    await runScript(adapter, ['thank you'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const reply = (adapter.sent.slice(before)[0] || {}).text || ''
+    const evs = await store.listEvents(rc.id)
+    assert.ok(!evs.some(e => e.kind === 'observation' && /CLOSING-NUDGE/.test(e.text || '')), 'complete report -> no closing nudge')
+    assert.ok(reply.length > 0, 'still a warm close')
   })
 
   await casey.stop()

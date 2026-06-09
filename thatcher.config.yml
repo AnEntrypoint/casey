@@ -76,6 +76,13 @@ entities:
       contact_id:  { type: text }
       subject:     { type: text }
       summary:     { type: textarea }                # agent-maintained rolling summary
+      report:      { type: textarea }                # agent-maintained structured field report (JSON).
+                                                     # Keys the agent fills as the farmer gives them: species,
+                                                     # symptoms, location, how_to_find, affected_count, dead_count,
+                                                     # onset, suspected_disease, recent_movement, photos,
+                                                     # identifying_traits, access_notes, farmer_available,
+                                                     # contact_fallback. Any subset -- never required, so casey
+                                                     # amplifies the report without imposing a form on the farmer.
       priority:    { type: enum, options: [low, normal, high, urgent], default: normal }
       tags:        { type: text }                    # comma-separated, agent-managed
       assignee:    { type: text }                    # operator handle, or 'agent'

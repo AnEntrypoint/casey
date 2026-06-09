@@ -214,6 +214,16 @@ const PAGE = /* html */ `<!doctype html>
   .wrap{display:grid;grid-template-columns:360px 1fr;height:100vh}
   .list{border-right:1px solid var(--border);overflow:auto;display:flex;flex-direction:column;min-height:0}
   .detail{overflow:auto;padding:20px}
+  .report{margin:0 0 16px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .rep-head{padding:8px 12px;background:var(--panel);font-weight:600;font-size:13px;border-bottom:1px solid var(--border-soft)}
+  .rep-row{display:flex;gap:10px;padding:6px 12px;border-bottom:1px solid var(--border-soft);font-size:13px}
+  .rep-row:last-child{border-bottom:none}
+  .rep-label{flex:0 0 42%;color:var(--muted)}
+  .rep-val{flex:1 1 auto;word-break:break-word}
+  .rep-missing{color:var(--muted);font-style:italic;opacity:.7}
+  .rep-ready{padding:7px 12px;font-size:12px;font-weight:600;border-bottom:1px solid var(--border-soft)}
+  .rep-ready.ok{color:#1c8c44;background:rgba(34,160,80,.10)}
+  .rep-ready.amber{color:#9a6a00;background:rgba(200,140,0,.10)}
   .topbar{padding:10px 14px;border-bottom:1px solid var(--border-soft);position:sticky;top:0;background:var(--bg);z-index:2}
   .topbar h1{font-size:14px;margin:0 0 8px;display:flex;align-items:center;gap:8px}
   .counts{font-size:11px;color:var(--muted);font-weight:400}
@@ -455,7 +465,64 @@ function rel(v){ const d=toDate(v); if(!d)return ''
   const m=Math.round(s/60); if(m<45)return m+'m ago'
   const h=Math.round(m/60); if(h<36)return h+'h ago'
   return Math.round(h/24)+'d ago' }
-function fmtTime(v){ const d=toDate(v); return d?d.toLocaleString():'' }
+// Absolute time is always shown in South African Standard Time (SAST, UTC+2, no
+// DST) so an operator anywhere reads the same local time the field team works in,
+// regardless of the browser's own timezone. 'SAST' is appended so it is explicit.
+function fmtTime(v){ const d=toDate(v); if(!d)return ''
+  try{ return d.toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'})+' SAST' }
+  catch{ return d.toLocaleString()+' SAST' } }
+
+// Show a SA phone number the way an operator expects: a WhatsApp MSISDN like
+// 27821234567 becomes +27 82 123 4567; a local 0821234567 stays 082 123 4567.
+// Non-phone external_ids (discord/sim ids) pass through unchanged. Display only --
+// the raw external_id stays the key.
+function fmtPhone(v){ const s=String(v||''); const digits=s.replace(/[^0-9]/g,'')
+  if(/^27[0-9]{9}$/.test(digits)){ const n=digits.slice(2); return '+27 '+n.slice(0,2)+' '+n.slice(2,5)+' '+n.slice(5) }
+  if(/^0[0-9]{9}$/.test(digits)){ return digits.slice(0,3)+' '+digits.slice(3,6)+' '+digits.slice(6) }
+  return s }
+
+// Plain-language labels for the structured report fields, in the order an
+// organiser most wants to read them. Missing fields are shown as "not given yet"
+// so the operator sees the WHOLE picture (what is known and what is still
+// outstanding), never a silently blank gap.
+const REPORT_FIELDS=[
+  ['species','Animals'],['symptoms','Signs'],['affected_count','How many affected'],
+  ['dead_count','How many died'],['onset','When it started'],['suspected_disease','Suspected disease'],
+  ['recent_movement','Recent movement'],['location','Where'],['how_to_find','How to find the place'],
+  ['access_notes','Access / travel'],['farmer_available','Farmer available?'],
+  ['contact_fallback','Other contact'],['identifying_traits','Identifying the animals'],
+  ['photos','Photos'],['notes','Other notes'],
+]
+// Fields a field visit genuinely needs that CANNOT be recovered once the worker
+// leaves the site -- this is the one-shot reality. The readiness line tells the
+// operator at a glance whether they can act on the report or should try to reach
+// the farmer NOW (while perhaps still reachable) for the missing on-site facts.
+const VISIT_CRITICAL=[
+  ['species','what animals'],['symptoms','the signs'],['location','where'],
+  ['how_to_find','how to find the place'],['farmer_available','if the farmer will be there'],
+  ['contact_fallback','another contact'],
+]
+const has=(r,k)=>r[k]!=null&&String(r[k]).trim()!==''
+function reportPanel(reportRaw){
+  let r={}; try{ r=reportRaw?JSON.parse(reportRaw):{} }catch{ r={} }
+  // If nothing has been gathered yet, a calm empty state -- not an empty box.
+  const any=REPORT_FIELDS.some(([k])=>has(r,k))
+  const missing=VISIT_CRITICAL.filter(([k])=>!has(r,k)).map(([,label])=>label)
+  // Plain readiness line: green when a visit has what it needs, amber listing the
+  // unrecoverable gaps. No assignment, no instruction -- just the picture.
+  let ready=''
+  if(any){
+    ready = missing.length
+      ? '<div class="rep-ready amber">Still missing for a visit: '+esc(missing.join(', '))+'</div>'
+      : '<div class="rep-ready ok">Has what a field visit needs.</div>'
+  }
+  const rows=REPORT_FIELDS.map(([k,label])=>{
+    const val=has(r,k)?esc(String(r[k])):'<span class="rep-missing">not given yet</span>'
+    return '<div class="rep-row"><span class="rep-label">'+esc(label)+'</span><span class="rep-val">'+val+'</span></div>'
+  }).join('')
+  return '<div class="report"><div class="rep-head">Report from the field'
+    +(any?'':' <span class="rep-missing">(nothing recorded yet)</span>')+'</div>'+ready+rows+'</div>'
+}
 
 let activeId = null, lastCasesJson = '', allCases = [], known = new Set()
 let editing = false                         // pause polling while operator types
@@ -498,7 +565,7 @@ function attnReason(c){
 // the agent already replies in-language; this is a nudge for HUMAN replies, where
 // a low-literacy operator might default to English. Non-latin script or a few
 // common non-English words trip it. False negatives are fine; this never blocks.
-const NON_EN_WORDS = /\\b(hola|gracias|por favor|bonjour|merci|danke|obrigad|ngiyabonga|sawubona|namaste|shukran|ayuda|pedido|mensaje)\\b/i
+const NON_EN_WORDS = /\\b(dankie|asseblief|hallo|goeie|siek|beeste|ngiyabonga|siyabonga|sawubona|izinkomo|usizo|enkosi|molo|nceda|iinkomo|dumela|kea leboha|dikgomo)\\b/i
 function contactMaybeNonEnglish(events){
   const lastIn = (events||[]).filter(e=>e.kind==='inbound').slice(-1)[0]
   const txt = lastIn && lastIn.text
@@ -629,8 +696,9 @@ async function openCase(id){
     <h2 style="margin:6px 0 4px">\${esc(c.ref)} <span class="badge" title="\${esc(c.status)}">\${esc(stageLabel(c.status))}</span>
       <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">&#x2398;</button></h2>
     <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
-    <div style="color:var(--muted);margin-bottom:12px">\${esc(c.channel)}/\${esc(c.external_id)}
+    <div style="color:var(--muted);margin-bottom:12px">\${esc(c.channel)}/\${esc(fmtPhone(c.external_id))}
       <button class="copy" data-copy="\${esc(c.external_id)}" title="copy contact">&#x2398;</button></div>
+    \${reportPanel(c.report)}
     <div class="row">
       <div><label>Priority</label><select id="f-priority">\${['low','normal','high','urgent'].map(p=>opt(p,c.priority)).join('')}</select>\${simple?'<p class="hint">How urgent this is.</p>':''}</div>
       <div><label>Autonomy</label><select id="f-autonomy" title="\${esc(AUTONOMY_HELP)}">\${['auto','assisted','observe'].map(p=>opt(p,c.autonomy)).join('')}</select>\${simple?'<p class="hint">Who answers the contact: the robot, a draft for you, or nobody.</p>':''}</div>
