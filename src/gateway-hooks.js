@@ -102,6 +102,68 @@ function caseSystemPrompt(caseRow, events, contact) {
 // opts.autoRespond=false to track-only (no agent turn / reply).
 const FALLBACK_REPLY = "Thanks for your message. We've logged it and someone will follow up shortly."
 
+// Holding message in the contact's own language, for the worst-case path: the
+// LLM turn errored, timed out, or returned nothing. A low-literacy contact who
+// wrote in Spanish must NOT get an English wall of text back (P9 worst-case +
+// P12 human value) -- the degraded reply mirrors their language too. Keyed by a
+// lightweight cue detector over the languages casey already claims to support;
+// when no cue matches we keep the plain-English default. `ref` is appended when
+// known so even the fallback hands the contact their reference number.
+const FALLBACK_BY_LANG = {
+  es: 'Gracias por su mensaje. Ya lo tenemos guardado y una persona le va a ayudar pronto.',
+  pt: 'Obrigado pela sua mensagem. Ja a registamos e uma pessoa vai ajuda-lo em breve.',
+  fr: 'Merci pour votre message. Nous l avons bien recu et une personne va vous aider bientot.',
+  af: 'Dankie vir u boodskap. Ons het dit ontvang en iemand sal u binnekort help.',
+  zu: 'Siyabonga ngomlayezo wakho. Siwutholile futhi umuntu uzokusiza maduze.',
+  ar: 'شكرا لرسالتك. لقد استلمناها وسيساعدك شخص ما قريبا.',
+  hi: 'आपके संदेश के लिए धन्यवाद। हमने इसे दर्ज कर लिया है और जल्द ही कोई व्यक्ति आपकी मदद करेगा।',
+}
+
+// Cheap, accent-stripped cue match. A wrong guess that flips a contact's language
+// is worse than defaulting to English (P6: make the wrong outcome hard), so cues
+// are DISTINCTIVE -- tokens that one language uses and its neighbours do not. We
+// score every language by how many of its distinctive cues appear and pick the
+// clear winner; ties or no hits fall back to English. Shared tokens (pedido,
+// por favor, ola/hola) are deliberately excluded because they collide es<->pt.
+const LANG_CUES = {
+  es: [' gracias ', ' necesito ', ' ayuda ', ' usted ', ' senor ', ' donde ', ' cuando ', ' mi pedido ', ' esta ', ' pero '],
+  pt: [' obrigado ', ' preciso ', ' ajuda ', ' voce ', ' onde ', ' quando ', ' meu pedido ', ' nao ', ' esta a '],
+  fr: [' bonjour ', ' merci ', ' commande ', ' aide ', ' besoin ', ' vous ', ' ou est ', ' je ', ' mais '],
+  af: [' dankie ', ' asseblief ', ' hallo ', ' goeie ', ' bestelling ', ' het nie ', ' gekom ', ' ek '],
+  zu: [' sawubona ', ' ngiyabonga ', ' usizo ', ' siza ', ' yami ', ' ngicela '],
+}
+
+function guessLang(text) {
+  const t = ` ${normalizeIntentText(text)} `
+  if (!t.trim()) return 'en'
+  if (/[؀-ۿ]/.test(text || '')) return 'ar'
+  if (/[ऀ-ॿ]/.test(text || '')) return 'hi'
+  let best = 'en', bestScore = 0, tie = false
+  for (const [lang, cues] of Object.entries(LANG_CUES)) {
+    const score = cues.reduce((n, c) => n + (t.includes(c) ? 1 : 0), 0)
+    if (score > bestScore) { best = lang; bestScore = score; tie = false }
+    else if (score === bestScore && score > 0) tie = true
+  }
+  // A genuine tie between two non-English languages is ambiguous -> English is
+  // the safe default (it never claims to speak a language it might have wrong).
+  return tie ? 'en' : best
+}
+
+export function fallbackReply(contactText, caseRow) {
+  const lang = guessLang(contactText)
+  const base = FALLBACK_BY_LANG[lang] || FALLBACK_REPLY
+  const ref = caseRow?.ref
+  if (!ref) return base
+  // Localised "your reference is X" tail, kept short.
+  const tail = {
+    es: ` Su referencia es ${ref}.`, pt: ` A sua referencia e ${ref}.`,
+    fr: ` Votre reference est ${ref}.`, af: ` U verwysing is ${ref}.`,
+    zu: ` Inombolo yakho yereferensi ngu-${ref}.`,
+    ar: ` رقمك المرجعي هو ${ref}.`, hi: ` आपका संदर्भ नंबर ${ref} है।`,
+  }[lang] || ` Your reference is ${ref}.`
+  return base + tail
+}
+
 export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
   return async function handleInbound(platform, msg) {
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
@@ -195,7 +257,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'opted-out') }) }
         catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: fresh.id, error: e.message }) }
       }
-      const text = intentReply(intent, fresh)
+      const text = intentReply(intent, fresh, guessLang(inboundText))
       await store.appendEvent(fresh.id, {
         kind: 'outbound', actor: 'system', channel,
         text, data: { to: msg.from, intent, deterministic: true },
@@ -223,6 +285,13 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         sessionKey: `case:${fresh.id}`,
         callLLM,
         enabledToolsets: ['cases', 'core'],
+        // freddie's runTurn defaults to 30s, which is too tight for a COLD first
+        // turn (host boot + first provider probe) against the real bridge -- the
+        // crucible run timed out there and the contact got a degraded reply. The
+        // lead providers answer in well under a second once warm, so this bound
+        // protects the cold start without abandoning a live contact for minutes.
+        // CASEY_LLM_TURN_TIMEOUT_MS overrides for slow links / dead-provider walks.
+        timeoutMs: Number(process.env.CASEY_LLM_TURN_TIMEOUT_MS) || 120000,
       })
     } catch (e) {
       errored = true
@@ -239,12 +308,13 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         log.warn?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent result error: ${result.error}` })
       }
-      text = FALLBACK_REPLY
+      text = fallbackReply(inboundText, fresh)
     }
+    const isFallback = !((result?.result || '').toString().trim())
 
     await store.appendEvent(fresh.id, {
       kind: 'outbound', actor: 'agent', channel,
-      text, data: { to: msg.from, fallback: text === FALLBACK_REPLY },
+      text, data: { to: msg.from, fallback: isFallback },
     })
 
     const reply = { to: msg.from, text, platform, caseId: fresh.id }
@@ -435,15 +505,52 @@ export function mergeTag(tags, tag) {
 
 // Plain-language, contact-safe description of where a request stands. Never
 // exposes the internal stage name.
-function plainStatus(status) {
-  return ({
-    new:         'We have it and will look at it very soon.',
-    triaging:    'We are looking at it right now.',
+const STATUS_STRINGS = {
+  en: {
+    new: 'We have it and will look at it very soon.', triaging: 'We are looking at it right now.',
     in_progress: 'Someone is working on it for you now.',
-    waiting:     'We have started, and we are waiting on one step before we finish. We will keep you posted.',
-    resolved:    'It is sorted. If anything is still not right, just tell us.',
-    closed:      'It is all finished. Reply any time if you need more help.',
-  })[status] || 'We are looking into it for you.'
+    waiting: 'We have started, and we are waiting on one step before we finish. We will keep you posted.',
+    resolved: 'It is sorted. If anything is still not right, just tell us.',
+    closed: 'It is all finished. Reply any time if you need more help.',
+    _: 'We are looking into it for you.',
+  },
+  es: {
+    new: 'Lo tenemos y lo revisaremos muy pronto.', triaging: 'Lo estamos revisando ahora mismo.',
+    in_progress: 'Alguien lo esta atendiendo para usted ahora.',
+    waiting: 'Ya empezamos y estamos esperando un paso antes de terminar. Le mantendremos al tanto.',
+    resolved: 'Esta resuelto. Si algo aun no esta bien, solo diganos.',
+    closed: 'Ya esta todo terminado. Responda cuando quiera si necesita mas ayuda.',
+    _: 'Lo estamos revisando para usted.',
+  },
+  pt: {
+    new: 'Ja temos e vamos ver muito em breve.', triaging: 'Estamos a ver agora mesmo.',
+    in_progress: 'Alguem esta a tratar disso para si agora.',
+    waiting: 'Ja comecamos e estamos a aguardar um passo antes de terminar. Manteremos voce informado.',
+    resolved: 'Esta resolvido. Se algo ainda nao estiver bem, e so dizer.',
+    closed: 'Esta tudo terminado. Responda quando quiser se precisar de mais ajuda.',
+    _: 'Estamos a ver isso para si.',
+  },
+  fr: {
+    new: 'Nous l avons et nous allons l examiner tres bientot.', triaging: 'Nous l examinons en ce moment.',
+    in_progress: 'Quelqu un s en occupe pour vous maintenant.',
+    waiting: 'Nous avons commence et nous attendons une etape avant de terminer. Nous vous tiendrons au courant.',
+    resolved: 'C est regle. Si quelque chose ne va toujours pas, dites-le-nous.',
+    closed: 'Tout est termine. Repondez a tout moment si vous avez besoin d aide.',
+    _: 'Nous examinons cela pour vous.',
+  },
+  af: {
+    new: 'Ons het dit en sal baie gou daarna kyk.', triaging: 'Ons kyk nou daarna.',
+    in_progress: 'Iemand werk nou daaraan vir u.',
+    waiting: 'Ons het begin en wag op een stap voordat ons klaarmaak. Ons sal u op hoogte hou.',
+    resolved: 'Dit is reggemaak. As iets steeds verkeerd is, se net vir ons.',
+    closed: 'Alles is klaar. Antwoord enige tyd as u meer hulp nodig het.',
+    _: 'Ons kyk daarna vir u.',
+  },
+}
+
+function plainStatus(status, lang = 'en') {
+  const S = STATUS_STRINGS[lang] || STATUS_STRINGS.en
+  return S[status] || S._
 }
 
 // Proactive, contact-safe note sent when a request MOVES to a new stage on an
@@ -501,30 +608,61 @@ export function makeTransitionNotifier(store, sendReply, { log = console } = {})
 
 // Build a clear, deterministic reply for a recognized intent. Every reply names
 // the reference so a low-literacy contact always has a handle on their request.
-export function intentReply(intent, caseRow) {
-  const ref = caseRow?.ref ? ` Your reference is ${caseRow.ref}.` : ''
-  if (intent === 'help') {
-    return `We are here to help. Reply STATUS to check progress, HUMAN for a real person, or STOP to end messages. Or just tell us what you need.${ref}`
-  }
-  if (intent === 'status') {
-    return `${plainStatus(caseRow.status)} Reply HUMAN any time to talk to a person.${ref}`
-  }
-  if (intent === 'stop') {
-    return `Okay, we will not message you again. Reply HELP any time if you change your mind.${ref}`
-  }
-  if (intent === 'human') {
-    return `Of course. We are asking a real person to help you now. They will reply right here as soon as they can.${ref}`
-  }
-  if (intent === 'thanks') {
-    // Terminal acknowledgement -- no invitation to reply, so we don't trigger a
-    // politeness ping-pong loop. (Note no dash punctuation: keep it plain.)
-    return `You're welcome, take care.${ref}`
-  }
-  if (intent === 'greeting') {
-    // Warm, NOT a command menu -- a contact who said "hi" should not get jargon.
-    return `Hello! Good to hear from you. How can we help today?${ref}`
-  }
-  return ''
+// Deterministic intent replies, localised. A low-literacy contact who wrote
+// "gracias" must get a Spanish acknowledgement, not an English one mid-Spanish
+// conversation (P12 human value) -- so these mirror the contact's language just
+// as the LLM path does. `lang` comes from guessLang(inboundText) at the call
+// site; unknown languages fall through to English. status is composed from the
+// localised plainStatus so the whole reply stays in one language.
+const INTENT_STRINGS = {
+  en: {
+    help: 'We are here to help. Reply STATUS to check progress, HUMAN for a real person, or STOP to end messages. Or just tell us what you need.',
+    stop: 'Okay, we will not message you again. Reply HELP any time if you change your mind.',
+    human: 'Of course. We are asking a real person to help you now. They will reply right here as soon as they can.',
+    thanks: "You're welcome, take care.",
+    greeting: 'Hello! Good to hear from you. How can we help today?',
+    statusTail: ' Reply HUMAN any time to talk to a person.', refLabel: (r) => ` Your reference is ${r}.`,
+  },
+  es: {
+    help: 'Estamos aqui para ayudar. Responda ESTADO para ver el progreso, PERSONA para hablar con alguien, o PARAR para no recibir mas mensajes. O solo diganos que necesita.',
+    stop: 'De acuerdo, no le enviaremos mas mensajes. Responda AYUDA cuando quiera si cambia de idea.',
+    human: 'Por supuesto. Le estamos pidiendo a una persona real que le ayude ahora. Le responderan aqui mismo lo antes posible.',
+    thanks: 'De nada, cuidese.',
+    greeting: 'Hola! Que bueno saber de usted. Como podemos ayudarle hoy?',
+    statusTail: ' Responda PERSONA cuando quiera para hablar con alguien.', refLabel: (r) => ` Su referencia es ${r}.`,
+  },
+  pt: {
+    help: 'Estamos aqui para ajudar. Responda ESTADO para ver o progresso, PESSOA para falar com alguem, ou PARAR para nao receber mais mensagens. Ou apenas diga o que precisa.',
+    stop: 'Tudo bem, nao enviaremos mais mensagens. Responda AJUDA quando quiser se mudar de ideia.',
+    human: 'Claro. Estamos a pedir a uma pessoa real para o ajudar agora. Vao responder-lhe aqui mesmo assim que puderem.',
+    thanks: 'De nada, cuide-se.',
+    greeting: 'Ola! Que bom ter noticias suas. Como podemos ajudar hoje?',
+    statusTail: ' Responda PESSOA quando quiser para falar com alguem.', refLabel: (r) => ` A sua referencia e ${r}.`,
+  },
+  fr: {
+    help: 'Nous sommes la pour aider. Repondez STATUT pour voir l avancement, PERSONNE pour parler a quelqu un, ou STOP pour ne plus recevoir de messages. Ou dites-nous simplement ce qu il vous faut.',
+    stop: 'D accord, nous ne vous enverrons plus de messages. Repondez AIDE a tout moment si vous changez d avis.',
+    human: 'Bien sur. Nous demandons a une vraie personne de vous aider maintenant. Elle vous repondra ici des que possible.',
+    thanks: 'Je vous en prie, prenez soin de vous.',
+    greeting: 'Bonjour ! Content d avoir de vos nouvelles. Comment pouvons-nous vous aider aujourd hui ?',
+    statusTail: ' Repondez PERSONNE a tout moment pour parler a quelqu un.', refLabel: (r) => ` Votre reference est ${r}.`,
+  },
+  af: {
+    help: 'Ons is hier om te help. Antwoord STATUS vir vordering, MENS vir n regte persoon, of STOP om nie meer boodskappe te kry nie. Of se net vir ons wat u nodig het.',
+    stop: 'Goed, ons sal u nie weer boodskap nie. Antwoord HELP enige tyd as u van plan verander.',
+    human: 'Natuurlik. Ons vra nou n regte persoon om u te help. Hulle sal hier antwoord sodra hulle kan.',
+    thanks: 'Plesier, sterkte.',
+    greeting: 'Hallo! Lekker om van u te hoor. Hoe kan ons vandag help?',
+    statusTail: ' Antwoord MENS enige tyd om met n persoon te praat.', refLabel: (r) => ` U verwysing is ${r}.`,
+  },
+}
+
+export function intentReply(intent, caseRow, lang = 'en') {
+  const L = INTENT_STRINGS[lang] || INTENT_STRINGS.en
+  const ref = caseRow?.ref ? L.refLabel(caseRow.ref) : ''
+  if (intent === 'status') return `${plainStatus(caseRow.status, lang)}${L.statusTail}${ref}`
+  const body = L[intent]
+  return body ? `${body}${ref}` : ''
 }
 
 // Posts a one-line operator alert to a Discord webhook. Returns null if no URL is

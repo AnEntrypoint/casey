@@ -156,17 +156,29 @@ async function main() {
     const requested = (flags.channels || 'sim,discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
     const channels = requested.filter(ch => ch === 'sim' || hasCreds(ch))
     const skipped = requested.filter(ch => ch !== 'sim' && !hasCreds(ch))
-    const callLLM = process.env.CASEY_STUB_LLM ? (await import('../src/sim/stub-llm.js')).stubLLM() : null
-    const casey = await createCasey({ channels, callLLM })
+    const { resolveCallLLM } = await import('../src/llm.js')
+    const brain = await resolveCallLLM({ probe: true })
+    const casey = await createCasey({ channels, callLLM: brain.callLLM })
     await casey.start()
     const dashPort = Number(flags.port || 4000)
     const sendReply = (caseRow, text) => {
       const a = casey.adapters[caseRow.channel]
       return a?.send ? a.send({ to: caseRow.external_id, text }) : Promise.resolve()
     }
-    const dash = createDashboard(casey.store, { port: dashPort, sendReply })
+    // Health pill re-resolves live so an operator sees acptoapi going up/down
+    // without restarting casey. Stub stays reported as stub (it never probes).
+    const { resolveCallLLM: _rc } = await import('../src/llm.js')
+    const llmStatus = async () => {
+      if (process.env.CASEY_STUB_LLM) return { source: 'stub' }
+      const b = await _rc({ probe: true }).catch(() => ({ source: 'none' }))
+      return { source: b.source, model: b.model, url: b.url }
+    }
+    const dash = createDashboard(casey.store, { port: dashPort, sendReply, llmStatus })
     console.log(bold('casey up') + dim(`  v${pkgVersion()}`))
     console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(`   (skipped, no creds: ${skipped.join(', ')} — run casey doctor)`) : ''))
+    if (brain.source === 'acptoapi') console.log(`  AI helper: ${green('online')}${dim(`   (${brain.model} via ${brain.url})`)}`)
+    else if (brain.source === 'stub') console.log(`  AI helper: ${yellow('test stub')}${dim('   (offline fake replies — for testing only)')}`)
+    else console.log(`  AI helper: ${yellow('offline')}${dim('   (auto-replies paused; contacts get a holding message and wait for a person. Start acptoapi to enable AI.)')}`)
     if (channels.length === 1 && channels[0] === 'sim') console.log(warn('only the offline sim is active — no real messages will arrive. Connect a channel in .env.'))
     const tokenNote = process.env.CASEY_DASHBOARD_TOKEN ? ` ${dim('(token required)')}` : ` ${yellow('(open — set CASEY_DASHBOARD_TOKEN)')}`
     console.log(`  dashboard: ${cyan(`http://localhost:${dash.port}`)}${tokenNote}`)
@@ -215,12 +227,27 @@ async function main() {
         'Thanks for looking into it',
       ]
     }
-    const casey = await createCasey({ channels: ['sim'], callLLM: stubLLM() })
+    // Default sim runs offline on the deterministic stub (cheap, repeatable).
+    // --real routes the same scenario through the live acptoapi bridge so devs
+    // and operators can validate real-model behaviour. Honest fallback: if --real
+    // is asked but the bridge is unreachable, say so and stay on the stub.
+    let simCallLLM = stubLLM()
+    if (flags.real) {
+      const { resolveCallLLM } = await import('../src/llm.js')
+      const brain = await resolveCallLLM({ probe: true })
+      if (brain.source === 'acptoapi') { simCallLLM = brain.callLLM; console.log(green(`(real) ${brain.model} via ${brain.url}`)) }
+      else console.log(yellow('--real asked but acptoapi is offline; running on the test stub instead. Start acptoapi on :4800.'))
+    }
+    const casey = await createCasey({ channels: ['sim'], callLLM: simCallLLM })
     await casey.start()
     const adapter = casey.adapters.sim
     const transcript = await runScript(adapter, script, { wait: () => casey.drain() })
     for (const t of transcript) console.log(`${t.role === 'contact' ? cyan('USER: ') : green('BOT:  ')} ${t.text}`)
-    const [caseRow] = await casey.store.listCases()
+    // Print THIS run's case, identified by the caseId the replies carried, not
+    // listCases()[0] (arbitrary across accumulated sim runs -- thatcher ignores
+    // orderBy). Fall back to listCases only if no reply carried a caseId.
+    const runCaseId = [...transcript].reverse().find(t => t.caseId)?.caseId
+    const caseRow = runCaseId ? await casey.store.getCase(runCaseId) : (await casey.store.listCases())[0]
     if (caseRow) console.log(`\n${bold(caseRow.ref)}  status=${caseRow.status}  priority=${caseRow.priority}  tags=${caseRow.tags || '-'}\n   summary: ${caseRow.summary || dim('(none)')}`)
     await casey.stop()
     process.exit(0)

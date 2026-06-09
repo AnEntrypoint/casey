@@ -23,7 +23,7 @@ const PAGE_MAX = 200
 
 // opts.token   shared secret; when set, /api and / require ?token= or Bearer header.
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
-export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null } = {}) {
+export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null } = {}) {
   const app = express()
   app.use(express.json())
 
@@ -64,6 +64,25 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     if (v.length > MAX_LEN) { res.status(413).json({ error: `${field} too long (max ${MAX_LEN})` }); return undefined }
     return v
   }
+
+  // Plain-words health for the operator: is the AI helper connected? Low-literacy
+  // operators must know WHY auto-replies may be paused (acptoapi offline) without
+  // reading logs. llmStatus is an object or a (sync/async) fn returning one; we
+  // normalise to {source, model, url} and translate to a friendly label + tone.
+  app.get('/api/health', async (req, res) => {
+    try {
+      let s = typeof llmStatus === 'function' ? await llmStatus() : llmStatus
+      s = s || { source: 'unknown' }
+      const map = {
+        acptoapi: { ok: true, label: 'AI helper: online', detail: 'Auto-replies are on. Contacts get an instant answer.' },
+        stub: { ok: false, label: 'AI helper: test mode', detail: 'Fake replies for testing only. Not for real contacts.' },
+        none: { ok: false, label: 'AI helper: offline', detail: 'Auto-replies are paused. Contacts get a holding message and wait for a person.' },
+        unknown: { ok: false, label: 'AI helper: unknown', detail: 'Cannot tell if the AI helper is connected.' },
+      }
+      const view = map[s.source] || map.unknown
+      res.json({ ...view, source: s.source, model: s.model || null, url: s.url || null })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
 
   app.get('/api/cases', async (req, res) => {
     try {
@@ -296,6 +315,7 @@ const PAGE = /* html */ `<!doctype html>
   <div class="list">
     <div class="topbar">
       <h1>casey <span class="counts" id="counts"></span>
+        <span class="aihealth" id="aihealth" title="Is the AI helper connected?" style="margin-left:12px;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600"></span>
         <button class="icon-btn" id="help" title="What does this screen mean?" style="margin-left:auto">?</button>
         <button class="icon-btn" id="refresh" title="Refresh now">&#x21bb;</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">&#x263d;</button>
@@ -742,9 +762,24 @@ function restoreFromHash(){ const m=/#case=([^&]+)/.exec(location.hash); if(m) r
 $('#handoff').onclick=(e)=>{ if(e.target.id==='handoff-dismiss') return
   const c=handoffQueue[handoffQueue.length-1]; if(c) openCase(c.id) }
 $('#handoff-dismiss').onclick=(e)=>{ e.stopPropagation(); handoffQueue=[]; renderHandoff() }
-async function boot(){ await loadCases(); const id=restoreFromHash(); if(id) openCase(id) }
-boot(); setInterval(loadCases, 5000)
-window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme,
+// Plain-words AI-helper health pill. Green when online, amber otherwise; the
+// title carries the full plain sentence so an operator sees WHY auto-replies may
+// be paused. Failure to fetch is itself "unknown" (amber) -- never a silent green.
+let lastHealth=null
+async function refreshHealth(){
+  const el=$('#aihealth'); if(!el) return
+  let h
+  try{ h=await api('/api/health').then(r=>{ if(!r.ok) throw new Error(r.status); return r.json() }) }
+  catch(e){ h={ ok:false, label:'AI helper: unknown', detail:'Cannot reach the server to check the AI helper.' } }
+  lastHealth=h
+  el.textContent=h.label
+  el.title=h.detail+(h.model?(' ('+h.model+')'):'')
+  el.style.background=h.ok?'rgba(34,160,80,.18)':'rgba(200,140,0,.20)'
+  el.style.color=h.ok?'#1c8c44':'#9a6a00'
+}
+async function boot(){ await loadCases(); await refreshHealth(); const id=restoreFromHash(); if(id) openCase(id) }
+boot(); setInterval(loadCases, 5000); setInterval(refreshHealth, 15000)
+window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHealth, get lastHealth(){return lastHealth},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple}, setFilter(q){filt.q=q;renderList()},

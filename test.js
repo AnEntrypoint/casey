@@ -8,6 +8,7 @@ import { createCasey } from './src/casey.js'
 import { createDashboard } from './src/dashboard/server.js'
 import { runScript, MockAdapter } from './src/sim/inject.js'
 import { stubLLM } from './src/sim/stub-llm.js'
+import { intentReply, fallbackReply } from './src/gateway-hooks.js'
 
 process.env.CASEY_LOG = 'silent'
 
@@ -605,6 +606,35 @@ async function main() {
       assert.ok(Array.isArray(r.cases) && r.cases.length === 1, 'dashboard still serves a page under load')
       assert.equal(r.total, after, `dashboard total matches countCases (${r.total} vs ${after})`)
     } finally { await cru.close() }
+  })
+
+  // Language-aware deterministic replies (the regression class the live crucible
+  // exposed: a Spanish contact must not get an English canned reply). These are
+  // pure functions, asserted directly.
+  await test('localized intentReply: thanks mirrors the contact language', async () => {
+    const c = { ref: 'CASE-9-x', status: 'new' }
+    assert.match(intentReply('thanks', c, 'es'), /De nada/, 'Spanish thanks')
+    assert.match(intentReply('thanks', c, 'es'), /Su referencia es CASE-9-x/, 'Spanish ref tail')
+    assert.match(intentReply('thanks', c, 'af'), /Plesier|sterkte/, 'Afrikaans thanks')
+    assert.match(intentReply('thanks', c, 'en'), /welcome/, 'English default')
+    assert.match(intentReply('thanks', c, 'zz'), /welcome/, 'unknown lang falls back to English')
+  })
+  await test('localized intentReply: status reply stays in one language', async () => {
+    const c = { ref: 'CASE-9-y', status: 'in_progress' }
+    const es = intentReply('status', c, 'es')
+    assert.match(es, /trabajando|atendiendo|revis/i, 'Spanish status body')
+    assert.match(es, /PERSONA/, 'Spanish status tail keyword')
+    assert.ok(!/Reply HUMAN/.test(es), 'no English tail leaking into Spanish status')
+  })
+  await test('localized fallbackReply: holding message mirrors language + cites ref', async () => {
+    const c = { ref: 'CASE-9-z' }
+    const es = fallbackReply('hola, necesito ayuda con mi pedido', c)
+    assert.match(es, /Gracias/, 'Spanish fallback')
+    assert.match(es, /Su referencia es CASE-9-z/, 'Spanish ref')
+    const en = fallbackReply('hi there my order is late', c)
+    assert.match(en, /Thanks for your message/, 'English fallback default')
+    const pt = fallbackReply('ola, preciso de ajuda com o meu pedido', c)
+    assert.match(pt, /Obrigado/, 'Portuguese fallback')
   })
 
   await casey.stop()
