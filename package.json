@@ -13,11 +13,12 @@
     "test": "node test.js"
   },
   "dependencies": {
-    "freddie": "file:../freddie",
-    "thatcher": "^1.0.7",
     "anentrypoint-design": "file:../anentrypoint-design",
     "express": "^4.19.2",
+    "freddie": "file:../freddie",
     "js-yaml": "^4.1.0",
-    "ws": "^8.18.0"
+    "thatcher": "^1.0.7",
+    "ws": "^8.18.0",
+    "xstate": "^5.32.0"
   }
 }

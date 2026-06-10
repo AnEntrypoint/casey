@@ -14,6 +14,7 @@ import { createThatcher } from 'thatcher'
 import path from 'node:path'
 import fs from 'node:fs'
 import yaml from 'js-yaml'
+import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 
 // Principals casey acts as. role:agent satisfies normal requires_role gates.
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
@@ -35,6 +36,7 @@ export class CaseStore {
     this.onTransition = opts.onTransition || null
     this.thatcher = null
     this._wf = null            // parsed workflow stage graph
+    this._machine = null       // xstate machine built from _wf (transition authority)
     this._locks = new Map()    // per-conversation find-or-create serialization
   }
 
@@ -45,6 +47,9 @@ export class CaseStore {
     // fails fast with a clear message instead of a cryptic runtime error later.
     const cfg = yaml.load(fs.readFileSync(this.configPath, 'utf8'))
     this._wf = this._validateConfig(cfg)
+    // The lifecycle is now a real xstate machine built from the same graph: it,
+    // not bespoke array checks, is the authority on whether a transition is legal.
+    this._machine = buildCaseMachine(this._wf)
 
     fs.mkdirSync(path.resolve(process.cwd(), 'data'), { recursive: true })
     this.thatcher = createThatcher({
@@ -90,17 +95,12 @@ export class CaseStore {
     this.thatcher = null
   }
 
-  // Validate a transition against the parsed stage graph + role gates.
+  // Validate a transition. Delegates to the xstate machine -- the single
+  // authority on legality -- so an illegal move is rejected structurally. Throws
+  // with the machine's reason (same message shape callers already surface).
   _validateTransition(fromState, toState, user) {
-    const from = this._wf[fromState]
-    const to = this._wf[toState]
-    if (!from) throw new Error(`invalid current stage "${fromState}"`)
-    if (!to) throw new Error(`invalid target stage "${toState}"`)
-    const allowed = [...from.forward, ...from.backward]
-    if (!allowed.includes(toState))
-      throw new Error(`cannot move ${fromState} -> ${toState}; allowed: ${allowed.join(', ') || 'none'}`)
-    if (to.requires_role.length && user && !to.requires_role.includes(user.role))
-      throw new Error(`role "${user.role}" cannot enter "${toState}" (requires ${to.requires_role.join('/')})`)
+    const res = canTransition(this._machine, fromState, toState, user?.role)
+    if (!res.ok) throw new Error(res.error)
   }
 
   get t() {
@@ -324,6 +324,15 @@ export class CaseStore {
     return this.getCase(id)
   }
 
+  // Metadata-only update that does NOT touch last_event_at -- used by the health
+  // sweep to set/clear health:* tags. Stamping recency here would corrupt the very
+  // signal staleness is measured from (a swept stale case would look freshly
+  // active), so the guardrail must never perturb the field it reads (P1).
+  async updateCaseQuiet(id, patch, user = SYSTEM_USER) {
+    await this.t.update('case', id, patch, user)
+    return this.getCase(id)
+  }
+
   // Re-point / edit a single timeline event. The one primitive merge and split
   // need: moving an event between cases is a case_id update, never a delete +
   // recreate (which would lose created_at ordering and the audit id). Used only
@@ -472,7 +481,7 @@ export class CaseStore {
 
   // ---- timeline / events --------------------------------------------------
 
-  async appendEvent(caseId, { kind, actor = 'system', channel, text = '', data = null, msg_id = '' }) {
+  async appendEvent(caseId, { kind, actor = 'system', channel, text = '', data = null, msg_id = '', touch = true }) {
     // Do not pass created_at: thatcher stamps it as a unix-seconds integer on
     // create(). Passing an ISO string would just be overwritten, leaving the
     // column's type ambiguous. The dashboard formats the integer for display.
@@ -485,11 +494,15 @@ export class CaseStore {
     }, AGENT_USER)
     // Touch the case so dashboards sort by recency. A failure here is a real
     // problem (the timeline and the case row diverge), so surface it rather than
-    // swallowing it.
-    try {
-      await this.t.update('case', caseId, { last_event_at: nowIso() }, AGENT_USER)
-    } catch (e) {
-      this.log?.warn?.('case touch after appendEvent failed', { caseId, error: e.message })
+    // swallowing it. touch=false for system notes that must NOT count as activity
+    // (the health sweep -- its own observation must not reset the staleness clock
+    // it measures from, or a stale case would look freshly active after a sweep).
+    if (touch) {
+      try {
+        await this.t.update('case', caseId, { last_event_at: nowIso() }, AGENT_USER)
+      } catch (e) {
+        this.log?.warn?.('case touch after appendEvent failed', { caseId, error: e.message })
+      }
     }
     return ev
   }
@@ -532,12 +545,7 @@ export class CaseStore {
   getValidStatuses() { return Object.keys(this._wf || {}) }
 
   availableTransitions(caseRow, user = AGENT_USER) {
-    const from = this._wf[caseRow.status]
-    if (!from) return []
-    return [...from.forward, ...from.backward].filter(to => {
-      const rr = this._wf[to]?.requires_role || []
-      return !rr.length || (user && rr.includes(user.role))
-    })
+    return nextStates(this._machine, caseRow.status, user?.role)
   }
 
   // Transition a case and record it on the timeline in one step.

@@ -14,6 +14,7 @@ import { Gateway, bootHost } from 'freddie'
 import { createCaseStore } from './case-store.js'
 import { setCaseStore } from './case-runtime.js'
 import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier } from './gateway-hooks.js'
+import { sweepCases } from './case-sweep.js'
 import { MockAdapter } from './sim/inject.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -32,6 +33,7 @@ export class Casey {
     this.adapters = {}
     this._inflight = new Set()      // track inbound turns for deterministic sim
     this._disconnects = []
+    this._sweepTimer = null         // periodic health-guardrail interval handle
   }
 
   async init() {
@@ -124,12 +126,41 @@ export class Casey {
   // Await all in-flight inbound turns (used by sim for determinism).
   async drain() { await Promise.all([...this._inflight]) }
 
-  async start() { await this.gateway.start() }
+  // Run one health-guardrail sweep now. Exposed for tests and manual runs; the
+  // scheduler calls the same path. Isolated: a sweep error is the caller's to log.
+  async runSweepOnce(now = Date.now()) {
+    return sweepCases(this.store, now, this.opts.healthThresholds, { log: this.log })
+  }
+
+  // Start (or restart) the periodic guardrail sweep. Opt-in: a non-positive
+  // interval disables it. The handle is stored so stop() can clear it -- a leaked
+  // interval is itself an over-time failure, so cleanup is structural, not hoped-for.
+  startSweep(intervalMs = this.opts.sweepIntervalMs ?? 15 * 60e3) {
+    this.stopSweep()
+    if (!(intervalMs > 0)) return
+    this._sweepTimer = setInterval(() => {
+      // A sweep failure must never crash the loop or wedge the process.
+      this.runSweepOnce().catch(e => this.log?.warn?.('[casey] sweep failed', { error: e.message }))
+    }, intervalMs)
+    // Do not keep the event loop alive solely for the sweep (clean test/CLI exit).
+    this._sweepTimer.unref?.()
+  }
+
+  stopSweep() {
+    if (this._sweepTimer) { clearInterval(this._sweepTimer); this._sweepTimer = null }
+  }
+
+  async start() {
+    await this.gateway.start()
+    // Default-on guardrails: enabled unless explicitly disabled (sweepIntervalMs<=0).
+    if (this.opts.sweepIntervalMs !== 0) this.startSweep()
+  }
 
   // Graceful shutdown: stop accepting input, let in-flight agent turns finish,
   // close channel receivers, then close the store so the DB flushes cleanly
   // (avoids the WAL/libuv teardown race seen on abrupt exit).
   async stop() {
+    this.stopSweep()
     for (const d of this._disconnects) { try { d() } catch { /* ignore */ } }
     await this.gateway?.stop()
     try { await this.drain() } catch { /* in-flight turn errored; already logged */ }

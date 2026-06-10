@@ -816,6 +816,110 @@ async function main() {
     assert.ok(r2.error && /not on case/.test(r2.error), `unknown-event split rejected: ${r2.error}`)
   })
 
+  // ---- xstate lifecycle machine: illegal transitions are unrepresentable -----
+  await test('case machine accepts legal transitions and rejects illegal ones, with role gates', async () => {
+    const { buildCaseMachine, canTransition, nextStates } = await import('./src/case-machine.js')
+    const m = buildCaseMachine(store._wf)
+    assert.ok(canTransition(m, 'new', 'triaging').ok, 'new -> triaging legal')
+    assert.ok(canTransition(m, 'triaging', 'new').ok, 'triaging -> new legal (backward)')
+    assert.ok(!canTransition(m, 'new', 'closed').ok, 'new -> closed illegal')
+    assert.ok(!canTransition(m, 'resolved', 'new').ok, 'resolved -> new illegal')
+    assert.ok(!canTransition(m, 'new', 'nonsense').ok, 'unknown target rejected')
+    // closed requires operator/admin: an agent cannot put a resolved case to closed.
+    assert.ok(!canTransition(m, 'resolved', 'closed', 'agent').ok, 'agent cannot enter closed')
+    assert.ok(canTransition(m, 'resolved', 'closed', 'operator').ok, 'operator can enter closed')
+    // nextStates parity with the store's availableTransitions for a sample case.
+    const ns = nextStates(m, 'triaging', 'operator').sort()
+    assert.deepEqual(ns, store.availableTransitions({ status: 'triaging' }, { role: 'operator' }).sort(), 'nextStates matches availableTransitions')
+  })
+  await test('store transition still enforces legality through the machine', async () => {
+    const { case: c } = await store.findOrCreateCase({ channel: 'sim', external_id: 'machine-' + Date.now() })
+    await assert.rejects(() => store.transition(c.id, 'closed', { user: { id: 'a', role: 'agent' } }),
+      /cannot move new -> closed/, 'illegal transition rejected by the machine via store')
+    const moved = await store.transition(c.id, 'triaging', { user: { id: 'a', role: 'agent' } })
+    assert.equal(moved.status, 'triaging', 'legal transition still works')
+  })
+
+  // ---- time-based guardrails: how a case goes wrong OVER TIME -----------------
+  await test('classifyCaseHealth fires each breach at its threshold and not before', async () => {
+    const { classifyCaseHealth, DEFAULT_THRESHOLDS: T } = await import('./src/case-health.js')
+    const now = 10_000_000_000_000
+    const breaches = c => classifyCaseHealth(c, now).map(b => b.breach)
+    // Fresh open case: healthy.
+    assert.deepEqual(breaches({ status: 'new', last_event_at: new Date(now - 1000).toISOString(), report: '{}' }), [], 'fresh case healthy')
+    // Just under stale: still healthy. Just over: stale.
+    const justUnder = new Date(now - T.staleMs + 60e3).toISOString()
+    const justOver = new Date(now - T.staleMs - 60e3).toISOString()
+    assert.ok(!breaches({ status: 'in_progress', last_event_at: justUnder, report: '{}' }).includes('stale'), 'under threshold not stale')
+    assert.ok(breaches({ status: 'in_progress', last_event_at: justOver, report: '{}' }).includes('stale'), 'over threshold is stale')
+    // Closed case: never stale/stuck.
+    assert.deepEqual(breaches({ status: 'closed', last_event_at: justOver, report: '{}' }), [], 'closed case has no breaches')
+    // Unanswered handoff: needs-human tag + idle past handoffMs.
+    const ho = new Date(now - T.handoffMs - 60e3).toISOString()
+    assert.ok(breaches({ status: 'waiting', tags: 'needs-human', last_event_at: ho, report: '{}' }).includes('unanswered_handoff'), 'unanswered handoff fires')
+    // Abandoned intake: visit-critical missing + idle past abandonMs.
+    const ab = new Date(now - T.abandonMs - 60e3).toISOString()
+    assert.ok(breaches({ status: 'new', last_event_at: ab, report: JSON.stringify({ species: 'cattle' }) }).includes('abandoned_intake'), 'abandoned intake fires')
+    // never_closed: resolved + idle past neverClosedMs.
+    const nc = new Date(now - T.neverClosedMs - 60e3).toISOString()
+    assert.ok(breaches({ status: 'resolved', last_event_at: nc, report: '{}' }).includes('never_closed'), 'never-closed fires')
+    // Multiple at once.
+    const multi = breaches({ status: 'new', tags: 'needs-human', last_event_at: new Date(now - T.staleMs * 4).toISOString(), report: JSON.stringify({ species: 'cattle' }) })
+    assert.ok(multi.includes('stale') && multi.includes('unanswered_handoff') && multi.includes('abandoned_intake'), `multiple breaches surface: ${multi}`)
+  })
+
+  await test('sweepCases flags, is idempotent, and clears when the case recovers', async () => {
+    const { sweepCases } = await import('./src/case-sweep.js')
+    const { DEFAULT_THRESHOLDS: T } = await import('./src/case-health.js')
+    const { case: c } = await store.findOrCreateCase({ channel: 'sim', external_id: 'sweep-' + Date.now() })
+    // Make it old: force last_event_at well past stale.
+    const old = new Date(Date.now() - T.staleMs - 3600e3).toISOString()
+    await store.t.update('case', c.id, { last_event_at: old }, { id: 'sys', role: 'admin' })
+    const now = Date.now()
+    const s1 = await sweepCases(store, now)
+    const after1 = await store.getCase(c.id)
+    assert.ok(String(after1.tags || '').split(',').includes('health:stale'), 'sweep set health:stale')
+    const obs1 = (await store.listEvents(c.id)).filter(e => /GUARDRAIL \[stale\]/.test(e.text || '')).length
+    assert.equal(obs1, 1, 'exactly one stale observation')
+    // Idempotent: second sweep adds no new observation, no duplicate tag.
+    await sweepCases(store, now)
+    const tags2 = String((await store.getCase(c.id)).tags || '').split(',').filter(t => t === 'health:stale')
+    assert.equal(tags2.length, 1, 'no duplicate health:stale tag')
+    const obs2 = (await store.listEvents(c.id)).filter(e => /GUARDRAIL \[stale\]/.test(e.text || '')).length
+    assert.equal(obs2, 1, 'no re-spammed observation on the second pass')
+    // Recover: touch the case (recent last_event_at) -> next sweep clears the tag.
+    await store.t.update('case', c.id, { last_event_at: new Date(now).toISOString() }, { id: 'sys', role: 'admin' })
+    await sweepCases(store, now + 1000)
+    assert.ok(!String((await store.getCase(c.id)).tags || '').split(',').includes('health:stale'), 'health:stale cleared after recovery')
+  })
+  await test('sweep preserves non-health tags (needs-human/merged) while reconciling health', async () => {
+    const { sweepCases } = await import('./src/case-sweep.js')
+    const { DEFAULT_THRESHOLDS: T } = await import('./src/case-health.js')
+    const { case: c } = await store.findOrCreateCase({ channel: 'sim', external_id: 'sweep-tags-' + Date.now() })
+    await store.updateCase(c.id, { tags: 'needs-human,vip' })
+    const old = new Date(Date.now() - T.staleMs - 3600e3).toISOString()
+    await store.t.update('case', c.id, { last_event_at: old }, { id: 'sys', role: 'admin' })
+    await sweepCases(store, Date.now())
+    const tags = String((await store.getCase(c.id)).tags || '').split(',')
+    assert.ok(tags.includes('needs-human') && tags.includes('vip'), 'non-health tags preserved')
+    assert.ok(tags.includes('health:stale'), 'health tag still added alongside')
+  })
+  await test('sweep scheduler starts and stops without leaking a timer', async () => {
+    // Construct a bare Casey (no init) so we exercise ONLY the timer lifecycle --
+    // creating a second fully-booted casey would swap the global case-store
+    // singleton the tools resolve through and corrupt later tests.
+    const { Casey } = await import('./src/casey.js')
+    const c2 = new Casey({ channels: ['sim'] })
+    c2.store = store   // a real store so a fired sweep would not throw
+    c2.startSweep(50)
+    assert.ok(c2._sweepTimer, 'sweep timer started')
+    c2.startSweep(50)  // restart must not leak the prior handle
+    assert.ok(c2._sweepTimer, 'restart keeps exactly one timer')
+    c2.stopSweep()
+    assert.equal(c2._sweepTimer, null, 'sweep timer cleared on stop')
+    c2.stopSweep()     // double-stop is safe
+  })
+
   await test('disease intake: stub records a report and asks at most one question per reply', async () => {
     const chan = 'farmer-intake-' + Date.now()
     const before = adapter.sent.length

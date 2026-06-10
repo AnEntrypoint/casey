@@ -173,6 +173,27 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     res.json({ ok: true })
   })
 
+  // Cases the time-guardrails flagged as going wrong: stale, stuck, an unanswered
+  // request for a person, an abandoned intake, or resolved-but-never-closed. Driven
+  // by the health:* tags the sweep maintains, with the live breach detail recomputed
+  // so the reason is current, not a stale snapshot.
+  app.get('/api/attention', async (req, res) => {
+    try {
+      const { classifyCaseHealth } = await import('../case-health.js')
+      const now = Date.now()
+      const open = (await store.listCases({}, { limit: 500 })).filter(c => c.status !== 'closed')
+      const flagged = []
+      for (const c of open) {
+        const breaches = classifyCaseHealth(c, now)
+        if (breaches.length) flagged.push({ id: c.id, ref: c.ref, subject: c.subject || '', status: c.status, breaches })
+      }
+      // Worst-first: most breaches, then longest-standing.
+      flagged.sort((a, b) => b.breaches.length - a.breaches.length
+        || Math.max(...b.breaches.map(x => x.since_ms)) - Math.max(...a.breaches.map(x => x.since_ms)))
+      res.json({ count: flagged.length, cases: flagged })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Cases that look like the SAME real-world outbreak as this one -- the
   // operator's view of casey's grouping intelligence, with the reasons shown so
   // the suggestion is explainable, never an opaque score.
@@ -743,6 +764,7 @@ async function openCase(id){
     <h2 style="margin:6px 0 4px">\${esc(c.ref)} <span class="badge" title="\${esc(c.status)}">\${esc(stageLabel(c.status))}</span>
       <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">&#x2398;</button></h2>
     <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
+    \${healthBadges(c.tags)}
     <div style="color:var(--muted);margin-bottom:12px">\${esc(c.channel)}/\${esc(fmtPhone(c.external_id))}
       <button class="copy" data-copy="\${esc(c.external_id)}" title="copy contact">&#x2398;</button></div>
     \${reportPanel(c.report)}
@@ -863,6 +885,14 @@ async function loadDuplicateSuggestions(id){
 }
 function renderEvents(events){
   return events.map(e=>\`<div class="ev \${esc(e.kind)}"><span class="k">\${esc(e.kind)}/\${esc(e.actor)}</span> \${esc(e.text||'')} <span class="when" title="\${esc(fmtTime(e.created_at))}">\${esc(rel(e.created_at))}</span></div>\`).join('')
+}
+// Plain-language warning chips for the time-guardrail health:* tags the sweep
+// maintains, so an operator sees at a glance that a case is going wrong over time.
+const HEALTH_LABEL={'health:stale':'Going cold (no recent activity)','health:stuck':'Stuck in this stage too long','health:unanswered_handoff':'A person was asked for and not yet answered','health:abandoned_intake':'Intake left with on-site facts missing','health:never_closed':'Resolved but never closed'}
+function healthBadges(tags){
+  const list=String(tags||'').split(',').map(s=>s.trim()).filter(t=>t.indexOf('health:')===0)
+  if(!list.length) return ''
+  return '<div class="health">'+list.map(t=>\`<span class="health-chip" title="\${esc(t)}">\${esc(HEALTH_LABEL[t]||t)}</span>\`).join('')+'</div>'
 }
 // --- theme ---
 function applyTheme(t){ document.documentElement.dataset.theme=t; try{localStorage.casey_theme=t}catch{}

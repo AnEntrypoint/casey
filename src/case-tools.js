@@ -271,6 +271,22 @@ export function buildCaseToolset(storeOrNull) {
         return { ok: true, movedEvents: res.movedEvents, newCase: slimCase(res.newCase) }
       },
     },
+    {
+      name: 'case_health',
+      toolset: 'cases',
+      schema: {
+        name: 'case_health',
+        description: 'Check whether a case is going wrong over time -- stale (no activity), stuck in a stage too long, an unanswered request for a person, an abandoned intake with on-site facts still missing, or resolved-but-never-closed. Returns the current guardrail breaches with how long each has been true. Use it to decide what needs attention.',
+        parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
+      },
+      handler: async ({ id }) => {
+        const c = await store().getCase(id)
+        if (!c) return { error: `no case ${id}` }
+        const { classifyCaseHealth } = await import('./case-health.js')
+        const breaches = classifyCaseHealth(c, Date.now())
+        return { id, status: c.status, healthy: breaches.length === 0, breaches }
+      },
+    },
   ]
   return tools
 }
