@@ -263,6 +263,21 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
       return { to: msg.from, text: '', platform, caseId: caseRow.id, duplicate: true }
     }
+    // One-shot: a received animal photo is recorded as explicit case state right
+    // here, deterministically, so the operator always sees that a picture exists
+    // -- never relying on the agent turn to notice it (it may not, on a media-only
+    // message). Fill-if-empty so we never clobber a richer description the agent
+    // records later. Skipped in observe mode (the store guards it) and harmless on
+    // a malformed report. A failure here must never block the reply path.
+    const photoNote = inboundImageNote(msg)
+    if (photoNote) {
+      try {
+        const r = await store.markReportFieldsIfEmpty(caseRow.id, { photos: photoNote })
+        if (r?.filled?.length) {
+          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `PHOTO RECEIVED: ${photoNote} (recorded for the field team).` })
+        }
+      } catch (e) { log.warn?.('[casey] photo mark failed', { caseId: caseRow.id, error: e.message }) }
+    }
     if (created) {
       if (!caseRow.subject) {
         const subj = truncate(inboundText || media || 'New conversation', 80)
@@ -444,6 +459,24 @@ function describeMedia(msg) {
   if (r.image) return 'an image'
   if (r.audio) return 'an audio message'
   if (r.sticker_items) return 'a sticker'
+  return ''
+}
+
+// A photo of a sick or dead animal is the single most valuable on-site artifact,
+// and on the one-shot path it cannot be recovered once the worker leaves. So a
+// received image is recorded as explicit case state (report.photos) at ingress,
+// deterministically -- never left to the agent turn to notice and record, which
+// it may not on a media-only message. Returns a short note when THIS message
+// carries a real image (not a sticker, not audio, not a generic attachment of
+// unknown type), else ''. WhatsApp/Twilio surface images as raw.image, type
+// 'image', or attachments with an image/* content type; we match all three.
+function inboundImageNote(msg) {
+  const r = msg.raw || {}
+  if (r.image || r.type === 'image') return 'farmer sent a photo'
+  const atts = Array.isArray(r.attachments) ? r.attachments : []
+  const imgs = atts.filter(a => typeof (a?.content_type || a?.contentType || a?.mimetype) === 'string'
+    && /^image\//i.test(a.content_type || a.contentType || a.mimetype))
+  if (imgs.length) return imgs.length === 1 ? 'farmer sent a photo' : `farmer sent ${imgs.length} photos`
   return ''
 }
 

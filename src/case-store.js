@@ -250,6 +250,33 @@ export class CaseStore {
     })
   }
 
+  // Fill report fields ONLY where currently empty -- a structural fill that can
+  // never clobber a value the agent already recorded (incoming loses to any
+  // non-blank current value). Used at ingress to mark facts that are observable
+  // deterministically (e.g. a photo arrived) without overwriting the agent's
+  // own richer description on a later turn. Same lock, same observe guard as
+  // mergeReport. Returns { report, filled:[keys] } or { error } / no-op { report }.
+  async markReportFieldsIfEmpty(caseId, fields, user = AGENT_USER) {
+    const c0 = await this.getCase(caseId)
+    if (!c0) return { error: `no case ${caseId}` }
+    return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
+      const c = await this.getCase(caseId)
+      if (!c) return { error: `no case ${caseId}` }
+      if (c.autonomy === 'observe') return { error: 'observe' }
+      let current = {}
+      try { current = c.report ? JSON.parse(c.report) : {} } catch { current = {} }
+      const filled = []
+      const next = { ...current }
+      for (const [k, v] of Object.entries(fields)) {
+        const have = current[k] != null && String(current[k]).trim() !== ''
+        if (!have && v != null && String(v).trim() !== '') { next[k] = v; filled.push(k) }
+      }
+      if (!filled.length) return { report: current, filled: [] }
+      await this.updateCase(caseId, { report: JSON.stringify(next) }, user)
+      return { report: next, filled }
+    })
+  }
+
   async _findOrCreateCaseUnsafe({ channel, external_id, contact, subject }) {
     const open = await this.findOpenCase({ channel, external_id })
     if (open) return { case: open, created: false }

@@ -690,6 +690,33 @@ async function main() {
     const rep = JSON.parse((await store.getCase(rc.id)).report || '{}')
     assert.equal(Object.keys(rep).length, 6, `all six concurrent fields present, none lost: ${JSON.stringify(rep)}`)
   })
+  // One-shot: a received animal photo is the highest-value on-site artifact and
+  // cannot be recovered after the worker leaves. It must be recorded as explicit
+  // case state at ingress, deterministically -- never left to the agent turn to
+  // notice. Drive a media-only inbound straight through the handler (no LLM) and
+  // assert report.photos is set.
+  await test('inbound photo is recorded on the report at ingress, without an agent turn', async () => {
+    const { makeCaseHandler } = await import('./src/gateway-hooks.js')
+    const handler = makeCaseHandler(store, { callLLM: null, autoRespond: false, log: { info(){}, warn(){}, error(){} } })
+    const ctx = { platforms: { get: () => null } }
+    const ext = 'photo-ingest-' + Date.now()
+    // WhatsApp surfaces an image as raw.type === 'image' (see the webhook test).
+    const res = await handler.call(ctx, 'whatsapp', { from: ext, text: '', raw: { id: 'wamid.photo.1', type: 'image', chatId: ext } })
+    const c = await store.getCase(res.caseId)
+    const rep = JSON.parse(c.report || '{}')
+    assert.ok(rep.photos && /photo/i.test(rep.photos), `photo recorded on report at ingress: ${JSON.stringify(rep)}`)
+    // And it must NOT clobber a description the agent records later: a second photo
+    // arrives after the agent wrote a richer note -> the richer note survives.
+    await store.mergeReport(res.caseId, { photos: 'clear photo of a drooling cow, ear tag 042' })
+    await handler.call(ctx, 'whatsapp', { from: ext, text: '', raw: { id: 'wamid.photo.2', type: 'image', chatId: ext } })
+    const rep2 = JSON.parse((await store.getCase(res.caseId)).report || '{}')
+    assert.equal(rep2.photos, 'clear photo of a drooling cow, ear tag 042', 'fill-if-empty never clobbers the agent\'s richer photo note')
+    // A non-image media-only message (sticker/audio) must NOT set photos.
+    const ext2 = 'sticker-ingest-' + Date.now()
+    const res2 = await handler.call(ctx, 'whatsapp', { from: ext2, text: '', raw: { id: 'wamid.sticker.1', type: 'sticker', chatId: ext2 } })
+    const rep3 = JSON.parse((await store.getCase(res2.caseId)).report || '{}')
+    assert.ok(rep3.photos == null, `a sticker does not set photos: ${JSON.stringify(rep3)}`)
+  })
   await test('disease intake: stub records a report and asks at most one question per reply', async () => {
     const chan = 'farmer-intake-' + Date.now()
     const before = adapter.sent.length
