@@ -717,6 +717,105 @@ async function main() {
     const rep3 = JSON.parse((await store.getCase(res2.caseId)).report || '{}')
     assert.ok(rep3.photos == null, `a sticker does not set photos: ${JSON.stringify(rep3)}`)
   })
+  // ---- correlation: which cases are the SAME outbreak vs SEPARATE ----------
+  await test('correlationScore: same outbreak scores high, unrelated scores low', async () => {
+    const { correlationScore, SUGGEST_THRESHOLD } = await import('./src/correlate.js')
+    const A = { id: '1', ref: 'CASE-1', channel: 'whatsapp', external_id: '27820000001', created_at: 1000000,
+      report: JSON.stringify({ location: 'Musina, near the baobab on the Pontdrift road', species: 'cattle', symptoms: 'drooling and blisters' }) }
+    const B = { id: '2', ref: 'CASE-2', channel: 'whatsapp', external_id: '27820000002', created_at: 1000000 + 86400,
+      report: JSON.stringify({ location: 'Musina, the baobab on Pontdrift road', species: 'cattle', symptoms: 'blisters on the mouth' }) }
+    const C = { id: '3', ref: 'CASE-3', channel: 'whatsapp', external_id: '27820000003', created_at: 1000000,
+      report: JSON.stringify({ location: 'Upington', species: 'sheep', symptoms: 'lameness' }) }
+    const same = correlationScore(A, B)
+    const diff = correlationScore(A, C)
+    assert.ok(same.score >= SUGGEST_THRESHOLD, `same outbreak clears threshold: ${same.score} (${same.reasons.join('; ')})`)
+    assert.ok(diff.score < SUGGEST_THRESHOLD, `unrelated stays below threshold: ${diff.score}`)
+    assert.ok(same.reasons.some(r => /location/.test(r)), `reasons explain the link: ${same.reasons.join('; ')}`)
+  })
+  await test('correlationScore: a fallback number that matches another case links them', async () => {
+    const { correlationScore } = await import('./src/correlate.js')
+    // Different contact numbers, but A names B's number as a fallback ("call my
+    // brother on the other number") -- the cross-number outbreak.
+    const A = { id: '1', ref: 'CASE-1', channel: 'whatsapp', external_id: '27820000001', created_at: 1000000,
+      report: JSON.stringify({ contact_fallback: '082 000 0002', species: 'goats' }) }
+    const B = { id: '2', ref: 'CASE-2', channel: 'whatsapp', external_id: '+27 82 000 0002', created_at: 1000000,
+      report: JSON.stringify({ species: 'goats' }) }
+    const r = correlationScore(A, B)
+    assert.ok(r.reasons.some(x => /fallback/.test(x)), `fallback-number link detected: ${r.reasons.join('; ')}`)
+  })
+  await test('correlationScore: time alone never manufactures a match', async () => {
+    const { correlationScore } = await import('./src/correlate.js')
+    const A = { id: '1', channel: 'whatsapp', external_id: 'a', created_at: 1000000, report: JSON.stringify({ location: 'Musina', species: 'cattle' }) }
+    const B = { id: '2', channel: 'whatsapp', external_id: 'b', created_at: 1000000, report: JSON.stringify({ location: 'Cape Town', species: 'pigs' }) }
+    assert.equal(correlationScore(A, B).score, 0, 'same instant but nothing in common -> not the same outbreak')
+  })
+
+  // ---- merge: post-fixing two cases that are really one --------------------
+  await test('mergeCases is lossless, fill-if-empty, and idempotent', async () => {
+    const { case: tgt } = await store.findOrCreateCase({ channel: 'sim', external_id: 'merge-tgt-' + Date.now() })
+    const { case: src } = await store.findOrCreateCase({ channel: 'sim', external_id: 'merge-src-' + Date.now() })
+    await store.appendEvent(tgt.id, { kind: 'inbound', actor: 'contact', text: 'target msg 1' })
+    await store.appendEvent(src.id, { kind: 'inbound', actor: 'contact', text: 'source msg 1' })
+    await store.appendEvent(src.id, { kind: 'inbound', actor: 'contact', text: 'source msg 2' })
+    await store.mergeReport(tgt.id, { species: 'cattle', location: 'Musina' })
+    await store.mergeReport(src.id, { location: 'SOURCE LOC SHOULD NOT WIN', onset: 'last tuesday' })
+    const tgtBefore = (await store.listEvents(tgt.id)).length
+    const srcBefore = (await store.listEvents(src.id)).length
+    const res = await store.mergeCases(src.id, tgt.id, { id: 'op', role: 'operator' }, { reason: 'same herd' })
+    assert.ok(res.merged, 'merge reported success')
+    // Lossless: target now holds every event from both, plus the two merge notes.
+    const tgtAfter = (await store.listEvents(tgt.id)).length
+    assert.equal(tgtAfter, tgtBefore + srcBefore + 1, `all events folded in (+target merge note): ${tgtAfter}`)
+    // Fill-if-empty: target's location wins; source-only onset is added.
+    const rep = JSON.parse((await store.getCase(tgt.id)).report || '{}')
+    assert.equal(rep.location, 'Musina', 'canonical target location preserved (not clobbered)')
+    assert.equal(rep.onset, 'last tuesday', 'source-only field folded in')
+    // Source is a redirect: tagged merged, walked out of the open set.
+    const srcRow = await store.getCase(src.id)
+    assert.ok((srcRow.tags || '').split(',').includes('merged'), 'source tagged merged')
+    assert.equal(srcRow.status, 'closed', 'source closed out of the open-case set')
+    // Idempotent: re-merging the emptied source is a no-op, no duplicate events.
+    const res2 = await store.mergeCases(src.id, tgt.id, { id: 'op', role: 'operator' })
+    assert.ok(res2.alreadyMerged, 'second merge is a no-op')
+    assert.equal((await store.listEvents(tgt.id)).length, tgtAfter, 'no duplicate events on re-merge')
+  })
+  await test('mergeCases rejects a self-merge', async () => {
+    const { case: c } = await store.findOrCreateCase({ channel: 'sim', external_id: 'self-merge-' + Date.now() })
+    const res = await store.mergeCases(c.id, c.id, { id: 'op', role: 'operator' })
+    assert.ok(res.error && /itself/.test(res.error), `self-merge rejected: ${res.error}`)
+  })
+
+  // ---- split: post-fixing one case that is really two ----------------------
+  await test('splitCase moves exactly the named events into a new linked case', async () => {
+    const { case: c } = await store.findOrCreateCase({ channel: 'sim', external_id: 'split-' + Date.now() })
+    const e1 = await store.appendEvent(c.id, { kind: 'inbound', actor: 'contact', text: 'cattle drooling in Musina' })
+    await store.appendEvent(c.id, { kind: 'inbound', actor: 'contact', text: 'and also...' })
+    const e3 = await store.appendEvent(c.id, { kind: 'inbound', actor: 'contact', text: 'my sheep in Upington are lame too' })
+    // Resolve the real event ids (appendEvent returns thatcher's create record).
+    const all = await store.listEvents(c.id)
+    const sheepEv = all.find(e => /Upington/.test(e.text))
+    const before = all.length
+    const res = await store.splitCase(c.id, [sheepEv.id], { subject: 'sheep in Upington', reason: 'separate outbreak' }, { id: 'op', role: 'operator' })
+    assert.ok(res.split, 'split reported success')
+    // Source loses exactly the moved event (+ gains a linking note).
+    const srcEvents = await store.listEvents(c.id)
+    assert.ok(!srcEvents.some(e => e.id === sheepEv.id), 'moved event left the source')
+    assert.equal(srcEvents.length, before - 1 + 1, 'source: one event left, one link note added')
+    // New case has the moved event + its own linking note.
+    const newEvents = await store.listEvents(res.newCase.id)
+    assert.ok(newEvents.some(e => /Upington/.test(e.text)), 'moved event landed on the new case')
+    assert.ok(newEvents.some(e => e.kind === 'note' && /Split out of/.test(e.text)), 'new case has the provenance note')
+  })
+  await test('splitCase rejects emptying the source and unknown events', async () => {
+    const { case: c } = await store.findOrCreateCase({ channel: 'sim', external_id: 'split-bad-' + Date.now() })
+    await store.appendEvent(c.id, { kind: 'inbound', actor: 'contact', text: 'only event' })
+    const all = await store.listEvents(c.id)
+    const r1 = await store.splitCase(c.id, all.map(e => e.id), {}, { id: 'op', role: 'operator' })
+    assert.ok(r1.error && /every event/.test(r1.error), `all-events split rejected: ${r1.error}`)
+    const r2 = await store.splitCase(c.id, ['no-such-event'], {}, { id: 'op', role: 'operator' })
+    assert.ok(r2.error && /not on case/.test(r2.error), `unknown-event split rejected: ${r2.error}`)
+  })
+
   await test('disease intake: stub records a report and asks at most one question per reply', async () => {
     const chan = 'farmer-intake-' + Date.now()
     const before = adapter.sent.length

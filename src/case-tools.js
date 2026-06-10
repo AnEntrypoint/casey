@@ -203,6 +203,74 @@ export function buildCaseToolset(storeOrNull) {
         return { current: c.status, available: avail }
       },
     },
+    {
+      name: 'case_link_suggestions',
+      toolset: 'cases',
+      schema: {
+        name: 'case_link_suggestions',
+        description: 'Find OTHER open cases that look like the SAME real-world outbreak as this one -- same place, same animals, a shared contact or fallback number, reported around the same time. Use this to decide whether two reports should be one case. Returns ranked candidates with the reasons for each, strongest first. It only SUGGESTS; you decide whether to case_merge.',
+        parameters: { type: 'object', properties: { id: str('Case id to find matches for'), limit: { type: 'number', default: 5 } }, required: ['id'] },
+      },
+      handler: async ({ id, limit = 5 }) => {
+        const c = await store().getCase(id)
+        if (!c) return { error: `no case ${id}` }
+        const { suggestLinks } = await import('./correlate.js')
+        // Scan a recent window of cases; exclude closed and already-merged ones --
+        // suggesting a merge into a closed/merged shell would be noise.
+        const pool = (await store().listCases({}, { limit: 200 }))
+          .filter(o => o.id !== id && o.status !== 'closed'
+            && !((o.tags || '').split(',').map(s => s.trim()).includes('merged')))
+        const suggestions = suggestLinks(slimCase(c), pool.map(slimCase)).slice(0, limit)
+        return { count: suggestions.length, suggestions }
+      },
+    },
+    {
+      name: 'case_merge',
+      toolset: 'cases',
+      schema: {
+        name: 'case_merge',
+        description: 'Fold one case (source) into another (target) when they are the SAME outbreak -- the target keeps the full combined report and timeline; the source becomes a redirect. Lossless and safe to retry. Use after case_link_suggestions confirms a real match. The TARGET is the case you keep.',
+        parameters: {
+          type: 'object',
+          properties: {
+            source: str('Case id to fold IN (becomes a redirect)'),
+            target: str('Case id to keep (gathers everything)'),
+            reason: str('Why these are the same outbreak (recorded on both timelines)'),
+          },
+          required: ['source', 'target'],
+        },
+      },
+      handler: async ({ source, target, reason = '' }) => {
+        const res = await store().mergeCases(source, target, AGENT_USER, { reason })
+        if (res.error === 'observe') return { error: 'target case autonomy is "observe"; merging is operator-only' }
+        if (res.error) return { error: res.error }
+        return { ok: true, alreadyMerged: !!res.alreadyMerged, movedEvents: res.movedEvents, target: slimCase(res.target) }
+      },
+    },
+    {
+      name: 'case_split',
+      toolset: 'cases',
+      schema: {
+        name: 'case_split',
+        description: 'Carve a set of timeline events out of a case into a NEW case, when one thread actually holds TWO separate outbreaks (e.g. a contact reported a second, unrelated sick herd). The named events move to the new case; both are linked. Get event ids from case_get.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: str('Case id to split FROM'),
+            event_ids: { type: 'array', items: { type: 'string' }, description: 'Ids of the events to move into the new case' },
+            subject: str('Short title for the new case'),
+            reason: str('Why these belong to a separate outbreak (recorded on both timelines)'),
+          },
+          required: ['id', 'event_ids'],
+        },
+      },
+      handler: async ({ id, event_ids, subject = '', reason = '' }) => {
+        const res = await store().splitCase(id, event_ids, { subject, reason }, AGENT_USER)
+        if (res.error === 'observe') return { error: 'case autonomy is "observe"; splitting is operator-only' }
+        if (res.error) return { error: res.error }
+        return { ok: true, movedEvents: res.movedEvents, newCase: slimCase(res.newCase) }
+      },
+    },
   ]
   return tools
 }

@@ -173,6 +173,37 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     res.json({ ok: true })
   })
 
+  // Cases that look like the SAME real-world outbreak as this one -- the
+  // operator's view of casey's grouping intelligence, with the reasons shown so
+  // the suggestion is explainable, never an opaque score.
+  app.get('/api/cases/:id/suggestions', async (req, res) => {
+    try {
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      const { suggestLinks } = await import('../correlate.js')
+      const pool = (await store.listCases({}, { limit: 200 }))
+        .filter(o => o.id !== c.id && o.status !== 'closed'
+          && !String(o.tags || '').split(',').map(s => s.trim()).includes('merged'))
+      const byId = new Map(pool.map(o => [o.id, o]))
+      const suggestions = suggestLinks(c, pool).slice(0, 5)
+        .map(s => ({ ...s, subject: byId.get(s.id)?.subject || '', status: byId.get(s.id)?.status || '' }))
+      res.json({ count: suggestions.length, suggestions })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Fold another case (source = req.body.into) INTO this one (target = :id). The
+  // target stays canonical; lossless and idempotent in the store.
+  app.post('/api/cases/:id/merge', async (req, res) => {
+    try {
+      const into = str(res, req.body, 'into'); if (into === undefined) return
+      if (!into.trim()) return res.status(400).json({ error: 'no source case to merge' })
+      const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
+      const res2 = await store.mergeCases(into, req.params.id, OPERATOR, { reason: reason || 'operator merge' })
+      if (res2.error) return res.status(400).json({ error: res2.error })
+      res.json({ ok: true, movedEvents: res2.movedEvents, alreadyMerged: !!res2.alreadyMerged })
+    } catch (e) { res.status(400).json({ error: e.message }) }
+  })
+
   // Operator takes over the conversation: send a message to the contact on
   // their channel and record it as an outbound event.
   app.post('/api/cases/:id/reply', async (req, res) => {
@@ -737,10 +768,15 @@ async function openCase(id){
         \`<button type="button" data-i="\${i}">\${esc(t)}</button>\`).join('')}</div>\` : ''}
       <button id="send-reply">Send reply</button>
     </div>
+    <div id="dup-panel"></div>
     <h3 style="margin:18px 0 6px">Timeline\${events_total!=null?\` (\${events.length}/\${events_total})\`:''}</h3>
     <div id="timeline">\${renderEvents(events)}</div>
     \${more?'<button id="more-events" style="background:#2a3340">Load older events</button>':''}
   \`
+  // Possibly-the-same-case panel: load casey's grouping suggestions and offer a
+  // one-click merge. Best-effort and isolated -- a suggestions failure must never
+  // break the case view, so it is loaded after the main render and swallows errors.
+  loadDuplicateSuggestions(id)
   // pause polling while any field is focused so a refresh can't wipe the edit;
   // resume on blur. A blur fallback guarantees we never get stuck paused.
   $('#detail').querySelectorAll('input,select,textarea').forEach(el=>{
@@ -796,6 +832,34 @@ async function openCase(id){
     lastCasesJson=''; await loadCases(); await openCase(id)
   })
   renderList(); renderTriage()              // reflect the new active row in both lists
+}
+// Load and render the "possibly the same case" suggestions for the open case.
+// Isolated and best-effort: any failure leaves the panel empty rather than
+// breaking the detail view. Each suggestion shows the plain-language reasons and
+// a merge button that folds the OTHER case into the one being viewed.
+async function loadDuplicateSuggestions(id){
+  const panel=$('#dup-panel'); if(!panel) return
+  let j
+  try{ j = await api('/api/cases/'+encodeURIComponent(id)+'/suggestions').then(r=>r.ok?r.json():null) }catch{ return }
+  if(!j||!j.suggestions||!j.suggestions.length){ panel.innerHTML=''; return }
+  panel.innerHTML='<div class="dup"><h3 style="margin:14px 0 6px">Possibly the same case</h3>'
+    + '<p class="hint">casey thinks these reports may be the same outbreak. Merge folds the other case into this one (you can review before confirming).</p>'
+    + j.suggestions.map(s=>\`<div class="dup-row"><b>\${esc(s.ref)}</b> \${esc(s.subject||'')}
+        <span class="when">\${esc(s.reasons.join(', '))}</span>
+        <button class="merge-btn" data-into="\${esc(s.id)}" data-ref="\${esc(s.ref)}" style="background:#3a2a40">Merge \${esc(s.ref)} into this</button></div>\`).join('')
+    + '</div>'
+  panel.querySelectorAll('.merge-btn').forEach(b=>b.onclick=async()=>{
+    if(!confirm('Merge '+b.dataset.ref+' into this case? The other case becomes a redirect. This is lossless and can be reviewed on the timeline.')) return
+    const reason = prompt('Why are these the same outbreak? (optional)')
+    if(reason===null) return
+    b.disabled=true
+    const r = await api('/api/cases/'+encodeURIComponent(id)+'/merge',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({into:b.dataset.into,reason:reason||undefined})})
+    b.disabled=false
+    if(!r.ok){ toast(await failMsg(r,'merge failed'),'err'); return }
+    const res=await r.json().catch(()=>({}))
+    toast(res.alreadyMerged?'already merged':'merged '+b.dataset.ref+' in ('+(res.movedEvents||0)+' events)','ok')
+    lastCasesJson=''; await loadCases(); await openCase(id)
+  })
 }
 function renderEvents(events){
   return events.map(e=>\`<div class="ev \${esc(e.kind)}"><span class="k">\${esc(e.kind)}/\${esc(e.actor)}</span> \${esc(e.text||'')} <span class="when" title="\${esc(fmtTime(e.created_at))}">\${esc(rel(e.created_at))}</span></div>\`).join('')
