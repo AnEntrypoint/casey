@@ -5,8 +5,12 @@ data/
 # operator secrets — scaffolded by `casey init`, never committed
 .env
 
-# editor / agent session state
-.claude/
+# editor / agent session state. Ignore everything under .claude EXCEPT the
+# reusable project workflows, which are source and should be tracked. (git will
+# not descend into an excluded dir, so we exclude .claude/* by glob -- not the
+# dir itself -- then re-include the workflows path.)
+.claude/*
+!.claude/workflows/
 
 # gm-plugkit runtime working state (machine-local tooling, not casey source)
 .gm/

@@ -80,14 +80,26 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         unknown: { ok: false, label: 'AI helper: unknown', detail: 'Cannot tell if the AI helper is connected.' },
       }
       const view = map[s.source] || map.unknown
-      res.json({ ...view, source: s.source, model: s.model || null, url: s.url || null })
+      // Bound the externally-supplied model/url so a misconfigured or hostile
+      // llmStatus cannot return a multi-megabyte string into the operator's UI.
+      const model = s.model ? String(s.model).slice(0, 100) : null
+      const url = s.url ? String(s.url).slice(0, 200) : null
+      res.json({ ...view, source: s.source, model, url })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
   app.get('/api/cases', async (req, res) => {
     try {
       const where = {}
-      if (req.query.status) where.status = req.query.status
+      if (req.query.status) {
+        // Validate against the workflow's real statuses so an arbitrary
+        // ?status=anything 400s here instead of silently reaching thatcher.
+        const valid = store.getValidStatuses()
+        if (!valid.includes(req.query.status)) {
+          return res.status(400).json({ error: `invalid status: ${req.query.status}`, allowed: valid })
+        }
+        where.status = req.query.status
+      }
       const limit = clampLimit(req.query.limit, 50)
       const offset = offsetOf(req.query.offset)
       const cases = await store.listCases(where, { limit, offset })
@@ -440,13 +452,17 @@ const STAGE_LABEL = { new:'New', triaging:'Looking into it', in_progress:'Workin
   waiting:'Waiting', resolved:'Done', closed:'Closed' }
 // stageLabel(s): friendly label in simple mode, raw stage name otherwise.
 function stageLabel(s){ return simple ? (STAGE_LABEL[s] || s) : s }
-// Carry the ?token= through every API call so the auth gate passes. Kept out of
-// the visible URL hash so deep-links can be shared without leaking the secret.
+// Read the token from the page-load query ONCE, then immediately scrub it from
+// the address bar (history.replaceState) so the secret does not linger in browser
+// history, bookmarks, or a shared screenshot. API calls then send it as the
+// X-Casey-Token HEADER (which the server already accepts) instead of in the URL,
+// so it never appears in server access logs or Referer headers either.
 const TOKEN = new URLSearchParams(location.search).get('token')
+if(TOKEN){ try{ const u=new URL(location.href); u.searchParams.delete('token'); history.replaceState(null,'',u.pathname+u.search+u.hash) }catch{} }
 const api = (url,opts={})=>{
-  const sep = url.includes('?')?'&':'?'
-  const u = TOKEN ? url+sep+'token='+encodeURIComponent(TOKEN) : url
-  return fetch(u,opts)
+  if(!TOKEN) return fetch(url,opts)
+  const headers = Object.assign({}, opts.headers||{}, { 'X-Casey-Token': TOKEN })
+  return fetch(url, Object.assign({}, opts, { headers }))
 }
 // --- toasts (replace alert): ok auto-dismisses, err persists until clicked ---
 function toast(msg,kind='ok'){

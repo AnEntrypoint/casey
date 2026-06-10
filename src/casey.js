@@ -55,7 +55,10 @@ export class Casey {
     //    (see gateway-hooks.js) rather than layering hooks around freddie's
     //    context-free turn. We then wrap it to track in-flight turns so the sim
     //    can await them (freddie fires inbound handling without awaiting).
-    this.gateway = new Gateway({ platforms, callLLM: this.opts.callLLM || null })
+    // casey replaces gateway.handleInbound entirely, so the gateway never uses a
+    // callLLM of its own -- the case handler owns the LLM decision (P4: one layer,
+    // one capability). Passing it to the gateway too was dead coupling.
+    this.gateway = new Gateway({ platforms })
     const handler = makeCaseHandler(this.store, {
       callLLM: this.opts.callLLM || null,
       autoRespond: this.opts.autoRespond !== false,

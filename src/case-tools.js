@@ -132,19 +132,15 @@ export function buildCaseToolset(storeOrNull) {
           'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'notes']
         const incoming = pick(fields, REPORT_KEYS)
         if (!Object.keys(incoming).length) return { error: 'no report fields supplied' }
-        const c = await store().getCase(id)
-        if (!c) return { error: `no case ${id}` }
-        if (c.autonomy === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
-        // Merge into the running report so later messages refine earlier ones and a
-        // field already given is never lost. Non-empty incoming values win; we never
-        // overwrite a known field with blank.
-        let current = {}
-        try { current = c.report ? JSON.parse(c.report) : {} } catch { current = {} }
-        const merged = { ...current, ...incoming }
-        const report = JSON.stringify(merged)
-        const updated = await store().updateCase(id, { report }, AGENT_USER)
+        // Atomic read-merge-write in the store, under the per-conversation lock, so
+        // two concurrent agent turns for the same case cannot read the same stale
+        // report and clobber each other's fields. Later messages refine earlier
+        // ones; a field already given is never lost.
+        const res = await store().mergeReport(id, incoming, AGENT_USER)
+        if (res.error === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
+        if (res.error) return { error: res.error }
         await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `recorded report fields: ${Object.keys(incoming).join(', ')}`, data: incoming })
-        return { ok: true, report: merged, fieldsRecorded: Object.keys(incoming) }
+        return { ok: true, report: res.report, fieldsRecorded: Object.keys(incoming) }
       },
     },
     {

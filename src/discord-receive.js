@@ -19,6 +19,13 @@ const INTENTS = (1 << 9) | (1 << 12) | (1 << 15)
 export function connectDiscordReceive(adapter, { token = adapter.token, log = console } = {}) {
   if (!token) throw new Error('connectDiscordReceive: DISCORD_BOT_TOKEN required')
   let ws, heartbeat, seq = null, acked = true, closed = false
+  // Reconnect backoff state: a dead gateway (auth failure, partition, outage)
+  // would otherwise spin a tight 3s reconnect loop hammering the API (P9: no
+  // tight failure loop, explicit degradation). We back off exponentially up to a
+  // ceiling and give up after MAX_RETRIES, then stop loudly. A successful
+  // connection (HELLO) resets the counter so transient drops recover instantly.
+  const BASE_MS = 3000, MAX_MS = 30000, MAX_RETRIES = 8
+  let retries = 0, reconnecting = false
 
   const identify = () => ws.send(JSON.stringify({
     op: OP.IDENTIFY,
@@ -27,10 +34,27 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
 
   const startHeartbeat = (interval) => {
     heartbeat = setInterval(() => {
-      if (!acked) { try { ws.terminate() } catch {} return }  // zombie connection
+      // A missed ack means the socket is a zombie: terminate it. The 'close'
+      // handler then drives the (backed-off) reconnect, so we do NOT also loop here.
+      if (!acked) { try { ws.terminate() } catch { /* already gone */ } return }
       acked = false
       ws.send(JSON.stringify({ op: OP.HEARTBEAT, d: seq }))
     }, interval)
+  }
+
+  // Schedule the next reconnect with backoff, unless we are shutting down, have
+  // exhausted retries, or already have one in flight (guards re-entry).
+  const scheduleReconnect = () => {
+    if (closed || reconnecting) return
+    if (retries >= MAX_RETRIES) {
+      log.error?.(`[discord] gateway unreachable after ${MAX_RETRIES} attempts, giving up`)
+      return
+    }
+    reconnecting = true
+    const delay = Math.min(BASE_MS * 2 ** retries, MAX_MS)
+    retries++
+    log.warn?.(`[discord] gateway closed, reconnecting in ${Math.round(delay / 1000)}s (attempt ${retries}/${MAX_RETRIES})`)
+    setTimeout(() => { reconnecting = false; open().catch((e) => { log.error?.('[discord] reconnect failed', e.message); scheduleReconnect() }) }, delay)
   }
 
   const open = async () => {
@@ -43,6 +67,7 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
       if (p.s != null) seq = p.s
       switch (p.op) {
         case OP.HELLO:
+          retries = 0                                 // connected: reset backoff
           startHeartbeat(p.d.heartbeat_interval)
           identify()
           break
@@ -56,7 +81,7 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
     })
     ws.on('close', () => {
       clearInterval(heartbeat)
-      if (!closed) { log.warn?.('[discord] gateway closed, reconnecting in 3s'); setTimeout(open, 3000) }
+      scheduleReconnect()
     })
     ws.on('error', (e) => log.error?.('[discord] ws error', e.message))
   }

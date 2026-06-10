@@ -114,7 +114,11 @@ export class CaseStore {
   // by a unique filter to recover the real id.
   async _createReload(entity, data, user, uniqueWhere) {
     await this.t.create(entity, data, user)
-    const [row] = await this.t.list(entity, uniqueWhere, { limit: 1, orderBy: 'created_at', order: 'desc' })
+    // thatcher ignores orderBy, so a limit:1 fetch could return the wrong row if
+    // uniqueWhere ever matches more than one. Pull the matches and pick the newest
+    // (the row we just created) in JS -- the reload is then order-independent.
+    const rows = await this.t.list(entity, uniqueWhere, { limit: 50 })
+    const row = rows.reduce((best, r) => (!best || (r.created_at || 0) > (best.created_at || 0) ? r : best), null)
     if (!row) throw new Error(`created ${entity} but could not reload by ${JSON.stringify(uniqueWhere)}`)
     return row
   }
@@ -162,8 +166,14 @@ export class CaseStore {
 
   async getContact(id) { return id ? this.t.get('contact', id) : null }
 
+  // Most-recently-active first. thatcher ignores orderBy/order so we sort in JS
+  // (by last_event_at, falling back to created_at) to make the order real. The
+  // page window is applied after sorting when a limit is given.
   async listCases(where = {}, opts = {}) {
-    return this.t.list('case', where, { limit: 50, orderBy: 'last_event_at', order: 'desc', ...opts })
+    const { limit = 50, offset = 0 } = opts
+    const rows = await this.t.list('case', where, { limit: Math.max(limit + offset, 1000) })
+    rows.sort((a, b) => recencyKey(b) - recencyKey(a))
+    return rows.slice(offset, offset + limit)
   }
 
   async countCases(where = {}) {
@@ -219,6 +229,27 @@ export class CaseStore {
     })
   }
 
+  // Atomically merge partial report fields into a case's running report JSON.
+  // Runs under the per-conversation lock so a fresh read-merge-write cannot race
+  // another merge (or an inbound) for the same conversation and lose fields. Only
+  // the fast DB round-trip is inside the lock -- LLM/network latency stays out.
+  // Non-empty incoming values win; a known field is never overwritten with blank.
+  // Returns { report } (the merged object) or { error } / { skipped } on guards.
+  async mergeReport(caseId, incoming, user = AGENT_USER) {
+    const c0 = await this.getCase(caseId)
+    if (!c0) return { error: `no case ${caseId}` }
+    return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
+      const c = await this.getCase(caseId)             // re-read INSIDE the lock
+      if (!c) return { error: `no case ${caseId}` }
+      if (c.autonomy === 'observe') return { error: 'observe' }
+      let current = {}
+      try { current = c.report ? JSON.parse(c.report) : {} } catch { current = {} }
+      const merged = { ...current, ...incoming }
+      await this.updateCase(caseId, { report: JSON.stringify(merged) }, user)
+      return { report: merged }
+    })
+  }
+
   async _findOrCreateCaseUnsafe({ channel, external_id, contact, subject }) {
     const open = await this.findOpenCase({ channel, external_id })
     if (open) return { case: open, created: false }
@@ -244,13 +275,16 @@ export class CaseStore {
     return { case: created, created: true }
   }
 
-  // Friendly, collision-proof case ref. Derives the sequence from the most
-  // recent cases (public list(), capped) rather than scanning the whole table,
-  // so creation stays bounded as volume grows. The random suffix guarantees
-  // uniqueness even if two creators read the same max concurrently.
+  // Friendly, collision-proof case ref. The numeric part is a best-effort
+  // human-friendly sequence taken as the max over a capped page of cases; we scan
+  // every returned row and take Math.max, so thatcher's ignored orderBy/order is
+  // irrelevant here (we do not pass it -- claiming an ordering thatcher does not
+  // honour would be dishonest, P10). UNIQUENESS does not depend on the sequence:
+  // the random suffix guarantees it even if two creators read the same max
+  // concurrently or the highest case falls outside the page.
   async _nextRef() {
     let seq = 1000
-    const recent = await this.t.list('case', {}, { limit: 200, orderBy: 'created_at', order: 'desc' })
+    const recent = await this.t.list('case', {}, { limit: 200 })
     for (const r of recent) {
       const m = /^CASE-(\d+)/.exec(r.ref || '')
       if (m) seq = Math.max(seq, parseInt(m[1], 10))
@@ -287,13 +321,22 @@ export class CaseStore {
     return ev
   }
 
+  // Chronological (oldest-first). thatcher ignores orderBy/order, so we sort in
+  // JS to make the order a real guarantee rather than relying on its (undocumented)
+  // insertion-order behaviour. created_at is a unix-seconds integer; we tiebreak
+  // on id so same-second events keep a stable order.
   async listEvents(caseId, opts = {}) {
-    return this.t.list('event', { case_id: caseId }, { limit: 200, orderBy: 'created_at', order: 'asc', ...opts })
+    const rows = await this.t.list('event', { case_id: caseId }, { limit: 200, ...opts })
+    return rows.sort(byCreatedAsc)
   }
 
-  // Paged, newest-first window for the dashboard timeline.
+  // Paged, newest-first window for the dashboard timeline. We sort the full set
+  // newest-first in JS, then apply the page window, so paging is correct even
+  // though thatcher does not honour orderBy/order.
   async listEventsPage(caseId, { limit = 50, offset = 0 } = {}) {
-    return this.t.list('event', { case_id: caseId }, { limit, offset, orderBy: 'created_at', order: 'desc' })
+    const rows = await this.t.list('event', { case_id: caseId }, { limit: 1000 })
+    rows.sort(byCreatedDesc)
+    return rows.slice(offset, offset + limit)
   }
 
   async countEvents(caseId) {
@@ -309,6 +352,11 @@ export class CaseStore {
   }
 
   // ---- workflow -----------------------------------------------------------
+
+  // The valid workflow statuses, from the parsed config -- the single source of
+  // truth callers (e.g. the dashboard status filter) validate against, so an
+  // arbitrary ?status= never reaches thatcher.
+  getValidStatuses() { return Object.keys(this._wf || {}) }
 
   availableTransitions(caseRow, user = AGENT_USER) {
     const from = this._wf[caseRow.status]
@@ -352,6 +400,19 @@ export class CaseStore {
 function nowIso() {
   // CaseStore runs in the casey process (not the workflow sandbox), so Date is fine here.
   return new Date().toISOString()
+}
+
+// Event ordering: created_at is a unix-seconds integer; id is the stable
+// tiebreaker so same-second events keep a deterministic order. thatcher ignores
+// orderBy, so these provide the ordering guarantee in JS.
+const ca = (r) => (r?.created_at || 0)
+function byCreatedAsc(a, b) { return ca(a) - ca(b) || String(a.id).localeCompare(String(b.id)) }
+function byCreatedDesc(a, b) { return ca(b) - ca(a) || String(b.id).localeCompare(String(a.id)) }
+// Case recency: last activity if known, else creation time. last_event_at is an
+// ISO string (or null); coerce to a comparable number.
+function recencyKey(c) {
+  const le = c?.last_event_at ? Date.parse(c.last_event_at) : NaN
+  return Number.isNaN(le) ? ca(c) * 1000 : le
 }
 
 function randomSuffix() {

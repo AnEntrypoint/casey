@@ -38,6 +38,10 @@ async function main() {
     assert.ok(c.summary)
   })
 
+  // The next several tests reuse caseId from the first test. If case creation
+  // failed, fail loudly with that cause instead of cryptic "undefined" errors.
+  if (!caseId) throw new Error('PREREQUISITE FAILED: first test did not create a case (caseId unset)')
+
   await test('timeline records inbound, action, transition, outbound', async () => {
     const kinds = (await store.listEvents(caseId)).map(e => e.kind)
     for (const k of ['inbound', 'action', 'transition', 'outbound']) assert.ok(kinds.includes(k), `missing ${k} in ${kinds.join(',')}`)
@@ -448,6 +452,17 @@ async function main() {
       // out and never forces a handoff (a benign help/menu outcome is fine).
       for (const inp of ['please dont stop helping', 'do not stop', 'never stop'])
         assert.ok(!['stop', 'human'].includes(detectContactIntent(inp)), `"${inp}" must not trigger stop/human`)
+      // Negation must guard MULTI-WORD keys too, not just single words: the negator
+      // before the first phrase word blanks the whole phrase.
+      for (const inp of ['please dont leave me alone', 'do not call me'])
+        assert.ok(!['stop', 'human'].includes(detectContactIntent(inp)), `negated phrase "${inp}" must not trigger stop/human`)
+      // STATUS is whole-word, so an inflected substring in an unrelated report
+      // ("nothing updated since the sickness started") must NOT shortcut to a
+      // canned status reply -- it must reach the agent (null intent here).
+      assert.equal(detectContactIntent('nothing updated since the sickness started'), null,
+        '"updated" inside a report must not match the STATUS keyword "update"')
+      assert.equal(detectContactIntent('the cow stopped eating completely'), null,
+        '"stopped" inside a report must not match the STOP keyword')
     })
 
     await test('intent: true positives across languages and the "???" help signal', async () => {
@@ -657,6 +672,23 @@ async function main() {
     // idempotent: re-sending a known field must not duplicate or drop others
     const r2 = await report.handler({ id: rc.id, species: 'cattle' })
     assert.equal(Object.keys(r2.report).length, 6, 'idempotent re-send keeps the report whole')
+  })
+  await test('case_report: concurrent merges for one case lose no fields (atomic mergeReport)', async () => {
+    const { buildCaseToolset } = await import('./src/case-tools.js')
+    const { case: rc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'report-race-' + Date.now() })
+    const report = buildCaseToolset(store).find(t => t.name === 'case_report')
+    // Fire distinct single-field merges in parallel: without the per-conversation
+    // lock these would read the same stale report and clobber each other.
+    await Promise.all([
+      report.handler({ id: rc.id, species: 'cattle' }),
+      report.handler({ id: rc.id, symptoms: 'drooling' }),
+      report.handler({ id: rc.id, location: 'Musina' }),
+      report.handler({ id: rc.id, dead_count: '2' }),
+      report.handler({ id: rc.id, onset: 'today' }),
+      report.handler({ id: rc.id, affected_count: '6' }),
+    ])
+    const rep = JSON.parse((await store.getCase(rc.id)).report || '{}')
+    assert.equal(Object.keys(rep).length, 6, `all six concurrent fields present, none lost: ${JSON.stringify(rep)}`)
   })
   await test('disease intake: stub records a report and asks at most one question per reply', async () => {
     const chan = 'farmer-intake-' + Date.now()

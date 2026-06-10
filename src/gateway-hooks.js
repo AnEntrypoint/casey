@@ -34,7 +34,10 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
   const firstMessage = events.filter(e => e.kind === 'inbound').length <= 1
   let reportObj = null
   try { reportObj = caseRow.report ? JSON.parse(caseRow.report) : null } catch { reportObj = null }
-  const haveFields = reportObj ? Object.keys(reportObj).filter(k => reportObj[k]) : []
+  // != null (not falsy) so a recorded 0 -- e.g. affected_count: 0, "no animals
+  // affected" -- is shown to the agent as known, matching reportMissingVisitCritical
+  // and mostImportantMissingField, which both use the null check.
+  const haveFields = reportObj ? Object.keys(reportObj).filter(k => reportObj[k] != null) : []
   const reportLine = haveFields.length ? haveFields.map(k => `${k}=${truncate(String(reportObj[k]), 80)}`).join('; ') : '(nothing recorded yet)'
   return [
     // --- Private structured context (for the agent's reasoning ONLY) ---
@@ -511,16 +514,35 @@ export function detectContactIntent(text) {
   const guarded = new Set()
   for (let i = 1; i < words.length; i++) if (NEGATORS.has(words[i - 1])) guarded.add(i)
   const liveWords = new Set(words.filter((_, i) => !guarded.has(i)))
+  // A key is "live" when it appears unguarded. Single-word keys: the token is not
+  // negated. Multi-word keys: the phrase occurs as consecutive tokens AND none of
+  // those token POSITIONS is guarded -- so "please dont leave me alone" does not
+  // match "leave me alone" (the negator guards the first phrase word). We scan
+  // positions rather than indexOf so a repeated word cannot be matched at the
+  // wrong (guarded) occurrence.
+  const phraseLive = (keyWords) => {
+    for (let i = 0; i + keyWords.length <= words.length; i++) {
+      let ok = true
+      for (let j = 0; j < keyWords.length; j++) {
+        if (words[i + j] !== keyWords[j] || guarded.has(i + j)) { ok = false; break }
+      }
+      if (ok) return true
+    }
+    return false
+  }
   const live = (keys) => keys.some(k =>
-    k.includes(' ') ? padded.includes(` ${k} `) : liveWords.has(k))
+    k.includes(' ') ? phraseLive(k.split(' ')) : liveWords.has(k))
 
   // STOP / HUMAN drive irreversible actions (opt-out, handoff): negation-guarded,
   // and blocked by explicit exclude phrases ("no problem", "in person").
   if (live(STOP_KEYS)  && !STOP_EXCLUDE.some(p => padded.includes(` ${p} `)))  return 'stop'
   if (live(HUMAN_KEYS) && !HUMAN_EXCLUDE.some(p => padded.includes(` ${p} `))) return 'human'
 
-  // STATUS / HELP are read-only replies, so the plain matcher is fine.
-  if (hit(STATUS_KEYS)) return 'status'
+  // STATUS is whole-word matched (live), not substring (hit): otherwise "update"
+  // matches "updated" in "nothing updated since the sickness started", firing a
+  // canned status reply on a real report that must reach the agent. STATUS is
+  // read-only so it needs no negation guard, but live() handles both correctly.
+  if (live(STATUS_KEYS)) return 'status'
   // A run of '?' ("?", "???", "????") from a confused contact is a help signal;
   // normalize collapses it to a single '?' token (see normalizeIntentText).
   if (hit(HELP_KEYS)) return 'help'
