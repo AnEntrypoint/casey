@@ -120,6 +120,7 @@ export function buildCaseToolset(storeOrNull) {
             farmer_available: str('Will the farmer be there on arrival? When are they reachable?'),
             contact_fallback: str('Who else to contact / another number if the farmer is unreachable'),
             photos: str('Note that the farmer sent a photo (set to a short description)'),
+            audio: str('Note that the farmer sent a voice note (set to a short description or transcription)'),
             notes: str('Anything else worth recording for the organisers'),
           },
           required: ['id'],
@@ -128,7 +129,7 @@ export function buildCaseToolset(storeOrNull) {
       handler: async ({ id, ...fields }) => {
         const REPORT_KEYS = ['species', 'symptoms', 'location', 'how_to_find', 'affected_count',
           'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits',
-          'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'notes']
+          'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'audio', 'notes']
         const incoming = pick(fields, REPORT_KEYS)
         if (!Object.keys(incoming).length) return { error: 'no report fields supplied' }
         // Atomic read-merge-write in the store, under the per-conversation lock, so
@@ -304,6 +305,6 @@ function slimEvent(e) {
 }
 function pick(obj, keys) {
   const out = {}
-  for (const k of keys) if (obj[k] !== undefined && obj[k] !== '') out[k] = obj[k]
+  for (const k of keys) if (obj[k] !== undefined && obj[k] !== '' && String(obj[k]).trim() !== '') out[k] = obj[k]
   return out
 }

@@ -35,6 +35,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   const tokenBuf = token ? Buffer.from(token) : null
   const matches = (candidate) => {
     if (!candidate) return false
+    if (tokenBuf == null) return false   // no token configured: matches() never authorises (the !token short-circuit in authed handles the open case)
     const buf = Buffer.from(String(candidate))
     return buf.length === tokenBuf.length && crypto.timingSafeEqual(buf, tokenBuf)
   }
@@ -359,7 +360,7 @@ const PAGE = /* html */ `<!doctype html>
     .back{display:inline-block}
   }
   .back{display:none}
-  /* --- plain-words help overlay + per-case "what to do now" hint --- */
+  /* plain-words help overlay + per-case "what to do now" hint */
   .help-ovl{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:100;display:none;
         align-items:flex-start;justify-content:center;overflow:auto;padding:40px 16px}
   .help-ovl.show{display:flex}
@@ -376,7 +377,7 @@ const PAGE = /* html */ `<!doctype html>
   .icon-btn.active{background:var(--accent-soft);color:var(--fg);border-color:var(--accent)}
   .todo{background:var(--accent-soft);border:1px solid var(--border);border-left:3px solid var(--accent);
         border-radius:6px;padding:9px 12px;margin:10px 0 14px;font-size:13px;color:var(--fg);line-height:1.5}
-  /* --- triage inbox (pinned top of list) + coaching buttons --- */
+  /* triage inbox (pinned top of list) + coaching buttons */
   .triage{border-bottom:1px solid var(--border);background:var(--accent-soft)}
   .triage h2{font-size:13px;margin:0;padding:10px 14px 6px;display:flex;align-items:center;gap:8px}
   .triage h2 .n{background:var(--danger);color:#fff;border-radius:10px;padding:1px 8px;font-size:12px}
@@ -392,7 +393,7 @@ const PAGE = /* html */ `<!doctype html>
         border-radius:8px;padding:10px 14px;font-size:14px;min-height:44px;text-align:left;flex:0 1 auto}
   .canned button:hover{background:var(--hover);border-color:var(--accent)}
   .canned-lab{font-size:12px;color:var(--muted);margin:12px 0 0}
-  /* --- handoff alert banner: loud, sticky, dismiss-per-case --- */
+  /* handoff alert banner: loud, sticky, dismiss-per-case */
   .handoff{display:none;background:var(--danger);color:#fff;padding:10px 14px;font-size:14px;
         line-height:1.4;align-items:center;gap:10px;cursor:pointer;border-bottom:1px solid rgba(0,0,0,.3)}
   .handoff.show{display:flex;animation:handoff-pulse 1.3s ease-in-out infinite}
@@ -582,7 +583,7 @@ const REPORT_FIELDS=[
   ['recent_movement','Recent movement'],['location','Where'],['how_to_find','How to find the place'],
   ['access_notes','Access / travel'],['farmer_available','Farmer available?'],
   ['contact_fallback','Other contact'],['identifying_traits','Identifying the animals'],
-  ['photos','Photos'],['notes','Other notes'],
+  ['photos','Photos'],['audio','Voice notes'],['notes','Other notes'],
 ]
 // Fields a field visit genuinely needs that CANNOT be recovered once the worker
 // leaves the site -- this is the one-shot reality. The readiness line tells the
@@ -846,7 +847,7 @@ async function openCase(id){
     btn.disabled=false; editing=false
     if(!r.ok){ toast(await failMsg(r,'send failed'),'err'); return }
     const j=await r.json().catch(()=>({})); ta.value=''
-    toast(j.sent?'reply sent':'reply logged (channel not connected)','ok'); await openCase(id)
+    toast(j.delivered?'reply sent':(j.sent?'reply sent but it did not reach the contact - check the timeline':'reply logged (channel not connected)'),'ok'); await openCase(id)
   }
   $('#send-reply').onclick = send
   $('#f-reply').addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); send() } })
@@ -873,7 +874,7 @@ async function openCase(id){
     if(!r.ok){ toast(await failMsg(r,'transition failed'),'err'); return }
     const updated = await r.json().catch(()=>({}))
     const NOTIFIED=['in_progress','waiting','resolved']
-    toast(NOTIFIED.includes(updated.status)?'Moved to '+toLabel+'. The contact was sent a short note.':'Moved to '+toLabel+'. The contact was not told.','ok')
+    toast(NOTIFIED.includes(updated.status)?'Moved to '+toLabel+'. A short note was queued to the contact.':'Moved to '+toLabel+'. The contact was not told.','ok')
     lastCasesJson=''; await loadCases(); await openCase(id)
   })
   renderList(); renderTriage()              // reflect the new active row in both lists

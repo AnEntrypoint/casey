@@ -459,7 +459,7 @@ export class CaseStore {
       const ref = await this._nextRef()
       const created = await this._createReload('case', {
         ref, channel: src.channel, external_id: src.external_id,
-        contact_id: src.contact_id || '', subject: subject || `Split from ${src.ref}`,
+        contact_id: src.contact_id || '', subject: (subject && String(subject).trim()) || `Split from ${src.ref}`,
         summary: '', report: '', priority: src.priority || 'normal',
         tags: 'split', assignee: src.assignee || 'agent', autonomy: src.autonomy || 'auto',
         status: 'new', last_event_at: nowIso(),
@@ -501,7 +501,11 @@ export class CaseStore {
       try {
         await this.t.update('case', caseId, { last_event_at: nowIso() }, AGENT_USER)
       } catch (e) {
-        this.log?.warn?.('case touch after appendEvent failed', { caseId, error: e.message })
+        // error, not warn: the timeline and the case row have genuinely diverged
+        // (the event persisted, last_event_at did not), so this must be visible --
+        // but we do NOT throw, or every appendEvent caller would have to handle a
+        // touch failure that does not affect the event it just wrote.
+        this.log?.error?.('case touch after appendEvent failed -- last_event_at is now stale for this case', { caseId, error: e.message })
       }
     }
     return ev

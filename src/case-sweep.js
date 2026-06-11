@@ -42,10 +42,12 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
     if (!added.length && !removed.length) continue   // nothing changed for this case
 
     try {
-      // Quiet update: setting health tags must NOT touch last_event_at, or the
-      // sweep would make every stale case it flags look freshly active.
-      await store.updateCaseQuiet(c.id, { tags: nextTags.join(',') })
-      // One observation per NEWLY entered breach -- not on every pass it persists.
+      // Append the observation(s) BEFORE writing the health tags. The tag is the
+      // dedup key ("one observation per newly-entered breach"), so if the tag
+      // write succeeded but the observation failed, the next pass would see the
+      // tag already present and never append -- a silently missing observation.
+      // Doing the event first means a partial failure costs at worst a visible
+      // duplicate observation on retry, never a silent loss (P9).
       for (const b of breaches) {
         if (added.includes(healthTag(b.breach))) {
           await store.appendEvent(c.id, {
@@ -56,6 +58,9 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
           summary.breaches[b.breach] = (summary.breaches[b.breach] || 0) + 1
         }
       }
+      // Quiet update: setting health tags must NOT touch last_event_at, or the
+      // sweep would make every stale case it flags look freshly active.
+      await store.updateCaseQuiet(c.id, { tags: nextTags.join(',') })
       summary.flagged += added.length
       summary.cleared += removed.length
     } catch (e) {

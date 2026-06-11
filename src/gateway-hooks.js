@@ -205,12 +205,12 @@ const FALLBACK_BY_LANG = {
 // clear winner; ties or no hits fall back to English. (Sotho/Tswana are close,
 // so their cues are chosen to separate them; on a tie we fall back to English.)
 const LANG_CUES = {
-  af: [' dankie ', ' asseblief ', ' hallo ', ' goeie ', ' siek ', ' beeste ', ' het nie ', ' gekom ', ' ek ', ' vrek ', ' diere '],
-  zu: [' sawubona ', ' ngiyabonga ', ' usizo ', ' siza ', ' yami ', ' ngicela ', ' izinkomo ', ' iyagula ', ' ngi '],
-  xh: [' molo ', ' enkosi ', ' nceda ', ' yam ', ' iinkomo ', ' iyagula ', ' ndi ', ' kwaye '],
+  af: [' dankie ', ' asseblief ', ' hallo ', ' goeie ', ' siek ', ' beeste ', ' het nie ', ' gekom ', ' ek ', ' vrek ', ' diere ', ' hou op ', ' los my ', ' genoeg ', ' mens '],
+  zu: [' sawubona ', ' ngiyabonga ', ' usizo ', ' siza ', ' yami ', ' ngicela ', ' izinkomo ', ' iyagula ', ' ngi ', ' yeka ', ' hambani ', ' umuntu '],
+  xh: [' molo ', ' enkosi ', ' nceda ', ' yam ', ' iinkomo ', ' iyagula ', ' ndi ', ' kwaye ', ' umntu ', ' hamba '],
 }
 
-function guessLang(text) {
+export function guessLang(text) {
   const t = ` ${normalizeIntentText(text)} `
   if (!t.trim()) return 'en'
   if (/[؀-ۿ]/.test(text || '')) return 'ar'
@@ -254,7 +254,9 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         contact: { display_name: msg.raw?.author?.username, handle: msg.raw?.author?.username },
       }))
     } catch (e) {
-      log.error?.('[casey] findOrCreateCase failed', { channel, external_id, error: e.message })
+      // Do NOT log external_id -- it is the contact's phone number (PII). Channel
+      // plus the error is enough to diagnose without writing PII to the log sink.
+      log.error?.('[casey] findOrCreateCase failed', { channel, error: e.message })
       return { to: msg.from, text: '', platform, error: e.message }
     }
 
@@ -288,6 +290,18 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
           await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `PHOTO RECEIVED: ${photoNote} (recorded for the field team).` })
         }
       } catch (e) { log.warn?.('[casey] photo mark failed', { caseId: caseRow.id, error: e.message }) }
+    }
+    // Same one-shot discipline for a voice note: record it as explicit state so an
+    // operator always sees a voice message arrived, even on an audio-only message
+    // the agent turn might not narrate. Fill-if-empty; never blocks the reply.
+    const audioNote = inboundAudioNote(msg)
+    if (audioNote) {
+      try {
+        const r = await store.markReportFieldsIfEmpty(caseRow.id, { audio: audioNote })
+        if (r?.filled?.length) {
+          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `AUDIO RECEIVED: ${audioNote}.` })
+        }
+      } catch (e) { log.warn?.('[casey] audio mark failed', { caseId: caseRow.id, error: e.message }) }
     }
     if (created) {
       if (!caseRow.subject) {
@@ -488,6 +502,24 @@ function inboundImageNote(msg) {
   const imgs = atts.filter(a => typeof (a?.content_type || a?.contentType || a?.mimetype) === 'string'
     && /^image\//i.test(a.content_type || a.contentType || a.mimetype))
   if (imgs.length) return imgs.length === 1 ? 'farmer sent a photo' : `farmer sent ${imgs.length} photos`
+  return ''
+}
+
+// A voice note is, for a low-literacy farmer, often the MAIN report -- they speak
+// rather than type. Like the photo, it is one-shot and easy to lose if it is only
+// described into the agent's context and never recorded as explicit case state.
+// So we capture it the same way: detect a real audio/voice message (not a sticker,
+// not an image) and record a note at ingress, fill-if-empty. casey does not
+// transcribe here (no heavy dependency, P2); the operator listens and can fill the
+// richer detail -- an honest degradation rung, not a silent drop. Returns '' when
+// THIS message carries no audio.
+function inboundAudioNote(msg) {
+  const r = msg.raw || {}
+  if (r.audio || r.voice || r.type === 'audio' || r.type === 'voice') return 'farmer sent a voice note (listen and record what it says)'
+  const atts = Array.isArray(r.attachments) ? r.attachments : []
+  const auds = atts.filter(a => typeof (a?.content_type || a?.contentType || a?.mimetype) === 'string'
+    && /^audio\//i.test(a.content_type || a.contentType || a.mimetype))
+  if (auds.length) return 'farmer sent a voice note (listen and record what it says)'
   return ''
 }
 

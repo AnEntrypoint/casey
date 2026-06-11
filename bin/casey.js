@@ -29,8 +29,8 @@ if (cmd === '--help' || cmd === '-h') { cmd = 'help' }
 const COLOR = process.stdout.isTTY && !process.env.NO_COLOR
 const c = (code) => (s) => COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s)
 const bold = c('1'), dim = c('2'), green = c('32'), red = c('31'), yellow = c('33'), cyan = c('36')
-const ok = (s) => `${green('✓')} ${s}`
-const bad = (s) => `${red('✗')} ${s}`
+const ok = (s) => `${green('[ok]')} ${s}`
+const bad = (s) => `${red('[x]')} ${s}`
 const warn = (s) => `${yellow('!')} ${s}`
 
 function pkgVersion() {
@@ -141,6 +141,13 @@ async function main() {
       else if (partialCreds(ch)) { console.log(bad(`channel ${ch}: partial credentials - set BOTH WHATSAPP_API_TOKEN and WHATSAPP_PHONE_NUMBER_ID`)); problems++ }
       else console.log(dim(`  channel ${ch}: not configured (optional)`))
     }
+    // The WhatsApp webhook trusts unsigned bodies when WHATSAPP_APP_SECRET is
+    // unset (freddie verifies the X-Hub-Signature-256 HMAC only when the secret
+    // is present). Without it anyone who can reach the webhook can forge inbound
+    // farmer messages, so flag it loudly when the channel is otherwise live.
+    if (hasCreds('whatsapp') && !process.env.WHATSAPP_APP_SECRET) {
+      console.log(warn('WHATSAPP_APP_SECRET unset - inbound webhook signatures are NOT verified; anyone who can reach the webhook can forge messages. Set it to reject forged inbound.'))
+    }
     if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected - only the offline sim will run'))
     // dashboard token
     console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset - dashboard is open to anyone who can reach the port'))
@@ -157,7 +164,9 @@ async function main() {
     const channels = requested.filter(ch => ch === 'sim' || hasCreds(ch))
     const skipped = requested.filter(ch => ch !== 'sim' && !hasCreds(ch))
     const { resolveCallLLM } = await import('../src/llm.js')
-    const brain = await resolveCallLLM({ probe: true })
+    // A probe failure must degrade to honest offline mode, never crash `up` with
+    // a raw stack trace before the gateway is even started (P9 graceful degradation).
+    const brain = await resolveCallLLM({ probe: true }).catch(() => ({ callLLM: null, source: 'none' }))
     const casey = await createCasey({ channels, callLLM: brain.callLLM })
     await casey.start()
     const dashPort = Number(flags.port || 4000)
@@ -183,7 +192,14 @@ async function main() {
     const tokenNote = process.env.CASEY_DASHBOARD_TOKEN ? ` ${dim('(token required)')}` : ` ${yellow('(open - set CASEY_DASHBOARD_TOKEN)')}`
     console.log(`  dashboard: ${cyan(`http://localhost:${dash.port}`)}${tokenNote}`)
     console.log(dim('  press ctrl-c to stop'))
-    process.on('SIGINT', async () => { await dash.close(); await casey.stop(); process.exit(0) })
+    // Guard against a double Ctrl-C: the second SIGINT must not call process.exit
+    // while the first is still flushing the WAL and draining in-flight turns.
+    let exiting = false
+    process.on('SIGINT', async () => {
+      if (exiting) return
+      exiting = true
+      await dash.close(); await casey.stop(); process.exit(0)
+    })
     return
   }
 

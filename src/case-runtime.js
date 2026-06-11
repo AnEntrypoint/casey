@@ -15,4 +15,7 @@ export function getCaseStore() {
   return _store
 }
 
-export function hasCaseStore() { return !!_store }
+// Clear the singleton on shutdown so a second createCasey() in the same process
+// (notably back-to-back tests) starts from a fresh store rather than a stale,
+// already-closed handle. casey.stop() calls this after store.close().
+export function resetCaseStore() { _store = null }

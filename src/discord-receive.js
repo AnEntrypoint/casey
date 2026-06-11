@@ -61,6 +61,9 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
   const open = async () => {
     // Adapter.start() populates adapter.gatewayUrl via the bot gateway lookup.
     if (!adapter.gatewayUrl) await adapter.start()
+    // Drop the previous socket's listeners before replacing it so reconnects do
+    // not accumulate orphaned 'message'/'close'/'error' handlers over time.
+    if (ws) { try { ws.removeAllListeners(); ws.terminate() } catch { /* already gone */ } }
     ws = new WebSocket(adapter.gatewayUrl)
 
     ws.on('message', (raw) => {
@@ -69,6 +72,7 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
       switch (p.op) {
         case OP.HELLO:
           retries = 0                                 // connected: reset backoff
+          acked = true                                // fresh socket: clear any stale unacked state from the prior connection so the first heartbeat does not terminate it
           startHeartbeat(p.d.heartbeat_interval)
           identify()
           break

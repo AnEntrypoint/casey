@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const pathToFileUrl = (p) => pathToFileURL(p).href
 import { Gateway, bootHost } from 'freddie'
 import { createCaseStore } from './case-store.js'
-import { setCaseStore } from './case-runtime.js'
+import { setCaseStore, resetCaseStore } from './case-runtime.js'
 import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier } from './gateway-hooks.js'
 import { sweepCases } from './case-sweep.js'
 import { MockAdapter } from './sim/inject.js'
@@ -94,7 +94,13 @@ export class Casey {
       if (!hasNativeReceive) {
         const { connectDiscordReceive } = await import('./discord-receive.js')
         const orig = a.start.bind(a)
-        a.start = async () => { await orig(); this._disconnects.push(connectDiscordReceive(a)) }
+        a.start = async () => {
+          // A failed Discord start (bad token, gateway unreachable) must surface,
+          // not leave the channel half-initialised with no receive and no log.
+          try { await orig() }
+          catch (e) { this.log?.error?.('[casey] discord adapter.start failed', { error: e.message }); throw e }
+          this._disconnects.push(connectDiscordReceive(a))
+        }
       }
       return a
     }
@@ -165,6 +171,7 @@ export class Casey {
     await this.gateway?.stop()
     try { await this.drain() } catch { /* in-flight turn errored; already logged */ }
     await this.store?.close()
+    resetCaseStore()   // clear the process-wide singleton so the next boot is clean
   }
 }
 
@@ -176,7 +183,7 @@ export async function createCasey(opts) {
 
 // Minimal structured logger: one JSON line per event with a level + message +
 // context. Quiet when CASEY_LOG=silent.
-export function makeLogger(component = 'casey') {
+function makeLogger(component = 'casey') {
   const silent = process.env.CASEY_LOG === 'silent'
   const emit = (level, msg, ctx) => {
     if (silent) return

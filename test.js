@@ -20,7 +20,10 @@ const test = async (name, fn) => {
 
 async function main() {
   rmSync('./data', { recursive: true, force: true })
-  const casey = await createCasey({ channels: ['sim'], callLLM: stubLLM() })
+  // sweepIntervalMs:0 disables the periodic health sweep: it would otherwise fire
+  // mid-test and mutate tags / append observations concurrently with assertions,
+  // making the suite non-deterministic (P11). The sweep has its own direct tests.
+  const casey = await createCasey({ channels: ['sim'], callLLM: stubLLM(), sweepIntervalMs: 0 })
   await casey.start()
   const adapter = casey.adapters.sim
   const store = casey.store
@@ -716,6 +719,36 @@ async function main() {
     const res2 = await handler.call(ctx, 'whatsapp', { from: ext2, text: '', raw: { id: 'wamid.sticker.1', type: 'sticker', chatId: ext2 } })
     const rep3 = JSON.parse((await store.getCase(res2.caseId)).report || '{}')
     assert.ok(rep3.photos == null, `a sticker does not set photos: ${JSON.stringify(rep3)}`)
+  })
+  await test('inbound voice note is recorded on the report at ingress, without an agent turn', async () => {
+    const { makeCaseHandler } = await import('./src/gateway-hooks.js')
+    const handler = makeCaseHandler(store, { callLLM: null, autoRespond: false, log: { info(){}, warn(){}, error(){} } })
+    const ctx = { platforms: { get: () => null } }
+    const ext = 'audio-ingest-' + Date.now()
+    // A low-literacy farmer often speaks rather than types: WhatsApp surfaces a
+    // voice note as raw.audio (or type 'audio'). It must become explicit state.
+    const res = await handler.call(ctx, 'whatsapp', { from: ext, text: '', raw: { id: 'wamid.audio.1', type: 'audio', chatId: ext } })
+    const rep = JSON.parse((await store.getCase(res.caseId)).report || '{}')
+    assert.ok(rep.audio && /voice/i.test(rep.audio), `voice note recorded on report at ingress: ${JSON.stringify(rep)}`)
+    // Fill-if-empty: an operator's richer transcription survives a later voice note.
+    await store.mergeReport(res.caseId, { audio: 'farmer says 3 cattle dead since Tuesday near the river' })
+    await handler.call(ctx, 'whatsapp', { from: ext, text: '', raw: { id: 'wamid.audio.2', type: 'audio', chatId: ext } })
+    const rep2 = JSON.parse((await store.getCase(res.caseId)).report || '{}')
+    assert.equal(rep2.audio, 'farmer says 3 cattle dead since Tuesday near the river', 'fill-if-empty never clobbers a richer audio note')
+    // A sticker is not audio.
+    const ext2 = 'audio-neg-' + Date.now()
+    const res2 = await handler.call(ctx, 'whatsapp', { from: ext2, text: '', raw: { id: 'wamid.sticker.2', type: 'sticker', chatId: ext2 } })
+    const rep3 = JSON.parse((await store.getCase(res2.caseId)).report || '{}')
+    assert.ok(rep3.audio == null, `a sticker does not set audio: ${JSON.stringify(rep3)}`)
+  })
+  await test('guessLang detects SA-language stop/human words (yeka/hou op/umntu)', async () => {
+    const { guessLang } = await import('./src/gateway-hooks.js')
+    // A farmer who writes only a stop/human word in their own language must be
+    // detected, so the reply localizes instead of falling back to English.
+    assert.equal(guessLang('hou op los my'), 'af', 'Afrikaans stop words detected')
+    assert.equal(guessLang('yeka hambani umuntu'), 'zu', 'Zulu stop/human words detected')
+    assert.equal(guessLang('umntu hamba'), 'xh', 'Xhosa human/leave words detected')
+    assert.equal(guessLang('please help me'), 'en', 'plain English still falls back to English')
   })
   // ---- correlation: which cases are the SAME outbreak vs SEPARATE ----------
   await test('correlationScore: same outbreak scores high, unrelated scores low', async () => {
