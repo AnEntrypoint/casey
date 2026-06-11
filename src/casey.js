@@ -4,8 +4,8 @@
 //
 // Channels:
 //   whatsapp  --  freddie's Meta Graph webhook adapter (real)
-//   discord   --  freddie's adapter + our WS receive (real simulation)
-//   sim       --  MockAdapter (offline, no credentials)
+//   discord  --  freddie's adapter + our WS receive (real simulation)
+//   sim  --  MockAdapter (offline, no credentials)
 
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -65,7 +65,7 @@ export class Casey {
       callLLM: this.opts.callLLM || null,
       autoRespond: this.opts.autoRespond !== false,
       log: this.log,
-      notifyHandoff: this.opts.notifyHandoff || discordHandoffNotifier(),
+      notifyHandoff: this.opts.notifyHandoff || discordHandoffNotifier(undefined, this.log),
     })
     this.gateway.handleInbound = handler.bind(this.gateway)
     this._wrapInflight()

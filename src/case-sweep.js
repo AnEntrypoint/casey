@@ -2,12 +2,12 @@
 //
 // classifyCaseHealth says what is wrong with one case at one instant; the sweep
 // applies that across every open case and makes it OBSERVABLE and IDEMPOTENT:
-//   - desired health tags are recomputed from scratch each pass (execute-and-
+// - desired health tags are recomputed from scratch each pass (execute-and-
 //     inhibit -- never conditionally skip, always diff the full set), so a tag is
 //     added when a breach starts and CLEARED when it resolves;
-//   - exactly one observation is appended when a breach is newly entered, never
+// - exactly one observation is appended when a breach is newly entered, never
 //     re-spammed on subsequent passes while it persists;
-//   - only health:* tags are touched -- agent/operator tags (needs-human, merged,
+// - only health:* tags are touched -- agent/operator tags (needs-human, merged,
 //     split, ...) are preserved, never clobbered.
 // A leaked or runaway sweep is itself an over-time failure, so the scheduler that
 // drives this (casey.js) owns the interval and clears it on stop.
@@ -22,7 +22,7 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
   const summary = { scanned: 0, flagged: 0, cleared: 0, breaches: {} }
   // Only open cases can be unhealthy; a closed case is finished. listCases with no
   // filter returns recency-sorted; we classify each and skip closed defensively.
-  const cases = await store.listCases({}, { limit: 1000 })
+  const cases = await store.listCases({}, { limit: 10000 })
   for (const c of cases) {
     if (c.status === 'closed') continue
     summary.scanned++

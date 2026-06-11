@@ -18,7 +18,7 @@ const STOP = new Set(['the', 'a', 'an', 'of', 'at', 'in', 'on', 'near', 'by', 'a
 // Normalize a free-text field into a set of meaningful lowercased tokens.
 // Accent-stripped so "musina" and "Musína" match; stop-words dropped so a shared
 // "farm"/"area" is not mistaken for a shared place.
-export function tokens(s) {
+function tokens(s) {
   return new Set(
     String(s || '')
       .toLowerCase()
@@ -31,7 +31,7 @@ export function tokens(s) {
 
 // Jaccard overlap of two token sets: |A∩B| / |A∪B|, in [0,1]. Empty-vs-anything
 // is 0 (no evidence is not evidence of sameness).
-export function tokenOverlap(a, b) {
+function tokenOverlap(a, b) {
   if (!a.size || !b.size) return 0
   let inter = 0
   for (const t of a) if (b.has(t)) inter++
@@ -41,7 +41,7 @@ export function tokenOverlap(a, b) {
 // Digits only, last 9 kept, so +27 82 123 4567 and 082 123 4567 (the same SA
 // number written two ways) compare equal. Returns '' when there is nothing
 // phone-like, so two blanks never "match".
-export function normPhone(s) {
+function normPhone(s) {
   const d = String(s || '').replace(/\D/g, '')
   return d.length >= 7 ? d.slice(-9) : ''
 }
@@ -62,12 +62,12 @@ function onsetGapDays(a, b) {
 // Score how likely two cases are the SAME outbreak. Returns { score, reasons }.
 // score is in [0,1]; reasons explains every contributing signal in plain words.
 // Signals (each capped, then summed and clamped):
-//   - same contact number (channel+external_id) ............ strong
-//   - a contact_fallback on one matches the other's number . strong
-//   - shared location tokens ............................... strong, scaled
-//   - same species ......................................... moderate
-//   - shared symptom / suspected-disease tokens ............ moderate
-//   - close in time (same week) ............................ weak supporting
+// - same contact number (channel+external_id) ............ strong
+// - a contact_fallback on one matches the other's number . strong
+// - shared location tokens ............................... strong, scaled
+// - same species ......................................... moderate
+// - shared symptom / suspected-disease tokens ............ moderate
+// - close in time (same week) ............................ weak supporting
 // A case is never "the same" on time alone -- timing only AMPLIFIES a real
 // content match, it cannot manufacture one (guarded below).
 export function correlationScore(a, b) {

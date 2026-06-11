@@ -7,11 +7,11 @@
 // context-free turn), casey REPLACES handleInbound with makeCaseHandler():
 //
 //   inbound message
-//     -> find/create case (thatcher)
-//     -> log inbound event
-//     -> agent turn with case context + case tools (runTurn)
-//     -> log outbound event
-//     -> send reply via the channel adapter
+// -> find/create case (thatcher)
+// -> log inbound event
+// -> agent turn with case context + case tools (runTurn)
+// -> log outbound event
+// -> send reply via the channel adapter
 //
 // All writes go through the CaseStore, so the dashboard observes everything and
 // an operator can override case state at any time.
@@ -53,9 +53,9 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     `priority. You may quietly keep records current with the case_* tools, but how`,
     `you handle records has nothing to do with how you talk to the person.`,
     `Respect the handling mode "${caseRow.autonomy}":`,
-    `  - auto     -- act and move things along freely behind the scenes.`,
-    `  - assisted -- act, but leave anything risky for a human to confirm.`,
-    `  - observe  -- do not change records; only reply and note what you observe.`,
+    ` - auto -- act and move things along freely behind the scenes.`,
+    ` - assisted -- act, but leave anything risky for a human to confirm.`,
+    ` - observe -- do not change records; only reply and note what you observe.`,
     ``,
     // The "CURRENT CASE <ref> (id=<id>)" token is parsed by tooling/tests; keep it.
     `CURRENT CASE ${caseRow.ref} (id=${caseRow.id})  [private -- do not mention to the person]`,
@@ -122,7 +122,7 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     `English as a first language.`,
     `1. LANGUAGE: Reply in the SAME language the person actually wrote in. If their`,
     `   words are English (even broken or with local terms), reply in simple English`,
-    `   -- do NOT switch them to another language. Only reply in a South African`,
+    ` -- do NOT switch them to another language. Only reply in a South African`,
     `   language when THEIR OWN words were clearly in it: isiZulu words -> isiZulu;`,
     `   Afrikaans words -> Afrikaans; isiXhosa, Sesotho, Setswana likewise. When in`,
     `   any doubt, use simple English. Never switch`,
@@ -522,7 +522,7 @@ function mostImportantMissingField(reportRaw) {
   return hit ? hit[1] : null
 }
 
-// --- Contact intent detection ------------------------------------------------
+// Contact intent detection -- low-literacy / multilingual handlers
 //
 // Low-literacy / multilingual contacts often send one word, an emoji, or a
 // phrase in their own language. Before spending an LLM turn we check for a few
@@ -577,8 +577,12 @@ export function detectContactIntent(text) {
   const live = (keys) => keys.some(k =>
     k.includes(' ') ? phraseLive(k.split(' ')) : liveWords.has(k))
 
-  // STOP / HUMAN drive irreversible actions (opt-out, handoff): negation-guarded,
-  // and blocked by explicit exclude phrases ("no problem", "in person").
+  // STOP / HUMAN drive irreversible actions (opt-out, handoff): each is guarded by
+  // its own exclude list of false-positive phrases -- STOP_EXCLUDE catches negated
+  // forms ("dont stop", "bus stop"); HUMAN_EXCLUDE catches reported speech
+  // ("a person told me", "in person"). We do not suppress a STOP that pairs an
+  // exclude word with a real opt-out: losing a genuine opt-out is worse than an
+  // occasional false one.
   if (live(STOP_KEYS)  && !STOP_EXCLUDE.some(p => padded.includes(` ${p} `)))  return 'stop'
   if (live(HUMAN_KEYS) && !HUMAN_EXCLUDE.some(p => padded.includes(` ${p} `))) return 'human'
 
@@ -735,8 +739,8 @@ function plainStatus(status, lang = 'en') {
 // Proactive, contact-safe note sent when a request MOVES to a new stage on an
 // OPERATOR's action. Warm, no jargon, no dashes-as-punctuation (reads as a bot).
 // Internal stages (new, triaging) and closed return '' and are not sent:
-//   - new/triaging are internal review steps the contact need not hear about.
-//   - closed is silent because `resolved` already told them it is done; an
+// - new/triaging are internal review steps the contact need not hear about.
+// - closed is silent because `resolved` already told them it is done; an
 //     operator moving resolved->closed seconds later would otherwise double-send.
 export function stageNote(status) {
   return ({
@@ -751,11 +755,11 @@ export function stageNote(status) {
 // announcing. Reuses the dashboard's sendReply(caseRow, text) adapter.
 //
 // Guards (all must pass to send):
-//   - agent transitions  -- skipped; the agent already replies to the contact
+// - agent transitions -- skipped; the agent already replies to the contact
 //                           in its own warm, contextual message (no double-send).
-//   - opted-out tag      -- the contact said STOP; stay silent.
-//   - stageNote empty    -- nothing worth announcing for this stage.
-//   - dedup              -- skip if the most recent outbound is this exact note.
+// - opted-out tag -- the contact said STOP; stay silent.
+// - stageNote empty -- nothing worth announcing for this stage.
+// - dedup -- skip if the most recent outbound is this exact note.
 // "Only on real stage change" is guaranteed by transition() skipping no-ops.
 export function makeTransitionNotifier(store, sendReply, { log = console } = {}) {
   if (!sendReply) return null
@@ -836,15 +840,18 @@ export function intentReply(intent, caseRow, lang = 'en') {
 // Posts a one-line operator alert to a Discord webhook. Returns null if no URL is
 // configured, so handoff flagging works with or without Discord wired up.
 // allowed_mentions.parse:[] blocks a contact injecting @everyone via the subject.
-export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WEBHOOK) {
+export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WEBHOOK, log = null) {
   if (!webhookUrl) return null
   return async ({ case: c, channel, from }) => {
     const content = `A person is needed - case ${c.ref} on ${channel} (${from})`
       + (c.subject ? ` - ${c.subject}` : '')
+    // A flaky webhook must never break the handoff itself: the case is already
+    // flagged needs-human in the store, so the dashboard surfaces it regardless.
+    // Degrade to a warning rather than rejecting the inbound turn (P9).
     await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
-    })
+    }).catch((e) => { log?.warn?.('[casey] discord handoff webhook failed', e.message) })
   }
 }

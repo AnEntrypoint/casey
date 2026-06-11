@@ -367,8 +367,8 @@ export class CaseStore {
   // outbreaks on one thread. So grouping must be CORRECTABLE after the fact.
   //
   // mergeCases folds `source` into `target` (target stays canonical). It is:
-  //   - LOSSLESS  : every source event is re-pointed to target, never deleted.
-  //   - IDEMPOTENT: a source already merged (tagged 'merged', no remaining own
+  // - LOSSLESS  : every source event is re-pointed to target, never deleted.
+  // - IDEMPOTENT: a source already merged (tagged 'merged', no remaining own
   //                 events) is a no-op -- safe to retry after a partial failure.
   // Report merge is fill-if-empty so the canonical target never loses a value it
   // already held; tags are unioned. The source is left as an audited redirect and
@@ -396,7 +396,7 @@ export class CaseStore {
         return { merged: true, alreadyMerged: true, target: tgt, movedEvents: 0 }
       }
       // Move only the REAL report events, not audit residue a prior step wrote.
-      const srcEvents = await this.listEvents(sourceId, { limit: 1000 })
+      const srcEvents = await this.listEvents(sourceId)
       // 1) Re-point every source event onto the target -- lossless.
       for (const ev of srcEvents) await this.updateEvent(ev.id, { case_id: targetId })
       // 2) Fill-if-empty report merge (target value wins -- it is canonical).
@@ -452,7 +452,7 @@ export class CaseStore {
     return this._withLock(`${src0.channel}|${src0.external_id}`, async () => {
       const src = await this.getCase(sourceId)
       if (!src) return { error: 'case vanished during split' }
-      const all = await this.listEvents(sourceId, { limit: 1000 })
+      const all = await this.listEvents(sourceId)
       const byId = new Map(all.map(e => [e.id, e]))
       for (const id of ids) if (!byId.has(id)) return { error: `event ${id} is not on case ${src.ref}` }
       if (ids.length >= all.length) return { error: 'cannot split out every event -- that would empty the source case' }
@@ -512,7 +512,11 @@ export class CaseStore {
   // insertion-order behaviour. created_at is a unix-seconds integer; we tiebreak
   // on id so same-second events keep a stable order.
   async listEvents(caseId, opts = {}) {
-    const rows = await this.t.list('event', { case_id: caseId }, { limit: 200, ...opts })
+    // Default high, not 200: merge/split and conversation-context callers need the
+    // WHOLE timeline -- a silent 200/1000 cap drops events on a long case, losing
+    // history on merge and miscounting the empty-source guard on split (P1/P9).
+    // Explicit-limit callers (case_get's 30) still win.
+    const rows = await this.t.list('event', { case_id: caseId }, { ...opts, limit: opts.limit ?? 10000 })
     return rows.sort(byCreatedAsc)
   }
 

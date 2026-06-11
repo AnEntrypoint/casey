@@ -75,22 +75,21 @@ export function buildCaseToolset(storeOrNull) {
             priority: str('Priority', { enum: ['low', 'normal', 'high', 'urgent'] }),
             tags: str('Comma-separated tags'),
             assignee: str('Operator handle, or "agent"'),
-            autonomy: str('Autonomy level', { enum: ['auto', 'assisted', 'observe'] }),
           },
           required: ['id'],
         },
       },
       handler: async ({ id, ...patch }) => {
-        const clean = pick(patch, ['subject', 'summary', 'priority', 'tags', 'assignee', 'autonomy'])
+        const clean = pick(patch, ['subject', 'summary', 'priority', 'tags', 'assignee'])
         if (!Object.keys(clean).length) return { error: 'no editable fields supplied' }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
-        // In observe mode the agent may only observe; the sole allowed change is
-        // an operator/agent raising autonomy back up (never the agent editing
-        // case content). Block content edits.
+        // Autonomy is operator control: it is set only from the dashboard, never by
+        // the agent -- otherwise the agent could flip observe back to auto and
+        // escape the very mode an operator used to stop it acting. So in observe
+        // mode the agent may only observe; all content edits are blocked.
         if (c.autonomy === 'observe') {
-          const editsContent = Object.keys(clean).some(k => k !== 'autonomy')
-          if (editsContent) return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
+          return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
         }
         const updated = await store().updateCase(id, clean, AGENT_USER)
         await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `updated ${Object.keys(clean).join(', ')}`, data: clean })

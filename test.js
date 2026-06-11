@@ -161,7 +161,7 @@ async function main() {
       const t = (await store.listEvents(caseId)).filter(e => e.kind === 'transition').pop()
       assert.ok(JSON.stringify(t).includes('operator-reason-xyz') || (t.text && t.text.includes('operator-reason-xyz')), 'reason recorded on transition')
     } else {
-      assert.ok(true, 'no transition available from ' + cur + ' — skipped')
+      assert.ok(true, 'no transition available from ' + cur + ' - skipped')
     }
   })
 

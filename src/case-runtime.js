@@ -1,7 +1,7 @@
 // case-runtime.js  --  process-wide singleton holding the initialized CaseStore.
 //
 // freddie discovers plugins by scanning directories and importing their
-// plugin.js. A plugin therefore can't be handed the CaseStore as an argument  -- 
+// plugin.js. A plugin therefore can't be handed the CaseStore as an argument -- 
 // it has to reach a shared instance. The CLI calls setCaseStore() after
 // init(), and the case-tools plugin calls getCaseStore() lazily inside its
 // handlers (by which time the store exists).

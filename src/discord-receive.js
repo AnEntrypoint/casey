@@ -33,6 +33,7 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
   }))
 
   const startHeartbeat = (interval) => {
+    if (heartbeat) clearInterval(heartbeat)   // never stack intervals across reconnects
     heartbeat = setInterval(() => {
       // A missed ack means the socket is a zombie: terminate it. The 'close'
       // handler then drives the (backed-off) reconnect, so we do NOT also loop here.
@@ -96,7 +97,10 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
     })
   }
 
-  open().catch((e) => log.error?.('[discord] connect failed', e.message))
+  // The INITIAL connect must retry like a reconnect does: without this, a gateway
+  // that is down at startup leaves the socket dead forever, silently dropping
+  // every inbound Discord message (P9 -- no silent catastrophe).
+  open().catch((e) => { log.error?.('[discord] connect failed', e.message); scheduleReconnect() })
 
   return () => { closed = true; clearInterval(heartbeat); try { ws?.close() } catch {} }
 }

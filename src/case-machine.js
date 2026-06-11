@@ -51,8 +51,11 @@ export function canTransition(machine, from, to, role) {
     return { ok: false, error: `cannot move ${from} -> ${to}; allowed: ${allowed || 'none'}` }
   }
   const rr = toNode.meta?.requires_role || []
-  if (rr.length && role && !rr.includes(role)) {
-    return { ok: false, error: `role "${role}" cannot enter "${to}" (requires ${rr.join('/')})` }
+  // A role-gated target must reject a MISSING role too, not just a wrong one --
+  // otherwise an unauthenticated caller (role undefined) walks straight through
+  // the gate it exists to enforce (P6/P8).
+  if (rr.length && (!role || !rr.includes(role))) {
+    return { ok: false, error: `role "${role || 'none'}" cannot enter "${to}" (requires ${rr.join('/')})` }
   }
   return { ok: true }
 }

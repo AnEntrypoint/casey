@@ -25,7 +25,7 @@ let [, , cmd, ...rest] = process.argv
 if (cmd === '--version' || cmd === '-v') { cmd = 'version' }
 if (cmd === '--help' || cmd === '-h') { cmd = 'help' }
 
-// ---- tiny terminal colorizer (respects NO_COLOR and non-TTY) ----
+// tiny terminal colorizer (respects NO_COLOR and non-TTY)
 const COLOR = process.stdout.isTTY && !process.env.NO_COLOR
 const c = (code) => (s) => COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s)
 const bold = c('1'), dim = c('2'), green = c('32'), red = c('31'), yellow = c('33'), cyan = c('36')
@@ -98,7 +98,7 @@ ${bold('usage:')}
   casey cases [--status <stage>]                list cases
   casey show <ref|id>                           show a case + timeline
 
-${bold('flags:')}  --help / -h on any command,  --version / -v
+${bold('flags:')} --help / -h on any command, --version / -v
 
 ${bold('channels (set in .env or the environment):')}
   DISCORD_BOT_TOKEN                             enable discord
@@ -114,7 +114,7 @@ async function main() {
 
   if (cmd === 'init') {
     const dest = path.join(ROOT, '.env')
-    if (existsSync(dest)) { console.log(warn(`.env already exists at ${dest} — leaving it untouched.`)); return }
+    if (existsSync(dest)) { console.log(warn(`.env already exists at ${dest} - leaving it untouched.`)); return }
     writeFileSync(dest, ENV_TEMPLATE)
     console.log(ok(`wrote ${cyan(dest)}`))
     console.log(`  Fill in the channel(s) you want, then run ${cyan('casey doctor')} to check it.`)
@@ -129,25 +129,25 @@ async function main() {
     console.log(major >= 18 ? ok(`Node ${process.versions.node}`) : bad(`Node ${process.versions.node} (need >=18)`))
     if (major < 18) problems++
     // .env presence
-    console.log(existsSync(path.join(ROOT, '.env')) ? ok('.env present') : warn(`.env missing — run ${cyan('casey init')} (channels can still come from the environment)`))
+    console.log(existsSync(path.join(ROOT, '.env')) ? ok('.env present') : warn(`.env missing - run ${cyan('casey init')} (channels can still come from the environment)`))
     // dependencies resolve
     for (const dep of ['anentrypoint-design', 'thatcher', 'freddie', 'express']) {
       try { await import(dep); console.log(ok(`dependency ${dep} resolves`)) }
-      catch { console.log(bad(`dependency ${dep} does not resolve — run npm install`)); problems++ }
+      catch { console.log(bad(`dependency ${dep} does not resolve - run npm install`)); problems++ }
     }
     // channels
     for (const ch of ['discord', 'whatsapp']) {
       if (hasCreds(ch)) console.log(ok(`channel ${ch}: credentials present`))
-      else if (partialCreds(ch)) { console.log(bad(`channel ${ch}: partial credentials — set BOTH WHATSAPP_API_TOKEN and WHATSAPP_PHONE_NUMBER_ID`)); problems++ }
+      else if (partialCreds(ch)) { console.log(bad(`channel ${ch}: partial credentials - set BOTH WHATSAPP_API_TOKEN and WHATSAPP_PHONE_NUMBER_ID`)); problems++ }
       else console.log(dim(`  channel ${ch}: not configured (optional)`))
     }
-    if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected — only the offline sim will run'))
+    if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected - only the offline sim will run'))
     // dashboard token
-    console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset — dashboard is open to anyone who can reach the port'))
+    console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset - dashboard is open to anyone who can reach the port'))
     // port
     const port = Number(flags.port || 4000)
-    console.log(await portFree(port) ? ok(`port ${port} is free`) : bad(`port ${port} is in use — start with --port <other>`))
-    console.log(problems ? red(`\n${problems} problem(s) to fix before ${cyan('casey up')}`) : green('\nall good — run casey up'))
+    console.log(await portFree(port) ? ok(`port ${port} is free`) : bad(`port ${port} is in use - start with --port <other>`))
+    console.log(problems ? red(`\n${problems} problem(s) to fix before ${cyan('casey up')}`) : green('\nall good - run casey up'))
     process.exit(problems ? 1 : 0)
   }
 
@@ -175,12 +175,12 @@ async function main() {
     }
     const dash = createDashboard(casey.store, { port: dashPort, sendReply, llmStatus })
     console.log(bold('casey up') + dim(`  v${pkgVersion()}`))
-    console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(`   (skipped, no creds: ${skipped.join(', ')} — run casey doctor)`) : ''))
+    console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(`   (skipped, no creds: ${skipped.join(', ')} - run casey doctor)`) : ''))
     if (brain.source === 'acptoapi') console.log(`  AI helper: ${green('online')}${dim(`   (${brain.model} via ${brain.url})`)}`)
-    else if (brain.source === 'stub') console.log(`  AI helper: ${yellow('test stub')}${dim('   (offline fake replies — for testing only)')}`)
+    else if (brain.source === 'stub') console.log(`  AI helper: ${yellow('test stub')}${dim('   (offline fake replies - for testing only)')}`)
     else console.log(`  AI helper: ${yellow('offline')}${dim('   (auto-replies paused; contacts get a holding message and wait for a person. Start acptoapi to enable AI.)')}`)
-    if (channels.length === 1 && channels[0] === 'sim') console.log(warn('only the offline sim is active — no real messages will arrive. Connect a channel in .env.'))
-    const tokenNote = process.env.CASEY_DASHBOARD_TOKEN ? ` ${dim('(token required)')}` : ` ${yellow('(open — set CASEY_DASHBOARD_TOKEN)')}`
+    if (channels.length === 1 && channels[0] === 'sim') console.log(warn('only the offline sim is active - no real messages will arrive. Connect a channel in .env.'))
+    const tokenNote = process.env.CASEY_DASHBOARD_TOKEN ? ` ${dim('(token required)')}` : ` ${yellow('(open - set CASEY_DASHBOARD_TOKEN)')}`
     console.log(`  dashboard: ${cyan(`http://localhost:${dash.port}`)}${tokenNote}`)
     console.log(dim('  press ctrl-c to stop'))
     process.on('SIGINT', async () => { await dash.close(); await casey.stop(); process.exit(0) })
@@ -203,7 +203,7 @@ async function main() {
     if (flags.help) {
       console.log('casey sim ["message" ...] [--scenario <name>]')
       console.log('  Run an offline simulated conversation against the stub model.')
-      console.log('  --scenario replays a built-in low-literacy persona. Available:')
+      console.log(' --scenario replays a built-in low-literacy persona. Available:')
       for (const n of scenarioNames()) console.log(`    ${cyan(n)}`)
       return
     }
@@ -217,7 +217,7 @@ async function main() {
         console.log(dim('  available: ') + scenarioNames().map(cyan).join(', '))
         process.exit(1)
       }
-      console.log(bold(`scenario: ${picked.name}`) + dim(`  -- ${picked.description}`))
+      console.log(bold(`scenario: ${picked.name}`) + dim(` -- ${picked.description}`))
       script = picked.lines
     } else {
       const lines = rest.filter(a => !a.startsWith('--'))

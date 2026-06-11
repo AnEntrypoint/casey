@@ -2,10 +2,10 @@
 //
 // Serves a small single-page app styled with anentrypoint-design's CSS, backed
 // by a JSON API over the CaseStore. This is the human surface of casey:
-//   - observe   read every case, open one, read its full timeline
-//   - edit      change subject/summary/priority/tags/assignee/autonomy
-//   - override  force any valid workflow transition as an operator
-//   - reply     send a message to the contact on their channel as a human
+// - observe   read every case, open one, read its full timeline
+// - edit      change subject/summary/priority/tags/assignee/autonomy
+// - override  force any valid workflow transition as an operator
+// - reply     send a message to the contact on their channel as a human
 //
 // Everything written here goes through the same CaseStore the agent uses, so
 // agent and operator share one timeline. The API is the operator-override
@@ -13,6 +13,7 @@
 
 import express from 'express'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -29,10 +30,18 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
 
   // Token gate (only when a token is configured). Accepts Authorization: Bearer
   // <token>, X-Casey-Token header, or ?token= query (for the page load).
+  // Constant-time compare so the gate does not leak the token one character at a
+  // time through response timing (P6: the worst case is a patient attacker).
+  const tokenBuf = token ? Buffer.from(token) : null
+  const matches = (candidate) => {
+    if (!candidate) return false
+    const buf = Buffer.from(String(candidate))
+    return buf.length === tokenBuf.length && crypto.timingSafeEqual(buf, tokenBuf)
+  }
   const authed = (req) => {
     if (!token) return true
     const bearer = (req.get('authorization') || '').replace(/^Bearer\s+/i, '')
-    return bearer === token || req.get('x-casey-token') === token || req.query.token === token
+    return matches(bearer) || matches(req.get('x-casey-token')) || matches(req.query.token)
   }
   app.use((req, res, next) => {
     if (req.path.startsWith('/design')) return next()
@@ -169,6 +178,8 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   app.post('/api/cases/:id/note', async (req, res) => {
     const text = str(res, req.body, 'text'); if (text === undefined) return
     if (!text.trim()) return res.status(400).json({ error: 'empty note' })
+    const c = await store.getCase(req.params.id)
+    if (!c) return res.status(404).json({ error: 'not found' })
     await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text })
     res.json({ ok: true })
   })
@@ -181,7 +192,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     try {
       const { classifyCaseHealth } = await import('../case-health.js')
       const now = Date.now()
-      const open = (await store.listCases({}, { limit: 500 })).filter(c => c.status !== 'closed')
+      const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
       const flagged = []
       for (const c of open) {
         const breaches = classifyCaseHealth(c, now)
@@ -234,15 +245,27 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       if (!text) return res.status(400).json({ error: 'empty reply' })
       const c = await store.getCase(req.params.id)
       if (!c) return res.status(404).json({ error: 'not found' })
-      if (sendReply) await sendReply(c, text)
-      await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id } })
-      // The operator personally answered, so the "wants a human" flag is satisfied;
-      // clear it or the triage inbox keeps this case pinned at the top forever.
-      const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
-      if (tags.includes('needs-human')) {
-        await store.updateCase(c.id, { tags: tags.filter(t => t !== 'needs-human').join(',') }, OPERATOR)
+      // Try to deliver before claiming success: if the channel send throws, we
+      // record the failure and do NOT clear needs-human, so a contact who never
+      // got the reply stays pinned in triage rather than silently dropped (P10).
+      let delivered = false
+      if (sendReply) {
+        try { await sendReply(c, text); delivered = true }
+        catch (e) {
+          await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send operator reply on channel: ${e.message || 'unknown error'}` })
+        }
       }
-      res.json({ ok: true, sent: !!sendReply })
+      await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id } })
+      // The operator personally answered, so the "wants a human" flag is satisfied
+      // -- but only once the message actually reached the contact. Clear it then,
+      // or the triage inbox keeps this case pinned at the top forever.
+      if (delivered) {
+        const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+        if (tags.includes('needs-human')) {
+          await store.updateCase(c.id, { tags: tags.filter(t => t !== 'needs-human').join(',') }, OPERATOR)
+        }
+      }
+      res.json({ ok: true, sent: !!sendReply, delivered })
     } catch (e) { res.status(400).json({ error: e.message }) }
   })
 
@@ -270,9 +293,9 @@ const PAGE = /* html */ `<!doctype html>
 <link rel="stylesheet" href="/design/editor-primitives.css">
 <style>
   :root{--bg:#0f1115;--fg:#e6e6e6;--panel:#11141a;--border:#262a33;--border-soft:#20242c;
-        --muted:#9aa6b2;--faint:#6b7685;--accent:#3b6ea5;--accent-soft:#1b2430;--hover:#171a21;--danger:#5a2230}
+ --muted:#9aa6b2;--faint:#6b7685;--accent:#3b6ea5;--accent-soft:#1b2430;--hover:#171a21;--danger:#5a2230}
   html[data-theme=light]{--bg:#f6f7f9;--fg:#1a1f29;--panel:#fff;--border:#d6dbe2;--border-soft:#e4e8ee;
-        --muted:#5a6675;--faint:#8a94a3;--accent:#2f6fb0;--accent-soft:#e7f0fa;--hover:#eef1f5;--danger:#c0392b}
+ --muted:#5a6675;--faint:#8a94a3;--accent:#2f6fb0;--accent-soft:#e7f0fa;--hover:#eef1f5;--danger:#c0392b}
   *{box-sizing:border-box}
   body{margin:0;font-family:var(--font-sans,system-ui);background:var(--bg);color:var(--fg)}
   .wrap{display:grid;grid-template-columns:360px 1fr;height:100vh}
