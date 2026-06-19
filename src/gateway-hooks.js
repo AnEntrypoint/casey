@@ -530,9 +530,12 @@ function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) +
 // which is the signal to let the agent make a single gentle closing ask instead
 // of taking the canned thanks-shortcut. Tolerates a missing/malformed report.
 const VISIT_CRITICAL_KEYS = ['species', 'symptoms', 'location', 'how_to_find', 'farmer_available', 'contact_fallback']
+function parseReportSafe(raw) {
+  try { return raw ? JSON.parse(raw) : {} } catch { return {} }
+}
+
 export function reportMissingVisitCritical(reportRaw) {
-  let r = {}
-  try { r = reportRaw ? JSON.parse(reportRaw) : {} } catch { r = {} }
+  const r = parseReportSafe(reportRaw)
   return VISIT_CRITICAL_KEYS.some(k => r[k] == null || String(r[k]).trim() === '')
 }
 
@@ -548,8 +551,7 @@ const VISIT_CRITICAL_ASK = [
   ['contact_fallback', 'another number to reach them if they are away'],
 ]
 function mostImportantMissingField(reportRaw) {
-  let r = {}
-  try { r = reportRaw ? JSON.parse(reportRaw) : {} } catch { r = {} }
+  const r = parseReportSafe(reportRaw)
   const hit = VISIT_CRITICAL_ASK.find(([k]) => r[k] == null || String(r[k]).trim() === '')
   return hit ? hit[1] : null
 }
@@ -880,10 +882,13 @@ export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WE
     // A flaky webhook must never break the handoff itself: the case is already
     // flagged needs-human in the store, so the dashboard surfaces it regardless.
     // Degrade to a warning rather than rejecting the inbound turn (P9).
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 5000)
     await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
-    }).catch((e) => { log?.warn?.('[casey] discord handoff webhook failed', e.message) })
+      signal: ac.signal,
+    }).then(() => clearTimeout(timer), (e) => { clearTimeout(timer); log?.warn?.('[casey] discord handoff webhook failed', e.message) })
   }
 }

@@ -25,7 +25,7 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
   // ceiling and give up after MAX_RETRIES, then stop loudly. A successful
   // connection (HELLO) resets the counter so transient drops recover instantly.
   const BASE_MS = 3000, MAX_MS = 30000, MAX_RETRIES = 8
-  let retries = 0, reconnecting = false
+  let retries = 0, reconnecting = false, reconnectTimeout = null
 
   const identify = () => ws.send(JSON.stringify({
     op: OP.IDENTIFY,
@@ -48,14 +48,20 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
   const scheduleReconnect = () => {
     if (closed || reconnecting) return
     if (retries >= MAX_RETRIES) {
-      log.error?.(`[discord] gateway unreachable after ${MAX_RETRIES} attempts, giving up`)
+      log.error?.(`[discord] reconnect failed after ${MAX_RETRIES} attempts, retrying in 1 hour`)
+      reconnecting = true
+      reconnectTimeout = setTimeout(() => {
+        reconnecting = false
+        retries = 0
+        open().catch((e) => { log.error?.('[discord] reconnect failed', e.message); scheduleReconnect() })
+      }, 60 * 60 * 1000)
       return
     }
     reconnecting = true
     const delay = Math.min(BASE_MS * 2 ** retries, MAX_MS)
     retries++
     log.warn?.(`[discord] gateway closed, reconnecting in ${Math.round(delay / 1000)}s (attempt ${retries}/${MAX_RETRIES})`)
-    setTimeout(() => { reconnecting = false; open().catch((e) => { log.error?.('[discord] reconnect failed', e.message); scheduleReconnect() }) }, delay)
+    reconnectTimeout = setTimeout(() => { reconnecting = false; open().catch((e) => { log.error?.('[discord] reconnect failed', e.message); scheduleReconnect() }) }, delay)
   }
 
   const open = async () => {
@@ -106,5 +112,5 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
   // every inbound Discord message (P9 -- no silent catastrophe).
   open().catch((e) => { log.error?.('[discord] connect failed', e.message); scheduleReconnect() })
 
-  return () => { closed = true; clearInterval(heartbeat); try { ws?.close() } catch {} }
+  return () => { closed = true; clearInterval(heartbeat); clearTimeout(reconnectTimeout); try { ws?.close() } catch {} }
 }

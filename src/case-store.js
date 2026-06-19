@@ -156,7 +156,7 @@ export class CaseStore {
     let best = null
     for (const status of Object.keys(this._wf)) {
       if (status === 'closed') continue
-      const rows = await this.t.list('case', { channel, external_id, status }, { limit: 1000 })
+      const rows = await this.t.list('case', { channel, external_id, status }, { limit: 2 })
       for (const r of rows) if (!best || (r.created_at || 0) > (best.created_at || 0)) best = r
     }
     return best
@@ -247,8 +247,11 @@ export class CaseStore {
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe') return { error: 'observe' }
       let current = {}
-      try { current = c.report ? JSON.parse(c.report) : {} } catch { current = {} }
-      const merged = { ...current, ...incoming }
+      try { current = c.report ? JSON.parse(c.report) : {} } catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); current = {} }
+      const merged = { ...current }
+      for (const [k, v] of Object.entries(incoming)) {
+        if (v != null && String(v).trim() !== '') merged[k] = v
+      }
       await this.updateCase(caseId, { report: JSON.stringify(merged) }, user)
       return { report: merged }
     })
@@ -386,10 +389,13 @@ export class CaseStore {
     if (tgt0.autonomy === 'observe') return { error: 'observe' }
     // Lock the TARGET conversation: merge mutates the target's report/tags and
     // re-homes events onto it, so it must serialize against target-side writes.
-    return this._withLock(`${tgt0.channel}|${tgt0.external_id}`, async () => {
+    const srcKey = `${src0.channel}|${src0.external_id}`
+    const tgtKey = `${tgt0.channel}|${tgt0.external_id}`
+    const mergeFn = async () => {
       const src = await this.getCase(sourceId)
       const tgt = await this.getCase(targetId)
       if (!src || !tgt) return { error: 'case vanished during merge' }
+      if (tgt.autonomy === 'observe') return { error: 'observe' }
       const srcTags = new Set((src.tags || '').split(',').map(s => s.trim()).filter(Boolean))
       // Idempotency: a source already folded in is tagged 'merged'. Retrying the
       // merge (e.g. after a crash between steps) must not move its redirect note
@@ -405,8 +411,8 @@ export class CaseStore {
       for (const ev of srcEvents) await this.updateEvent(ev.id, { case_id: targetId })
       // 2) Fill-if-empty report merge (target value wins -- it is canonical).
       let srcReport = {}, tgtReport = {}
-      try { srcReport = src.report ? JSON.parse(src.report) : {} } catch { srcReport = {} }
-      try { tgtReport = tgt.report ? JSON.parse(tgt.report) : {} } catch { tgtReport = {} }
+      try { srcReport = src.report ? JSON.parse(src.report) : {} } catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId: sourceId, error: e.message }); srcReport = {} }
+      try { tgtReport = tgt.report ? JSON.parse(tgt.report) : {} } catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId: targetId, error: e.message }); tgtReport = {} }
       const mergedReport = { ...tgtReport }
       for (const [k, v] of Object.entries(srcReport)) {
         const have = tgtReport[k] != null && String(tgtReport[k]).trim() !== ''
@@ -436,7 +442,10 @@ export class CaseStore {
       })
       await this._forceClose(sourceId, `merged into ${tgt.ref}`, SYSTEM_USER)
       return { merged: true, target: await this.getCase(targetId), source: await this.getCase(sourceId), movedEvents: srcEvents.length }
-    })
+    }
+    if (srcKey === tgtKey) return this._withLock(tgtKey, mergeFn)
+    const [key1, key2] = [srcKey, tgtKey].sort()
+    return this._withLock(key1, () => this._withLock(key2, mergeFn))
   }
 
   // splitCase carves a subset of a case's events into a NEW case -- the inverse
@@ -456,6 +465,7 @@ export class CaseStore {
     return this._withLock(`${src0.channel}|${src0.external_id}`, async () => {
       const src = await this.getCase(sourceId)
       if (!src) return { error: 'case vanished during split' }
+      if (src.autonomy === 'observe') return { error: 'observe' }
       const all = await this.listEvents(sourceId)
       const byId = new Map(all.map(e => [e.id, e]))
       for (const id of ids) if (!byId.has(id)) return { error: `event ${id} is not on case ${src.ref}` }

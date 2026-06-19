@@ -28,7 +28,7 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
     summary.scanned++
     let breaches
     try { breaches = classifyCaseHealth(c, now, thresholds) }
-    catch (e) { log?.warn?.('[sweep] classify failed', { caseId: c.id, error: e.message }); continue }
+    catch (e) { log?.warn?.('[sweep] classify failed', { caseId: c.id, error: e.message }); summary.errors.push({ caseId: c.id, error: e.message, phase: 'classify' }); continue }
     const desired = new Set(breaches.map(b => healthTag(b.breach)))
 
     const current = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)

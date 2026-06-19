@@ -67,7 +67,7 @@ function partialCreds(ch) {
 function portFree(port) {
   return new Promise((resolve) => {
     const s = net.createServer()
-    s.once('error', () => resolve(false))
+    s.once('error', () => { s.close?.(); resolve(false) })
     s.once('listening', () => s.close(() => resolve(true)))
     s.listen(port, '127.0.0.1')
   })

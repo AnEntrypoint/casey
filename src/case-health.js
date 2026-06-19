@@ -68,7 +68,11 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   if (status === 'closed' || !OPEN.has(status)) return out
 
   const touched = lastTouch(caseRow)
-  const idle = Number.isFinite(touched) ? now - touched : 0
+  if (!Number.isFinite(touched)) {
+    out.push({ breach: 'timestamp_corrupt', since_ms: 0, detail: 'case timestamps missing or corrupted; unable to assess staleness' })
+    return out
+  }
+  const idle = now - touched
 
   // A resolved case is awaiting only closure: its single over-time failure is
   // never being closed. It is not "stale/stuck/abandoned" -- the work is done.
@@ -120,4 +124,4 @@ function hours(msVal) {
 
 // Stable tag name for a breach, so the sweep can set/clear them idempotently.
 export function healthTag(breach) { return 'health:' + breach }
-export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'abandoned_intake', 'never_closed'].map(healthTag)
+export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'abandoned_intake', 'never_closed', 'timestamp_corrupt'].map(healthTag)

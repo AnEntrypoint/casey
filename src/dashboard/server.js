@@ -985,7 +985,8 @@ async function refreshHealth(){
   el.style.color=h.ok?'#1c8c44':'#9a6a00'
 }
 async function boot(){ await loadCases(); await refreshHealth(); const id=restoreFromHash(); if(id) openCase(id) }
-boot(); setInterval(loadCases, 5000); setInterval(refreshHealth, 15000)
+boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000)
+window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv) })
 window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHealth, get lastHealth(){return lastHealth},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},

@@ -29,7 +29,7 @@ function tokens(s) {
   )
 }
 
-// Jaccard overlap of two token sets: |A∩B| / |A∪B|, in [0,1]. Empty-vs-anything
+// Jaccard overlap of two token sets: |A & B| / |A | B|, in [0,1]. Empty-vs-anything
 // is 0 (no evidence is not evidence of sameness).
 function tokenOverlap(a, b) {
   if (!a.size || !b.size) return 0
@@ -55,7 +55,7 @@ function parseReport(c) {
 // null when either side is unknown.
 function onsetGapDays(a, b) {
   const ta = Number(a?.created_at), tb = Number(b?.created_at)
-  if (!Number.isFinite(ta) || !Number.isFinite(tb) || !ta || !tb) return null
+  if (!Number.isFinite(ta) || !Number.isFinite(tb)) return null
   return Math.abs(ta - tb) / 86400
 }
 
@@ -131,7 +131,3 @@ export function suggestLinks(target, others, threshold = SUGGEST_THRESHOLD) {
   }
   return out.sort((x, y) => y.score - x.score)
 }
-
-
-function nonEmpty(v) { return v != null && String(v).trim() !== '' }
-function safeParse(s) { try { return s ? JSON.parse(s) : {} } catch { return {} } }
