@@ -25,6 +25,7 @@ const PAGE_MAX = 200
 // opts.token   shared secret; when set, /api and / require ?token= or Bearer header.
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
 export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null } = {}) {
+  if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   app.use(express.json())
 
@@ -42,7 +43,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   const authed = (req) => {
     if (!token) return true
     const bearer = (req.get('authorization') || '').replace(/^Bearer\s+/i, '')
-    return matches(bearer) || matches(req.get('x-casey-token')) || matches(req.query.token)
+    return matches(bearer) || matches(req.get('x-casey-token'))
   }
   app.use((req, res, next) => {
     if (req.path.startsWith('/design')) return next()
@@ -53,7 +54,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   app.use('/design', express.static(DESIGN_DIR))
 
   const clampLimit = (v, d) => Math.min(PAGE_MAX, Math.max(1, parseInt(v, 10) || d))
-  const offsetOf = (v) => Math.max(0, parseInt(v, 10) || 0)
+  const offsetOf = (v) => Math.min(50000, Math.max(0, parseInt(v, 10) || 0))
 
   // Adversarial-Structural: reject malformed mutations with a clear 4xx before
   // thatcher is touched. No framework, no dependency. MAX_LEN is a product cap
@@ -152,11 +153,15 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         patch[k] = v
       }
       if (!Object.keys(patch).length) return res.status(400).json({ error: 'no editable fields' })
+      if (Object.keys(patch).some(k => k !== 'autonomy')) {
+        const c = await store.getCase(req.params.id)
+        if (c?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy setting can be changed' })
+      }
       const updated = await store.updateCase(req.params.id, patch, OPERATOR)
       if (!updated) return res.status(404).json({ error: 'not found' })
       await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${Object.keys(patch).join(', ')}`, data: patch })
       res.json(updated)
-    } catch (e) { res.status(400).json({ error: e.message }) }
+    } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
   app.post('/api/cases/:id/transition', async (req, res) => {
@@ -173,16 +178,18 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       }
       await store.transition(req.params.id, to, { user: OPERATOR, reason: reason || 'operator override' })
       res.json(await store.getCase(req.params.id))
-    } catch (e) { res.status(400).json({ error: e.message }) }
+    } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
   app.post('/api/cases/:id/note', async (req, res) => {
-    const text = str(res, req.body, 'text'); if (text === undefined) return
-    if (!text.trim()) return res.status(400).json({ error: 'empty note' })
-    const c = await store.getCase(req.params.id)
-    if (!c) return res.status(404).json({ error: 'not found' })
-    await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text })
-    res.json({ ok: true })
+    try {
+      const text = str(res, req.body, 'text'); if (text === undefined) return
+      if (!text.trim()) return res.status(400).json({ error: 'empty note' })
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text })
+      res.json({ ok: true })
+    } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
   // Cases the time-guardrails flagged as going wrong: stale, stuck, an unanswered
@@ -234,7 +241,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const res2 = await store.mergeCases(into, req.params.id, OPERATOR, { reason: reason || 'operator merge' })
       if (res2.error) return res.status(400).json({ error: res2.error })
       res.json({ ok: true, movedEvents: res2.movedEvents, alreadyMerged: !!res2.alreadyMerged })
-    } catch (e) { res.status(400).json({ error: e.message }) }
+    } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
   // Operator takes over the conversation: send a message to the contact on
@@ -267,7 +274,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         }
       }
       res.json({ ok: true, sent: !!sendReply, delivered })
-    } catch (e) { res.status(400).json({ error: e.message }) }
+    } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
   app.get('/', (_req, res) => res.type('html').send(PAGE))

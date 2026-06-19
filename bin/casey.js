@@ -146,7 +146,8 @@ async function main() {
     // is present). Without it anyone who can reach the webhook can forge inbound
     // farmer messages, so flag it loudly when the channel is otherwise live.
     if (hasCreds('whatsapp') && !process.env.WHATSAPP_APP_SECRET) {
-      console.log(warn('WHATSAPP_APP_SECRET unset - inbound webhook signatures are NOT verified; anyone who can reach the webhook can forge messages. Set it to reject forged inbound.'))
+      console.log(bad('WHATSAPP_APP_SECRET is required to enable WhatsApp (verify inbound webhook signatures)'))
+      problems++
     }
     if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected - only the offline sim will run'))
     // dashboard token
@@ -163,6 +164,7 @@ async function main() {
     const requested = (flags.channels || 'sim,discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
     const channels = requested.filter(ch => ch === 'sim' || hasCreds(ch))
     const skipped = requested.filter(ch => ch !== 'sim' && !hasCreds(ch))
+    if (!channels.length) { console.log(bad('no channels available - set credentials or include sim in --channels')); process.exit(1) }
     const { resolveCallLLM } = await import('../src/llm.js')
     // A probe failure must degrade to honest offline mode, never crash `up` with
     // a raw stack trace before the gateway is even started (P9 graceful degradation).
@@ -297,6 +299,10 @@ async function main() {
   if (cmd === 'cases') {
     const store = createCaseStore()
     await store.init()
+    if (flags.status) {
+      const valid = store.getValidStatuses()
+      if (!valid.includes(flags.status)) { console.log(bad(`invalid status: ${flags.status}, allowed: ${valid.join(', ')}`)); process.exit(1) }
+    }
     const cases = await store.listCases({}, flags.status ? { status: flags.status } : {})
     if (!cases.length) {
       console.log(flags.status ? `no cases in stage "${flags.status}".` : 'no cases yet.')
@@ -315,7 +321,7 @@ async function main() {
     if (!id) { console.log(`usage: casey show <ref|id>`); process.exit(1) }
     const caseRow = await store.getCase(id) || (await store.listCases()).find(x => x.ref === id)
     if (!caseRow) { console.log(red('case not found:'), id); console.log(dim(`  list cases with ${cyan('casey cases')}.`)); process.exit(1) }
-    console.log(`${bold(caseRow.ref)}  [${caseRow.status}]  ${caseRow.priority}  ${caseRow.channel}/${caseRow.external_id}`)
+    console.log(`${bold(caseRow.ref)}  [${caseRow.status}]  ${caseRow.priority}  ${caseRow.channel}/${caseRow.id}`)
     console.log(`subject: ${caseRow.subject}\nsummary: ${caseRow.summary}\ntags: ${caseRow.tags}`)
     console.log(dim('--- timeline ---'))
     for (const e of await store.listEvents(caseRow.id)) console.log(`  ${e.kind}/${e.actor}: ${e.text}`)

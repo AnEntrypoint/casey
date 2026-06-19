@@ -20,6 +20,8 @@ import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
 export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
 
+const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_find', 'affected_count', 'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits', 'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'audio', 'notes'])
+
 export class CaseStore {
   constructor(opts = {}) {
     this.configPath = opts.config || path.resolve(process.cwd(), 'thatcher.config.yml')
@@ -240,6 +242,8 @@ export class CaseStore {
   // Non-empty incoming values win; a known field is never overwritten with blank.
   // Returns { report } (the merged object) or { error } on guards.
   async mergeReport(caseId, incoming, user = AGENT_USER) {
+    const invalid = Object.keys(incoming).filter(k => !REPORT_KEYS.has(k))
+    if (invalid.length) return { error: `invalid report fields: ${invalid.join(', ')}` }
     const c0 = await this.getCase(caseId)
     if (!c0) return { error: `no case ${caseId}` }
     return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
@@ -271,7 +275,7 @@ export class CaseStore {
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe') return { error: 'observe' }
       let current = {}
-      try { current = c.report ? JSON.parse(c.report) : {} } catch { current = {} }
+      try { current = c.report ? JSON.parse(c.report) : {} } catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); current = {} }
       const filled = []
       const next = { ...current }
       for (const [k, v] of Object.entries(fields)) {
@@ -430,7 +434,14 @@ export class CaseStore {
         text: `Merged in ${src.ref} (${srcEvents.length} event(s))${reason ? ` -- ${reason}` : ''}.`,
         data: { merged_from: sourceId, merged_from_ref: src.ref, moved_events: srcEvents.length, reason },
       })
-      // 4) Leave the source as an audited redirect and close it out.
+      // 4) Close the source first, then tag it as merged redirect.
+      // _forceClose must succeed BEFORE writing 'merged' tag -- if we tag first
+      // and then close fails, the source is stuck as 'merged' but still open,
+      // and the idempotency check (srcTags.has('merged')) would skip it on retry.
+      const closed = await this._forceClose(sourceId, `merged into ${tgt.ref}`, SYSTEM_USER)
+      if (!closed || closed.status !== 'closed') {
+        return { error: 'merge partial: source could not be closed', status: closed?.status }
+      }
       await this.updateCase(sourceId, {
         tags: [...srcTags, 'merged'].filter((v, i, a) => a.indexOf(v) === i).join(','),
         summary: `Merged into ${tgt.ref}. See that case for the full report.`,
@@ -440,8 +451,7 @@ export class CaseStore {
         text: `This report was merged into ${tgt.ref}${reason ? ` -- ${reason}` : ''}.`,
         data: { merged_into: targetId, merged_into_ref: tgt.ref, reason },
       })
-      await this._forceClose(sourceId, `merged into ${tgt.ref}`, SYSTEM_USER)
-      return { merged: true, target: await this.getCase(targetId), source: await this.getCase(sourceId), movedEvents: srcEvents.length }
+      return { merged: true, alreadyMerged: false, target: await this.getCase(targetId), source: await this.getCase(sourceId), movedEvents: srcEvents.length }
     }
     if (srcKey === tgtKey) return this._withLock(tgtKey, mergeFn)
     const [key1, key2] = [srcKey, tgtKey].sort()
@@ -594,7 +604,11 @@ export class CaseStore {
     // operator's transition (the stage change already committed).
     if (this.onTransition) {
       try { await this.onTransition({ caseRow: result, from: before.status, to: toState, user, reason }) }
-      catch (e) { this.log?.warn?.('onTransition hook failed', { caseId, to: toState, error: e.message }) }
+      catch (e) {
+        this.log?.warn?.('[casey] onTransition hook failed', { caseId, to: toState, error: e.message })
+        try { await this.appendEvent(caseId, { kind: 'observation', actor: 'system', text: `Stage notification failed: ${e.message}` }) }
+        catch (e2) { this.log?.error?.('[casey] failed to record onTransition hook failure', { caseId, error: e2.message }) }
+      }
     }
     return result
   }

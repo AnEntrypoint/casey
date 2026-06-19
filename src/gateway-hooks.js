@@ -61,7 +61,7 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     `CURRENT CASE ${caseRow.ref} (id=${caseRow.id})  [private -- do not mention to the person]`,
     `  status: ${caseRow.status}   priority: ${caseRow.priority}   assignee: ${caseRow.assignee}`,
     `  subject: ${caseRow.subject || '(none yet)'}`,
-    `  contact: ${contact?.display_name || caseRow.external_id}`,
+    `  contact: ${contact?.display_name || caseRow.channel}`,
     `  summary: ${caseRow.summary || '(none yet)'}`,
     `  tags: ${caseRow.tags || '(none)'}`,
     `  first message from this person? ${firstMessage ? 'YES (brand new)' : 'no'}`,
@@ -242,6 +242,7 @@ export function fallbackReply(contactText, caseRow) {
 
 export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
   return async function handleInbound(platform, msg) {
+    if (!store) { log?.error?.('[casey] store not initialized'); return { to: msg.from, text: '', platform, error: 'store_not_ready' } }
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
     const external_id = conversationKey(msg)
     const adapter = this?.platforms?.get?.(platform)
@@ -720,7 +721,7 @@ function normalizeIntentText(text) {
 }
 
 // Add a tag to a comma-separated tag string without duplicating it.
-export function mergeTag(tags, tag) {
+function mergeTag(tags, tag) {
   const list = (tags || '').split(',').map(s => s.trim()).filter(Boolean)
   if (!list.includes(tag)) list.push(tag)
   return list.join(',')

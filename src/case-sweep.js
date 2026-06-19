@@ -29,6 +29,11 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
     let breaches
     try { breaches = classifyCaseHealth(c, now, thresholds) }
     catch (e) { log?.warn?.('[sweep] classify failed', { caseId: c.id, error: e.message }); summary.errors.push({ caseId: c.id, error: e.message, phase: 'classify' }); continue }
+    if (summary.errors.length > 100) {
+      log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: 'too many errors, sweep halted for safety' })
+      summary.errors.push({ phase: 'aborted', reason: 'too many errors, sweep halted for safety' })
+      break
+    }
     const desired = new Set(breaches.map(b => healthTag(b.breach)))
 
     const current = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)

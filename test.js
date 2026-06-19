@@ -1,4 +1,4 @@
-// casey end-to-end smoke test  --  one file, real services (thatcher + freddie),
+﻿// casey end-to-end smoke test  --  one file, real services (thatcher + freddie),
 // stub LLM. Covers the full chain plus every hardened behaviour: autonomy modes,
 // illegal transitions, message dedup, empty-message handling, dashboard
 // auth/paging/escaping/reply, discord WS receive, and whatsapp webhook.
@@ -105,30 +105,35 @@ async function main() {
 
   // ---- dashboard API ----
   let dash
+  // Helper: dashboard fetch with Bearer auth (used throughout this block)
+  const df = (url, opts = {}) => fetch(
+    url.replace('?token=secret&', '?').replace('?token=secret', '').replace('&token=secret', ''),
+    { ...opts, headers: { Authorization: 'Bearer secret', ...(opts.headers || {}) } }
+  )
   await test('dashboard requires token when configured', async () => {
     dash = await createDashboard(store, { port: 4577, token: 'secret', sendReply: (c, t) => adapter.send({ to: c.external_id, text: t }) })
     const noAuth = await fetch('http://localhost:4577/api/cases')
     assert.equal(noAuth.status, 401)
-    const ok = await fetch('http://localhost:4577/api/cases?token=secret')
+    const ok = await df('http://localhost:4577/api/cases')
     assert.equal(ok.status, 200)
   })
 
   await test('dashboard cases endpoint paginates with total', async () => {
-    const r = await fetch('http://localhost:4577/api/cases?token=secret&limit=1').then(r => r.json())
+    const r = await df('http://localhost:4577/api/cases?token=secret&limit=1').then(r => r.json())
     assert.ok(Array.isArray(r.cases))
     assert.equal(r.limit, 1)
     assert.ok(typeof r.total === 'number' && r.total >= 2)
   })
 
   await test('dashboard case detail returns events_total + transitions', async () => {
-    const r = await fetch('http://localhost:4577/api/cases/' + caseId + '?token=secret').then(r => r.json())
+    const r = await df('http://localhost:4577/api/cases/' + caseId + '?token=secret').then(r => r.json())
     assert.ok(typeof r.events_total === 'number')
     assert.ok(Array.isArray(r.transitions))
   })
 
   await test('dashboard operator reply sends on channel + logs outbound', async () => {
     const sentBefore = adapter.sent.length
-    const r = await fetch('http://localhost:4577/api/cases/' + caseId + '/reply?token=secret', {
+    const r = await df('http://localhost:4577/api/cases/' + caseId + '/reply?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'operator here' }),
     })
     assert.equal(r.status, 200)
@@ -138,13 +143,13 @@ async function main() {
   })
 
   await test('dashboard reply surfaces the sent flag (delivered vs logged-only)', async () => {
-    const wired = await fetch('http://localhost:4577/api/cases/' + caseId + '/reply?token=secret', {
+    const wired = await df('http://localhost:4577/api/cases/' + caseId + '/reply?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'wired' }),
     }).then(r => r.json())
     assert.equal(wired.sent, true, 'sendReply present -> sent:true')
     // a dashboard with no sendReply logs the outbound but reports sent:false
     const noSend = await createDashboard(store, { port: 4578, token: 'secret' })
-    const logged = await fetch('http://localhost:4578/api/cases/' + caseId + '/reply?token=secret', {
+    const logged = await df('http://localhost:4578/api/cases/' + caseId + '/reply?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'logged only' }),
     }).then(r => r.json())
     assert.equal(logged.sent, false, 'no sendReply -> sent:false')
@@ -156,7 +161,7 @@ async function main() {
     const cur = (await store.getCase(caseId)).status
     const avail = store.availableTransitions(await store.getCase(caseId), { id: 'op', role: 'operator' })
     if (avail.length) {
-      const r = await fetch('http://localhost:4577/api/cases/' + caseId + '/transition?token=secret', {
+      const r = await df('http://localhost:4577/api/cases/' + caseId + '/transition?token=secret', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ to: avail[0], reason: 'operator-reason-xyz' }),
       })
@@ -175,11 +180,11 @@ async function main() {
     assert.ok(opCase, 'case opened for operator-flow contact')
     assert.ok((opCase.tags || '').includes('needs-human'), 'contact flagged needs-human')
 
-    const detail = await fetch('http://localhost:4577/api/cases/' + opCase.id + '?token=secret').then(r => r.json())
+    const detail = await df('http://localhost:4577/api/cases/' + opCase.id + '?token=secret').then(r => r.json())
     assert.ok((detail.case.tags || '').includes('needs-human'), 'dashboard surfaces needs-human tag')
 
     const sentBefore = adapter.sent.length
-    const reply = await fetch('http://localhost:4577/api/cases/' + opCase.id + '/reply?token=secret', {
+    const reply = await df('http://localhost:4577/api/cases/' + opCase.id + '/reply?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: 'Hi, this is Sam from the team. I am looking after this for you now.' }),
     }).then(r => r.json())
@@ -193,12 +198,12 @@ async function main() {
     const avail = store.availableTransitions(await store.getCase(opCase.id), { id: 'op', role: 'operator' })
     assert.ok(avail.length, 'operator has a stage to move to')
     const target = avail.includes('in_progress') ? 'in_progress' : avail[0]
-    const tr = await fetch('http://localhost:4577/api/cases/' + opCase.id + '/transition?token=secret', {
+    const tr = await df('http://localhost:4577/api/cases/' + opCase.id + '/transition?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ to: target, reason: 'operator picked it up' }),
     })
     assert.equal(tr.status, 200)
-    const after = await fetch('http://localhost:4577/api/cases/' + opCase.id + '?token=secret').then(r => r.json())
+    const after = await df('http://localhost:4577/api/cases/' + opCase.id + '?token=secret').then(r => r.json())
     assert.equal(after.case.status, target, 'dashboard surfaces the transitioned stage')
     // The reason lives on a TRANSITION EVENT, not in the available-transitions list.
     const trEv = (await store.listEvents(opCase.id)).filter(e => e.kind === 'transition').pop()
@@ -223,7 +228,7 @@ async function main() {
     assert.equal(c.priority, 'high', 'handoff keeps/raises priority to high')
 
     const beforeOp = adapter.sent.length
-    await fetch('http://localhost:4577/api/cases/' + c.id + '/reply?token=secret', {
+    await df('http://localhost:4577/api/cases/' + c.id + '/reply?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: 'Hi, a person here now, checking the courier for you.' }),
     })
@@ -296,20 +301,20 @@ async function main() {
 
   await test('dashboard mutation endpoints reject malformed input with a clear 4xx (adversarial)', async () => {
     const someCase = (await store.listCases())[0]
-    const post = (path, body) => fetch('http://localhost:4577/api/cases/' + someCase.id + path + '?token=secret', {
+    const post = (path, body) => df('http://localhost:4577/api/cases/' + someCase.id + path + '?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
     })
     // bad autonomy / priority are rejected before thatcher is touched
-    const badAuto = await fetch('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
+    const badAuto = await df('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ autonomy: 'wizard' }),
     })
     assert.equal(badAuto.status, 400, 'invalid autonomy rejected')
-    const badPrio = await fetch('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
+    const badPrio = await df('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ priority: '11' }),
     })
     assert.equal(badPrio.status, 400, 'invalid priority rejected')
     // non-string field is rejected, not coerced
-    const objField = await fetch('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
+    const objField = await df('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subject: { evil: 1 } }),
     })
     assert.equal(objField.status, 400, 'object subject rejected')
@@ -622,7 +627,7 @@ async function main() {
 
     const cru = await createDashboard(store, { port: 4579, token: 'secret' })
     try {
-      const r = await fetch('http://localhost:4579/api/cases?token=secret&limit=1').then(r => r.json())
+      const r = await df('http://localhost:4579/api/cases?token=secret&limit=1').then(r => r.json())
       assert.ok(Array.isArray(r.cases) && r.cases.length === 1, 'dashboard still serves a page under load')
       assert.equal(r.total, after, `dashboard total matches countCases (${r.total} vs ${after})`)
     } finally { await cru.close() }
