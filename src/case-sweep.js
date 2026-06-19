@@ -19,7 +19,7 @@ const HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 // Run one full pass. Pure-ish: all mutation goes through the store, `now` is
 // injected. Returns a summary { scanned, flagged, cleared, breaches:{type:count} }.
 export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_THRESHOLDS, { log = null } = {}) {
-  const summary = { scanned: 0, flagged: 0, cleared: 0, breaches: {} }
+  const summary = { scanned: 0, flagged: 0, cleared: 0, breaches: {}, errors: [] }
   // Only open cases can be unhealthy; a closed case is finished. listCases with no
   // filter returns recency-sorted; we classify each and skip closed defensively.
   const cases = await store.listCases({}, { limit: 10000 })
@@ -65,6 +65,7 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
       summary.cleared += removed.length
     } catch (e) {
       log?.warn?.('[sweep] reconcile failed', { caseId: c.id, error: e.message })
+      summary.errors.push({ caseId: c.id, error: e.message })
     }
   }
   log?.info?.('[sweep] pass complete', summary)

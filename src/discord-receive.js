@@ -72,7 +72,7 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
       switch (p.op) {
         case OP.HELLO:
           retries = 0                                 // connected: reset backoff
-          acked = true                                // fresh socket: clear any stale unacked state from the prior connection so the first heartbeat does not terminate it
+          acked = true                                // clear stale state before heartbeat
           startHeartbeat(p.d.heartbeat_interval)
           identify()
           break

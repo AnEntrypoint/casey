@@ -273,7 +273,12 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   app.get('/', (_req, res) => res.type('html').send(PAGE))
 
   const server = app.listen(port)
-  return { app, server, port, close: () => new Promise(r => server.close(r)) }
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.once('listening', () => {
+      resolve({ app, server, port, close: () => new Promise(r => { server.closeAllConnections?.(); server.close(r) }) })
+    })
+  })
 }
 
 // Self-contained page. Uses anentrypoint-design's CSS variables/typography for

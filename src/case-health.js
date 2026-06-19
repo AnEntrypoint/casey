@@ -40,7 +40,7 @@ function ms(v) {
   // last_event_at is an ISO string (nowIso); created_at can be unix-seconds
   // (thatcher) or ISO. Normalize both to epoch ms, or NaN when unknown.
   if (v == null || v === '') return NaN
-  if (typeof v === 'number') return v < 1e12 ? v * 1000 : v   // seconds -> ms
+  if (typeof v === 'number') return v < 1e12 ? v * 1000 : v   // seconds to ms
   const t = Date.parse(v)
   return Number.isNaN(t) ? NaN : t
 }

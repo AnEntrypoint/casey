@@ -176,6 +176,10 @@ export class CaseStore {
     return rows.slice(offset, offset + limit)
   }
 
+  // Returns the count of cases, capped at 50,000 for performance. If the true count
+  // exceeds the cap, the returned value is an underestimate. The dashboard uses this
+  // for pagination hints; the cap is sized to real-world casey volumes (dashboard
+  // PAGE_MAX is 200, real case counts are far below the cap).
   async countCases(where = {}) {
     return this._count('case', where)
   }
@@ -234,7 +238,7 @@ export class CaseStore {
   // another merge (or an inbound) for the same conversation and lose fields. Only
   // the fast DB round-trip is inside the lock -- LLM/network latency stays out.
   // Non-empty incoming values win; a known field is never overwritten with blank.
-  // Returns { report } (the merged object) or { error } / { skipped } on guards.
+  // Returns { report } (the merged object) or { error } on guards.
   async mergeReport(caseId, incoming, user = AGENT_USER) {
     const c0 = await this.getCase(caseId)
     if (!c0) return { error: `no case ${caseId}` }

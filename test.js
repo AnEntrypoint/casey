@@ -106,7 +106,7 @@ async function main() {
   // ---- dashboard API ----
   let dash
   await test('dashboard requires token when configured', async () => {
-    dash = createDashboard(store, { port: 4577, token: 'secret', sendReply: (c, t) => adapter.send({ to: c.external_id, text: t }) })
+    dash = await createDashboard(store, { port: 4577, token: 'secret', sendReply: (c, t) => adapter.send({ to: c.external_id, text: t }) })
     const noAuth = await fetch('http://localhost:4577/api/cases')
     assert.equal(noAuth.status, 401)
     const ok = await fetch('http://localhost:4577/api/cases?token=secret')
@@ -143,7 +143,7 @@ async function main() {
     }).then(r => r.json())
     assert.equal(wired.sent, true, 'sendReply present -> sent:true')
     // a dashboard with no sendReply logs the outbound but reports sent:false
-    const noSend = createDashboard(store, { port: 4578, token: 'secret' })
+    const noSend = await createDashboard(store, { port: 4578, token: 'secret' })
     const logged = await fetch('http://localhost:4578/api/cases/' + caseId + '/reply?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'logged only' }),
     }).then(r => r.json())
@@ -620,7 +620,7 @@ async function main() {
     const after = await store.countCases()
     assert.equal(after - before, N, `countCases grew by exactly ${N}: ${before} -> ${after}`)
 
-    const cru = createDashboard(store, { port: 4579, token: 'secret' })
+    const cru = await createDashboard(store, { port: 4579, token: 'secret' })
     try {
       const r = await fetch('http://localhost:4579/api/cases?token=secret&limit=1').then(r => r.json())
       assert.ok(Array.isArray(r.cases) && r.cases.length === 1, 'dashboard still serves a page under load')

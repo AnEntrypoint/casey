@@ -132,22 +132,6 @@ export function suggestLinks(target, others, threshold = SUGGEST_THRESHOLD) {
   return out.sort((x, y) => y.score - x.score)
 }
 
-// Does an inbound report look like a DIFFERENT outbreak than the open case it
-// would otherwise be appended to? Used at ingress to surface a NEW-OUTBREAK
-// signal (not to auto-split): true when the open case already has a clear
-// location+species AND the incoming clearly names a different place AND a
-// different animal -- i.e. the correlation is near zero on the very fields that
-// define an outbreak. Conservative on purpose: a missing field is never "different".
-export function looksLikeNewOutbreak(openReport, incoming) {
-  const a = (typeof openReport === 'string') ? safeParse(openReport) : (openReport || {})
-  const b = incoming || {}
-  const haveBothLoc = nonEmpty(a.location) && nonEmpty(b.location)
-  const haveBothSp = nonEmpty(a.species) && nonEmpty(b.species)
-  if (!haveBothLoc || !haveBothSp) return false
-  const locSame = tokenOverlap(tokens(a.location), tokens(b.location)) > 0
-  const spSame = tokenOverlap(tokens(a.species), tokens(b.species)) > 0
-  return !locSame && !spSame
-}
 
 function nonEmpty(v) { return v != null && String(v).trim() !== '' }
 function safeParse(s) { try { return s ? JSON.parse(s) : {} } catch { return {} } }

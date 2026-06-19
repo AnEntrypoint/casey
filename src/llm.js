@@ -7,9 +7,9 @@
 // the real brain was never connected. resolveCallLLM picks the backend by an
 // explicit, honest precedence and never claims a capability it can't deliver:
 //
-//   1. CASEY_STUB_LLM set -> deterministic stub (offline, cheap, tests/sim)
-//   2. acptoapi reachable -> real model via the freddie bridge
-//   3. neither -> null  (gateway falls back to canned replies)
+//   1. CASEY_STUB_LLM set: deterministic stub (offline, cheap, tests/sim)
+//   2. acptoapi reachable: real model via the freddie bridge
+//   3. neither: null  (gateway falls back to canned replies)
 //
 // The null fall-through is the worst-case path (P9/P10): if the bridge is down,
 // casey does NOT pretend to have an AI - it returns null and the gateway answers

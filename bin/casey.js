@@ -131,7 +131,7 @@ async function main() {
     // .env presence
     console.log(existsSync(path.join(ROOT, '.env')) ? ok('.env present') : warn(`.env missing - run ${cyan('casey init')} (channels can still come from the environment)`))
     // dependencies resolve
-    for (const dep of ['anentrypoint-design', 'thatcher', 'freddie', 'express']) {
+    for (const dep of ['thatcher', 'freddie', 'express']) {
       try { await import(dep); console.log(ok(`dependency ${dep} resolves`)) }
       catch { console.log(bad(`dependency ${dep} does not resolve - run npm install`)); problems++ }
     }
@@ -182,7 +182,13 @@ async function main() {
       const b = await _rc({ probe: true }).catch(() => ({ source: 'none' }))
       return { source: b.source, model: b.model, url: b.url }
     }
-    const dash = createDashboard(casey.store, { port: dashPort, sendReply, llmStatus })
+    let dash
+    try {
+      dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus })
+    } catch (e) {
+      console.log(bad(`dashboard failed to bind port ${dashPort}: ${e.message} - start with --port <other>`))
+      process.exit(1)
+    }
     console.log(bold('casey up') + dim(`  v${pkgVersion()}`))
     console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(`   (skipped, no creds: ${skipped.join(', ')} - run casey doctor)`) : ''))
     if (brain.source === 'acptoapi') console.log(`  AI helper: ${green('online')}${dim(`   (${brain.model} via ${brain.url})`)}`)
@@ -198,7 +204,13 @@ async function main() {
     process.on('SIGINT', async () => {
       if (exiting) return
       exiting = true
-      await dash.close(); await casey.stop(); process.exit(0)
+      try {
+        await dash.close()
+        await casey.stop()
+      } catch (e) {
+        console.error('shutdown error:', e.message)
+      }
+      process.exit(0)
     })
     return
   }
@@ -206,9 +218,22 @@ async function main() {
   if (cmd === 'dashboard') {
     if (flags.help) { console.log('casey dashboard [--port 4000]\n  Start only the observe/edit dashboard against the existing store.'); return }
     const store = createCaseStore(); await store.init()
-    const dash = createDashboard(store, { port: Number(flags.port || 4000) })
+    let dash
+    try {
+      dash = await createDashboard(store, { port: Number(flags.port || 4000) })
+    } catch (e) {
+      console.log(bad(`dashboard failed to bind port ${Number(flags.port || 4000)}: ${e.message} - start with --port <other>`))
+      process.exit(1)
+    }
     console.log(`dashboard: ${cyan(`http://localhost:${dash.port}`)}  ${dim('(ctrl-c to stop)')}`)
-    process.on('SIGINT', async () => { await dash.close(); process.exit(0) })
+    process.on('SIGINT', async () => {
+      try {
+        await dash.close()
+      } catch (e) {
+        console.error('shutdown error:', e.message)
+      }
+      process.exit(0)
+    })
     return
   }
 

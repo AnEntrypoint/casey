@@ -221,7 +221,7 @@ export function guessLang(text) {
     if (score > bestScore) { best = lang; bestScore = score; tie = false }
     else if (score === bestScore && score > 0) tie = true
   }
-  // A genuine tie between two non-English languages is ambiguous -> English is
+  // A genuine tie between two non-English languages is ambiguous: English is
   // the safe default (it never claims to speak a language it might have wrong).
   return tie ? 'en' : best
 }
