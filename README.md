@@ -50,17 +50,17 @@ casey assumes the people on both ends may not be technical. That shapes two surf
 **The person messaging in (WhatsApp/Discord).** They may be elderly, may not read
 well, and may not speak English as a first language. So casey:
 
-- replies in **plain, short, warm** language — one idea per sentence, one question at
+- replies in **plain, short, warm** language -- one idea per sentence, one question at
   a time, and never any internal jargon (case, triage, workflow, status, priority).
 - **mirrors their language**: if they write in Spanish, it answers in Spanish.
 - on first contact, **greets them and gives their reference number in plain words**, and
   sets the expectation that a real person will follow up.
 - understands a few **simple keywords in any phrasing or language** and answers instantly,
   without an LLM turn, where a fixed answer is better: `HELP` (a short menu), `STATUS`
-  (where their request stands, in plain words), `HUMAN` (hands off to a person — flags the
+  (where their request stands, in plain words), `HUMAN` (hands off to a person -- flags the
   case `needs-human`, raises priority, and reassures them), `STOP` (opts them out; casey
   will not message again unless they ask for `HELP`/`HUMAN`).
-- never sends a blank or dead-end reply — empty, emoji-only, and media-only messages still
+- never sends a blank or dead-end reply -- empty, emoji-only, and media-only messages still
   get a gentle, helpful answer.
 
 **The operator watching the dashboard.** They may not understand workflow jargon either. So:
@@ -76,7 +76,7 @@ well, and may not speak English as a first language. So casey:
   friendly names (`Looking into it`, `Working on it`, `Done`, ...) everywhere.
 - each open case shows a **"what to do now"** line derived from its state (e.g. "This person asked
   for a real person. Reply to them below."), plus **ready-made replies** the operator can tap to
-  fill the reply box (then edit before sending) — no blank-page problem.
+  fill the reply box (then edit before sending) -- no blank-page problem.
 - if the person wrote in another language, the reply box **warns the operator to answer in their
   language**, and the ready-made replies are not offered for someone who asked to stop.
 - when someone asks for a human, a **loud red banner** (with a soft chime and a flashing browser
@@ -115,7 +115,7 @@ You do not need to be a developer to run casey day-to-day:
 ```sh
 npm install
 node bin/casey.js init       # writes a .env you fill in (channel tokens, dashboard secret)
-node bin/casey.js doctor     # green/red preflight: deps, channels, port, token — fix the reds
+node bin/casey.js doctor     # green/red preflight: deps, channels, port, token -- fix the reds
 node bin/casey.js up         # starts the gateway + dashboard, prints the dashboard URL
 ```
 
@@ -127,10 +127,10 @@ so you can see the flow and a case appear.
 
 ### The dashboard
 
-The dashboard is the whole operator surface — one page, no build step:
+The dashboard is the whole operator surface -- one page, no build step:
 
 - **"Needs you now" inbox (top of the list):** a ranked, plain-worded queue of just the cases that
-  need a person now — someone asked for a human, a case casey will not auto-answer, or a request stuck
+  need a person now -- someone asked for a human, a case casey will not auto-answer, or a request stuck
   waiting over a day. Each row leads with the reason; opting-out contacts are never listed. It reads
   "All caught up" when there is nothing to do.
 - **Case list (left):** every case, with a priority badge, last-activity time, and an amber dot on

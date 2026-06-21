@@ -122,3 +122,5 @@ casey depends on the fixed thatcher release. See README "thatcher" section.
 - ES modules (`"type": "module"`), Node >= 22.
 - The single end-to-end `test.js` against real services is the test surface;
   do not add a parallel mock-heavy unit suite.
+
+@.gm/next-step.md

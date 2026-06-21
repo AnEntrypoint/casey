@@ -1,10 +1,10 @@
-# casey — case-tracking system of record (thatcher config)
+# casey -- case-tracking system of record (thatcher config)
 #
 # Three entities:
-#   case        — one tracked case, opened from a channel conversation
-#   event       — append-only timeline: inbound msgs, outbound replies, agent
+#   case        -- one tracked case, opened from a channel conversation
+#   event       -- append-only timeline: inbound msgs, outbound replies, agent
 #                 observations, and human/agent actions (full audit trail)
-#   contact     — a person/identity across channels (whatsapp number, discord id)
+#   contact     -- a person/identity across channels (whatsapp number, discord id)
 #
 # The workflow drives case lifecycle. The agent is fully autonomous: it may
 # create cases, append events, and transition stages via tools. Every change is
@@ -42,7 +42,7 @@ permission_templates:
 
 # Shared system fields. thatcher's migration builds columns ONLY from declared
 # fields (it does not auto-inject a primary key), while its write engine always
-# writes id/created_at/created_by/updated_at/status — so every entity must
+# writes id/created_at/created_by/updated_at/status -- so every entity must
 # declare them or inserts fail with "no column named id".
 _system_fields: &system_fields
   id:         { type: id }
