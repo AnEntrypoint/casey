@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Agentic case tracking, observation and manual editing over WhatsApp/Discord — freddie (agent harness) + thatcher (case system of record) + anentrypoint-design (dashboard UI).",
+  "description": "Agentic case tracking, observation and manual editing over WhatsApp/Discord -- freddie (agent harness) + thatcher (case system of record) + anentrypoint-design (dashboard UI).",
   "bin": {
     "casey": "bin/casey.js"
   },

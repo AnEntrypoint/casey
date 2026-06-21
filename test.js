@@ -1,4 +1,4 @@
-﻿// casey end-to-end smoke test  --  one file, real services (thatcher + freddie),
+// casey end-to-end smoke test  --  one file, real services (thatcher + freddie),
 // stub LLM. Covers the full chain plus every hardened behaviour: autonomy modes,
 // illegal transitions, message dedup, empty-message handling, dashboard
 // auth/paging/escaping/reply, discord WS receive, and whatsapp webhook.
