@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node bin/casey.js up",
     "sim": "node bin/casey.js sim",
+    "lint": "node scripts/lint.mjs",
     "test": "node test.js"
   },
   "dependencies": {
