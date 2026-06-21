@@ -64,8 +64,14 @@ node bin/casey.js doctor    # green/red preflight: deps, channels, port, token
 node bin/casey.js up        # gateway + dashboard (default http://localhost:4000)
 node bin/casey.js sim "my cattle are sick"        # offline conversation, stub model
 node bin/casey.js sim --scenario <name>           # replay a low-literacy persona
+npm run lint                # dependency-free preflight (syntax+config+package+ascii); the CI gate
 node test.js                # end-to-end suite (CASEY_STUB_LLM path, stub model)
 ```
+
+CI: `.github/workflows/ci.yml` runs `npm run lint` (`scripts/lint.mjs`) on every
+push and PR. It is dependency-free on purpose -- it does NOT need the `file:../`
+siblings, so it stays green in a bare clone. Keep `test.js` as the real-services
+witness; do not move its real-services assertions into the lint gate.
 
 Note: `freddie` and `anentrypoint-design` are `file:../` dependencies. Without
 those sibling checkouts (and `thatcher` from npm) installed, `node test.js` and

@@ -1,0 +1,27 @@
+name: ci
+
+# casey composes three sibling/npm projects (freddie, thatcher,
+# anentrypoint-design). The freddie and anentrypoint-design deps are
+# file:../ links that do not exist in a bare clone, so a full `npm install`
+# and `node test.js` cannot run in CI here. This workflow runs every check
+# that IS possible from the repo alone -- JS syntax, YAML config, package
+# sanity, and the ASCII-only source convention -- via `npm run lint`, which
+# is the same gate humans run locally. When the sibling checkouts or a
+# published thatcher with the upstream fixes are wired into CI, add an
+# install + `node test.js` job alongside this one.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Lint (syntax + config + package + ascii)
+        run: npm run lint

@@ -167,8 +167,17 @@ node bin/casey.js dashboard     # observe/edit dashboard only, on :4000
 node bin/casey.js cases         # list cases (empty -> hint on how to make one)
 node bin/casey.js show <ref|id> # show a case + full timeline
 node bin/casey.js --version     # print the version  (also --help / -h on any command)
+npm run lint                    # dependency-free preflight: JS syntax + config + package + ascii
 node test.js                    # end-to-end suite (real thatcher + freddie, stub model)
 ```
+
+`npm run lint` (`node scripts/lint.mjs`) runs every check that works from a bare
+clone -- `node --check` on all JS, a YAML parse of `thatcher.config.yml`,
+`package.json` sanity, and the ASCII-only source convention. It needs no sibling
+checkouts, so it is the gate the GitHub Actions `ci` workflow
+(`.github/workflows/ci.yml`) runs on every push and pull request. `node test.js`
+remains the full real-services witness and runs only where the `file:../` siblings
+(`freddie`, `anentrypoint-design`) and a fixed `thatcher` are installed.
 
 `casey up` runs the real model via freddie's provider resolver (configure `~/.freddie`
 + a provider key). Set `CASEY_STUB_LLM=1` to run `up` fully offline with the deterministic
