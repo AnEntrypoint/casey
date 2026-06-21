@@ -2,6 +2,9 @@ node_modules/
 data/
 *.log
 
+# stray crash dumps (e.g. MSYS bash.exe.stackdump on Windows) -- never source
+*.stackdump
+
 # operator secrets — scaffolded by `casey init`, never committed
 .env
 
