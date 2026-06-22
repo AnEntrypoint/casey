@@ -126,8 +126,8 @@ async function main() {
     let problems = 0
     // Node version
     const major = Number(process.versions.node.split('.')[0])
-    console.log(major >= 18 ? ok(`Node ${process.versions.node}`) : bad(`Node ${process.versions.node} (need >=18)`))
-    if (major < 18) problems++
+    console.log(major >= 22 ? ok(`Node ${process.versions.node}`) : bad(`Node ${process.versions.node} (need >=22)`))
+    if (major < 22) problems++
     // .env presence
     console.log(existsSync(path.join(ROOT, '.env')) ? ok('.env present') : warn(`.env missing - run ${cyan('casey init')} (channels can still come from the environment)`))
     // dependencies resolve

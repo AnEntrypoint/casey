@@ -10,7 +10,7 @@
 
 import WebSocket from 'ws'
 
-const OP = { DISPATCH: 0, HEARTBEAT: 1, IDENTIFY: 2, HELLO: 10, HEARTBEAT_ACK: 11 }
+const OP = { DISPATCH: 0, HEARTBEAT: 1, IDENTIFY: 2, RESUME: 6, RECONNECT: 7, INVALID_SESSION: 9, HELLO: 10, HEARTBEAT_ACK: 11 }
 // GUILD_MESSAGES(1<<9) + MESSAGE_CONTENT(1<<15) + DIRECT_MESSAGES(1<<12)
 const INTENTS = (1 << 9) | (1 << 12) | (1 << 15)
 
@@ -19,6 +19,7 @@ const INTENTS = (1 << 9) | (1 << 12) | (1 << 15)
 export function connectDiscordReceive(adapter, { token = adapter.token, log = console } = {}) {
   if (!token) throw new Error('connectDiscordReceive: DISCORD_BOT_TOKEN required')
   let ws, heartbeat, seq = null, acked = true, closed = false
+  let sessionId = null, resumeUrl = null
   // Reconnect backoff state: a dead gateway (auth failure, partition, outage)
   // would otherwise spin a tight 3s reconnect loop hammering the API (P9: no
   // tight failure loop, explicit degradation). We back off exponentially up to a
@@ -30,6 +31,10 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
   const identify = () => ws.send(JSON.stringify({
     op: OP.IDENTIFY,
     d: { token, intents: INTENTS, properties: { os: 'linux', browser: 'casey', device: 'casey' } },
+  }))
+  const resume = () => ws.send(JSON.stringify({
+    op: OP.RESUME,
+    d: { token, session_id: sessionId, seq },
   }))
 
   const startHeartbeat = (interval) => {
@@ -70,7 +75,10 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
     // Drop the previous socket's listeners before replacing it so reconnects do
     // not accumulate orphaned 'message'/'close'/'error' handlers over time.
     if (ws) { try { ws.removeAllListeners(); ws.terminate() } catch { /* already gone */ } }
-    ws = new WebSocket(adapter.gatewayUrl)
+    // Use the resume_gateway_url from the last READY if we have one (Discord
+    // may load-balance; reconnecting to the original URL loses session affinity).
+    const url = (sessionId && resumeUrl) ? resumeUrl : adapter.gatewayUrl
+    ws = new WebSocket(url)
 
     ws.on('message', (raw) => {
       let p; try { p = JSON.parse(raw.toString()) } catch { return }
@@ -80,13 +88,30 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
           retries = 0                                 // connected: reset backoff
           acked = true                                // clear stale state before heartbeat
           startHeartbeat(p.d.heartbeat_interval)
-          identify()
+          // Use RESUME when we have a prior session so we replay missed events;
+          // fall back to IDENTIFY on fresh start or after INVALID_SESSION.
+          if (sessionId) resume(); else identify()
           break
         case OP.HEARTBEAT_ACK:
           acked = true
           break
+        case OP.RECONNECT:
+          // Server requests a reconnect; close gracefully so the close handler
+          // triggers a RESUME with the current session_id.
+          try { ws.close(4000, 'server requested reconnect') } catch { /* already gone */ }
+          break
+        case OP.INVALID_SESSION:
+          // Session is not resumable; clear it and re-identify after a brief delay.
+          sessionId = null; resumeUrl = null; seq = null
+          setTimeout(() => { if (!closed) identify() }, p.d ? 1000 : 5000)
+          break
         case OP.DISPATCH:
+          if (p.t === 'READY') {
+            sessionId = p.d.session_id
+            resumeUrl = p.d.resume_gateway_url || adapter.gatewayUrl
+          }
           if (p.t === 'MESSAGE_CREATE') onMessageCreate(p.d)
+          if (p.t === 'RESUMED') log.info?.('[discord] session resumed successfully')
           break
       }
     })

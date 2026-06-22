@@ -56,6 +56,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
 
   app.use('/design', express.static(DESIGN_DIR))
 
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
   const clampLimit = (v, d) => Math.min(PAGE_MAX, Math.max(1, parseInt(v, 10) || d))
   const offsetOf = (v) => Math.min(50000, Math.max(0, parseInt(v, 10) || 0))
 
@@ -108,7 +109,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     'suspected_disease', 'recent_movement', 'location', 'how_to_find', 'access_notes',
     'farmer_available', 'contact_fallback', 'identifying_traits', 'photos', 'audio', 'notes']
   const REPORT_KEY_SET = new Set(REPORT_KEY_LIST)
-  const VISIT_CRITICAL_SET = new Set(['species', 'symptoms', 'location', 'how_to_find', 'affected_count', 'farmer_available'])
+  const VISIT_CRITICAL_SET = new Set(['species', 'symptoms', 'location', 'how_to_find', 'farmer_available', 'contact_fallback'])
 
   function computeFillRate(reportJson) {
     let r = {}
@@ -406,7 +407,7 @@ th{width:40%;background:#f5f5f5;font-weight:600}
 <p><strong>Status:</strong> ${esc(c.status||'')} &nbsp; <strong>Channel:</strong> ${esc(c.channel||'')}</p>
 <table>${rows}</table></body></html>`
       res.type('html').send(html)
-    } catch (e) { res.status(500).send('<p>Error: ' + e.message + '</p>') }
+    } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || 'unknown error')) + '</p>') }
   })
 
   app.get('/', (_req, res) => res.type('html').send(PAGE))
@@ -484,7 +485,7 @@ const PAGE = /* html */ `<!doctype html>
   .ev .k{display:inline-block;min-width:120px;color:#8aa0c0;font-size:11px}
   label{display:block;margin:8px 0 2px;font-size:12px;color:var(--muted)}
   .hint{font-size:11px;color:var(--faint);margin:2px 0 0}
-  input,select,textarea{width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px}
+  input,select,textarea{width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:16px}
   button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer;margin-top:8px}
   button:disabled{opacity:.55;cursor:default}
   .row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1}
@@ -542,7 +543,7 @@ const PAGE = /* html */ `<!doctype html>
         align-items:flex-start;justify-content:center;overflow:auto;padding:30px 16px}
   .intake-ovl.show{display:flex}
   .intake-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
-        max-width:600px;width:100%;padding:22px 24px;box-shadow:0 8px 40px rgba(0,0,0,.5);font-size:14px;max-height:calc(100vh - 60px);overflow:auto}
+        max-width:600px;width:100%;padding:22px 24px;box-shadow:0 8px 40px rgba(0,0,0,.5);font-size:14px;max-height:calc(100dvh - 60px);overflow:auto}
   .intake-card h2{margin:0 0 12px;font-size:18px}
   .intake-card .field-hint{font-size:11px;color:var(--faint);margin:0 0 4px}
   .intake-card .fill-bar{display:flex;gap:6px;align-items:center;margin:0 0 14px;font-size:12px;color:var(--muted)}
@@ -571,6 +572,13 @@ const PAGE = /* html */ `<!doctype html>
         padding:4px 10px;margin:0;cursor:pointer;font-size:13px}
   .handoff .x:hover{background:rgba(255,255,255,.3)}
   @keyframes handoff-pulse{0%,100%{opacity:1}50%{opacity:.72}}
+  /* health breach chips */
+  .health{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+  .health-chip{display:inline-block;background:rgba(200,140,0,.18);color:#9a6a00;border:1px solid rgba(200,140,0,.3);border-radius:10px;padding:2px 10px;font-size:11px;font-weight:600}
+  html[data-theme=light] .health-chip{background:rgba(180,120,0,.12);color:#7a5200}
+  /* reply character counter */
+  .reply-counter{font-size:11px;color:var(--faint);text-align:right;margin-top:2px}
+  .reply-counter.warn{color:#9a6a00}.reply-counter.over{color:var(--danger)}
 </style></head>
 <body>
 <div id="conn" class="conn">Connection lost - retrying...</div>
@@ -601,7 +609,7 @@ const PAGE = /* html */ `<!doctype html>
   </div>
   <div class="detail" id="detail"><p class="empty">Select a case to observe, edit, reply, or override its workflow stage.</p></div>
 </div>
-<div class="intake-ovl" id="intake-ovl">
+<div class="intake-ovl" id="intake-ovl" role="dialog" aria-modal="true" aria-labelledby="intake-title">
   <div class="intake-card">
     <h2 id="intake-title">New case</h2>
     <div id="intake-fill-bar" class="fill-bar" style="display:none">
@@ -800,7 +808,7 @@ function fieldSources(events){
     if(!isAgent&&!isOp) continue
     // The action event text lists fields like "recorded report fields: species, symptoms"
     // or "updated report fields: location"
-    const m=(e.text||'').match(/(?:recorded|updated) report fields?:\s*(.+)/i)
+    const m=(e.text||'').match(/(?:recorded|updated) report fields?(?:[^:]*)?:\s*(.+)/i)
     if(!m) continue
     const keys=m[1].split(',').map(s=>s.trim()).filter(Boolean)
     for(const k of keys){
@@ -962,6 +970,13 @@ async function loadCases(){
   catch(e){ setConn(true); return }
   setConn(false)
   const cases = resp.cases || []
+  const capEl=document.getElementById('cap-warn')
+  if(resp.total>cases.length){
+    if(!capEl){ const w=document.createElement('div'); w.id='cap-warn'
+      w.style.cssText='background:rgba(200,140,0,.18);color:#9a6a00;font-size:12px;padding:5px 14px;text-align:center;border-bottom:1px solid rgba(200,140,0,.3)'
+      w.textContent='Showing '+cases.length+' of '+resp.total+' cases. Use filters to find older ones.'
+      document.getElementById('cases').before(w) }
+  } else if(capEl){ capEl.remove() }
   const json = JSON.stringify(cases.map(c=>[c.id,c.ref,c.priority,c.channel,c.status,c.subject,c.autonomy,c.updated_at]))
   // notice genuinely-new cases (after first load) so an idle operator sees work
   if(!firstLoad){ const fresh=cases.filter(c=>!known.has(c.id)); if(fresh.length) toast(fresh.length+' new case'+(fresh.length>1?'s':'')) }
@@ -1051,7 +1066,8 @@ async function openCase(id){
       \${transitions.map(t=>\`<button class="trans" data-to="\${esc(t)}" title="\${esc(t)}" style="background:#2a3340">-&gt; \${esc(stageLabel(t))}</button>\`).join(' ')||'<span class="hint">no transitions available</span>'}
     </div>
     <div style="margin-top:14px"><label>Reply to contact on \${esc(c.channel)}</label>
-      <textarea id="f-reply" rows="2" placeholder="Send a message as a human operator... (Ctrl+Enter to send)"></textarea>
+      <textarea id="f-reply" rows="2" placeholder="Send a message as a human operator... (Ctrl+Enter to send)" maxlength="4096"></textarea>
+      <div class="reply-counter" id="reply-counter">0 / 4096</div>
       \${contactMaybeNonEnglish(events)?'<p class="canned-lab" style="color:var(--danger)">This person may not be writing in English. Please reply in their language.</p>':''}
       \${cannedReplies(c).length ? \`<p class="canned-lab">Or tap a ready-made reply to start with:</p>
       <div class="canned" id="canned">\${cannedReplies(c).map((t,i)=>
@@ -1106,7 +1122,9 @@ async function openCase(id){
   $('#detail').querySelectorAll('.rep-note-btn').forEach(btn=>{
     btn.onclick=async()=>{
       const k=btn.dataset.key
-      const text=(prompt('Add a note for "'+(REPORT_FIELDS.find(([f])=>f===k)||[k,k])[1]+'":') || '').trim()
+      const fieldLabel=(REPORT_FIELDS.find(([f])=>f===k)||[k,k])[1]
+      const dlg=await showDialog({title:'Add a note',inputLabel:'Note for: '+fieldLabel,inputPlaceholder:'Type your note here...',confirmLabel:'Save note'})
+      const text=(dlg&&dlg.value||'').trim()
       if(!text) return
       const r=await api('/api/cases/'+encodeURIComponent(c.id)+'/note',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text,field:k})})
       if(!r.ok){ toast(await failMsg(r,'note failed'),'err'); return }
@@ -1134,6 +1152,12 @@ async function openCase(id){
   }
   $('#send-reply').onclick = send
   $('#f-reply').addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); send() } })
+  const replyCounter=$('#reply-counter')
+  if(replyCounter){
+    const updateCounter=()=>{ const n=$('#f-reply').value.length; replyCounter.textContent=n+' / 4096'
+      replyCounter.className='reply-counter'+(n>3800?' warn':'')+(n>=4096?' over':'') }
+    $('#f-reply').addEventListener('input',updateCounter)
+  }
   const canEl = $('#canned')
   if(canEl){
     const cans = cannedReplies(c)
@@ -1151,8 +1175,9 @@ async function openCase(id){
   }
   document.querySelectorAll('.trans').forEach(b=>b.onclick=async()=>{
     const toLabel = stageLabel(b.dataset.to)
-    const reason = prompt('Reason for moving to "'+toLabel+'"? (optional)')
-    if(reason===null) return                // operator cancelled
+    const dlg=await showDialog({title:'Move to: '+toLabel,inputLabel:'Reason (optional)',inputPlaceholder:'e.g. operator contacted farmer directly',confirmLabel:'Move case'})
+    if(dlg===null) return                   // operator cancelled
+    const reason=dlg.value||''
     const r = await api('/api/cases/'+encodeURIComponent(id)+'/transition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({to:b.dataset.to,reason:reason||undefined})})
     if(!r.ok){ toast(await failMsg(r,'transition failed'),'err'); return }
     const updated = await r.json().catch(()=>({}))
@@ -1178,9 +1203,9 @@ async function loadDuplicateSuggestions(id){
         <button class="merge-btn" data-into="\${esc(s.id)}" data-ref="\${esc(s.ref)}" style="background:#3a2a40">Merge \${esc(s.ref)} into this</button></div>\`).join('')
     + '</div>'
   panel.querySelectorAll('.merge-btn').forEach(b=>b.onclick=async()=>{
-    if(!confirm('Merge '+b.dataset.ref+' into this case? The other case becomes a redirect. This is lossless and can be reviewed on the timeline.')) return
-    const reason = prompt('Why are these the same outbreak? (optional)')
-    if(reason===null) return
+    const dlg=await showDialog({title:'Merge '+b.dataset.ref+' into this case?',message:'The other case becomes a redirect. This is lossless and can be reviewed on the timeline.',inputLabel:'Why are these the same outbreak? (optional)',inputPlaceholder:'e.g. same farm, same symptoms reported separately',confirmLabel:'Merge cases',danger:true})
+    if(dlg===null) return
+    const reason=dlg.value||''
     b.disabled=true
     const r = await api('/api/cases/'+encodeURIComponent(id)+'/merge',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({into:b.dataset.into,reason:reason||undefined})})
     b.disabled=false
@@ -1195,7 +1220,7 @@ function renderEvents(events){
 }
 // Plain-language warning chips for the time-guardrail health:* tags the sweep
 // maintains, so an operator sees at a glance that a case is going wrong over time.
-const HEALTH_LABEL={'health:stale':'Going cold (no recent activity)','health:stuck':'Stuck in this stage too long','health:unanswered_handoff':'A person was asked for and not yet answered','health:abandoned_intake':'Intake left with on-site facts missing','health:never_closed':'Resolved but never closed'}
+const HEALTH_LABEL={'health:stale':'Going cold (no recent activity)','health:stuck':'Stuck in this stage too long','health:unanswered_handoff':'A person was asked for and not yet answered','health:abandoned_intake':'Intake left with on-site facts missing','health:never_closed':'Resolved but never closed','health:timestamp_corrupt':'Case time data looks wrong'}
 function healthBadges(tags){
   const list=String(tags||'').split(',').map(s=>s.trim()).filter(t=>t.indexOf('health:')===0)
   if(!list.length) return ''
@@ -1231,7 +1256,7 @@ $('#refresh').onclick=()=>{ lastCasesJson=''; loadCases() }
 document.addEventListener('keydown',e=>{
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)
   if(e.key==='/' && !typing){ e.preventDefault(); $('#q').focus(); return }
-  if(e.key==='Escape'){ if(helpOpen){hideHelp()} else if(typing){document.activeElement.blur()} else if($('#q').value){filt.q='';$('#q').value='';renderList()} return }
+  if(e.key==='Escape'){ if(helpOpen){hideHelp()} else if(typing){document.activeElement.blur()} else if($('#q').value){filt.q='';$('#q').value='';renderListFull()} return }
   if(typing) return
   if(e.key==='j'||e.key==='k'||e.key==='ArrowDown'||e.key==='ArrowUp'){
     const shown=allCases.filter(matchesFull); if(!shown.length)return
@@ -1399,6 +1424,37 @@ $('#export-btn').onclick=async()=>{
     setTimeout(()=>URL.revokeObjectURL(a.href),5000)
   }catch(e){ toast('Export failed: '+e.message,'err') }
 }
+// Inline modal replacement for native prompt()/confirm() -- works on mobile/PWA.
+// Uses DOM creation (not innerHTML) to avoid conflicts with the outer template literal.
+// Returns a Promise resolving to {value, confirmed:true} or null if cancelled.
+function showDialog(opts){
+  const { title='', message='', inputLabel='', inputPlaceholder='', confirmLabel='OK', cancelLabel='Cancel', danger=false } = opts || {}
+  return new Promise(function(resolve){
+    function mk(tag, css, txt){ const el=document.createElement(tag); if(css) el.style.cssText=css; if(txt!=null) el.textContent=txt; return el }
+    const overlay=mk('div','position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px')
+    overlay.setAttribute('role','dialog'); overlay.setAttribute('aria-modal','true')
+    const card=mk('div','background:var(--panel);border:1px solid var(--border);border-radius:10px;max-width:420px;width:100%;padding:22px 24px;box-shadow:0 8px 40px rgba(0,0,0,.5);font-size:14px')
+    if(title){ const h=mk('h3','margin:0 0 8px;font-size:16px',title); card.appendChild(h) }
+    if(message){ const p=mk('p','margin:0 0 10px;color:var(--muted);line-height:1.5',message); card.appendChild(p) }
+    let inp=null
+    if(inputLabel){
+      const lab=mk('label','display:block;margin:0 0 4px;font-size:12px;color:var(--muted)',inputLabel); card.appendChild(lab)
+      inp=document.createElement('textarea'); inp.rows=2; inp.placeholder=inputPlaceholder
+      inp.style.cssText='width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;resize:vertical'
+      card.appendChild(inp)
+    }
+    const row=mk('div','display:flex;gap:8px;margin-top:14px;justify-content:flex-end')
+    const cancelBtn=mk('button','background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0',cancelLabel)
+    const okBtn=mk('button','background:'+(danger?'var(--danger)':'var(--accent)')+';color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0',confirmLabel)
+    row.appendChild(cancelBtn); row.appendChild(okBtn); card.appendChild(row)
+    overlay.appendChild(card); document.body.appendChild(overlay)
+    const close=function(confirmed, value){ overlay.remove(); resolve(confirmed?{value:value||'',confirmed:true}:null) }
+    okBtn.onclick=function(){ close(true, inp?inp.value:'') }
+    cancelBtn.onclick=function(){ close(false) }
+    overlay.addEventListener('keydown',function(e){ if(e.key==='Escape') close(false) })
+    setTimeout(function(){ if(inp) inp.focus(); else okBtn.focus() }, 60)
+  })
+}
 async function boot(){ await loadCases(); await refreshHealth(); const id=restoreFromHash(); if(id) openCase(id) }
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv) })
@@ -1414,6 +1470,7 @@ window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHeal
   attnScore, attnReason, cannedReplies, renderTriage,
   checkHandoffs, clearHandoff, hasHandoff, contactMaybeNonEnglish,
   INTAKE_FIELDS,
-  get handoffQueue(){return handoffQueue}, get handoffSeen(){return handoffSeen} }   // exposed for browser-witness
+  get handoffQueue(){return handoffQueue}, get handoffSeen(){return handoffSeen},
+  showDialog }   // exposed for browser-witness
 </script>
 </body></html>`
