@@ -1280,7 +1280,7 @@ const _matchesOrig = matches
   }
 })()
 // replace matches with channel-aware version
-const matchesFull=(c)=>{
+function matchesFull(c){
   if(filt.channel && c.channel!==filt.channel) return false
   return matches(c)
 }
