@@ -102,6 +102,29 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Keys used by the report fields -- kept in sync with REPORT_KEYS in case-store.js.
+  // Ordered for display: observation fields first, then logistics, then contacts/media.
+  const REPORT_KEY_LIST = ['species', 'symptoms', 'affected_count', 'dead_count', 'onset',
+    'suspected_disease', 'recent_movement', 'location', 'how_to_find', 'access_notes',
+    'farmer_available', 'contact_fallback', 'identifying_traits', 'photos', 'audio', 'notes']
+  const REPORT_KEY_SET = new Set(REPORT_KEY_LIST)
+  const VISIT_CRITICAL_SET = new Set(['species', 'symptoms', 'location', 'how_to_find', 'affected_count', 'farmer_available'])
+
+  function computeFillRate(reportJson) {
+    let r = {}
+    try { r = reportJson ? JSON.parse(reportJson) : {} } catch { r = {} }
+    const filled = REPORT_KEY_LIST.filter(k => r[k] != null && String(r[k]).trim() !== '').length
+    const vcFilled = [...VISIT_CRITICAL_SET].filter(k => r[k] != null && String(r[k]).trim() !== '').length
+    return { total_fields: REPORT_KEY_LIST.length, filled, visit_critical_filled: vcFilled, visit_critical_total: VISIT_CRITICAL_SET.size }
+  }
+
+  // Escape a cell value for CSV: wrap in quotes if it contains comma, newline, or quote.
+  function csvCell(v) {
+    const s = v == null ? '' : String(v)
+    if (s.includes(',') || s.includes('\n') || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"'
+    return s
+  }
+
   app.get('/api/cases', async (req, res) => {
     try {
       const where = {}
@@ -114,11 +137,60 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         }
         where.status = req.query.status
       }
+      if (req.query.channel) where.channel = req.query.channel
       const limit = clampLimit(req.query.limit, 50)
       const offset = offsetOf(req.query.offset)
       const cases = await store.listCases(where, { limit, offset })
       const total = await store.countCases(where)
       res.json({ cases, total, limit, offset })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Create a case manually from the dashboard (non-AI intake flow).
+  // channel is forced to 'web'; external_id is synthesised from the contact phone
+  // (or a timestamp if none given) so it does not collide with channel messages.
+  app.post('/api/cases', async (req, res) => {
+    try {
+      const subject = str(res, req.body, 'subject', { required: false }); if (subject === undefined) return
+      const name = str(res, req.body, 'name', { required: false }); if (name === undefined) return
+      const phone = str(res, req.body, 'phone', { required: false }); if (phone === undefined) return
+      // external_id must be stable for dedup; use phone if given, else a web-<ms> id
+      const external_id = phone ? phone.replace(/[^0-9+]/g, '') || `web-${Date.now()}` : `web-${Date.now()}`
+      const contact = { name: name || 'operator', phone: phone || '' }
+      const { case: c } = await store.findOrCreateCase({ channel: 'web', external_id, contact, subject: subject || 'Field report' })
+      // Tag it as operator-initiated manual intake
+      const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+      if (!tags.includes('intake_mode:manual')) {
+        const newTags = [...tags, 'intake_mode:manual'].join(',')
+        await store.updateCase(c.id, { tags: newTags }, OPERATOR)
+      }
+      await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'case created via dashboard manual intake' })
+      res.status(201).json(await store.getCase(c.id))
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // CSV export: GET before /:id so express does not capture 'export.csv' as an id.
+  app.get('/api/cases/export.csv', async (req, res) => {
+    try {
+      const where = {}
+      if (req.query.status) {
+        const valid = store.getValidStatuses()
+        if (!valid.includes(req.query.status)) return res.status(400).json({ error: `invalid status: ${req.query.status}` })
+        where.status = req.query.status
+      }
+      if (req.query.channel) where.channel = req.query.channel
+      const cases = await store.listCases(where, { limit: 10000, offset: 0 })
+      const META = ['ref', 'subject', 'status', 'priority', 'channel', 'created_at']
+      const headers = [...META, ...REPORT_KEY_LIST]
+      const rows = cases.map(c => {
+        let r = {}
+        try { r = c.report ? JSON.parse(c.report) : {} } catch { r = {} }
+        return [...META.map(k => csvCell(c[k])), ...REPORT_KEY_LIST.map(k => csvCell(r[k]))].join(',')
+      })
+      const csv = [headers.join(','), ...rows].join('\n')
+      res.setHeader('Content-Type', 'text/csv')
+      res.setHeader('Content-Disposition', 'attachment; filename="casey-cases.csv"')
+      res.send(csv)
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -131,7 +203,31 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const limit = clampLimit(req.query.events_limit, 50)
       const events = await store.listEventsPage(c.id, { limit, offset: 0 })
       const transitions = store.availableTransitions(c, OPERATOR)
-      res.json({ case: c, events, events_total, transitions })
+      const report_fill_rate = computeFillRate(c.report)
+      res.json({ case: c, events, events_total, transitions, report_fill_rate })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Submit structured report fields for a case (non-AI intake or operator correction).
+  // Merges into the existing report; blank incoming values never clobber filled ones.
+  app.post('/api/cases/:id/intake', async (req, res) => {
+    try {
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      const incoming = {}
+      for (const k of REPORT_KEY_LIST) {
+        if (!(k in req.body)) continue
+        const v = str(res, req.body, k, { required: false }); if (v === undefined) return
+        incoming[k] = v
+      }
+      // Reject unrecognised keys to avoid silent data loss
+      const unknown = Object.keys(req.body).filter(k => !REPORT_KEY_SET.has(k))
+      if (unknown.length) return res.status(400).json({ error: `unknown report fields: ${unknown.join(', ')}` })
+      if (!Object.keys(incoming).length) return res.status(400).json({ error: 'no report fields provided' })
+      const result = await store.mergeReport(c.id, incoming, OPERATOR)
+      if (result.error) return res.status(400).json({ error: result.error })
+      await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `recorded report fields via dashboard: ${Object.keys(incoming).join(', ')}`, data: incoming })
+      res.json({ report: result.report, report_fill_rate: computeFillRate(JSON.stringify(result.report)) })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -190,7 +286,8 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       if (!text.trim()) return res.status(400).json({ error: 'empty note' })
       const c = await store.getCase(req.params.id)
       if (!c) return res.status(404).json({ error: 'not found' })
-      await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text })
+      const field = req.body.field && REPORT_KEY_SET.has(req.body.field) ? req.body.field : null
+      await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text, data: field ? { field } : undefined })
       res.json({ ok: true })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -278,6 +375,38 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       }
       res.json({ ok: true, sent: !!sendReply, delivered })
     } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Printable case briefing for field teams. Plain HTML, no JS, print-friendly.
+  app.get('/api/cases/:id/report.html', async (req, res) => {
+    try {
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).send('<p>Case not found.</p>')
+      let r = {}
+      try { r = c.report ? JSON.parse(c.report) : {} } catch { r = {} }
+      const LABELS = { species: 'Animals', symptoms: 'Signs seen', affected_count: 'How many affected',
+        dead_count: 'How many died', onset: 'When it started', suspected_disease: 'Suspected disease',
+        recent_movement: 'Recent movement', location: 'Where', how_to_find: 'How to find the place',
+        access_notes: 'Getting there', farmer_available: 'Farmer available?',
+        contact_fallback: 'Other contact', identifying_traits: 'Identifying the animals',
+        photos: 'Photos', audio: 'Voice notes', notes: 'Other notes' }
+      const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
+      const rows = REPORT_KEY_LIST.map(k => {
+        const val = r[k] != null && String(r[k]).trim() ? esc(String(r[k])) : '<em>not recorded</em>'
+        return `<tr><th>${esc(LABELS[k] || k)}</th><td>${val}</td></tr>`
+      }).join('')
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Case ${esc(c.ref||c.id)} briefing</title>
+<style>body{font-family:sans-serif;max-width:700px;margin:2em auto;color:#111}
+h1{font-size:1.2em;margin-bottom:.5em}table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:.4em .6em;border:1px solid #ccc;vertical-align:top}
+th{width:40%;background:#f5f5f5;font-weight:600}
+@media print{body{margin:0}}</style></head>
+<body><h1>Field briefing: ${esc(c.ref||c.id)}</h1>
+<p><strong>Subject:</strong> ${esc(c.subject||'')}</p>
+<p><strong>Status:</strong> ${esc(c.status||'')} &nbsp; <strong>Channel:</strong> ${esc(c.channel||'')}</p>
+<table>${rows}</table></body></html>`
+      res.type('html').send(html)
+    } catch (e) { res.status(500).send('<p>Error: ' + e.message + '</p>') }
   })
 
   app.get('/', (_req, res) => res.type('html').send(PAGE))
@@ -408,6 +537,31 @@ const PAGE = /* html */ `<!doctype html>
         border-radius:8px;padding:10px 14px;font-size:14px;min-height:44px;text-align:left;flex:0 1 auto}
   .canned button:hover{background:var(--hover);border-color:var(--accent)}
   .canned-lab{font-size:12px;color:var(--muted);margin:12px 0 0}
+  /* intake form overlay (New Case + Edit Report) */
+  .intake-ovl{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:none;
+        align-items:flex-start;justify-content:center;overflow:auto;padding:30px 16px}
+  .intake-ovl.show{display:flex}
+  .intake-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+        max-width:600px;width:100%;padding:22px 24px;box-shadow:0 8px 40px rgba(0,0,0,.5);font-size:14px;max-height:calc(100vh - 60px);overflow:auto}
+  .intake-card h2{margin:0 0 12px;font-size:18px}
+  .intake-card .field-hint{font-size:11px;color:var(--faint);margin:0 0 4px}
+  .intake-card .fill-bar{display:flex;gap:6px;align-items:center;margin:0 0 14px;font-size:12px;color:var(--muted)}
+  .intake-card .fill-bar .bar{flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+  .intake-card .fill-bar .bar .fill{height:100%;background:#2e8b57;transition:width .3s}
+  .fill-pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:var(--border);color:var(--muted);margin-left:6px;vertical-align:middle}
+  .fill-pill.ok{background:rgba(34,160,80,.18);color:#1c8c44}
+  .fill-pill.low{background:rgba(200,140,0,.18);color:#9a6a00}
+  .src-tag{font-size:10px;font-weight:600;padding:1px 5px;border-radius:8px;margin-left:4px;vertical-align:middle}
+  .src-ai{background:rgba(59,110,165,.18);color:#5a90cc}
+  .src-manual{background:rgba(90,170,130,.18);color:#2e8b57}
+  .src-both{background:rgba(160,100,180,.18);color:#9060b0}
+  .rep-editable{cursor:text;border-radius:3px;padding:1px 3px;transition:background .15s}
+  .rep-editable:hover{background:var(--hover)}
+  .rep-field-input{width:100%;background:var(--panel);border:1px solid var(--accent);color:var(--fg);border-radius:4px;padding:3px 6px;font-size:13px}
+  .rep-saving{opacity:.6}
+  .rep-note-btn{background:transparent;color:var(--faint);border:0;cursor:pointer;padding:0 0 0 6px;margin:0;font-size:10px;vertical-align:middle}
+  .rep-note-btn:hover{color:var(--accent)}
+  .rep-field-note{font-size:11px;color:var(--muted);background:var(--hover);border-radius:4px;padding:3px 7px;margin-top:3px;border-left:2px solid var(--border)}
   /* handoff alert banner: loud, sticky, dismiss-per-case */
   .handoff{display:none;background:var(--danger);color:#fff;padding:10px 14px;font-size:14px;
         line-height:1.4;align-items:center;gap:10px;cursor:pointer;border-bottom:1px solid rgba(0,0,0,.3)}
@@ -430,6 +584,8 @@ const PAGE = /* html */ `<!doctype html>
       <h1>casey <span class="counts" id="counts"></span>
         <span class="aihealth" id="aihealth" title="Is the AI helper connected?" style="margin-left:12px;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600"></span>
         <button class="icon-btn" id="help" title="What does this screen mean?" style="margin-left:auto">?</button>
+        <button class="icon-btn" id="new-case-btn" title="Add a case manually (no WhatsApp or Discord needed)">+ New</button>
+        <button class="icon-btn" id="export-btn" title="Download all cases as a spreadsheet (CSV)">Export</button>
         <button class="icon-btn" id="refresh" title="Refresh now">&#x21bb;</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">&#x263d;</button>
         <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names">Aa</button>
@@ -437,12 +593,33 @@ const PAGE = /* html */ `<!doctype html>
       <div class="filters">
         <input id="q" placeholder="Search ref, subject, contact... ( / )" autocomplete="off">
         <select id="statusf"><option value="">all stages</option></select>
+        <select id="channelf" title="Filter by channel"><option value="">all channels</option></select>
       </div>
     </div>
     <div class="triage" id="triage"></div>
     <div class="caselist" id="cases"><div class="empty">Loading cases...</div></div>
   </div>
   <div class="detail" id="detail"><p class="empty">Select a case to observe, edit, reply, or override its workflow stage.</p></div>
+</div>
+<div class="intake-ovl" id="intake-ovl">
+  <div class="intake-card">
+    <h2 id="intake-title">New case</h2>
+    <div id="intake-fill-bar" class="fill-bar" style="display:none">
+      <span id="intake-fill-label"></span>
+      <div class="bar"><div class="fill" id="intake-fill-pct" style="width:0%"></div></div>
+    </div>
+    <div id="intake-contact-fields">
+      <label>Contact name (optional)</label><input id="int-name" placeholder="e.g. Johannes">
+      <label>Contact phone (optional)</label><input id="int-phone" placeholder="+27 82 123 4567">
+      <label>Subject (what is the report about?)</label><input id="int-subject" placeholder="e.g. Sick cattle near Musina">
+    </div>
+    <div id="intake-report-fields"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button id="intake-submit">Save</button>
+      <button id="intake-cancel" style="background:transparent;color:var(--muted);border:1px solid var(--border)">Cancel</button>
+    </div>
+    <p class="hint" id="intake-error" style="color:var(--danger);display:none"></p>
+  </div>
 </div>
 <div class="help-ovl" id="help-ovl">
   <div class="help-card">
@@ -610,22 +787,66 @@ const VISIT_CRITICAL=[
   ['contact_fallback','another contact'],
 ]
 const has=(r,k)=>r[k]!=null&&String(r[k]).trim()!==''
-function reportPanel(reportRaw){
+// Derive per-field source labels from the action event log.
+// Events with actor=agent and text containing 'recorded report fields' carry
+// the field names that came from the AI conversation. Events with actor=operator
+// carry fields set via the manual intake form. Returns a map of key -> 'ai'|'manual'|'both'.
+function fieldSources(events){
+  const src={}
+  for(const e of (events||[])){
+    if(e.kind!=='action') continue
+    const isAgent=e.actor==='agent'
+    const isOp=e.actor==='operator'
+    if(!isAgent&&!isOp) continue
+    // The action event text lists fields like "recorded report fields: species, symptoms"
+    // or "updated report fields: location"
+    const m=(e.text||'').match(/(?:recorded|updated) report fields?:\s*(.+)/i)
+    if(!m) continue
+    const keys=m[1].split(',').map(s=>s.trim()).filter(Boolean)
+    for(const k of keys){
+      if(isAgent) src[k]=src[k]==='manual'?'both':'ai'
+      else src[k]=src[k]==='ai'?'both':'manual'
+    }
+  }
+  return src
+}
+function sourceTag(s){
+  if(!s) return ''
+  if(s==='ai') return ' <span class="src-tag src-ai">[AI]</span>'
+  if(s==='manual') return ' <span class="src-tag src-manual">[Manual]</span>'
+  if(s==='both') return ' <span class="src-tag src-both">[Both]</span>'
+  return ''
+}
+// Build map of field -> [{text, created_at}] from note events with a field key
+function fieldNotes(events){
+  const notes={}
+  for(const e of (events||[])){
+    if(e.kind!=='note'||!e.data?.field) continue
+    if(!notes[e.data.field]) notes[e.data.field]=[]
+    notes[e.data.field].push({text:e.text,created_at:e.created_at})
+  }
+  return notes
+}
+function reportPanel(reportRaw, events){
   let r={}; try{ r=reportRaw?JSON.parse(reportRaw):{} }catch{ r={} }
+  const src=fieldSources(events)
+  const fnotes=fieldNotes(events)
   // If nothing has been gathered yet, a calm empty state -- not an empty box.
   const any=REPORT_FIELDS.some(([k])=>has(r,k))
-  const missing=VISIT_CRITICAL.filter(([k])=>!has(r,k)).map(([,label])=>label)
+  const missingVC=VISIT_CRITICAL.filter(([k])=>!has(r,k))
+  const missing=missingVC.map(([,label])=>label)
   // Plain readiness line: green when a visit has what it needs, amber listing the
-  // unrecoverable gaps. No assignment, no instruction -- just the picture.
+  // unrecoverable gaps. Clicking the amber banner opens the intake form.
   let ready=''
   if(any){
     ready = missing.length
-      ? '<div class="rep-ready amber">Still missing for a visit: '+esc(missing.join(', '))+'</div>'
+      ? '<div class="rep-ready amber" id="vc-banner" title="Click to fill in the missing fields" style="cursor:pointer">Still missing for a visit: '+esc(missing.join(', '))+' - click to fill in</div>'
       : '<div class="rep-ready ok">Has what a field visit needs.</div>'
   }
   const rows=REPORT_FIELDS.map(([k,label])=>{
-    const val=has(r,k)?esc(String(r[k])):'<span class="rep-missing">not given yet</span>'
-    return '<div class="rep-row"><span class="rep-label">'+esc(label)+'</span><span class="rep-val">'+val+'</span></div>'
+    const val=has(r,k)?esc(String(r[k]))+sourceTag(src[k]):'<span class="rep-missing">not given yet</span>'
+    const noteList=(fnotes[k]||[]).map(n=>'<div class="rep-field-note">'+esc(n.text)+'</div>').join('')
+    return '<div class="rep-row" data-field="'+esc(k)+'"><span class="rep-label">'+esc(label)+'</span><span class="rep-val"><span class="rep-editable" data-key="'+esc(k)+'" title="Click to edit">'+val+'</span><button class="rep-note-btn" data-key="'+esc(k)+'" title="Add a note to this field">note</button>'+noteList+'</span></div>'
   }).join('')
   return '<div class="report"><div class="rep-head">Report from the field'
     +(any?'':' <span class="rep-missing">(nothing recorded yet)</span>')+'</div>'+ready+rows+'</div>'
@@ -750,7 +971,7 @@ async function loadCases(){
   if(json===lastCasesJson){ // counts/rel-time may still drift; cheap refresh of relative labels
     document.querySelectorAll('.case .when').forEach(()=>{}); return }
   lastCasesJson = json; allCases = cases
-  fillStatusFilter(); renderCounts(); renderList(); renderTriage()
+  fillStatusFilter(); fillChannelFilter(); renderCounts(); renderListFull(); renderTriage()
 }
 function opt(val,cur){ return \`<option\${val===cur?' selected':''}>\${esc(val)}</option>\` }
 const AUTONOMY_HELP = 'auto = agent replies on its own - assisted = agent drafts, human sends - observe = agent only logs, never replies'
@@ -796,17 +1017,25 @@ async function openCase(id){
   let data
   try{ data = await api('/api/cases/'+encodeURIComponent(id)).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json() }) }
   catch(e){ $('#detail').innerHTML='<p class="empty">Could not load this case.</p>'; return }
-  const {case:c, events, transitions, events_total} = data
+  const {case:c, events, transitions, events_total, report_fill_rate:rfr} = data
   const more = events_total!=null && events.length<events_total
+  function fillPill(rfr){
+    if(!rfr) return ''
+    const cls = rfr.filled===rfr.total_fields?'ok':(rfr.visit_critical_filled<rfr.visit_critical_total?'low':'')
+    return \`<span class="fill-pill \${cls}" title="Essential fields: \${rfr.visit_critical_filled} of \${rfr.visit_critical_total}">\${rfr.filled}/\${rfr.total_fields} fields\${rfr.visit_critical_filled<rfr.visit_critical_total?' ('+rfr.visit_critical_filled+'/'+rfr.visit_critical_total+' essential)':''}</span>\`
+  }
   $('#detail').innerHTML = \`
     <button class="icon-btn back" id="back">&larr; cases</button>
     <h2 style="margin:6px 0 4px">\${esc(c.ref)} <span class="badge" title="\${esc(c.status)}">\${esc(stageLabel(c.status))}</span>
-      <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">&#x2398;</button></h2>
+      \${fillPill(rfr)}
+      <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">&#x2398;</button>
+      <a href="/api/cases/\${encodeURIComponent(c.id)}/report.html" target="_blank" class="icon-btn" style="margin-left:4px;text-decoration:none;display:inline-block">Print</a></h2>
     <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
     \${healthBadges(c.tags)}
     <div style="color:var(--muted);margin-bottom:12px">\${esc(c.channel)}/\${esc(fmtPhone(c.external_id))}
       <button class="copy" data-copy="\${esc(c.external_id)}" title="copy contact">&#x2398;</button></div>
-    \${reportPanel(c.report)}
+    \${reportPanel(c.report, events)}
+    <button id="edit-report-btn" class="icon-btn" style="margin-bottom:14px">Edit report fields</button>
     <div class="row">
       <div><label>Priority</label><select id="f-priority">\${['low','normal','high','urgent'].map(p=>opt(p,c.priority)).join('')}</select>\${simple?'<p class="hint">How urgent this is.</p>':''}</div>
       <div><label>Autonomy</label><select id="f-autonomy" title="\${esc(AUTONOMY_HELP)}">\${['auto','assisted','observe'].map(p=>opt(p,c.autonomy)).join('')}</select>\${simple?'<p class="hint">Who answers the contact: the robot, a draft for you, or nobody.</p>':''}</div>
@@ -845,6 +1074,45 @@ async function openCase(id){
     el.addEventListener('blur',()=>{editing=false})
   })
   const back=$('#back'); if(back) back.onclick=()=>{ $('#wrap').classList.remove('detail-open') }
+  const editRptBtn=$('#edit-report-btn')
+  if(editRptBtn) editRptBtn.onclick=()=>openIntakeForm(c)
+  const vcBanner=$('#vc-banner')
+  if(vcBanner) vcBanner.onclick=()=>openIntakeForm(c)
+  // Inline per-field editing: click a field value -> edit in place -> Enter/blur saves.
+  $('#detail').querySelectorAll('.rep-editable').forEach(span=>{
+    span.onclick=async()=>{
+      if(span.querySelector('input')) return   // already editing
+      const k=span.dataset.key
+      const cur=(c.report?JSON.parse(c.report):{})[k]||''
+      span.classList.add('rep-saving')
+      const inp=document.createElement('input')
+      inp.className='rep-field-input'; inp.value=cur
+      span.innerHTML=''; span.appendChild(inp)
+      inp.focus(); span.classList.remove('rep-saving')
+      const save=async()=>{
+        const val=inp.value
+        if(val===cur){span.textContent=cur||''; return}   // no change
+        span.classList.add('rep-saving')
+        const r=await api('/api/cases/'+encodeURIComponent(c.id)+'/intake',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({[k]:val})})
+        if(!r.ok){ toast(await failMsg(r,'save failed'),'err'); span.textContent=cur||''; return }
+        toast('saved','ok'); span.classList.remove('rep-saving')
+        lastCasesJson=''; await loadCases(); await openCase(c.id)
+      }
+      inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();save()} if(e.key==='Escape'){span.textContent=cur||''} })
+      inp.addEventListener('blur',save)
+    }
+  })
+  // Per-field note buttons: prompt for a note text, save as kind=note event with field key.
+  $('#detail').querySelectorAll('.rep-note-btn').forEach(btn=>{
+    btn.onclick=async()=>{
+      const k=btn.dataset.key
+      const text=(prompt('Add a note for "'+(REPORT_FIELDS.find(([f])=>f===k)||[k,k])[1]+'":') || '').trim()
+      if(!text) return
+      const r=await api('/api/cases/'+encodeURIComponent(c.id)+'/note',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text,field:k})})
+      if(!r.ok){ toast(await failMsg(r,'note failed'),'err'); return }
+      toast('note saved','ok'); lastCasesJson=''; await loadCases(); await openCase(c.id)
+    }
+  })
   $('#detail').querySelectorAll('.copy').forEach(b=>b.onclick=()=>{
     try{ navigator.clipboard.writeText(b.dataset.copy); toast('copied') }catch{ toast('copy failed','err') } })
   $('#save').onclick = async ()=>{
@@ -892,7 +1160,7 @@ async function openCase(id){
     toast(NOTIFIED.includes(updated.status)?'Moved to '+toLabel+'. A short note was queued to the contact.':'Moved to '+toLabel+'. The contact was not told.','ok')
     lastCasesJson=''; await loadCases(); await openCase(id)
   })
-  renderList(); renderTriage()              // reflect the new active row in both lists
+  renderListFull(); renderTriage()              // reflect the new active row in both lists
 }
 // Load and render the "possibly the same case" suggestions for the open case.
 // Isolated and best-effort: any failure leaves the panel empty rather than
@@ -942,7 +1210,7 @@ $('#theme').onclick=()=>applyTheme(document.documentElement.dataset.theme==='lig
 function applySimple(on){ simple=!!on; try{localStorage.casey_simple=on?'1':''}catch{}
   $('#simple').classList.toggle('active',simple)
   $('#simple').title = simple ? 'Plain-language mode ON - click for technical stage names' : 'Plain-language mode: show friendly stage names'
-  fillStatusFilter(); renderList(); if(activeId) openCase(activeId) }
+  fillStatusFilter(); renderListFull(); if(activeId) openCase(activeId) }
 applySimple((()=>{ try{return localStorage.casey_simple}catch{} })()==='1')
 $('#simple').onclick=()=>applySimple(!simple)
 // --- first-run help overlay (remembered in localStorage; re-openable via ? ) ---
@@ -956,8 +1224,8 @@ $('#help-ovl').addEventListener('click', e=>{ if(e.target===$('#help-ovl')) hide
 if(!helpSeen()) showHelp()
 // --- filters ---
 let qTimer
-$('#q').addEventListener('input',e=>{ clearTimeout(qTimer); qTimer=setTimeout(()=>{ filt.q=e.target.value; renderList() },120) })
-$('#statusf').addEventListener('change',e=>{ filt.status=e.target.value; renderList() })
+$('#q').addEventListener('input',e=>{ clearTimeout(qTimer); qTimer=setTimeout(()=>{ filt.q=e.target.value; renderListFull() },120) })
+$('#statusf').addEventListener('change',e=>{ filt.status=e.target.value; renderListFull() })
 $('#refresh').onclick=()=>{ lastCasesJson=''; loadCases() }
 // --- keyboard nav: / focus search, j/k move, enter open, esc clear/back ---
 document.addEventListener('keydown',e=>{
@@ -966,7 +1234,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){ if(helpOpen){hideHelp()} else if(typing){document.activeElement.blur()} else if($('#q').value){filt.q='';$('#q').value='';renderList()} return }
   if(typing) return
   if(e.key==='j'||e.key==='k'||e.key==='ArrowDown'||e.key==='ArrowUp'){
-    const shown=allCases.filter(matches); if(!shown.length)return
+    const shown=allCases.filter(matchesFull); if(!shown.length)return
     let i=shown.findIndex(c=>c.id===activeId)
     i = (e.key==='j'||e.key==='ArrowDown') ? Math.min(shown.length-1,i+1) : Math.max(0,i<0?0:i-1)
     openCase(shown[i].id)
@@ -994,18 +1262,158 @@ async function refreshHealth(){
   el.style.background=h.ok?'rgba(34,160,80,.18)':'rgba(200,140,0,.20)'
   el.style.color=h.ok?'#1c8c44':'#9a6a00'
 }
+// --- channel filter ---
+function fillChannelFilter(){
+  const cur=$('#channelf').value
+  const channels=[...new Set(allCases.map(c=>c.channel).filter(Boolean))].sort()
+  $('#channelf').innerHTML='<option value="">all channels</option>'+channels.map(ch=>\`<option value="\${esc(ch)}"\${ch===cur?' selected':''}>\${esc(ch)}</option>\`).join('')
+  if(cur) $('#channelf').value=cur
+}
+$('#channelf').addEventListener('change',e=>{ filt.channel=e.target.value; renderList() })
+const _matchesOrig = matches
+// patch matches to honour channel filter
+;(()=>{
+  const base = matches
+  window._matchesFn = (c)=>{
+    if(filt.channel && c.channel!==filt.channel) return false
+    return base(c)
+  }
+})()
+// replace matches with channel-aware version
+const matchesFull=(c)=>{
+  if(filt.channel && c.channel!==filt.channel) return false
+  return matches(c)
+}
+// Re-define renderList to use matchesFull
+function renderListFull(){
+  const shown = allCases.filter(matchesFull)
+  if(!allCases.length){ $('#cases').innerHTML='<div class="empty">No cases yet.<br>Run <code>casey sim</code> or connect a channel to create one.</div>'; return }
+  if(!shown.length){ $('#cases').innerHTML='<div class="empty">No cases match your filter.</div>'; return }
+  $('#cases').innerHTML = shown.map(c=>\`
+    <div class="case \${c.id===activeId?'active':''}" data-id="\${esc(c.id)}">
+      <div class="top">\${attn(c)?'<span class="dot attn" title="needs attention (autonomy: '+esc(c.autonomy)+')"></span>':''}
+        <span class="ref">\${esc(c.ref)}</span><span class="badge \${esc(c.priority)}">\${esc(c.priority)}</span>
+        <span class="when" style="margin-left:auto" title="\${esc(fmtTime(c.updated_at||c.created_at))}">\${esc(rel(c.updated_at||c.created_at))}</span></div>
+      <div class="sub">\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}</div>
+    </div>\`).join('')
+  document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
+}
+filt.channel = ''
+
+// --- intake form (New Case / Edit Report) ---
+const INTAKE_FIELDS=[
+  ['species','Which animals?','e.g. cattle, sheep, goats, pigs'],
+  ['symptoms','What signs are you seeing?','e.g. drooling, limping, not eating, sudden death'],
+  ['affected_count','How many are affected?','e.g. 5'],
+  ['dead_count','How many have died?','e.g. 2 (write 0 if none)'],
+  ['onset','When did it start?','e.g. yesterday morning, 3 days ago'],
+  ['suspected_disease','Do you know what disease it might be?','e.g. FMD, lumpy skin - leave blank if unsure'],
+  ['recent_movement','Have the animals moved recently?','e.g. yes, bought from market last week'],
+  ['location','Where are the animals?','Farm name, nearest town, or GPS coordinates'],
+  ['how_to_find','How do we find the place?','Road name, landmark, or directions from the nearest town'],
+  ['access_notes','Any access or travel notes?','e.g. gravel road, locked gate - call first'],
+  ['farmer_available','Will the farmer be there?','e.g. yes, or phone first on 082...'],
+  ['contact_fallback','Any other contact person?','Name and phone number if different from this one'],
+  ['identifying_traits','How do we identify the animals?','e.g. red tag in ear, black-and-white Friesians'],
+  ['photos','Are there photos?','yes / no, or a description of what they show'],
+  ['audio','Are there voice notes?','yes / no'],
+  ['notes','Anything else to note?','Any extra information'],
+]
+let intakeCaseId = null    // set when editing existing case; null = new case
+function openIntakeForm(caseRow){
+  intakeCaseId = caseRow ? caseRow.id : null
+  const isEdit = !!caseRow
+  $('#intake-title').textContent = isEdit ? 'Edit report fields' : 'New case'
+  const contactSection = $('#intake-contact-fields')
+  contactSection.style.display = isEdit ? 'none' : ''
+  // build report fields
+  let existingReport = {}
+  if(caseRow && caseRow.report){ try{ existingReport=JSON.parse(caseRow.report) }catch{} }
+  // fill rate bar (edit mode only)
+  const fillBar = $('#intake-fill-bar')
+  if(isEdit){
+    const total=INTAKE_FIELDS.length
+    const filled=INTAKE_FIELDS.filter(([k])=>existingReport[k]!=null&&String(existingReport[k]).trim()!=='').length
+    fillBar.style.display='flex'
+    $('#intake-fill-label').textContent=filled+' of '+total+' fields filled'
+    $('#intake-fill-pct').style.width=Math.round(filled/total*100)+'%'
+  } else { fillBar.style.display='none' }
+  // render fields with pre-fill and hints
+  $('#intake-report-fields').innerHTML = INTAKE_FIELDS.map(([k,label,hint])=>\`
+    <label for="int-\${k}">\${esc(label)}</label>
+    <input id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" value="\${esc(existingReport[k]||'')}" autocomplete="off">
+  \`).join('')
+  $('#intake-error').style.display='none'
+  $('#intake-ovl').classList.add('show')
+  setTimeout(()=>{ if(isEdit) document.getElementById('int-species')?.focus()
+    else document.getElementById('int-name')?.focus() }, 80)
+}
+$('#intake-cancel').onclick=()=>{ $('#intake-ovl').classList.remove('show'); intakeCaseId=null }
+$('#intake-ovl').addEventListener('click',e=>{ if(e.target===$('#intake-ovl')){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null } })
+$('#intake-submit').onclick=async()=>{
+  const btn=$('#intake-submit'); btn.disabled=true
+  const errEl=$('#intake-error'); errEl.style.display='none'
+  try{
+    let caseId=intakeCaseId
+    if(!caseId){
+      // create new case
+      const body={
+        name:$('#int-name').value.trim(),
+        phone:$('#int-phone').value.trim(),
+        subject:$('#int-subject').value.trim()||'Field report'
+      }
+      const r=await api('/api/cases',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
+      if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||'Failed to create case') }
+      const j=await r.json(); caseId=j.id
+    }
+    // gather report fields (skip blanks)
+    const report={}
+    for(const [k] of INTAKE_FIELDS){
+      const v=(document.getElementById('int-'+k)||{}).value||''
+      if(v.trim()) report[k]=v.trim()
+    }
+    if(Object.keys(report).length){
+      const r2=await api('/api/cases/'+encodeURIComponent(caseId)+'/intake',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(report)})
+      if(!r2.ok){ const e=await r2.json().catch(()=>({})); throw new Error(e.error||'Failed to save report') }
+    }
+    const wasEdit=!!intakeCaseId
+    $('#intake-ovl').classList.remove('show'); intakeCaseId=null
+    toast(wasEdit?'Report updated':'Case created','ok')
+    lastCasesJson=''; await loadCases(); await openCase(caseId)
+  } catch(e){ errEl.textContent=e.message; errEl.style.display=''; }
+  btn.disabled=false
+}
+$('#new-case-btn').onclick=()=>openIntakeForm(null)
+// --- export CSV (fetch via api() so the X-Casey-Token header is sent, then save as blob) ---
+$('#export-btn').onclick=async()=>{
+  const params=new URLSearchParams()
+  if(filt.status) params.set('status',filt.status)
+  if(filt.channel) params.set('channel',filt.channel)
+  const url='/api/cases/export.csv'+(params.toString()?'?'+params.toString():'')
+  try{
+    const r=await api(url)
+    if(!r.ok){ toast('Export failed: '+r.status,'err'); return }
+    const blob=await r.blob()
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='casey-cases.csv'
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    setTimeout(()=>URL.revokeObjectURL(a.href),5000)
+  }catch(e){ toast('Export failed: '+e.message,'err') }
+}
 async function boot(){ await loadCases(); await refreshHealth(); const id=restoreFromHash(); if(id) openCase(id) }
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv) })
 window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHealth, get lastHealth(){return lastHealth},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
-  get editing(){return editing}, get simple(){return simple}, setFilter(q){filt.q=q;renderList()},
+  get editing(){return editing}, get simple(){return simple},
+  setFilter(q){filt.q=q;renderListFull()},
+  renderList: renderListFull, matchesFull, openIntakeForm,
   // help overlay + per-case hint, exposed for browser-witness
   showHelp, hideHelp, helpSeen, todoHint, get helpOpen(){return helpOpen},
   // triage inbox + coaching + handoff, exposed for browser-witness
   attnScore, attnReason, cannedReplies, renderTriage,
   checkHandoffs, clearHandoff, hasHandoff, contactMaybeNonEnglish,
+  INTAKE_FIELDS,
   get handoffQueue(){return handoffQueue}, get handoffSeen(){return handoffSeen} }   // exposed for browser-witness
 </script>
 </body></html>`

@@ -149,7 +149,13 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
          `into it. Give them their reference simply, for example: "Thank you for`,
          `letting us know. Our team will look into this. If you need to remind us,`,
          `your reference is ${caseRow.ref}." Then, if it helps, ask one gentle question`,
-         `about what they are seeing or where the animals are -- but only one.`].join('\n')
+         `about what they are seeing or where the animals are -- but only one.`,
+         ...( process.env.CASEY_PUBLIC_URL
+           ? [`Also, once you have given the reference, you may optionally add ONE short`,
+              `plain sentence offering the web form link, for example: "You can also fill in`,
+              `details at: ${process.env.CASEY_PUBLIC_URL}?ref=${caseRow.ref}" -- but ONLY if`,
+              `there is a natural place for it; never interrupt warmth for a URL.`]
+           : [] )].join('\n')
       : `Continue gently from the earlier messages above. Pick up where things left off.`,
     ``,
     closingCapture

@@ -64,6 +64,26 @@ export const SCENARIOS = {
     description: 'Reports that merely contain trigger substrings (personal/stopped/updated). With word-boundary intent matching these must reach the agent, never a stop/handoff shortcut.',
     lines: ['my personal herd is the one affected', 'the cow stopped eating completely', 'nothing updated since the sickness started'],
   },
+  'one-question-at-a-time': {
+    name: 'one-question-at-a-time',
+    description: 'Two key facts (species and location) are both missing after the first message. The agent must ask at most one question per reply, never a list. Verifiable: each agent reply must contain at most one question mark.',
+    lines: ['some of my animals are very sick', 'cattle', 'near Bela-Bela on the farm road'],
+  },
+  'language-mirror-zulu': {
+    name: 'language-mirror-zulu',
+    description: 'Contact writes in isiZulu throughout. Agent must reply in isiZulu, not switch to English. Verifiable: replies must not be pure English when isiZulu words are in the input.',
+    lines: ['izinkomo zami ziyagula kakhulu', 'ziyakhipha amathe futhi zikhomba imizwa yobuhlungu', 'ngiyabonga'],
+  },
+  'language-mirror-afrikaans': {
+    name: 'language-mirror-afrikaans',
+    description: 'Contact writes in Afrikaans. Agent must reply in Afrikaans.',
+    lines: ['my beeste is baie siek vandag', 'hulle eet nie meer nie en staan net stil', 'dankie broer'],
+  },
+  'mixed-language': {
+    name: 'mixed-language',
+    description: 'Contact switches between isiZulu and broken English mid-conversation. Agent mirrors each message in the language it was written in.',
+    lines: ['izinkomo zami ziyagula', 'they drooling a lot and some are limping', 'ngiyabonga ngomuntu ozosiza'],
+  },
 }
 
 // Return a persona by name (case-insensitive), or null.

@@ -1010,6 +1010,61 @@ async function main() {
     assert.ok(reply.length > 0, 'still a warm close')
   })
 
+  await test('first message: reply has reference, is warm, at most one question mark', async () => {
+    const chan = 'first-msg-' + Date.now()
+    const replies = []
+    const origSend = adapter.sent.length
+    await runScript(adapter, ['my goats are sick'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const newReplies = adapter.sent.slice(origSend)
+    assert.ok(newReplies.length >= 1, 'at least one reply sent')
+    const first = newReplies[0].text || ''
+    assert.ok(first.length > 0, 'first reply is not empty')
+    // reply must contain the case reference (CASE-xxxx-yyyy format)
+    assert.ok(/CASE-[A-Z0-9]+-[a-z0-9]+/i.test(first), 'first reply contains the case reference')
+    // at most one question mark (no interrogation)
+    const qmarks = (first.match(/\?/g) || []).length
+    assert.ok(qmarks <= 1, 'first reply has at most one question mark, got: ' + qmarks)
+    // not empty or emoji-only (has real words)
+    assert.ok(/[a-zA-Z]{3,}/.test(first), 'first reply contains real words')
+    // does not contain internal jargon
+    const lc = first.toLowerCase()
+    assert.ok(!lc.includes('triage') && !lc.includes(' case ') && !lc.includes('ticket') && !lc.includes('workflow'), 'first reply contains no internal jargon')
+  })
+
+  await test('POST /api/cases creates a case with channel=web', async () => {
+    const r = await df('http://localhost:4577/api/cases?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Jan Bloem', phone: '0821112222', subject: 'Web intake test' }),
+    })
+    assert.equal(r.status, 201, 'POST /api/cases returns 201')
+    const j = await r.json()
+    assert.equal(j.channel, 'web', 'new case has channel=web')
+    assert.ok(j.id, 'new case has an id')
+    assert.ok((j.tags || '').includes('intake_mode:manual'), 'new case tagged intake_mode:manual')
+    const webCaseId = j.id
+
+    const intake = await df('http://localhost:4577/api/cases/' + webCaseId + '/intake?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ species: 'goats', location: 'Bela-Bela', symptoms: 'limping', affected_count: '4' }),
+    })
+    assert.equal(intake.status, 200, 'POST /api/cases/:id/intake returns 200')
+    const ij = await intake.json()
+    assert.equal(ij.report.species, 'goats', 'species written to report')
+    assert.equal(ij.report_fill_rate.filled, 4, 'fill_rate counts 4 filled fields')
+    assert.equal(ij.report_fill_rate.total_fields, 16, 'fill_rate total_fields is 16')
+
+    const detail = await df('http://localhost:4577/api/cases/' + webCaseId + '?token=secret').then(r => r.json())
+    assert.equal(detail.report_fill_rate.filled, 4, 'GET /api/cases/:id includes report_fill_rate')
+    assert.ok(detail.report_fill_rate.visit_critical_total >= 4, 'visit_critical_total present')
+
+    const csv = await df('http://localhost:4577/api/cases/export.csv?token=secret')
+    assert.equal(csv.status, 200, 'GET /api/cases/export.csv returns 200')
+    const body = await csv.text()
+    assert.ok(body.startsWith('ref,'), 'CSV starts with ref column')
+    assert.ok(body.includes('species'), 'CSV has species column')
+    assert.ok(body.includes('Bela-Bela'), 'CSV contains the intake data')
+  })
+
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
   process.exit(failures ? 1 : 0)
