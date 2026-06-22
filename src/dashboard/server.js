@@ -43,7 +43,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   const authed = (req) => {
     if (!token) return true
     const bearer = (req.get('authorization') || '').replace(/^Bearer\s+/i, '')
-    return matches(bearer) || matches(req.get('x-casey-token'))
+    // req.query.token is accepted for the page-load GET / only (the client JS
+    // immediately strips it from the address bar and switches to X-Casey-Token
+    // header for all subsequent API calls, so it never appears in access logs).
+    return matches(bearer) || matches(req.get('x-casey-token')) || matches(req.query.token)
   }
   app.use((req, res, next) => {
     if (req.path.startsWith('/design')) return next()

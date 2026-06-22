@@ -150,6 +150,10 @@ async function main() {
       problems++
     }
     if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected - only the offline sim will run'))
+    // thatcher config
+    const cfgFile = path.join(ROOT, 'thatcher.config.yml')
+    console.log(existsSync(cfgFile) ? ok('thatcher.config.yml present') : bad('thatcher.config.yml missing - casey will fail to start (see README Layout section)'))
+    if (!existsSync(cfgFile)) problems++
     // dashboard token
     console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset - dashboard is open to anyone who can reach the port'))
     // port
@@ -291,7 +295,19 @@ async function main() {
     // orderBy). Fall back to listCases only if no reply carried a caseId.
     const runCaseId = [...transcript].reverse().find(t => t.caseId)?.caseId
     const caseRow = runCaseId ? await casey.store.getCase(runCaseId) : (await casey.store.listCases())[0]
-    if (caseRow) console.log(`\n${bold(caseRow.ref)}  status=${caseRow.status}  priority=${caseRow.priority}  tags=${caseRow.tags || '-'}\n   summary: ${caseRow.summary || dim('(none)')}`)
+    if (caseRow) {
+      console.log(`\n${bold(caseRow.ref)}  status=${caseRow.status}  priority=${caseRow.priority}  tags=${caseRow.tags || '-'}\n   summary: ${caseRow.summary || dim('(none)')}`)
+      try {
+        const report = caseRow.report ? JSON.parse(caseRow.report) : {}
+        const filled = Object.entries(report).filter(([, v]) => v != null && v !== '')
+        if (filled.length) {
+          console.log(dim('   report:'))
+          for (const [k, v] of filled) console.log(`     ${dim(k.padEnd(20))} ${v}`)
+        } else {
+          console.log(dim('   report: (empty)'))
+        }
+      } catch { /* malformed report JSON: skip */ }
+    }
     await casey.stop()
     process.exit(0)
   }
@@ -299,18 +315,28 @@ async function main() {
   if (cmd === 'cases') {
     const store = createCaseStore()
     await store.init()
+    const where = {}
     if (flags.status) {
       const valid = store.getValidStatuses()
       if (!valid.includes(flags.status)) { console.log(bad(`invalid status: ${flags.status}, allowed: ${valid.join(', ')}`)); process.exit(1) }
+      where.status = flags.status
     }
-    const cases = await store.listCases({}, flags.status ? { status: flags.status } : {})
+    if (flags.channel) {
+      const valid = ['sim', 'discord', 'whatsapp']
+      if (!valid.includes(flags.channel)) { console.log(bad(`invalid channel: ${flags.channel}, allowed: ${valid.join(', ')}`)); process.exit(1) }
+      where.channel = flags.channel
+    }
+    const cases = await store.listCases(where)
     if (!cases.length) {
-      console.log(flags.status ? `no cases in stage "${flags.status}".` : 'no cases yet.')
+      const desc = [flags.status && `stage "${flags.status}"`, flags.channel && `channel "${flags.channel}"`].filter(Boolean).join(', ')
+      console.log(desc ? `no cases matching ${desc}.` : 'no cases yet.')
       console.log(dim(`  create one with ${cyan('casey sim "my order is late"')}, or connect a channel and run ${cyan('casey up')}.`))
       process.exit(0)
     }
     for (const cr of cases) {
-      console.log(`${bold(cr.ref)}\t[${cr.status}]\t${cr.priority}\t${cr.channel}\t${cr.subject || ''}`)
+      const contact = cr.external_id ? dim(cr.external_id) : ''
+      const age = cr.created_at ? dim(new Date(cr.created_at * 1000).toLocaleDateString()) : ''
+      console.log(`${bold(cr.ref)}\t[${cr.status}]\t${cr.priority}\t${cr.channel}\t${contact}\t${cr.subject || ''}\t${age}`)
     }
     process.exit(0)
   }

@@ -193,7 +193,7 @@ returns nothing, and records the failure as an observation rather than leaking i
 | `WHATSAPP_VERIFY_TOKEN` | Webhook verification handshake token. |
 | `WHATSAPP_APP_SECRET` | When set, inbound webhooks are HMAC-SHA256 verified (`X-Hub-Signature-256`); forged posts are rejected. |
 | `WHATSAPP_WEBHOOK_PORT`, `WHATSAPP_WEBHOOK_PATH` | Fixed webhook port/path (Meta needs a stable public URL; use a tunnel in dev). |
-| `CASEY_DASHBOARD_TOKEN` | When set, the dashboard API and page require this token (`?token=` or `Authorization: Bearer`). |
+| `CASEY_DASHBOARD_TOKEN` | When set, the dashboard API and page require this token (`Authorization: Bearer <token>` or `X-Casey-Token` header). For the initial page load, pass `?token=` in the URL; the browser strips it from the address bar and switches to the header for all API calls. |
 | `CASEY_LOG=silent` | Silence casey's structured JSON logs (used by tests). |
 | `CASEY_STUB_LLM=1` | Run `casey up` with the offline stub model. |
 
