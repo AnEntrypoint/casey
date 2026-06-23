@@ -671,6 +671,7 @@ const PAGE = /* html */ `<!doctype html>
   .rep-label{flex:0 0 42%;color:var(--muted)}
   .rep-val{flex:1 1 auto;word-break:break-word}
   .rep-missing{color:var(--muted);font-style:italic;opacity:.7}
+  .rep-src-legend{font-size:11px;color:var(--muted);padding:4px 12px 4px;border-bottom:1px solid var(--border-soft)}
   .rep-ready{padding:7px 12px;font-size:12px;font-weight:600;border-bottom:1px solid var(--border-soft)}
   .rep-ready.ok{color:#1c8c44;background:rgba(34,160,80,.10)}
   .rep-ready.amber{color:#9a6a00;background:rgba(200,140,0,.10)}
@@ -681,8 +682,8 @@ const PAGE = /* html */ `<!doctype html>
         padding:3px 8px;cursor:pointer;margin:0;font-size:12px;line-height:1}
   .icon-btn:hover{background:var(--hover);color:var(--fg)}
   .icon-btn.active{background:var(--accent-soft);color:var(--fg);border-color:var(--accent)}
-  .filters{display:flex;gap:6px}
-  .filters input{flex:2}.filters select{flex:1}
+  .filters{display:flex;gap:6px;flex-wrap:wrap}
+  .filters input{flex:2 1 120px}.filters select{flex:1 1 80px}
   .caselist{overflow:auto;flex:1;min-height:0}
   .case{padding:12px 14px;border-bottom:1px solid var(--border-soft);cursor:pointer}
   .case:hover{background:var(--hover)}
@@ -1087,8 +1088,19 @@ function reportPanel(reportRaw, events){
     const noteList=(fnotes[k]||[]).map(n=>'<div class="rep-field-note">'+esc(n.text)+'</div>').join('')
     return '<div class="rep-row" data-field="'+esc(k)+'"><span class="rep-label">'+esc(label)+'</span><span class="rep-val"><span class="rep-editable" data-key="'+esc(k)+'" title="Click to edit">'+val+'</span><button class="rep-note-btn" data-key="'+esc(k)+'" title="Add a note to this field">note</button>'+noteList+'</span></div>'
   }).join('')
+  // Source legend: only shown when at least one field has a src annotation
+  const srcVals=Object.values(src)
+  let srcLegend=''
+  if(srcVals.length){
+    const hasAI=srcVals.some(v=>v==='ai'||v==='both')
+    const hasManual=srcVals.some(v=>v==='manual'||v==='both')
+    const parts=[]
+    if(hasAI) parts.push('<span class="src-tag src-ai">[AI]</span> collected by agent')
+    if(hasManual) parts.push('<span class="src-tag src-manual">[Manual]</span> entered by operator')
+    srcLegend='<div class="rep-src-legend">Fields from: '+parts.join('  ')+'</div>'
+  }
   return '<div class="report"><div class="rep-head">Report from the field'
-    +(any?'':' <span class="rep-missing">(nothing recorded yet)</span>')+'</div>'+ready+rows+'</div>'
+    +(any?'':' <span class="rep-missing">(nothing recorded yet)</span>')+'</div>'+srcLegend+ready+rows+'</div>'
 }
 
 let activeId = null, lastCasesJson = '', allCases = [], known = new Set()

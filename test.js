@@ -1186,6 +1186,24 @@ async function main() {
     assert.ok(html.includes('goats'), 'existing report value is pre-filled')
   })
 
+  await test('GET /api/cases/:id/report.html escapes XSS in all contact-supplied fields', async () => {
+    // A contact can supply any text including script injection attempts. The
+    // report.html endpoint must HTML-escape every field value from the report,
+    // the subject, and the ref so none of them can execute as markup.
+    const xss = '<script>alert(1)</script>'
+    const { case: xc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'xss-' + Date.now(), subject: xss })
+    await store.mergeReport(xc.id, { species: xss, location: xss, symptoms: '"<img onerror=alert(2) src=x>' })
+    const r = await df('http://localhost:4577/api/cases/' + xc.id + '/report.html?token=secret')
+    assert.equal(r.status, 200, 'report.html loads for the case')
+    const html = await r.text()
+    // The raw XSS strings must NOT appear verbatim; they must be entity-escaped.
+    // (A live <script> or <img> tag must not be in the HTML -- the < must be &lt;.)
+    assert.ok(!html.includes('<script>alert(1)</script>'), 'script tag is not injected verbatim')
+    assert.ok(!html.includes('<img '), 'img tag is not injected verbatim (< must be &lt;)')
+    // The encoded forms must be present (field content is still rendered, just escaped).
+    assert.ok(html.includes('&lt;script&gt;') || html.includes('&lt;img'), 'XSS payload is HTML-entity-escaped in the output')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')

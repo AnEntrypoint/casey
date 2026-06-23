@@ -275,7 +275,10 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // Do NOT log external_id -- it is the contact's phone number (PII). Channel
       // plus the error is enough to diagnose without writing PII to the log sink.
       log.error?.('[casey] findOrCreateCase failed', { channel, error: e.message })
-      return { to: msg.from, text: '', platform, error: e.message }
+      // Send a warm holding message rather than empty text so the contact knows
+      // their message arrived and the team will follow up.
+      const storeDownText = fallbackReply(msg.text || '', null)
+      return { to: msg.from, text: storeDownText, platform, error: e.message }
     }
 
     // Dedup: a redelivered platform message (webhook retry, gateway replay, or
@@ -288,7 +291,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     const inboundEvent = await store.recordInbound(caseRow, {
       channel,
       text: inboundText || (media ? `[${media}]` : '[empty message]'),
-      data: { from: msg.from }, msg_id: msgId,
+      data: {}, msg_id: msgId,
     })
     if (!inboundEvent) {
       log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
