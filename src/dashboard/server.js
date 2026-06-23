@@ -1846,9 +1846,16 @@ $('#intake-back').onclick=()=>{
 }
 $('#intake-cancel').onclick=()=>{ clearDraft(); closeIntakeOvl() }
 $('#intake-ovl').addEventListener('click',e=>{ if(e.target===$('#intake-ovl')) closeIntakeOvl() })
-// Escape closes the overlay; Tab order is natural (DOM order)
+// Escape closes the overlay; Enter on input fields advances (Next) or submits (Save); Tab order is natural DOM order
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&$('#intake-ovl').classList.contains('show')){ e.preventDefault(); closeIntakeOvl() }
+  if(!$('#intake-ovl').classList.contains('show')) return
+  if(e.key==='Escape'){ e.preventDefault(); closeIntakeOvl(); return }
+  if(e.key==='Enter'&&e.target.tagName==='INPUT'&&!e.defaultPrevented){
+    e.preventDefault()
+    const next=$('#intake-next'); const sub=$('#intake-submit')
+    if(next&&next.style.display!=='none') next.click()
+    else if(sub&&sub.style.display!=='none') sub.click()
+  }
 })
 $('#intake-submit').onclick=async()=>{
   const btn=$('#intake-submit'); btn.disabled=true

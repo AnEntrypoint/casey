@@ -401,11 +401,14 @@ async function main() {
     let report = {}; try { report = caseRow.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
     const { VISIT_CRITICAL: VC } = await import('../src/case-health.js')
     const filled = Object.keys(report).filter(k => report[k] != null && String(report[k]).trim())
-    if (filled.length) {
-      console.log(dim('--- report ---'))
-      for (const k of VC) { if (report[k]) console.log(`  ${k}: ${report[k]} [visit-critical]`) }
-      for (const k of filled.filter(k => !VC.includes(k))) console.log(`  ${k}: ${report[k]}`)
-    } else { console.log(dim('  (no report fields filled yet)')) }
+    console.log(dim('--- report ---'))
+    for (const k of VC) {
+      if (report[k]) console.log(`  ${k}: ${report[k]} [visit-critical]`)
+      else console.log(dim(`  ${k}: (not given) [visit-critical]`))
+    }
+    const extra = filled.filter(k => !VC.includes(k))
+    for (const k of extra) console.log(`  ${k}: ${report[k]}`)
+    if (!filled.length) console.log(dim('  (no additional fields filled)'))
     console.log(dim('--- timeline ---'))
     for (const e of await store.listEvents(caseRow.id)) console.log(`  ${e.kind}/${e.actor}: ${e.text}`)
     process.exit(0)
