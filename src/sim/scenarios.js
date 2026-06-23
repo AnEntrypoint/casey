@@ -95,6 +95,101 @@ export const SCENARIOS = {
       'no other contact but my wife is also here',
     ],
   },
+  'numbers-as-words': {
+    name: 'numbers-as-words',
+    description: 'Contact writes counts as English words ("three cows died"). Verifies extractFields handles word numerals.',
+    lines: [
+      'three of my cattle are very sick',
+      'two of them died already',
+      'they are near Tzaneen on the farm',
+    ],
+  },
+  'severe-misspelling': {
+    name: 'severe-misspelling',
+    description: 'Heavy misspellings ("mah cattl ar sic", "thay drolen"). The agent must still understand and reply warmly without correcting the contact.',
+    lines: [
+      'mah cattl ar sic',
+      'thay drolen and not eting',
+      'i hav abut 15 of dem',
+    ],
+  },
+  'contradictory-counts': {
+    name: 'contradictory-counts',
+    description: 'Contact first says 25 animals died, then says they only own 10. Tests that the agent does not alarm or confront the person.',
+    lines: [
+      'my cattle 25 died already',
+      'oh wait no, i have only 10 total animals',
+      'some sick not all dead sorry',
+    ],
+  },
+  'bare-location-only': {
+    name: 'bare-location-only',
+    description: 'Contact gives only a place name, no species or symptoms. Checks that the agent gently prompts for what kind of animal.',
+    lines: [
+      'near Vryheid',
+      'on the farm past the river',
+      'cattle yes',
+    ],
+  },
+  'multiple-species': {
+    name: 'multiple-species',
+    description: 'Contact mentions both cattle and sheep are sick in the same message.',
+    lines: [
+      'both my cattle and my sheep are very sick',
+      'the cattle have blisters and the sheep are just not eating',
+      'about 8 cattle and 12 sheep affected',
+    ],
+  },
+  'wrong-number-correction': {
+    name: 'wrong-number-correction',
+    description: 'Contact gives a wrong fallback number, then corrects it in a later message.',
+    lines: [
+      'my goats are sick near Lephalale',
+      'call my brother on 071 555 1234',
+      'sorry wrong number, it is 072 888 9999',
+    ],
+  },
+  'allcaps-shouting': {
+    name: 'allcaps-shouting',
+    description: 'Entire messages in ALL CAPS -- worried contact, not aggressive. Agent must respond warmly.',
+    lines: [
+      'MY CATTLE ARE DYING PLEASE HELP',
+      'THEY ARE DROOLING AND HAVE BLISTERS',
+      'I AM AT FARM NEAR MOKOPANE PLEASE COME',
+    ],
+  },
+  'emoji-only': {
+    name: 'emoji-only',
+    description: 'Contact sends only emoji and no text (common on low-data phones). Agent must acknowledge and gently ask for more.',
+    lines: ['[image]', '[image]', 'sick animals'],
+  },
+  'local-language-species': {
+    name: 'local-language-species',
+    description: 'Species stated only in local language: isiZulu "izinkomo" (cattle) and Afrikaans "skape" (sheep). Verifies extractFields handles them.',
+    lines: [
+      'izinkomo ziyagula',
+      'skape is ook siek by my buurman',
+      'ngicela usizo',
+    ],
+  },
+  'relative-onset': {
+    name: 'relative-onset',
+    description: 'Contact describes when it started using relative terms ("last week", "since Tuesday"). Verifies onset extraction.',
+    lines: [
+      'my sheep started getting sick since Tuesday',
+      'it started last week actually',
+      'the farm is near Ermelo',
+    ],
+  },
+  'not-available': {
+    name: 'not-available',
+    description: 'Contact proactively says they will not be at the farm when someone comes. Tests that farmer_available is captured as no.',
+    lines: [
+      'my cattle are sick near Phalaborwa',
+      'they are drooling and limping',
+      'I will not be home next week, call my wife Nomsa',
+    ],
+  },
 }
 
 // Return a persona by name (case-insensitive), or null.

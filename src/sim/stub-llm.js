@@ -57,17 +57,60 @@ function composeReply(text, ref) {
 // the case_report merge is exercised; the real model does the rich extraction.
 function extractFields(text) {
   const t = (text || '').toLowerCase()
+  const raw = text || ''
   const f = {}
-  const species = ['cattle', 'cow', 'cows', 'sheep', 'goat', 'goats', 'pig', 'pigs', 'beeste', 'izinkomo', 'iinkomo']
-    .find(s => new RegExp(`\\b${s}\\b`).test(t))
+
+  // Species -- English, Afrikaans (beeste=cattle, skape=sheep, varke=pigs),
+  // isiZulu/isiXhosa (izinkomo/iinkomo=cattle, izimvu=sheep).
+  const SPECIES = ['cattle', 'cow', 'cows', 'sheep', 'goat', 'goats', 'pig', 'pigs',
+    'beeste', 'skape', 'varke', 'izinkomo', 'iinkomo', 'izimvu']
+  const species = SPECIES.find(s => new RegExp(`\\b${s}\\b`).test(t))
   if (species) f.species = species
-  const sym = ['drool', 'blister', 'limp', 'lame', 'died', 'dying', 'sick', 'siek', 'gula', 'kwyl']
-    .find(s => t.includes(s))
+
+  // Symptoms -- include Afrikaans (kwyl=drool, kreupel=limp) and common phrases.
+  const SYMPTOMS = ['drool', 'blister', 'limp', 'lame', 'died', 'dying', 'sick', 'siek',
+    'gula', 'kwyl', 'kreupel', 'not eating', 'not eating', 'eet nie', 'amathe']
+  const sym = SYMPTOMS.find(s => t.includes(s))
   if (sym) f.symptoms = sym
-  const num = (t.match(/\b(\d+)\b/) || [])[1]
+
+  // Counts -- numbers written as digits or common English words.
+  const WORD_NUMS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 }
+  let num = null
+  const digitMatch = (t.match(/\b(\d+)\b/) || [])[1]
+  if (digitMatch) {
+    num = digitMatch
+  } else {
+    const wordMatch = Object.keys(WORD_NUMS).find(w => new RegExp(`\\b${w}\\b`).test(t))
+    if (wordMatch) num = String(WORD_NUMS[wordMatch])
+  }
   if (num && /\b(died|dead|dood|gevrek)\b/.test(t)) f.dead_count = num
   else if (num) f.affected_count = num
-  if (/\bdied|dead|dood|gevrek\b/.test(t)) f.dead_count = f.dead_count || 'some'
+  if (/\b(died|dead|dood|gevrek)\b/.test(t)) f.dead_count = f.dead_count || 'some'
+
+  // Location -- "near X", "farm X", "on the R\d+ road", "X area", "past X".
+  const locPat = /\b(?:near|past|from|at|on the|in|by)\s+([A-Z][a-zA-Z\s\-]{2,30}?)(?:\s*,|\s*\.|$)/
+  const locMatch = raw.match(locPat)
+  if (locMatch) f.location = locMatch[1].trim()
+  // Also capture "my farm near X" or "X farm"
+  if (!f.location) {
+    const farmMatch = raw.match(/\b([A-Z][a-zA-Z\s]{2,20})\s+(?:farm|area|dorp|plaas)\b/i)
+    if (farmMatch) f.location = farmMatch[1].trim()
+  }
+
+  // Onset -- "started yesterday", "since Monday", "X days ago", "last week".
+  const onsetPat = /\b(?:since|started|since last|from)\s+(yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|last\s+\w+|\d+\s+days?\s+ago)/i
+  const onsetMatch = raw.match(onsetPat)
+  if (onsetMatch) f.onset = onsetMatch[1].trim()
+  else if (/\b(\d+)\s+days?\s+ago\b/i.test(raw)) {
+    f.onset = (raw.match(/(\d+\s+days?\s+ago)/i) || [])[1]
+  }
+  else if (/\byesterday\b/.test(t)) f.onset = 'yesterday'
+
+  // Contact name -- "my name is X", "I am X", "This is X".
+  const namePat = /(?:my name is|i am|this is|naam is)\s+([A-Z][a-zA-Z]{1,20}(?:\s+[A-Z][a-zA-Z]{1,20})?)/i
+  const nameMatch = raw.match(namePat)
+  if (nameMatch) f.contact_name = nameMatch[1].trim()
+
   return f
 }
 

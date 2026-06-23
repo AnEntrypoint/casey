@@ -1097,7 +1097,7 @@ async function main() {
     const ij = await intake.json()
     assert.equal(ij.report.species, 'goats', 'species written to report')
     assert.equal(ij.report_fill_rate.filled, 4, 'fill_rate counts 4 filled fields')
-    assert.equal(ij.report_fill_rate.total_fields, 16, 'fill_rate total_fields is 16')
+    assert.equal(ij.report_fill_rate.total_fields, 17, 'fill_rate total_fields is 17')
 
     const detail = await df('http://localhost:4577/api/cases/' + webCaseId + '?token=secret').then(r => r.json())
     assert.equal(detail.report_fill_rate.filled, 4, 'GET /api/cases/:id includes report_fill_rate')

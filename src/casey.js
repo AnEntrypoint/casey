@@ -102,6 +102,31 @@ export class Casey {
           this._disconnects.push(connectDiscordReceive(a))
         }
       }
+      // Filter guild channel messages to only DMs (guild_id absent) or @mentions of
+      // the bot. Without this, every message in any guild channel creates a case --
+      // surveillance intake should only trigger when someone deliberately contacts
+      // the bot, not from general server conversation.
+      let botUserId = null
+      const origEmit = a.emit.bind(a)
+      a.emit = (event, msg, ...rest) => {
+        if (event === 'message') {
+          const raw = msg?.raw || {}
+          // DM: no guild_id. Guild: only if bot is @mentioned.
+          const isDM = !raw.guild_id
+          const mentions = Array.isArray(raw.mentions) ? raw.mentions : []
+          const botMentioned = botUserId ? mentions.some(u => u.id === botUserId) : mentions.length > 0
+          if (!isDM && !botMentioned) return false
+        }
+        return origEmit(event, msg, ...rest)
+      }
+      // Capture bot user ID from READY event so mention filter is precise.
+      const origDispatch = a._dispatch?.bind(a)
+      if (origDispatch) {
+        a._dispatch = (p) => {
+          if (p.t === 'READY' && p.d?.user?.id) botUserId = p.d.user.id
+          return origDispatch(p)
+        }
+      }
       return a
     }
     if (ch === 'whatsapp') {
