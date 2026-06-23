@@ -1087,7 +1087,7 @@ function fieldSources(events){
     if(!isAgent&&!isOp) continue
     // The action event text lists fields like "recorded report fields: species, symptoms"
     // or "updated report fields: location"
-    const m=(e.text||'').match(/(?:recorded|updated) report fields?(?:[^:]*)?:\s*(.+)/i)
+    const m=(e.text||'').match(/(?:recorded|updated) report fields?(?:[^:]*)?:[ ]*(.+)/i)
     if(!m) continue
     const keys=m[1].split(',').map(s=>s.trim()).filter(Boolean)
     for(const k of keys){
@@ -1859,7 +1859,7 @@ $('#intake-submit').onclick=async()=>{
       const rawPhone=$('#int-phone').value.trim()
       if(rawPhone){
         const digits=rawPhone.replace(/[^0-9+]/g,'')
-        if(!/^0[0-9]{9}$/.test(digits)&&!/^\+27[0-9]{9}$/.test(digits)){
+        if(!/^0[0-9]{9}$/.test(digits)&&!/^[+]27[0-9]{9}$/.test(digits)){
           errEl.textContent='Phone must be a South African number: 0821234567 or +27821234567'
           errEl.style.display=''; btn.disabled=false; return
         }
