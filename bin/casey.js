@@ -257,11 +257,45 @@ async function main() {
     const { stubLLM } = await import('../src/sim/stub-llm.js')
     const { getScenario, scenarioNames } = await import('../src/sim/scenarios.js')
     if (flags.help) {
-      console.log('casey sim ["message" ...] [--scenario <name>]')
+      console.log('casey sim ["message" ...] [--scenario <name>] [--intake]')
       console.log('  Run an offline simulated conversation against the stub model.')
-      console.log(' --scenario replays a built-in low-literacy persona. Available:')
+      console.log('  --intake  exercises the non-AI manual intake flow (dashboard API POST /api/cases)')
+      console.log('  --scenario replays a built-in low-literacy persona. Available:')
       for (const n of scenarioNames()) console.log(`    ${cyan(n)}`)
       return
+    }
+
+    // --intake: exercise the non-AI manual-intake flow via the dashboard API.
+    // Starts a minimal casey instance + dashboard on a temporary port, posts a
+    // case and report fields, prints the result, then shuts down.
+    if (flags.intake) {
+      const { createDashboard } = await import('../src/dashboard/server.js')
+      const store = createCaseStore()
+      await store.init()
+      const dash = await createDashboard(store, { port: 0, token: '' }).catch(e => { console.log(bad('dashboard failed: ' + e.message)); process.exit(1) })
+      const base = `http://localhost:${dash.server.address().port}`
+      console.log(dim(`dashboard on ${base} (ephemeral)`))
+      // POST /api/cases: create the case. 409 = already exists, use that id.
+      const name = rest.filter(a => !a.startsWith('--'))[0] || 'Sim Farmer'
+      const phone = rest.filter(a => !a.startsWith('--'))[1] || '0821234567'
+      const caseR = await fetch(`${base}/api/cases`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, phone, subject: 'Sim intake test' }) })
+      const cj = await caseR.json().catch(() => ({}))
+      if (caseR.status === 409) {
+        console.log(dim(`case already exists for ${phone}: ${cj.existing_ref} -- using it`))
+        cj.id = cj.existing_id; cj.ref = cj.existing_ref
+      } else if (!caseR.ok) { console.log(bad('POST /api/cases failed: ' + (cj.error || caseR.status))); await dash.close(); process.exit(1) }
+      const c = cj
+      console.log(green(`created: ${c.ref}  id=${c.id}  tags=${c.tags||'(existing)'}`))
+      // POST /api/cases/:id/intake: fill report fields
+      const intakeR = await fetch(`${base}/api/cases/${c.id}/intake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ species: 'cattle', symptoms: 'drooling, limping', location: 'near Musina', how_to_find: 'farm gate on R572', affected_count: '6', farmer_available: 'yes' }) })
+      if (!intakeR.ok) { const e = await intakeR.json().catch(() => ({})); console.log(bad('POST /intake failed: ' + (e.error || intakeR.status))); await dash.close(); process.exit(1) }
+      const ij = await intakeR.json()
+      console.log(green(`intake saved  fill=${ij.report_fill_rate?.filled}/${ij.report_fill_rate?.total_fields}  visit-critical=${ij.report_fill_rate?.visit_critical_filled}/${ij.report_fill_rate?.visit_critical_total}`))
+      console.log(dim('--- report ---'))
+      for (const [k, v] of Object.entries(ij.report || {})) if (v != null && v !== '') console.log(`  ${dim(k.padEnd(20))} ${v}`)
+      await dash.close()
+      await store.close()
+      process.exit(0)
     }
     // Decide the script: --scenario <name> wins; else positional messages; else
     // the default order-is-late demo. Positional args keep working unchanged.
@@ -278,9 +312,9 @@ async function main() {
     } else {
       const lines = rest.filter(a => !a.startsWith('--'))
       script = lines.length ? lines : [
-        'Hi, my order #55 still has not arrived',
-        'It was supposed to come yesterday',
-        'Thanks for looking into it',
+        'Hi, my cattle are sick, some are drooling and not eating',
+        'There are about 10 of them near Bela-Bela',
+        'Thanks for helping',
       ]
     }
     // Default sim runs offline on the deterministic stub (cheap, repeatable).

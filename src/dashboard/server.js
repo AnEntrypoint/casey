@@ -186,8 +186,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         const valid = /^0[0-9]{9}$/.test(digits) || /^\+27[0-9]{9}$/.test(digits)
         if (!valid) return res.status(400).json({ error: 'Phone must be a South African number: 0821234567 or +27821234567' })
       }
-      // external_id must be stable for dedup; use phone if given, else a web-<ms> id
-      const external_id = phone ? phone.replace(/[^0-9+]/g, '') || `web-${Date.now()}` : `web-${Date.now()}`
+      // external_id must be stable for dedup; normalise phone digits (keep leading +)
+      // then fall back to web-<ms> if normalisation yields empty (e.g. '+' only).
+      const normPhone = phone ? phone.replace(/[\s\-()]/g, '') : ''
+      const external_id = normPhone && /^[+0-9]/.test(normPhone) ? normPhone : `web-${Date.now()}`
       const contact = { name: name || 'operator', phone: phone || '' }
       const { case: c, created } = await store.findOrCreateCase({ channel: 'web', external_id, contact, subject: subject || 'Field report' })
       // If a case already exists for this phone, return 409 so the client can offer to open it
@@ -377,6 +379,18 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const res2 = await store.mergeCases(into, req.params.id, OPERATOR, { reason: reason || 'operator merge' })
       if (res2.error) return res.status(400).json({ error: res2.error })
       res.json({ ok: true, movedEvents: res2.movedEvents, alreadyMerged: !!res2.alreadyMerged })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Split selected events out of this case into a NEW linked case.
+  // Body: { event_ids: string[], subject?: string, reason?: string }
+  app.post('/api/cases/:id/split', async (req, res) => {
+    try {
+      const { event_ids, subject, reason } = req.body
+      if (!Array.isArray(event_ids) || !event_ids.length) return res.status(400).json({ error: 'event_ids must be a non-empty array' })
+      const result = await store.splitCase(req.params.id, event_ids, { subject: subject || '', reason: reason || 'operator split' }, OPERATOR)
+      if (result.error) return res.status(400).json({ error: result.error })
+      res.json({ ok: true, new_case_id: result.newCase?.id, new_case_ref: result.newCase?.ref, moved_events: result.movedEvents })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -1133,7 +1147,8 @@ async function openCase(id){
       <button id="send-reply">Send reply</button>
     </div>
     <div id="dup-panel"></div>
-    <h3 style="margin:18px 0 6px">Timeline\${events_total!=null?\` (\${events.length}/\${events_total})\`:''}</h3>
+    <h3 style="margin:18px 0 6px">Timeline\${events_total!=null?\` (\${events.length}/\${events_total})\`:''}
+      <button id="add-case-note" class="icon-btn" style="float:right;margin-top:-2px">+ Note</button></h3>
     <div id="timeline">\${renderEvents(events)}</div>
     \${more?'<button id="more-events" style="background:#2a3340">Load older events</button>':''}
   \`
@@ -1223,6 +1238,14 @@ async function openCase(id){
       const ta=$('#f-reply'); ta.value=cans[+b.dataset.i]; ta.focus()
       ta.setSelectionRange(ta.value.length,ta.value.length)
     })
+  }
+  const addNoteBtn = $('#add-case-note')
+  if(addNoteBtn) addNoteBtn.onclick = async ()=>{
+    const dlg=await showDialog({title:'Add a note to this case',inputLabel:'Note',inputPlaceholder:'Type your observation or note here...',confirmLabel:'Save note'})
+    const text=(dlg&&dlg.value||'').trim(); if(!text) return
+    const r=await api('/api/cases/'+encodeURIComponent(id)+'/note',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})})
+    if(!r.ok){ toast(await failMsg(r,'note failed'),'err'); return }
+    toast('note saved','ok'); lastCasesJson=''; await loadCases(); await openCase(id)
   }
   const moreBtn = $('#more-events')
   if(moreBtn) moreBtn.onclick = async ()=>{

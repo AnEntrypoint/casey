@@ -1122,6 +1122,35 @@ async function main() {
     assert.equal(refR.cases[0].id, webCaseId, 'ref search returns the correct case')
   })
 
+  await test('POST /api/cases/:id/split splits events into a new case', async () => {
+    const { case: splitSrc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'split-api-' + Date.now() })
+    await store.appendEvent(splitSrc.id, { kind: 'inbound', actor: 'contact', text: 'cattle in Musina drooling' })
+    await store.appendEvent(splitSrc.id, { kind: 'inbound', actor: 'contact', text: 'also sheep in Upington lame' })
+    const evts = await store.listEvents(splitSrc.id)
+    const sheepEvt = evts.find(e => /Upington/.test(e.text))
+    const r = await df('http://localhost:4577/api/cases/' + splitSrc.id + '/split?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event_ids: [sheepEvt.id], subject: 'sheep Upington', reason: 'separate outbreak' }),
+    })
+    assert.equal(r.status, 200, 'POST /split returns 200')
+    const sj = await r.json()
+    assert.ok(sj.ok, 'split ok flag set')
+    assert.ok(sj.new_case_id, 'split returns new_case_id')
+    assert.ok(sj.new_case_ref, 'split returns new_case_ref')
+    assert.equal(sj.moved_events, 1, 'split moved exactly 1 event')
+  })
+
+  await test('POST /api/cases/:id/note stores a general case note in the timeline', async () => {
+    const { case: nc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'note-api-' + Date.now() })
+    const r = await df('http://localhost:4577/api/cases/' + nc.id + '/note?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Farmer called back, confirmed 8 cattle affected' }),
+    })
+    assert.equal(r.status, 200, 'POST /note without field returns 200')
+    const evs = await store.listEvents(nc.id)
+    assert.ok(evs.some(e => e.kind === 'note' && /Farmer called back/.test(e.text)), 'general note stored in timeline')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
