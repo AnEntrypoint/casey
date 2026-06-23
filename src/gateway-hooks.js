@@ -153,7 +153,7 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
          ...( process.env.CASEY_PUBLIC_URL
            ? [`Also, once you have given the reference, you may optionally add ONE short`,
               `plain sentence offering the web form link, for example: "You can also fill in`,
-              `details at: ${process.env.CASEY_PUBLIC_URL}?ref=${caseRow.ref}" -- but ONLY if`,
+              `details at: ${process.env.CASEY_PUBLIC_URL}/report?ref=${caseRow.ref}" -- but ONLY if`,
               `there is a natural place for it; never interrupt warmth for a URL.`]
            : [] )].join('\n')
       : `Continue gently from the earlier messages above. Pick up where things left off.`,

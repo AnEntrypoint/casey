@@ -28,6 +28,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   app.use(express.json())
+  app.use(express.urlencoded({ extended: false }))
 
   // Token gate (only when a token is configured). Accepts Authorization: Bearer
   // <token>, X-Casey-Token header, or ?token= query (for the page load).
@@ -48,6 +49,127 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     // header for all subsequent API calls, so it never appears in access logs).
     return matches(bearer) || matches(req.get('x-casey-token')) || matches(req.query.token)
   }
+  // Public contact-facing report form -- no token required.
+  // The ref acts as the shared secret: contacts only know their own ref,
+  // and report fields are non-sensitive (location, symptoms, contact info).
+  // GET /report?ref=REF  -> HTML form for that case (or blank ref input)
+  // POST /report         -> submit fields; redirect back with ?done=1 or ?err=...
+  const PUBLIC_FIELDS = [
+    ['species', 'Which animals?', 'e.g. cattle, sheep, goats, pigs', false],
+    ['symptoms', 'What signs are you seeing?', 'e.g. drooling, limping, not eating, sudden death', true],
+    ['location', 'Where are the animals?', 'Farm name, nearest town, or GPS coordinates', false],
+    ['how_to_find', 'How do we find the place?', 'Road name, landmark, or directions from the nearest town', true],
+    ['farmer_available', 'Will the farmer be there?', 'e.g. yes, or phone first on 082...', false],
+    ['contact_fallback', 'Any other contact person?', 'Name and phone number if different from this one', false],
+    ['affected_count', 'How many are affected?', 'e.g. 5', false],
+    ['dead_count', 'How many have died?', 'e.g. 2 (write 0 if none)', false],
+    ['onset', 'When did it start?', 'e.g. yesterday morning, 3 days ago', false],
+    ['recent_movement', 'Have the animals moved recently?', 'e.g. yes, bought from market last week', false],
+    ['access_notes', 'Any access or travel notes?', 'e.g. gravel road, locked gate - call first', true],
+    ['notes', 'Anything else to note?', 'Any extra information', true],
+  ]
+  const PUBLIC_FIELD_KEYS = new Set(PUBLIC_FIELDS.map(f => f[0]))
+
+  function publicFormHtml({ ref = '', caseRow = null, done = false, err = '' } = {}) {
+    const escq = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+    let report = {}
+    try { report = caseRow?.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
+    const fieldRows = PUBLIC_FIELDS.map(([k, label, hint, isArea]) => {
+      const val = escq(report[k] || '')
+      const inp = isArea
+        ? `<textarea name="${k}" rows="3" placeholder="${escq(hint)}">${val}</textarea>`
+        : `<input type="text" name="${k}" placeholder="${escq(hint)}" value="${val}">`
+      return `<div class="field"><label>${escq(label)}</label>${inp}<div class="hint">${escq(hint)}</div></div>`
+    }).join('')
+    const banner = done
+      ? `<div class="banner ok">Your details have been saved. Thank you -- the team will be in touch.</div>`
+      : err ? `<div class="banner err">${escq(err)}</div>` : ''
+    const caseInfo = caseRow
+      ? `<div class="case-info"><strong>Reference: ${escq(caseRow.ref)}</strong> &ndash; ${escq(caseRow.subject || 'Field report')}</div>`
+      : ''
+    const refBlock = caseRow ? `<input type="hidden" name="ref" value="${escq(ref)}">` : `
+      <div class="field"><label>Your reference number</label>
+      <input type="text" name="ref" value="${escq(ref)}" placeholder="e.g. CASE-001" required>
+      <div class="hint">This was shared with you when you first reported. Check your messages.</div></div>`
+    return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Animal report form</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,sans-serif;background:#f4f6f9;color:#1a1f29;min-height:100vh}
+  .wrap{max-width:540px;margin:0 auto;padding:24px 16px 60px}
+  h1{font-size:1.3em;margin:0 0 4px;color:#1a3a5c}
+  .sub{font-size:14px;color:#5a6675;margin:0 0 20px}
+  .case-info{background:#e8f0fa;border:1px solid #b8d0ee;border-radius:8px;padding:10px 14px;margin:0 0 20px;font-size:14px;color:#1a3a5c}
+  .banner{border-radius:8px;padding:12px 14px;margin:0 0 20px;font-size:14px}
+  .banner.ok{background:#e8f7ee;border:1px solid #9ed8b4;color:#1a5c35}
+  .banner.err{background:#fdeaea;border:1px solid #f0a0a0;color:#5c1a1a}
+  .field{margin:0 0 18px}
+  label{display:block;font-size:14px;font-weight:600;margin:0 0 4px;color:#1a1f29}
+  .hint{font-size:12px;color:#7a8a9a;margin:3px 0 0}
+  input[type=text],textarea{width:100%;border:1px solid #c8d0da;border-radius:6px;padding:8px 10px;
+    font-size:16px;font-family:inherit;background:#fff;color:#1a1f29}
+  input:focus,textarea:focus{outline:2px solid #2f6fb0;border-color:#2f6fb0}
+  textarea{resize:vertical;min-height:72px}
+  .section-head{font-size:12px;font-weight:700;letter-spacing:.06em;color:#2f6fb0;
+    text-transform:uppercase;margin:24px 0 8px;padding-bottom:4px;border-bottom:2px solid #dce8f5}
+  button[type=submit]{width:100%;background:#2f6fb0;color:#fff;border:0;border-radius:8px;
+    padding:14px;font-size:17px;font-weight:600;cursor:pointer;margin-top:8px}
+  button:disabled{opacity:.6;cursor:default}
+  footer{text-align:center;font-size:12px;color:#9aa6b2;margin-top:24px}
+</style></head><body>
+<div class="wrap">
+  <h1>Animal health report</h1>
+  <p class="sub">Please fill in as many details as you can. Every field helps the team prepare a visit.</p>
+  ${banner}${caseInfo}
+  <form method="POST" action="/report">
+    ${refBlock}
+    ${fieldRows}
+    <button type="submit">Send details</button>
+  </form>
+  <footer>Animal disease surveillance &ndash; South Africa</footer>
+</div>
+<script>
+  const btn = document.querySelector('button[type=submit]')
+  document.querySelector('form').addEventListener('submit', () => { btn.disabled = true; btn.textContent = 'Sending...' })
+</script>
+</body></html>`
+  }
+
+  app.get('/report', async (req, res) => {
+    const ref = String(req.query.ref || '').slice(0, 50).trim()
+    const done = req.query.done === '1'
+    if (!ref) return res.type('html').send(publicFormHtml({ done }))
+    try {
+      const all = await store.listCases({}, { limit: 10000, offset: 0 })
+      const found = all.find(c => c.ref === ref)
+      if (!found) return res.type('html').send(publicFormHtml({ ref, err: `Reference "${ref}" was not found. Please check and try again.` }))
+      res.type('html').send(publicFormHtml({ ref, caseRow: found, done }))
+    } catch (e) { res.status(500).type('html').send(publicFormHtml({ ref, err: 'Something went wrong. Please try again in a moment.' })) }
+  })
+
+  app.post('/report', async (req, res) => {
+    const ref = String(req.body.ref || '').slice(0, 50).trim()
+    if (!ref) return res.redirect('/report?err=' + encodeURIComponent('Please enter your reference number.'))
+    try {
+      const all = await store.listCases({}, { limit: 10000, offset: 0 })
+      const found = all.find(c => c.ref === ref)
+      if (!found) return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent(`Reference "${ref}" was not found.`))
+      const incoming = {}
+      for (const [k] of PUBLIC_FIELDS) {
+        const v = req.body[k]
+        if (v == null || typeof v !== 'string') continue
+        const trimmed = v.trim().slice(0, 4000)
+        if (trimmed) incoming[k] = trimmed
+      }
+      if (Object.keys(incoming).length) {
+        await store.mergeReport(found.id, incoming, { id: 'contact', role: 'contact' })
+        await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated report via web form: ${Object.keys(incoming).join(', ')}`, data: incoming })
+      }
+      res.redirect('/report?ref=' + encodeURIComponent(ref) + '&done=1')
+    } catch (e) { res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong. Please try again.')) }
+  })
+
   app.use((req, res, next) => {
     if (req.path.startsWith('/design')) return next()
     if (authed(req)) return next()

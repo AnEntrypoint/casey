@@ -1151,6 +1151,36 @@ async function main() {
     assert.ok(evs.some(e => e.kind === 'note' && /Farmer called back/.test(e.text)), 'general note stored in timeline')
   })
 
+  await test('GET /report serves the public form without auth', async () => {
+    const r = await fetch('http://localhost:4577/report')
+    assert.equal(r.status, 200, 'public form loads without token')
+    const html = await r.text()
+    assert.ok(html.includes('<form'), 'response is an HTML form')
+    assert.ok(html.includes('name="ref"'), 'ref field present')
+  })
+
+  await test('POST /report submits fields to a case by ref and redirects', async () => {
+    const { case: rc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'report-form-' + Date.now() })
+    const body = new URLSearchParams({ ref: rc.ref, species: 'cattle', symptoms: 'drooling', location: 'Near Limpopo' })
+    // follow redirect so the final URL contains done=1; Node fetch follows 302 automatically
+    const r = await fetch('http://localhost:4577/report', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: body.toString() })
+    assert.ok(r.ok, 'POST /report ends in a successful response after redirect')
+    assert.ok(r.url.includes('done=1'), 'final URL includes done=1 after redirect')
+    const updated = await store.getCase(rc.id)
+    let rpt = {}; try { rpt = JSON.parse(updated.report || '{}') } catch { rpt = {} }
+    assert.equal(rpt.species, 'cattle', 'species saved to report')
+    assert.equal(rpt.location, 'Near Limpopo', 'location saved to report')
+  })
+
+  await test('GET /report?ref= shows pre-filled form for known ref', async () => {
+    const { case: rc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'report-form2-' + Date.now() })
+    await store.mergeReport(rc.id, { species: 'goats' }, { id: 'test', role: 'operator' })
+    const r = await fetch('http://localhost:4577/report?ref=' + encodeURIComponent(rc.ref))
+    assert.equal(r.status, 200)
+    const html = await r.text()
+    assert.ok(html.includes('goats'), 'existing report value is pre-filled')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
