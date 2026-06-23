@@ -15,6 +15,7 @@ import express from 'express'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { VISIT_CRITICAL } from '../case-health.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DESIGN_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'anentrypoint-design')
@@ -253,7 +254,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     'suspected_disease', 'recent_movement', 'location', 'how_to_find', 'access_notes',
     'farmer_available', 'contact_fallback', 'identifying_traits', 'photos', 'audio', 'notes']
   const REPORT_KEY_SET = new Set(REPORT_KEY_LIST)
-  const VISIT_CRITICAL_SET = new Set(['species', 'symptoms', 'location', 'how_to_find', 'farmer_available', 'contact_fallback'])
+  const VISIT_CRITICAL_SET = new Set(VISIT_CRITICAL)
 
   function computeFillRate(reportJson) {
     let r = {}
@@ -1600,16 +1601,6 @@ function fillChannelFilter(){
   if(cur) $('#channelf').value=cur
 }
 $('#channelf').addEventListener('change',e=>{ filt.channel=e.target.value; lastCasesJson=''; loadCases() })
-const _matchesOrig = matches
-// patch matches to honour channel filter
-;(()=>{
-  const base = matches
-  window._matchesFn = (c)=>{
-    if(filt.channel && c.channel!==filt.channel) return false
-    return base(c)
-  }
-})()
-// replace matches with channel-aware version
 function matchesFull(c){
   if(filt.channel && c.channel!==filt.channel) return false
   return matches(c)

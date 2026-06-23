@@ -32,10 +32,9 @@ export const DEFAULT_THRESHOLDS = {
   },
 }
 
-// On-site facts a field visit cannot proceed without -- the same set the intake
-// flow already treats as visit-critical. Kept here so the classifier is
-// self-contained (pure, no import cycle through gateway-hooks).
-const VISIT_CRITICAL = ['species', 'symptoms', 'location', 'how_to_find', 'farmer_available', 'contact_fallback']
+// On-site facts a field visit cannot proceed without. Exported so gateway-hooks
+// and the dashboard can import the canonical list instead of maintaining copies.
+export const VISIT_CRITICAL = ['species', 'symptoms', 'location', 'how_to_find', 'farmer_available', 'contact_fallback']
 
 const OPEN = new Set(['new', 'triaging', 'in_progress', 'waiting', 'resolved'])
 

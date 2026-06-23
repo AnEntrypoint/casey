@@ -17,6 +17,7 @@
 // an operator can override case state at any time.
 
 import { runTurn } from 'freddie'
+import { VISIT_CRITICAL } from './case-health.js'
 
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 
@@ -552,18 +553,17 @@ function inboundAudioNote(msg) {
 
 function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '...' : s }
 
-// The on-site facts a field visit needs that cannot be recovered once the worker
-// leaves -- the one-shot reality. Returns true when at least one is still absent,
-// which is the signal to let the agent make a single gentle closing ask instead
-// of taking the canned thanks-shortcut. Tolerates a missing/malformed report.
-const VISIT_CRITICAL_KEYS = ['species', 'symptoms', 'location', 'how_to_find', 'farmer_available', 'contact_fallback']
+// Returns true when at least one visit-critical fact is still absent -- the
+// signal to let the agent make a single gentle closing ask instead of taking
+// the canned thanks-shortcut. Tolerates a missing/malformed report.
+// VISIT_CRITICAL is imported from case-health.js (canonical source).
 function parseReportSafe(raw) {
   try { return raw ? JSON.parse(raw) : {} } catch { return {} }
 }
 
 export function reportMissingVisitCritical(reportRaw) {
   const r = parseReportSafe(reportRaw)
-  return VISIT_CRITICAL_KEYS.some(k => r[k] == null || String(r[k]).trim() === '')
+  return VISIT_CRITICAL.some(k => r[k] == null || String(r[k]).trim() === '')
 }
 
 // The single most important still-missing on-site fact, in priority order, with a
