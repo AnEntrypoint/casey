@@ -165,8 +165,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     const done = req.query.done === '1'
     if (!ref) return res.type('html').send(publicFormHtml({ done }))
     try {
-      const all = await store.listCases({}, { limit: 10000, offset: 0 })
-      const found = all.find(c => c.ref === ref)
+      const found = await store.getCaseByRef(ref)
       if (!found) return res.type('html').send(publicFormHtml({ ref, err: `Reference "${ref}" was not found. Please check and try again.` }))
       res.type('html').send(publicFormHtml({ ref, caseRow: found, done }))
     } catch (e) { res.status(500).type('html').send(publicFormHtml({ ref, err: 'Something went wrong. Please try again in a moment.' })) }
@@ -176,8 +175,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     const ref = String(req.body.ref || '').slice(0, 50).trim()
     if (!ref) return res.redirect('/report?err=' + encodeURIComponent('Please enter your reference number.'))
     try {
-      const all = await store.listCases({}, { limit: 10000, offset: 0 })
-      const found = all.find(c => c.ref === ref)
+      const found = await store.getCaseByRef(ref)
       if (!found) return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent(`Reference "${ref}" was not found.`))
       const incoming = {}
       for (const [k] of PUBLIC_FIELDS) {
@@ -288,10 +286,9 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       // ?ref= is a direct-lookup shortcut (used by shareable ref deep-links)
       if (req.query.ref) {
         const ref = String(req.query.ref).slice(0, 50)
-        const all = await store.listCases({}, { limit: 10000, offset: 0 })
-        const found = all.filter(c => c.ref === ref)
-        const casesWithFill = found.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
-        return res.json({ cases: casesWithFill, total: found.length, limit: found.length, offset: 0 })
+        const found = await store.getCaseByRef(ref)
+        const casesWithFill = found ? [{ ...found, fill_rate: computeFillRate(found.report) }] : []
+        return res.json({ cases: casesWithFill, total: casesWithFill.length, limit: casesWithFill.length, offset: 0 })
       }
       const q = req.query.q ? String(req.query.q).slice(0, 200).toLowerCase() : ''
       const limit = clampLimit(req.query.limit, 50)
@@ -1113,7 +1110,12 @@ function attnScore(c){
   if(tags.includes('opted-out')) return 0             // contact left; never chase them
   let s=0
   if(tags.includes('needs-human')) s+=100             // contact explicitly asked for a person
+  if(tags.includes('health:unanswered_handoff')) s+=60  // handoff request, no operator in window
+  if(tags.includes('health:incomplete_critical')) s+=40 // active case, visit-critical facts still missing
+  if(tags.includes('health:abandoned_intake')) s+=35    // stalled, on-site facts likely unrecoverable
   if(c.status==='waiting' && ageHours(c)>=24) s+=40   // genuinely stuck over a day
+  if(tags.includes('health:stuck')) s+=20
+  if(tags.includes('health:stale')) s+=10
   if(c.autonomy==='observe') s+=20                    // casey only listens; soft nudge
   if(c.autonomy==='assisted') s+=15                   // person in the loop; soft nudge
   if(c.priority==='urgent') s+=15
@@ -1125,7 +1127,12 @@ function attnScore(c){
 function attnReason(c){
   const tags=tagList(c)
   if(tags.includes('needs-human')) return 'This person asked to talk to a real person.'
+  if(tags.includes('health:unanswered_handoff')) return 'A person was asked for and no one has replied yet.'
+  if(tags.includes('health:incomplete_critical')) return 'Active case but the visit-critical facts are still missing. Reach the farmer now.'
+  if(tags.includes('health:abandoned_intake')) return 'The farmer may have left. On-site facts are still missing.'
   if(c.status==='waiting' && ageHours(c)>=24) return 'No answer for over a day. A check-in may help.'
+  if(tags.includes('health:stuck')) return 'This one has been in the same stage too long.'
+  if(tags.includes('health:stale')) return 'No activity in a while. A check may be due.'
   if(c.autonomy==='observe') return 'casey is only listening here. A reply has to come from you.'
   if(c.autonomy==='assisted') return 'casey can draft, but you send. Open it to check.'
   return 'This one is worth a look.'
@@ -1247,13 +1254,19 @@ const AUTONOMY_HELP = 'auto = agent replies on its own - assisted = agent drafts
 // matching rule wins so the most action-needed state shows. Derives purely from
 // enum-safe c.status / c.autonomy.
 function todoHint(c){
-  if(tagList(c).includes('opted-out')) return 'This person asked to stop. Do not message them. Leave this one alone.'
+  const tags=tagList(c)
+  if(tags.includes('opted-out')) return 'This person asked to stop. Do not message them. Leave this one alone.'
   if(c.status==='closed') return 'This one is finished. Nothing to do.'
-  if(tagList(c).includes('needs-human')) return 'This person asked for a real person. Reply to them below.'
+  if(tags.includes('needs-human')) return 'This person asked for a real person. Reply to them below.'
   if(c.status==='resolved') return 'This one is marked done. Close it if you are finished.'
+  if(tags.includes('health:unanswered_handoff')) return 'A person was asked for and no one has replied. Reply below to take this one on.'
+  if(tags.includes('health:incomplete_critical')) return 'The visit-critical facts are still missing and the case is active. Try to reach the farmer now -- once they leave the site some facts cannot be recovered.'
+  if(tags.includes('health:abandoned_intake')) return 'On-site facts are still missing and the farmer may be gone. Check if they are still reachable and ask for the most important detail (location or how to find the place).'
   if(c.autonomy==='observe') return 'This one is waiting for you. Read it and reply, or set Who answers to auto so casey can answer.'
   if(c.autonomy==='assisted') return 'casey prepared a reply but waits for a person. Check it, then send.'
+  if(tags.includes('health:stuck')) return 'This case has been in the same stage for a while. Check if it needs a push or can be closed.'
   if(c.status==='waiting') return 'Waiting on the person to reply. Nothing to do until they answer.'
+  if(tags.includes('health:stale')) return 'No activity for a while. Check if anything needs following up.'
   if(c.status==='new'||c.status==='triaging') return 'A new message came in. casey is sorting it out.'
   return 'casey is handling this one on its own. Step in only if you need to.'
 }

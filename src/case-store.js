@@ -171,6 +171,11 @@ export class CaseStore {
   // Most-recently-active first. thatcher ignores orderBy/order so we sort in JS
   // (by last_event_at, falling back to created_at) to make the order real. The
   // page window is applied after sorting when a limit is given.
+  async getCaseByRef(ref) {
+    const [row] = await this.t.list('case', { ref }, { limit: 1 })
+    return row || null
+  }
+
   async listCases(where = {}, opts = {}) {
     const { limit = 50, offset = 0 } = opts
     const rows = await this.t.list('case', where, { limit: Math.max(limit + offset, 1000) })
