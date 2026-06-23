@@ -1,4 +1,4 @@
-// dashboard/server.js -- casey's observe + manual-edit UI.
+﻿// dashboard/server.js -- casey's observe + manual-edit UI.
 //
 // Serves a small single-page app styled with anentrypoint-design's CSS, backed
 // by a JSON API over the CaseStore. This is the human surface of casey:
@@ -1710,8 +1710,9 @@ function buildFieldsHtml(existingReport){
     const val=esc(existingReport[k]||'')
     const req=opts.required?' <span class="intake-req" title="Needed for a field visit">*</span>':''
     let fld=\`<label for="int-\${k}">\${esc(label)}\${req}</label>\`
-    if(opts.textarea){ fld+=\`<textarea id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" rows="2" autocomplete="off">\${val}</textarea>\` }
-    else { fld+=\`<input id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" value="\${val}" autocomplete="off">\` }
+    const ariaReq=opts.required?' aria-required="true"':''
+    if(opts.textarea){ fld+=\`<textarea id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" rows="2" autocomplete="off"\${ariaReq}>\${val}</textarea>\` }
+    else { fld+=\`<input id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" value="\${val}" autocomplete="off"\${ariaReq}>\` }
     if(VC_KEYS.has(k)) step1+=fld; else step2+=fld
   }
   return {step1, step2}
@@ -1857,7 +1858,7 @@ $('#intake-submit').onclick=async()=>{
     if(!caseId){
       const rawPhone=$('#int-phone').value.trim()
       if(rawPhone){
-        const digits=rawPhone.replace(/[\s\-()]/g,'')
+        const digits=rawPhone.replace(/[^0-9+]/g,'')
         if(!/^0[0-9]{9}$/.test(digits)&&!/^\+27[0-9]{9}$/.test(digits)){
           errEl.textContent='Phone must be a South African number: 0821234567 or +27821234567'
           errEl.style.display=''; btn.disabled=false; return
