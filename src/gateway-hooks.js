@@ -247,8 +247,18 @@ export function fallbackReply(contactText, caseRow) {
 }
 
 export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
+  // Per-contact in-flight guard: if a prior agent turn is still running for this
+  // contact, we drop the new message rather than race two concurrent LLM calls
+  // against the same case. The contact's inbound is still recorded (above), so
+  // nothing is lost -- the next turn will pick up the full conversation including
+  // this message. The guard is keyed on external_id (the canonical contact key).
+  const inFlight = new Set()
   return async function handleInbound(platform, msg) {
-    if (!store) { log?.error?.('[casey] store not initialized'); return { to: msg.from, text: '', platform, error: 'store_not_ready' } }
+    if (!store) {
+      log?.error?.('[casey] store not initialized')
+      const warmText = FALLBACK_REPLY + ' We are experiencing a brief interruption. Please try again shortly.'
+      return { to: msg.from, text: warmText, platform, error: 'store_not_ready' }
+    }
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
     const external_id = conversationKey(msg)
     const adapter = this?.platforms?.get?.(platform)
@@ -277,7 +287,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     const inboundEvent = await store.recordInbound(caseRow, {
       channel,
       text: inboundText || (media ? `[${media}]` : '[empty message]'),
-      data: { from: msg.from, raw: msg.raw }, msg_id: msgId,
+      data: { from: msg.from }, msg_id: msgId,
     })
     if (!inboundEvent) {
       log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
@@ -419,6 +429,14 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       ? mostImportantMissingField(fresh.report)
       : null
 
+    // Per-contact concurrency gate: a second message from the same contact while
+    // the first turn is still in the LLM is held off until next poll / retry.
+    if (inFlight.has(external_id)) {
+      log.info?.('[casey] skipping concurrent LLM turn', { caseId: fresh.id })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'concurrent turn skipped: prior LLM turn still in-flight for this contact' })
+      return { to: msg.from, text: '', platform, caseId: fresh.id, skipped: true }
+    }
+    inFlight.add(external_id)
     let result, errored = false
     try {
       result = await runTurn({
@@ -440,6 +458,8 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       log.error?.('[casey] agent turn failed', { caseId: fresh.id, error: e.message })
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent turn error: ${e.message}` })
       result = {}
+    } finally {
+      inFlight.delete(external_id)
     }
 
     // Never send a raw error string or an empty message to the contact. On

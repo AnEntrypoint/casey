@@ -318,6 +318,23 @@ async function main() {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subject: { evil: 1 } }),
     })
     assert.equal(objField.status, 400, 'object subject rejected')
+    // successful note returns 200 and the event is stored
+    const goodNote = await post('/note', { text: 'Test note from operator', field: 'location' })
+    assert.equal(goodNote.status, 200, 'POST /note with valid text returns 200')
+    const noteEvs = await store.listEvents(someCase.id)
+    assert.ok(noteEvs.some(e => e.kind === 'note' && e.text === 'Test note from operator'), 'note event stored in timeline')
+    // observe-mode guard: non-autonomy PATCH blocked for observe cases
+    await df('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ autonomy: 'observe' }),
+    })
+    const observePatch = await df('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ subject: 'should not stick' }),
+    })
+    assert.equal(observePatch.status, 400, 'PATCH of non-autonomy field rejected when autonomy=observe')
+    // restore autonomy so further tests still work
+    await df('http://localhost:4577/api/cases/' + someCase.id + '?token=secret', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ autonomy: 'auto' }),
+    })
     // oversized text is 413
     const huge = await post('/note', { text: 'x'.repeat(5000) })
     assert.equal(huge.status, 413, 'oversized note rejected')
@@ -331,12 +348,19 @@ async function main() {
     assert.equal(noop.status, 200, 'no-op same-stage transition accepted')
   })
 
+  await test('GET /api/attention returns a list of flagged cases', async () => {
+    const r = await df('http://localhost:4577/api/attention?token=secret')
+    assert.equal(r.status, 200, 'GET /api/attention returns 200')
+    const j = await r.json()
+    assert.ok(Array.isArray(j.cases), 'attention response has cases array')
+    assert.ok(typeof j.count === 'number', 'attention response has count')
+  })
+
   await test('countCases is exact for casey scale (50k cap is a worst-case ceiling, not a truncation here)', async () => {
     const n = await store.countCases({ channel: 'sim' })
     const listed = (await store.listCases({ channel: 'sim' }, { limit: 100000 })).length
     assert.equal(n, listed, 'countCases matches a full list of the same where')
   })
-  await dash.close()
 
   // ---- discord WS receive ----
   await test('discord adapter emits message on MESSAGE_CREATE, ignores bots', async () => {
@@ -362,6 +386,23 @@ async function main() {
       a.emit('message', { from: m.from, text: m.text?.body || '', raw: { ...m, id: m.id, type: m.type } })
     assert.equal(got.length, 1)
     assert.equal(got[0].from, '27820000000'); assert.equal(got[0].raw.id, 'wamid.1')
+  })
+
+  await test('WhatsApp HMAC-SHA256 signature verification rejects forged requests', async () => {
+    const { WhatsappAdapter } = await import('file://' + process.cwd().replace(/\\/g, '/') + '/node_modules/freddie/plugins/platform-whatsapp/handler.js')
+    const crypto = await import('crypto')
+    const secret = 'test-secret-abc123'
+    const a = new WhatsappAdapter({ token: 't', phoneId: 'p', appSecret: secret })
+    const body = Buffer.from(JSON.stringify({ hello: 'world' }))
+    // valid signature
+    const validSig = 'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex')
+    const fakeReq = (sig) => ({ get: (h) => h === 'x-hub-signature-256' ? sig : '', rawBody: body })
+    assert.equal(a._verifySignature(fakeReq(validSig)), true, 'valid HMAC accepted')
+    assert.equal(a._verifySignature(fakeReq('sha256=deadbeef')), false, 'forged signature rejected')
+    assert.equal(a._verifySignature(fakeReq('')), false, 'missing signature rejected')
+    // adapter with no secret allows all (legacy mode)
+    const noSecretA = new WhatsappAdapter({ token: 't', phoneId: 'p' })
+    assert.equal(noSecretA._verifySignature(fakeReq('')), true, 'no appSecret = verification skipped')
   })
 
   await test('concurrent first-messages create exactly one case', async () => {
@@ -1063,8 +1104,25 @@ async function main() {
     assert.ok(body.startsWith('ref,'), 'CSV starts with ref column')
     assert.ok(body.includes('species'), 'CSV has species column')
     assert.ok(body.includes('Bela-Bela'), 'CSV contains the intake data')
+
+    // 409 on duplicate phone: second POST with same phone returns 409 + existing id
+    const dup = await df('http://localhost:4577/api/cases?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Jan Bloem', phone: '0821112222', subject: 'Duplicate check' }),
+    })
+    assert.equal(dup.status, 409, 'duplicate phone returns 409')
+    const dupJ = await dup.json()
+    assert.ok(dupJ.existing_id, '409 body includes existing_id')
+    assert.ok(dupJ.existing_ref, '409 body includes existing_ref')
+    assert.equal(dupJ.existing_id, webCaseId, '409 points to the original case')
+
+    // GET /api/cases?ref= returns the matching case
+    const refR = await df('http://localhost:4577/api/cases?ref=' + encodeURIComponent(j.ref) + '&token=secret').then(r => r.json())
+    assert.equal(refR.cases.length, 1, 'GET /api/cases?ref= finds the case')
+    assert.equal(refR.cases[0].id, webCaseId, 'ref search returns the correct case')
   })
 
+  await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
   process.exit(failures ? 1 : 0)

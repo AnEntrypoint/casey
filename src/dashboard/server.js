@@ -139,11 +139,36 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         where.status = req.query.status
       }
       if (req.query.channel) where.channel = req.query.channel
+      // ?ref= is a direct-lookup shortcut (used by shareable ref deep-links)
+      if (req.query.ref) {
+        const ref = String(req.query.ref).slice(0, 50)
+        const all = await store.listCases({}, { limit: 10000, offset: 0 })
+        const found = all.filter(c => c.ref === ref)
+        const casesWithFill = found.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
+        return res.json({ cases: casesWithFill, total: found.length, limit: found.length, offset: 0 })
+      }
+      const q = req.query.q ? String(req.query.q).slice(0, 200).toLowerCase() : ''
       const limit = clampLimit(req.query.limit, 50)
       const offset = offsetOf(req.query.offset)
-      const cases = await store.listCases(where, { limit, offset })
-      const total = await store.countCases(where)
-      res.json({ cases, total, limit, offset })
+      let cases, total
+      if (q) {
+        // Search across case fields + all report field values. Fetch the full set
+        // (capped at 10000) then filter in Node so report JSON is reachable.
+        const all = await store.listCases(where, { limit: 10000, offset: 0 })
+        const filtered = all.filter(c => {
+          const hay = [c.ref, c.subject, c.summary, c.external_id, c.channel].join(' ').toLowerCase()
+          if (hay.includes(q)) return true
+          let r = {}; try { r = c.report ? JSON.parse(c.report) : {} } catch { r = {} }
+          return REPORT_KEY_LIST.some(k => r[k] != null && String(r[k]).toLowerCase().includes(q))
+        })
+        total = filtered.length
+        cases = filtered.slice(offset, offset + limit)
+      } else {
+        cases = await store.listCases(where, { limit, offset })
+        total = await store.countCases(where)
+      }
+      const casesWithFill = cases.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
+      res.json({ cases: casesWithFill, total, limit, offset })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -155,10 +180,20 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const subject = str(res, req.body, 'subject', { required: false }); if (subject === undefined) return
       const name = str(res, req.body, 'name', { required: false }); if (name === undefined) return
       const phone = str(res, req.body, 'phone', { required: false }); if (phone === undefined) return
+      // SA phone validation: 0XXXXXXXXX (10 digits) or +27XXXXXXXXX (11 digits after +)
+      if (phone) {
+        const digits = phone.replace(/[\s\-()]/g, '')
+        const valid = /^0[0-9]{9}$/.test(digits) || /^\+27[0-9]{9}$/.test(digits)
+        if (!valid) return res.status(400).json({ error: 'Phone must be a South African number: 0821234567 or +27821234567' })
+      }
       // external_id must be stable for dedup; use phone if given, else a web-<ms> id
       const external_id = phone ? phone.replace(/[^0-9+]/g, '') || `web-${Date.now()}` : `web-${Date.now()}`
       const contact = { name: name || 'operator', phone: phone || '' }
-      const { case: c } = await store.findOrCreateCase({ channel: 'web', external_id, contact, subject: subject || 'Field report' })
+      const { case: c, created } = await store.findOrCreateCase({ channel: 'web', external_id, contact, subject: subject || 'Field report' })
+      // If a case already exists for this phone, return 409 so the client can offer to open it
+      if (!created) {
+        return res.status(409).json({ error: 'A case already exists for this contact', existing_id: c.id, existing_ref: c.ref })
+      }
       // Tag it as operator-initiated manual intake
       const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
       if (!tags.includes('intake_mode:manual')) {
@@ -410,6 +445,13 @@ th{width:40%;background:#f5f5f5;font-weight:600}
     } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || 'unknown error')) + '</p>') }
   })
 
+  app.get('/manifest.json', (_req, res) => res.json({
+    name: 'casey', short_name: 'casey', start_url: '/', display: 'standalone',
+    background_color: '#0f1115', theme_color: '#3b6ea5',
+    description: 'Animal-disease surveillance case management',
+    icons: [{ src: '/design/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: '/design/icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
+  }))
   app.get('/', (_req, res) => res.type('html').send(PAGE))
 
   const server = app.listen(port)
@@ -433,6 +475,11 @@ th{width:40%;background:#f5f5f5;font-weight:600}
 const PAGE = /* html */ `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="casey">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="/manifest.json">
 <title>casey - cases</title>
 <link rel="stylesheet" href="/design/colors_and_type.css">
 <link rel="stylesheet" href="/design/app-shell.css">
@@ -458,7 +505,7 @@ const PAGE = /* html */ `<!doctype html>
   .rep-ready.ok{color:#1c8c44;background:rgba(34,160,80,.10)}
   .rep-ready.amber{color:#9a6a00;background:rgba(200,140,0,.10)}
   .topbar{padding:10px 14px;border-bottom:1px solid var(--border-soft);position:sticky;top:0;background:var(--bg);z-index:2}
-  .topbar h1{font-size:14px;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+  .topbar h1{font-size:14px;margin:0 0 8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .counts{font-size:11px;color:var(--muted);font-weight:400}
   .icon-btn{background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;
         padding:3px 8px;cursor:pointer;margin:0;font-size:12px;line-height:1}
@@ -549,6 +596,10 @@ const PAGE = /* html */ `<!doctype html>
   .intake-card .fill-bar{display:flex;gap:6px;align-items:center;margin:0 0 14px;font-size:12px;color:var(--muted)}
   .intake-card .fill-bar .bar{flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden}
   .intake-card .fill-bar .bar .fill{height:100%;background:#2e8b57;transition:width .3s}
+  .intake-section-head{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin:10px 0 4px;padding:4px 0;border-bottom:1px solid var(--border-soft)}
+  .intake-vc-note{font-weight:400;text-transform:none;letter-spacing:0;opacity:.8}
+  .intake-req{color:var(--danger);font-size:13px;margin-left:2px}
+  .intake-ovl textarea{resize:vertical;min-height:52px}
   .fill-pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:var(--border);color:var(--muted);margin-left:6px;vertical-align:middle}
   .fill-pill.ok{background:rgba(34,160,80,.18);color:#1c8c44}
   .fill-pill.low{background:rgba(200,140,0,.18);color:#9a6a00}
@@ -556,6 +607,7 @@ const PAGE = /* html */ `<!doctype html>
   .src-ai{background:rgba(59,110,165,.18);color:#5a90cc}
   .src-manual{background:rgba(90,170,130,.18);color:#2e8b57}
   .src-both{background:rgba(160,100,180,.18);color:#9060b0}
+  .intake-mode-badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:rgba(90,170,130,.18);color:#2e8b57;margin-left:6px;vertical-align:middle}
   .rep-editable{cursor:text;border-radius:3px;padding:1px 3px;transition:background .15s}
   .rep-editable:hover{background:var(--hover)}
   .rep-field-input{width:100%;background:var(--panel);border:1px solid var(--accent);color:var(--fg);border-radius:4px;padding:3px 6px;font-size:13px}
@@ -594,8 +646,8 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="help" title="What does this screen mean?" style="margin-left:auto">?</button>
         <button class="icon-btn" id="new-case-btn" title="Add a case manually (no WhatsApp or Discord needed)">+ New</button>
         <button class="icon-btn" id="export-btn" title="Download all cases as a spreadsheet (CSV)">Export</button>
-        <button class="icon-btn" id="refresh" title="Refresh now">&#x21bb;</button>
-        <button class="icon-btn" id="theme" title="Toggle light/dark">&#x263d;</button>
+        <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
+        <button class="icon-btn" id="theme" title="Toggle light/dark">dark</button>
         <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names">Aa</button>
       </h1>
       <div class="filters">
@@ -825,6 +877,11 @@ function sourceTag(s){
   if(s==='both') return ' <span class="src-tag src-both">[Both]</span>'
   return ''
 }
+function fillPill(rfr){
+  if(!rfr) return ''
+  const cls = rfr.filled===rfr.total_fields?'ok':(rfr.visit_critical_filled<rfr.visit_critical_total?'low':'')
+  return \`<span class="fill-pill \${cls}" title="Essential fields: \${rfr.visit_critical_filled} of \${rfr.visit_critical_total}">\${rfr.filled}/\${rfr.total_fields} fields\${rfr.visit_critical_filled<rfr.visit_critical_total?' ('+rfr.visit_critical_filled+'/'+rfr.visit_critical_total+' essential)':''}</span>\`
+}
 // Build map of field -> [{text, created_at}] from note events with a field key
 function fieldNotes(events){
   const notes={}
@@ -930,7 +987,7 @@ function renderList(){
       <div class="top">\${attn(c)?'<span class="dot attn" title="needs attention (autonomy: '+esc(c.autonomy)+')"></span>':''}
         <span class="ref">\${esc(c.ref)}</span><span class="badge \${esc(c.priority)}">\${esc(c.priority)}</span>
         <span class="when" style="margin-left:auto" title="\${esc(fmtTime(c.updated_at||c.created_at))}">\${esc(rel(c.updated_at||c.created_at))}</span></div>
-      <div class="sub">\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}</div>
+      <div class="sub">\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
     </div>\`).join('')
   document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
 }
@@ -966,7 +1023,13 @@ function setConn(down){
 async function loadCases(){
   if(editing) return                        // never clobber an in-progress edit
   let resp
-  try{ resp = await api('/api/cases?limit=200').then(r=>{ if(!r.ok) throw new Error(r.status); return r.json() }) }
+  try{
+    const params=new URLSearchParams({limit:'200'})
+    if(filt.status) params.set('status',filt.status)
+    if(filt.channel) params.set('channel',filt.channel)
+    if(filt.q) params.set('q',filt.q)
+    resp = await api('/api/cases?'+params.toString()).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json() })
+  }
   catch(e){ setConn(true); return }
   setConn(false)
   const cases = resp.cases || []
@@ -977,7 +1040,7 @@ async function loadCases(){
       w.textContent='Showing '+cases.length+' of '+resp.total+' cases. Use filters to find older ones.'
       document.getElementById('cases').before(w) }
   } else if(capEl){ capEl.remove() }
-  const json = JSON.stringify(cases.map(c=>[c.id,c.ref,c.priority,c.channel,c.status,c.subject,c.autonomy,c.updated_at]))
+  const json = JSON.stringify(cases.map(c=>[c.id,c.ref,c.priority,c.channel,c.status,c.subject,c.autonomy,c.updated_at,c.fill_rate?.filled]))
   // notice genuinely-new cases (after first load) so an idle operator sees work
   if(!firstLoad){ const fresh=cases.filter(c=>!known.has(c.id)); if(fresh.length) toast(fresh.length+' new case'+(fresh.length>1?'s':'')) }
   checkHandoffs(cases)                         // detect needs-human, alert once per case
@@ -1034,21 +1097,16 @@ async function openCase(id){
   catch(e){ $('#detail').innerHTML='<p class="empty">Could not load this case.</p>'; return }
   const {case:c, events, transitions, events_total, report_fill_rate:rfr} = data
   const more = events_total!=null && events.length<events_total
-  function fillPill(rfr){
-    if(!rfr) return ''
-    const cls = rfr.filled===rfr.total_fields?'ok':(rfr.visit_critical_filled<rfr.visit_critical_total?'low':'')
-    return \`<span class="fill-pill \${cls}" title="Essential fields: \${rfr.visit_critical_filled} of \${rfr.visit_critical_total}">\${rfr.filled}/\${rfr.total_fields} fields\${rfr.visit_critical_filled<rfr.visit_critical_total?' ('+rfr.visit_critical_filled+'/'+rfr.visit_critical_total+' essential)':''}</span>\`
-  }
   $('#detail').innerHTML = \`
-    <button class="icon-btn back" id="back">&larr; cases</button>
+    <button class="icon-btn back" id="back">&lt;- cases</button>
     <h2 style="margin:6px 0 4px">\${esc(c.ref)} <span class="badge" title="\${esc(c.status)}">\${esc(stageLabel(c.status))}</span>
       \${fillPill(rfr)}
-      <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">&#x2398;</button>
+      <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">copy</button>
       <a href="/api/cases/\${encodeURIComponent(c.id)}/report.html" target="_blank" class="icon-btn" style="margin-left:4px;text-decoration:none;display:inline-block">Print</a></h2>
     <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
-    \${healthBadges(c.tags)}
+    \${healthBadges(c.tags)}\${intakeModeBadge(c.tags)}
     <div style="color:var(--muted);margin-bottom:12px">\${esc(c.channel)}/\${esc(fmtPhone(c.external_id))}
-      <button class="copy" data-copy="\${esc(c.external_id)}" title="copy contact">&#x2398;</button></div>
+      <button class="copy" data-copy="\${esc(c.external_id)}" title="copy contact">copy</button></div>
     \${reportPanel(c.report, events)}
     <button id="edit-report-btn" class="icon-btn" style="margin-bottom:14px">Edit report fields</button>
     <div class="row">
@@ -1226,9 +1284,14 @@ function healthBadges(tags){
   if(!list.length) return ''
   return '<div class="health">'+list.map(t=>\`<span class="health-chip" title="\${esc(t)}">\${esc(HEALTH_LABEL[t]||t)}</span>\`).join('')+'</div>'
 }
+function intakeModeBadge(tags){
+  const t=String(tags||'').split(',').map(s=>s.trim())
+  if(t.includes('intake_mode:manual')) return '<span class="intake-mode-badge" title="Report entered by an operator via the dashboard">Entered by operator</span>'
+  return ''
+}
 // --- theme ---
 function applyTheme(t){ document.documentElement.dataset.theme=t; try{localStorage.casey_theme=t}catch{}
-  $('#theme').innerHTML = t==='light'?'&#x263c;':'&#x263d;' }
+  $('#theme').textContent = t==='light'?'dark':'light' }
 applyTheme((()=>{ try{return localStorage.casey_theme}catch{} })() || (matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'))
 $('#theme').onclick=()=>applyTheme(document.documentElement.dataset.theme==='light'?'dark':'light')
 // --- plain-language / simple mode toggle (persisted like the theme) ---
@@ -1249,8 +1312,8 @@ $('#help-ovl').addEventListener('click', e=>{ if(e.target===$('#help-ovl')) hide
 if(!helpSeen()) showHelp()
 // --- filters ---
 let qTimer
-$('#q').addEventListener('input',e=>{ clearTimeout(qTimer); qTimer=setTimeout(()=>{ filt.q=e.target.value; renderListFull() },120) })
-$('#statusf').addEventListener('change',e=>{ filt.status=e.target.value; renderListFull() })
+$('#q').addEventListener('input',e=>{ clearTimeout(qTimer); qTimer=setTimeout(()=>{ filt.q=e.target.value; lastCasesJson=''; loadCases() },300) })
+$('#statusf').addEventListener('change',e=>{ filt.status=e.target.value; lastCasesJson=''; loadCases() })
 $('#refresh').onclick=()=>{ lastCasesJson=''; loadCases() }
 // --- keyboard nav: / focus search, j/k move, enter open, esc clear/back ---
 document.addEventListener('keydown',e=>{
@@ -1268,6 +1331,14 @@ document.addEventListener('keydown',e=>{
 })
 // --- deep-link restore + poll ---
 function restoreFromHash(){ const m=/#case=([^&]+)/.exec(location.hash); if(m) return decodeURIComponent(m[1]) }
+async function restoreRefFromHash(){
+  const m=/#ref=([^&]+)/.exec(location.hash); if(!m) return
+  const ref=decodeURIComponent(m[1])
+  // pre-populate search and fetch the matching case
+  filt.q=ref; $('#q').value=ref; lastCasesJson=''
+  await loadCases()
+  const found=allCases.find(c=>c.ref===ref); if(found) openCase(found.id)
+}
 // Handoff banner click handlers (attached here so openCase is defined).
 $('#handoff').onclick=(e)=>{ if(e.target.id==='handoff-dismiss') return
   const c=handoffQueue[handoffQueue.length-1]; if(c) openCase(c.id) }
@@ -1294,7 +1365,7 @@ function fillChannelFilter(){
   $('#channelf').innerHTML='<option value="">all channels</option>'+channels.map(ch=>\`<option value="\${esc(ch)}"\${ch===cur?' selected':''}>\${esc(ch)}</option>\`).join('')
   if(cur) $('#channelf').value=cur
 }
-$('#channelf').addEventListener('change',e=>{ filt.channel=e.target.value; renderList() })
+$('#channelf').addEventListener('change',e=>{ filt.channel=e.target.value; lastCasesJson=''; loadCases() })
 const _matchesOrig = matches
 // patch matches to honour channel filter
 ;(()=>{
@@ -1319,31 +1390,36 @@ function renderListFull(){
       <div class="top">\${attn(c)?'<span class="dot attn" title="needs attention (autonomy: '+esc(c.autonomy)+')"></span>':''}
         <span class="ref">\${esc(c.ref)}</span><span class="badge \${esc(c.priority)}">\${esc(c.priority)}</span>
         <span class="when" style="margin-left:auto" title="\${esc(fmtTime(c.updated_at||c.created_at))}">\${esc(rel(c.updated_at||c.created_at))}</span></div>
-      <div class="sub">\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}</div>
+      <div class="sub">\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
     </div>\`).join('')
   document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
 }
 filt.channel = ''
 
 // --- intake form (New Case / Edit Report) ---
+// Fields a field visit cannot recover once the worker leaves -- visit-critical
+// fields come first and are marked required. textarea:true for long free-text.
 const INTAKE_FIELDS=[
-  ['species','Which animals?','e.g. cattle, sheep, goats, pigs'],
-  ['symptoms','What signs are you seeing?','e.g. drooling, limping, not eating, sudden death'],
+  // -- visit-critical (needed for a field visit) --
+  ['species','Which animals?','e.g. cattle, sheep, goats, pigs',{required:true}],
+  ['symptoms','What signs are you seeing?','e.g. drooling, limping, not eating, sudden death',{required:true,textarea:true}],
+  ['location','Where are the animals?','Farm name, nearest town, or GPS coordinates',{required:true}],
+  ['how_to_find','How do we find the place?','Road name, landmark, or directions from the nearest town',{required:true,textarea:true}],
+  ['farmer_available','Will the farmer be there?','e.g. yes, or phone first on 082...',{required:true}],
+  ['contact_fallback','Any other contact person?','Name and phone number if different from this one',{required:true}],
+  // -- additional details --
   ['affected_count','How many are affected?','e.g. 5'],
   ['dead_count','How many have died?','e.g. 2 (write 0 if none)'],
   ['onset','When did it start?','e.g. yesterday morning, 3 days ago'],
   ['suspected_disease','Do you know what disease it might be?','e.g. FMD, lumpy skin - leave blank if unsure'],
   ['recent_movement','Have the animals moved recently?','e.g. yes, bought from market last week'],
-  ['location','Where are the animals?','Farm name, nearest town, or GPS coordinates'],
-  ['how_to_find','How do we find the place?','Road name, landmark, or directions from the nearest town'],
-  ['access_notes','Any access or travel notes?','e.g. gravel road, locked gate - call first'],
-  ['farmer_available','Will the farmer be there?','e.g. yes, or phone first on 082...'],
-  ['contact_fallback','Any other contact person?','Name and phone number if different from this one'],
+  ['access_notes','Any access or travel notes?','e.g. gravel road, locked gate - call first',{textarea:true}],
   ['identifying_traits','How do we identify the animals?','e.g. red tag in ear, black-and-white Friesians'],
   ['photos','Are there photos?','yes / no, or a description of what they show'],
   ['audio','Are there voice notes?','yes / no'],
-  ['notes','Anything else to note?','Any extra information'],
+  ['notes','Anything else to note?','Any extra information',{textarea:true}],
 ]
+const VC_KEYS = new Set(['species','symptoms','location','how_to_find','farmer_available','contact_fallback'])
 let intakeCaseId = null    // set when editing existing case; null = new case
 function openIntakeForm(caseRow){
   intakeCaseId = caseRow ? caseRow.id : null
@@ -1363,31 +1439,59 @@ function openIntakeForm(caseRow){
     $('#intake-fill-label').textContent=filled+' of '+total+' fields filled'
     $('#intake-fill-pct').style.width=Math.round(filled/total*100)+'%'
   } else { fillBar.style.display='none' }
-  // render fields with pre-fill and hints
-  $('#intake-report-fields').innerHTML = INTAKE_FIELDS.map(([k,label,hint])=>\`
-    <label for="int-\${k}">\${esc(label)}</label>
-    <input id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" value="\${esc(existingReport[k]||'')}" autocomplete="off">
-  \`).join('')
+  // render fields: VC section header first, then additional-details header
+  let _fhtml = '<div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed for a field visit)</span></div>'
+  let _addHead = false
+  for(const [k,label,hint,opts={}] of INTAKE_FIELDS){
+    if(!VC_KEYS.has(k) && !_addHead){ _fhtml += '<div class="intake-section-head" style="margin-top:14px">Additional details</div>'; _addHead=true }
+    const val=esc(existingReport[k]||'')
+    const req=opts.required?' <span class="intake-req" title="Needed for a field visit">*</span>':''
+    _fhtml += \`<label for="int-\${k}">\${esc(label)}\${req}</label>\`
+    if(opts.textarea){ _fhtml += \`<textarea id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" rows="2" autocomplete="off">\${val}</textarea>\` }
+    else { _fhtml += \`<input id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" value="\${val}" autocomplete="off">\` }
+  }
+  $('#intake-report-fields').innerHTML = _fhtml
   $('#intake-error').style.display='none'
   $('#intake-ovl').classList.add('show')
   setTimeout(()=>{ if(isEdit) document.getElementById('int-species')?.focus()
     else document.getElementById('int-name')?.focus() }, 80)
 }
-$('#intake-cancel').onclick=()=>{ $('#intake-ovl').classList.remove('show'); intakeCaseId=null }
-$('#intake-ovl').addEventListener('click',e=>{ if(e.target===$('#intake-ovl')){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null } })
+function closeIntakeOvl(){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null }
+$('#intake-cancel').onclick=closeIntakeOvl
+$('#intake-ovl').addEventListener('click',e=>{ if(e.target===$('#intake-ovl')) closeIntakeOvl() })
+// Escape closes the overlay; Tab order is natural (DOM order)
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&$('#intake-ovl').classList.contains('show')){ e.preventDefault(); closeIntakeOvl() }
+})
 $('#intake-submit').onclick=async()=>{
   const btn=$('#intake-submit'); btn.disabled=true
   const errEl=$('#intake-error'); errEl.style.display='none'
   try{
     let caseId=intakeCaseId
     if(!caseId){
+      const rawPhone=$('#int-phone').value.trim()
+      if(rawPhone){
+        const digits=rawPhone.replace(/[\s\-()]/g,'')
+        if(!/^0[0-9]{9}$/.test(digits)&&!/^\+27[0-9]{9}$/.test(digits)){
+          errEl.textContent='Phone must be a South African number: 0821234567 or +27821234567'
+          errEl.style.display=''; btn.disabled=false; return
+        }
+      }
       // create new case
       const body={
         name:$('#int-name').value.trim(),
-        phone:$('#int-phone').value.trim(),
+        phone:rawPhone,
         subject:$('#int-subject').value.trim()||'Field report'
       }
       const r=await api('/api/cases',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
+      if(r.status===409){
+        const e=await r.json().catch(()=>({}))
+        // offer to open the existing case instead of failing
+        const open=window.confirm((e.error||'A case already exists for this contact')+' ('+e.existing_ref+'). Open it?')
+        btn.disabled=false
+        if(open){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null; await openCase(e.existing_id) }
+        return
+      }
       if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||'Failed to create case') }
       const j=await r.json(); caseId=j.id
     }
@@ -1455,7 +1559,11 @@ function showDialog(opts){
     setTimeout(function(){ if(inp) inp.focus(); else okBtn.focus() }, 60)
   })
 }
-async function boot(){ await loadCases(); await refreshHealth(); const id=restoreFromHash(); if(id) openCase(id) }
+async function boot(){
+  await loadCases(); await refreshHealth()
+  const id=restoreFromHash(); if(id){ openCase(id); return }
+  await restoreRefFromHash()
+}
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv) })
 window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHealth, get lastHealth(){return lastHealth},

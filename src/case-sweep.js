@@ -18,7 +18,7 @@ const HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
 // Run one full pass. Pure-ish: all mutation goes through the store, `now` is
 // injected. Returns a summary { scanned, flagged, cleared, breaches:{type:count} }.
-export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_THRESHOLDS, { log = null } = {}) {
+export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_THRESHOLDS, { log = null, notifyBreach = null } = {}) {
   const summary = { scanned: 0, flagged: 0, cleared: 0, breaches: {}, errors: [] }
   // Only open cases can be unhealthy; a closed case is finished. listCases with no
   // filter returns recency-sorted; we classify each and skip closed defensively.
@@ -61,6 +61,10 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
             data: { guardrail: b.breach, since_ms: b.since_ms },
           })
           summary.breaches[b.breach] = (summary.breaches[b.breach] || 0) + 1
+          if (notifyBreach) {
+            try { await notifyBreach(c.id, b.breach, b.detail) }
+            catch (ne) { log?.warn?.('[sweep] notifyBreach failed', { caseId: c.id, breach: b.breach, error: ne.message }) }
+          }
         }
       }
       // Quiet update: setting health tags must NOT touch last_event_at, or the

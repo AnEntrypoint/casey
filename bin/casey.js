@@ -74,17 +74,26 @@ function portFree(port) {
 }
 
 const ENV_TEMPLATE = `# casey environment -- fill in the channels you want, leave the rest blank.
-# Discord (simulates the WhatsApp flow on a Discord bot):
+# Discord:
 DISCORD_BOT_TOKEN=
 
 # WhatsApp Cloud API (both required to enable the real channel):
 WHATSAPP_API_TOKEN=
 WHATSAPP_PHONE_NUMBER_ID=
-# Optional: verifies inbound Meta webhooks (X-Hub-Signature-256):
+# Required when WhatsApp credentials are set (HMAC-SHA256 webhook signature check):
 WHATSAPP_APP_SECRET=
+# Webhook verification handshake token (set in the Meta developer console):
+WHATSAPP_VERIFY_TOKEN=
+# Fix the public-facing webhook port/path (useful behind a reverse proxy or ngrok):
+#WHATSAPP_WEBHOOK_PORT=4001
+#WHATSAPP_WEBHOOK_PATH=/whatsapp
 
-# Dashboard: set a shared secret to require ?token= / Bearer auth (recommended):
+# Dashboard: require a token to open the dashboard (strongly recommended in production):
 CASEY_DASHBOARD_TOKEN=
+
+# Development overrides:
+#CASEY_STUB_LLM=1    # run fully offline with a deterministic stub model
+#CASEY_LOG=silent    # suppress structured JSON logs (used by tests)
 `
 
 const HELP = `${bold('casey')} ${dim('v' + pkgVersion())}  --  agentic case tracking over WhatsApp/Discord
@@ -349,6 +358,14 @@ async function main() {
     if (!caseRow) { console.log(red('case not found:'), id); console.log(dim(`  list cases with ${cyan('casey cases')}.`)); process.exit(1) }
     console.log(`${bold(caseRow.ref)}  [${caseRow.status}]  ${caseRow.priority}  ${caseRow.channel}/${caseRow.id}`)
     console.log(`subject: ${caseRow.subject}\nsummary: ${caseRow.summary}\ntags: ${caseRow.tags}`)
+    let report = {}; try { report = caseRow.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
+    const VC = ['species','symptoms','location','how_to_find','farmer_available','contact_fallback']
+    const filled = Object.keys(report).filter(k => report[k] != null && String(report[k]).trim())
+    if (filled.length) {
+      console.log(dim('--- report ---'))
+      for (const k of VC) { if (report[k]) console.log(`  ${k}: ${report[k]} [visit-critical]`) }
+      for (const k of filled.filter(k => !VC.includes(k))) console.log(`  ${k}: ${report[k]}`)
+    } else { console.log(dim('  (no report fields filled yet)')) }
     console.log(dim('--- timeline ---'))
     for (const e of await store.listEvents(caseRow.id)) console.log(`  ${e.kind}/${e.actor}: ${e.text}`)
     process.exit(0)
