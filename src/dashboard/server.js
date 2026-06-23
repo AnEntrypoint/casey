@@ -1275,7 +1275,7 @@ function cannedReplies(c){
 }
 async function openCase(id){
   activeId = id
-  clearHandoff(id)                             // operator is now handling it
+  clearHandoff(id)                             // dismiss banner locally; DB tag clears only on reply
   // deep-link the open case in the hash only; the ?token= stays in the real
   // query string (location.search is preserved by replaceState's relative URL),
   // so the hash is shareable without leaking the secret.
@@ -1326,6 +1326,7 @@ async function openCase(id){
     <h3 style="margin:18px 0 6px">Timeline\${events_total!=null?\` (\${events.length}/\${events_total})\`:''}
       <button id="add-case-note" class="icon-btn" style="float:right;margin-top:-2px">+ Note</button>
       <button id="split-case-btn" class="icon-btn" style="float:right;margin-top:-2px;margin-right:4px">Split</button></h3>
+    <input id="timeline-search" type="search" placeholder="Search timeline..." style="width:100%;margin-bottom:8px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg2);color:var(--fg);font-size:13px">
     <div id="timeline">\${renderEvents(events)}</div>
     \${more?'<button id="more-events" style="background:#2a3340">Load older events</button>':''}
   \`
@@ -1340,6 +1341,13 @@ async function openCase(id){
     el.addEventListener('blur',()=>{editing=false})
   })
   const back=$('#back'); if(back) back.onclick=()=>{ $('#wrap').classList.remove('detail-open') }
+  const tlSearch=$('#timeline-search')
+  if(tlSearch) tlSearch.addEventListener('input',()=>{
+    const q=tlSearch.value.toLowerCase().trim()
+    $('#timeline').querySelectorAll('.ev').forEach(el=>{
+      el.style.display=(!q||el.textContent.toLowerCase().includes(q))?'':'none'
+    })
+  })
   const editRptBtn=$('#edit-report-btn')
   if(editRptBtn) editRptBtn.onclick=()=>openIntakeForm(c)
   const vcBanner=$('#vc-banner')
@@ -1491,7 +1499,7 @@ function renderEvents(events){
 }
 // Plain-language warning chips for the time-guardrail health:* tags the sweep
 // maintains, so an operator sees at a glance that a case is going wrong over time.
-const HEALTH_LABEL={'health:stale':'Going cold (no recent activity)','health:stuck':'Stuck in this stage too long','health:unanswered_handoff':'A person was asked for and not yet answered','health:abandoned_intake':'Intake left with on-site facts missing','health:never_closed':'Resolved but never closed','health:timestamp_corrupt':'Case time data looks wrong'}
+const HEALTH_LABEL={'health:stale':'Going cold (no recent activity)','health:stuck':'Stuck in this stage too long','health:unanswered_handoff':'A person was asked for and not yet answered','health:abandoned_intake':'Intake left with on-site facts missing','health:incomplete_critical':'Working but visit-critical facts still missing','health:never_closed':'Resolved but never closed','health:timestamp_corrupt':'Case time data looks wrong'}
 function healthBadges(tags){
   const list=String(tags||'').split(',').map(s=>s.trim()).filter(t=>t.indexOf('health:')===0)
   if(!list.length) return ''
