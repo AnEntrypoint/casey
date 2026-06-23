@@ -1217,19 +1217,7 @@ function renderCounts(){
   const a=allCases.filter(attn).length
   $('#counts').textContent = allCases.length+' total'+(a?' - '+a+' need attention':'')
 }
-function renderList(){
-  const shown = allCases.filter(matches)
-  if(!allCases.length){ $('#cases').innerHTML='<div class="empty">No cases yet.<br>Run <code>casey sim</code> or connect a channel to create one.</div>'; return }
-  if(!shown.length){ $('#cases').innerHTML='<div class="empty">No cases match your filter.</div>'; return }
-  $('#cases').innerHTML = shown.map(c=>\`
-    <div class="case \${c.id===activeId?'active':''}" data-id="\${esc(c.id)}">
-      <div class="top">\${attn(c)?'<span class="dot attn" title="needs attention (autonomy: '+esc(c.autonomy)+')"></span>':''}
-        <span class="ref">\${esc(c.ref)}</span><span class="badge \${esc(c.priority)}">\${esc(c.priority)}</span>
-        <span class="when" style="margin-left:auto" title="\${esc(fmtTime(c.updated_at||c.created_at))}">\${esc(rel(c.updated_at||c.created_at))}</span></div>
-      <div class="sub">\${tagList(c).includes('intake_mode:manual')?'<span class="src-tag src-manual" style="font-size:10px;padding:1px 6px">Manual</span> ':''\}\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
-    </div>\`).join('')
-  document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
-}
+
 function renderTriage(){
   const el=$('#triage'); if(!el) return
   const inbox = allCases.map(c=>({c,score:attnScore(c)}))
@@ -1663,7 +1651,6 @@ function matchesFull(c){
   if(filt.source==='channel' && tagList(c).includes('intake_mode:manual')) return false
   return matches(c)
 }
-// Re-define renderList to use matchesFull
 function renderListFull(){
   const shown = allCases.filter(matchesFull)
   if(!allCases.length){ $('#cases').innerHTML='<div class="empty">No cases yet.<br>Run <code>casey sim</code> or connect a channel to create one.</div>'; return }
@@ -1726,7 +1713,6 @@ function showIntakeStep(step){
   if(isNew){
     // step-bar and wizard only for new case
     $('#intake-step-bar').style.display='flex'
-    $('#intake-step-dot-1'||'#step-dot-1')
     document.getElementById('step-dot-1').className='step-dot'+(step===1?' active':' done')
     document.getElementById('step-dot-2').className='step-dot'+(step===2?' active':'')
     document.getElementById('step-line-1').className='step-line'+(step===2?' done':'')
@@ -1780,8 +1766,9 @@ function openIntakeForm(caseRow){
       for(const [k] of INTAKE_FIELDS){ const el=document.getElementById('int-'+k); if(el&&draft[k]) el.value=draft[k] }
       setTimeout(()=>toast('Draft restored - fill in the rest and save','ok'),200)
     }
-    // auto-save draft on any input change
+    // auto-save draft on any input change; remove any prior listener first
     const ovl=$('#intake-ovl')
+    if(ovl._draftH) ovl.removeEventListener('input',ovl._draftH)
     const saveH=()=>saveDraft()
     ovl._draftH=saveH
     ovl.addEventListener('input',saveH)
@@ -1898,10 +1885,13 @@ $('#intake-submit').onclick=async()=>{
 }
 $('#new-case-btn').onclick=()=>openIntakeForm(null)
 // --- export CSV (fetch via api() so the X-Casey-Token header is sent, then save as blob) ---
+// Note: the server CSV already has an intake_source column; if a source filter is
+// active the filename suffix reminds the operator that the export is unfiltered.
 $('#export-btn').onclick=async()=>{
   const params=new URLSearchParams()
   if(filt.status) params.set('status',filt.status)
   if(filt.channel) params.set('channel',filt.channel)
+  if(filt.source) toast('Note: CSV export includes all sources; intake_source column lets you filter in your spreadsheet','ok')
   const url='/api/cases/export.csv'+(params.toString()?'?'+params.toString():'')
   try{
     const r=await api(url)
@@ -2014,7 +2004,7 @@ window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHeal
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
   setFilter(q){filt.q=q;renderListFull()},
-  renderList: renderListFull, matchesFull, openIntakeForm,
+  renderList: renderListFull, renderListFull, matchesFull, openIntakeForm,
   // help overlay + per-case hint, exposed for browser-witness
   showHelp, hideHelp, helpSeen, todoHint, get helpOpen(){return helpOpen},
   // triage inbox + coaching + handoff, exposed for browser-witness
