@@ -622,6 +622,33 @@ th{width:40%;background:#f5f5f5;font-weight:600}
     icons: [{ src: '/design/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
       { src: '/design/icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
   }))
+  // Service worker: cache-first for app shell assets, network-first for API, offline.html fallback.
+  app.get('/sw.js', (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.send(`
+const CACHE='casey-v1'
+const SHELL=['/offline.html']
+self.addEventListener('install',e=>{ e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))); self.skipWaiting() })
+self.addEventListener('activate',e=>{ e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))); self.clients.claim() })
+self.addEventListener('fetch',e=>{
+  const u=e.request.url
+  if(u.includes('/api/')){ e.respondWith(fetch(e.request).catch(()=>new Response(JSON.stringify({error:'offline'}),{status:503,headers:{'content-type':'application/json'}}))); return }
+  e.respondWith(fetch(e.request).catch(()=>caches.match('/offline.html')))
+})
+`)
+  })
+  app.get('/offline.html', (_req, res) => {
+    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>casey - offline</title>
+<style>body{font-family:sans-serif;background:#0f1115;color:#cdd3de;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:20px}
+.card{max-width:360px}.card h1{font-size:1.4em;margin:0 0 8px}p{color:#8b95a6;line-height:1.5;margin:0 0 16px}
+a{color:#3b6ea5;text-decoration:none;border:1px solid #3b6ea5;border-radius:6px;padding:8px 18px;display:inline-block}a:hover{background:#1e2a3a}</style>
+</head><body><div class="card">
+<h1>casey</h1>
+<p>You are offline. Please check your connection and try again.</p>
+<a href="/">Try again</a>
+</div></body></html>`)
+  })
   app.get('/', (_req, res) => res.type('html').send(PAGE))
 
   const server = app.listen(port)
@@ -771,6 +798,12 @@ const PAGE = /* html */ `<!doctype html>
   .intake-vc-note{font-weight:400;text-transform:none;letter-spacing:0;opacity:.8}
   .intake-req{color:var(--danger);font-size:13px;margin-left:2px}
   .intake-ovl textarea{resize:vertical;min-height:52px}
+  .intake-step-bar{display:flex;align-items:center;gap:6px;margin:0 0 14px;font-size:12px;color:var(--muted)}
+  .intake-step-bar .step-dot{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;background:var(--border);color:var(--muted);flex-shrink:0}
+  .intake-step-bar .step-dot.active{background:var(--accent);color:#fff}
+  .intake-step-bar .step-dot.done{background:var(--accent);color:#fff;opacity:.6}
+  .intake-step-bar .step-line{flex:1;height:2px;background:var(--border);border-radius:1px}
+  .intake-step-bar .step-line.done{background:var(--accent);opacity:.5}
   .fill-pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:var(--border);color:var(--muted);margin-left:6px;vertical-align:middle}
   .fill-pill.ok{background:rgba(34,160,80,.18);color:#1c8c44}
   .fill-pill.low{background:rgba(200,140,0,.18);color:#9a6a00}
@@ -839,6 +872,12 @@ const PAGE = /* html */ `<!doctype html>
 <div class="intake-ovl" id="intake-ovl" role="dialog" aria-modal="true" aria-labelledby="intake-title">
   <div class="intake-card">
     <h2 id="intake-title">New case</h2>
+    <div id="intake-step-bar" class="intake-step-bar" style="display:none">
+      <div id="step-dot-1" class="step-dot active">1</div>
+      <div id="step-line-1" class="step-line"></div>
+      <div id="step-dot-2" class="step-dot">2</div>
+      <span id="intake-step-label" style="margin-left:4px">Step 1 of 2: Critical details</span>
+    </div>
     <div id="intake-fill-bar" class="fill-bar" style="display:none">
       <span id="intake-fill-label"></span>
       <div class="bar"><div class="fill" id="intake-fill-pct" style="width:0%"></div></div>
@@ -850,7 +889,9 @@ const PAGE = /* html */ `<!doctype html>
     </div>
     <div id="intake-report-fields"></div>
     <div style="display:flex;gap:8px;margin-top:14px">
+      <button id="intake-next" style="display:none">Next</button>
       <button id="intake-submit">Save</button>
+      <button id="intake-back" style="display:none;background:transparent;color:var(--muted);border:1px solid var(--border)">Back</button>
       <button id="intake-cancel" style="background:transparent;color:var(--muted);border:1px solid var(--border)">Cancel</button>
     </div>
     <p class="hint" id="intake-error" style="color:var(--danger);display:none"></p>
@@ -1657,15 +1698,58 @@ const INTAKE_FIELDS=[
 ]
 const VC_KEYS = new Set(['species','symptoms','location','how_to_find','farmer_available','contact_fallback'])
 let intakeCaseId = null    // set when editing existing case; null = new case
+let intakeStep = 1         // 1 or 2; only used for new-case wizard
+// Build separate HTML strings for step1 (VC fields) and step2 (additional)
+function buildFieldsHtml(existingReport){
+  let step1='', step2=''
+  for(const [k,label,hint,opts={}] of INTAKE_FIELDS){
+    const val=esc(existingReport[k]||'')
+    const req=opts.required?' <span class="intake-req" title="Needed for a field visit">*</span>':''
+    let fld=\`<label for="int-\${k}">\${esc(label)}\${req}</label>\`
+    if(opts.textarea){ fld+=\`<textarea id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" rows="2" autocomplete="off">\${val}</textarea>\` }
+    else { fld+=\`<input id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" value="\${val}" autocomplete="off">\` }
+    if(VC_KEYS.has(k)) step1+=fld; else step2+=fld
+  }
+  return {step1, step2}
+}
+function showIntakeStep(step){
+  intakeStep=step
+  const isNew=!intakeCaseId
+  const {step1,step2}=buildFieldsHtml(window._intakeExistingReport||{})
+  if(isNew){
+    // step-bar and wizard only for new case
+    $('#intake-step-bar').style.display='flex'
+    $('#intake-step-dot-1'||'#step-dot-1')
+    document.getElementById('step-dot-1').className='step-dot'+(step===1?' active':' done')
+    document.getElementById('step-dot-2').className='step-dot'+(step===2?' active':'')
+    document.getElementById('step-line-1').className='step-line'+(step===2?' done':'')
+    $('#intake-step-label').textContent='Step '+step+' of 2: '+(step===1?'Critical details':'Additional details')
+    if(step===1){
+      $('#intake-contact-fields').style.display=''
+      $('#intake-report-fields').innerHTML='<div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed before a vet can visit)</span></div>'+step1
+      $('#intake-next').style.display=''; $('#intake-back').style.display='none'; $('#intake-submit').style.display='none'
+    } else {
+      $('#intake-contact-fields').style.display='none'
+      $('#intake-report-fields').innerHTML='<div class="intake-section-head">Additional details</div>'+step2
+      $('#intake-next').style.display='none'; $('#intake-back').style.display=''; $('#intake-submit').style.display=''
+      $('#intake-submit').textContent='Save'
+    }
+  } else {
+    // Edit mode: single page with all fields
+    $('#intake-step-bar').style.display='none'
+    $('#intake-contact-fields').style.display='none'
+    $('#intake-report-fields').innerHTML='<div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed before a vet can visit)</span></div>'+step1+'<div class="intake-section-head" style="margin-top:14px">Additional details</div>'+step2
+    $('#intake-next').style.display='none'; $('#intake-back').style.display='none'; $('#intake-submit').style.display=''; $('#intake-submit').textContent='Save'
+  }
+  $('#intake-error').style.display='none'
+}
 function openIntakeForm(caseRow){
   intakeCaseId = caseRow ? caseRow.id : null
   const isEdit = !!caseRow
   $('#intake-title').textContent = isEdit ? 'Edit report fields' : 'New case'
-  const contactSection = $('#intake-contact-fields')
-  contactSection.style.display = isEdit ? 'none' : ''
-  // build report fields
   let existingReport = {}
   if(caseRow && caseRow.report){ try{ existingReport=JSON.parse(caseRow.report) }catch{} }
+  window._intakeExistingReport = existingReport
   // fill rate bar (edit mode only)
   const fillBar = $('#intake-fill-bar')
   if(isEdit){
@@ -1679,25 +1763,41 @@ function openIntakeForm(caseRow){
     $('#intake-fill-pct').style.width=vcPct+'%'
     $('#intake-fill-pct').style.background=vcFilled===vcTotal?'var(--accent)':'var(--danger)'
   } else { fillBar.style.display='none' }
-  // render fields: VC section header first, then additional-details header
-  let _fhtml = '<div class="intake-vc-box"><div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed before a vet can visit)</span></div>'
-  let _addHead = false
-  for(const [k,label,hint,opts={}] of INTAKE_FIELDS){
-    if(!VC_KEYS.has(k) && !_addHead){ _fhtml += '</div><div class="intake-section-head" style="margin-top:14px">Additional details</div>'; _addHead=true }
-    const val=esc(existingReport[k]||'')
-    const req=opts.required?' <span class="intake-req" title="Needed for a field visit">*</span>':''
-    _fhtml += \`<label for="int-\${k}">\${esc(label)}\${req}</label>\`
-    if(opts.textarea){ _fhtml += \`<textarea id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" rows="2" autocomplete="off">\${val}</textarea>\` }
-    else { _fhtml += \`<input id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" value="\${val}" autocomplete="off">\` }
-  }
-  if(!_addHead) _fhtml += '</div>'   // close vc-box if no non-VC fields were added
-  $('#intake-report-fields').innerHTML = _fhtml
-  $('#intake-error').style.display='none'
+  showIntakeStep(1)
   $('#intake-ovl').classList.add('show')
   setTimeout(()=>{ if(isEdit) document.getElementById('int-species')?.focus()
     else document.getElementById('int-name')?.focus() }, 80)
 }
-function closeIntakeOvl(){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null }
+function closeIntakeOvl(){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null; window._intakeExistingReport={} }
+$('#intake-next').onclick=()=>{
+  // validate step 1: at least species or symptoms must be filled
+  const errEl=$('#intake-error')
+  const species=(document.getElementById('int-species')||{}).value||''
+  if(!species.trim()){ errEl.textContent='Please fill in at least the animal type (which animals?)'; errEl.style.display=''; return }
+  errEl.style.display='none'
+  // preserve values filled in step1 so step2 can be navigated back to with data intact
+  window._intakeStep1Values={}
+  for(const [k] of INTAKE_FIELDS.filter(([k])=>VC_KEYS.has(k))){
+    window._intakeStep1Values[k]=(document.getElementById('int-'+k)||{}).value||''
+  }
+  showIntakeStep(2)
+  document.getElementById('int-affected_count')?.focus()
+}
+$('#intake-back').onclick=()=>{
+  // preserve step2 values
+  window._intakeStep2Values={}
+  for(const [k] of INTAKE_FIELDS.filter(([k])=>!VC_KEYS.has(k))){
+    window._intakeStep2Values[k]=(document.getElementById('int-'+k)||{}).value||''
+  }
+  showIntakeStep(1)
+  // restore step1 values
+  if(window._intakeStep1Values){
+    for(const [k,v] of Object.entries(window._intakeStep1Values)){
+      const el=document.getElementById('int-'+k); if(el) el.value=v
+    }
+  }
+  document.getElementById('int-species')?.focus()
+}
 $('#intake-cancel').onclick=closeIntakeOvl
 $('#intake-ovl').addEventListener('click',e=>{ if(e.target===$('#intake-ovl')) closeIntakeOvl() })
 // Escape closes the overlay; Tab order is natural (DOM order)
@@ -1736,9 +1836,13 @@ $('#intake-submit').onclick=async()=>{
       const j=await r.json(); caseId=j.id
     }
     // gather report fields (skip blanks)
+    // For new cases in step 2, VC fields are in _intakeStep1Values; additional
+    // fields are in the current DOM. For edit mode all fields are in the DOM.
     const report={}
+    const step1Saved=window._intakeStep1Values||{}
     for(const [k] of INTAKE_FIELDS){
-      const v=(document.getElementById('int-'+k)||{}).value||''
+      const domEl=document.getElementById('int-'+k)
+      const v=domEl ? domEl.value : (step1Saved[k]||'')
       if(v.trim()) report[k]=v.trim()
     }
     if(Object.keys(report).length){
@@ -1880,4 +1984,5 @@ window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHeal
   get handoffQueue(){return handoffQueue}, get handoffSeen(){return handoffSeen},
   showDialog }   // exposed for browser-witness
 </script>
+<script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{})</script>
 </body></html>`
