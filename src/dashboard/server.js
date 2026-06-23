@@ -362,11 +362,12 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       if (req.query.channel) where.channel = req.query.channel
       const cases = await store.listCases(where, { limit: 10000, offset: 0 })
       const META = ['ref', 'subject', 'status', 'priority', 'channel', 'created_at']
-      const headers = [...META, ...REPORT_KEY_LIST]
+      const headers = [...META, 'intake_source', ...REPORT_KEY_LIST]
       const rows = cases.map(c => {
         let r = {}
         try { r = c.report ? JSON.parse(c.report) : {} } catch { r = {} }
-        return [...META.map(k => csvCell(c[k])), ...REPORT_KEY_LIST.map(k => csvCell(r[k]))].join(',')
+        const intakeSrc = String(c.tags || '').split(',').map(t => t.trim()).includes('intake_mode:manual') ? 'manual' : 'channel'
+        return [...META.map(k => csvCell(c[k])), csvCell(intakeSrc), ...REPORT_KEY_LIST.map(k => csvCell(r[k]))].join(',')
       })
       const csv = [headers.join(','), ...rows].join('\n')
       res.setHeader('Content-Type', 'text/csv')
@@ -862,6 +863,7 @@ const PAGE = /* html */ `<!doctype html>
         <input id="q" placeholder="Search ref, subject, contact... ( / )" autocomplete="off">
         <select id="statusf"><option value="">all stages</option></select>
         <select id="channelf" title="Filter by channel"><option value="">all channels</option></select>
+        <select id="sourcef" title="Filter by intake source"><option value="">all sources</option><option value="manual">Manual (operator)</option><option value="channel">Channel (AI)</option></select>
       </div>
     </div>
     <div class="triage" id="triage"></div>
@@ -1224,7 +1226,7 @@ function renderList(){
       <div class="top">\${attn(c)?'<span class="dot attn" title="needs attention (autonomy: '+esc(c.autonomy)+')"></span>':''}
         <span class="ref">\${esc(c.ref)}</span><span class="badge \${esc(c.priority)}">\${esc(c.priority)}</span>
         <span class="when" style="margin-left:auto" title="\${esc(fmtTime(c.updated_at||c.created_at))}">\${esc(rel(c.updated_at||c.created_at))}</span></div>
-      <div class="sub">\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
+      <div class="sub">\${tagList(c).includes('intake_mode:manual')?'<span class="src-tag src-manual" style="font-size:10px;padding:1px 6px">Manual</span> ':''\}\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
     </div>\`).join('')
   document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
 }
@@ -1358,6 +1360,7 @@ async function openCase(id){
     <h2 style="margin:6px 0 4px">\${esc(c.ref)} <span class="badge" title="\${esc(c.status)}">\${esc(stageLabel(c.status))}</span>
       \${fillPill(rfr)}
       <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">copy</button>
+      <button class="copy" data-copy="\${esc(location.origin+location.pathname+'#case='+encodeURIComponent(c.id))}" title="copy direct link to this case (no token in link)" style="margin-left:4px">link</button>
       <a href="/api/cases/\${encodeURIComponent(c.id)}/report.html" target="_blank" class="icon-btn" style="margin-left:4px;text-decoration:none;display:inline-block">Print</a></h2>
     <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
     \${healthBadges(c.tags)}\${intakeModeBadge(c.tags)}
@@ -1653,8 +1656,11 @@ function fillChannelFilter(){
   if(cur) $('#channelf').value=cur
 }
 $('#channelf').addEventListener('change',e=>{ filt.channel=e.target.value; lastCasesJson=''; loadCases() })
+$('#sourcef').addEventListener('change',e=>{ filt.source=e.target.value; renderListFull(); renderTriage() })
 function matchesFull(c){
   if(filt.channel && c.channel!==filt.channel) return false
+  if(filt.source==='manual' && !tagList(c).includes('intake_mode:manual')) return false
+  if(filt.source==='channel' && tagList(c).includes('intake_mode:manual')) return false
   return matches(c)
 }
 // Re-define renderList to use matchesFull
@@ -1667,11 +1673,12 @@ function renderListFull(){
       <div class="top">\${attn(c)?'<span class="dot attn" title="needs attention (autonomy: '+esc(c.autonomy)+')"></span>':''}
         <span class="ref">\${esc(c.ref)}</span><span class="badge \${esc(c.priority)}">\${esc(c.priority)}</span>
         <span class="when" style="margin-left:auto" title="\${esc(fmtTime(c.updated_at||c.created_at))}">\${esc(rel(c.updated_at||c.created_at))}</span></div>
-      <div class="sub">\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
+      <div class="sub">\${tagList(c).includes('intake_mode:manual')?'<span class="src-tag src-manual" style="font-size:10px;padding:1px 6px">Manual</span> ':''\}\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
     </div>\`).join('')
   document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
 }
 filt.channel = ''
+filt.source = ''
 
 // --- intake form (New Case / Edit Report) ---
 // Fields a field visit cannot recover once the worker leaves -- visit-critical
@@ -1764,11 +1771,43 @@ function openIntakeForm(caseRow){
     $('#intake-fill-pct').style.background=vcFilled===vcTotal?'var(--accent)':'var(--danger)'
   } else { fillBar.style.display='none' }
   showIntakeStep(1)
+  if(!isEdit){
+    const draft=restoreDraft()
+    if(draft){
+      const n=$('#int-name'); if(n&&draft.name) n.value=draft.name
+      const p=$('#int-phone'); if(p&&draft.phone) p.value=draft.phone
+      const s=$('#int-subject'); if(s&&draft.subject) s.value=draft.subject
+      for(const [k] of INTAKE_FIELDS){ const el=document.getElementById('int-'+k); if(el&&draft[k]) el.value=draft[k] }
+      setTimeout(()=>toast('Draft restored - fill in the rest and save','ok'),200)
+    }
+    // auto-save draft on any input change
+    const ovl=$('#intake-ovl')
+    const saveH=()=>saveDraft()
+    ovl._draftH=saveH
+    ovl.addEventListener('input',saveH)
+  }
   $('#intake-ovl').classList.add('show')
   setTimeout(()=>{ if(isEdit) document.getElementById('int-species')?.focus()
     else document.getElementById('int-name')?.focus() }, 80)
 }
-function closeIntakeOvl(){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null; window._intakeExistingReport={} }
+function saveDraft(){
+  if(intakeCaseId) return // only save drafts for new-case mode
+  const d={}
+  const n=$('#int-name'); if(n) d.name=n.value
+  const p=$('#int-phone'); if(p) d.phone=p.value
+  const s=$('#int-subject'); if(s) d.subject=s.value
+  for(const [k] of INTAKE_FIELDS){ const el=document.getElementById('int-'+k); if(el) d[k]=el.value }
+  Object.assign(d, window._intakeStep1Values||{}, window._intakeStep2Values||{})
+  try{localStorage.casey_draft_case=JSON.stringify(d)}catch{}
+}
+function clearDraft(){ try{localStorage.removeItem('casey_draft_case')}catch{} }
+function restoreDraft(){
+  try{
+    const raw=localStorage.casey_draft_case; if(!raw) return null
+    return JSON.parse(raw)
+  }catch{ return null }
+}
+function closeIntakeOvl(){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null; window._intakeExistingReport={}; window._intakeStep1Values={}; window._intakeStep2Values={} }
 $('#intake-next').onclick=()=>{
   // validate step 1: at least species or symptoms must be filled
   const errEl=$('#intake-error')
@@ -1798,7 +1837,7 @@ $('#intake-back').onclick=()=>{
   }
   document.getElementById('int-species')?.focus()
 }
-$('#intake-cancel').onclick=closeIntakeOvl
+$('#intake-cancel').onclick=()=>{ clearDraft(); closeIntakeOvl() }
 $('#intake-ovl').addEventListener('click',e=>{ if(e.target===$('#intake-ovl')) closeIntakeOvl() })
 // Escape closes the overlay; Tab order is natural (DOM order)
 document.addEventListener('keydown',e=>{
@@ -1850,6 +1889,7 @@ $('#intake-submit').onclick=async()=>{
       if(!r2.ok){ const e=await r2.json().catch(()=>({})); throw new Error(e.error||'Failed to save report') }
     }
     const wasEdit=!!intakeCaseId
+    if(!wasEdit) clearDraft()
     $('#intake-ovl').classList.remove('show'); intakeCaseId=null
     toast(wasEdit?'Report updated':'Case created','ok')
     lastCasesJson=''; await loadCases(); await openCase(caseId)
