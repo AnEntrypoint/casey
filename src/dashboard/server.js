@@ -1784,7 +1784,9 @@ function saveDraft(){
   const p=$('#int-phone'); if(p) d.phone=p.value
   const s=$('#int-subject'); if(s) d.subject=s.value
   for(const [k] of INTAKE_FIELDS){ const el=document.getElementById('int-'+k); if(el) d[k]=el.value }
-  Object.assign(d, window._intakeStep1Values||{}, window._intakeStep2Values||{})
+  // Fill gaps from the other step's saved values (DOM wins; step values fill what is not currently rendered)
+  for(const [k,v] of Object.entries(window._intakeStep1Values||{})){ if(d[k]==null) d[k]=v }
+  for(const [k,v] of Object.entries(window._intakeStep2Values||{})){ if(d[k]==null) d[k]=v }
   try{localStorage.casey_draft_case=JSON.stringify(d)}catch{}
 }
 function clearDraft(){ try{localStorage.removeItem('casey_draft_case')}catch{} }
@@ -1807,6 +1809,13 @@ $('#intake-next').onclick=()=>{
     window._intakeStep1Values[k]=(document.getElementById('int-'+k)||{}).value||''
   }
   showIntakeStep(2)
+  // restore any step-2 draft values now that their DOM elements exist
+  const draft2=restoreDraft()
+  if(draft2){
+    for(const [k] of INTAKE_FIELDS.filter(([k])=>!VC_KEYS.has(k))){
+      const el=document.getElementById('int-'+k); if(el&&draft2[k]&&!el.value) el.value=draft2[k]
+    }
+  }
   document.getElementById('int-affected_count')?.focus()
 }
 $('#intake-back').onclick=()=>{
