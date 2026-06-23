@@ -1186,6 +1186,40 @@ async function main() {
     assert.ok(html.includes('goats'), 'existing report value is pre-filled')
   })
 
+  await test('POST /report with phone creates or finds a case and redirects with done=1', async () => {
+    const phone = '0829' + Math.floor(Math.random() * 1e6).toString().padStart(6, '0')
+    const body = new URLSearchParams({ phone, species: 'sheep', symptoms: 'limping' })
+    const r = await fetch('http://localhost:4577/report', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: body.toString() })
+    assert.ok(r.ok, 'POST /report with phone returns 200 after redirect')
+    assert.ok(r.url.includes('done=1'), 'redirect includes done=1')
+    // the case was created and tagged public_form
+    const norm = '+27' + phone.slice(1)
+    const all = await store.listCases({}, { limit: 100000 })
+    const found = all.find(c => {
+      const eid = String(c.external_id || '')
+      return eid === norm || eid === norm.replace(/^\+/, '')
+    })
+    assert.ok(found, 'a case was created for the phone number')
+    assert.ok((found.tags || '').includes('intake_mode:public_form'), 'case tagged intake_mode:public_form')
+    let rpt = {}; try { rpt = JSON.parse(found.report || '{}') } catch { rpt = {} }
+    assert.equal(rpt.species, 'sheep', 'report field saved from public form')
+  })
+
+  await test('GET /api/stats returns per-mode fill-rate breakdown', async () => {
+    const r = await df('http://localhost:4577/api/stats?token=secret')
+    assert.equal(r.status, 200, 'GET /api/stats returns 200')
+    const j = await r.json()
+    assert.ok(typeof j.total === 'number', 'stats.total is a number')
+    assert.ok(j.by_mode && typeof j.by_mode === 'object', 'stats.by_mode is an object')
+    const modes = Object.keys(j.by_mode)
+    assert.ok(modes.length >= 1, 'at least one mode in by_mode')
+    for (const m of modes) {
+      const s = j.by_mode[m]
+      assert.ok(typeof s.count === 'number', `${m}.count is a number`)
+      assert.ok(typeof s.avg_filled === 'number', `${m}.avg_filled is a number`)
+    }
+  })
+
   await test('GET /api/cases/:id/report.html escapes XSS in all contact-supplied fields', async () => {
     // A contact can supply any text including script injection attempts. The
     // report.html endpoint must HTML-escape every field value from the report,

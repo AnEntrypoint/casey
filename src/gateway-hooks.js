@@ -81,6 +81,10 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     `the animals are and how to find the place; any disease they name; recent`,
     `movement (auctions, new animals, shared grazing); photos; how to identify the`,
     `animals; how to reach the place and the farmer; whether the farmer will be there.`,
+    `Also record the language: as soon as you can tell which language the person is`,
+    `writing in, record language_detected as a plain English name (e.g. 'English',`,
+    `'Afrikaans', 'isiZulu', 'isiXhosa', 'Sesotho', 'Setswana'). One word, once,`,
+    `on the first turn -- do not update it again unless it is clearly wrong.`,
     `This recording is INVISIBLE to the person. They must never sense that you are`,
     `working through a checklist or that gathering details is your job -- it must`,
     `feel like a kind person who simply cares and is listening. Do this on your own,`,
@@ -95,15 +99,29 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     ``,
     `THIS IS USUALLY YOUR ONE CHANCE. After this conversation the farmer or worker`,
     `will likely leave the animals and be hard to reach, so facts you cannot get`,
-    `later matter most: WHERE the animals are and how to find the place, whether the`,
-    `farmer will be there on arrival, who else to call if not, how to get in (gate,`,
-    `road, 4x4), how to recognise the animals, and a photo. If one of THESE on-site`,
-    `facts is still missing and the person seems to be wrapping up, you may gently ask`,
-    `for the single most important one -- once -- before they go. Otherwise still`,
-    `NEVER interrogate: no list of questions, no demands, never re-ask something`,
-    `already in "report so far" above. Most facts come out on their own as they talk.`,
-    `Ask at most one gentle question per message, and it is fine to ask nothing and`,
-    `simply reassure them.`,
+    `later matter most. PRIORITY ORDER for what to ask if one thing is missing and`,
+    `you must gently prompt: (1) WHERE are the animals -- farm name, town, or GPS;`,
+    `(2) WHICH animals -- species (cattle, sheep, etc.); (3) WHAT are the signs`,
+    `(drooling, blisters, sudden death); (4) HOW to find the place (road, landmark);`,
+    `(5) Will the FARMER be there on arrival; (6) Any OTHER contact person.`,
+    `If one of these on-site facts is still missing and the person seems to be`,
+    `wrapping up, you may gently ask for the single most important one -- once --`,
+    `before they go. Otherwise still NEVER interrogate: no list of questions, no`,
+    `demands, never re-ask something already in "report so far" above. Most facts`,
+    `come out on their own as they talk. Ask at most one gentle question per message,`,
+    `and it is fine to ask nothing and simply reassure them.`,
+    // If most VC fields are filled and photos not yet mentioned, gentle ask
+    ...( (() => {
+      if (!reportObj) return []
+      const vcMissing = VISIT_CRITICAL.filter(k => reportObj[k] == null).length
+      const hasPhotos = reportObj && reportObj.photos != null
+      if (vcMissing === 0 && !hasPhotos) {
+        return [`PHOTOS: Most of the important details are recorded. If the farmer has a`,
+                `photo of the sick animals, a gentle "do you have any photos?" is useful`,
+                `-- but only if the conversation is still going naturally. Never demand it.`]
+      }
+      return []
+    })() ),
     ``,
     // --- Keep the grouping right (invisible to the person) ---
     `KEEP REPORTS CORRECTLY GROUPED (private, never mentioned to the person):`,
@@ -329,6 +347,13 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         const subj = truncate(inboundText || media || 'New conversation', 80)
         try { await store.updateCase(caseRow.id, { subject: subj }) } catch (e) { log.warn?.('[casey] seed subject failed', { error: e.message }) }
       }
+      // Tag intake source so the dashboard can filter and compare AI vs manual.
+      try {
+        const tags = String(caseRow.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+        if (!tags.includes('intake_mode:channel')) {
+          await store.updateCase(caseRow.id, { tags: [...tags, 'intake_mode:channel'].join(',') })
+        }
+      } catch (e) { log.warn?.('[casey] intake_mode tag failed', { error: e.message }) }
       await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` })
     }
 

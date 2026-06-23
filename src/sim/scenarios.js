@@ -84,6 +84,17 @@ export const SCENARIOS = {
     description: 'Contact switches between isiZulu and broken English mid-conversation. Agent mirrors each message in the language it was written in.',
     lines: ['izinkomo zami ziyagula', 'they drooling a lot and some are limping', 'ngiyabonga ngomuntu ozosiza'],
   },
+  'vc-collection': {
+    name: 'vc-collection',
+    description: 'Starts with one vague line; reveals species, location, symptoms, and visit logistics across five messages. Verifies the agent asks for missing VC fields one at a time, never repeats a gathered field, and closes warmly once all six visit-critical fields are in.',
+    lines: [
+      'my cattle are sick',
+      'they are drooling and not eating',
+      'the farm is on the R33 road near Marble Hall, look for the blue gate',
+      'yes i will be here all day, my number is this one',
+      'no other contact but my wife is also here',
+    ],
+  },
 }
 
 // Return a persona by name (case-insensitive), or null.

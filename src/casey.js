@@ -160,6 +160,28 @@ export class Casey {
     await this.gateway.start()
     // Default-on guardrails: enabled unless explicitly disabled (sweepIntervalMs<=0).
     if (this.opts.sweepIntervalMs !== 0) this.startSweep()
+    // One-time backfill: tag channel-created cases that predate intake_mode tagging.
+    this._backfillIntakeMode().catch(e => this.log?.warn?.('[casey] intake_mode backfill failed', { error: e.message }))
+  }
+
+  // Quiet sweep: cases with no intake_mode tag and channel != 'web' get intake_mode:channel.
+  async _backfillIntakeMode() {
+    const PAGE = 200; let offset = 0; let tagged = 0
+    for (;;) {
+      const rows = await this.store.listCases({}, { limit: PAGE, offset })
+      if (!rows.length) break
+      for (const c of rows) {
+        const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
+        const hasMode = tags.some(t => t.startsWith('intake_mode:'))
+        if (!hasMode && c.channel && c.channel !== 'web') {
+          await this.store.updateCaseQuiet(c.id, { tags: [...tags, 'intake_mode:channel'].join(',') })
+          tagged++
+        }
+      }
+      if (rows.length < PAGE) break
+      offset += PAGE
+    }
+    if (tagged) this.log?.info?.('[casey] intake_mode backfill complete', { tagged })
   }
 
   // Graceful shutdown: stop accepting input, let in-flight agent turns finish,

@@ -100,12 +100,16 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       ? `<div class="banner ok">Your details have been saved. Thank you -- the team will be in touch.</div>`
       : err ? `<div class="banner err">${escq(err)}</div>` : ''
     const caseInfo = caseRow
-      ? `<div class="case-info"><strong>Reference: ${escq(caseRow.ref)}</strong> &ndash; ${escq(caseRow.subject || 'Field report')}</div>`
+      ? `<div class="case-info"><strong>Reference: ${escq(caseRow.ref)}</strong> &ndash; ${escq(caseRow.subject || 'Field report')}
+         <button type="button" class="copy-link-btn" onclick="const u=location.href.split('?')[0]+'?ref='+encodeURIComponent('${escq(caseRow.ref)}');navigator.clipboard?.writeText(u).then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Share link',2000)}).catch(()=>prompt('Copy this link:',u))">Share link</button></div>`
       : ''
     const refBlock = caseRow ? `<input type="hidden" name="ref" value="${escq(ref)}">` : `
       <div class="field"><label>Your reference number</label>
-      <input type="text" name="ref" value="${escq(ref)}" placeholder="e.g. CASE-001" required maxlength="50">
-      <div class="hint">This was shared with you when you first reported. Check your messages.</div></div>`
+      <input type="text" name="ref" value="${escq(ref)}" placeholder="e.g. CASE-001" maxlength="50">
+      <div class="hint">This was shared with you when you first reported. Check your messages. If you do not have one, enter your phone number below instead.</div></div>
+      <div class="field"><label>Or your phone number</label>
+      <input type="tel" name="phone" placeholder="+27 82 123 4567" maxlength="30">
+      <div class="hint">South African number -- we use this to find your report.</div></div>`
     return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Animal report form</title>
@@ -139,6 +143,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     padding:15px;font-size:17px;font-weight:600;cursor:pointer;margin-top:10px;min-height:52px}
   button:disabled{opacity:.6;cursor:default}
   .req-note{font-size:12px;color:#7a8a9a;margin:0 0 8px}
+  .copy-link-btn{background:none;border:1px solid #b8d0ee;border-radius:5px;color:#2f6fb0;font-size:12px;padding:3px 8px;cursor:pointer;margin-left:8px;vertical-align:middle}
+  .copy-link-btn:hover{background:#dce8f5}
+  .field-err{font-size:12px;color:#a00;margin-top:4px;display:none}
+  .field-err.show{display:block}
   footer{text-align:center;font-size:12px;color:#9aa6b2;margin-top:24px}
 </style></head><body>
 <div class="wrap">
@@ -155,7 +163,30 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
 </div>
 <script>
   const btn = document.querySelector('button[type=submit]')
-  document.querySelector('form').addEventListener('submit', () => { btn.disabled = true; btn.textContent = 'Sending...' })
+  // Phone field normalization and inline validation
+  const phoneEl = document.querySelector('input[name=phone]')
+  if (phoneEl) {
+    let errEl = document.createElement('div')
+    errEl.className = 'field-err'
+    errEl.id = 'phone-err'
+    phoneEl.parentNode.appendChild(errEl)
+    phoneEl.addEventListener('blur', () => {
+      const v = phoneEl.value.trim()
+      if (!v) { errEl.className = 'field-err'; return }
+      const d = v.replace(/[^0-9+]/g, '')
+      if (/^0[0-9]{9}$/.test(d)) { phoneEl.value = '+27' + d.slice(1); errEl.className = 'field-err'; return }
+      if (/^27[0-9]{9}$/.test(d)) { phoneEl.value = '+' + d; errEl.className = 'field-err'; return }
+      if (/^\\+27[0-9]{9}$/.test(d)) { errEl.className = 'field-err'; return }
+      errEl.textContent = 'Please use a South African number: 0821234567 or +27821234567'
+      errEl.className = 'field-err show'
+    })
+  }
+  document.querySelector('form').addEventListener('submit', (e) => {
+    // Block submit if phone has visible error
+    const pe = document.getElementById('phone-err')
+    if (pe && pe.classList.contains('show')) { e.preventDefault(); return }
+    btn.disabled = true; btn.textContent = 'Sending...'
+  })
 </script>
 </body></html>`
   }
@@ -174,10 +205,39 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
 
   app.post('/report', async (req, res) => {
     const ref = String(req.body.ref || '').slice(0, 50).trim()
-    if (!ref) return res.redirect('/report?err=' + encodeURIComponent('Please enter your reference number.'))
+    const phoneRaw = String(req.body.phone || '').replace(/[\s\-()]/g, '').slice(0, 30)
+    if (!ref && !phoneRaw) return res.redirect('/report?err=' + encodeURIComponent('Please enter your reference number or phone number.'))
     try {
-      const found = await store.getCaseByRef(ref)
-      if (!found) return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent(`Reference "${ref}" was not found.`))
+      let found = null
+      if (ref) {
+        found = await store.getCaseByRef(ref)
+        if (!found) return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent(`Reference "${ref}" was not found. Please check, or enter your phone number instead.`))
+      } else {
+        // Phone-based lookup: normalise to +27XXXXXXXXX, search by external_id
+        const validPhone = /^0[0-9]{9}$/.test(phoneRaw) || /^\+27[0-9]{9}$/.test(phoneRaw)
+        if (!validPhone) return res.redirect('/report?err=' + encodeURIComponent('Phone number not recognised. Please use a South African number like 0821234567 or +27821234567.'))
+        const normPhone = phoneRaw.startsWith('0') ? '+27' + phoneRaw.slice(1) : phoneRaw
+        // Try to find existing case by external_id (WhatsApp stores as 27XXXXXXXXX)
+        const waPhone = normPhone.replace(/^\+/, '')
+        const all = await store.listCases({}, { limit: 10000, offset: 0 })
+        found = all.find(c => {
+          const eid = String(c.external_id || '')
+          return eid === normPhone || eid === waPhone || eid === phoneRaw
+        }) || null
+        if (!found) {
+          // Create a new case from the phone number
+          const { case: nc } = await store.findOrCreateCase({ channel: 'web', external_id: normPhone, contact: { phone: normPhone }, subject: 'Field report via web form' })
+          found = nc
+          // Tag as public form intake
+          try {
+            const tags = String(nc.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+            if (!tags.includes('intake_mode:public_form')) {
+              await store.updateCase(nc.id, { tags: [...tags, 'intake_mode:public_form'].join(',') }, { id: 'contact', role: 'contact' })
+            }
+          } catch { /* best-effort */ }
+          await store.appendEvent(nc.id, { kind: 'note', actor: 'system', text: 'Case created via public web form (phone number entry)' })
+        }
+      }
       const incoming = {}
       for (const [k] of PUBLIC_FIELDS) {
         const v = req.body[k]
@@ -192,9 +252,17 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         }
         if (!mergeResult.error) {
           await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated report via web form: ${Object.keys(incoming).join(', ')}`, data: incoming })
+          // Tag intake source (add public_form if not already present)
+          try {
+            const existingTags = String(found.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+            if (!existingTags.includes('intake_mode:public_form')) {
+              await store.updateCase(found.id, { tags: [...existingTags, 'intake_mode:public_form'].join(',') }, { id: 'contact', role: 'contact' })
+            }
+          } catch { /* best-effort; form still submitted even if tag fails */ }
         }
       }
-      res.redirect('/report?ref=' + encodeURIComponent(ref) + '&done=1')
+      const foundRef = found?.ref || ref
+      res.redirect('/report?ref=' + encodeURIComponent(foundRef) + '&done=1')
     } catch (e) { res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong. Please try again.')) }
   })
 
@@ -257,7 +325,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   // Ordered for display: observation fields first, then logistics, then contacts/media.
   const REPORT_KEY_LIST = ['species', 'symptoms', 'affected_count', 'dead_count', 'onset',
     'suspected_disease', 'recent_movement', 'location', 'how_to_find', 'access_notes',
-    'farmer_available', 'contact_fallback', 'identifying_traits', 'photos', 'audio', 'notes']
+    'farmer_available', 'contact_fallback', 'identifying_traits', 'photos', 'audio', 'notes', 'language_detected']
   const REPORT_KEY_SET = new Set(REPORT_KEY_LIST)
   const VISIT_CRITICAL_SET = new Set(VISIT_CRITICAL)
 
@@ -372,7 +440,8 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const rows = cases.map(c => {
         let r = {}
         try { r = c.report ? JSON.parse(c.report) : {} } catch { r = {} }
-        const intakeSrc = String(c.tags || '').split(',').map(t => t.trim()).includes('intake_mode:manual') ? 'manual' : 'channel'
+        const tagArr = String(c.tags || '').split(',').map(t => t.trim())
+        const intakeSrc = tagArr.includes('intake_mode:manual') ? 'manual' : tagArr.includes('intake_mode:public_form') ? 'public_form' : tagArr.includes('intake_mode:channel') ? 'channel' : 'unknown'
         return [...META.map(k => csvCell(c[k])), csvCell(intakeSrc), ...REPORT_KEY_LIST.map(k => csvCell(r[k]))].join(',')
       })
       const csv = [headers.join(','), ...rows].join('\n')
@@ -514,6 +583,39 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Aggregate stats comparing intake modes. Returns fill-rate breakdown by source.
+  app.get('/api/stats', async (req, res) => {
+    try {
+      const cases = await store.listCases({}, { limit: 10000, offset: 0 })
+      const byMode = { channel: [], manual: [], public_form: [], unknown: [] }
+      for (const c of cases) {
+        const tags = String(c.tags || '').split(',').map(t => t.trim())
+        const hasChannel = tags.includes('intake_mode:channel')
+        const hasManual = tags.includes('intake_mode:manual')
+        const hasPublic = tags.includes('intake_mode:public_form')
+        const fill = computeFillRate(c.report)
+        if (hasChannel) byMode.channel.push(fill)
+        if (hasManual) byMode.manual.push(fill)
+        if (hasPublic) byMode.public_form.push(fill)
+        if (!hasChannel && !hasManual && !hasPublic) byMode.unknown.push(fill)
+      }
+      const avg = (arr, key) => arr.length ? Math.round(arr.reduce((s, r) => s + r[key], 0) / arr.length * 10) / 10 : null
+      const summary = {}
+      for (const [mode, arr] of Object.entries(byMode)) {
+        if (!arr.length) continue
+        summary[mode] = {
+          count: arr.length,
+          avg_filled: avg(arr, 'filled'),
+          avg_vc_filled: avg(arr, 'visit_critical_filled'),
+          vc_complete: arr.filter(r => r.visit_critical_filled >= r.visit_critical_total).length,
+          total_fields: arr[0]?.total_fields ?? 0,
+          vc_total: arr[0]?.visit_critical_total ?? 0,
+        }
+      }
+      res.json({ total: cases.length, by_mode: summary })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Cases that look like the SAME real-world outbreak as this one -- the
   // operator's view of casey's grouping intelligence, with the reasons shown so
   // the suggestion is explainable, never an opaque score.
@@ -605,18 +707,40 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         contact_fallback: 'Other contact', identifying_traits: 'Identifying the animals',
         photos: 'Photos', audio: 'Voice notes', notes: 'Other notes' }
       const rows = REPORT_KEY_LIST.map(k => {
-        const val = r[k] != null && String(r[k]).trim() ? esc(String(r[k])) : '<em>not recorded</em>'
+        let val = '<em>not recorded</em>'
+        if (r[k] != null && String(r[k]).trim()) {
+          const raw = String(r[k])
+          if (k === 'location') {
+            const mapHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(raw)}`
+            val = `${esc(raw)} <a href="${esc(mapHref)}" target="_blank" rel="noopener" style="font-size:12px">[map]</a>`
+          } else {
+            val = esc(raw)
+          }
+        }
         return `<tr><th>${esc(LABELS[k] || k)}</th><td>${val}</td></tr>`
       }).join('')
+      // Maps link when location field is available
+      const mapsUrl = r.location ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(r.location))}` : null
+      // tel: link for the external_id if it looks like a phone
+      const phone = c.external_id || ''
+      const telLink = /^[+0-9]{7,}$/.test(phone.replace(/[\s\-()]/g, '')) ? `tel:${phone.replace(/[\s\-()]/g, '')}` : null
       const html = `<!doctype html><html><head><meta charset="utf-8"><title>Case ${esc(c.ref||c.id)} briefing</title>
 <style>body{font-family:sans-serif;max-width:700px;margin:2em auto;color:#111}
 h1{font-size:1.2em;margin-bottom:.5em}table{border-collapse:collapse;width:100%}
 th,td{text-align:left;padding:.4em .6em;border:1px solid #ccc;vertical-align:top}
 th{width:40%;background:#f5f5f5;font-weight:600}
-@media print{body{margin:0}}</style></head>
+.act{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}
+.act a{background:#2f6fb0;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600}
+.act a:hover{background:#1a5592}
+@media print{body{margin:0}.act{display:none}}</style></head>
 <body><h1>Field briefing: ${esc(c.ref||c.id)}</h1>
 <p><strong>Subject:</strong> ${esc(c.subject||'')}</p>
 <p><strong>Status:</strong> ${esc(c.status||'')} &nbsp; <strong>Channel:</strong> ${esc(c.channel||'')}</p>
+<div class="act">
+  <a href="javascript:window.print()">Print this page</a>
+  ${mapsUrl ? `<a href="${esc(mapsUrl)}" target="_blank" rel="noopener">Open in Maps</a>` : ''}
+  ${telLink ? `<a href="${esc(telLink)}">Call contact</a>` : ''}
+</div>
 <table>${rows}</table></body></html>`
       res.type('html').send(html)
     } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || 'unknown error')) + '</p>') }
@@ -814,6 +938,13 @@ const PAGE = /* html */ `<!doctype html>
   .intake-step-bar .step-dot.done{background:var(--accent);color:#fff;opacity:.6}
   .intake-step-bar .step-line{flex:1;height:2px;background:var(--border);border-radius:1px}
   .intake-step-bar .step-line.done{background:var(--accent);opacity:.5}
+  .intake-hint-btn{background:none;border:none;cursor:pointer;font-size:11px;color:var(--muted);padding:0 0 0 4px;vertical-align:middle;line-height:1}
+  .intake-hint-btn:hover{color:var(--accent)}
+  .intake-hint-box{display:none;font-size:12px;color:var(--muted);background:var(--surface,#f8f8f8);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin:2px 0 6px;line-height:1.4}
+  .intake-hint-box.open{display:block}
+  .intake-vc-fill{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:12px;color:var(--muted)}
+  .intake-vc-fill .bar{flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+  .intake-vc-fill .bar .fill{height:100%;background:var(--danger,#c00);transition:width .3s,background .3s}
   .fill-pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:var(--border);color:var(--muted);margin-left:6px;vertical-align:middle}
   .fill-pill.ok{background:rgba(34,160,80,.18);color:#1c8c44}
   .fill-pill.low{background:rgba(200,140,0,.18);color:#9a6a00}
@@ -848,6 +979,15 @@ const PAGE = /* html */ `<!doctype html>
   /* reply character counter */
   .reply-counter{font-size:11px;color:var(--faint);text-align:right;margin-top:2px}
   .reply-counter.warn{color:#9a6a00}.reply-counter.over{color:var(--danger)}
+  /* intake stats panel */
+  .stats-panel{border-bottom:1px solid var(--border);background:var(--panel);padding:10px 14px;display:none}
+  .stats-panel.show{display:block}
+  .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:8px}
+  .stats-card{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px}
+  .stats-card .sc-mode{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px}
+  .stats-card .sc-count{font-size:22px;font-weight:700;color:var(--fg)}
+  .stats-card .sc-detail{font-size:11px;color:var(--muted);margin-top:2px}
+  .stats-card .sc-vc{font-size:12px;color:var(--accent);font-weight:600;margin-top:4px}
 </style></head>
 <body>
 <div id="conn" class="conn">Connection lost - retrying...</div>
@@ -864,6 +1004,7 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="new-case-btn" title="Add a case manually (no WhatsApp or Discord needed)">+ New</button>
         <button class="icon-btn" id="export-btn" title="Download all cases as a spreadsheet (CSV)">Export</button>
         <button class="icon-btn" id="sweep-btn" title="Run health-guardrail sweep now (re-evaluates all cases for time-based issues)">Sweep</button>
+        <button class="icon-btn" id="stats-btn" title="Show fill-rate comparison by intake source">Stats</button>
         <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">dark</button>
         <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names">Aa</button>
@@ -872,8 +1013,12 @@ const PAGE = /* html */ `<!doctype html>
         <input id="q" placeholder="Search ref, subject, contact... ( / )" autocomplete="off">
         <select id="statusf"><option value="">all stages</option></select>
         <select id="channelf" title="Filter by channel"><option value="">all channels</option></select>
-        <select id="sourcef" title="Filter by intake source"><option value="">all sources</option><option value="manual">Manual (operator)</option><option value="channel">Channel (AI)</option></select>
+        <select id="sourcef" title="Filter by intake source"><option value="">all sources</option><option value="manual">Manual (operator)</option><option value="channel">Channel (AI)</option><option value="public_form">Public form</option></select>
       </div>
+    </div>
+    <div class="stats-panel" id="stats-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Fill-rate by intake source</div>
+      <div class="stats-grid" id="stats-grid"><div class="empty" style="grid-column:1/-1;padding:8px 0">Loading...</div></div>
     </div>
     <div class="triage" id="triage"></div>
     <div class="caselist" id="cases"><div class="empty">Loading cases...</div></div>
@@ -887,7 +1032,9 @@ const PAGE = /* html */ `<!doctype html>
       <div id="step-dot-1" class="step-dot active">1</div>
       <div id="step-line-1" class="step-line"></div>
       <div id="step-dot-2" class="step-dot">2</div>
-      <span id="intake-step-label" style="margin-left:4px">Step 1 of 2: Critical details</span>
+      <div id="step-line-2" class="step-line"></div>
+      <div id="step-dot-3" class="step-dot">3</div>
+      <span id="intake-step-label" style="margin-left:4px">Step 1 of 3: Contact details</span>
     </div>
     <div id="intake-fill-bar" class="fill-bar" style="display:none">
       <span id="intake-fill-label"></span>
@@ -1063,6 +1210,7 @@ const REPORT_FIELDS=[
   ['access_notes','Access / travel'],['farmer_available','Farmer available?'],
   ['contact_fallback','Other contact'],['identifying_traits','Identifying the animals'],
   ['photos','Photos'],['audio','Voice notes'],['notes','Other notes'],
+  ['language_detected','Language detected'],
 ]
 // Fields a field visit genuinely needs that CANNOT be recovered once the worker
 // leaves the site -- this is the one-shot reality. The readiness line tells the
@@ -1151,8 +1299,13 @@ function reportPanel(reportRaw, events){
     if(hasManual) parts.push('<span class="src-tag src-manual">[Manual]</span> entered by operator')
     srcLegend='<div class="rep-src-legend">Fields from: '+parts.join('  ')+'</div>'
   }
+  // Voice note banner: when report.audio is set, prompt operator to transcribe
+  const audioVal=has(r,'audio')?String(r.audio).trim():''
+  const audioBanner=audioVal&&audioVal.toLowerCase()!=='no'
+    ?'<div class="rep-ready amber rep-audio-banner">Voice note on record: &ldquo;'+esc(audioVal)+'&rdquo; -- listen and update the fields below from what you hear.</div>'
+    :''
   return '<div class="report"><div class="rep-head">Report from the field'
-    +(any?'':' <span class="rep-missing">(nothing recorded yet)</span>')+'</div>'+srcLegend+ready+rows+'</div>'
+    +(any?'':' <span class="rep-missing">(nothing recorded yet)</span>')+'</div>'+srcLegend+ready+audioBanner+rows+'</div>'
 }
 
 let activeId = null, lastCasesJson = '', allCases = [], known = new Set()
@@ -1358,7 +1511,8 @@ async function openCase(id){
       \${fillPill(rfr)}
       <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">copy</button>
       <button class="copy" data-copy="\${esc(location.origin+location.pathname+'#case='+encodeURIComponent(c.id))}" title="copy direct link to this case (no token in link)" style="margin-left:4px">link</button>
-      <a href="/api/cases/\${encodeURIComponent(c.id)}/report.html" target="_blank" class="icon-btn" style="margin-left:4px;text-decoration:none;display:inline-block">Print</a></h2>
+      <a href="/api/cases/\${encodeURIComponent(c.id)}/report.html" target="_blank" class="icon-btn" style="margin-left:4px;text-decoration:none;display:inline-block">Print</a>
+      <button id="share-form-btn" class="icon-btn" style="margin-left:4px" title="Get a link to share with the contact so they can fill in their own details">Share form</button></h2>
     <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
     \${healthBadges(c.tags)}\${intakeModeBadge(c.tags)}
     <div style="color:var(--muted);margin-bottom:12px">\${esc(c.channel)}/\${esc(fmtPhone(c.external_id))}
@@ -1407,6 +1561,13 @@ async function openCase(id){
     el.addEventListener('blur',()=>{editing=false})
   })
   const back=$('#back'); if(back) back.onclick=()=>{ $('#wrap').classList.remove('detail-open') }
+  const shareFormBtn=$('#share-form-btn')
+  if(shareFormBtn) shareFormBtn.onclick=()=>{
+    const url=location.origin+'/report?ref='+encodeURIComponent(c.ref)
+    showDialog({title:'Share form with contact',message:'Send this link to the contact so they can fill in the details directly: '+url,confirmLabel:'Copy link',cancelLabel:'Close'}).then(dlg=>{
+      if(dlg){ try{ navigator.clipboard.writeText(url); toast('Link copied') }catch{ prompt('Copy this link:',url) } }
+    })
+  }
   const tlSearch=$('#timeline-search')
   if(tlSearch) tlSearch.addEventListener('input',()=>{
     const q=tlSearch.value.toLowerCase().trim()
@@ -1574,8 +1735,15 @@ function healthBadges(tags){
 }
 function intakeModeBadge(tags){
   const t=String(tags||'').split(',').map(s=>s.trim())
-  if(t.includes('intake_mode:manual')) return '<span class="intake-mode-badge" title="Report entered by an operator via the dashboard">Entered by operator</span>'
-  return ''
+  const hasChannel=t.includes('intake_mode:channel')
+  const hasManual=t.includes('intake_mode:manual')
+  const hasPublic=t.includes('intake_mode:public_form')
+  if(!hasChannel&&!hasManual&&!hasPublic) return ''
+  const parts=[]
+  if(hasChannel) parts.push('<span class="src-tag src-ai" style="font-size:11px;padding:2px 8px">AI channel</span>')
+  if(hasManual) parts.push('<span class="src-tag src-manual" style="font-size:11px;padding:2px 8px">Operator entry</span>')
+  if(hasPublic) parts.push('<span class="src-tag src-both" style="font-size:11px;padding:2px 8px">Public form</span>')
+  return '<span class="intake-mode-badge" title="How this case was created" style="background:transparent;padding:0">' + parts.join(' ') + '</span>'
 }
 // --- theme ---
 function applyTheme(t){ document.documentElement.dataset.theme=t; try{localStorage.casey_theme=t}catch{}
@@ -1606,6 +1774,7 @@ $('#refresh').onclick=()=>{ lastCasesJson=''; loadCases() }
 // --- keyboard nav: / focus search, j/k move, enter open, esc clear/back ---
 document.addEventListener('keydown',e=>{
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)
+  if(e.key==='n' && !typing){ e.preventDefault(); openIntakeForm(null); return }
   if(e.key==='/' && !typing){ e.preventDefault(); $('#q').focus(); return }
   if(e.key==='Escape'){ if(helpOpen){hideHelp()} else if(typing){document.activeElement.blur()} else if($('#q').value){filt.q='';$('#q').value='';renderListFull()} return }
   if(typing) return
@@ -1657,8 +1826,12 @@ $('#channelf').addEventListener('change',e=>{ filt.channel=e.target.value; lastC
 $('#sourcef').addEventListener('change',e=>{ filt.source=e.target.value; renderListFull(); renderTriage() })
 function matchesFull(c){
   if(filt.channel && c.channel!==filt.channel) return false
-  if(filt.source==='manual' && !tagList(c).includes('intake_mode:manual')) return false
-  if(filt.source==='channel' && tagList(c).includes('intake_mode:manual')) return false
+  if(filt.source){
+    const tags=tagList(c)
+    if(filt.source==='manual' && !tags.includes('intake_mode:manual')) return false
+    if(filt.source==='channel' && !tags.includes('intake_mode:channel')) return false
+    if(filt.source==='public_form' && !tags.includes('intake_mode:public_form')) return false
+  }
   return matches(c)
 }
 function renderListFull(){
@@ -1670,7 +1843,7 @@ function renderListFull(){
       <div class="top">\${attn(c)?'<span class="dot attn" title="needs attention (autonomy: '+esc(c.autonomy)+')"></span>':''}
         <span class="ref">\${esc(c.ref)}</span><span class="badge \${esc(c.priority)}">\${esc(c.priority)}</span>
         <span class="when" style="margin-left:auto" title="\${esc(fmtTime(c.updated_at||c.created_at))}">\${esc(rel(c.updated_at||c.created_at))}</span></div>
-      <div class="sub">\${tagList(c).includes('intake_mode:manual')?'<span class="src-tag src-manual" style="font-size:10px;padding:1px 6px">Manual</span> ':''\}\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
+      <div class="sub">\${(()=>{ const tg=tagList(c); if(tg.includes('intake_mode:manual')) return '<span class="src-tag src-manual" style="font-size:10px;padding:1px 6px">Manual</span> '; if(tg.includes('intake_mode:public_form')) return '<span class="src-tag src-both" style="font-size:10px;padding:1px 6px">Form</span> '; if(tg.includes('intake_mode:channel')) return '<span class="src-tag src-ai" style="font-size:10px;padding:1px 6px">AI</span> '; return '' })()\}\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
     </div>\`).join('')
   document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
 }
@@ -1682,59 +1855,99 @@ filt.source = ''
 // fields come first and are marked required. textarea:true for long free-text.
 const INTAKE_FIELDS=[
   // -- visit-critical (needed for a field visit) --
-  ['species','Which animals?','e.g. cattle, sheep, goats, pigs',{required:true}],
-  ['symptoms','What signs are you seeing?','e.g. drooling, limping, not eating, sudden death',{required:true,textarea:true}],
-  ['location','Where are the animals?','Farm name, nearest town, or GPS coordinates',{required:true}],
-  ['how_to_find','How do we find the place?','Road name, landmark, or directions from the nearest town',{required:true,textarea:true}],
-  ['farmer_available','Will the farmer be there?','e.g. yes, or phone first on 082...',{required:true}],
-  ['contact_fallback','Any other contact person?','Name and phone number if different from this one',{required:true}],
+  ['species','Which animals?','e.g. cattle, sheep, goats, pigs',{required:true},'The type of animal matters for disease identification. Be specific: "cattle" is better than "livestock".'],
+  ['symptoms','What signs are you seeing?','e.g. drooling, limping, not eating, sudden death',{required:true,textarea:true},'Describe what you can see or hear. Multiple symptoms? List them all. "Drooling and limping on front legs" is much more useful than just "sick".'],
+  ['location','Where are the animals?','Farm name, nearest town, or GPS coordinates',{required:true},'The single most important field. Without WHERE, a field team cannot visit. Farm name + nearest town is the minimum. GPS coordinates from your phone are perfect.'],
+  ['how_to_find','How do we find the place?','Road name, landmark, or directions from the nearest town',{required:true,textarea:true},'What would you tell a stranger driving from the nearest town? Include landmarks, turn directions, and any tricky spots. "Past the big baobab, second gate on the left."'],
+  ['farmer_available','Will the farmer be there?','e.g. yes, or phone first on 082...',{required:true},'A field team needs someone on-site to show them the animals. If the farmer will not be there, who can meet them?'],
+  ['contact_fallback','Any other contact person?','Name and phone number if different from this one',{required:true},'A second number to call if this contact is unreachable. Even a neighbour or family member is better than nothing.'],
   // -- additional details --
-  ['affected_count','How many are affected?','e.g. 5'],
-  ['dead_count','How many have died?','e.g. 2 (write 0 if none)'],
-  ['onset','When did it start?','e.g. yesterday morning, 3 days ago'],
-  ['suspected_disease','Do you know what disease it might be?','e.g. FMD, lumpy skin - leave blank if unsure'],
-  ['recent_movement','Have the animals moved recently?','e.g. yes, bought from market last week'],
-  ['access_notes','Any access or travel notes?','e.g. gravel road, locked gate - call first',{textarea:true}],
-  ['identifying_traits','How do we identify the animals?','e.g. red tag in ear, black-and-white Friesians'],
-  ['photos','Are there photos?','yes / no, or a description of what they show'],
+  ['affected_count','How many are affected?','e.g. 5','Total number showing symptoms. Even an estimate helps plan resources.'],
+  ['dead_count','How many have died?','e.g. 2 (write 0 if none)','If animals have died, note how many and roughly when (today, yesterday, over the past week).'],
+  ['onset','When did it start?','e.g. yesterday morning, 3 days ago','When did you first notice the problem? This helps identify the disease timeline.'],
+  ['suspected_disease','Do you know what disease it might be?','e.g. FMD, lumpy skin - leave blank if unsure','Leave blank if unsure. Only fill if the farmer or vet has already suggested a name.'],
+  ['recent_movement','Have the animals moved recently?','e.g. yes, bought from market last week','Movement in the past 2-4 weeks can spread disease. Note if animals were bought, sold, or moved between farms.'],
+  ['access_notes','Any access or travel notes?','e.g. gravel road, locked gate - call first',{textarea:true},'Anything that could slow down or block a field visit: road conditions, security, locked gates, flooding, etc.'],
+  ['identifying_traits','How do we identify the animals?','e.g. red tag in ear, black-and-white Friesians','Ear tag numbers, coat colour, breed, or any other way to identify the sick animals in a herd.'],
+  ['photos','Are there photos?','yes / no, or a description of what they show','If photos were sent on WhatsApp/Discord, write "yes - sent via channel". Otherwise describe what the photo shows.'],
   ['audio','Are there voice notes?','yes / no'],
   ['notes','Anything else to note?','Any extra information',{textarea:true}],
 ]
 const VC_KEYS = new Set(['species','symptoms','location','how_to_find','farmer_available','contact_fallback'])
 let intakeCaseId = null    // set when editing existing case; null = new case
-let intakeStep = 1         // 1 or 2; only used for new-case wizard
-// Build separate HTML strings for step1 (VC fields) and step2 (additional)
+let intakeStep = 1         // 1, 2, or 3; only used for new-case wizard
+// Build separate HTML strings for step2 (VC fields) and step3 (additional)
 function buildFieldsHtml(existingReport){
-  let step1='', step2=''
-  for(const [k,label,hint,opts={}] of INTAKE_FIELDS){
+  let step2='', step3=''
+  for(const [k,label,hint,opts={},coaching=''] of INTAKE_FIELDS){
     const val=esc(existingReport[k]||'')
     const req=opts.required?' <span class="intake-req" title="Needed for a field visit">*</span>':''
-    let fld=\`<label for="int-\${k}">\${esc(label)}\${req}</label>\`
+    const hintId='hint-'+k
+    const hintBtn=coaching?\`<button type="button" class="intake-hint-btn" aria-expanded="false" data-hint="\${hintId}" title="What to write here">(?)</button>\`:'';
+    let fld=\`<label for="int-\${k}">\${esc(label)}\${req}\${hintBtn}</label>\`
+    if(coaching) fld+=\`<div class="intake-hint-box" id="\${hintId}">\${esc(coaching)}</div>\`
     const ariaReq=opts.required?' aria-required="true"':''
     if(opts.textarea){ fld+=\`<textarea id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" rows="2" autocomplete="off"\${ariaReq}>\${val}</textarea>\` }
     else { fld+=\`<input id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" value="\${val}" autocomplete="off"\${ariaReq}>\` }
-    if(VC_KEYS.has(k)) step1+=fld; else step2+=fld
+    if(VC_KEYS.has(k)) step2+=fld; else step3+=fld
   }
-  return {step1, step2}
+  return {step2, step3}
+}
+function getVcFillCount(valuesObj){
+  return [...VC_KEYS].filter(k=>(valuesObj[k]||'').trim()!=='').length
+}
+function updateVcFillBar(){
+  const barEl=document.getElementById('intake-vc-fill-bar')
+  if(!barEl) return
+  const vals={}
+  for(const k of VC_KEYS){ const el=document.getElementById('int-'+k); if(el) vals[k]=el.value||'' }
+  // also factor in saved step values from other step if in step3
+  for(const [k,v] of Object.entries(window._intakeStep2Values||{})){ if(!vals[k]) vals[k]=v }
+  const filled=getVcFillCount(vals)
+  const total=[...VC_KEYS].length
+  const pct=Math.round(filled/total*100)
+  const fillEl=document.getElementById('intake-vc-fill-pct')
+  const labelEl=document.getElementById('intake-vc-fill-label')
+  if(fillEl){ fillEl.style.width=pct+'%'; fillEl.style.background=filled===total?'var(--accent)':'var(--danger,#c00)' }
+  if(labelEl) labelEl.textContent=filled+'/'+total+' visit-critical fields filled'
 }
 function showIntakeStep(step){
   intakeStep=step
   const isNew=!intakeCaseId
-  const {step1,step2}=buildFieldsHtml(window._intakeExistingReport||{})
+  const {step2,step3}=buildFieldsHtml(window._intakeExistingReport||{})
   if(isNew){
     // step-bar and wizard only for new case
     $('#intake-step-bar').style.display='flex'
     document.getElementById('step-dot-1').className='step-dot'+(step===1?' active':' done')
-    document.getElementById('step-dot-2').className='step-dot'+(step===2?' active':'')
-    document.getElementById('step-line-1').className='step-line'+(step===2?' done':'')
-    $('#intake-step-label').textContent='Step '+step+' of 2: '+(step===1?'Critical details':'Additional details')
+    document.getElementById('step-dot-2').className='step-dot'+(step===2?' active':(step===3?' done':''))
+    document.getElementById('step-dot-3').className='step-dot'+(step===3?' active':'')
+    document.getElementById('step-line-1').className='step-line'+(step>1?' done':'')
+    document.getElementById('step-line-2').className='step-line'+(step>2?' done':'')
+    const labels=['','Contact details','Visit-critical fields','Additional details']
+    $('#intake-step-label').textContent='Step '+step+' of 3: '+labels[step]
     if(step===1){
       $('#intake-contact-fields').style.display=''
-      $('#intake-report-fields').innerHTML='<div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed before a vet can visit)</span></div>'+step1
+      $('#intake-report-fields').innerHTML=''
       $('#intake-next').style.display=''; $('#intake-back').style.display='none'; $('#intake-submit').style.display='none'
+    } else if(step===2){
+      $('#intake-contact-fields').style.display='none'
+      $('#intake-report-fields').innerHTML=
+        '<div class="intake-vc-fill" id="intake-vc-fill-bar"><span id="intake-vc-fill-label">0/6 visit-critical fields filled</span><div class="bar"><div class="fill" id="intake-vc-fill-pct" style="width:0%"></div></div></div>'+
+        '<div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed before a vet can visit)</span></div>'+step2
+      $('#intake-next').style.display=''; $('#intake-back').style.display=''; $('#intake-submit').style.display='none'
+      updateVcFillBar()
+      // wire hint toggles
+      document.querySelectorAll('.intake-hint-btn').forEach(btn=>{ btn.onclick=()=>{
+        const box=document.getElementById(btn.dataset.hint); if(!box) return
+        const open=box.classList.toggle('open'); btn.setAttribute('aria-expanded',open?'true':'false')
+      }})
+      // live fill bar update
+      const rfEl=$('#intake-report-fields')
+      if(rfEl._vcH) rfEl.removeEventListener('input',rfEl._vcH)
+      rfEl._vcH=()=>updateVcFillBar(); rfEl.addEventListener('input',rfEl._vcH)
     } else {
       $('#intake-contact-fields').style.display='none'
-      $('#intake-report-fields').innerHTML='<div class="intake-section-head">Additional details</div>'+step2
+      $('#intake-report-fields').innerHTML='<div class="intake-section-head">Additional details</div>'+step3
       $('#intake-next').style.display='none'; $('#intake-back').style.display=''; $('#intake-submit').style.display=''
       $('#intake-submit').textContent='Save'
     }
@@ -1742,8 +1955,19 @@ function showIntakeStep(step){
     // Edit mode: single page with all fields
     $('#intake-step-bar').style.display='none'
     $('#intake-contact-fields').style.display='none'
-    $('#intake-report-fields').innerHTML='<div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed before a vet can visit)</span></div>'+step1+'<div class="intake-section-head" style="margin-top:14px">Additional details</div>'+step2
+    $('#intake-report-fields').innerHTML=
+      '<div class="intake-vc-fill" id="intake-vc-fill-bar"><span id="intake-vc-fill-label">0/6 visit-critical fields filled</span><div class="bar"><div class="fill" id="intake-vc-fill-pct" style="width:0%"></div></div></div>'+
+      '<div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed before a vet can visit)</span></div>'+step2+
+      '<div class="intake-section-head" style="margin-top:14px">Additional details</div>'+step3
     $('#intake-next').style.display='none'; $('#intake-back').style.display='none'; $('#intake-submit').style.display=''; $('#intake-submit').textContent='Save'
+    updateVcFillBar()
+    document.querySelectorAll('.intake-hint-btn').forEach(btn=>{ btn.onclick=()=>{
+      const box=document.getElementById(btn.dataset.hint); if(!box) return
+      const open=box.classList.toggle('open'); btn.setAttribute('aria-expanded',open?'true':'false')
+    }})
+    const rfEl=$('#intake-report-fields')
+    if(rfEl._vcH) rfEl.removeEventListener('input',rfEl._vcH)
+    rfEl._vcH=()=>updateVcFillBar(); rfEl.addEventListener('input',rfEl._vcH)
   }
   $('#intake-error').style.display='none'
 }
@@ -1754,19 +1978,9 @@ function openIntakeForm(caseRow){
   let existingReport = {}
   if(caseRow && caseRow.report){ try{ existingReport=JSON.parse(caseRow.report) }catch{} }
   window._intakeExistingReport = existingReport
-  // fill rate bar (edit mode only)
+  // fill bar is rendered inline in step2/edit-mode via showIntakeStep; hide the old bar element
   const fillBar = $('#intake-fill-bar')
-  if(isEdit){
-    const total=INTAKE_FIELDS.length
-    const filled=INTAKE_FIELDS.filter(([k])=>existingReport[k]!=null&&String(existingReport[k]).trim()!=='').length
-    const vcTotal=[...VC_KEYS].length
-    const vcFilled=[...VC_KEYS].filter(k=>existingReport[k]!=null&&String(existingReport[k]).trim()!=='').length
-    fillBar.style.display='flex'
-    const vcPct=Math.round(vcFilled/vcTotal*100)
-    $('#intake-fill-label').textContent=vcFilled+'/'+vcTotal+' visit-critical  +  '+(filled-vcFilled)+'/'+(total-vcTotal)+' other'
-    $('#intake-fill-pct').style.width=vcPct+'%'
-    $('#intake-fill-pct').style.background=vcFilled===vcTotal?'var(--accent)':'var(--danger)'
-  } else { fillBar.style.display='none' }
+  if(fillBar) fillBar.style.display='none'
   showIntakeStep(1)
   if(!isEdit){
     const draft=restoreDraft()
@@ -1795,9 +2009,9 @@ function saveDraft(){
   const p=$('#int-phone'); if(p) d.phone=p.value
   const s=$('#int-subject'); if(s) d.subject=s.value
   for(const [k] of INTAKE_FIELDS){ const el=document.getElementById('int-'+k); if(el) d[k]=el.value }
-  // Fill gaps from the other step's saved values (DOM wins; step values fill what is not currently rendered)
-  for(const [k,v] of Object.entries(window._intakeStep1Values||{})){ if(d[k]==null) d[k]=v }
+  // Fill gaps from saved step values (DOM wins; saved values fill fields not currently rendered)
   for(const [k,v] of Object.entries(window._intakeStep2Values||{})){ if(d[k]==null) d[k]=v }
+  for(const [k,v] of Object.entries(window._intakeStep3Values||{})){ if(d[k]==null) d[k]=v }
   try{localStorage.casey_draft_case=JSON.stringify(d)}catch{}
 }
 function clearDraft(){ try{localStorage.removeItem('casey_draft_case')}catch{} }
@@ -1807,45 +2021,67 @@ function restoreDraft(){
     return JSON.parse(raw)
   }catch{ return null }
 }
-function closeIntakeOvl(){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null; window._intakeExistingReport={}; window._intakeStep1Values={}; window._intakeStep2Values={} }
+function closeIntakeOvl(){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null; window._intakeExistingReport={}; window._intakeStep2Values={}; window._intakeStep3Values={} }
 $('#intake-next').onclick=()=>{
-  // validate step 1: at least species or symptoms must be filled
   const errEl=$('#intake-error')
-  const species=(document.getElementById('int-species')||{}).value||''
-  if(!species.trim()){ errEl.textContent='Please fill in at least the animal type (which animals?)'; errEl.style.display=''; return }
-  errEl.style.display='none'
-  // preserve values filled in step1 so step2 can be navigated back to with data intact
-  window._intakeStep1Values={}
-  for(const [k] of INTAKE_FIELDS.filter(([k])=>VC_KEYS.has(k))){
-    window._intakeStep1Values[k]=(document.getElementById('int-'+k)||{}).value||''
-  }
-  showIntakeStep(2)
-  // restore any step-2 draft values now that their DOM elements exist
-  const draft2=restoreDraft()
-  if(draft2){
-    for(const [k] of INTAKE_FIELDS.filter(([k])=>!VC_KEYS.has(k))){
-      const el=document.getElementById('int-'+k); if(el&&draft2[k]&&!el.value) el.value=draft2[k]
+  if(intakeStep===1){
+    // step 1 -> step 2: no required fields, just advance
+    errEl.style.display='none'
+    showIntakeStep(2)
+    // restore any draft VC values
+    const draft2=restoreDraft()
+    if(draft2){ for(const [k] of INTAKE_FIELDS.filter(([k])=>VC_KEYS.has(k))){ const el=document.getElementById('int-'+k); if(el&&draft2[k]&&!el.value) el.value=draft2[k] } }
+    updateVcFillBar()
+    document.getElementById('int-species')?.focus()
+  } else if(intakeStep===2){
+    // step 2 -> step 3: at least species required
+    const species=(document.getElementById('int-species')||{}).value||''
+    if(!species.trim()){ errEl.textContent='Please fill in at least the animal type (which animals?)'; errEl.style.display=''; return }
+    errEl.style.display='none'
+    // preserve step2 VC values
+    window._intakeStep2Values={}
+    for(const [k] of INTAKE_FIELDS.filter(([k])=>VC_KEYS.has(k))){
+      window._intakeStep2Values[k]=(document.getElementById('int-'+k)||{}).value||''
     }
+    showIntakeStep(3)
+    // restore step3 draft values
+    const draft3=restoreDraft()
+    if(draft3){ for(const [k] of INTAKE_FIELDS.filter(([k])=>!VC_KEYS.has(k))){ const el=document.getElementById('int-'+k); if(el&&draft3[k]&&!el.value) el.value=draft3[k] } }
+    document.getElementById('int-affected_count')?.focus()
   }
-  document.getElementById('int-affected_count')?.focus()
 }
 $('#intake-back').onclick=()=>{
-  // preserve step2 values
-  window._intakeStep2Values={}
-  for(const [k] of INTAKE_FIELDS.filter(([k])=>!VC_KEYS.has(k))){
-    window._intakeStep2Values[k]=(document.getElementById('int-'+k)||{}).value||''
-  }
-  showIntakeStep(1)
-  // restore step1 values
-  if(window._intakeStep1Values){
-    for(const [k,v] of Object.entries(window._intakeStep1Values)){
-      const el=document.getElementById('int-'+k); if(el) el.value=v
+  const errEl=$('#intake-error')
+  errEl.style.display='none'
+  if(intakeStep===2){
+    showIntakeStep(1)
+    document.getElementById('int-name')?.focus()
+  } else if(intakeStep===3){
+    // preserve step3 values before going back
+    window._intakeStep3Values={}
+    for(const [k] of INTAKE_FIELDS.filter(([k])=>!VC_KEYS.has(k))){
+      window._intakeStep3Values[k]=(document.getElementById('int-'+k)||{}).value||''
     }
+    showIntakeStep(2)
+    // restore step2 VC values
+    if(window._intakeStep2Values){ for(const [k,v] of Object.entries(window._intakeStep2Values)){ const el=document.getElementById('int-'+k); if(el) el.value=v } }
+    updateVcFillBar()
+    document.getElementById('int-species')?.focus()
   }
-  document.getElementById('int-species')?.focus()
 }
 $('#intake-cancel').onclick=()=>{ clearDraft(); closeIntakeOvl() }
 $('#intake-ovl').addEventListener('click',e=>{ if(e.target===$('#intake-ovl')) closeIntakeOvl() })
+// Normalize SA phone number on blur: 0XXXXXXXXX -> +27XXXXXXXXX
+const intPhoneEl=$('#int-phone')
+if(intPhoneEl) intPhoneEl.addEventListener('blur',()=>{
+  const v=intPhoneEl.value.trim()
+  if(!v) return
+  const d=v.replace(/[^0-9+]/g,'')
+  if(/^0[0-9]{9}$/.test(d)){intPhoneEl.value='+27'+d.slice(1);intPhoneEl.style.borderColor='';return}
+  if(/^27[0-9]{9}$/.test(d)){intPhoneEl.value='+'+d;intPhoneEl.style.borderColor='';return}
+  if(/^[+]27[0-9]{9}$/.test(d)){intPhoneEl.style.borderColor='';return}
+  intPhoneEl.style.borderColor='var(--danger,#c00)'
+})
 // Escape closes the overlay; Enter on input fields advances (Next) or submits (Save); Tab order is natural DOM order
 document.addEventListener('keydown',e=>{
   if(!$('#intake-ovl').classList.contains('show')) return
@@ -1889,25 +2125,29 @@ $('#intake-submit').onclick=async()=>{
       const j=await r.json(); caseId=j.id
     }
     // gather report fields (skip blanks)
-    // For new cases in step 2, VC fields are in _intakeStep1Values; additional
-    // fields are in the current DOM. For edit mode all fields are in the DOM.
+    // For new cases: VC fields in _intakeStep2Values, additional in DOM (step3); edit mode all in DOM.
     const report={}
-    const step1Saved=window._intakeStep1Values||{}
+    const step2Saved=window._intakeStep2Values||{}
     for(const [k] of INTAKE_FIELDS){
       const domEl=document.getElementById('int-'+k)
-      const v=domEl ? domEl.value : (step1Saved[k]||'')
+      const v=domEl ? domEl.value : (step2Saved[k]||'')
       if(v.trim()) report[k]=v.trim()
     }
     if(Object.keys(report).length){
       const r2=await api('/api/cases/'+encodeURIComponent(caseId)+'/intake',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(report)})
-      if(!r2.ok){ const e=await r2.json().catch(()=>({})); throw new Error(e.error||'Failed to save report') }
+      if(!r2.ok){ const e=await r2.json().catch(()=>({})); throw new Error(e.error||'Failed to save report - your data is preserved, please try again') }
     }
     const wasEdit=!!intakeCaseId
     if(!wasEdit) clearDraft()
     $('#intake-ovl').classList.remove('show'); intakeCaseId=null
     toast(wasEdit?'Report updated':'Case created','ok')
     lastCasesJson=''; await loadCases(); await openCase(caseId)
-  } catch(e){ errEl.textContent=e.message; errEl.style.display=''; }
+  } catch(e){
+    errEl.textContent=e.message
+    errEl.style.display=''
+    // ensure draft is saved so data is not lost on error
+    saveDraft()
+  }
   btn.disabled=false
 }
 $('#new-case-btn').onclick=()=>openIntakeForm(null)
@@ -1939,6 +2179,36 @@ if(sweepBtn) sweepBtn.onclick=async()=>{
   const j=await r.json().catch(()=>({}))
   toast('Sweep done'+(j.scanned!=null?' -- '+j.scanned+' checked, '+j.flagged+' flagged, '+j.cleared+' cleared':''),'ok')
   lastCasesJson=''; await loadCases(); refreshAttention()
+}
+// --- intake stats panel ---
+let statsOpen=false
+const statsBtn=$('#stats-btn')
+const statsPanel=$('#stats-panel')
+async function loadStats(){
+  const grid=$('#stats-grid'); if(!grid) return
+  grid.innerHTML='<div class="empty" style="grid-column:1/-1;padding:8px 0">Loading...</div>'
+  try{
+    const j=await api('/api/stats').then(r=>r.ok?r.json():null)
+    if(!j){ grid.innerHTML='<div class="empty" style="grid-column:1/-1">Could not load stats.</div>'; return }
+    const MODE_LABEL={channel:'AI (channel)',manual:'Operator entry',public_form:'Public form',unknown:'Untagged'}
+    if(!Object.keys(j.by_mode).length){ grid.innerHTML='<div class="empty" style="grid-column:1/-1">No data yet.</div>'; return }
+    grid.innerHTML=Object.entries(j.by_mode).map(([mode,s])=>{
+      const vcPct=s.vc_total?Math.round(s.vc_complete/s.count*100):0
+      return \`<div class="stats-card">
+        <div class="sc-mode">\${esc(MODE_LABEL[mode]||mode)}</div>
+        <div class="sc-count">\${s.count}</div>
+        <div class="sc-detail">avg \${s.avg_filled??'-'}/\${s.total_fields} fields filled</div>
+        <div class="sc-vc">\${s.vc_complete}/\${s.count} visit-ready (\${vcPct}%)</div>
+        <div class="sc-detail">avg \${s.avg_vc_filled??'-'}/\${s.vc_total} essential</div>
+      </div>\`
+    }).join('')
+  }catch(e){ grid.innerHTML='<div class="empty" style="grid-column:1/-1">Stats error: '+esc(e.message)+'</div>' }
+}
+if(statsBtn) statsBtn.onclick=async()=>{
+  statsOpen=!statsOpen
+  statsPanel.classList.toggle('show',statsOpen)
+  statsBtn.classList.toggle('active',statsOpen)
+  if(statsOpen) await loadStats()
 }
 // Inline modal replacement for native prompt()/confirm() -- works on mobile/PWA.
 // Uses DOM creation (not innerHTML) to avoid conflicts with the outer template literal.
