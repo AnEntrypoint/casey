@@ -163,11 +163,12 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   app.get('/report', async (req, res) => {
     const ref = String(req.query.ref || '').slice(0, 50).trim()
     const done = req.query.done === '1'
-    if (!ref) return res.type('html').send(publicFormHtml({ done }))
+    const err = String(req.query.err || '').slice(0, 200)
+    if (!ref) return res.type('html').send(publicFormHtml({ done, err }))
     try {
       const found = await store.getCaseByRef(ref)
-      if (!found) return res.type('html').send(publicFormHtml({ ref, err: `Reference "${ref}" was not found. Please check and try again.` }))
-      res.type('html').send(publicFormHtml({ ref, caseRow: found, done }))
+      if (!found) return res.type('html').send(publicFormHtml({ ref, err: err || `Reference "${ref}" was not found. Please check and try again.` }))
+      res.type('html').send(publicFormHtml({ ref, caseRow: found, done, err }))
     } catch (e) { res.status(500).type('html').send(publicFormHtml({ ref, err: 'Something went wrong. Please try again in a moment.' })) }
   })
 
@@ -591,6 +592,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
 
   // Printable case briefing for field teams. Plain HTML, no JS, print-friendly.
   app.get('/api/cases/:id/report.html', async (req, res) => {
+    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
     try {
       const c = await store.getCase(req.params.id)
       if (!c) return res.status(404).send('<p>Case not found.</p>')
@@ -602,7 +604,6 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         access_notes: 'Getting there', farmer_available: 'Farmer available?',
         contact_fallback: 'Other contact', identifying_traits: 'Identifying the animals',
         photos: 'Photos', audio: 'Voice notes', notes: 'Other notes' }
-      const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
       const rows = REPORT_KEY_LIST.map(k => {
         const val = r[k] != null && String(r[k]).trim() ? esc(String(r[k])) : '<em>not recorded</em>'
         return `<tr><th>${esc(LABELS[k] || k)}</th><td>${val}</td></tr>`
@@ -2003,7 +2004,7 @@ function showDialog(opts){
     const close=function(confirmed, value){ overlay.remove(); resolve(confirmed?{value:value||'',confirmed:true}:null) }
     okBtn.onclick=function(){ close(true, inp?inp.value:'') }
     cancelBtn.onclick=function(){ close(false) }
-    overlay.addEventListener('keydown',function(e){ if(e.key==='Escape') close(false) })
+    overlay.addEventListener('keydown',function(e){ if(e.key==='Escape') close(false); if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); close(true,inp?inp.value:'') } })
     setTimeout(function(){ if(inp) inp.focus(); else okBtn.focus() }, 60)
   })
 }
