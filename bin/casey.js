@@ -394,12 +394,12 @@ async function main() {
     const store = createCaseStore(); await store.init()
     const id = rest.find(a => !a.startsWith('--'))
     if (!id) { console.log(`usage: casey show <ref|id>`); process.exit(1) }
-    const caseRow = await store.getCase(id) || (await store.listCases()).find(x => x.ref === id)
+    const caseRow = await store.getCase(id) || await store.getCaseByRef(id)
     if (!caseRow) { console.log(red('case not found:'), id); console.log(dim(`  list cases with ${cyan('casey cases')}.`)); process.exit(1) }
     console.log(`${bold(caseRow.ref)}  [${caseRow.status}]  ${caseRow.priority}  ${caseRow.channel}/${caseRow.id}`)
     console.log(`subject: ${caseRow.subject}\nsummary: ${caseRow.summary}\ntags: ${caseRow.tags}`)
     let report = {}; try { report = caseRow.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
-    const VC = ['species','symptoms','location','how_to_find','farmer_available','contact_fallback']
+    const { VISIT_CRITICAL: VC } = await import('../src/case-health.js')
     const filled = Object.keys(report).filter(k => report[k] != null && String(report[k]).trim())
     if (filled.length) {
       console.log(dim('--- report ---'))

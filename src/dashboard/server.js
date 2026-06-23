@@ -56,7 +56,6 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   // GET /report?ref=REF  -> HTML form for that case (or blank ref input)
   // POST /report         -> submit fields; redirect back with ?done=1 or ?err=...
   // Fields shown on the public contact form. [key, label, placeholder, isTextarea, isVisitCritical]
-  // Visit-critical fields match VISIT_CRITICAL in case-health.js -- keep them in sync.
   const PUBLIC_FIELDS = [
     ['species', 'Which animals?', 'e.g. cattle, sheep, goats, pigs', false, true],
     ['symptoms', 'What signs are you seeing?', 'e.g. drooling, limping, not eating, sudden death', true, true],
