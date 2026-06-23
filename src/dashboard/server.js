@@ -54,19 +54,22 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   // and report fields are non-sensitive (location, symptoms, contact info).
   // GET /report?ref=REF  -> HTML form for that case (or blank ref input)
   // POST /report         -> submit fields; redirect back with ?done=1 or ?err=...
+  // Fields shown on the public contact form. [key, label, placeholder, isTextarea, isVisitCritical]
+  // Visit-critical fields match VISIT_CRITICAL in case-health.js -- keep them in sync.
   const PUBLIC_FIELDS = [
-    ['species', 'Which animals?', 'e.g. cattle, sheep, goats, pigs', false],
-    ['symptoms', 'What signs are you seeing?', 'e.g. drooling, limping, not eating, sudden death', true],
-    ['location', 'Where are the animals?', 'Farm name, nearest town, or GPS coordinates', false],
-    ['how_to_find', 'How do we find the place?', 'Road name, landmark, or directions from the nearest town', true],
-    ['farmer_available', 'Will the farmer be there?', 'e.g. yes, or phone first on 082...', false],
-    ['contact_fallback', 'Any other contact person?', 'Name and phone number if different from this one', false],
-    ['affected_count', 'How many are affected?', 'e.g. 5', false],
-    ['dead_count', 'How many have died?', 'e.g. 2 (write 0 if none)', false],
-    ['onset', 'When did it start?', 'e.g. yesterday morning, 3 days ago', false],
-    ['recent_movement', 'Have the animals moved recently?', 'e.g. yes, bought from market last week', false],
-    ['access_notes', 'Any access or travel notes?', 'e.g. gravel road, locked gate - call first', true],
-    ['notes', 'Anything else to note?', 'Any extra information', true],
+    ['species', 'Which animals?', 'e.g. cattle, sheep, goats, pigs', false, true],
+    ['symptoms', 'What signs are you seeing?', 'e.g. drooling, limping, not eating, sudden death', true, true],
+    ['location', 'Where are the animals?', 'Farm name, nearest town, or GPS coordinates', false, true],
+    ['how_to_find', 'How do we find the place?', 'Road name, landmark, or directions from the nearest town', true, true],
+    ['farmer_available', 'Will the farmer be there?', 'e.g. yes, or phone first on 082...', false, true],
+    ['contact_fallback', 'Any other contact person?', 'Name and phone number if different from this one', false, true],
+    ['affected_count', 'How many are affected?', 'e.g. 5', false, false],
+    ['dead_count', 'How many have died?', 'e.g. 2 (write 0 if none)', false, false],
+    ['onset', 'When did it start?', 'e.g. yesterday morning, 3 days ago', false, false],
+    ['suspected_disease', 'What do you think it might be?', 'e.g. foot-and-mouth, lumpy skin, not sure', false, false],
+    ['recent_movement', 'Have the animals moved recently?', 'e.g. yes, bought from market last week', false, false],
+    ['access_notes', 'Any access or travel notes?', 'e.g. gravel road, locked gate - call first', true, false],
+    ['notes', 'Anything else to note?', 'Any extra information', true, false],
   ]
   const PUBLIC_FIELD_KEYS = new Set(PUBLIC_FIELDS.map(f => f[0]))
 
@@ -74,12 +77,24 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     const escq = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
     let report = {}
     try { report = caseRow?.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
-    const fieldRows = PUBLIC_FIELDS.map(([k, label, hint, isArea]) => {
+    const vcTotal = PUBLIC_FIELDS.filter(f => f[4]).length
+    const vcFilled = PUBLIC_FIELDS.filter(([k,,,,vc]) => vc && report[k] != null && String(report[k]).trim() !== '').length
+    const allFilled = vcFilled >= vcTotal
+    const progressBar = caseRow ? `<div class="progress-wrap" aria-label="Essential fields: ${vcFilled} of ${vcTotal} filled">
+      <div class="progress-label">${allFilled ? 'All essential details filled -- thank you!' : `Essential details: ${vcFilled} of ${vcTotal} filled`}</div>
+      <div class="progress-track"><div class="progress-bar${allFilled ? ' done' : ''}" style="width:${Math.round(vcFilled/vcTotal*100)}%"></div></div>
+    </div>` : ''
+    let inEssential = false, inExtra = false
+    const fieldRows = PUBLIC_FIELDS.map(([k, label, hint, isArea, isVC]) => {
+      let section = ''
+      if (isVC && !inEssential) { inEssential = true; section = '<div class="section-head">Essential details for a visit</div>' }
+      if (!isVC && !inExtra) { inExtra = true; section = '<div class="section-head">Extra details (helpful but not required)</div>' }
       const val = escq(report[k] || '')
       const inp = isArea
-        ? `<textarea name="${k}" rows="3" placeholder="${escq(hint)}">${val}</textarea>`
-        : `<input type="text" name="${k}" placeholder="${escq(hint)}" value="${val}">`
-      return `<div class="field"><label>${escq(label)}</label>${inp}<div class="hint">${escq(hint)}</div></div>`
+        ? `<textarea name="${k}" rows="3" placeholder="${escq(hint)}" maxlength="4000">${val}</textarea>`
+        : `<input type="text" name="${k}" placeholder="${escq(hint)}" value="${val}" maxlength="500">`
+      const vcMark = isVC ? ' <span class="req" aria-label="essential">*</span>' : ''
+      return `${section}<div class="field${isVC ? ' vc' : ''}"><label>${escq(label)}${vcMark}</label>${inp}</div>`
     }).join('')
     const banner = done
       ? `<div class="banner ok">Your details have been saved. Thank you -- the team will be in touch.</div>`
@@ -89,7 +104,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       : ''
     const refBlock = caseRow ? `<input type="hidden" name="ref" value="${escq(ref)}">` : `
       <div class="field"><label>Your reference number</label>
-      <input type="text" name="ref" value="${escq(ref)}" placeholder="e.g. CASE-001" required>
+      <input type="text" name="ref" value="${escq(ref)}" placeholder="e.g. CASE-001" required maxlength="50">
       <div class="hint">This was shared with you when you first reported. Check your messages.</div></div>`
     return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -100,31 +115,40 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   .wrap{max-width:540px;margin:0 auto;padding:24px 16px 60px}
   h1{font-size:1.3em;margin:0 0 4px;color:#1a3a5c}
   .sub{font-size:14px;color:#5a6675;margin:0 0 20px}
-  .case-info{background:#e8f0fa;border:1px solid #b8d0ee;border-radius:8px;padding:10px 14px;margin:0 0 20px;font-size:14px;color:#1a3a5c}
+  .case-info{background:#e8f0fa;border:1px solid #b8d0ee;border-radius:8px;padding:10px 14px;margin:0 0 16px;font-size:14px;color:#1a3a5c}
   .banner{border-radius:8px;padding:12px 14px;margin:0 0 20px;font-size:14px}
   .banner.ok{background:#e8f7ee;border:1px solid #9ed8b4;color:#1a5c35}
   .banner.err{background:#fdeaea;border:1px solid #f0a0a0;color:#5c1a1a}
-  .field{margin:0 0 18px}
-  label{display:block;font-size:14px;font-weight:600;margin:0 0 4px;color:#1a1f29}
-  .hint{font-size:12px;color:#7a8a9a;margin:3px 0 0}
-  input[type=text],textarea{width:100%;border:1px solid #c8d0da;border-radius:6px;padding:8px 10px;
-    font-size:16px;font-family:inherit;background:#fff;color:#1a1f29}
+  .progress-wrap{margin:0 0 20px}
+  .progress-label{font-size:13px;color:#5a6675;margin-bottom:5px}
+  .progress-track{background:#dce8f5;border-radius:4px;height:7px;overflow:hidden}
+  .progress-bar{background:#f0a030;height:100%;border-radius:4px;transition:width .3s}
+  .progress-bar.done{background:#2a9e5c}
+  .field{margin:0 0 16px}
+  .field.vc label{color:#1a3a5c}
+  label{display:block;font-size:14px;font-weight:600;margin:0 0 5px}
+  .req{color:#c06000;font-weight:700}
+  input[type=text],textarea{width:100%;border:1px solid #c8d0da;border-radius:6px;
+    padding:11px 12px;font-size:16px;font-family:inherit;background:#fff;color:#1a1f29;
+    min-height:44px;-webkit-appearance:none}
   input:focus,textarea:focus{outline:2px solid #2f6fb0;border-color:#2f6fb0}
-  textarea{resize:vertical;min-height:72px}
+  textarea{resize:vertical;min-height:80px}
   .section-head{font-size:12px;font-weight:700;letter-spacing:.06em;color:#2f6fb0;
-    text-transform:uppercase;margin:24px 0 8px;padding-bottom:4px;border-bottom:2px solid #dce8f5}
+    text-transform:uppercase;margin:24px 0 10px;padding-bottom:4px;border-bottom:2px solid #dce8f5}
   button[type=submit]{width:100%;background:#2f6fb0;color:#fff;border:0;border-radius:8px;
-    padding:14px;font-size:17px;font-weight:600;cursor:pointer;margin-top:8px}
+    padding:15px;font-size:17px;font-weight:600;cursor:pointer;margin-top:10px;min-height:52px}
   button:disabled{opacity:.6;cursor:default}
+  .req-note{font-size:12px;color:#7a8a9a;margin:0 0 8px}
   footer{text-align:center;font-size:12px;color:#9aa6b2;margin-top:24px}
 </style></head><body>
 <div class="wrap">
   <h1>Animal health report</h1>
-  <p class="sub">Please fill in as many details as you can. Every field helps the team prepare a visit.</p>
-  ${banner}${caseInfo}
+  <p class="sub">Please fill in as many details as you can. Fields marked * are needed before a team can visit.</p>
+  ${banner}${caseInfo}${progressBar}
   <form method="POST" action="/report">
     ${refBlock}
     ${fieldRows}
+    <p class="req-note">* Essential for a field visit</p>
     <button type="submit">Send details</button>
   </form>
   <footer>Animal disease surveillance &ndash; South Africa</footer>

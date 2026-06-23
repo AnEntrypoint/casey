@@ -168,7 +168,7 @@ async function main() {
     console.log(existsSync(cfgFile) ? ok('thatcher.config.yml present') : bad('thatcher.config.yml missing - casey will fail to start (see README Layout section)'))
     if (!existsSync(cfgFile)) problems++
     // dashboard token
-    console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset - dashboard is open to anyone who can reach the port'))
+    console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset -- dashboard is open to anyone on the network (set a token for production use)'))
     // public URL (optional but useful)
     console.log(process.env.CASEY_PUBLIC_URL ? ok(`CASEY_PUBLIC_URL set (${process.env.CASEY_PUBLIC_URL})`) : dim('  CASEY_PUBLIC_URL unset - contacts will not receive a web form link (optional)'))
     // port

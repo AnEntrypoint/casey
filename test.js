@@ -942,6 +942,11 @@ async function main() {
     // never_closed: resolved + idle past neverClosedMs.
     const nc = new Date(now - T.neverClosedMs - 60e3).toISOString()
     assert.ok(breaches({ status: 'resolved', last_event_at: nc, report: '{}' }).includes('never_closed'), 'never-closed fires')
+    // incomplete_critical: active work stage but critical facts still missing.
+    const icMs = T.incompleteCriticalMs ?? (8 * 3600e3)
+    const ic = new Date(now - icMs - 60e3).toISOString()
+    assert.ok(breaches({ status: 'in_progress', last_event_at: ic, report: JSON.stringify({ species: 'cattle' }) }).includes('incomplete_critical'), 'incomplete_critical fires in in_progress with missing facts')
+    assert.ok(!breaches({ status: 'in_progress', last_event_at: ic, report: JSON.stringify({ species: 'cattle', symptoms: 'x', location: 'x', how_to_find: 'x', farmer_available: 'x', contact_fallback: 'x' }) }).includes('incomplete_critical'), 'incomplete_critical clears when all critical fields filled')
     // Multiple at once.
     const multi = breaches({ status: 'new', tags: 'needs-human', last_event_at: new Date(now - T.staleMs * 4).toISOString(), report: JSON.stringify({ species: 'cattle' }) })
     assert.ok(multi.includes('stale') && multi.includes('unanswered_handoff') && multi.includes('abandoned_intake'), `multiple breaches surface: ${multi}`)

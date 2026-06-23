@@ -20,6 +20,9 @@ export const DEFAULT_THRESHOLDS = {
   handoffMs: 4 * 3600e3,           // a human was asked for, none replied in 4h
   abandonMs: 24 * 3600e3,          // intake stalled with on-site facts missing
   neverClosedMs: 7 * 24 * 3600e3,  // resolved but not closed for a week
+  // A case in active work (past triaging) that still has critical facts missing.
+  // Worse than abandoned_intake because work has started but the visit cannot proceed.
+  incompleteCriticalMs: 8 * 3600e3,
   // Per-stage maximum dwell. A case sitting in one stage past this is "stuck".
   stageMaxDwellMs: {
     new: 12 * 3600e3,              // un-triaged for half a day
@@ -112,6 +115,16 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   if (missingCritical && Number.isFinite(touched) && idle >= thresholds.abandonMs) {
     out.push({ breach: 'abandoned_intake', since_ms: idle, detail: `on-site facts still missing after ${hours(idle)}` })
   }
+
+  // INCOMPLETE_CRITICAL: case has moved beyond triaging (active work in progress)
+  // but still lacks critical visit facts. The farmer may still be reachable, but
+  // the window is closing and the team cannot dispatch without this information.
+  const activeWorkStages = new Set(['in_progress', 'waiting'])
+  const icThreshold = thresholds.incompleteCriticalMs ?? (8 * 3600e3)
+  if (missingCritical && activeWorkStages.has(status) && Number.isFinite(touched) && idle >= icThreshold) {
+    out.push({ breach: 'incomplete_critical', since_ms: idle, detail: `in ${status} for ${hours(idle)} but visit-critical facts still missing` })
+  }
+
   return out
 }
 
@@ -124,4 +137,4 @@ function hours(msVal) {
 
 // Stable tag name for a breach, so the sweep can set/clear them idempotently.
 export function healthTag(breach) { return 'health:' + breach }
-export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'abandoned_intake', 'never_closed', 'timestamp_corrupt'].map(healthTag)
+export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt'].map(healthTag)
