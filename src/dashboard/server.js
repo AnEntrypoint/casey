@@ -185,8 +185,13 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         if (trimmed) incoming[k] = trimmed
       }
       if (Object.keys(incoming).length) {
-        await store.mergeReport(found.id, incoming, { id: 'contact', role: 'contact' })
-        await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated report via web form: ${Object.keys(incoming).join(', ')}`, data: incoming })
+        const mergeResult = await store.mergeReport(found.id, incoming, { id: 'contact', role: 'contact' })
+        if (mergeResult.error && mergeResult.error !== 'observe') {
+          return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong saving your details. Please try again.'))
+        }
+        if (!mergeResult.error) {
+          await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated report via web form: ${Object.keys(incoming).join(', ')}`, data: incoming })
+        }
       }
       res.redirect('/report?ref=' + encodeURIComponent(ref) + '&done=1')
     } catch (e) { res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong. Please try again.')) }
@@ -1423,6 +1428,7 @@ async function openCase(id){
       const save=async()=>{
         const val=inp.value
         if(val===cur){span.textContent=cur||''; return}   // no change
+        if(!val.trim()&&cur){ toast('To remove a field value, use the full Edit form','ok'); span.textContent=cur||''; return }
         span.classList.add('rep-saving')
         const r=await api('/api/cases/'+encodeURIComponent(c.id)+'/intake',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({[k]:val})})
         if(!r.ok){ toast(await failMsg(r,'save failed'),'err'); span.textContent=cur||''; return }
