@@ -24,7 +24,7 @@ const PAGE_MAX = 200
 
 // opts.token   shared secret; when set, /api and / require ?token= or Bearer header.
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
-export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null } = {}) {
+export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null, runSweep = null } = {}) {
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   app.use(express.json())
@@ -354,6 +354,16 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Trigger a health-guardrail sweep now (operator-initiated). Only available
+  // when the casey instance passed a runSweep callback; returns 501 otherwise.
+  app.post('/api/sweep', async (req, res) => {
+    if (!runSweep) return res.status(501).json({ error: 'sweep not available in this mode' })
+    try {
+      const result = await runSweep()
+      res.json({ ok: true, scanned: result?.scanned ?? null, flagged: result?.flagged ?? null, cleared: result?.cleared ?? null })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Cases that look like the SAME real-world outbreak as this one -- the
   // operator's view of casey's grouping intelligence, with the reasons shown so
   // the suggestion is explainable, never an opaque score.
@@ -666,6 +676,7 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="help" title="What does this screen mean?" style="margin-left:auto">?</button>
         <button class="icon-btn" id="new-case-btn" title="Add a case manually (no WhatsApp or Discord needed)">+ New</button>
         <button class="icon-btn" id="export-btn" title="Download all cases as a spreadsheet (CSV)">Export</button>
+        <button class="icon-btn" id="sweep-btn" title="Run health-guardrail sweep now (re-evaluates all cases for time-based issues)">Sweep</button>
         <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">dark</button>
         <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names">Aa</button>
@@ -1587,6 +1598,17 @@ $('#export-btn').onclick=async()=>{
     document.body.appendChild(a); a.click(); document.body.removeChild(a)
     setTimeout(()=>URL.revokeObjectURL(a.href),5000)
   }catch(e){ toast('Export failed: '+e.message,'err') }
+}
+const sweepBtn=$('#sweep-btn')
+if(sweepBtn) sweepBtn.onclick=async()=>{
+  sweepBtn.disabled=true
+  const r=await api('/api/sweep',{method:'POST'})
+  sweepBtn.disabled=false
+  if(r.status===501){ toast('Sweep not available in dashboard-only mode','err'); return }
+  if(!r.ok){ toast(await failMsg(r,'sweep failed'),'err'); return }
+  const j=await r.json().catch(()=>({}))
+  toast('Sweep done'+(j.scanned!=null?' -- '+j.scanned+' checked, '+j.flagged+' flagged, '+j.cleared+' cleared':''),'ok')
+  lastCasesJson=''; await loadCases(); refreshAttention()
 }
 // Inline modal replacement for native prompt()/confirm() -- works on mobile/PWA.
 // Uses DOM creation (not innerHTML) to avoid conflicts with the outer template literal.

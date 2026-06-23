@@ -91,6 +91,10 @@ WHATSAPP_VERIFY_TOKEN=
 # Dashboard: require a token to open the dashboard (strongly recommended in production):
 CASEY_DASHBOARD_TOKEN=
 
+# Public URL of this casey instance (optional). When set, the agent mentions it
+# to the contact on first message so they can fill in more details via the web form:
+#CASEY_PUBLIC_URL=https://your-domain.example.com
+
 # Development overrides:
 #CASEY_STUB_LLM=1    # run fully offline with a deterministic stub model
 #CASEY_LOG=silent    # suppress structured JSON logs (used by tests)
@@ -165,6 +169,8 @@ async function main() {
     if (!existsSync(cfgFile)) problems++
     // dashboard token
     console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset - dashboard is open to anyone who can reach the port'))
+    // public URL (optional but useful)
+    console.log(process.env.CASEY_PUBLIC_URL ? ok(`CASEY_PUBLIC_URL set (${process.env.CASEY_PUBLIC_URL})`) : dim('  CASEY_PUBLIC_URL unset - contacts will not receive a web form link (optional)'))
     // port
     const port = Number(flags.port || 4000)
     console.log(await portFree(port) ? ok(`port ${port} is free`) : bad(`port ${port} is in use - start with --port <other>`))
@@ -199,7 +205,7 @@ async function main() {
     }
     let dash
     try {
-      dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus })
+      dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus, runSweep: () => casey.runSweepOnce() })
     } catch (e) {
       console.log(bad(`dashboard failed to bind port ${dashPort}: ${e.message} - start with --port <other>`))
       process.exit(1)

@@ -88,6 +88,7 @@ clone that lacks them. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
 | `WHATSAPP_APP_SECRET` | When set, inbound webhooks are HMAC-SHA256 verified; forged posts rejected. |
 | `WHATSAPP_WEBHOOK_PORT`, `WHATSAPP_WEBHOOK_PATH` | Fixed webhook port/path for a stable public URL. |
 | `CASEY_DASHBOARD_TOKEN` | When set, dashboard API + page require this token (`Authorization: Bearer <token>` or `X-Casey-Token` header). For the initial page load only, `?token=` in the URL is also accepted; the client strips it from the address bar and switches to header for all API calls. |
+| `CASEY_PUBLIC_URL` | When set, the agent includes a web-form link in the first contact message so contacts can fill in details via the intake form. |
 | `CASEY_LOG=silent` | Silence structured JSON logs (used by tests). |
 | `CASEY_STUB_LLM=1` | Run `casey up` with the offline stub model. |
 
