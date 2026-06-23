@@ -622,12 +622,13 @@ th{width:40%;background:#f5f5f5;font-weight:600}
     } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || 'unknown error')) + '</p>') }
   })
 
+  const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="32" fill="#3b6ea5"/><text x="96" y="136" font-family="system-ui,sans-serif" font-size="120" font-weight="700" fill="#fff" text-anchor="middle">C</text></svg>`
+  app.get('/icon.svg', (_req, res) => res.type('image/svg+xml').send(PWA_ICON_SVG))
   app.get('/manifest.json', (_req, res) => res.json({
     name: 'casey', short_name: 'casey', start_url: '/', display: 'standalone',
     background_color: '#0f1115', theme_color: '#3b6ea5',
     description: 'Animal-disease surveillance case management',
-    icons: [{ src: '/design/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { src: '/design/icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
+    icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
   }))
   // Service worker: cache-first for app shell assets, network-first for API, offline.html fallback.
   app.get('/sw.js', (_req, res) => {
@@ -635,7 +636,7 @@ th{width:40%;background:#f5f5f5;font-weight:600}
     res.setHeader('Cache-Control', 'no-cache')
     res.send(`
 const CACHE='casey-v1'
-const SHELL=['/offline.html']
+const SHELL=['/offline.html','/icon.svg']
 self.addEventListener('install',e=>{ e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))); self.skipWaiting() })
 self.addEventListener('activate',e=>{ e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))); self.clients.claim() })
 self.addEventListener('fetch',e=>{
@@ -684,6 +685,8 @@ const PAGE = /* html */ `<!doctype html>
 <meta name="apple-mobile-web-app-title" content="casey">
 <meta name="theme-color" content="#0f1115">
 <link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
 <title>casey - cases</title>
 <link rel="stylesheet" href="/design/colors_and_type.css">
 <link rel="stylesheet" href="/design/app-shell.css">
