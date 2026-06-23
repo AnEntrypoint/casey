@@ -347,7 +347,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       // Worst-first: most breaches, then longest-standing.
       flagged.sort((a, b) => b.breaches.length - a.breaches.length
         || Math.max(...b.breaches.map(x => x.since_ms)) - Math.max(...a.breaches.map(x => x.since_ms)))
-      res.json({ count: flagged.length, cases: flagged })
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500)
+      const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
+      const page = flagged.slice(offset, offset + limit)
+      res.json({ count: page.length, total: flagged.length, limit, offset, cases: page })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -642,6 +645,9 @@ const PAGE = /* html */ `<!doctype html>
   .health{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
   .health-chip{display:inline-block;background:rgba(200,140,0,.18);color:#9a6a00;border:1px solid rgba(200,140,0,.3);border-radius:10px;padding:2px 10px;font-size:11px;font-weight:600}
   html[data-theme=light] .health-chip{background:rgba(180,120,0,.12);color:#7a5200}
+  .breach-detail{font-size:11px;color:var(--muted);margin-left:4px}
+  .intake-vc-box{background:rgba(200,100,0,.07);border:1px solid rgba(200,100,0,.2);border-radius:8px;padding:10px 12px;margin-bottom:4px}
+  html[data-theme=light] .intake-vc-box{background:rgba(200,100,0,.05);border-color:rgba(200,100,0,.15)}
   /* reply character counter */
   .reply-counter{font-size:11px;color:var(--faint);text-align:right;margin-top:2px}
   .reply-counter.warn{color:#9a6a00}.reply-counter.over{color:var(--danger)}
@@ -1018,12 +1024,25 @@ function renderTriage(){
     return
   }
   el.innerHTML='<h2>Needs you now <span class="n">'+inbox.length+'</span></h2>'+
-    inbox.map(c=>\`
+    inbox.map(c=>{
+      const breaches = attentionBreaches[c.id]||[]
+      const breachDetail = breaches.length ? ' -- '+breaches.map(b=>b.detail||b.breach).join('; ') : ''
+      return \`
       <div class="tcase \${c.id===activeId?'active':''}" data-id="\${esc(c.id)}">
-        <div class="why">\${esc(attnReason(c))}</div>
+        <div class="why">\${esc(attnReason(c))}\${breachDetail?'<span class="breach-detail"> '+esc(breachDetail)+'</span>':''}</div>
         <div class="meta">\${esc(c.ref)} - \${esc(c.channel)} - \${esc(c.subject||'(no subject)')} - \${esc(rel(c.updated_at||c.created_at))}</div>
-      </div>\`).join('')
+      </div>\`
+    }).join('')
   el.querySelectorAll('.tcase').forEach(d=>d.onclick=()=>openCase(d.dataset.id))
+}
+let attentionBreaches = {}
+async function refreshAttention(){
+  try{
+    const j = await api('/api/attention').then(r=>r.ok?r.json():null)
+    if(!j) return
+    const m={}; for(const entry of (j.cases||[])) m[entry.id]=entry.breaches||[]
+    attentionBreaches=m; renderTriage()
+  }catch{ /* best-effort; triage still renders without breach detail */ }
 }
 function fillStatusFilter(){
   const cur=$('#statusf').value
@@ -1148,7 +1167,8 @@ async function openCase(id){
     </div>
     <div id="dup-panel"></div>
     <h3 style="margin:18px 0 6px">Timeline\${events_total!=null?\` (\${events.length}/\${events_total})\`:''}
-      <button id="add-case-note" class="icon-btn" style="float:right;margin-top:-2px">+ Note</button></h3>
+      <button id="add-case-note" class="icon-btn" style="float:right;margin-top:-2px">+ Note</button>
+      <button id="split-case-btn" class="icon-btn" style="float:right;margin-top:-2px;margin-right:4px">Split</button></h3>
     <div id="timeline">\${renderEvents(events)}</div>
     \${more?'<button id="more-events" style="background:#2a3340">Load older events</button>':''}
   \`
@@ -1246,6 +1266,19 @@ async function openCase(id){
     const r=await api('/api/cases/'+encodeURIComponent(id)+'/note',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})})
     if(!r.ok){ toast(await failMsg(r,'note failed'),'err'); return }
     toast('note saved','ok'); lastCasesJson=''; await loadCases(); await openCase(id)
+  }
+  const splitBtn = $('#split-case-btn')
+  if(splitBtn) splitBtn.onclick = async ()=>{
+    const allEvts = await api('/api/cases/'+encodeURIComponent(id)+'/events?limit=200').then(r=>r.json()).catch(()=>({events:[]}))
+    const evList = (allEvts.events||[]).filter(e=>['inbound','outbound','note','observation'].includes(e.kind))
+    if(!evList.length){ toast('no events to split off','err'); return }
+    const result = await showSplitDialog(evList, c.ref)
+    if(!result) return
+    const r = await api('/api/cases/'+encodeURIComponent(id)+'/split',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({event_ids:result.event_ids,subject:result.subject,reason:result.reason})})
+    if(!r.ok){ toast(await failMsg(r,'split failed'),'err'); return }
+    const sj = await r.json().catch(()=>({}))
+    toast('split: new case '+sj.new_case_ref+' ('+sj.moved_events+' events moved)','ok')
+    lastCasesJson=''; await loadCases(); await openCase(id)
   }
   const moreBtn = $('#more-events')
   if(moreBtn) moreBtn.onclick = async ()=>{
@@ -1458,21 +1491,26 @@ function openIntakeForm(caseRow){
   if(isEdit){
     const total=INTAKE_FIELDS.length
     const filled=INTAKE_FIELDS.filter(([k])=>existingReport[k]!=null&&String(existingReport[k]).trim()!=='').length
+    const vcTotal=[...VC_KEYS].length
+    const vcFilled=[...VC_KEYS].filter(k=>existingReport[k]!=null&&String(existingReport[k]).trim()!=='').length
     fillBar.style.display='flex'
-    $('#intake-fill-label').textContent=filled+' of '+total+' fields filled'
-    $('#intake-fill-pct').style.width=Math.round(filled/total*100)+'%'
+    const vcPct=Math.round(vcFilled/vcTotal*100)
+    $('#intake-fill-label').textContent=vcFilled+'/'+vcTotal+' visit-critical  +  '+(filled-vcFilled)+'/'+(total-vcTotal)+' other'
+    $('#intake-fill-pct').style.width=vcPct+'%'
+    $('#intake-fill-pct').style.background=vcFilled===vcTotal?'var(--accent)':'var(--danger)'
   } else { fillBar.style.display='none' }
   // render fields: VC section header first, then additional-details header
-  let _fhtml = '<div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed for a field visit)</span></div>'
+  let _fhtml = '<div class="intake-vc-box"><div class="intake-section-head">Visit-critical fields <span class="intake-vc-note">(needed before a vet can visit)</span></div>'
   let _addHead = false
   for(const [k,label,hint,opts={}] of INTAKE_FIELDS){
-    if(!VC_KEYS.has(k) && !_addHead){ _fhtml += '<div class="intake-section-head" style="margin-top:14px">Additional details</div>'; _addHead=true }
+    if(!VC_KEYS.has(k) && !_addHead){ _fhtml += '</div><div class="intake-section-head" style="margin-top:14px">Additional details</div>'; _addHead=true }
     const val=esc(existingReport[k]||'')
     const req=opts.required?' <span class="intake-req" title="Needed for a field visit">*</span>':''
     _fhtml += \`<label for="int-\${k}">\${esc(label)}\${req}</label>\`
     if(opts.textarea){ _fhtml += \`<textarea id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" rows="2" autocomplete="off">\${val}</textarea>\` }
     else { _fhtml += \`<input id="int-\${k}" name="\${k}" placeholder="\${esc(hint)}" value="\${val}" autocomplete="off">\` }
   }
+  if(!_addHead) _fhtml += '</div>'   // close vc-box if no non-VC fields were added
   $('#intake-report-fields').innerHTML = _fhtml
   $('#intake-error').style.display='none'
   $('#intake-ovl').classList.add('show')
@@ -1509,10 +1547,9 @@ $('#intake-submit').onclick=async()=>{
       const r=await api('/api/cases',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
       if(r.status===409){
         const e=await r.json().catch(()=>({}))
-        // offer to open the existing case instead of failing
-        const open=window.confirm((e.error||'A case already exists for this contact')+' ('+e.existing_ref+'). Open it?')
         btn.disabled=false
-        if(open){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null; await openCase(e.existing_id) }
+        const dlg=await showDialog({title:'Case already exists',message:(e.error||'A case already exists for this contact')+' ('+esc(e.existing_ref||'')+').',confirmLabel:'Open existing case',cancelLabel:'Cancel'})
+        if(dlg){ $('#intake-ovl').classList.remove('show'); intakeCaseId=null; await openCase(e.existing_id) }
         return
       }
       if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error||'Failed to create case') }
@@ -1554,6 +1591,54 @@ $('#export-btn').onclick=async()=>{
 // Inline modal replacement for native prompt()/confirm() -- works on mobile/PWA.
 // Uses DOM creation (not innerHTML) to avoid conflicts with the outer template literal.
 // Returns a Promise resolving to {value, confirmed:true} or null if cancelled.
+function showSplitDialog(evList, caseRef){
+  return new Promise(function(resolve){
+    function mk(tag, css, txt){ const el=document.createElement(tag); if(css) el.style.cssText=css; if(txt!=null) el.textContent=txt; return el }
+    const overlay=mk('div','position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px')
+    overlay.setAttribute('role','dialog'); overlay.setAttribute('aria-modal','true')
+    const card=mk('div','background:var(--panel);border:1px solid var(--border);border-radius:10px;max-width:520px;width:100%;padding:22px 24px;box-shadow:0 8px 40px rgba(0,0,0,.5);font-size:14px;max-height:80vh;overflow:auto')
+    card.appendChild(mk('h3','margin:0 0 6px;font-size:16px','Split case '+caseRef))
+    card.appendChild(mk('p','margin:0 0 10px;color:var(--muted);line-height:1.5','Select events to move into a new case. The rest stay here.'))
+    const subLab=mk('label','display:block;margin:0 0 4px;font-size:12px;color:var(--muted)','Subject for new case (optional)')
+    card.appendChild(subLab)
+    const subInp=document.createElement('input'); subInp.type='text'; subInp.placeholder='e.g. sheep Upington outbreak'
+    subInp.style.cssText='width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;margin-bottom:10px'
+    card.appendChild(subInp)
+    const evLab=mk('label','display:block;margin:0 0 6px;font-size:12px;color:var(--muted)','Events to move:')
+    card.appendChild(evLab)
+    const evBox=mk('div','border:1px solid var(--border);border-radius:6px;padding:6px;max-height:220px;overflow-y:auto;margin-bottom:10px')
+    const checkboxes=[]
+    evList.forEach(function(e){
+      const row=mk('div','display:flex;align-items:flex-start;gap:6px;padding:4px 2px;border-bottom:1px solid var(--border)')
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.value=e.id; cb.style.cssText='margin-top:3px;flex-shrink:0'
+      checkboxes.push(cb)
+      const label=mk('span','font-size:12px;color:var(--fg);line-height:1.4','['+e.kind+'] '+(e.text||'').slice(0,120))
+      row.appendChild(cb); row.appendChild(label); evBox.appendChild(row)
+    })
+    card.appendChild(evBox)
+    const reasonLab=mk('label','display:block;margin:0 0 4px;font-size:12px;color:var(--muted)','Reason (optional)')
+    card.appendChild(reasonLab)
+    const reasonInp=document.createElement('textarea'); reasonInp.rows=2; reasonInp.placeholder='e.g. different species, separate location'
+    reasonInp.style.cssText='width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;resize:vertical'
+    card.appendChild(reasonInp)
+    const row=mk('div','display:flex;gap:8px;margin-top:14px;justify-content:flex-end')
+    const cancelBtn=mk('button','background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0','Cancel')
+    const okBtn=mk('button','background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0','Split case')
+    row.appendChild(cancelBtn); row.appendChild(okBtn); card.appendChild(row)
+    overlay.appendChild(card); document.body.appendChild(overlay)
+    const close=function(confirmed){
+      overlay.remove()
+      if(!confirmed){ resolve(null); return }
+      const event_ids=checkboxes.filter(cb=>cb.checked).map(cb=>cb.value)
+      if(!event_ids.length){ resolve(null); return }
+      resolve({event_ids,subject:subInp.value.trim(),reason:reasonInp.value.trim()})
+    }
+    okBtn.onclick=function(){ close(true) }
+    cancelBtn.onclick=function(){ close(false) }
+    overlay.addEventListener('keydown',function(e){ if(e.key==='Escape') close(false) })
+    setTimeout(function(){ subInp.focus() }, 60)
+  })
+}
 function showDialog(opts){
   const { title='', message='', inputLabel='', inputPlaceholder='', confirmLabel='OK', cancelLabel='Cancel', danger=false } = opts || {}
   return new Promise(function(resolve){
@@ -1583,13 +1668,13 @@ function showDialog(opts){
   })
 }
 async function boot(){
-  await loadCases(); await refreshHealth()
+  await loadCases(); await refreshHealth(); refreshAttention()
   const id=restoreFromHash(); if(id){ openCase(id); return }
   await restoreRefFromHash()
 }
-boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000)
-window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv) })
-window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHealth, get lastHealth(){return lastHealth},
+boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000); const _attnIv = setInterval(refreshAttention, 30000)
+window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
+window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, get lastHealth(){return lastHealth}, get attentionBreaches(){return attentionBreaches},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
