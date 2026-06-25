@@ -205,11 +205,49 @@ async function main() {
   }
 
   if (cmd === 'up') {
-    if (flags.help) { console.log('casey up [--channels sim,discord,whatsapp] [--port 4000]\n  Start the gateway (all configured channels) and the dashboard.'); return }
+    if (flags.help) { console.log('casey up [--channels sim,discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise]\n  Start the gateway (all configured channels) and the dashboard.\n  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,\n  reopening the same case store so nothing is lost. --no-reload disables the watcher (explicit\n  restarts only); --no-supervise runs the legacy single-process path for debugging.'); return }
     const requested = (flags.channels || 'sim,discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
     const channels = requested.filter(ch => ch === 'sim' || hasCreds(ch))
     const skipped = requested.filter(ch => ch !== 'sim' && !hasCreds(ch))
     if (!channels.length) { console.log(bad('no channels available - set credentials or include sim in --channels')); process.exit(1) }
+
+    // Supervised path (default): a parent supervisor forks the serving worker
+    // (bin/worker.js = gateway + dashboard + store), watches src/ for changes, and
+    // drain-respawns the worker on a source change (live reload) or a crash. The
+    // worker reopens the same cwd-bound app.db every time, so the case store
+    // survives every restart -- this is the "never manually restart again" path.
+    const supervise = !flags['no-supervise']
+    if (supervise) {
+      const { createSupervisor } = await import('../src/supervisor.js')
+      const dashPort = Number(flags.port || 4000)
+      // Pass the operator's flags through to every worker the supervisor forks.
+      const workerArgs = ['--channels', channels.join(','), '--port', String(dashPort)]
+      const reload = !flags['no-reload']
+      const sup = createSupervisor({ workerArgs, reload })
+      console.log(bold('casey up') + dim(`  v${pkgVersion()}`) + dim('  (supervised)'))
+      console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(`   (skipped, no creds: ${skipped.join(', ')} - run casey doctor)`) : ''))
+      const tokenNote = process.env.CASEY_DASHBOARD_TOKEN ? ` ${dim('(token required)')}` : ` ${yellow('(open - set CASEY_DASHBOARD_TOKEN)')}`
+      console.log(`  dashboard: ${cyan(`http://localhost:${dashPort}`)}${tokenNote}`)
+      console.log(`  data: ${dim(path.join(process.cwd(), 'data'))}`)
+      console.log(reload
+        ? `  live reload: ${green('on')}${dim('   (edits to src/ restart the worker automatically; same store, no data lost)')}`
+        : `  live reload: ${yellow('off')}${dim('   (--no-reload: restart manually to pick up code changes)')}`)
+      console.log(dim('  press ctrl-c to stop'))
+      await sup.start()
+      let exiting = false
+      const shutdown = async () => {
+        if (exiting) return
+        exiting = true
+        try { await sup.stop() } catch (e) { console.error('shutdown error:', e.message) }
+        process.exit(0)
+      }
+      process.on('SIGINT', shutdown)
+      process.on('SIGTERM', shutdown)
+      return
+    }
+
+    // Legacy single-process path (--no-supervise): build casey inline, no parent,
+    // no live reload. Kept for debugging -- a code change here needs a manual restart.
     const { resolveCallLLM } = await import('../src/llm.js')
     // A probe failure must degrade to honest offline mode, never crash `up` with
     // a raw stack trace before the gateway is even started (P9 graceful degradation).

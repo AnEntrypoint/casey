@@ -26,7 +26,7 @@ const PAGE_MAX = 200
 
 // opts.token   shared secret; when set, /api and / require ?token= or Bearer header.
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
-export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null } = {}) {
+export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null } = {}) {
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   app.use(express.json())
@@ -339,6 +339,39 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         }
       } catch { gateway = null }   // receive status is best-effort; never break health
       res.json({ ...view, source: s.source, model, url, gateway })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Runtime/supervisor state: the lifecycle the SUPERVISOR (parent process) drives
+  // -- healthy/restarting/degraded, restart count, last reload/crash. The parent
+  // pushes this snapshot down over IPC (PARENT_MSG.STATE) and the worker exposes it
+  // here so the operator can tell "the runtime got bounced and why" rather than
+  // seeing a silent gap. Token-gated like every other API. Null runtimeStatus (the
+  // legacy single-process path with no supervisor) reports a benign 'standalone'
+  // so the SPA pill never shows a false 'restarting'.
+  app.get('/api/runtime', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      let s = typeof runtimeStatus === 'function' ? await runtimeStatus() : runtimeStatus
+      if (!s) return res.json({ state: 'standalone', supervised: false, label: 'Runtime: running', ok: true })
+      // Bound and whitelist the fields so a malformed snapshot cannot inject markup
+      // or unbounded strings into the operator UI. No external_id ever appears here.
+      const state = String(s.state || 'unknown').slice(0, 32)
+      const okStates = new Set(['booting', 'healthy', 'restarting', 'degraded', 'stopping', 'stopped', 'standalone'])
+      const safeState = okStates.has(state) ? state : 'unknown'
+      const ok = safeState === 'healthy' || safeState === 'standalone'
+      const labelMap = {
+        booting: 'Runtime: starting', healthy: 'Runtime: healthy', restarting: 'Runtime: restarting',
+        degraded: 'Runtime: degraded -- needs attention', stopping: 'Runtime: stopping', stopped: 'Runtime: stopped',
+        standalone: 'Runtime: running', unknown: 'Runtime: unknown',
+      }
+      res.json({
+        state: safeState, supervised: true, ok, label: labelMap[safeState],
+        restarts: Number.isFinite(s.restarts) ? s.restarts : 0,
+        lastReloadAt: s.lastReloadAt != null ? Number(s.lastReloadAt) : null,
+        lastCrashReason: s.lastCrashReason ? String(s.lastCrashReason).slice(0, 300) : null,
+        since: s.since != null ? Number(s.since) : null,
+      })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 

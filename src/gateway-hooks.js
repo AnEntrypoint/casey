@@ -18,6 +18,32 @@
 
 import { runTurn } from 'freddie'
 import { VISIT_CRITICAL } from './case-health.js'
+import { extractFields } from './extract.js'
+
+// Report fields casey is allowed to fill deterministically at ingress. Mirrors
+// REPORT_KEYS in case-store.js; extractFields may emit keys outside the report
+// (e.g. contact_name belongs on the contact, not the report) so we filter here.
+const CAPTURE_KEYS = new Set(['species', 'symptoms', 'location', 'affected_count', 'dead_count', 'onset'])
+
+// Deterministic field capture from the inbound text, run on EVERY turn before the
+// reply regardless of which path answers. The production model is small and does
+// not reliably call case_report, so without this a real conversation logs an empty
+// case ("only logs cases from messages, without the relevant details"). Fills only
+// fields still empty (never clobbers the model's or a prior turn's richer value),
+// is observe-guarded + locked inside the store, and records which keys it filled.
+async function captureFieldsFromText(store, caseId, text, log) {
+  try {
+    const all = extractFields(text)
+    const fields = {}
+    for (const [k, v] of Object.entries(all)) if (CAPTURE_KEYS.has(k)) fields[k] = v
+    if (!Object.keys(fields).length) return
+    const res = await store.markReportFieldsIfEmpty(caseId, fields)
+    if (res?.filled?.length) {
+      // Field KEYS only -- never the raw contact text (PII) in the observation.
+      await store.appendEvent(caseId, { kind: 'observation', actor: 'system', text: `fields auto-captured: ${res.filled.join(', ')}` })
+    }
+  } catch (e) { log?.warn?.('[casey] auto-capture failed', { caseId, error: e.message }) }
+}
 
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 
@@ -478,7 +504,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
 
     if (!autoRespond) return { to: external_id, text: '', platform, caseId: caseRow.id }
 
-    const fresh = await store.getCase(caseRow.id)
+    let fresh = await store.getCase(caseRow.id)
 
     // observe-mode: the agent does not act or reply automatically; a human
     // drives the case. We still recorded the inbound above.
@@ -500,6 +526,16 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       return { to: external_id, text: '', platform, caseId: fresh.id, observed: true }
     }
 
+    // Deterministic field capture FIRST -- before any reply path (intent shortcut,
+    // agent turn, or fallback). This guarantees the contact's plainly-stated facts
+    // are recorded even when the model drives nothing, so a case is never an empty
+    // shell. Runs only outside observe mode (returned above). Re-read fresh after so
+    // downstream report-aware decisions see what was just captured.
+    if (inboundText) {
+      await captureFieldsFromText(store, fresh.id, inboundText, log)
+      fresh = await store.getCase(fresh.id)
+    }
+
     // Deterministic intent shortcuts. For a few universal intents a low-literacy
     // contact is likely to send, a fixed, correct reply beats a generated one --
     // so we answer without an LLM turn. This runs only when auto-responding and
@@ -512,6 +548,14 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // reference, not a canned line -- so defer them to the agent on message one.
     // (status/human/stop/thanks still answered deterministically.)
     if (['help', 'greeting'].includes(intent) && isFirstMessage) intent = null
+    // ALSO defer a LATER greeting on a still-incomplete case: a canned re-greeting
+    // on every "hi" stalls the intake (the witnessed "blue eyes" -> greeting loop).
+    // While visit-critical facts are still missing, let the agent (and the per-field
+    // fallback) keep advancing rather than re-greeting. Once the report is
+    // visit-ready, a later greeting is answered deterministically again. HELP is
+    // EXCLUDED: the HELP keyword must always short-circuit to its menu instantly
+    // (fixed-keyword invariant) -- only a bare greeting defers.
+    if (intent === 'greeting' && reportMissingVisitCritical(fresh.report)) intent = null
     // One-shot closing capture: a "thanks" is usually the farmer wrapping up, and
     // after this they leave the site and are hard to reach. If a visit-critical
     // on-site fact is still missing AND we have not already made one closing ask,
@@ -654,25 +698,33 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent result error: ${result.error}` })
       }
       // Never a dead-end: when the model fails (error/timeout/empty/prompt-echo)
-      // but the case still needs a visit-critical fact, the holding ack is
-      // followed by ONE gentle question for the single most important missing
-      // fact, so the conversation advances even on the degraded path. This is the
-      // contact's "one chance" -- a bare ack every turn is the live stall the
-      // weak model otherwise causes (it echoes -> isPromptEcho -> fallback). We
-      // ask via the fallback at most ONCE per case (durable observation marker,
-      // append-only so the agent's own case_update cannot clobber it); after that
-      // the degraded reply is the plain holding ack and the operator takes over.
+      // but the case still needs visit-critical facts, the holding ack is followed
+      // by ONE gentle question -- for the next still-missing fact NOT yet asked via
+      // this degraded path. This advances the intake field-by-field across turns
+      // (where -> which animals -> signs -> ...) instead of asking one thing then
+      // repeating a greeting forever (the witnessed "blue eyes" -> re-greeting loop).
+      // Each asked field is recorded as a durable FALLBACK-ASK:<key> observation
+      // (append-only, so the agent's own case_update cannot clobber the once-per-
+      // field guarantee). Only once every visit-critical field has been asked once
+      // does the degraded reply become the plain holding ack and the operator takes
+      // over -- never a re-greet, never the same question twice.
       const priorAsk = await store.listEvents(fresh.id)
-      const alreadyAskedViaFallback = priorAsk.some(e => e.kind === 'observation' && /FALLBACK-ASK/.test(e.text || ''))
-      const advancing = !alreadyAskedViaFallback ? advancingFallback(inboundText, fresh) : fallbackReply(inboundText, fresh)
-      if (!alreadyAskedViaFallback && advancing !== fallbackReply(inboundText, fresh)) {
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'FALLBACK-ASK: degraded reply advanced intake with one gentle question for the most important missing on-site fact (one-shot).' })
+      const askedKeys = new Set()
+      for (const e of priorAsk) {
+        const m = e.kind === 'observation' && /FALLBACK-ASK:(\w+)/.exec(e.text || '')
+        if (m) askedKeys.add(m[1])
+      }
+      const next = nextUnaskedMissingField(fresh.report, askedKeys)
+      const advancing = next ? advancingFallbackForHint(inboundText, fresh, next[1]) : fallbackReply(inboundText, fresh)
+      if (next && advancing !== fallbackReply(inboundText, fresh)) {
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${next[0]} degraded reply asked for the next still-missing on-site fact (once per field).` })
       }
       text = advancing
     }
-    const isFallback = !text
-      || text === fallbackReply(inboundText, fresh)
-      || text === advancingFallback(inboundText, fresh)
+    // A reply is a (degraded) fallback if it is empty or begins with the holding
+    // ack base -- covers the plain ack and every per-field advancing variant.
+    const fallbackBase = fallbackReply(inboundText, fresh)
+    const isFallback = !text || text === fallbackBase || text.startsWith(fallbackBase)
 
     // Final guard before the reply leaves (send OR assisted draft): correct any
     // fabricated/stale case reference to this case's real ref. A weak model recites
@@ -819,6 +871,28 @@ function mostImportantMissingField(reportRaw) {
   const r = parseReportSafe(reportRaw)
   const hit = VISIT_CRITICAL_ASK.find(([k]) => r[k] == null || String(r[k]).trim() === '')
   return hit ? hit[1] : null
+}
+
+// Per-field advancing: the highest-priority on-site fact that is BOTH still
+// missing AND not already asked once via the degraded fallback (askedKeys). This
+// is what makes the degraded path advance field-by-field across turns instead of
+// asking the same thing then repeating a greeting -- each degraded turn moves to
+// the next genuinely-missing field. Returns [key, hint] or null when every
+// visit-critical field is either filled or already asked once.
+function nextUnaskedMissingField(reportRaw, askedKeys) {
+  const r = parseReportSafe(reportRaw)
+  const hit = VISIT_CRITICAL_ASK.find(([k]) =>
+    (r[k] == null || String(r[k]).trim() === '') && !askedKeys.has(k))
+  return hit || null
+}
+
+// Holding ack + one gentle question for a specific missing fact's hint. The
+// per-field counterpart to advancingFallback (which always asks the single most
+// important). Caller picks the field via nextUnaskedMissingField.
+export function advancingFallbackForHint(contactText, caseRow, hint) {
+  const base = fallbackReply(contactText, caseRow)
+  if (!hint) return base
+  return `${base} ${askCarrier(guessLang(contactText), hint)}`
 }
 
 // Contact intent detection -- low-literacy / multilingual handlers
