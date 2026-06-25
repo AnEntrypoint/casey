@@ -171,6 +171,13 @@ async function main() {
     console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset -- dashboard is open to anyone on the network (set a token for production use)'))
     // public URL (optional but useful)
     console.log(process.env.CASEY_PUBLIC_URL ? ok(`CASEY_PUBLIC_URL set (${process.env.CASEY_PUBLIC_URL})`) : dim('  CASEY_PUBLIC_URL unset - contacts will not receive a web form link (optional)'))
+    // alert webhook -- high-severity guardrail breaches page the team here during
+    // a sweep; falls back to the handoff webhook. Optional: without either, breaches
+    // still surface in the dashboard inbox, they just do not push a notification.
+    const alertHook = process.env.CASEY_ALERT_WEBHOOK || process.env.CASEY_HANDOFF_WEBHOOK
+    console.log(alertHook
+      ? ok(`breach alerts on${process.env.CASEY_ALERT_WEBHOOK ? ' CASEY_ALERT_WEBHOOK' : ' CASEY_HANDOFF_WEBHOOK (fallback)'}`)
+      : dim('  CASEY_ALERT_WEBHOOK unset - sweep breaches surface in the inbox but do not push an alert (optional)'))
     // data dir -- where the live case store lives (cwd-bound)
     const dataDir = path.join(process.cwd(), 'data')
     const dbFile = path.join(dataDir, 'app.db')

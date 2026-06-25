@@ -16,6 +16,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { VISIT_CRITICAL } from '../case-health.js'
+import { rankAttention } from '../attn.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DESIGN_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'anentrypoint-design')
@@ -529,13 +530,31 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         patch[k] = v
       }
       if (!Object.keys(patch).length) return res.status(400).json({ error: 'no editable fields' })
+      // Optional one-line reason carried alongside the patch (notably for autonomy
+      // changes); not a stored field, so it is read off the body directly.
+      const patchReason = str(res, req.body, 'reason', { required: false }); if (patchReason === undefined) return
+      const prior = await store.getCase(req.params.id)
       if (Object.keys(patch).some(k => k !== 'autonomy')) {
-        const c = await store.getCase(req.params.id)
-        if (c?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy setting can be changed' })
+        if (prior?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy setting can be changed' })
       }
       const updated = await store.updateCase(req.params.id, patch, OPERATOR)
       if (!updated) return res.status(404).json({ error: 'not found' })
-      await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${Object.keys(patch).join(', ')}`, data: patch })
+      // An autonomy change is a first-class audited event carrying {from,to,by,reason}
+      // so the timeline can render it as a distinct chip (like a transition), not a
+      // generic edit that drops the prior value. Other field edits keep the action row.
+      const autonomyChanged = 'autonomy' in patch && prior && prior.autonomy !== patch.autonomy
+      if (autonomyChanged) {
+        await store.appendEvent(req.params.id, {
+          kind: 'autonomy_change', actor: 'operator',
+          text: `autonomy ${prior.autonomy} -> ${patch.autonomy}`,
+          data: { from: prior.autonomy, to: patch.autonomy, by: OPERATOR.id, reason: patchReason || '' },
+        })
+      }
+      const otherKeys = Object.keys(patch).filter(k => k !== 'autonomy')
+      if (otherKeys.length) {
+        const otherPatch = Object.fromEntries(otherKeys.map(k => [k, patch[k]]))
+        await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${otherKeys.join(', ')}`, data: otherPatch })
+      }
       res.json(updated)
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -577,19 +596,22 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     try {
       const { classifyCaseHealth } = await import('../case-health.js')
       const now = Date.now()
+      // Rank over ALL open cases with the SAME enum-weighted scorer the SPA used
+      // to render (src/attn.js), so a high-urgency case outside the page window
+      // the client fetched still reaches the inbox -- the ranking is no longer
+      // capped by loadCases' 200-row limit.
       const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
-      const flagged = []
-      for (const c of open) {
-        const breaches = classifyCaseHealth(c, now)
-        if (breaches.length) flagged.push({ id: c.id, ref: c.ref, subject: c.subject || '', status: c.status, breaches })
-      }
-      // Worst-first: most breaches, then longest-standing.
-      flagged.sort((a, b) => b.breaches.length - a.breaches.length
-        || Math.max(...b.breaches.map(x => x.since_ms)) - Math.max(...a.breaches.map(x => x.since_ms)))
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500)
       const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
-      const page = flagged.slice(offset, offset + limit)
-      res.json({ count: page.length, total: flagged.length, limit, offset, cases: page })
+      const { total, items } = rankAttention(open, now, { limit, offset })
+      // Recompute the live breach detail per ranked case so the reason is current,
+      // not a stale tag snapshot. classifyCaseHealth is the source of detail text.
+      const cases = items.map(({ c, score, reason }) => ({
+        id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
+        status: c.status, updated_at: c.updated_at || c.created_at,
+        score, reason, breaches: classifyCaseHealth(c, now)
+      }))
+      res.json({ count: cases.length, total, limit, offset, cases })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -709,6 +731,63 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         }
       }
       res.json({ ok: true, sent: !!sendReply, delivered })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // The latest pending assisted-mode draft for a case, or null. A draft is
+  // "pending" only while draft-pending is on the case (cleared on
+  // approve/discard/supersede), so we read the most recent draft event and gate
+  // on the tag rather than tracking draft state separately.
+  async function pendingDraft(c) {
+    const tags = String(c.tags || '').split(',').map(t => t.trim())
+    if (!tags.includes('draft-pending')) return null
+    const events = await store.listEvents(c.id)
+    const drafts = events.filter(e => e.kind === 'draft')
+    return drafts.length ? drafts[drafts.length - 1] : null
+  }
+
+  // Approve a held assisted draft: send the (possibly operator-edited) text to the
+  // contact, record it as an operator outbound, and clear draft-pending +
+  // needs-human only once it actually delivered -- mirroring the reply path so a
+  // failed send leaves the case pinned rather than silently dropped.
+  app.post('/api/cases/:id/draft/approve', async (req, res) => {
+    try {
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      const draft = await pendingDraft(c)
+      if (!draft) return res.status(409).json({ error: 'no pending draft' })
+      // Operator may edit before approving; fall back to the drafted text.
+      let text = draft.text || ''
+      if (req.body && typeof req.body.text === 'string' && req.body.text.trim()) text = req.body.text.trim()
+      if (!text) return res.status(400).json({ error: 'empty draft' })
+      let delivered = false
+      if (sendReply) {
+        try { await sendReply(c, text); delivered = true }
+        catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
+      }
+      await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true } })
+      if (delivered) {
+        const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+        await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending' && t !== 'needs-human').join(',') }, OPERATOR)
+      }
+      res.json({ ok: true, sent: !!sendReply, delivered })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Discard a held assisted draft without sending: clear draft-pending and record
+  // the decision. needs-human stays -- a discarded draft still wants a human to
+  // decide what (if anything) to say next.
+  app.post('/api/cases/:id/draft/discard', async (req, res) => {
+    try {
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      const draft = await pendingDraft(c)
+      if (!draft) return res.status(409).json({ error: 'no pending draft' })
+      const reason = (req.body && typeof req.body.reason === 'string' ? req.body.reason.trim() : '') || 'operator discarded'
+      const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+      await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending').join(',') }, OPERATOR)
+      await store.appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `DRAFT DISCARDED: ${reason}.` })
+      res.json({ ok: true })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -1336,44 +1415,11 @@ const filt = { q:'', status:'' }
 function attn(c){ return c.autonomy==='observe' || c.autonomy==='assisted'
   || String(c.tags||'').split(',').map(s=>s.trim()).includes('needs-human') }
 // --- triage: which cases need a HUMAN now, and why, in plain words ---
-// Deterministic, enum-derived (status/autonomy/tags/age); no LLM. Higher = more urgent.
+// Scoring + reason live server-side in src/attn.js and reach the client ranked
+// via GET /api/attention (over ALL open cases, not just the page window). The SPA
+// no longer recomputes them -- renderTriage renders the server-ranked list, so the
+// two surfaces cannot drift.
 function tagList(c){ return String(c.tags||'').split(',').map(t=>t.trim()).filter(Boolean) }
-function ageHours(c){ const d=toDate(c.updated_at||c.created_at); return d?(Date.now()-d.getTime())/3.6e6:0 }
-function tMs(c){ const d=toDate(c.updated_at||c.created_at); return d?d.getTime():0 }
-// attnScore: 0 means "no human action needed" (hidden from the inbox).
-function attnScore(c){
-  if(c.status==='resolved'||c.status==='closed') return 0
-  const tags=tagList(c)
-  if(tags.includes('opted-out')) return 0             // contact left; never chase them
-  let s=0
-  if(tags.includes('needs-human')) s+=100             // contact explicitly asked for a person
-  if(tags.includes('health:unanswered_handoff')) s+=60  // handoff request, no operator in window
-  if(tags.includes('health:incomplete_critical')) s+=40 // active case, visit-critical facts still missing
-  if(tags.includes('health:abandoned_intake')) s+=35    // stalled, on-site facts likely unrecoverable
-  if(c.status==='waiting' && ageHours(c)>=24) s+=40   // genuinely stuck over a day
-  if(tags.includes('health:stuck')) s+=20
-  if(tags.includes('health:stale')) s+=10
-  if(c.autonomy==='observe') s+=20                    // casey only listens; soft nudge
-  if(c.autonomy==='assisted') s+=15                   // person in the loop; soft nudge
-  if(c.priority==='urgent') s+=15
-  else if(c.priority==='high') s+=8
-  s += Math.min(20, Math.floor(ageHours(c)))
-  return s
-}
-// One honest, plain reason this case is in the inbox. First match wins.
-function attnReason(c){
-  const tags=tagList(c)
-  if(tags.includes('needs-human')) return 'This person asked to talk to a real person.'
-  if(tags.includes('health:unanswered_handoff')) return 'A person was asked for and no one has replied yet.'
-  if(tags.includes('health:incomplete_critical')) return 'Active case but the visit-critical facts are still missing. Reach the farmer now.'
-  if(tags.includes('health:abandoned_intake')) return 'The farmer may have left. On-site facts are still missing.'
-  if(c.status==='waiting' && ageHours(c)>=24) return 'No answer for over a day. A check-in may help.'
-  if(tags.includes('health:stuck')) return 'This one has been in the same stage too long.'
-  if(tags.includes('health:stale')) return 'No activity in a while. A check may be due.'
-  if(c.autonomy==='observe') return 'casey is only listening here. A reply has to come from you.'
-  if(c.autonomy==='assisted') return 'casey can draft, but you send. Open it to check.'
-  return 'This one is worth a look.'
-}
 // Light heuristic: does the contact's most recent inbound look like it is NOT
 // plain English? We only flag the operator to mirror the contact's language --
 // the agent already replies in-language; this is a nudge for HUMAN replies, where
@@ -1400,38 +1446,40 @@ function renderCounts(){
   $('#counts').textContent = allCases.length+' total'+(a?' - '+a+' need attention':'')
 }
 
+// The inbox is the server-ranked /api/attention list (scored over ALL open cases
+// in src/attn.js), NOT a client recompute over the page window -- so a high-urgency
+// case beyond the 200-row loadCases cap still shows. Each entry carries its own
+// ref/channel/subject/updated_at/reason/breaches; renderTriage never reaches into
+// allCases for triage, so the two surfaces cannot drift.
+let attentionInbox = []
 function renderTriage(){
   const el=$('#triage'); if(!el) return
-  const inbox = allCases.map(c=>({c,score:attnScore(c)}))
-    .filter(x=>x.score>0)
-    .sort((a,b)=> b.score-a.score || tMs(b.c)-tMs(a.c))
-    .slice(0,12).map(x=>x.c)
+  const inbox = attentionInbox.slice(0,12)
   if(!inbox.length){
     el.innerHTML='<h2>Needs you now</h2>'+
       '<div class="calm">All caught up. Nothing needs a person right now. '+
       'A new one will show up here the moment someone needs you.</div>'
     return
   }
-  el.innerHTML='<h2>Needs you now <span class="n">'+inbox.length+'</span></h2>'+
-    inbox.map(c=>{
-      const breaches = attentionBreaches[c.id]||[]
+  el.innerHTML='<h2>Needs you now <span class="n">'+attentionInbox.length+'</span></h2>'+
+    inbox.map(e=>{
+      const breaches = e.breaches||[]
       const breachDetail = breaches.length ? ' -- '+breaches.map(b=>b.detail||b.breach).join('; ') : ''
       return \`
-      <div class="tcase \${c.id===activeId?'active':''}" data-id="\${esc(c.id)}">
-        <div class="why">\${esc(attnReason(c))}\${breachDetail?'<span class="breach-detail"> '+esc(breachDetail)+'</span>':''}</div>
-        <div class="meta">\${esc(c.ref)} - \${esc(c.channel)} - \${esc(c.subject||'(no subject)')} - \${esc(rel(c.updated_at||c.created_at))}</div>
+      <div class="tcase \${e.id===activeId?'active':''}" data-id="\${esc(e.id)}">
+        <div class="why">\${esc(e.reason||'This one is worth a look.')}\${breachDetail?'<span class="breach-detail"> '+esc(breachDetail)+'</span>':''}</div>
+        <div class="meta">\${esc(e.ref)} - \${esc(e.channel)} - \${esc(e.subject||'(no subject)')} - \${esc(rel(e.updated_at))}</div>
       </div>\`
     }).join('')
   el.querySelectorAll('.tcase').forEach(d=>d.onclick=()=>openCase(d.dataset.id))
 }
-let attentionBreaches = {}
 async function refreshAttention(){
   try{
     const j = await api('/api/attention').then(r=>r.ok?r.json():null)
     if(!j) return
-    const m={}; for(const entry of (j.cases||[])) m[entry.id]=entry.breaches||[]
-    attentionBreaches=m; renderTriage()
-  }catch{ /* best-effort; triage still renders without breach detail */ }
+    attentionInbox = j.cases||[]
+    renderTriage()
+  }catch{ /* best-effort; a stale inbox is better than a blank one */ }
 }
 function fillStatusFilter(){
   const cur=$('#statusf').value
@@ -2328,7 +2376,7 @@ async function boot(){
 }
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000); const _attnIv = setInterval(refreshAttention, 30000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, get lastHealth(){return lastHealth}, get attentionBreaches(){return attentionBreaches},
+window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
@@ -2337,7 +2385,7 @@ window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHeal
   // help overlay + per-case hint, exposed for browser-witness
   showHelp, hideHelp, helpSeen, todoHint, get helpOpen(){return helpOpen},
   // triage inbox + coaching + handoff, exposed for browser-witness
-  attnScore, attnReason, cannedReplies, renderTriage,
+  cannedReplies, renderTriage,
   checkHandoffs, clearHandoff, hasHandoff, contactMaybeNonEnglish,
   INTAKE_FIELDS,
   get handoffQueue(){return handoffQueue}, get handoffSeen(){return handoffSeen},

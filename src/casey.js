@@ -13,7 +13,7 @@ const pathToFileUrl = (p) => pathToFileURL(p).href
 import { Gateway, bootHost } from 'freddie'
 import { createCaseStore } from './case-store.js'
 import { setCaseStore, resetCaseStore } from './case-runtime.js'
-import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier } from './gateway-hooks.js'
+import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier, breachNotifier } from './gateway-hooks.js'
 import { sweepCases } from './case-sweep.js'
 import { MockAdapter } from './sim/inject.js'
 
@@ -23,6 +23,14 @@ const CASEY_PLUGINS = path.resolve(__dirname, '..', 'plugins')
 // platform adapter classes by absolute path under node_modules.
 const FREDDIE_ROOT = path.resolve(__dirname, '..', 'node_modules', 'freddie')
 const freddieFile = (rel) => pathToFileUrl(path.join(FREDDIE_ROOT, rel))
+
+// Guardrail breaches severe enough to alert the team during a sweep. The rest
+// (stale/stuck/timestamp_corrupt) still tag the case for the inbox but do not page.
+const SWEEP_ALERT_BREACHES = new Set(['unanswered_handoff', 'unanswered_handoff_escalated', 'incomplete_critical', 'abandoned_intake', 'never_closed'])
+// The escalated handoff tier routes to a DISTINCT supervisor channel when one is
+// configured (CASEY_ESCALATE_WEBHOOK); otherwise it falls back to the same alert
+// channel as every other breach.
+const ESCALATION_BREACHES = new Set(['unanswered_handoff_escalated'])
 
 export class Casey {
   constructor(opts = {}) {
@@ -84,6 +92,17 @@ export class Casey {
       log: this.log,
       notifyHandoff: this.opts.notifyHandoff || discordHandoffNotifier(undefined, this.log),
     })
+    // High-severity guardrail breaches alert the team over the same webhook
+    // transport as a handoff (CASEY_ALERT_WEBHOOK, falling back to the handoff
+    // webhook). Null when neither is set: the sweep still flags every case via
+    // health:* tags, so the dashboard inbox surfaces them regardless.
+    this._notifyBreach = this.opts.notifyBreach || breachNotifier(undefined, this.log)
+    // Distinct supervisor channel for the escalated handoff tier. Falls back to the
+    // ordinary breach notifier when CASEY_ESCALATE_WEBHOOK is unset, so escalation
+    // is never silently dropped -- it just shares the alert channel.
+    this._notifyEscalation = this.opts.notifyEscalation
+      || breachNotifier(process.env.CASEY_ESCALATE_WEBHOOK, this.log)
+      || this._notifyBreach
     this.gateway.handleInbound = handler.bind(this.gateway)
     this._wrapInflight()
 
@@ -222,7 +241,21 @@ export class Casey {
   // Run one health-guardrail sweep now. Exposed for tests and manual runs; the
   // scheduler calls the same path. Isolated: a sweep error is the caller's to log.
   async runSweepOnce(now = Date.now()) {
-    return sweepCases(this.store, now, this.opts.healthThresholds, { log: this.log })
+    // Only the breaches a person must act on raise an alert; stale/stuck are
+    // surfaced in the inbox but do not page the team. The sweep passes
+    // (caseId, breach, detail); we look the case up so the alert carries its ref.
+    const notifyBreach = this._notifyBreach
+      ? async (caseId, breach, detail) => {
+          if (!SWEEP_ALERT_BREACHES.has(breach)) return
+          const c = await this.store.getCase(caseId).catch(() => null)
+          if (!c) return
+          // The escalated tier goes to the supervisor channel; everything else to
+          // the ordinary breach channel.
+          const notify = ESCALATION_BREACHES.has(breach) ? this._notifyEscalation : this._notifyBreach
+          if (notify) await notify(c, breach, detail)
+        }
+      : null
+    return sweepCases(this.store, now, this.opts.healthThresholds, { log: this.log, notifyBreach })
   }
 
   // Start (or restart) the periodic guardrail sweep. Opt-in: a non-positive

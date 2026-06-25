@@ -290,6 +290,34 @@ export function fallbackReply(contactText, caseRow) {
   return base + tail
 }
 
+// A single gentle "could you tell me <fact>?" carrier per language. The asked-fact
+// phrase itself stays English plain-language (the canonical VISIT_CRITICAL_ASK
+// hints); the carrier sentence mirrors the contact's language. This is the
+// offline/degraded one-shot path -- the live model handles full localisation; here
+// honest degradation beats a dead-end ack.
+function askCarrier(lang, fact) {
+  const c = {
+    af: `Kan u my asseblief vertel ${fact}?`,
+    zu: `Ungangitshela ${fact}?`,
+    xh: `Ungandixelela ${fact}?`,
+  }[lang]
+  return c || `Could you tell me ${fact}?`
+}
+
+// The degraded reply that does NOT dead-end: when the model errored/echoed/emptied
+// but the case still needs a visit-critical fact, the holding ack is followed by
+// ONE gentle question for the single most important missing fact, so the intake
+// advances even on the fallback path. When nothing is missing (or no report yet
+// has a clear next ask), it is exactly fallbackReply -- the safe holding ack.
+// Caller guards once-only via an observation marker so a contact is not re-asked
+// the same fact every degraded turn.
+export function advancingFallback(contactText, caseRow) {
+  const base = fallbackReply(contactText, caseRow)
+  const fact = mostImportantMissingField(caseRow?.report)
+  if (!fact) return base
+  return `${base} ${askCarrier(guessLang(contactText), fact)}`
+}
+
 export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
   // Per-contact in-flight guard: if a prior agent turn is still running for this
   // contact, we drop the new message rather than race two concurrent LLM calls
@@ -354,6 +382,17 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
       return { to: external_id, text: '', platform, caseId: caseRow.id, duplicate: true }
     }
+    // A fresh inbound supersedes any pending assisted draft: the contact has said
+    // more, so a draft composed against the old conversation is stale. Clear the
+    // draft-pending tag (the agent turn below re-drafts against the full thread)
+    // and record the supersession so the timeline shows why the old draft lapsed.
+    // needs-human is left in place -- the case still wants an operator.
+    if ((caseRow.tags || '').split(',').map(s => s.trim()).includes('draft-pending')) {
+      try {
+        await store.updateCase(caseRow.id, { tags: (caseRow.tags || '').split(',').map(s => s.trim()).filter(t => t && t !== 'draft-pending').join(',') })
+        await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: 'DRAFT SUPERSEDED: a new message arrived; the pending draft reply was set aside for a fresh one.' })
+      } catch (e) { log.warn?.('[casey] draft supersede failed', { caseId: caseRow.id, error: e.message }) }
+    }
     // One-shot: a received animal photo is recorded as explicit case state right
     // here, deterministically, so the operator always sees that a picture exists
     // -- never relying on the agent turn to notice it (it may not, on a media-only
@@ -404,6 +443,19 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // drives the case. We still recorded the inbound above.
     if (fresh.autonomy === 'observe') {
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'autonomy=observe: awaiting operator (no auto-reply)' })
+      // Observe mode means a human drives, but the case must still SURFACE for one
+      // -- otherwise an observe-mode contact waits silently with nothing in the
+      // triage inbox. Flag needs-human (the observable handoff signal) and notify
+      // once on first flag, exactly like an explicit human request. Do NOT raise
+      // priority: casey surfaces the request; the operator decides urgency.
+      const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
+      try {
+        await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-human') })
+        if (notifyHandoff && !alreadyFlagged) {
+          try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
+          catch (e) { log.warn?.('[casey] observe handoff notify failed', { caseId: fresh.id, error: e.message }) }
+        }
+      } catch (e) { log.warn?.('[casey] observe needs-human flag failed', { caseId: fresh.id, error: e.message }) }
       return { to: external_id, text: '', platform, caseId: fresh.id, observed: true }
     }
 
@@ -551,9 +603,48 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         log.warn?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent result error: ${result.error}` })
       }
-      text = fallbackReply(inboundText, fresh)
+      // Never a dead-end: when the model fails (error/timeout/empty/prompt-echo)
+      // but the case still needs a visit-critical fact, the holding ack is
+      // followed by ONE gentle question for the single most important missing
+      // fact, so the conversation advances even on the degraded path. This is the
+      // contact's "one chance" -- a bare ack every turn is the live stall the
+      // weak model otherwise causes (it echoes -> isPromptEcho -> fallback). We
+      // ask via the fallback at most ONCE per case (durable observation marker,
+      // append-only so the agent's own case_update cannot clobber it); after that
+      // the degraded reply is the plain holding ack and the operator takes over.
+      const priorAsk = await store.listEvents(fresh.id)
+      const alreadyAskedViaFallback = priorAsk.some(e => e.kind === 'observation' && /FALLBACK-ASK/.test(e.text || ''))
+      const advancing = !alreadyAskedViaFallback ? advancingFallback(inboundText, fresh) : fallbackReply(inboundText, fresh)
+      if (!alreadyAskedViaFallback && advancing !== fallbackReply(inboundText, fresh)) {
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'FALLBACK-ASK: degraded reply advanced intake with one gentle question for the most important missing on-site fact (one-shot).' })
+      }
+      text = advancing
     }
-    const isFallback = !text || text === fallbackReply(inboundText, fresh)
+    const isFallback = !text
+      || text === fallbackReply(inboundText, fresh)
+      || text === advancingFallback(inboundText, fresh)
+
+    // ASSISTED mode: the agent composed a reply, but a human must approve before
+    // anything reaches the contact. Hold it as a draft event (never sent), flag
+    // the case for an operator, and notify once -- mirroring the human-handoff
+    // path. The dashboard surfaces the draft for one-click approve/discard.
+    if (canAgentAct(fresh, 'reply') === 'draft') {
+      await store.appendEvent(fresh.id, {
+        kind: 'draft', actor: 'agent', channel,
+        text, data: { to: external_id, fallback: isFallback, draft: true },
+      })
+      const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
+      try {
+        await store.updateCase(fresh.id, { tags: mergeTag(mergeTag(fresh.tags, 'draft-pending'), 'needs-human') })
+        if (notifyHandoff && !alreadyFlagged) {
+          try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
+          catch (e) { log.warn?.('[casey] assisted draft notify failed', { caseId: fresh.id, error: e.message }) }
+        }
+      } catch (e) { log.warn?.('[casey] assisted draft flag failed', { caseId: fresh.id, error: e.message }) }
+      // Nothing is sent in assisted mode -- return empty text so the gateway sends
+      // nothing and the contact waits on a human-approved reply.
+      return { to: external_id, text: '', platform, caseId: fresh.id, drafted: true }
+    }
 
     await store.appendEvent(fresh.id, {
       kind: 'outbound', actor: 'agent', channel,
@@ -838,6 +929,19 @@ function mergeTag(tags, tag) {
   return list.join(',')
 }
 
+// Single source of truth for what the agent may do, per case autonomy mode.
+// 'observe'  -- the agent neither computes a reply nor sends; a human drives.
+// 'assisted' -- the agent COMPUTES a reply but it is held as a draft for an
+//               operator to approve; nothing is auto-sent.
+// 'auto'     -- the agent computes and sends automatically.
+// Returns 'send' (compute and send), 'draft' (compute, hold), or 'none'.
+export function canAgentAct(caseRow, action = 'reply') {
+  const mode = caseRow?.autonomy || 'auto'
+  if (mode === 'observe') return 'none'
+  if (mode === 'assisted') return 'draft'
+  return 'send'
+}
+
 // Plain-language, contact-safe description of where a request stands. Never
 // exposes the internal stage name.
 // Plain-language status, framed for a disease report: the team/field worker is
@@ -994,13 +1098,31 @@ export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WE
     // A flaky webhook must never break the handoff itself: the case is already
     // flagged needs-human in the store, so the dashboard surfaces it regardless.
     // Degrade to a warning rather than rejecting the inbound turn (P9).
-    const ac = new AbortController()
-    const timer = setTimeout(() => ac.abort(), 5000)
-    await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
-      signal: ac.signal,
-    }).then(() => clearTimeout(timer), (e) => { clearTimeout(timer); log?.warn?.('[casey] discord handoff webhook failed', e.message) })
+    await postWebhook(webhookUrl, content, log, 'discord handoff webhook')
   }
+}
+
+// Posts a one-line guardrail-breach alert to a Discord webhook. Same transport and
+// safety as the handoff notifier (no @-mentions, 5s timeout, degrade-not-throw),
+// but driven by the periodic sweep rather than an inbound turn. Returns null with
+// no URL so a sweep runs alert-free when nothing is configured.
+export function breachNotifier(webhookUrl = process.env.CASEY_ALERT_WEBHOOK || process.env.CASEY_HANDOFF_WEBHOOK, log = null) {
+  if (!webhookUrl) return null
+  return async (c, breach, detail) => {
+    const content = `Case ${c.ref}: ${detail || breach}`
+    await postWebhook(webhookUrl, content, log, 'discord breach webhook')
+  }
+}
+
+// Shared Discord-webhook POST: blocks @-mention injection, aborts after 5s, and
+// degrades a failure to a warning so a flaky webhook never breaks the caller.
+async function postWebhook(webhookUrl, content, log, label) {
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), 5000)
+  await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+    signal: ac.signal,
+  }).then(() => clearTimeout(timer), (e) => { clearTimeout(timer); log?.warn?.(`[casey] ${label} failed`, e.message) })
 }

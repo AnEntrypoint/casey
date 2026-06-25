@@ -18,11 +18,15 @@
 export const DEFAULT_THRESHOLDS = {
   staleMs: 48 * 3600e3,            // open, untouched for 2 days
   handoffMs: 4 * 3600e3,           // a human was asked for, none replied in 4h
+  escalateHandoffMs: 12 * 3600e3,  // still no operator reply after 12h -- escalate
   abandonMs: 24 * 3600e3,          // intake stalled with on-site facts missing
   neverClosedMs: 7 * 24 * 3600e3,  // resolved but not closed for a week
   // A case in active work (past triaging) that still has critical facts missing.
   // Worse than abandoned_intake because work has started but the visit cannot proceed.
   incompleteCriticalMs: 8 * 3600e3,
+  // An assisted-mode draft reply composed but not yet approved/sent. The contact
+  // is waiting on a human to release it, so a stale draft is a silent delay.
+  unsentDraftMs: 1 * 3600e3,
   // Per-stage maximum dwell. A case sitting in one stage past this is "stuck".
   stageMaxDwellMs: {
     new: 12 * 3600e3,              // un-triaged for half a day
@@ -104,6 +108,22 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   // (see dashboard reply), so the tag still being present IS the unanswered signal.
   if (tagList(caseRow).includes('needs-human') && Number.isFinite(touched) && idle >= thresholds.handoffMs) {
     out.push({ breach: 'unanswered_handoff', since_ms: idle, detail: `a person was asked for ${hours(idle)} ago` })
+    // ESCALATED tier: a DISTINCT breach (own name -> own health tag) so the sweep,
+    // which dedups one observation per newly-entered tag, fires a SECOND, separate
+    // notification when the wait crosses the escalation window. Same name with a
+    // larger since_ms would never re-fire (the tag is already present).
+    const escMs = thresholds.escalateHandoffMs ?? (12 * 3600e3)
+    if (idle >= escMs) {
+      out.push({ breach: 'unanswered_handoff_escalated', since_ms: idle, detail: `still no operator reply after ${hours(idle)} -- escalating` })
+    }
+  }
+
+  // UNSENT_DRAFT: an assisted-mode reply is composed and waiting for an operator
+  // to approve it. The draft-pending tag is set when the draft is held and cleared
+  // on approve/discard/supersede, so the tag still being present past the window
+  // IS the unsent-draft signal -- the contact is waiting on a human to release it.
+  if (tagList(caseRow).includes('draft-pending') && Number.isFinite(touched) && idle >= (thresholds.unsentDraftMs ?? (1 * 3600e3))) {
+    out.push({ breach: 'unsent_draft', since_ms: idle, detail: `a drafted reply has waited ${hours(idle)} for approval` })
   }
 
   // ABANDONED_INTAKE: the one-shot capture stalled with on-site facts still
@@ -136,4 +156,4 @@ function hours(msVal) {
 
 // Stable tag name for a breach, so the sweep can set/clear them idempotently.
 export function healthTag(breach) { return 'health:' + breach }
-export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt'].map(healthTag)
+export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'unanswered_handoff_escalated', 'unsent_draft', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt'].map(healthTag)
