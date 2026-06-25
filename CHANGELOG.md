@@ -14,6 +14,20 @@
   live `casey up` database (thatcher's sqlite handle is cwd-bound).
 - Store-outage and case-create-failure paths now actually send their warm holding
   reply to the contact instead of building it and returning silently.
+- Discord send now verifies delivery: freddie's adapter `fetch().then(r=>r.json())`
+  swallowed non-2xx responses, so a rejected send looked successful. The send is
+  wrapped to throw on a Discord error body, so a failed outbound is recorded as a
+  send-failure observation instead of being silently lost.
+
+### Added
+- Receive-liveness watchdog. A gateway WebSocket can go zombie (TCP still
+  ESTABLISHED but gateway-dead) and silently stop delivering inbound while the
+  process, HTTP server, and outbound send all stay healthy -- "online but
+  answering nobody". casey now stamps each real-time channel's last connect
+  (gateway READY/RESUMED) and last inbound; `GET /api/health` reports a `gateway`
+  field, and the dashboard pill shows "Messages: not connected" in red when a
+  configured channel has never connected since start, overriding the green AI
+  helper line so a deaf receive can never hide behind "online".
 
 ### Changed
 - First contact greeting is neutral about ownership across en/af/zu/xh, since the

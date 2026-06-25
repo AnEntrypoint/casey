@@ -25,7 +25,7 @@ const PAGE_MAX = 200
 
 // opts.token   shared secret; when set, /api and / require ?token= or Bearer header.
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
-export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null, runSweep = null } = {}) {
+export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null } = {}) {
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   app.use(express.json())
@@ -317,7 +317,27 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       // llmStatus cannot return a multi-megabyte string into the operator's UI.
       const model = s.model ? String(s.model).slice(0, 100) : null
       const url = s.url ? String(s.url).slice(0, 200) : null
-      res.json({ ...view, source: s.source, model, url })
+      // Receive-liveness for real-time channels: a zombie gateway socket leaves
+      // casey deaf while the LLM pill stays green. Surface it as `gateway` so the
+      // operator can tell "online" from "online but answering nobody". A channel
+      // configured yet never connected since start is the actionable red signal.
+      let gateway = null
+      try {
+        const rs = typeof receiveStatus === 'function' ? await receiveStatus() : receiveStatus
+        if (rs && rs.state && rs.state !== 'none') {
+          const deaf = rs.state === 'never-connected'
+          gateway = {
+            ok: !deaf,
+            state: rs.state,
+            label: deaf ? 'Messages: not connected' : 'Messages: connected',
+            detail: deaf
+              ? 'A message channel is not receiving. Contacts may be sending with no reply. Restart casey or check the connection.'
+              : 'casey is connected and listening for messages.',
+            channels: rs.channels || {},
+          }
+        }
+      } catch { gateway = null }   // receive status is best-effort; never break health
+      res.json({ ...view, source: s.source, model, url, gateway })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -1810,8 +1830,20 @@ async function refreshHealth(){
   try{ h=await api('/api/health').then(r=>{ if(!r.ok) throw new Error(r.status); return r.json() }) }
   catch(e){ h={ ok:false, label:'AI helper: unknown', detail:'Cannot reach the server to check the AI helper.' } }
   lastHealth=h
+  // A deaf receive channel (gateway not connected) is more urgent than the AI
+  // helper's state: contacts may be messaging into silence. When the server
+  // reports the gateway down, the pill shows THAT in red and overrides the
+  // AI-helper line, so "online" can never hide "answering nobody".
+  const gw=h.gateway
+  if(gw && gw.ok===false){
+    el.textContent=gw.label||'Messages: not connected'
+    el.title=gw.detail||'A message channel is not receiving.'
+    el.style.background='rgba(200,40,40,.20)'
+    el.style.color='#b22222'
+    return
+  }
   el.textContent=h.label
-  el.title=h.detail+(h.model?(' ('+h.model+')'):'')
+  el.title=h.detail+(h.model?(' ('+h.model+')'):'')+(gw&&gw.label?(' - '+gw.label):'')
   el.style.background=h.ok?'rgba(34,160,80,.18)':'rgba(200,140,0,.20)'
   el.style.color=h.ok?'#1c8c44':'#9a6a00'
 }

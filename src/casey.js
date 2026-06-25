@@ -34,6 +34,23 @@ export class Casey {
     this._inflight = new Set()      // track inbound turns for deterministic sim
     this._disconnects = []
     this._sweepTimer = null         // periodic health-guardrail interval handle
+    // Per-channel receive liveness. A gateway WebSocket can go zombie (TCP still
+    // ESTABLISHED, gateway-dead) and silently stop delivering inbound while the
+    // process, the HTTP server, and outbound send all stay healthy -- the exact
+    // "casey looks online but answers nobody" failure. We stamp the last time we
+    // saw a connect (READY) and the last inbound on each real-time channel so the
+    // health surface can flag a deaf receive instead of reporting a false green.
+    this.receiveHealth = {}         // { [channel]: { connectedAt, lastInboundAt } }
+  }
+
+  _markConnected(channel) {
+    const r = (this.receiveHealth[channel] ||= {})
+    r.connectedAt = Date.now()
+  }
+
+  _markInbound(channel) {
+    const r = (this.receiveHealth[channel] ||= {})
+    r.lastInboundAt = Date.now()
   }
 
   async init() {
@@ -116,16 +133,37 @@ export class Casey {
           const mentions = Array.isArray(raw.mentions) ? raw.mentions : []
           const botMentioned = botUserId ? mentions.some(u => u.id === botUserId) : mentions.length > 0
           if (!isDM && !botMentioned) return false
+          // We received a real, addressed-to-us inbound: receive is alive. Stamp
+          // BEFORE delegating so a throw downstream still records that we heard.
+          this._markInbound('discord')
         }
         return origEmit(event, msg, ...rest)
       }
-      // Capture bot user ID from READY event so mention filter is precise.
+      // Capture bot user ID from READY event so mention filter is precise, and
+      // stamp the connect so a long silence after a healthy READY is observable
+      // as a possibly-zombie socket rather than a false green.
       const origDispatch = a._dispatch?.bind(a)
       if (origDispatch) {
         a._dispatch = (p) => {
-          if (p.t === 'READY' && p.d?.user?.id) botUserId = p.d.user.id
+          if (p.t === 'READY') { if (p.d?.user?.id) botUserId = p.d.user.id; this._markConnected('discord') }
+          if (p.t === 'RESUMED') this._markConnected('discord')
           return origDispatch(p)
         }
+      }
+      // Verify outbound delivery. freddie's adapter.send does fetch(...).then(
+      // r => r.json()) with NO status check, so a non-2xx (wrong channel, missing
+      // perms, rate-limit, revoked token) is swallowed and casey would still log a
+      // clean outbound -- a reply that never arrived. Wrap send to inspect the
+      // Discord response: a successful message has an `id`; an error body carries a
+      // numeric `code` and `message` and no `id`. Throw on a detected failure so the
+      // caller records it as an observation rather than a false-positive outbound.
+      const origSend = a.send.bind(a)
+      a.send = async (reply) => {
+        const resp = await origSend(reply)
+        if (resp && typeof resp === 'object' && !resp.id && (resp.code != null || resp.message)) {
+          throw new Error(`discord send rejected (code ${resp.code ?? '?'}): ${String(resp.message || '').slice(0, 200)}`)
+        }
+        return resp
       }
       return a
     }
@@ -152,6 +190,30 @@ export class Casey {
   async sendReply(caseRow, text) {
     const a = this.adapters[caseRow.channel]
     if (a?.send) await a.send({ to: caseRow.external_id, text })
+  }
+
+  // Receive-liveness snapshot for the real-time channels (currently discord),
+  // so the health surface can distinguish "online" from "deaf". `sim`/`web` are
+  // request-driven and have no socket to go zombie, so they are omitted. A channel
+  // is `ok` once it has connected; `quiet` is informational only (a real channel
+  // can legitimately receive nothing for long stretches), so quietness alone never
+  // flips the pill -- only "configured but never connected since start" does, which
+  // is the actionable signal an operator can act on (a wedged/zombie initial
+  // connect). `now` is injectable for tests.
+  receiveStatus(now = Date.now()) {
+    const channels = {}
+    let worst = 'ok'
+    for (const ch of this.channels) {
+      if (ch === 'sim' || ch === 'web') continue   // no real-time receive socket
+      const r = this.receiveHealth[ch] || {}
+      const connected = r.connectedAt != null
+      const sinceInboundMs = r.lastInboundAt != null ? now - r.lastInboundAt : null
+      const sinceConnectMs = r.connectedAt != null ? now - r.connectedAt : null
+      const state = connected ? 'ok' : 'never-connected'
+      if (state === 'never-connected') worst = 'never-connected'
+      channels[ch] = { state, connected, sinceConnectMs, sinceInboundMs }
+    }
+    return { state: Object.keys(channels).length ? worst : 'none', channels }
   }
 
   // Await all in-flight inbound turns (used by sim for determinism).

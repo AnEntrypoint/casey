@@ -211,7 +211,7 @@ async function main() {
     }
     let dash
     try {
-      dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus, runSweep: () => casey.runSweepOnce() })
+      dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus, runSweep: () => casey.runSweepOnce(), receiveStatus: () => casey.receiveStatus() })
     } catch (e) {
       console.log(bad(`dashboard failed to bind port ${dashPort}: ${e.message} - start with --port <other>`))
       process.exit(1)

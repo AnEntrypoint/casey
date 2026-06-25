@@ -7,7 +7,7 @@ import { mkdtempSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createCasey } from './src/casey.js'
+import { createCasey, Casey } from './src/casey.js'
 import { createDashboard } from './src/dashboard/server.js'
 import { runScript, MockAdapter } from './src/sim/inject.js'
 import { stubLLM } from './src/sim/stub-llm.js'
@@ -370,6 +370,57 @@ async function main() {
     const j = await r.json()
     assert.ok(Array.isArray(j.cases), 'attention response has cases array')
     assert.ok(typeof j.count === 'number', 'attention response has count')
+  })
+
+  // ---- receive-liveness watchdog ----
+  // A gateway WebSocket can go zombie (TCP ESTABLISHED, gateway-dead) and
+  // silently stop delivering inbound while the process, HTTP server, and
+  // outbound send all stay healthy -- the "online but answering nobody"
+  // failure. receiveStatus() turns that silent state into an observable signal,
+  // and /api/health surfaces it as the `gateway` field so the dashboard pill can
+  // show "not connected" in red instead of a false green. We test receiveStatus
+  // on a bare Casey (no init/start) so no real Discord socket is opened.
+  await test('receiveStatus: a configured-but-never-connected channel reports never-connected; a connect flips it to ok', async () => {
+    const c = new Casey({ channels: ['discord'] })
+    const t0 = 1_000_000
+    const before = c.receiveStatus(t0)
+    assert.equal(before.state, 'never-connected', 'a channel that never saw a READY is never-connected (deaf)')
+    assert.equal(before.channels.discord.connected, false, 'channel reports not connected')
+    assert.equal(before.channels.discord.sinceConnectMs, null, 'no connect timestamp yet')
+    // Simulate a gateway READY: _markConnected stamps connectedAt -> ok.
+    c._markConnected('discord')
+    const after = c.receiveStatus()
+    assert.equal(after.state, 'ok', 'after a connect the channel is ok')
+    assert.equal(after.channels.discord.connected, true, 'channel reports connected')
+    assert.ok(after.channels.discord.sinceConnectMs >= 0, 'sinceConnectMs is a non-negative age')
+    // sim-only casey has no real-time receive socket -> state 'none', no false red.
+    assert.equal(new Casey({ channels: ['sim'] }).receiveStatus().state, 'none', 'sim/web are not receive sockets')
+  })
+
+  await test('/api/health surfaces a deaf gateway as gateway.ok=false; a connected one as gateway.ok=true; sim-only has none', async () => {
+    // Inject receiveStatus directly so the test never depends on a live socket.
+    const deafDash = await createDashboard(store, { port: 4581, token: 'secret',
+      receiveStatus: () => ({ state: 'never-connected', channels: { discord: { state: 'never-connected', connected: false, sinceConnectMs: null, sinceInboundMs: null } } }) })
+    try {
+      const h = await df('http://localhost:4581/api/health?token=secret').then(r => r.json())
+      assert.ok(h.gateway, 'health includes a gateway field when a channel is configured')
+      assert.equal(h.gateway.ok, false, 'a never-connected gateway is reported not ok')
+      assert.equal(h.gateway.state, 'never-connected')
+      assert.equal(h.gateway.label, 'Messages: not connected', 'plain-language label for the operator')
+    } finally { await deafDash.close() }
+    const okDash = await createDashboard(store, { port: 4582, token: 'secret',
+      receiveStatus: () => ({ state: 'ok', channels: { discord: { state: 'ok', connected: true, sinceConnectMs: 1000, sinceInboundMs: 500 } } }) })
+    try {
+      const h = await df('http://localhost:4582/api/health?token=secret').then(r => r.json())
+      assert.ok(h.gateway && h.gateway.ok === true, 'a connected gateway is reported ok')
+      assert.equal(h.gateway.label, 'Messages: connected')
+    } finally { await okDash.close() }
+    const simDash = await createDashboard(store, { port: 4583, token: 'secret',
+      receiveStatus: () => ({ state: 'none', channels: {} }) })
+    try {
+      const h = await df('http://localhost:4583/api/health?token=secret').then(r => r.json())
+      assert.equal(h.gateway, null, 'no real-time channel -> no gateway pill, never a false red')
+    } finally { await simDash.close() }
   })
 
   await test('countCases is exact for casey scale (50k cap is a worst-case ceiling, not a truncation here)', async () => {

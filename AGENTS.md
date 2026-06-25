@@ -110,6 +110,13 @@ clone that lacks them. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
 - **Fixed keywords short-circuit the LLM**: `HELP` / `STATUS` / `HUMAN` / `STOP`
   answer instantly in any phrasing/language.
 - **Full observability**: every action is an append-only audited `event` row.
+- **Receive-liveness is observable, never a false green**: a real-time channel
+  (Discord/WhatsApp) can have a live TCP socket yet a dead gateway and deliver no
+  inbound. casey stamps each channel's last connect (gateway READY/RESUMED) and
+  last inbound; `GET /api/health` carries a `gateway` field and the dashboard pill
+  shows "Messages: not connected" in red when a configured channel never connected
+  since start. Outbound send verifies delivery (a non-2xx is a recorded
+  send-failure observation), so neither a deaf receive nor a dropped send hides.
 - **Autonomy modes** per case (`auto | assisted | observe`) scope what the agent
   may do; the dashboard can override stage and reply as a human.
 - **Operator surface is low-jargon**: "Needs you now" inbox, plain-language mode,
