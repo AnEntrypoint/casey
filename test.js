@@ -174,15 +174,33 @@ async function main() {
     // No header -> falls back to the generic operator, never an injected actor.
     assert.equal(roster.current, 'dashboard-operator', 'absent header resolves to the default operator')
     // A known roster id selected via the header is recorded on the audited event.
-    const r = await df('http://localhost:4577/api/cases/' + caseId + '/reply?token=secret', {
+    // Use a FRESH conversation so the claim-on-reply assertions see an unowned case.
+    const idsBefore = new Set((await store.listCases({}, { limit: 10000 })).map(c => c.id))
+    await runScript(adapter, ['my cattle are sick'], { from: 'rosterfarmer', channel_id: 'croster', wait: () => casey.drain() })
+    const rosterCase = (await store.listCases({}, { limit: 10000 })).find(c => !idsBefore.has(c.id))
+    assert.ok(rosterCase, 'a fresh case opened for the roster test')
+    const rcid = rosterCase.id
+    const r = await df('http://localhost:4577/api/cases/' + rcid + '/reply?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-casey-operator': 'thandi' }, body: JSON.stringify({ text: 'Thandi here' }),
     })
     assert.equal(r.status, 200)
-    const evs = await store.listEvents(caseId)
+    const rbody = await r.json()
+    const evs = await store.listEvents(rcid)
     const lastOut = [...evs].reverse().find(e => e.kind === 'outbound' && e.text === 'Thandi here')
     assert.ok(lastOut, 'the Thandi reply was recorded as an outbound event')
     // thatcher stores event.data as a JSON string; parse before reading the attributed operator.
     assert.equal((typeof lastOut.data === 'string' ? JSON.parse(lastOut.data) : lastOut.data)?.by, 'thandi', 'the outbound event records the picked operator id')
+    // Claim-on-reply: answering an unowned case claims it for the acting operator,
+    // with an audited claim event, and a second reply does NOT re-claim (soft, idempotent).
+    assert.equal(rbody.claimed, true, 'replying to an unowned case claims it')
+    assert.equal((await store.getCase(rcid)).assignee, 'thandi', 'the case assignee is set to the acting operator')
+    const claimEv = [...evs].reverse().find(e => e.kind === 'action' && /^Claimed by /.test(e.text || ''))
+    assert.ok(claimEv, 'a claim is recorded as an audited action event')
+    const r2 = await df('http://localhost:4577/api/cases/' + rcid + '/reply?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-casey-operator': 'sipho' }, body: JSON.stringify({ text: 'Sipho follow-up' }),
+    }).then(x => x.json())
+    assert.equal(r2.claimed, false, 'a reply to an already-claimed case does not steal it')
+    assert.equal((await store.getCase(rcid)).assignee, 'thandi', 'the original claimant keeps the case')
     // An unknown id is NOT trusted -- it falls back, so attribution can never be forged into a new actor.
     const who = await df('http://localhost:4577/api/operators?token=secret', { headers: { 'x-casey-operator': 'nobody-xyz' } }).then(r => r.json())
     assert.equal(who.current, 'dashboard-operator', 'an off-roster id falls back to the default, never injected')

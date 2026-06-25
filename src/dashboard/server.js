@@ -1014,6 +1014,21 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
           await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send operator reply on channel: ${e.message || 'unknown error'}` })
         }
       }
+      // Claim-on-reply: the operator who personally answered owns the case. Only
+      // auto-claim an unowned case (unset or the default 'agent'); never silently
+      // take a case another human already holds -- that stays a soft nudge, not a
+      // hard steal. The claim is recorded BEFORE the outbound event so the reply
+      // stays the latest event on the timeline, and is its own audited action so
+      // the handover is observable.
+      let claimed = false
+      if (delivered) {
+        const current = String(c.assignee || '').trim()
+        if (!current || current === 'agent') {
+          await store.updateCase(c.id, { assignee: op.id }, op)
+          await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `Claimed by ${op.name || op.id}`, data: { claimed_by: op.id, was: current || null } })
+          claimed = true
+        }
+      }
       await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id } })
       // The operator personally answered, so the "wants a human" flag is satisfied
       // -- but only once the message actually reached the contact. Clear it then,
@@ -1024,7 +1039,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
           await store.updateCase(c.id, { tags: tags.filter(t => t !== 'needs-human').join(',') }, op)
         }
       }
-      res.json({ ok: true, sent: !!sendReply, delivered })
+      res.json({ ok: true, sent: !!sendReply, delivered, claimed })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
