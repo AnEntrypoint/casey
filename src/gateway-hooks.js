@@ -540,6 +540,15 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     if (inboundText) {
       justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log)
       fresh = await store.getCase(fresh.id)
+      // Keep the operator-facing subject/summary populated from the captured
+      // fields when the model never set them (additive only -- never clobbers a
+      // model/human value). Same captured-field projection that drives the
+      // contact-facing acknowledgement, so a fully-degraded conversation still
+      // gives an operator a real one-line picture instead of '(none yet)'.
+      if (justCaptured.length) {
+        const wrote = await syncSummaryFromCaptured(store, fresh, log)
+        if (wrote) fresh = await store.getCase(fresh.id)
+      }
     }
 
     // Deterministic intent shortcuts. For a few universal intents a low-literacy
@@ -951,6 +960,72 @@ function ackCapturedFields(justFilled) {
   const pick = order.find(k => justFilled.includes(k)) || justFilled.find(k => CAPTURED_ACK[k])
   const label = pick && CAPTURED_ACK[pick]
   return label ? `Thank you -- I have noted ${label}.` : ''
+}
+
+// Operator-facing one-line summary projected from the deterministically-captured
+// report fields. The weak model returns no tool_calls (so it never sets a subject
+// or summary), which left an operator staring at '(none yet)' on a real report --
+// this synthesises a short scannable picture from what the contact plainly stated
+// so the inbox shows the animals, the signs, how many, and where, even on a fully
+// model-degraded conversation. Plain words only (no internal jargon); the captured
+// VALUES are the contact's own text and are HTML-escaped at render like all contact
+// text. Returns '' when nothing useful is captured yet (caller then writes nothing).
+function summaryFromReport(reportRaw) {
+  const r = parseReportSafe(reportRaw)
+  const val = k => (r[k] == null ? '' : String(r[k]).trim())
+  const parts = []
+  const species = val('species')
+  const symptoms = val('symptoms')
+  const dead = val('dead_count')
+  const affected = val('affected_count')
+  const location = val('location')
+  const onset = val('onset')
+  // Lead with the animals + what is wrong: "cattle, blue eye" / "sheep, sick".
+  const head = [species, symptoms].filter(Boolean).join(', ')
+  if (head) parts.push(head)
+  else if (symptoms) parts.push(symptoms)
+  if (dead) parts.push(`${dead} dead`)
+  if (affected && !dead) parts.push(`${affected} affected`)
+  if (location) parts.push(`at ${location}`)
+  if (onset) parts.push(`since ${onset}`)
+  return parts.join(' - ')
+}
+
+// A short subject (title) from the same projection: animals + sign, or the sign
+// alone, capped so the inbox row stays scannable. Returns '' when nothing yet.
+function subjectFromReport(reportRaw) {
+  const r = parseReportSafe(reportRaw)
+  const val = k => (r[k] == null ? '' : String(r[k]).trim())
+  const species = val('species')
+  const symptoms = val('symptoms')
+  const title = [species, symptoms].filter(Boolean).join(' - ') || symptoms || val('location')
+  return title ? truncate(title, 60) : ''
+}
+
+// Keep subject/summary populated from captured fields WITHOUT ever clobbering a
+// model- or human-authored value. A summary set by the agent (case_update) or an
+// operator is real working memory; we only fill the gap when the field is still
+// empty or the default placeholder. Quiet update (does not touch last_event_at):
+// this is a derived projection of facts already recorded this turn, not new
+// contact activity. Returns true when it wrote something.
+async function syncSummaryFromCaptured(store, caseRow, log) {
+  try {
+    const isBlank = v => v == null || String(v).trim() === '' || String(v).trim() === '(none yet)'
+    const patch = {}
+    if (isBlank(caseRow.summary)) {
+      const s = summaryFromReport(caseRow.report)
+      if (s) patch.summary = s
+    }
+    if (isBlank(caseRow.subject)) {
+      const sub = subjectFromReport(caseRow.report)
+      if (sub) patch.subject = sub
+    }
+    if (!Object.keys(patch).length) return false
+    await store.updateCaseQuiet(caseRow.id, patch)
+    // Field KEYS only -- never the raw captured values (contact PII) in the log line.
+    await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', touch: false, text: `summary auto-filled from captured fields: ${Object.keys(patch).join(', ')}` })
+    return true
+  } catch (e) { log?.warn?.('[casey] summary auto-fill failed', { caseId: caseRow.id, error: e.message }); return false }
 }
 
 // The full deterministic capture-driven reply: acknowledge what was just captured,

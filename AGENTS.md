@@ -45,6 +45,7 @@ src/
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep
   correlate.js             cross-case correlation helpers
+  extract.js               deterministic field capture from plain contact text (species/symptoms/counts/location/onset/name); shared by the live handler and the stub model so a case is never an empty shell even when the model drives no tools
   gateway-hooks.js         makeCaseHandler: plain-language prompt, intent keywords, dedup, media, observe, fallback
   discord-receive.js       fallback Discord WS receive for older freddie builds
   llm.js                   model call wiring

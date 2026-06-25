@@ -20,6 +20,16 @@
   send-failure observation instead of being silently lost.
 
 ### Added
+- Deterministic field capture every turn (`src/extract.js`). The production model
+  is a small local model that does not reliably call the `case_report` tool, so a
+  real conversation would log an empty case. casey now runs `extractFields` on
+  every inbound turn and records whatever the contact plainly stated (species,
+  symptoms, counts, location, onset, name) -- so an actionable case gets all the
+  details it needs, not just a logged reference. The degraded fallback advances
+  field-by-field (asking the next missing detail) rather than re-greeting, and a
+  later greeting on an in-progress case still captures its content. Location
+  capture stops at a following clause word ("near Musina since Monday" -> place
+  "Musina") and symptom capture matches inflected forms ("limping", "drooling").
 - Receive-liveness watchdog. A gateway WebSocket can go zombie (TCP still
   ESTABLISHED but gateway-dead) and silently stop delivering inbound while the
   process, HTTP server, and outbound send all stay healthy -- "online but

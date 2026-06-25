@@ -1305,6 +1305,63 @@ async function main() {
     assert.ok(html.includes('&lt;script&gt;') || html.includes('&lt;img'), 'XSS payload is HTML-entity-escaped in the output')
   })
 
+  // ---- progression: the weak model is not trusted to drive intake ----------
+  // The live model returns content-only replies (no tool_calls), so the case
+  // would be an empty shell if intake relied on it. Deterministic extractFields
+  // must record what the contact plainly stated on EVERY turn, and the degraded
+  // fallback must advance field-by-field rather than re-greeting. These witness
+  // the originating defect: "it just logs cases from messages, without all the
+  // relevant details ... something without enough details isn't an actionable
+  // case, it should get everything it needs."
+  await test('extractFields captures what the contact plainly stated', async () => {
+    const { extractFields } = await import('./src/extract.js')
+    const f = extractFields('three of my cattle died near Musina since Monday, my name is Thabo')
+    assert.equal(f.species, 'cattle', `species: ${JSON.stringify(f)}`)
+    assert.equal(f.dead_count, '3', `dead_count from "three ... died": ${JSON.stringify(f)}`)
+    assert.equal(f.location, 'Musina', `location after "near": ${JSON.stringify(f)}`)
+    assert.ok(/monday/i.test(f.onset || ''), `onset after "since": ${JSON.stringify(f)}`)
+    assert.equal(f.contact_name, 'Thabo', `name after "my name is": ${JSON.stringify(f)}`)
+    // A bare greeting captures nothing (no false fields off "Hi Casey").
+    assert.equal(Object.keys(extractFields('hi casey')).length, 0, 'greeting yields no fields')
+  })
+
+  await test('multi-turn conversation accumulates every stated field even as the model stays degraded', async () => {
+    // The stub model never calls tools; only deterministic capture fills the report.
+    const ext = 'progress-' + Date.now()
+    await runScript(adapter, ['my cattle are sick'], { from: ext, channel_id: ext, wait: () => casey.drain() })
+    await runScript(adapter, ['they are drooling and have blisters'], { from: ext, channel_id: ext, wait: () => casey.drain() })
+    await runScript(adapter, ['six of them, near Musina'], { from: ext, channel_id: ext, wait: () => casey.drain() })
+    const c = (await store.listCases()).find(x => x.external_id === ext)
+    assert.ok(c, 'case exists for the conversation')
+    const rep = JSON.parse(c.report || '{}')
+    assert.equal(rep.species, 'cattle', `species retained from turn 1: ${JSON.stringify(rep)}`)
+    // Turn 1 "sick" fills symptoms; fill-if-empty keeps it (never clobbers) when
+    // turn 2 adds "drooling" -- the point is the field is captured, not empty.
+    assert.ok(rep.symptoms && rep.symptoms.trim().length > 0, `symptoms captured: ${JSON.stringify(rep)}`)
+    assert.equal(rep.affected_count, '6', `count from turn 3: ${JSON.stringify(rep)}`)
+    assert.equal(rep.location, 'Musina', `location from turn 3, nothing lost: ${JSON.stringify(rep)}`)
+  })
+
+  await test('degraded fallback advances field-by-field and never re-greets an in-progress case', async () => {
+    const { advancingFallback } = await import('./src/gateway-hooks.js')
+    // A case missing several fields: the fallback names a MISSING field to ask,
+    // and asking twice for a case at different fill states asks DIFFERENT things.
+    const empty = { ref: 'CASE-1', report: JSON.stringify({}) }
+    const partial = { ref: 'CASE-1', report: JSON.stringify({ species: 'cattle', symptoms: 'drooling', location: 'Musina', affected_count: '6' }) }
+    const a1 = advancingFallback('ok', empty)
+    const a2 = advancingFallback('ok', partial)
+    assert.ok(a1 && a1.length > 0, 'fallback is never blank')
+    assert.notEqual(a1, a2, 'the ask advances as fields fill -- not the same line every turn')
+  })
+
+  await test('a later greeting on an in-progress case still captures content and does not reset', async () => {
+    // "hi casey, my goats are limping" -- the greeting must not swallow the report.
+    const { extractFields } = await import('./src/extract.js')
+    const f = extractFields('hi casey, my goats are limping')
+    assert.equal(f.species, 'goats', `species captured despite greeting: ${JSON.stringify(f)}`)
+    assert.ok(/limp/.test(f.symptoms || ''), `symptom captured despite greeting: ${JSON.stringify(f)}`)
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')

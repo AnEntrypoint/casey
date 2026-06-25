@@ -54,7 +54,9 @@ export function extractFields(text) {
   const SYMPTOM_WORDS = ['drool', 'blister', 'limp', 'lame', 'died', 'dying', 'sick',
     'siek', 'gula', 'kwyl', 'kreupel', 'amathe']
   const phrase = SYMPTOM_PHRASES.find(s => t.includes(s))
-  const word = SYMPTOM_WORDS.find(s => new RegExp(`\\b${escapeRe(s)}\\b`).test(t))
+  // Stem match: a farmer writes "limping", "drooling", "blisters" -- match the
+  // stem at a word boundary so the inflected form is still captured, not dropped.
+  const word = SYMPTOM_WORDS.find(s => new RegExp(`\\b${escapeRe(s)}`).test(t))
   if (phrase) f.symptoms = phrase
   else if (word) f.symptoms = word
 
@@ -78,7 +80,11 @@ export function extractFields(text) {
   const locPat = /\b(?:near|past|from|at|on the|in|by)\s+([A-Z][a-zA-Z\s\-]{2,30}?)(?:\s*,|\s*\.|$)/
   const locMatch = raw.match(locPat)
   if (locMatch && !STOP_WORDS.has(locMatch[1].trim().toLowerCase())) {
-    f.location = locMatch[1].trim()
+    // Cut the captured place at the first temporal/clause word so a run-on like
+    // "Musina since Monday" yields the place "Musina", not the whole tail.
+    f.location = locMatch[1]
+      .split(/\s+(?:since|started|from|near|past|and|but|because|they|we|it|my)\b/i)[0]
+      .trim()
   }
   if (!f.location) {
     const farmMatch = raw.match(/\b([A-Z][a-zA-Z\s]{2,20})\s+(?:farm|area|dorp|plaas)\b/i)
