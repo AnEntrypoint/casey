@@ -12,6 +12,8 @@
 
 import { createThatcher } from 'thatcher'
 import path from 'node:path'
+import { DEFAULT_THRESHOLDS } from './case-health.js'
+import { mergeThresholds } from './thresholds.js'
 import fs from 'node:fs'
 import yaml from 'js-yaml'
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
@@ -178,9 +180,73 @@ export class CaseStore {
     return best
   }
 
+  // The open (non-terminal) workflow stages -- every status except 'closed'. The
+  // same finite open-stage set findOpenCase iterates; exposed so callers (e.g. the
+  // boot resume sweep) can filter to cases that still want a reply without
+  // duplicating the 'closed is the only terminal' knowledge.
+  getOpenStatuses() { return Object.keys(this._wf || {}).filter(s => s !== 'closed') }
+
   async getCase(id) { return this.t.get('case', id) }
 
   async getContact(id) { return id ? this.t.get('contact', id) : null }
+
+  // Operator-tunable health thresholds, persisted as an append-only audited
+  // observation on a singleton `system` settings case (the same pattern the
+  // runtime-event log uses). The LATEST `thresholds:<json>` observation is the
+  // live value; absent any, callers fall back to DEFAULT_THRESHOLDS. Storing the
+  // change as an event makes every tuning auditable for free -- no schema change,
+  // no new entity, and a full history of who tightened what and when.
+  async _settingsCaseId() {
+    const { case: c } = await this.findOrCreateCase({
+      channel: 'system', external_id: 'settings:thresholds',
+      contact: { display_name: 'settings' },
+    })
+    return c.id
+  }
+
+  // Returns the latest persisted thresholds patch object, or null if none set.
+  // Validation/merge over defaults is the caller's concern (src/thresholds.js).
+  async getThresholdsPatch() {
+    let id
+    try { id = await this._settingsCaseId() } catch { return null }
+    const events = await this.listEvents(id).catch(() => [])
+    // Walk newest-first; the first parseable thresholds observation wins.
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i]
+      if (ev.kind !== 'observation' || typeof ev.text !== 'string') continue
+      const m = ev.text.match(/^thresholds:(.+)$/s)
+      if (!m) continue
+      try { return JSON.parse(m[1]) } catch { continue }
+    }
+    return null
+  }
+
+  // Persist a thresholds patch as a new audited observation. The patch is the
+  // already-validated/merged object; we store it verbatim so a later read replays
+  // exactly what was accepted. Returns the stored patch.
+  async setThresholdsPatch(patch, user) {
+    const id = await this._settingsCaseId()
+    await this.appendEvent(id, {
+      kind: 'observation', actor: 'operator',
+      text: `thresholds:${JSON.stringify(patch)}`,
+      data: { keys: Object.keys(patch || {}), by: user?.id || user || 'operator' },
+    })
+    return patch
+  }
+
+  // The LIVE thresholds the sweep and /api/attention must both read at call time:
+  // the persisted operator patch (if any) merged over a boot override (if any)
+  // merged over DEFAULT_THRESHOLDS. Reading this per call -- not once at boot --
+  // is what makes a PUT take effect immediately on the next sweep and the next
+  // attention scan, the whole point of the tunable knob. A store read failure
+  // falls back to the boot/default value rather than throwing.
+  async resolveThresholds(bootOverride = null) {
+    const base = bootOverride ? mergeThresholds(bootOverride).thresholds : DEFAULT_THRESHOLDS
+    let patch = null
+    try { patch = await this.getThresholdsPatch() } catch { patch = null }
+    if (!patch) return base
+    return mergeThresholds(patch, base).thresholds
+  }
 
   // Most-recently-active first. thatcher ignores orderBy/order so we sort in JS
   // (by last_event_at, falling back to created_at) to make the order real. The
@@ -556,23 +622,22 @@ export class CaseStore {
 
   // Chronological (oldest-first). thatcher ignores orderBy/order, so we sort in
   // JS to make the order a real guarantee rather than relying on its (undocumented)
-  // insertion-order behaviour. created_at is a unix-seconds integer; we tiebreak
-  // on id so same-second events keep a stable order.
+  // insertion-order behaviour. created_at is a unix-seconds integer; same-second
+  // events keep insertion order via the stable index tiebreak (see sortByCreatedStable).
   async listEvents(caseId, opts = {}) {
     // Default high, not 200: merge/split and conversation-context callers need the
     // WHOLE timeline -- a silent 200/1000 cap drops events on a long case, losing
     // history on merge and miscounting the empty-source guard on split (P1/P9).
     // Explicit-limit callers (case_get's 30) still win.
     const rows = await this.t.list('event', { case_id: caseId }, { ...opts, limit: opts.limit ?? 10000 })
-    return rows.sort(byCreatedAsc)
+    return byCreatedAscList(rows)
   }
 
   // Paged, newest-first window for the dashboard timeline. We sort the full set
   // newest-first in JS, then apply the page window, so paging is correct even
   // though thatcher does not honour orderBy/order.
   async listEventsPage(caseId, { limit = 50, offset = 0 } = {}) {
-    const rows = await this.t.list('event', { case_id: caseId }, { limit: 1000 })
-    rows.sort(byCreatedDesc)
+    const rows = byCreatedDescList(await this.t.list('event', { case_id: caseId }, { limit: 1000 }))
     return rows.slice(offset, offset + limit)
   }
 
@@ -638,12 +703,29 @@ function nowIso() {
   return new Date().toISOString()
 }
 
-// Event ordering: created_at is a unix-seconds integer; id is the stable
-// tiebreaker so same-second events keep a deterministic order. thatcher ignores
-// orderBy, so these provide the ordering guarantee in JS.
+// Event ordering: created_at is a unix-SECONDS integer (coarse -- a whole turn's
+// events routinely share one second), and thatcher's id is a time-prefixed string
+// with a RANDOM suffix, so the id is NOT a reliable insertion-order tiebreaker:
+// within one second, two events sort by their random suffixes, scrambling order.
+// What IS reliable is thatcher's raw list order, which preserves insertion order
+// (witnessed). So we sort by created_at with a STABLE sort that breaks ties by the
+// row's original index in the input -- insertion order is preserved exactly on a
+// tie, and positional logic (resume completed-after, timeline replay) is
+// deterministic. ordered(rows, dir) is the only sort entry point; it never tie-
+// breaks on the id. (A prior version tie-broke on id assuming monotonic integer
+// ids -- false for thatcher's random-suffix ids -- and made the resume sweep flaky.)
 const ca = (r) => (r?.created_at || 0)
-function byCreatedAsc(a, b) { return ca(a) - ca(b) || String(a.id).localeCompare(String(b.id)) }
-function byCreatedDesc(a, b) { return ca(b) - ca(a) || String(b.id).localeCompare(String(a.id)) }
+function sortByCreatedStable(rows, dir) {
+  // Decorate with the input index, sort by (created_at, index), undecorate. The
+  // index tiebreak keeps same-second events in arrival order regardless of the
+  // engine's sort stability or the id's unsortable suffix.
+  return rows
+    .map((row, idx) => ({ row, idx }))
+    .sort((a, b) => dir * (ca(a.row) - ca(b.row)) || (a.idx - b.idx))
+    .map(x => x.row)
+}
+function byCreatedAscList(rows) { return sortByCreatedStable(rows, 1) }
+function byCreatedDescList(rows) { return sortByCreatedStable(rows, -1) }
 // Case recency: last activity if known, else creation time. last_event_at is an
 // ISO string (or null); coerce to a comparable number.
 function recencyKey(c) {

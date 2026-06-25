@@ -92,6 +92,33 @@ clone that lacks them. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
 | `CASEY_PUBLIC_URL` | When set, the agent includes a `{CASEY_PUBLIC_URL}/report?ref={ref}` link in the first contact message. The `/report` page is a public (no-token) contact-facing form where contacts can fill in case details directly. |
 | `CASEY_LOG=silent` | Silence structured JSON logs (used by tests). |
 | `CASEY_STUB_LLM=1` | Run `casey up` with the offline stub model. |
+| `CASEY_RELOAD=0` | Disable hot-reload (the supervisor still restarts on crash; it just stops watching source). |
+| `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (e.g. `../freddie/src`). `src/` and a sibling `../freddie/src` are watched by default; absent dirs are skipped with a warning. Allowlist only -- never contact input. |
+| `CASEY_RELOAD_DEBOUNCE_MS` | Coalesce a burst of saves into one reload (default 300). |
+| `CASEY_DRAIN_DEADLINE_MS` | How long a reloading worker may finish in-flight turns before it is killed (default 15000). |
+| `CASEY_CRASH_WINDOW_MS`, `CASEY_CRASH_LIMIT` | Crash budget: more than `LIMIT` crashes within `WINDOW` ms stops the restart loop instead of thrashing (defaults 60000 / 5). |
+| `CASEY_RESTART_BACKOFF_MS`, `CASEY_RESTART_BACKOFF_CEIL_MS` | Restart backoff base and ceiling (defaults 500 / 10000). |
+| `CASEY_RECEIVE_SILENCE_MS` | Zombie-receive self-heal: a channel that was receiving then went silent longer than this is treated as a wedged gateway and restarted. Default 0 = OFF (a quiet day is indistinguishable from a wedge by silence alone). |
+
+## Supervised runtime (hot reload + crash restart)
+
+`casey up` runs under a supervisor (`src/supervisor.js`) that forks the actual
+gateway+dashboard in a child worker (`bin/worker.js`) and owns fork/kill/watch.
+The supervisor never re-imports app code, so a worker crash or a source edit only
+recycles the child -- the parent stays up. `src/supervisor-machine.js` is the pure
+xstate v5 transition authority (running -> draining -> restarting -> running, plus
+the crash-budget stop state); the supervisor is its only I/O.
+
+- Hot reload: a `.js`/`.mjs` save under a watched dir (default `src/` +
+  `../freddie/src`) drains in-flight turns (up to `CASEY_DRAIN_DEADLINE_MS`) then
+  re-forks the worker on fresh code. The store (`app.db`) is the durable boundary,
+  reopened per worker -- nothing is lost across a reload.
+- Crash restart: a worker that exits non-zero is re-forked with exponential
+  backoff, bounded by the crash budget so a boot-loop stops instead of thrashing.
+- The watch list is a fixed allowlist (`src/`, `../freddie/src`, `CASEY_RELOAD_PATHS`),
+  never derived from contact input; the fork takes an argv array, never an
+  interpolated shell string. Run `casey up --no-reload` to watch nothing and
+  `casey up --no-supervise` to run the worker in-process (no restart-on-crash).
 
 ## Design principles (preserve these)
 

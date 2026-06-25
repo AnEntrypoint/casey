@@ -629,6 +629,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     try {
       const { classifyCaseHealth } = await import('../case-health.js')
       const now = Date.now()
+      // Use the LIVE operator-tuned thresholds, not the hard defaults. Passing no
+      // thresholds here was a latent bug: a team that tightened handoffMs via
+      // /api/thresholds still saw the inbox classify against the shipped default.
+      const thresholds = await store.resolveThresholds()
       // Rank over ALL open cases with the SAME enum-weighted scorer the SPA used
       // to render (src/attn.js), so a high-urgency case outside the page window
       // the client fetched still reaches the inbox -- the ranking is no longer
@@ -642,9 +646,51 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const cases = items.map(({ c, score, reason }) => ({
         id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
         status: c.status, updated_at: c.updated_at || c.created_at,
-        score, reason, breaches: classifyCaseHealth(c, now)
+        score, reason, breaches: classifyCaseHealth(c, now, thresholds)
       }))
       res.json({ count: cases.length, total, limit, offset, cases })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Operator-tunable health thresholds. GET returns the live effective values
+  // (persisted patch merged over defaults); PUT validates+clamps a partial patch
+  // against the known keys, persists it as an audited observation, and returns the
+  // new effective values plus which keys applied/were rejected. Both are gated by
+  // the global auth middleware above. The PUT feeds BOTH the live sweep and the
+  // /api/attention classifier, since both read store.resolveThresholds() at call
+  // time -- a change here takes effect on the next sweep and the next inbox scan.
+  app.get('/api/thresholds', async (req, res) => {
+    try {
+      const { mergeThresholds, THRESHOLD_KEYS } = await import('../thresholds.js')
+      const patch = await store.getThresholdsPatch()
+      const effective = patch ? mergeThresholds(patch).thresholds : (await import('../case-health.js')).DEFAULT_THRESHOLDS
+      res.json({ thresholds: effective, customized: !!patch, keys: THRESHOLD_KEYS })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  app.put('/api/thresholds', async (req, res) => {
+    try {
+      const { mergeThresholds } = await import('../thresholds.js')
+      const body = req.body && typeof req.body === 'object' ? req.body : {}
+      const { thresholds, applied, rejected } = mergeThresholds(body)
+      if (!applied.length) {
+        return res.status(400).json({ error: 'no valid threshold keys in patch', rejected })
+      }
+      // Persist only the accepted, clamped values (not the raw body), so a replay
+      // reproduces exactly what took effect.
+      const accepted = {}
+      for (const k of applied) {
+        if (k.startsWith('stageMaxDwellMs.')) {
+          const sk = k.slice('stageMaxDwellMs.'.length)
+          accepted.stageMaxDwellMs = accepted.stageMaxDwellMs || {}
+          accepted.stageMaxDwellMs[sk] = thresholds.stageMaxDwellMs[sk]
+        } else {
+          accepted[k] = thresholds[k]
+        }
+      }
+      await store.setThresholdsPatch(accepted, OPERATOR)
+      const effective = await store.resolveThresholds()
+      res.json({ ok: true, thresholds: effective, applied, rejected })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 

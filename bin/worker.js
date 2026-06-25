@@ -102,6 +102,43 @@ async function main() {
   let runtimeSnapshot = null
   const runtimeStatus = () => runtimeSnapshot
 
+  // Durable runtime-lifecycle audit: the parent buffers each CRASH/RELOAD/DEGRADED/
+  // BUDGET bounce and flushes it to us (PARENT_MSG.RUNTIME_EVENT) once we are READY,
+  // so a crash that killed the PREVIOUS worker is persisted by THIS one. We record
+  // it as an append-only system observation on a singleton runtime case so the
+  // timeline + shift-handover show the runtime was bounced and why. Reason-only:
+  // the parent snapshot never carries external_id (PII), so nothing here can leak it.
+  let runtimeCaseIdP = null
+  const RUNTIME_EVENT_LABEL = {
+    CRASH: 'CRASH', RELOAD_REQUESTED: 'RELOAD', HEALTH_DEGRADED: 'DEGRADED', BUDGET_EXCEEDED: 'CRASH-BUDGET-EXCEEDED',
+  }
+  async function runtimeCaseId() {
+    if (!runtimeCaseIdP) {
+      runtimeCaseIdP = casey.store.findOrCreateCase({
+        channel: 'system', external_id: 'runtime:supervisor',
+        contact: { display_name: 'casey runtime', handle: 'runtime' },
+      }).then(r => {
+        if (r.created && !r.case.subject) {
+          casey.store.updateCase(r.case.id, { subject: 'casey runtime lifecycle' }).catch(() => {})
+        }
+        return r.case.id
+      })
+    }
+    return runtimeCaseIdP
+  }
+  async function recordRuntimeEvent(ev) {
+    try {
+      const label = RUNTIME_EVENT_LABEL[ev.event] || ev.event || 'EVENT'
+      const reason = ev.reason ? ` -- ${String(ev.reason).slice(0, 300)}` : ''
+      const id = await runtimeCaseId()
+      await casey.store.appendEvent(id, {
+        kind: 'observation', actor: 'system',
+        text: `RUNTIME ${label}${reason} (restart #${ev.restarts ?? 0})`,
+        data: { runtime: ev.event, restarts: ev.restarts ?? 0 },
+      })
+    } catch (e) { console.error('[worker] runtime-event record failed:', e.message) }
+  }
+
   let dash
   try {
     dash = await createDashboard(casey.store, {
@@ -150,6 +187,7 @@ async function main() {
       if (m.type === PARENT_MSG.DRAIN) drainAndExit(0)
       else if (m.type === PARENT_MSG.HEALTH_QUERY) reportHealth()
       else if (m.type === PARENT_MSG.STATE) runtimeSnapshot = m.payload || null
+      else if (m.type === PARENT_MSG.RUNTIME_EVENT) recordRuntimeEvent(m.payload || {})
     })
     // Periodic self-report so the parent can detect a wedged worker (no ticks)
     // distinct from a crashed one (exit event). Unref'd: it never holds the worker

@@ -255,7 +255,11 @@ export class Casey {
           if (notify) await notify(c, breach, detail)
         }
       : null
-    return sweepCases(this.store, now, this.opts.healthThresholds, { log: this.log, notifyBreach })
+    // Read the live thresholds (persisted operator patch over the boot override
+    // over defaults) at call time, so a /api/thresholds change takes effect on the
+    // very next sweep without a restart.
+    const thresholds = await this.store.resolveThresholds(this.opts.healthThresholds)
+    return sweepCases(this.store, now, thresholds, { log: this.log, notifyBreach })
   }
 
   // Start (or restart) the periodic guardrail sweep. Opt-in: a non-positive
@@ -282,6 +286,98 @@ export class Casey {
     if (this.opts.sweepIntervalMs !== 0) this.startSweep()
     // One-time backfill: tag channel-created cases that predate intake_mode tagging.
     this._backfillIntakeMode().catch(e => this.log?.warn?.('[casey] intake_mode backfill failed', { error: e.message }))
+    // One-shot boot recovery: re-drive turns that started but never replied (the
+    // process crashed/reloaded mid-turn). Bounded; never blocks start; never
+    // double-sends (each re-drive is marked BEFORE it runs).
+    this.resumePendingTurns().catch(e => this.log?.warn?.('[casey] resume sweep failed', { error: e.message }))
+  }
+
+  // Boot-time recovery for the "contact messaged, casey crashed before replying"
+  // failure. Scan a bounded window of recent open cases; for each, find an inbound
+  // whose agent turn STARTED (a `TURN-START:<msgId>` observation -- written by the
+  // handler before the LLM call) but never COMPLETED (no later outbound and no
+  // later draft), and re-drive the handler for it exactly once.
+  //
+  // At-most-once is structural: a durable `resume-attempted:<msgId>` observation is
+  // appended BEFORE the re-drive. If the re-drive itself crashes, the next boot sees
+  // the marker and skips -- a possible MISS is preferred over a contact-facing
+  // double-send (design principle: never nag). A turn whose outbound send merely
+  // failed is NOT re-driven: it has a following outbound (the send-failure path
+  // still records the outbound event), so it reads as completed here.
+  //
+  // The reconstructed msg must round-trip through the handler's own derivations:
+  // conversationKey(msg) === case.external_id (so it finds the SAME case, not a new
+  // one) and messageId(msg) === event.msg_id (so the inbound is recognised as the
+  // already-recorded one). conversationKey reads raw.channel_id first; messageId
+  // reads raw.id first -- so both live in `raw`. `resume:true` tells the handler the
+  // already-recorded inbound is expected, not a duplicate to drop.
+  async resumePendingTurns({ maxCases = 200, maxRedrives = 50 } = {}) {
+    if (this.opts.resumeOnBoot === false) return { scanned: 0, resumed: 0 }
+    const handle = this.gateway?.handleInbound
+    if (typeof handle !== 'function') return { scanned: 0, resumed: 0 }
+    let scanned = 0, resumed = 0
+    const openStatuses = new Set(this.store.getOpenStatuses?.() || [])
+    const rows = await this.store.listCases({}, { limit: maxCases, offset: 0 })
+    for (const c of rows) {
+      if (resumed >= maxRedrives) break
+      // Only re-drive cases still open (a closed/won case wants no further reply).
+      if (openStatuses.size && !openStatuses.has(c.status)) continue
+      // Skip channels with no live adapter to send on (e.g. a sim-only boot).
+      if (!this.adapters[c.channel]?.send && c.channel !== 'sim') continue
+      let events
+      try { events = await this.store.listEvents(c.id) } catch { continue }
+      scanned++
+      // Walk chronologically. Track, per msgId, whether its turn started, whether a
+      // completion (outbound/draft) followed, and whether a resume was already
+      // attempted. A completion or a later inbound for the SAME msgId is positional.
+      const started = new Map()       // msgId -> inbound event
+      const completedAfter = new Set()
+      const attempted = new Set()
+      for (const ev of events) {
+        if (ev.kind === 'inbound' && ev.msg_id) started.set(ev.msg_id, ev)
+        else if (ev.kind === 'observation' && typeof ev.text === 'string') {
+          const m = ev.text.match(/^resume-attempted:(.+)$/)
+          if (m) attempted.add(m[1])
+        }
+        // Any outbound/draft completes EVERY turn started before it: a reply on the
+        // conversation answers the latest inbound, so an earlier unanswered inbound
+        // is no longer pending (the contact got a response on this thread).
+        if (ev.kind === 'outbound' || ev.kind === 'draft') {
+          for (const id of started.keys()) completedAfter.add(id)
+        }
+      }
+      // The pending msgId: started, not completed, not already attempted. Take the
+      // most recent such inbound only -- one re-drive answers the live thread.
+      let pending = null
+      for (const [id, ev] of started) {
+        if (completedAfter.has(id) || attempted.has(id)) continue
+        if (!pending || ev.created_at >= pending.ev.created_at) pending = { id, ev }
+      }
+      if (!pending) continue
+      // Mark BEFORE re-drive -- at-most-once. A crash now leaves attempted-not-done,
+      // and the next boot skips this msgId rather than re-driving (miss over double).
+      try {
+        await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-attempted:${pending.id}` })
+      } catch (e) { this.log?.warn?.('[casey] resume marker failed', { caseId: c.id, error: e.message }); continue }
+      const platform = c.channel
+      const msg = {
+        from: c.external_id,
+        text: pending.ev.text || '',
+        platform,
+        resume: true,
+        raw: { channel_id: c.external_id, id: pending.id, author: {} },
+      }
+      try {
+        await handle.call(this.gateway, platform, msg)
+        resumed++
+        this.log?.info?.('[casey] resumed pending turn', { caseId: c.id, channel: c.channel })
+      } catch (e) {
+        // Already marked attempted, so it will not be retried -- log and move on.
+        this.log?.warn?.('[casey] resume re-drive failed', { caseId: c.id, error: e.message })
+      }
+    }
+    if (resumed) this.log?.info?.('[casey] resume sweep complete', { scanned, resumed })
+    return { scanned, resumed }
   }
 
   // Quiet sweep: cases with no intake_mode tag and channel != 'web' get intake_mode:channel.

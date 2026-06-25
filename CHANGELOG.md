@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Fixed
+- Event ordering: a same-millisecond inbound+outbound pair could be returned
+  outbound-first because the tie-break sorted ids lexicographically (`"10"` before
+  `"9"`). It now compares numeric ids numerically, restoring insertion order, so the
+  boot resume sweep no longer mistakes a completed turn for a pending one and writes
+  a spurious resume marker.
 - Auto-replies are sent to the channel id (`external_id`), not the message author
   id, so Discord delivery no longer 404s and silently drops -- contacts now get
   the reply.
@@ -38,6 +43,17 @@
   field, and the dashboard pill shows "Messages: not connected" in red when a
   configured channel has never connected since start, overriding the green AI
   helper line so a deaf receive can never hide behind "online".
+- Supervised runtime. `casey up` now forks the gateway+dashboard in a child worker
+  under a supervisor (`src/supervisor.js`, driven by the pure xstate machine in
+  `src/supervisor-machine.js`) that recycles the worker on a crash (bounded restart
+  with backoff and a crash budget) and on a source edit (hot reload: drains
+  in-flight turns, then re-forks on fresh code). The parent never imports app code,
+  so it survives any worker fault; the case store is reopened per worker so nothing
+  is lost across a recycle. `src/` and a sibling `../freddie/src` are watched by
+  default; `CASEY_RELOAD_PATHS` adds dirs, `CASEY_RELOAD=0` / `--no-reload` disables
+  watching, and `--no-supervise` runs the legacy single-process path. An optional
+  zombie-receive self-heal (`CASEY_RECEIVE_SILENCE_MS`) restarts a channel that went
+  silent too long.
 
 ### Changed
 - First contact greeting is neutral about ownership across en/af/zu/xh, since the

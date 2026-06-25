@@ -450,7 +450,12 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       text: inboundText || (media ? `[${media}]` : '[empty message]'),
       data: {}, msg_id: msgId,
     })
-    if (!inboundEvent) {
+    // A resume re-drive (msg.resume) intentionally carries the ORIGINAL msg_id of
+    // an inbound already recorded -- recordInbound correctly returns null. That is
+    // the expected path here, not a duplicate to drop: the boot resume sweep is
+    // re-running the turn for a message whose inbound persisted but whose reply
+    // never went out. Fall through to the agent turn instead of short-circuiting.
+    if (!inboundEvent && !msg.resume) {
       log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
       return { to: external_id, text: '', platform, caseId: caseRow.id, duplicate: true }
     }
@@ -820,6 +825,25 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // Nothing is sent in assisted mode -- return empty text so the gateway sends
       // nothing and the contact waits on a human-approved reply.
       return { to: external_id, text: '', platform, caseId: fresh.id, drafted: true }
+    }
+
+    // Deterministic intake advance: a substantive inbound on a brand-new case
+    // means the case is observably past "new" -- a real report has landed and a
+    // reply is going out. The agent turn is SUPPOSED to call case_transition, but
+    // the production model is content-only (it rarely emits tool calls) and even
+    // the stub can leave the move uncommitted, so relying on the LLM makes the
+    // first stage change flaky. We move new->triaging here, deterministically,
+    // BEFORE recording the outbound. It is a no-op if the agent already moved the
+    // case (transition() returns early on an equal stage) and is skipped for the
+    // content-free social/empty turns (those never reach a substantive reply with
+    // a recorded report). Best-effort: a transition failure must never block the
+    // reply. Observe mode returned far above, so acting here is always permitted.
+    {
+      const latest = await store.getCase(fresh.id).catch(() => fresh)
+      if (latest && latest.status === 'new' && (inboundText || media)) {
+        try { await store.transition(fresh.id, 'triaging', { reason: 'first report received (auto)' }) }
+        catch (e) { log.warn?.('[casey] intake auto-transition failed', { caseId: fresh.id, error: e.message }) }
+      }
     }
 
     await store.appendEvent(fresh.id, {

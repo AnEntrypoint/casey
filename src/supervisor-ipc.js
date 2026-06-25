@@ -32,6 +32,7 @@ export const PARENT_MSG = Object.freeze({
   DRAIN: 'parent:drain',            // stop accepting inbound, finish in-flight, then exit
   HEALTH_QUERY: 'parent:health?',   // request an immediate HEALTH report
   STATE: 'parent:state',            // push the authoritative runtime snapshot; payload {state, restarts, lastReloadAt, lastCrashReason, since}
+  RUNTIME_EVENT: 'parent:runtime-event', // a lifecycle bounce to PERSIST as a durable audited observation; payload {event, reason, restarts, ts}
 })
 
 // A tiny helper so senders never hand-roll the {type,payload} envelope shape.

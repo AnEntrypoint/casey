@@ -36,6 +36,12 @@ const CRASH_WINDOW_MS = Number(process.env.CASEY_CRASH_WINDOW_MS || 60_000)
 const CRASH_LIMIT = Number(process.env.CASEY_CRASH_LIMIT || 5)
 const BACKOFF_BASE_MS = Number(process.env.CASEY_RESTART_BACKOFF_MS || 500)
 const BACKOFF_CEIL_MS = Number(process.env.CASEY_RESTART_BACKOFF_CEIL_MS || 10_000)
+// Zombie-receive self-heal threshold: a real-time channel that WAS receiving and
+// then went silent longer than this is treated as a wedged gateway and healed by a
+// restart. Default 0 = OFF -- a conservative opt-in, because a genuinely quiet day
+// is indistinguishable from a wedge by silence alone, and a false restart is worse
+// than waiting. Set e.g. CASEY_RECEIVE_SILENCE_MS=900000 (15min) to enable.
+const RECEIVE_SILENCE_MS = Number(process.env.CASEY_RECEIVE_SILENCE_MS || 0)
 
 // Default the reload watch to casey's own src/, plus any extra dirs the operator
 // names (CASEY_RELOAD_PATHS, comma-separated -- e.g. ../freddie/src to pick up a
@@ -43,9 +49,20 @@ const BACKOFF_CEIL_MS = Number(process.env.CASEY_RESTART_BACKOFF_CEIL_MS || 10_0
 // clone has no ../freddie).
 function reloadWatchPaths() {
   const paths = [path.join(__dirname)]   // src/
+  // ../freddie is a file:../ dependency imported into the worker (agent harness +
+  // gateway adapters). A freddie source edit must reload the worker too, else the
+  // running build silently diverges from the freddie checkout. Watched by DEFAULT,
+  // existence-guarded by armWatcher's fs.existsSync -- a bare clone (no sibling)
+  // simply skips it with a warning, never crashes. (thatcher is an npm dep with no
+  // local source tree to watch; its app.db is the durable boundary, reopened per
+  // worker -- nothing to hot-reload there.)
+  const freddieSrc = path.resolve(__dirname, '..', '..', 'freddie', 'src')
+  paths.push(freddieSrc)
   const extra = (process.env.CASEY_RELOAD_PATHS || '').split(',').map(s => s.trim()).filter(Boolean)
   for (const p of extra) paths.push(path.resolve(p))
-  return paths
+  // Dedup: an operator naming ../freddie/src in CASEY_RELOAD_PATHS must not arm two
+  // watchers on the same dir (double-fire on every freddie save).
+  return [...new Set(paths)]
 }
 
 // A source file change worth a reload: .js/.mjs only, ignore the spool, dotfiles,
@@ -58,6 +75,23 @@ function isReloadableChange(file) {
   if (file.includes('.gm')) return false
   if (file.startsWith('.')) return false
   return true
+}
+
+// Pure zombie-receive detector over a receiveStatus snapshot ({state, channels:{
+// [ch]:{connected, sinceConnectMs, sinceInboundMs}}}). Returns the first channel
+// that is connected and was receiving (sinceInboundMs != null) but has now been
+// silent past `silenceMs`, or null. A never-received channel (sinceInboundMs ===
+// null) is intentionally NOT flagged: a quiet day is not a wedge. Exported for the
+// single real-services witness to assert the heuristic directly.
+export function detectZombieReceive(receive, silenceMs) {
+  if (!receive || !receive.channels || !(silenceMs > 0)) return null
+  for (const [channel, c] of Object.entries(receive.channels)) {
+    if (!c || !c.connected) continue
+    if (c.sinceInboundMs != null && c.sinceInboundMs > silenceMs) {
+      return { channel, silentMs: c.sinceInboundMs }
+    }
+  }
+  return null
 }
 
 export function createSupervisor(opts = {}) {
@@ -83,6 +117,28 @@ export function createSupervisor(opts = {}) {
   let stopping = false
   let booted = false         // the current worker has sent READY
 
+  // Durable runtime-lifecycle events (CRASH / RELOAD / DEGRADED / BUDGET) that must
+  // land in the store as audited observations so the timeline + shift-handover show
+  // the runtime was bounced and why. The PARENT detects them but only the WORKER
+  // holds the store -- and at CRASH time the worker that died is gone while the next
+  // is not yet up. So we BUFFER each event here and flush the buffer to the worker
+  // right after it sends READY (the same moment the snapshot is pushed). A bounded
+  // ring (drop-oldest past the cap) keeps a respawn storm from growing this without
+  // limit; the per-event reason is reason-only (no external_id / PII).
+  const pendingRuntimeEvents = []
+  const RUNTIME_EVENT_CAP = 50
+  function emitRuntimeEvent(event, reason, nowMs) {
+    pendingRuntimeEvents.push({ event, reason: reason || null, restarts: ctx.restarts, ts: nowMs })
+    if (pendingRuntimeEvents.length > RUNTIME_EVENT_CAP) pendingRuntimeEvents.shift()
+    flushRuntimeEvents()
+  }
+  function flushRuntimeEvents() {
+    if (!worker || !worker.connected || !booted) return   // hold until a live, ready worker can persist
+    while (pendingRuntimeEvents.length) {
+      ipcSend(worker, PARENT_MSG.RUNTIME_EVENT, pendingRuntimeEvents.shift())
+    }
+  }
+
   // --- machine-validated state advance -------------------------------------
   // Every lifecycle move goes through the machine: illegal transitions are a bug
   // we surface loudly, not silently swallow. `nowMs` is injected so the whole
@@ -101,6 +157,12 @@ export function createSupervisor(opts = {}) {
     if (reason) ctx.lastCrashReason = event === 'CRASH' || event === 'HEALTH_DEGRADED' ? reason : ctx.lastCrashReason
     log.info?.('[supervisor] transition', { from, event, to: state, reason: reason || undefined })
     pushStateToWorker()
+    // A runtime bounce is an auditable action: buffer it for durable persistence by
+    // the worker. Only the events that mean "the runtime was disrupted and why" --
+    // not the routine BOOTED/HEALTH_OK churn that would flood the timeline.
+    if (event === 'CRASH' || event === 'RELOAD_REQUESTED' || event === 'HEALTH_DEGRADED' || event === 'BUDGET_EXCEEDED') {
+      emitRuntimeEvent(event, reason, nowMs)
+    }
     opts.onTransition?.({ from, event, to: state, reason, ctx: snapshot() })
     return true
   }
@@ -141,6 +203,7 @@ export function createSupervisor(opts = {}) {
         if (state === 'restarting') fire('RESTART_DONE', Date.now())
         fire('BOOTED', Date.now())
         pushStateToWorker()   // hand the fresh worker the current snapshot immediately
+        flushRuntimeEvents()  // persist any lifecycle bounce buffered while no worker was up (e.g. the crash that killed the prior one)
         log.info?.('[supervisor] worker ready', { pid: child.pid, port: m.payload?.port })
       } else if (m.type === WORKER_MSG.HEALTH) {
         onHealth(m.payload || {}, Date.now())
@@ -294,6 +357,18 @@ export function createSupervisor(opts = {}) {
     if (payload.store === false) {
       log.error?.('[supervisor] worker reports store not ready -- degrading')
       if (fire('HEALTH_DEGRADED', nowMs, 'store not ready')) reloadNow(nowMs)
+      return
+    }
+    // Zombie-receive heal (opt-in via CASEY_RECEIVE_SILENCE_MS): a real-time channel
+    // that connected AND received inbound at some point, but has now been silent past
+    // the threshold while still "connected", is a wedged gateway (TCP up, delivery
+    // dead) -- the exact "online but deaf" failure. A channel that connected and NEVER
+    // received is NOT flagged (a quiet day is legitimate, sinceInboundMs===null). Heal
+    // by restart through the same drain->refork path; channel NAME only (never PII).
+    const zombie = RECEIVE_SILENCE_MS > 0 ? detectZombieReceive(payload.receive, RECEIVE_SILENCE_MS) : null
+    if (zombie) {
+      log.error?.('[supervisor] zombie receive detected -- degrading', { channel: zombie.channel, silentMs: zombie.silentMs })
+      if (fire('HEALTH_DEGRADED', nowMs, `receive silent on ${zombie.channel} for ${zombie.silentMs}ms`)) reloadNow(nowMs)
       return
     }
     if (state === 'healthy') fire('HEALTH_OK', nowMs)

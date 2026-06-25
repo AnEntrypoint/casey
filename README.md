@@ -184,6 +184,14 @@ remains the full real-services witness and runs only where the `file:../` siblin
 stub. The agent always sends a safe fallback reply if the model errors, times out, or
 returns nothing, and records the failure as an observation rather than leaking it to the contact.
 
+`casey up` runs the gateway+dashboard under a supervisor that forks them in a child
+worker and recycles it on crash or on a source edit, so a code change reloads
+without a manual restart and a crash restarts on its own (the parent never imports
+app code). Source under `src/` and a sibling `../freddie/src` is watched by default;
+add more dirs with `CASEY_RELOAD_PATHS`. Use `casey up --no-reload` to stop watching
+and `casey up --no-supervise` to run in-process without restart-on-crash. See
+AGENTS.md "Supervised runtime" for the full env-var set.
+
 ### Environment
 
 | Variable | Purpose |
@@ -196,6 +204,9 @@ returns nothing, and records the failure as an observation rather than leaking i
 | `CASEY_DASHBOARD_TOKEN` | When set, the dashboard API and page require this token (`Authorization: Bearer <token>` or `X-Casey-Token` header). For the initial page load, pass `?token=` in the URL; the browser strips it from the address bar and switches to the header for all API calls. |
 | `CASEY_LOG=silent` | Silence casey's structured JSON logs (used by tests). |
 | `CASEY_STUB_LLM=1` | Run `casey up` with the offline stub model. |
+| `CASEY_RELOAD=0` | Disable hot-reload (crash-restart stays on). |
+| `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (default `src/` + `../freddie/src`). |
+| `CASEY_RECEIVE_SILENCE_MS` | Restart a channel that went silent this long (zombie-receive self-heal; default 0 = off). |
 
 ## Layout
 
