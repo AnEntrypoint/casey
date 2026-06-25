@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Auto-replies are sent to the channel id (`external_id`), not the message author
+  id, so Discord delivery no longer 404s and silently drops -- contacts now get
+  the reply.
+- The first-message system prompt no longer hands the model a copy-ready
+  acknowledgement, so the small model stops parroting a canned, comma-spliced
+  greeting; a reply that echoes the prompt example is now caught and replaced by
+  the safe fallback rather than leaked.
+- `test.js` runs from an isolated temp cwd, so a test run can no longer wipe a
+  live `casey up` database (thatcher's sqlite handle is cwd-bound).
+- Store-outage and case-create-failure paths now actually send their warm holding
+  reply to the contact instead of building it and returning silently.
+
+### Changed
+- First contact greeting is neutral about ownership across en/af/zu/xh, since the
+  reporter is often organising-team staff inspecting someone else's animals, not
+  the owner.
+- `casey doctor` and `casey up` print the data-dir location.
+
 ## 0.2.0 - 2026-06-22
 
 ### Security

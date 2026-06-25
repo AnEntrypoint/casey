@@ -99,7 +99,14 @@ clone that lacks them. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
   give a plain-words reference number on first contact.
 - **Never a dead-end reply**: empty, emoji-only, and media-only inbound still get
   a gentle helpful answer; the agent always sends a safe fallback on model
-  error/timeout/empty and records the failure as an observation, never leaked.
+  error/timeout/empty and records the failure as an observation, never leaked. A
+  reply that parrots a system-prompt example verbatim is treated as a failed turn
+  (`isPromptEcho`) and replaced by the fallback.
+- **No copyable reply examples in the prompt**: `caseSystemPrompt` must not give
+  the model a full quoted sample reply -- small models copy it word-for-word. Only
+  literal tokens that must be reproduced exactly (the reference, a link) may
+  appear, each with an explicit "write the surrounding sentence yourself"
+  instruction; everything else is a structural instruction the model composes.
 - **Fixed keywords short-circuit the LLM**: `HELP` / `STATUS` / `HUMAN` / `STOP`
   answer instantly in any phrasing/language.
 - **Full observability**: every action is an append-only audited `event` row.
@@ -135,5 +142,11 @@ casey depends on the fixed thatcher release. See README "thatcher" section.
 - ES modules (`"type": "module"`), Node >= 22.
 - The single end-to-end `test.js` against real services is the test surface;
   do not add a parallel mock-heavy unit suite.
+- thatcher's sqlite handle is cwd-bound: it primes `getDatabase()` argless at
+  init, resolving `<cwd>/data/app.db`, and importing `getDatabase` ourselves to
+  relocate it forks thatcher's module graph into a second handle. So the only
+  safe way to point the store elsewhere is the process cwd. `test.js` therefore
+  copies the config into a temp dir and `chdir`s there, so a run never wipes a
+  live `casey up` store; freddie `file:../` imports stay anchored to `REPO_ROOT`.
 
 @.gm/next-step.md
