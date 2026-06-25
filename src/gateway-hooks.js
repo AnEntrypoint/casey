@@ -846,6 +846,24 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       }
     }
 
+    // AI-offline queue: when the agent turn ITSELF failed (model error/timeout, or
+    // the store/host threw) the contact still got a safe degraded reply above, but a
+    // human should verify it was adequate -- the model could not reason about this
+    // case. Tag the case 'ai-offline' so it surfaces in the operator's offline queue
+    // (GET /api/unreplied) and on the case list. The next operator reply clears it
+    // (claim-on-reply untags it), and a later successful agent turn does too. The tag
+    // is set only on a genuine turn failure, never on a normal fallback (an empty/
+    // media-only social turn is not a model outage). Best-effort: a tag failure must
+    // never block the reply.
+    if (errored) {
+      try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'ai-offline') }) }
+      catch (e) { log.warn?.('[casey] ai-offline tag failed', { caseId: fresh.id, error: e.message }) }
+    } else if ((fresh.tags || '').split(',').map(s => s.trim()).includes('ai-offline')) {
+      // A successful turn clears a stale offline flag from a prior failed turn.
+      try { await store.updateCase(fresh.id, { tags: dropTag(fresh.tags, 'ai-offline') }) }
+      catch (e) { log.warn?.('[casey] ai-offline clear failed', { caseId: fresh.id, error: e.message }) }
+    }
+
     await store.appendEvent(fresh.id, {
       kind: 'outbound', actor: 'agent', channel,
       text, data: { to: external_id, fallback: isFallback },
@@ -1255,6 +1273,11 @@ function mergeTag(tags, tag) {
   const list = (tags || '').split(',').map(s => s.trim()).filter(Boolean)
   if (!list.includes(tag)) list.push(tag)
   return list.join(',')
+}
+
+// Inverse of mergeTag: remove a tag, leaving the rest intact and order-stable.
+function dropTag(tags, tag) {
+  return (tags || '').split(',').map(s => s.trim()).filter(Boolean).filter(t => t !== tag).join(',')
 }
 
 // Single source of truth for what the agent may do, per case autonomy mode.

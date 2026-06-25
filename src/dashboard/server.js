@@ -1025,6 +1025,27 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // AI-offline queue: open cases whose last agent turn FAILED (model error/timeout,
+  // store/host fault) so a human could not trust the auto-reply was adequate. The
+  // gateway tags such a case 'ai-offline' (cleared by the next operator reply or a
+  // later successful agent turn), so this is a cheap tag scan over the open pool --
+  // no per-case event read on the hot path. Newest-first by last activity so the
+  // freshest outage sits on top of the operator's queue.
+  app.get('/api/unreplied', async (req, res) => {
+    try {
+      const open = (await store.listCases({}, { limit: 10000, offset: 0 }))
+        .filter(c => c.status !== 'closed'
+          && String(c.tags || '').split(',').map(t => t.trim()).includes('ai-offline'))
+      open.sort((a, b) => (b.last_event_at || b.updated_at || 0) - (a.last_event_at || a.updated_at || 0))
+      const items = open.map(c => ({
+        id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
+        status: c.status, assignee: c.assignee || '',
+        last_event_at: c.last_event_at || c.updated_at || c.created_at || 0,
+      }))
+      res.json({ total: items.length, items })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Cases that look like the SAME real-world outbreak as this one -- the
   // operator's view of casey's grouping intelligence, with the reasons shown so
   // the suggestion is explainable, never an opaque score.
@@ -1107,10 +1128,15 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       // The operator personally answered, so the "wants a human" flag is satisfied
       // -- but only once the message actually reached the contact. Clear it then,
       // or the triage inbox keeps this case pinned at the top forever.
+      // Clearing needs-human (a person was asked for) and ai-offline (the agent turn
+      // had failed and a human needed to verify the reply): a delivered operator
+      // answer satisfies both, so drop them together rather than leaving the case
+      // pinned in the triage inbox or the offline queue forever.
       if (delivered) {
         const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
-        if (tags.includes('needs-human')) {
-          await store.updateCase(c.id, { tags: tags.filter(t => t !== 'needs-human').join(',') }, op)
+        const keep = tags.filter(t => t !== 'needs-human' && t !== 'ai-offline')
+        if (keep.length !== tags.length) {
+          await store.updateCase(c.id, { tags: keep.join(',') }, op)
         }
       }
       res.json({ ok: true, sent: !!sendReply, delivered, claimed })

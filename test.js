@@ -226,6 +226,28 @@ async function main() {
     assert.equal(noTok.status, 401, 'handover is gated by the dashboard token')
   })
 
+  await test('ai-offline queue: failed agent turns surface in /api/unreplied; an operator reply clears them', async () => {
+    // A case the gateway tagged 'ai-offline' (its agent turn errored, so the
+    // auto-reply could not be trusted) belongs in the operator's offline queue.
+    const { case: oc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'aioffline-' + Date.now() })
+    await store.updateCase(oc.id, { tags: 'ai-offline' })
+    const q1 = await df('http://localhost:4577/api/unreplied?token=secret').then(r => r.json())
+    assert.ok(q1.items.some(i => i.id === oc.id), 'the offline case is listed in the queue')
+    assert.equal(typeof q1.total, 'number', 'the queue reports a total count')
+    // An operator who personally answers clears the offline flag (claim-on-reply),
+    // so the case drops out of the queue rather than pinning there forever.
+    const rep = await df('http://localhost:4577/api/cases/' + oc.id + '/reply?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'I have got this one, thanks.' }),
+    }).then(r => r.json())
+    assert.equal(rep.delivered, true, 'the operator reply was delivered')
+    assert.ok(!String((await store.getCase(oc.id)).tags || '').split(',').map(t => t.trim()).includes('ai-offline'), 'the offline flag is cleared on operator reply')
+    const q2 = await df('http://localhost:4577/api/unreplied?token=secret').then(r => r.json())
+    assert.ok(!q2.items.some(i => i.id === oc.id), 'the answered case leaves the queue')
+    const noTok = await fetch('http://localhost:4577/api/unreplied')
+    assert.equal(noTok.status, 401, 'the offline queue is gated by the dashboard token')
+  })
+
   await test('src/format.js renders real event timestamps in SAST and contacts in +27 (CLI/SPA shared)', async () => {
     // The CLI show timeline and the dashboard SPA both format absolute time and
     // phone numbers through this module; assert it on a REAL stored event, not a
