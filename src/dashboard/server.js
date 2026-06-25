@@ -324,6 +324,26 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong. Please try again.')) }
   })
 
+  // Readiness probe for orchestrators/load balancers: is the system of record
+  // actually reachable RIGHT NOW (a real store query succeeds), not merely "the
+  // HTTP server booted"? Distinct from /api/health, which reports AI-helper and
+  // gateway liveness; a process can serve HTTP with a wedged or unopened store and
+  // /api/health would still answer. This exercises the store with the cheapest real
+  // read (a count) and returns 200 {ready:true} or 503 {ready:false,error}. It is
+  // UNGATED on purpose -- a k8s/LB probe has no dashboard token, and the response
+  // leaks nothing sensitive (a boolean + a short error string, no case data). Placed
+  // before the auth middleware so the token gate never 401s a readiness check.
+  app.get('/api/ready', async (req, res) => {
+    const started = Date.now()
+    try {
+      await store.countCases({})
+      res.json({ ready: true, store: 'ok', took_ms: Date.now() - started })
+    } catch (e) {
+      // Bound the error so a hostile/huge store error cannot bloat the probe body.
+      res.status(503).json({ ready: false, store: 'unreachable', error: String(e.message || e).slice(0, 200) })
+    }
+  })
+
   app.use((req, res, next) => {
     if (req.path.startsWith('/design')) return next()
     if (authed(req)) return next()

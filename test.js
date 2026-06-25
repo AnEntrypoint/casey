@@ -248,6 +248,17 @@ async function main() {
     assert.equal(noTok.status, 401, 'the offline queue is gated by the dashboard token')
   })
 
+  await test('readiness probe: GET /api/ready confirms the store is reachable, ungated', async () => {
+    // A k8s/LB probe has no dashboard token, so /api/ready must answer WITHOUT one
+    // (unlike every other API). With the store up it reports ready:true.
+    const r = await fetch('http://localhost:4577/api/ready')
+    assert.equal(r.status, 200, 'readiness answers without a token')
+    const body = await r.json()
+    assert.equal(body.ready, true, 'the store is reachable -> ready:true')
+    assert.equal(body.store, 'ok', 'the probe names the store as ok')
+    assert.equal(typeof body.took_ms, 'number', 'the probe reports how long the store read took')
+  })
+
   await test('src/format.js renders real event timestamps in SAST and contacts in +27 (CLI/SPA shared)', async () => {
     // The CLI show timeline and the dashboard SPA both format absolute time and
     // phone numbers through this module; assert it on a REAL stored event, not a
