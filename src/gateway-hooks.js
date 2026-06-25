@@ -226,6 +226,47 @@ function isPromptEcho(text) {
   return ECHO_MARKERS.some(m => norm.includes(m))
 }
 
+// A reference number is a real datum -- the only token in a reply the contact may
+// quote back to find their case. A weak model recites a memorized stock reply that
+// carries a STALE or HALLUCINATED ref (witnessed live: a reply said
+// "CASE-1034-0sckh" for a case whose real ref was CASE-1073-iyniv, and that case
+// number never existed). So before any reply is sent OR held as a draft, every
+// case-ref-shaped token that is not this case's real ref is rewritten to the real
+// ref. Deterministic, ASCII, no model in the loop -- the contact can never be
+// handed a fabricated reference. Returns { text, corrected:[wrong refs] }.
+const CASE_REF_RE = /CASE-\d+-[a-z0-9]+/gi
+export function sanitizeOutboundRef(text, realRef) {
+  if (!text || !realRef) return { text, corrected: [] }
+  const corrected = []
+  const fixed = String(text).replace(CASE_REF_RE, (tok) => {
+    if (tok.toLowerCase() === String(realRef).toLowerCase()) return tok
+    corrected.push(tok)
+    return realRef
+  })
+  return { text: fixed, corrected }
+}
+
+// The stock holding line ("thank you for letting us know ... your reference is
+// <ref>") carries no case-specific content beyond the ref. A reply that is
+// substantively only this line is a memorized/parroted turn -- it does not advance
+// intake. Detected on a ref-stripped, normalised copy so the (now-correct) ref
+// does not mask the parrot. Distinct from isPromptEcho: that catches the
+// first-contact exemplar; this catches the bare stock ack the weak model recites
+// on EVERY later turn (witnessed live: a 2nd identical-shape reply shipped a bad
+// ref because only the exemplar phrasing was guarded). ASCII only.
+const STOCK_ACK_SHAPES = [
+  'thank you for letting us know. we have your message and the team will look into it.',
+  'thank you for letting us know. our team will look into this.',
+]
+export function isStockAck(text) {
+  if (!text) return false
+  const norm = String(text).toLowerCase().replace(CASE_REF_RE, '').replace(/your reference is\s*\.?/g, '').replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim()
+  return STOCK_ACK_SHAPES.some(m => {
+    const mn = m.toLowerCase().replace(/your reference is\s*\.?/g, '').replace(/\s+/g, ' ').replace(/[.\s]+$/, '').trim()
+    return norm === mn
+  })
+}
+
 // Holding message in the contact's own language, for the worst-case path: the
 // LLM turn errored, timed out, or returned nothing. A low-literacy contact who
 // wrote in Spanish must NOT get an English wall of text back (P9 worst-case +
@@ -598,6 +639,15 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model echoed prompt example; replaced with fallback' })
       text = ''
     }
+    // The weak model recites the bare stock ack on later turns too (not just the
+    // first-contact exemplar isPromptEcho catches). A reply that is substantively
+    // only "thank you ... your reference is X" advances nothing -- treat it as a
+    // failed turn so the degraded path below asks the one most-important missing
+    // on-site fact instead of parroting an ack a third time.
+    if (text && isStockAck(text)) {
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model recited stock ack (no case-specific content); replaced with advancing fallback' })
+      text = ''
+    }
     if (!text) {
       if (!errored && result?.error) {
         log.warn?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
@@ -623,6 +673,18 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     const isFallback = !text
       || text === fallbackReply(inboundText, fresh)
       || text === advancingFallback(inboundText, fresh)
+
+    // Final guard before the reply leaves (send OR assisted draft): correct any
+    // fabricated/stale case reference to this case's real ref. A weak model recites
+    // a memorized stock reply carrying the wrong ref; the contact must never be
+    // handed a reference that does not resolve to their case.
+    {
+      const { text: safeText, corrected } = sanitizeOutboundRef(text, fresh.ref)
+      if (corrected.length) {
+        text = safeText
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `REF-CORRECTED: model emitted ${corrected.join(', ')}; rewrote to real ref ${fresh.ref}.` })
+      }
+    }
 
     // ASSISTED mode: the agent composed a reply, but a human must approve before
     // anything reaches the contact. Hold it as a draft event (never sent), flag
