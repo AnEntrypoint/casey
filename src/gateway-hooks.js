@@ -273,14 +273,22 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
   // this message. The guard is keyed on external_id (the canonical contact key).
   const inFlight = new Set()
   return async function handleInbound(platform, msg) {
-    if (!store) {
-      log?.error?.('[casey] store not initialized')
-      const warmText = FALLBACK_REPLY + ' We are experiencing a brief interruption. Please try again shortly.'
-      return { to: msg.from, text: warmText, platform, error: 'store_not_ready' }
-    }
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
     const external_id = conversationKey(msg)
     const adapter = this?.platforms?.get?.(platform)
+    if (!store) {
+      log?.error?.('[casey] store not initialized')
+      const warmText = FALLBACK_REPLY + ' We are experiencing a brief interruption. Please try again shortly.'
+      // The gateway discards this handler's return value (freddie run.js calls
+      // handleInbound only for its side effects), so a warm holding reply reaches
+      // the contact ONLY if we send it ourselves. Target external_id (channel id
+      // on Discord, phone on WhatsApp) -- msg.from is the author id and would 404.
+      if (adapter?.send) {
+        try { await adapter.send({ to: external_id, text: warmText, platform }) }
+        catch (e) { log?.error?.('[casey] store-not-ready holding send failed', { channel, error: e.message }) }
+      }
+      return { to: external_id, text: warmText, platform, error: 'store_not_ready' }
+    }
     const msgId = messageId(msg)
 
     let caseRow, created
@@ -294,9 +302,15 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // plus the error is enough to diagnose without writing PII to the log sink.
       log.error?.('[casey] findOrCreateCase failed', { channel, error: e.message })
       // Send a warm holding message rather than empty text so the contact knows
-      // their message arrived and the team will follow up.
+      // their message arrived and the team will follow up. The gateway ignores
+      // this return value, so deliver it ourselves to external_id (the channel id
+      // on Discord, the phone on WhatsApp); msg.from is the author id and 404s.
       const storeDownText = fallbackReply(msg.text || '', null)
-      return { to: msg.from, text: storeDownText, platform, error: e.message }
+      if (adapter?.send) {
+        try { await adapter.send({ to: external_id, text: storeDownText, platform }) }
+        catch (sendErr) { log.error?.('[casey] store-down holding send failed', { channel, error: sendErr.message }) }
+      }
+      return { to: external_id, text: storeDownText, platform, error: e.message }
     }
 
     // Dedup: a redelivered platform message (webhook retry, gateway replay, or
@@ -313,7 +327,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     })
     if (!inboundEvent) {
       log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
-      return { to: msg.from, text: '', platform, caseId: caseRow.id, duplicate: true }
+      return { to: external_id, text: '', platform, caseId: caseRow.id, duplicate: true }
     }
     // One-shot: a received animal photo is recorded as explicit case state right
     // here, deterministically, so the operator always sees that a picture exists
@@ -357,7 +371,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` })
     }
 
-    if (!autoRespond) return { to: msg.from, text: '', platform, caseId: caseRow.id }
+    if (!autoRespond) return { to: external_id, text: '', platform, caseId: caseRow.id }
 
     const fresh = await store.getCase(caseRow.id)
 
@@ -365,7 +379,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // drives the case. We still recorded the inbound above.
     if (fresh.autonomy === 'observe') {
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'autonomy=observe: awaiting operator (no auto-reply)' })
-      return { to: msg.from, text: '', platform, caseId: fresh.id, observed: true }
+      return { to: external_id, text: '', platform, caseId: fresh.id, observed: true }
     }
 
     // Deterministic intent shortcuts. For a few universal intents a low-literacy
@@ -403,7 +417,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // unless they explicitly ask for help or a human.
     if (optedOut && intent !== 'help' && intent !== 'human') {
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'contact previously opted out; no auto-reply' })
-      return { to: msg.from, text: '', platform, caseId: fresh.id, optedOut: true }
+      return { to: external_id, text: '', platform, caseId: fresh.id, optedOut: true }
     }
     if (intent) {
       if (intent === 'human') {
@@ -469,7 +483,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     if (inFlight.has(external_id)) {
       log.info?.('[casey] skipping concurrent LLM turn', { caseId: fresh.id })
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'concurrent turn skipped: prior LLM turn still in-flight for this contact' })
-      return { to: msg.from, text: '', platform, caseId: fresh.id, skipped: true }
+      return { to: external_id, text: '', platform, caseId: fresh.id, skipped: true }
     }
     inFlight.add(external_id)
     let result, errored = false
