@@ -207,6 +207,21 @@ async function main() {
   if (cmd === 'up') {
     if (flags.help) { console.log('casey up [--channels sim,discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise]\n  Start the gateway (all configured channels) and the dashboard.\n  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,\n  reopening the same case store so nothing is lost. --no-reload disables the watcher (explicit\n  restarts only); --no-supervise runs the legacy single-process path for debugging.'); return }
     const requested = (flags.channels || 'sim,discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
+    // Security invariant (AGENTS.md): WhatsApp must NOT serve without
+    // WHATSAPP_APP_SECRET -- without it freddie cannot HMAC-verify inbound
+    // webhooks, so anyone reaching the webhook can forge farmer messages. doctor
+    // flags it; here on the live path we ENFORCE it. If whatsapp was named
+    // explicitly, refuse to start (loud, not a silent drop); if it only came from
+    // the default channel list, drop it with a warning and serve the rest. The
+    // worker (bin/worker.js) carries the same guard as defence in depth.
+    if (hasCreds('whatsapp') && !process.env.WHATSAPP_APP_SECRET) {
+      const idx = requested.indexOf('whatsapp')
+      if (idx !== -1 && flags.channels) {
+        console.log(bad('WHATSAPP_APP_SECRET is required to enable WhatsApp (verify inbound webhook signatures) - refusing to serve unsigned inbound'))
+        process.exit(1)
+      }
+      if (idx !== -1) { requested.splice(idx, 1); console.log(warn('WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')) }
+    }
     const channels = requested.filter(ch => ch === 'sim' || hasCreds(ch))
     const skipped = requested.filter(ch => ch !== 'sim' && !hasCreds(ch))
     if (!channels.length) { console.log(bad('no channels available - set credentials or include sim in --channels')); process.exit(1) }

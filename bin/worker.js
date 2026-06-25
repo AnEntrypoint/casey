@@ -51,7 +51,25 @@ async function main() {
   const forked = typeof process.send === 'function'
 
   const requested = (flags.channels || 'sim,discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
-  const channels = requested.filter(ch => ch === 'sim' || hasCreds(ch))
+  // Security invariant (AGENTS.md): WhatsApp must NOT serve without
+  // WHATSAPP_APP_SECRET -- without it freddie cannot HMAC-verify inbound webhooks,
+  // so anyone reaching the webhook can forge farmer messages. Enforce it here in
+  // the worker (the process that actually binds the channel), not just in doctor:
+  // if whatsapp has creds but no secret, refuse it. If whatsapp was EXPLICITLY
+  // requested, that is a fatal misconfiguration (loud, not a silent drop); if it
+  // came from the default channel list, drop it with a warning and serve the rest.
+  if (hasCreds('whatsapp') && !process.env.WHATSAPP_APP_SECRET) {
+    const idx = requested.indexOf('whatsapp')
+    if (idx !== -1 && (flags.channels)) {
+      // operator named whatsapp explicitly -> fatal, do not run it unsigned
+      if (forked) ipcSend(process, WORKER_MSG.FATAL, { reason: 'WHATSAPP_APP_SECRET required to serve WhatsApp (verify inbound webhook signatures)' })
+      console.error('[worker] WHATSAPP_APP_SECRET is required to enable WhatsApp - refusing to serve unsigned inbound')
+      process.exit(1)
+    }
+    if (idx !== -1) requested.splice(idx, 1)
+    console.error('[worker] WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')
+  }
+  const channels = requested.filter(ch => ch === 'sim' || (ch === 'whatsapp' ? (hasCreds(ch) && !!process.env.WHATSAPP_APP_SECRET) : hasCreds(ch)))
   if (!channels.length) {
     // No serving surface: fatal, not a silent idle. The supervisor treats a FATAL
     // boot as a crash for budget purposes, so a permanently-misconfigured worker
