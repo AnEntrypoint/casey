@@ -304,6 +304,51 @@ export class CaseStore {
     return { latest, history, degraded: !!latest?.degraded }
   }
 
+  // Singleton settings case holding the shift-handover marker. Same append-only
+  // observation pattern as thresholds: 'Start of shift' stamps one audited
+  // observation, and the handover digest reads the newest to scope "since last
+  // shift". Scoped by timestamp, not operator id, so a rotating field team shares
+  // one shift line regardless of who clicks.
+  async _shiftCaseId() {
+    const { case: c } = await this.findOrCreateCase({
+      channel: 'system', external_id: 'settings:shift',
+      contact: { display_name: 'shift' },
+    })
+    return c.id
+  }
+
+  // Stamp a new shift marker. Returns { ts, by }.
+  async startShift(user, now = Date.now()) {
+    const by = user?.id || user || 'operator'
+    const id = await this._shiftCaseId()
+    await this.appendEvent(id, {
+      kind: 'observation', actor: 'operator',
+      text: `shift-start:${now}`,
+      data: { by },
+    })
+    return { ts: now, by }
+  }
+
+  // The newest shift marker, or null if no shift has been started. A read/parse
+  // failure degrades to null rather than throwing -- a missing marker just means
+  // the digest scopes the full window.
+  async getShiftMarker() {
+    let id
+    try { id = await this._shiftCaseId() } catch { return null }
+    const events = await this.listEvents(id).catch(() => [])
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i]
+      if (ev.kind !== 'observation' || typeof ev.text !== 'string') continue
+      const m = ev.text.match(/^shift-start:(\d+)$/)
+      if (!m) continue
+      const ts = parseInt(m[1], 10)
+      if (!Number.isFinite(ts)) continue
+      const by = (typeof ev.data === 'string' ? (() => { try { return JSON.parse(ev.data) } catch { return null } })() : ev.data)?.by || null
+      return { ts, by }
+    }
+    return null
+  }
+
   // Most-recently-active first. thatcher ignores orderBy/order so we sort in JS
   // (by last_event_at, falling back to created_at) to make the order real. The
   // page window is applied after sorting when a limit is given.

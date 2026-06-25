@@ -113,6 +113,7 @@ ${bold('usage:')}
   casey cases [--status <stage>]                list cases
   casey show <ref|id>                           show a case + timeline
   casey attention [--limit N --offset N --json] worst-first inbox: who needs a person now, and why
+  casey handover [--json] / handover start      shift digest: what to pick up; 'start' stamps a new shift
   casey health                                  read-only guardrail summary (no changes written)
   casey sweep                                   run the health-guardrail sweep once now (writes tags/observations)
   casey transition <ref|id> <stage> [--reason]  move a case to a stage (legality-checked)
@@ -528,6 +529,45 @@ async function main() {
       console.log(`${bold(x.c.ref)}\t${red('score ' + x.score)}\t[${x.c.status}]\t${x.c.channel}\t${contact}`)
       console.log(`  ${x.reason}\n  ${dim('last activity: ' + when)}`)
     }
+    process.exit(0)
+  }
+
+  if (cmd === 'handover') {
+    const store = createCaseStore(); await store.init()
+    if (flags['start-shift'] || rest.includes('start')) {
+      const m = await store.startShift('cli')
+      console.log(green(`shift started ${fmtTimeSAST(Math.floor(m.ts / 1000))}`))
+      console.log(dim('  the next handover digest scopes "since now".'))
+      process.exit(0)
+    }
+    const now = Date.now()
+    const marker = await store.getShiftMarker()
+    const since = marker?.ts || 0
+    const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
+    const tagsOf = (c) => String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+    const { items } = rankAttention(open, now, { limit: 50, offset: 0 })
+    const handoffs = open.filter(c => tagsOf(c).includes('needs-human'))
+    const drafts = open.filter(c => tagsOf(c).includes('draft-pending'))
+    const touched = open.filter(c => since && (c.last_event_at || c.updated_at || c.created_at || 0) >= since)
+      .sort((a, b) => (b.last_event_at || b.updated_at || 0) - (a.last_event_at || a.updated_at || 0))
+    if (flags.json) {
+      console.log(JSON.stringify({
+        generated_at: now, since, since_by: marker?.by || null,
+        attention: items.map(x => ({ ref: x.c.ref, reason: x.reason, assignee: x.c.assignee || '' })),
+        handoffs: handoffs.map(c => c.ref), drafts: drafts.map(c => c.ref), touched: touched.map(c => c.ref),
+      }, null, 2))
+      process.exit(0)
+    }
+    console.log(bold('casey shift handover') + dim(`  since ${since ? fmtTimeSAST(Math.floor(since / 1000)) : 'start of records'}`) + '\n')
+    console.log(bold(`needs attention (${items.length})`))
+    for (const x of items) console.log(`  ${bold(x.c.ref)}\t${x.c.assignee ? dim('@' + x.c.assignee) : red('unowned')}\t${x.reason}`)
+    console.log(bold(`\nopen handoffs not yet taken (${handoffs.length})`))
+    for (const c of handoffs) console.log(`  ${bold(c.ref)}\t${c.subject || ''}`)
+    console.log(bold(`\nunsent drafts (${drafts.length})`))
+    for (const c of drafts) console.log(`  ${bold(c.ref)}\t${c.subject || ''}`)
+    console.log(bold(`\ntouched this shift (${touched.length})`))
+    for (const c of touched) console.log(`  ${dim(fmtTimeSAST(Math.floor((c.last_event_at || c.updated_at || c.created_at || 0) / 1000)) || '(no date)')}  ${bold(c.ref)}\t${c.subject || ''}`)
+    console.log(dim(`\n  stamp a new shift with ${cyan('casey handover start')}.`))
     process.exit(0)
   }
 

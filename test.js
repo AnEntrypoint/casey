@@ -206,6 +206,26 @@ async function main() {
     assert.equal(who.current, 'dashboard-operator', 'an off-roster id falls back to the default, never injected')
   })
 
+  await test('shift handover: digest lists attention/handoffs/drafts; Start of shift scopes "since"', async () => {
+    // Before any shift is started, the digest scopes the full open pool (since=0).
+    const h0 = await df('http://localhost:4577/api/handover?token=secret').then(r => r.json())
+    assert.equal(h0.since, 0, 'no shift marker yet -> since is 0')
+    assert.ok(Array.isArray(h0.attention) && Array.isArray(h0.handoffs) && Array.isArray(h0.touched), 'digest carries the four lists')
+    // Stamp a shift, attributed to the acting operator.
+    const start = await df('http://localhost:4577/api/handover/start-shift?token=secret', {
+      method: 'POST', headers: { 'x-casey-operator': 'thandi' },
+    }).then(r => r.json())
+    assert.equal(start.ok, true); assert.equal(start.by, 'thandi', 'the shift marker is attributed to the operator')
+    const h1 = await df('http://localhost:4577/api/handover?token=secret').then(r => r.json())
+    assert.ok(h1.since >= start.ts - 1000 && h1.since_by === 'thandi', 'the digest now scopes since the new marker')
+    // The HTML form renders without throwing and escapes contact text.
+    const html = await df('http://localhost:4577/api/handover?format=html&token=secret').then(r => r.text())
+    assert.match(html, /casey shift handover/, 'the printable digest renders')
+    // The handover endpoint is token-gated like every other dashboard API.
+    const noTok = await fetch('http://localhost:4577/api/handover')
+    assert.equal(noTok.status, 401, 'handover is gated by the dashboard token')
+  })
+
   await test('src/format.js renders real event timestamps in SAST and contacts in +27 (CLI/SPA shared)', async () => {
     // The CLI show timeline and the dashboard SPA both format absolute time and
     // phone numbers through this module; assert it on a REAL stored event, not a

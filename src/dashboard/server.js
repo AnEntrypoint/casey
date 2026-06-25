@@ -951,6 +951,80 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Shift handover: a printable digest of what the next person needs to pick up.
+  // Built entirely from the event log + attention engine, scoped to "since the
+  // last Start-of-shift marker" (or the full open pool when no shift was started).
+  // No per-operator scoping -- a rotating field team shares one shift line.
+  async function gatherHandover() {
+    const now = Date.now()
+    const marker = await store.getShiftMarker()
+    const since = marker?.ts || 0
+    const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
+    const tagsOf = (c) => String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+    // Cases still needing attention, ranked by the same scorer the inbox uses.
+    const { items } = rankAttention(open, now, { limit: 50, offset: 0 })
+    const attention = items.map(({ c, score, reason }) => ({
+      id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
+      status: c.status, assignee: c.assignee || '', score, reason,
+    }))
+    // Open handoffs not yet taken: a person was asked for and no operator owns it.
+    const handoffs = open.filter(c => tagsOf(c).includes('needs-human'))
+      .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel, assignee: c.assignee || '' }))
+    // Unsent assisted drafts waiting for an operator to approve or discard.
+    const drafts = open.filter(c => tagsOf(c).includes('draft-pending'))
+      .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel }))
+    // Cases touched since the shift began, with their last action, newest-first.
+    const touched = []
+    for (const c of open) {
+      const at = c.last_event_at || c.updated_at || c.created_at || 0
+      if (!since || at < since) continue
+      const evs = await store.listEvents(c.id).catch(() => [])
+      const last = evs.length ? evs[evs.length - 1] : null
+      touched.push({
+        id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
+        at, last_kind: last?.kind || '', last_actor: last?.actor || '',
+      })
+    }
+    touched.sort((a, b) => b.at - a.at)
+    return { generated_at: now, since, since_by: marker?.by || null, attention, handoffs, drafts, touched: touched.slice(0, 50) }
+  }
+
+  app.get('/api/handover', async (req, res) => {
+    try {
+      const h = await gatherHandover()
+      if (req.query.format !== 'html') return res.json(h)
+      const secs = (ms) => Math.floor(ms / 1000)
+      const row = (cells) => `<tr>${cells.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`
+      const tbl = (head, rows) => rows.length
+        ? `<table><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr>${rows.join('')}</table>`
+        : `<p>none</p>`
+      const sinceTxt = h.since ? fmtTimeSAST(secs(h.since)) + (h.since_by ? ` (by ${esc(h.since_by)})` : '') : 'start of records'
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>casey shift handover</title>`
+        + `<style>body{font:14px system-ui,sans-serif;margin:2rem;color:#1a1a1a}h1{font-size:1.3rem}h2{font-size:1rem;margin-top:1.5rem}table{border-collapse:collapse;margin:.3rem 0}td,th{border:1px solid #ccc;padding:.2rem .6rem;text-align:left}@media print{body{margin:0}}</style>`
+        + `</head><body><h1>casey shift handover</h1>`
+        + `<p>Generated ${esc(fmtTimeSAST(secs(h.generated_at)))} -- since ${esc(sinceTxt)}</p>`
+        + `<h2>Needs attention (${h.attention.length})</h2>`
+        + tbl(['ref', 'subject', 'channel', 'owner', 'why'], h.attention.map(a => row([a.ref, a.subject, a.channel, a.assignee || '-', a.reason])))
+        + `<h2>Open handoffs not yet taken (${h.handoffs.length})</h2>`
+        + tbl(['ref', 'subject', 'channel', 'owner'], h.handoffs.map(a => row([a.ref, a.subject, a.channel, a.assignee || '-'])))
+        + `<h2>Unsent drafts (${h.drafts.length})</h2>`
+        + tbl(['ref', 'subject', 'channel'], h.drafts.map(a => row([a.ref, a.subject, a.channel])))
+        + `<h2>Touched this shift (${h.touched.length})</h2>`
+        + tbl(['when', 'ref', 'subject', 'last action'], h.touched.map(a => row([fmtTimeSAST(secs(a.at)), a.ref, a.subject, `${a.last_kind}${a.last_actor ? ' by ' + a.last_actor : ''}`])))
+        + `</body></html>`
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      res.send(html)
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Stamp a new shift marker so the next handover digest scopes "since now".
+  app.post('/api/handover/start-shift', async (req, res) => {
+    try {
+      const m = await store.startShift(actingOperator(req))
+      res.json({ ok: true, ts: m.ts, by: m.by })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Cases that look like the SAME real-world outbreak as this one -- the
   // operator's view of casey's grouping intelligence, with the reasons shown so
   // the suggestion is explainable, never an opaque score.
