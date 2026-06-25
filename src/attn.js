@@ -77,22 +77,48 @@ function attnScore(c, now = Date.now()) {
   return s
 }
 
-// One honest, plain reason this case is in the inbox. First match wins.
-function attnReason(c) {
+// Single ordered state->{reason, todo} policy. ONE first-match-wins ladder feeds
+// both the inbox "why" line (terse) and the detail "what to do now" line
+// (actionable), so the two surfaces can never disagree about a case's state or
+// contradict each other -- the bug of maintaining two parallel ladders with
+// different branch orderings. Inbox-relevant states come first in the SAME order
+// attnScore weights them (needs-human highest), so the worst-first sort and the
+// reason line agree; the trailing states (opted-out/closed/resolved/waiting/new)
+// never reach the inbox (they score 0) but DO show in the detail "to do" line, so
+// they live at the end of the ladder where only caseHints(...).todo reads them.
+// `now` is injected (default Date.now()) to keep the waiting-over-a-day branch a
+// pure function for tests.
+function caseHints(c, now = Date.now()) {
   const tags = tagList(c)
-  if (tags.includes('needs-human')) return 'This person asked to talk to a real person.'
-  if (tags.includes('draft-pending') || tags.includes('unsent_draft') || tags.includes('health:unsent_draft')) return 'casey drafted a reply. Review it, then send or change it.'
-  if (tags.includes('health:unanswered_handoff_escalated')) return 'A person was asked for a long time ago and still no one has replied. Please step in.'
-  if (tags.includes('health:unanswered_handoff')) return 'A person was asked for and no one has replied yet.'
-  if (tags.includes('health:incomplete_critical')) return 'Active case but the visit-critical facts are still missing. Reach the farmer now.'
-  if (tags.includes('health:abandoned_intake')) return 'The farmer may have left. On-site facts are still missing.'
-  if (c.status === 'waiting' && ageHours(c, Date.now()) >= 24) return 'No answer for over a day. A check-in may help.'
-  if (tags.includes('health:stuck')) return 'This one has been in the same stage too long.'
-  if (tags.includes('health:stale')) return 'No activity in a while. A check may be due.'
-  if (c.autonomy === 'observe') return 'casey is only listening here. A reply has to come from you.'
-  if (c.autonomy === 'assisted') return 'casey can draft, but you send. Open it to check.'
-  return 'This one is worth a look.'
+  // Detail-only terminal/quiet states first: these are not inbox reasons (they
+  // score 0) but the detail line must still say the right thing about them.
+  if (tags.includes('opted-out')) return { reason: 'This person asked to stop.', todo: 'This person asked to stop. Do not message them. Leave this one alone.' }
+  if (c.status === 'closed') return { reason: 'This one is finished.', todo: 'This one is finished. Nothing to do.' }
+  // Inbox states, in attnScore weight order so why-line and sort agree.
+  if (tags.includes('needs-human')) return { reason: 'This person asked to talk to a real person.', todo: 'This person asked for a real person. Reply to them below.' }
+  if (tags.includes('draft-pending') || tags.includes('unsent_draft') || tags.includes('health:unsent_draft')) return { reason: 'casey drafted a reply. Review it, then send or change it.', todo: 'casey prepared a reply but waits for a person. Check it, then send.' }
+  if (tags.includes('health:unanswered_handoff_escalated')) return { reason: 'A person was asked for a long time ago and still no one has replied. Please step in.', todo: 'A person was asked for a long time ago and still no one has replied. Step in below.' }
+  if (tags.includes('health:unanswered_handoff')) return { reason: 'A person was asked for and no one has replied yet.', todo: 'A person was asked for and no one has replied. Reply below to take this one on.' }
+  if (tags.includes('health:incomplete_critical')) return { reason: 'Active case but the visit-critical facts are still missing. Reach the farmer now.', todo: 'The visit-critical facts are still missing and the case is active. Try to reach the farmer now -- once they leave the site some facts cannot be recovered.' }
+  if (tags.includes('health:abandoned_intake')) return { reason: 'The farmer may have left. On-site facts are still missing.', todo: 'On-site facts are still missing and the farmer may be gone. Check if they are still reachable and ask for the most important detail (location or how to find the place).' }
+  if (c.status === 'waiting' && ageHours(c, now) >= 24) return { reason: 'No answer for over a day. A check-in may help.', todo: 'No answer for over a day. A check-in may help -- reply below.' }
+  if (tags.includes('health:stuck')) return { reason: 'This one has been in the same stage too long.', todo: 'This case has been in the same stage for a while. Check if it needs a push or can be closed.' }
+  if (tags.includes('health:stale')) return { reason: 'No activity in a while. A check may be due.', todo: 'No activity for a while. Check if anything needs following up.' }
+  if (c.autonomy === 'observe') return { reason: 'casey is only listening here. A reply has to come from you.', todo: 'This one is waiting for you. Read it and reply, or set Who answers to auto so casey can answer.' }
+  if (c.autonomy === 'assisted') return { reason: 'casey can draft, but you send. Open it to check.', todo: 'casey can draft, but you send. Open it and check the draft.' }
+  // Trailing detail-only states.
+  if (c.status === 'resolved') return { reason: 'This one is marked done.', todo: 'This one is marked done. Close it if you are finished.' }
+  if (c.status === 'waiting') return { reason: 'Waiting on the person to reply.', todo: 'Waiting on the person to reply. Nothing to do until they answer.' }
+  if (c.status === 'new' || c.status === 'triaging') return { reason: 'A new message came in.', todo: 'A new message came in. casey is sorting it out.' }
+  return { reason: 'This one is worth a look.', todo: 'casey is handling this one on its own. Step in only if you need to.' }
 }
+
+// One honest, plain reason this case is in the inbox. Thin wrapper over the
+// shared policy so the inbox why-line and the detail to-do line never diverge.
+function attnReason(c, now = Date.now()) { return caseHints(c, now).reason }
+
+// One plain "what to do now" line for the detail view. Same shared policy.
+function todoHint(c, now = Date.now()) { return caseHints(c, now).todo }
 
 // Rank a set of cases worst-first. Returns [{ c, score, reason }] for cases that
 // need attention (score > 0), sorted by score then recency. `cases` should be the
@@ -107,4 +133,4 @@ function rankAttention(cases, now = Date.now(), { limit = 0, offset = 0 } = {}) 
   return { total, items: sliced }
 }
 
-export { attnScore, attnReason, rankAttention, tagList, ageHours, touchMs, snoozedUntil }
+export { attnScore, attnReason, todoHint, caseHints, rankAttention, tagList, ageHours, touchMs, snoozedUntil }

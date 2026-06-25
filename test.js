@@ -13,7 +13,7 @@ import { runScript, MockAdapter } from './src/sim/inject.js'
 import { stubLLM } from './src/sim/stub-llm.js'
 import { intentReply, fallbackReply, reportMissingVisitCritical } from './src/gateway-hooks.js'
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
-import { rankAttention } from './src/attn.js'
+import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
 
 process.env.CASEY_LOG = 'silent'
@@ -280,6 +280,34 @@ async function main() {
     assert.ok(Array.isArray(fh.latest.errors), 'latest carries an errors array')
     assert.equal(fh.degraded, fh.latest.errors.length > 0, 'degraded reflects the latest errors')
     assert.ok(fh.history.every((r, i) => i === 0 || r.ts >= fh.history[i - 1].ts), 'history is oldest-first for a trend line')
+  })
+
+  await test('attnReason and todoHint derive from one caseHints policy and never contradict', async () => {
+    const now = Date.parse('2026-06-25T12:00:00+02:00')
+    const dayAgo = new Date(now - 30 * 3.6e6).toISOString()
+    const states = [
+      { tags: 'opted-out' },
+      { status: 'closed' },
+      { tags: 'needs-human' },
+      { tags: 'health:unanswered_handoff' },
+      { tags: 'health:incomplete_critical' },
+      { tags: 'health:abandoned_intake' },
+      { status: 'waiting', updated_at: dayAgo },
+      { tags: 'health:stuck' },
+      { tags: 'health:stale' },
+      { autonomy: 'observe' },
+      { autonomy: 'assisted' },
+      { status: 'resolved' },
+      { status: 'waiting' },
+      { status: 'new' },
+      {},
+    ]
+    for (const c of states) {
+      const hints = caseHints(c, now)
+      assert.equal(attnReason(c, now), hints.reason, 'attnReason is caseHints(...).reason')
+      assert.equal(todoHint(c, now), hints.todo, 'todoHint is caseHints(...).todo')
+      assert.ok(hints.reason && hints.todo, 'every state yields both a why-line and a to-do')
+    }
   })
 
   await test('GET /api/report.csv and /api/report.html produce a management briefing (SAST, escaped)', async () => {
