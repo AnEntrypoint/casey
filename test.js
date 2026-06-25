@@ -11,7 +11,7 @@ import { createCasey, Casey } from './src/casey.js'
 import { createDashboard } from './src/dashboard/server.js'
 import { runScript, MockAdapter } from './src/sim/inject.js'
 import { stubLLM } from './src/sim/stub-llm.js'
-import { intentReply, fallbackReply, reportMissingVisitCritical } from './src/gateway-hooks.js'
+import { intentReply, fallbackReply, reportMissingVisitCritical, jargonHits } from './src/gateway-hooks.js'
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
@@ -345,6 +345,62 @@ async function main() {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
     })
     assert.equal(noTok.status, 401, 'undo requires the dashboard token')
+  })
+
+  await test('pre-send jargon guard: word-boundary scan; a jargon reply is HELD as a draft, never sent', async () => {
+    // Word-boundary correctness: whole banned words hit, substrings/conjunction do not.
+    assert.deepEqual(jargonHits('Your case has been logged.').sort(), ['case'])
+    assert.deepEqual(jargonHits('We will triage the workflow by priority status').sort(), ['priority', 'status', 'triage', 'workflow'])
+    assert.deepEqual(jargonHits('staircase showcases workflows'), [], 'substrings of other words do not false-positive')
+    assert.deepEqual(jargonHits('In case it rains, the status quo'), ['case', 'status'], 'whole words in plain prose still hit (held for a human)')
+    assert.deepEqual(jargonHits(''), [], 'empty reply is clean')
+    // End-to-end hold: a model that leaks jargon must NOT reach the contact. Spin a
+    // dedicated casey whose model emits jargon and assert the reply is held (drafted,
+    // never sent) on the same real store path. The precedence gate REPLACES model
+    // output with the deterministic intake reply while visit-critical intake is
+    // INCOMPLETE -- and three visit-critical fields (how_to_find, farmer_available,
+    // contact_fallback) are NOT deterministically extractable, so only the agent's
+    // case_report tool can complete intake. A column seed does not survive the agent
+    // turn (freddie reconciles report from the turn's own tool calls). So the model
+    // here both COMPLETES intake via case_report (filling the three non-extractable
+    // fields) AND leaks jargon in its prose -- the real scenario the guard governs:
+    // a model that did its job on the record yet spoke internal jargon to the contact.
+    const JARGON = 'Thank you. Your case is now in triage and we set its priority.'
+    const jargonModel = () => {
+      let call = 0
+      return async ({ messages }) => {
+        const sys = (messages.find(m => m.role === 'system')?.content) || ''
+        const idm = /id=([^)\s]+)/.exec(sys)
+        const caseId = idm ? idm[1] : null
+        // First invocation of each turn: complete intake via case_report (the three
+        // non-extractable visit-critical fields) so the precedence gate opens. The
+        // tool result re-invokes the model; the second invocation returns the jargon
+        // prose with no tool calls, which the agent loop adopts as the reply.
+        call++
+        if (call % 2 === 1 && caseId != null) {
+          return { content: '', tool_calls: [{ id: 'r' + call, name: 'case_report', arguments: { id: caseId, how_to_find: 'second gate past the clinic', farmer_available: 'yes', contact_fallback: 'neighbour Thabo' } }] }
+        }
+        return { content: JARGON, tool_calls: [] }
+      }
+    }
+    const jcasey = await createCasey({ channels: ['sim'], callLLM: jargonModel(), sweepIntervalMs: 0, notifyHandoff: async () => {} })
+    await jcasey.start()
+    const jadapter = jcasey.adapters.sim
+    let sent = 0
+    const realSend = jadapter.send.bind(jadapter)
+    jadapter.send = async (m) => { sent++; return realSend(m) }
+    const chan = 'jargon-' + Date.now()
+    // One turn carrying the extractable facts (species/symptoms/location); the model
+    // completes the rest via case_report and then speaks jargon, which the guard holds.
+    await runScript(jadapter, ['my goats are coughing badly at the farm near Taung'], { from: chan, channel_id: chan, username: chan, wait: () => jcasey.drain() })
+    const jc = (await jcasey.store.listCases()).find(c => c.external_id === chan)
+    const store2 = jcasey.store
+    assert.equal(sent, 0, 'a jargon-laden reply is never sent to the contact')
+    const evs = await jcasey.store.listEvents(jc.id)
+    assert.ok(evs.some(e => e.kind === 'draft' && /case|triage|priority/.test(String(e.data || '') + (e.text || ''))), 'the jargon reply is held as a draft event')
+    assert.ok(evs.some(e => e.kind === 'observation' && /JARGON-HELD/.test(e.text || '')), 'an observation records why it was held')
+    const tags = String((await store2.getCase(jc.id)).tags || '').split(',').map(t => t.trim())
+    assert.ok(tags.includes('draft-pending') && tags.includes('needs-human'), 'the case is flagged for a human to reword')
   })
 
   await test('src/format.js renders real event timestamps in SAST and contacts in +27 (CLI/SPA shared)', async () => {

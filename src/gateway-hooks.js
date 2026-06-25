@@ -298,6 +298,32 @@ export function isStockAck(text) {
   })
 }
 
+// Pre-send jargon guard. casey's design rule is plain, warm language to the
+// contact: never internal jargon (case/triage/workflow/status/priority). A weak
+// model occasionally leaks one of these words into a reply. This is a
+// deterministic word-BOUNDARY scan (so "in case" the conjunction, "status quo",
+// or "workflow" inside a contact-quoted phrase are matched as whole words only,
+// and substrings like "staircase"/"workflows" of a different word do not false-
+// positive) over the OUTBOUND reply just before it leaves. On a hit the reply is
+// NOT sent: it is held as a draft for a human, exactly like assisted mode, with
+// the offending words recorded. This is a JARGON gate only -- it deliberately does
+// NOT inspect language/non-English (that is a separate concern and not in scope).
+// Returns the list of banned words found (empty = clean). ASCII only.
+const JARGON_WORDS = ['case', 'triage', 'workflow', 'status', 'priority']
+const JARGON_RE = new RegExp('\\b(' + JARGON_WORDS.join('|') + ')\\b', 'gi')
+export function jargonHits(text) {
+  if (!text) return []
+  // Strip the case-reference token first: a real ref is "CASE-1073-iyniv", whose
+  // "CASE" prefix would otherwise trip \bcase\b on EVERY reply that quotes the
+  // reference (the contact-facing ref is required, not jargon). The ref is the one
+  // legitimate place "CASE" appears in an outbound; scan the rest.
+  const scrubbed = String(text).replace(CASE_REF_RE, ' ')
+  const found = new Set()
+  const m = scrubbed.match(JARGON_RE)
+  if (m) for (const w of m) found.add(w.toLowerCase())
+  return [...found]
+}
+
 // Holding message in the contact's own language, for the worst-case path: the
 // LLM turn errored, timed out, or returned nothing. A low-literacy contact who
 // wrote in Spanish must NOT get an English wall of text back (P9 worst-case +
@@ -702,6 +728,13 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     } finally {
       inFlight.delete(external_id)
     }
+    // Re-read the case after the agent turn: the agent may have completed intake via
+    // case_report (or moved the stage) during the turn. Report-aware decisions below
+    // -- the precedence gate, the fallback intake-advance, the jargon hold -- must see
+    // what the agent just wrote, not the pre-turn snapshot. Without this, an agent
+    // that completed intake this turn is still overridden by a deterministic intake
+    // question, and a now-complete case never lets trusted model prose through.
+    fresh = await store.getCase(fresh.id).catch(() => fresh)
 
     // Never send a raw error string or an empty message to the contact. On
     // error/empty, send a safe fallback and keep the case recoverable.
@@ -803,6 +836,36 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         text = safeText
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `REF-CORRECTED: model emitted ${corrected.join(', ')}; rewrote to real ref ${fresh.ref}.` })
       }
+    }
+
+    // PRE-SEND JARGON GUARD: if the composed reply leaked internal jargon
+    // (case/triage/workflow/status/priority as whole words), do NOT send it. Hold
+    // it as a draft for a human exactly like assisted mode -- the contact must never
+    // receive a jargon-laden reply, and a person rewrites it plainly. This fires in
+    // ANY autonomy mode (the leak is a content defect, not a mode choice) and runs
+    // before the assisted-mode branch so a jargon hit holds even in auto mode. The
+    // offending words are recorded as an observation for the operator. Reuses the
+    // assisted draft-hold mechanics (draft event + draft-pending + needs-human +
+    // notify-once).
+    const jHits = jargonHits(text)
+    if (jHits.length) {
+      await store.appendEvent(fresh.id, {
+        kind: 'observation', actor: 'system',
+        text: `JARGON-HELD: reply withheld -- contained internal jargon (${jHits.join(', ')}); held for a human to reword plainly.`,
+      })
+      await store.appendEvent(fresh.id, {
+        kind: 'draft', actor: 'agent', channel,
+        text, data: { to: external_id, fallback: isFallback, draft: true, jargon: jHits },
+      })
+      const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
+      try {
+        await store.updateCase(fresh.id, { tags: mergeTag(mergeTag(fresh.tags, 'draft-pending'), 'needs-human') })
+        if (notifyHandoff && !alreadyFlagged) {
+          try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
+          catch (e) { log.warn?.('[casey] jargon-held notify failed', { caseId: fresh.id, error: e.message }) }
+        }
+      } catch (e) { log.warn?.('[casey] jargon-held flag failed', { caseId: fresh.id, error: e.message }) }
+      return { to: external_id, text: '', platform, caseId: fresh.id, drafted: true, jargonHeld: jHits }
     }
 
     // ASSISTED mode: the agent composed a reply, but a human must approve before
