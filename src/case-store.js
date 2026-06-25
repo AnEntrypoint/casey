@@ -248,6 +248,62 @@ export class CaseStore {
     return mergeThresholds(patch, base).thresholds
   }
 
+  // Singleton settings case holding the rolling fleet-health sweep log. Same
+  // append-only-observation pattern as thresholds and the runtime-event log: each
+  // SCHEDULED sweep persists its summary as one audited observation, so the trend
+  // over time is auditable for free -- no schema change, no new entity.
+  async _fleetHealthCaseId() {
+    const { case: c } = await this.findOrCreateCase({
+      channel: 'system', external_id: 'settings:fleet-health',
+      contact: { display_name: 'fleet-health' },
+    })
+    return c.id
+  }
+
+  // Persist a sweep summary as a new audited observation. `summary` is the object
+  // sweepCases returns ({scanned, flagged, cleared, breaches, errors, ...}); we add
+  // a `ts` and a derived `degraded` flag and store it verbatim so a later read
+  // replays exactly what the sweep saw. Returns the stored record.
+  async recordSweepSummary(summary, now = Date.now()) {
+    const errors = Array.isArray(summary?.errors) ? summary.errors : []
+    const rec = {
+      ts: now,
+      scanned: summary?.scanned ?? 0,
+      flagged: summary?.flagged ?? 0,
+      cleared: summary?.cleared ?? 0,
+      breaches: summary?.breaches && typeof summary.breaches === 'object' ? summary.breaches : {},
+      errors,
+      degraded: errors.length > 0,
+    }
+    const id = await this._fleetHealthCaseId()
+    await this.appendEvent(id, {
+      kind: 'observation', actor: 'system',
+      text: `fleet-health:${JSON.stringify(rec)}`,
+      data: { scanned: rec.scanned, flagged: rec.flagged, degraded: rec.degraded },
+    })
+    return rec
+  }
+
+  // Read the last N sweep summaries, newest-first. Returns {latest, history,
+  // degraded}: `history` is up to N parsed records oldest->newest (for a trend
+  // line), `latest` is the most recent (or null), `degraded` is the latest's flag.
+  // A parse/read failure degrades to an empty history rather than throwing.
+  async getFleetHealth(n = 50) {
+    let id
+    try { id = await this._fleetHealthCaseId() } catch { return { latest: null, history: [], degraded: false } }
+    const events = await this.listEvents(id).catch(() => [])
+    const recs = []
+    for (const ev of events) {
+      if (ev.kind !== 'observation' || typeof ev.text !== 'string') continue
+      const m = ev.text.match(/^fleet-health:(.+)$/s)
+      if (!m) continue
+      try { recs.push(JSON.parse(m[1])) } catch { continue }
+    }
+    const history = recs.slice(Math.max(0, recs.length - Math.max(1, n)))
+    const latest = history.length ? history[history.length - 1] : null
+    return { latest, history, degraded: !!latest?.degraded }
+  }
+
   // Most-recently-active first. thatcher ignores orderBy/order so we sort in JS
   // (by last_event_at, falling back to created_at) to make the order real. The
   // page window is applied after sorting when a limit is given.

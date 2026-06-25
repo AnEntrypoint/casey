@@ -269,6 +269,19 @@ async function main() {
     assert.equal(bogus.kind, null, 'an unknown kind is ignored, not passed to the store')
   })
 
+  await test('runSweepOnce persists a fleet-health summary that GET /api/fleet-health trends', async () => {
+    const before = await df('http://localhost:4577/api/fleet-health?token=secret').then(r => r.json())
+    const beforeN = before.history.length
+    await casey.runSweepOnce()
+    await casey.runSweepOnce()
+    const fh = await df('http://localhost:4577/api/fleet-health?token=secret&n=10').then(r => r.json())
+    assert.ok(fh.history.length >= beforeN + 2, 'each sweep appends one trend point')
+    assert.ok(fh.latest && typeof fh.latest.scanned === 'number', 'latest summary carries a scanned count')
+    assert.ok(Array.isArray(fh.latest.errors), 'latest carries an errors array')
+    assert.equal(fh.degraded, fh.latest.errors.length > 0, 'degraded reflects the latest errors')
+    assert.ok(fh.history.every((r, i) => i === 0 || r.ts >= fh.history[i - 1].ts), 'history is oldest-first for a trend line')
+  })
+
   await test('GET /api/report.csv and /api/report.html produce a management briefing (SAST, escaped)', async () => {
     const csvRes = await df('http://localhost:4577/api/report.csv?token=secret&days=30')
     assert.equal(csvRes.status, 200, 'report.csv reachable + token-gated')

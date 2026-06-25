@@ -259,7 +259,14 @@ export class Casey {
     // over defaults) at call time, so a /api/thresholds change takes effect on the
     // very next sweep without a restart.
     const thresholds = await this.store.resolveThresholds(this.opts.healthThresholds)
-    return sweepCases(this.store, now, thresholds, { log: this.log, notifyBreach })
+    const summary = await sweepCases(this.store, now, thresholds, { log: this.log, notifyBreach })
+    // Persist the rich summary as a rolling audited observation so the dashboard
+    // can show a trend over time and a degraded-sweep banner -- otherwise the
+    // breaches/errors detail is logged once and lost. A persistence failure must
+    // not fail the sweep itself, so it is best-effort and recorded as a warning.
+    try { this._lastSweepSummary = await this.store.recordSweepSummary(summary, now) }
+    catch (e) { this.log?.warn?.('[casey] fleet-health persist failed', { error: e.message }) }
+    return summary
   }
 
   // Start (or restart) the periodic guardrail sweep. Opt-in: a non-positive

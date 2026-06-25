@@ -738,6 +738,20 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Fleet-health trend: the rolling log of SCHEDULED guardrail-sweep summaries
+  // (persisted by casey.runSweepOnce as audited observations). Returns the latest
+  // summary, the last N for a trend line, and a degraded flag (true when the
+  // latest sweep hit errors). Read-only, store-backed -- no casey-instance handle
+  // needed. ?n clamps the history depth (default 50, 1..500). The header pill
+  // wiring is the client-side half (blocked on the browser surface).
+  app.get('/api/fleet-health', async (req, res) => {
+    try {
+      const n = Math.min(Math.max(parseInt(req.query.n, 10) || 50, 1), 500)
+      const fh = await store.getFleetHealth(n)
+      res.json(fh)
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Management KPIs over the live case+event history: time-to-first-reply
   // (median/p90), median dwell per stage from transition events, opened-vs-closed
   // per day, open backlog by stage. Aggregate-only -- no per-contact rows or
