@@ -433,9 +433,15 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       const text = intentReply(intent, fresh, guessLang(inboundText))
       await store.appendEvent(fresh.id, {
         kind: 'outbound', actor: 'system', channel,
-        text, data: { to: msg.from, intent, deterministic: true },
+        text, data: { to: external_id, intent, deterministic: true },
       })
-      const reply = { to: msg.from, text, platform, caseId: fresh.id, intent }
+      // Reply target is external_id (the conversation key), NOT msg.from. On
+      // Discord, freddie's adapter POSTs to /channels/{to}/messages, so `to` must
+      // be the channel id (conversationKey), not the author id -- sending to the
+      // author id silently fails (Discord 404, swallowed by .then(json)) and the
+      // contact never sees a reply. external_id is correct for WhatsApp too, where
+      // conversationKey falls back to msg.from (the phone number).
+      const reply = { to: external_id, text, platform, caseId: fresh.id, intent }
       if (adapter?.send) {
         try { await adapter.send(reply) }
         catch (e) {
@@ -505,10 +511,15 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
 
     await store.appendEvent(fresh.id, {
       kind: 'outbound', actor: 'agent', channel,
-      text, data: { to: msg.from, fallback: isFallback },
+      text, data: { to: external_id, fallback: isFallback },
     })
 
-    const reply = { to: msg.from, text, platform, caseId: fresh.id }
+    // Reply target is external_id (conversationKey), NOT msg.from -- see the note
+    // at the deterministic-intent reply above. On Discord, freddie POSTs to
+    // /channels/{to}/messages, so `to` must be the channel id; on WhatsApp,
+    // conversationKey falls back to the phone number. msg.from (author id) silently
+    // 404s on Discord and the contact never sees the reply.
+    const reply = { to: external_id, text, platform, caseId: fresh.id }
     if (adapter?.send) {
       try { await adapter.send(reply) }
       catch (e) {
@@ -790,7 +801,7 @@ const STATUS_STRINGS = {
     new: 'We have your report and the team will look at it very soon.', triaging: 'The team is looking at your report now.',
     in_progress: 'Someone from the team is working on this now.',
     waiting: 'The team has started and is waiting on one step. We will keep you posted.',
-    resolved: 'This has been dealt with. If anything is still wrong with your animals, just tell us.',
+    resolved: 'This has been dealt with. If anything is still wrong with the animals, just tell us.',
     closed: 'This report is closed. Message any time if you see something new.',
     _: 'The team is looking into your report.',
   },
@@ -798,7 +809,7 @@ const STATUS_STRINGS = {
     new: 'Ons het u verslag en die span sal baie gou daarna kyk.', triaging: 'Die span kyk nou na u verslag.',
     in_progress: 'Iemand van die span werk nou hieraan.',
     waiting: 'Die span het begin en wag op een stap. Ons sal u op hoogte hou.',
-    resolved: 'Dit is hanteer. As iets nog steeds fout is met u diere, se net vir ons.',
+    resolved: 'Dit is hanteer. As iets nog steeds fout is met die diere, se net vir ons.',
     closed: 'Hierdie verslag is gesluit. Stuur enige tyd n boodskap as u iets nuuts sien.',
     _: 'Die span kyk na u verslag.',
   },
@@ -806,7 +817,7 @@ const STATUS_STRINGS = {
     new: 'Siwutholile umbiko wakho futhi ithimba lizowubheka maduzane.', triaging: 'Ithimba libheka umbiko wakho manje.',
     in_progress: 'Othile ethimbeni usebenza kulokhu manje.',
     waiting: 'Ithimba seliqalile futhi lilinde isinyathelo esisodwa. Sizokwazisa.',
-    resolved: 'Lokhu sekulungisiwe. Uma kukhona okusako ngezilwane zakho, sitshele nje.',
+    resolved: 'Lokhu sekulungisiwe. Uma kukhona okusako ngezilwane, sitshele nje.',
     closed: 'Lo mbiko uvaliwe. Thumela umlayezo noma nini uma ubona okuthile okusha.',
     _: 'Ithimba libheka umbiko wakho.',
   },
@@ -814,7 +825,7 @@ const STATUS_STRINGS = {
     new: 'Siwufumene umbiko wakho kwaye iqela liza kuwujonga kungekudala.', triaging: 'Iqela lijonga umbiko wakho ngoku.',
     in_progress: 'Umntu weqela usebenza koku ngoku.',
     waiting: 'Iqela seliqalile kwaye lilinde inyathelo elinye. Siza kukwazisa.',
-    resolved: 'Oku kulungisiwe. Ukuba kukho into engalunganga ngezilwanyana zakho, sixelele nje.',
+    resolved: 'Oku kulungisiwe. Ukuba kukho into engalunganga ngezilwanyana, sixelele nje.',
     closed: 'Lo mbiko uvaliwe. Thumela umyalezo nanini na ukuba ubona into entsha.',
     _: 'Iqela lijonga umbiko wakho.',
   },
@@ -885,35 +896,35 @@ export function makeTransitionNotifier(store, sendReply, { log = console } = {})
 // for a disease report (a team will look into it), no order/ticket language.
 const INTENT_STRINGS = {
   en: {
-    help: 'We are here to help. Reply STATUS to check on your report, HUMAN to talk to a person, or STOP to end messages. Or just tell us what you are seeing with your animals.',
+    help: 'We are here to help. Reply STATUS to check on your report, HUMAN to talk to a person, or STOP to end messages. Or just tell us what you are seeing with the animals.',
     stop: 'Okay, we will not message you again. Reply HELP any time if you change your mind.',
     human: 'Of course. We are asking a person from the team to help you now. They will reply right here as soon as they can.',
     thanks: "You're welcome. Thank you for reporting it.",
-    greeting: 'Hello! Good to hear from you. Tell us what you are seeing with your animals.',
+    greeting: 'Hello! Good to hear from you. Tell us what you are seeing with the animals.',
     statusTail: ' Reply HUMAN any time to talk to a person.', refLabel: (r) => ` Your reference is ${r}.`,
   },
   af: {
-    help: 'Ons is hier om te help. Antwoord STATUS om u verslag na te gaan, MENS om met n persoon te praat, of STOP om nie meer boodskappe te kry nie. Of se net vir ons wat u by u diere sien.',
+    help: 'Ons is hier om te help. Antwoord STATUS om u verslag na te gaan, MENS om met n persoon te praat, of STOP om nie meer boodskappe te kry nie. Of se net vir ons wat u by die diere sien.',
     stop: 'Goed, ons sal u nie weer boodskap nie. Antwoord HELP enige tyd as u van plan verander.',
     human: 'Natuurlik. Ons vra nou iemand van die span om u te help. Hulle sal hier antwoord sodra hulle kan.',
     thanks: 'Plesier. Dankie dat u dit aangemeld het.',
-    greeting: 'Hallo! Lekker om van u te hoor. Vertel ons wat u by u diere sien.',
+    greeting: 'Hallo! Lekker om van u te hoor. Vertel ons wat u by die diere sien.',
     statusTail: ' Antwoord MENS enige tyd om met n persoon te praat.', refLabel: (r) => ` U verwysing is ${r}.`,
   },
   zu: {
-    help: 'Silapha ukukusiza. Phendula u-STATUS ukuze ubheke umbiko wakho, u-HUMAN ukuze ukhulume nomuntu, noma u-STOP ukuze umise imilayezo. Noma usitshele nje ukuthi ubonani ezilwaneni zakho.',
+    help: 'Silapha ukukusiza. Phendula u-STATUS ukuze ubheke umbiko wakho, u-HUMAN ukuze ukhulume nomuntu, noma u-STOP ukuze umise imilayezo. Noma usitshele nje ukuthi ubonani ezilwaneni.',
     stop: 'Kulungile, ngeke siphinde sikuthumelele. Phendula u-HELP noma nini uma ushintsha umqondo.',
     human: 'Impela. Sicela umuntu wethimba ukuthi akusize manje. Uzophendula lapha ngokushesha angakwazi.',
     thanks: 'Wamukelekile. Siyabonga ngokukubika.',
-    greeting: 'Sawubona! Kuhle ukuzwa kuwe. Sitshele ukuthi ubonani ezilwaneni zakho.',
+    greeting: 'Sawubona! Kuhle ukuzwa kuwe. Sitshele ukuthi ubonani ezilwaneni.',
     statusTail: ' Phendula u-HUMAN noma nini ukuze ukhulume nomuntu.', refLabel: (r) => ` Inombolo yakho yereferensi ngu-${r}.`,
   },
   xh: {
-    help: 'Silapha ukukunceda. Phendula u-STATUS ukujonga umbiko wakho, u-HUMAN ukuthetha nomntu, okanye u-STOP ukuyeka imiyalezo. Okanye sixelele nje ukuba ubona ntoni kwizilwanyana zakho.',
+    help: 'Silapha ukukunceda. Phendula u-STATUS ukujonga umbiko wakho, u-HUMAN ukuthetha nomntu, okanye u-STOP ukuyeka imiyalezo. Okanye sixelele nje ukuba ubona ntoni kwizilwanyana.',
     stop: 'Kulungile, asisayi kuphinda sikuthumelele. Phendula u-HELP nanini na ukuba uyaguqula ingqondo.',
     human: 'Ewe kakhulu. Sicela umntu weqela ukuba akuncede ngoku. Uya kuphendula apha kamsinya.',
     thanks: 'Wamkelekile. Enkosi ngokuyixela.',
-    greeting: 'Molo! Kuhle ukuva kuwe. Sixelele ukuba ubona ntoni kwizilwanyana zakho.',
+    greeting: 'Molo! Kuhle ukuva kuwe. Sixelele ukuba ubona ntoni kwizilwanyana.',
     statusTail: ' Phendula u-HUMAN nanini na ukuthetha nomntu.', refLabel: (r) => ` Inombolo yakho yesalathiso ngu-${r}.`,
   },
 }
