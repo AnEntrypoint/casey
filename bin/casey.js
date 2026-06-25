@@ -9,6 +9,8 @@
 import { createCasey } from '../src/casey.js'
 import { createCaseStore } from '../src/case-store.js'
 import { createDashboard } from '../src/dashboard/server.js'
+import { fmtTimeSAST, fmtPhone27, hostTimezone, hostIsSAST, SAST_TZ } from '../src/format.js'
+import { rankAttention } from '../src/attn.js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -110,6 +112,10 @@ ${bold('usage:')}
   casey sim ["message" ...] [--scenario <name>] run a simulated conversation (or a built-in persona)
   casey cases [--status <stage>]                list cases
   casey show <ref|id>                           show a case + timeline
+  casey attention [--limit N --offset N --json] worst-first inbox: who needs a person now, and why
+  casey health                                  read-only guardrail summary (no changes written)
+  casey sweep                                   run the health-guardrail sweep once now (writes tags/observations)
+  casey transition <ref|id> <stage> [--reason]  move a case to a stage (legality-checked)
 
 ${bold('flags:')} --help / -h on any command, --version / -v
 
@@ -184,6 +190,10 @@ async function main() {
     console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset -- dashboard is open to anyone on the network (set a token for production use)'))
     // public URL (optional but useful)
     console.log(process.env.CASEY_PUBLIC_URL ? ok(`CASEY_PUBLIC_URL set (${process.env.CASEY_PUBLIC_URL})`) : dim('  CASEY_PUBLIC_URL unset - contacts will not receive a web form link (optional)'))
+    // host timezone -- casey always renders absolute times in SAST regardless of
+    // the host clock, so a non-SAST host is fine (not a problem), but flag it so
+    // an operator reading raw OS timestamps elsewhere knows the offset.
+    console.log(hostIsSAST() ? ok(`host timezone is SAST (${SAST_TZ})`) : warn(`host timezone is ${hostTimezone() || 'unknown'}, not ${SAST_TZ} - casey still shows all times in SAST, but your OS clock differs`))
     // alert webhook -- high-severity guardrail breaches page the team here during
     // a sweep; falls back to the handoff webhook. Optional: without either, breaches
     // still surface in the dashboard inbox, they just do not push a notification.
@@ -463,8 +473,8 @@ async function main() {
       process.exit(0)
     }
     for (const cr of cases) {
-      const contact = cr.external_id ? dim(cr.external_id) : ''
-      const age = cr.created_at ? dim(new Date(cr.created_at * 1000).toLocaleDateString()) : ''
+      const contact = cr.external_id ? dim(fmtPhone27(cr.external_id)) : ''
+      const age = dim(fmtTimeSAST(cr.created_at) || '(no date)')
       console.log(`${bold(cr.ref)}\t[${cr.status}]\t${cr.priority}\t${cr.channel}\t${contact}\t${cr.subject || ''}\t${age}`)
     }
     process.exit(0)
@@ -476,7 +486,8 @@ async function main() {
     if (!id) { console.log(`usage: casey show <ref|id>`); process.exit(1) }
     const caseRow = await store.getCase(id) || await store.getCaseByRef(id)
     if (!caseRow) { console.log(red('case not found:'), id); console.log(dim(`  list cases with ${cyan('casey cases')}.`)); process.exit(1) }
-    console.log(`${bold(caseRow.ref)}  [${caseRow.status}]  ${caseRow.priority}  ${caseRow.channel}/${caseRow.id}`)
+    console.log(`${bold(caseRow.ref)}  [${caseRow.status}]  ${caseRow.priority}  ${caseRow.channel}/${fmtPhone27(caseRow.external_id)}`)
+    console.log(`opened: ${fmtTimeSAST(caseRow.created_at) || dim('(no date)')}`)
     console.log(`subject: ${caseRow.subject}\nsummary: ${caseRow.summary}\ntags: ${caseRow.tags}`)
     let report = {}; try { report = caseRow.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
     const { VISIT_CRITICAL: VC } = await import('../src/case-health.js')
@@ -490,7 +501,94 @@ async function main() {
     for (const k of extra) console.log(`  ${k}: ${report[k]}`)
     if (!filled.length) console.log(dim('  (no additional fields filled)'))
     console.log(dim('--- timeline ---'))
-    for (const e of await store.listEvents(caseRow.id)) console.log(`  ${e.kind}/${e.actor}: ${e.text}`)
+    for (const e of await store.listEvents(caseRow.id)) {
+      const ts = fmtTimeSAST(e.created_at)
+      console.log(`  ${dim('[' + (ts || 'no time') + ']')} ${e.kind}/${e.actor}: ${e.text}`)
+    }
+    process.exit(0)
+  }
+
+  if (cmd === 'attention') {
+    const store = createCaseStore(); await store.init()
+    // Rank over the OPEN pool with the SAME scorer the dashboard inbox uses
+    // (src/attn.js), so the terminal and the web view agree on what is urgent.
+    const open = (await store.listCases()).filter(c => c.status !== 'resolved' && c.status !== 'closed')
+    const limit = Number(flags.limit) > 0 ? Number(flags.limit) : 0
+    const offset = Number(flags.offset) > 0 ? Number(flags.offset) : 0
+    const { total, items } = rankAttention(open, Date.now(), { limit, offset })
+    if (flags.json) {
+      console.log(JSON.stringify({ total, items: items.map(x => ({ ref: x.c.ref, score: x.score, reason: x.reason, status: x.c.status, channel: x.c.channel, contact: x.c.external_id, last_activity: x.c.updated_at || x.c.created_at })) }, null, 2))
+      process.exit(0)
+    }
+    if (!total) { console.log(green('nothing needs a person right now.')); process.exit(0) }
+    console.log(bold(`${total} case${total === 1 ? '' : 's'} need attention`) + (limit ? dim(`  (showing ${items.length})`) : '') + '\n')
+    for (const x of items) {
+      const contact = x.c.external_id ? dim(fmtPhone27(x.c.external_id)) : ''
+      const when = dim(fmtTimeSAST(x.c.updated_at || x.c.created_at) || '(no date)')
+      console.log(`${bold(x.c.ref)}\t${red('score ' + x.score)}\t[${x.c.status}]\t${x.c.channel}\t${contact}`)
+      console.log(`  ${x.reason}\n  ${dim('last activity: ' + when)}`)
+    }
+    process.exit(0)
+  }
+
+  if (cmd === 'health') {
+    const store = createCaseStore(); await store.init()
+    const { classifyCaseHealth } = await import('../src/case-health.js')
+    const thresholds = await store.resolveThresholds()
+    const open = (await store.listCases()).filter(c => c.status !== 'resolved' && c.status !== 'closed')
+    const now = Date.now()
+    const breachCounts = {}
+    let corrupt = 0, breachedCases = 0
+    for (const c of open) {
+      let breaches = []
+      try { breaches = classifyCaseHealth(c, now, thresholds) || [] }
+      catch { corrupt++; continue }
+      if (breaches.length) breachedCases++
+      for (const b of breaches) { const tag = b.breach || 'breach'; breachCounts[tag] = (breachCounts[tag] || 0) + 1 }
+    }
+    if (flags.json) { console.log(JSON.stringify({ open: open.length, breachedCases, corrupt, breaches: breachCounts }, null, 2)); process.exit(0) }
+    console.log(bold('casey health') + dim('  (read-only -- nothing written)'))
+    console.log(`open cases: ${open.length}   with a guardrail breach: ${breachedCases}` + (corrupt ? red(`   corrupt rows skipped: ${corrupt}`) : ''))
+    const entries = Object.entries(breachCounts).sort((a, b) => b[1] - a[1])
+    if (!entries.length) console.log(green('  no guardrail breaches.'))
+    for (const [tag, n] of entries) console.log(`  ${tag}\t${n}`)
+    process.exit(0)
+  }
+
+  if (cmd === 'sweep') {
+    const store = createCaseStore(); await store.init()
+    const { sweepCases } = await import('../src/case-sweep.js')
+    const thresholds = await store.resolveThresholds()
+    const summary = await sweepCases(store, Date.now(), thresholds)
+    if (flags.json) { console.log(JSON.stringify(summary, null, 2)); process.exit(0) }
+    const scanned = summary.scanned || 0
+    const flagged = summary.flagged || 0
+    const cleared = summary.cleared || 0
+    const errors = Array.isArray(summary.errors) ? summary.errors.length : 0
+    console.log(bold('casey sweep') + dim('  (health-guardrail sweep ran once)'))
+    console.log(`scanned: ${scanned}   newly flagged: ${flagged}   cleared: ${cleared}` + (errors ? red(`   errors: ${errors}`) : ''))
+    console.log(dim('  run ') + cyan('casey attention') + dim(' to see what to act on.'))
+    process.exit(0)
+  }
+
+  if (cmd === 'transition') {
+    const store = createCaseStore(); await store.init()
+    const positional = rest.filter(a => !a.startsWith('--'))
+    const [ref, stage] = positional
+    if (!ref || !stage) { console.log('usage: casey transition <ref|id> <stage> [--reason "..."]'); console.log(dim('  stages: ') + store.getValidStatuses().map(cyan).join(', ')); process.exit(1) }
+    const caseRow = await store.getCase(ref) || await store.getCaseByRef(ref)
+    if (!caseRow) { console.log(red('case not found:'), ref); process.exit(1) }
+    const OP = { id: 'cli-operator', role: 'operator' }
+    const legal = store.availableTransitions(caseRow, OP)
+    if (stage !== caseRow.status && !legal.includes(stage)) {
+      console.log(red(`cannot move ${caseRow.ref} from '${caseRow.status}' to '${stage}'.`))
+      console.log(dim('  allowed from here: ') + (legal.length ? legal.map(cyan).join(', ') : dim('(none)')))
+      process.exit(1)
+    }
+    const reason = typeof flags.reason === 'string' ? flags.reason : 'cli operator override'
+    await store.transition(caseRow.id, stage, { user: OP, reason })
+    const after = await store.getCase(caseRow.id)
+    console.log(green(`${after.ref}: ${caseRow.status} -> ${after.status}`) + dim(`  (${reason})`))
     process.exit(0)
   }
 

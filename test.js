@@ -12,6 +12,8 @@ import { createDashboard } from './src/dashboard/server.js'
 import { runScript, MockAdapter } from './src/sim/inject.js'
 import { stubLLM } from './src/sim/stub-llm.js'
 import { intentReply, fallbackReply, reportMissingVisitCritical } from './src/gateway-hooks.js'
+import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
+import { rankAttention } from './src/attn.js'
 
 process.env.CASEY_LOG = 'silent'
 
@@ -159,6 +161,39 @@ async function main() {
     assert.equal(adapter.sent.length, sentBefore + 1)
     const last = (await store.listEvents(caseId)).pop()
     assert.equal(last.kind, 'outbound'); assert.equal(last.actor, 'operator')
+  })
+
+  await test('src/format.js renders real event timestamps in SAST and contacts in +27 (CLI/SPA shared)', async () => {
+    // The CLI show timeline and the dashboard SPA both format absolute time and
+    // phone numbers through this module; assert it on a REAL stored event, not a
+    // synthetic value, so the same created_at the CLI prints is what we verify.
+    const evt = (await store.listEvents(caseId))[0]
+    assert.ok(evt && evt.created_at, 'a real event with created_at exists')
+    const shown = fmtTimeSAST(evt.created_at)
+    assert.ok(shown.endsWith(' SAST'), 'absolute time carries the SAST suffix: ' + shown)
+    // round-trips the stored unix-seconds value (not host-tz, not ms-vs-s drift)
+    assert.equal(toDate(evt.created_at).getTime(), Number(evt.created_at) * 1000, 'seconds, not ms')
+    // corrupt/missing timestamps never throw -- show must not crash on a bad row
+    assert.equal(fmtTimeSAST(null), '', 'null timestamp -> empty, no throw')
+    assert.equal(fmtTimeSAST('not-a-date'), '', 'garbage timestamp -> empty, no throw')
+    // phone formatting: MSISDN -> +27, local -> spaced, non-phone id passes through
+    assert.equal(fmtPhone27('27821234567'), '+27 82 123 4567')
+    assert.equal(fmtPhone27('0821234567'), '082 123 4567')
+    assert.equal(fmtPhone27('discord-user-9912'), 'discord-user-9912')
+  })
+
+  await test('CLI attention/transition primitives: rankAttention ranks the open pool, legality guard holds', async () => {
+    // The `casey attention` command ranks store.listCases() through this exact
+    // shared scorer; assert it over the REAL open pool and that the same legality
+    // check `casey transition` uses (availableTransitions) rejects a bogus stage.
+    const open = (await store.listCases()).filter(c => c.status !== 'resolved' && c.status !== 'closed')
+    const { total, items } = rankAttention(open, Date.now())
+    assert.ok(total >= 1, 'at least one open case needs attention')
+    assert.ok(items.every(x => x.score > 0 && typeof x.reason === 'string' && x.reason), 'every ranked item has a positive score and a plain reason')
+    assert.ok(items.every((x, i) => i === 0 || items[i - 1].score >= x.score), 'ranked worst-first by score')
+    const c = await store.getCase(caseId)
+    const legal = store.availableTransitions(c, { id: 'cli-operator', role: 'operator' })
+    assert.ok(!legal.includes('definitely_not_a_stage'), 'a bogus stage is never legal (the CLI 400s on it)')
   })
 
   await test('dashboard reply surfaces the sent flag (delivered vs logged-only)', async () => {
