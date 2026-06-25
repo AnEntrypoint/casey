@@ -269,6 +269,22 @@ async function main() {
     assert.equal(bogus.kind, null, 'an unknown kind is ignored, not passed to the store')
   })
 
+  await test('GET /api/report.csv and /api/report.html produce a management briefing (SAST, escaped)', async () => {
+    const csvRes = await df('http://localhost:4577/api/report.csv?token=secret&days=30')
+    assert.equal(csvRes.status, 200, 'report.csv reachable + token-gated')
+    assert.match(csvRes.headers.get('content-type') || '', /text\/csv/, 'csv content-type')
+    const csv = await csvRes.text()
+    assert.match(csv, /^section,key,value/, 'csv has the briefing header')
+    assert.match(csv, /totals,all,/, 'csv carries totals')
+    assert.match(csv, /response,median_first_response_hours,/, 'csv carries median response time')
+    const htmlRes = await df('http://localhost:4577/api/report.html?token=secret')
+    assert.equal(htmlRes.status, 200, 'report.html reachable')
+    const html = await htmlRes.text()
+    assert.match(html, /casey management report/, 'html briefing renders')
+    assert.match(html, /SAST/, 'generated time is shown in SAST')
+    assert.ok(!html.includes('<script>alert'), 'no unescaped contact text leaks into the report')
+  })
+
   await test('dashboard reply surfaces the sent flag (delivered vs logged-only)', async () => {
     const wired = await df('http://localhost:4577/api/cases/' + caseId + '/reply?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'wired' }),

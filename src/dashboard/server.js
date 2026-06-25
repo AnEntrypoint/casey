@@ -17,6 +17,7 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { VISIT_CRITICAL } from '../case-health.js'
 import { rankAttention } from '../attn.js'
+import { fmtTimeSAST } from '../format.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DESIGN_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'anentrypoint-design')
@@ -801,6 +802,70 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         text: e.text || '', created_at: e.created_at,
       }))
       res.json({ count: events.length, kind, actor, events })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Management briefing: one aggregate report (counts by stage + area, opened/
+  // closed this period, median/p90 first-response, live breach counts) over a
+  // ?days window. .csv for spreadsheets, .html for a print-friendly page; both
+  // render the same buildReport numbers. Read-only, aggregate-only, SAST.
+  async function gatherReport(days) {
+    const { classifyCaseHealth } = await import('../case-health.js')
+    const thresholds = await store.resolveThresholds()
+    const now = Date.now()
+    const cases = await store.listCases({}, { limit: 10000, offset: 0 })
+    const eventsByCaseId = new Map()
+    for (const c of cases) eventsByCaseId.set(c.id, await store.listEvents(c.id).catch(() => []))
+    const breachRows = cases
+      .filter(c => c.status !== 'resolved' && c.status !== 'closed')
+      .flatMap(c => classifyCaseHealth(c, now, thresholds))
+    const { buildReport } = await import('../report.js')
+    return buildReport(cases, eventsByCaseId, breachRows, now, days)
+  }
+  const reportDays = (req) => Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
+  const msToHrs = (ms) => ms == null ? '' : Math.round(ms / 3600000 * 10) / 10
+
+  app.get('/api/report.csv', async (req, res) => {
+    try {
+      const r = await gatherReport(reportDays(req))
+      const lines = []
+      lines.push(['section', 'key', 'value'].join(','))
+      lines.push(['totals', 'all', csvCell(r.totals.all)].join(','))
+      lines.push(['totals', 'open', csvCell(r.totals.open)].join(','))
+      lines.push(['totals', 'closed', csvCell(r.totals.closed)].join(','))
+      lines.push(['period', 'days', csvCell(r.period_days)].join(','))
+      lines.push(['period', 'opened_this_period', csvCell(r.opened_this_period)].join(','))
+      lines.push(['period', 'closed_this_period', csvCell(r.closed_this_period)].join(','))
+      lines.push(['response', 'median_first_response_hours', csvCell(msToHrs(r.median_first_response_ms))].join(','))
+      lines.push(['response', 'p90_first_response_hours', csvCell(msToHrs(r.p90_first_response_ms))].join(','))
+      for (const [stage, n] of Object.entries(r.by_stage)) lines.push(['by_stage', csvCell(stage), csvCell(n)].join(','))
+      for (const a of r.by_area) lines.push(['by_area', csvCell(a.place), csvCell(a.count)].join(','))
+      for (const [b, n] of Object.entries(r.breaches)) lines.push(['breach', csvCell(b), csvCell(n)].join(','))
+      res.setHeader('Content-Type', 'text/csv')
+      res.setHeader('Content-Disposition', 'attachment; filename="casey-management-report.csv"')
+      res.send(lines.join('\n'))
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  app.get('/api/report.html', async (req, res) => {
+    try {
+      const r = await gatherReport(reportDays(req))
+      const row = (k, v) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`
+      const stageRows = Object.entries(r.by_stage).map(([s, n]) => row(s, n)).join('')
+      const areaRows = r.by_area.slice(0, 20).map(a => row(a.place, a.count)).join('')
+      const breachRows = Object.entries(r.breaches).map(([b, n]) => row(b, n)).join('') || row('none', 0)
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>casey management report</title>`
+        + `<style>body{font:14px system-ui,sans-serif;margin:2rem;color:#1a1a1a}h1{font-size:1.3rem}h2{font-size:1rem;margin-top:1.5rem}table{border-collapse:collapse;margin:.3rem 0}td{border:1px solid #ccc;padding:.2rem .6rem}@media print{body{margin:0}}</style>`
+        + `</head><body><h1>casey management report</h1>`
+        + `<p>Generated ${esc(fmtTimeSAST(Math.floor(r.generated_at / 1000)))} -- last ${esc(r.period_days)} days</p>`
+        + `<h2>Totals</h2><table>${row('all cases', r.totals.all)}${row('open', r.totals.open)}${row('closed', r.totals.closed)}${row('opened this period', r.opened_this_period)}${row('closed this period', r.closed_this_period)}</table>`
+        + `<h2>Response time</h2><table>${row('median first reply (hours)', msToHrs(r.median_first_response_ms))}${row('p90 first reply (hours)', msToHrs(r.p90_first_response_ms))}</table>`
+        + `<h2>By stage</h2><table>${stageRows}</table>`
+        + `<h2>Hotspots by area</h2><table>${areaRows || row('none', 0)}</table>`
+        + `<h2>Current health breaches</h2><table>${breachRows}</table>`
+        + `</body></html>`
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      res.send(html)
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
