@@ -689,6 +689,64 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Bulk operator actions over many cases in one request: claim, transition, tag,
+  // untag, or note a whole selection. Each case is processed INDEPENDENTLY through
+  // the same single-case store ops the per-case endpoints use -- so one case's
+  // failure (an illegal transition, a vanished id) is reported in its own result and
+  // never aborts the batch. Returns a per-id outcome list plus ok/failed counts so
+  // the SPA can show "claimed 7, 1 could not transition". Body:
+  //   { ids: string[], action: 'claim'|'transition'|'tag'|'untag'|'note',
+  //     to?, tag?, text? }
+  // No new store privilege: it is a loop over audited single-case mutations, each
+  // attributed to the acting operator exactly as the individual endpoints are.
+  app.post('/api/cases/bulk', async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean) : null
+      if (!ids || !ids.length) return res.status(400).json({ error: 'ids must be a non-empty array' })
+      if (ids.length > 500) return res.status(413).json({ error: 'too many ids (max 500 per bulk request)' })
+      const action = String(req.body?.action || '')
+      const ACTIONS = new Set(['claim', 'transition', 'tag', 'untag', 'note'])
+      if (!ACTIONS.has(action)) return res.status(400).json({ error: `unknown action '${action}'`, allowed: [...ACTIONS] })
+      const op = actingOperator(req)
+      // Validate action-specific args ONCE up front so a malformed request fails fast
+      // rather than half-applying across the selection.
+      const to = action === 'transition' ? String(req.body?.to || '') : null
+      if (action === 'transition' && !to) return res.status(400).json({ error: 'transition requires a "to" stage' })
+      const tag = (action === 'tag' || action === 'untag') ? String(req.body?.tag || '').trim() : null
+      if ((action === 'tag' || action === 'untag') && !tag) return res.status(400).json({ error: `${action} requires a "tag"` })
+      if ((action === 'tag' || action === 'untag') && /[,]/.test(tag)) return res.status(400).json({ error: 'tag must not contain a comma' })
+      const noteText = action === 'note' ? String(req.body?.text || '').trim() : null
+      if (action === 'note' && !noteText) return res.status(400).json({ error: 'note requires non-empty "text"' })
+
+      const results = []
+      for (const id of ids) {
+        try {
+          const c = await store.getCase(id)
+          if (!c) { results.push({ id, ok: false, error: 'not found' }); continue }
+          if (action === 'claim') {
+            await store.updateCase(id, { assignee: op.id }, op)
+            await store.appendEvent(id, { kind: 'action', actor: 'operator', text: `Claimed by ${op.name || op.id}`, data: { claimed_by: op.id, bulk: true } })
+          } else if (action === 'transition') {
+            const legal = store.availableTransitions(c, OPERATOR)
+            if (to !== c.status && !legal.includes(to)) { results.push({ id, ok: false, error: `cannot transition to '${to}'` }); continue }
+            await store.transition(id, to, { user: op, reason: 'operator bulk action' })
+          } else if (action === 'tag') {
+            const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+            if (!tags.includes(tag)) await store.updateCase(id, { tags: [...tags, tag].join(',') }, op)
+          } else if (action === 'untag') {
+            const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+            if (tags.includes(tag)) await store.updateCase(id, { tags: tags.filter(t => t !== tag).join(',') }, op)
+          } else if (action === 'note') {
+            await store.appendEvent(id, { kind: 'note', actor: 'operator', text: noteText, data: { by: op.id, bulk: true } })
+          }
+          results.push({ id, ok: true })
+        } catch (e) { results.push({ id, ok: false, error: String(e.message || e).slice(0, 200) }) }
+      }
+      const okCount = results.filter(r => r.ok).length
+      res.json({ action, total: ids.length, ok: okCount, failed: ids.length - okCount, results })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   app.post('/api/cases/:id/note', async (req, res) => {
     try {
       const text = str(res, req.body, 'text'); if (text === undefined) return

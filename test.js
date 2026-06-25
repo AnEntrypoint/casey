@@ -259,6 +259,32 @@ async function main() {
     assert.equal(typeof body.took_ms, 'number', 'the probe reports how long the store read took')
   })
 
+  await test('bulk actions: POST /api/cases/bulk tags many cases, isolates a bad id, validates the action', async () => {
+    const { case: a } = await store.findOrCreateCase({ channel: 'sim', external_id: 'bulk-a-' + Date.now() })
+    const { case: b } = await store.findOrCreateCase({ channel: 'sim', external_id: 'bulk-b-' + Date.now() })
+    // Tag a real pair plus one bogus id: the bogus one fails in its own result,
+    // the real two succeed -- one failure never aborts the batch.
+    const tagged = await df('http://localhost:4577/api/cases/bulk?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: [a.id, b.id, 'no-such-case'], action: 'tag', tag: 'priority' }),
+    }).then(r => r.json())
+    assert.equal(tagged.ok, 2, 'two real cases tagged'); assert.equal(tagged.failed, 1, 'the bogus id failed in isolation')
+    assert.ok(tagged.results.find(r => r.id === 'no-such-case' && r.ok === false && /not found/.test(r.error)), 'the bad id reports not found')
+    assert.ok(String((await store.getCase(a.id)).tags || '').split(',').includes('priority'), 'tag landed on case a')
+    // Untag reverses it.
+    await df('http://localhost:4577/api/cases/bulk?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: [a.id, b.id], action: 'untag', tag: 'priority' }),
+    }).then(r => r.json())
+    assert.ok(!String((await store.getCase(a.id)).tags || '').split(',').includes('priority'), 'untag cleared the tag')
+    // An unknown action is rejected up front, nothing applied.
+    const bad = await df('http://localhost:4577/api/cases/bulk?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: [a.id], action: 'delete-everything' }),
+    })
+    assert.equal(bad.status, 400, 'an unknown bulk action is rejected')
+  })
+
   await test('src/format.js renders real event timestamps in SAST and contacts in +27 (CLI/SPA shared)', async () => {
     // The CLI show timeline and the dashboard SPA both format absolute time and
     // phone numbers through this module; assert it on a REAL stored event, not a
