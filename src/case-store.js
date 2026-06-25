@@ -645,6 +645,18 @@ export class CaseStore {
     return this._count('event', { case_id: caseId })
   }
 
+  // Cross-case event stream for the activity/audit view. Unscoped by case but
+  // where-filterable by kind/actor (validated by the caller against known enums);
+  // returned newest-first and capped so a huge log cannot blow the response. The
+  // case_id stays on each row so the UI can deep-link back to the case.
+  async listAllEvents({ kind = null, actor = null } = {}, { limit = 200 } = {}) {
+    const where = {}
+    if (kind) where.kind = kind
+    if (actor) where.actor = actor
+    const rows = byCreatedDescList(await this.t.list('event', where, { limit: 10000 }))
+    return rows.slice(0, Math.max(1, limit))
+  }
+
   // Has this exact platform message already been recorded? Used to dedup webhook
   // / gateway redeliveries so a retried message is not answered twice.
   async hasInboundMessage(caseId, msgId) {

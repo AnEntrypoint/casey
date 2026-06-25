@@ -238,6 +238,37 @@ async function main() {
     assert.ok(!JSON.stringify(body).includes('external_id'), 'clusters payload leaks no external_id')
   })
 
+  await test('GET /api/geo rolls open cases up by stored location into ranked hotspots', async () => {
+    const { buildCaseToolset } = await import('./src/case-tools.js')
+    const report = buildCaseToolset(store).find(t => t.name === 'case_report')
+    const stamp = Date.now()
+    const { case: g1 } = await store.findOrCreateCase({ channel: 'sim', external_id: 'geo-a-' + stamp })
+    const { case: g2 } = await store.findOrCreateCase({ channel: 'sim', external_id: 'geo-b-' + stamp })
+    await report.handler({ id: g1.id, location: 'Thohoyandou', species: 'cattle' })
+    await report.handler({ id: g2.id, location: 'Thohoyandou', species: 'goats' })
+    const wired = await df('http://localhost:4577/api/geo?token=secret')
+    assert.equal(wired.status, 200, '/api/geo is token-gated and reachable')
+    const body = await wired.json()
+    const hot = (body.places || []).find(p => p.place === 'thohoyandou')
+    assert.ok(hot && hot.count >= 2, 'the shared place rolls both cases into one hotspot')
+    assert.ok(hot.species.cattle >= 1 && hot.species.goats >= 1, 'species mix aggregated for the place')
+    assert.ok(body.places.every((p, i) => i === 0 || body.places[i - 1].count >= p.count), 'hotspots ranked by count')
+    assert.ok(!JSON.stringify(body).includes('external_id'), 'geo payload leaks no external_id')
+  })
+
+  await test('GET /api/activity merges events across cases, newest-first, filterable by kind', async () => {
+    const all = await df('http://localhost:4577/api/activity?token=secret&limit=50').then(r => r.json())
+    assert.ok(all.count >= 1, 'activity stream returns events')
+    assert.ok(all.events.every((e, i) => i === 0 || Number(all.events[i - 1].created_at) >= Number(e.created_at)), 'newest-first')
+    assert.ok(all.events.every(e => e.case_id), 'every row deep-links to its case')
+    const caseIds = new Set(all.events.map(e => e.case_id))
+    assert.ok(caseIds.size >= 2, 'stream spans more than one case (cross-case merge)')
+    const inbound = await df('http://localhost:4577/api/activity?token=secret&kind=inbound').then(r => r.json())
+    assert.ok(inbound.events.every(e => e.kind === 'inbound'), 'kind filter holds')
+    const bogus = await df('http://localhost:4577/api/activity?token=secret&kind=not_a_kind').then(r => r.json())
+    assert.equal(bogus.kind, null, 'an unknown kind is ignored, not passed to the store')
+  })
+
   await test('dashboard reply surfaces the sent flag (delivered vs logged-only)', async () => {
     const wired = await df('http://localhost:4577/api/cases/' + caseId + '/reply?token=secret', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'wired' }),

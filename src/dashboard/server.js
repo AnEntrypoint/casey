@@ -771,6 +771,39 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Hotspots by area: open cases grouped by their stored location token(s),
+  // ranked by count, each with species mix and most-recent report time. Re-groups
+  // stored location only (no new data); aggregate-only, on-demand.
+  app.get('/api/geo', async (req, res) => {
+    try {
+      const { buildGeo } = await import('../geo.js')
+      const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
+      res.json({ open: open.length, places: buildGeo(open) })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Cross-case activity/audit stream: every event newest-first, filterable by
+  // kind/actor (validated against known enums) and a since-timestamp window, each
+  // row deep-linking to its case. Read-only. Reuses the same per-case timeline
+  // data, just merged across cases for review.
+  app.get('/api/activity', async (req, res) => {
+    try {
+      const KINDS = new Set(['inbound', 'outbound', 'transition', 'observation', 'note', 'action', 'autonomy_change'])
+      const ACTORS = new Set(['agent', 'operator', 'contact', 'system'])
+      const kind = KINDS.has(req.query.kind) ? req.query.kind : null
+      const actor = ACTORS.has(req.query.actor) ? req.query.actor : null
+      const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500)
+      const since = parseInt(req.query.since, 10) || 0
+      let rows = await store.listAllEvents({ kind, actor }, { limit: limit + (since ? 500 : 0) })
+      if (since) rows = rows.filter(e => Number(e.created_at) * 1000 >= since)
+      const events = rows.slice(0, limit).map(e => ({
+        id: e.id, case_id: e.case_id, kind: e.kind, actor: e.actor,
+        text: e.text || '', created_at: e.created_at,
+      }))
+      res.json({ count: events.length, kind, actor, events })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Cases that look like the SAME real-world outbreak as this one -- the
   // operator's view of casey's grouping intelligence, with the reasons shown so
   // the suggestion is explainable, never an opaque score.
