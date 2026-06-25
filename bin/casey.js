@@ -171,6 +171,12 @@ async function main() {
     console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset -- dashboard is open to anyone on the network (set a token for production use)'))
     // public URL (optional but useful)
     console.log(process.env.CASEY_PUBLIC_URL ? ok(`CASEY_PUBLIC_URL set (${process.env.CASEY_PUBLIC_URL})`) : dim('  CASEY_PUBLIC_URL unset - contacts will not receive a web form link (optional)'))
+    // data dir -- where the live case store lives (cwd-bound)
+    const dataDir = path.join(process.cwd(), 'data')
+    const dbFile = path.join(dataDir, 'app.db')
+    console.log(existsSync(dbFile)
+      ? ok(`case data at ${dbFile} (test.js isolates to a temp cwd, so it will not wipe this)`)
+      : dim(`  no case data yet (will be created at ${dbFile})`))
     // port
     const port = Number(flags.port || 4000)
     console.log(await portFree(port) ? ok(`port ${port} is free`) : bad(`port ${port} is in use - start with --port <other>`))
@@ -218,6 +224,7 @@ async function main() {
     if (channels.length === 1 && channels[0] === 'sim') console.log(warn('only the offline sim is active - no real messages will arrive. Connect a channel in .env.'))
     const tokenNote = process.env.CASEY_DASHBOARD_TOKEN ? ` ${dim('(token required)')}` : ` ${yellow('(open - set CASEY_DASHBOARD_TOKEN)')}`
     console.log(`  dashboard: ${cyan(`http://localhost:${dash.port}`)}${tokenNote}`)
+    console.log(`  data: ${dim(path.join(process.cwd(), 'data'))}`)
     console.log(dim('  press ctrl-c to stop'))
     // Guard against a double Ctrl-C: the second SIGINT must not call process.exit
     // while the first is still flushing the WAL and draining in-flight turns.

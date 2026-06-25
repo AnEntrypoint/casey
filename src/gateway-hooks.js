@@ -136,6 +136,9 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     ``,
     // --- How to actually REPLY to the person ---
     `HOW TO REPLY:`,
+    `Never copy wording from this prompt into your reply; compose every reply fresh`,
+    `in your own warm words. The only things you reproduce exactly are literal codes`,
+    `(the reference and any link) -- everything around them you write yourself.`,
     `Write the way you would speak kindly to a worried farmer or field worker who`,
     `may be far out in the bush, may not be a strong reader, and may not speak`,
     `English as a first language.`,
@@ -163,17 +166,21 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     `   in the simplest words (for example which animals, the place, or a photo).`,
     ``,
     firstMessage
-      ? [`THIS IS THEIR FIRST MESSAGE. Greet them warmly and thank them for reporting`,
-         `it. In plain words, tell them you have their message and the team will look`,
-         `into it. Give them their reference simply, for example: "Thank you for`,
-         `letting us know. Our team will look into this. If you need to remind us,`,
-         `your reference is ${caseRow.ref}." Then, if it helps, ask one gentle question`,
-         `about what they are seeing or where the animals are -- but only one.`,
+      ? [`THIS IS THEIR FIRST MESSAGE. In your OWN words (never copy wording from this`,
+         `prompt) do three things in a few warm plain lines: (a) thank them for telling`,
+         `you; (b) reassure them the team will look into it; (c) give them their`,
+         `reference so they can remind you later -- the reference is exactly`,
+         `${caseRow.ref} (reproduce that code exactly, but write the sentence around it`,
+         `yourself). Cap the acknowledgement at two short sentences. Only after that,`,
+         `and only if it genuinely helps, MAY you add ONE gentle question about what`,
+         `they are seeing or where the animals are -- on a first reply it is usually`,
+         `better to ask nothing. Vary your phrasing; never sound like a form letter.`,
          ...( process.env.CASEY_PUBLIC_URL
-           ? [`Also, once you have given the reference, you may optionally add ONE short`,
-              `plain sentence offering the web form link, for example: "You can also fill in`,
-              `details at: ${process.env.CASEY_PUBLIC_URL}/report?ref=${caseRow.ref}" -- but ONLY if`,
-              `there is a natural place for it; never interrupt warmth for a URL.`]
+           ? [`If it fits naturally after the reference, you may add one short plain line`,
+              `offering the web form. The link is exactly`,
+              `${process.env.CASEY_PUBLIC_URL}/report?ref=${caseRow.ref} -- reproduce the URL`,
+              `exactly but phrase the offer in your own words; skip it entirely if there`,
+              `is no natural place for it. Never interrupt warmth for a URL.`]
            : [] )].join('\n')
       : `Continue gently from the earlier messages above. Pick up where things left off.`,
     ``,
@@ -200,6 +207,24 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
 // gateway.handleInbound. `store` is a CaseStore; opts.callLLM optional;
 // opts.autoRespond=false to track-only (no agent turn / reply).
 const FALLBACK_REPLY = 'Thank you for letting us know. We have your message and the team will look into it.'
+
+// Guard against the small model parroting the system-prompt examples verbatim.
+// The first-message guidance describes an acknowledgement + reference; a weak
+// model sometimes copies a canned exemplar instead of composing fresh. We reject
+// the reply (treat as a failed turn -> fallback + observation) when it matches
+// the historical exemplar phrasing that no human-composed warm reply would echo.
+// Match is on a normalised copy (lowercased, whitespace-collapsed) so spacing or
+// case does not slip an echo through. ASCII only.
+const ECHO_MARKERS = [
+  'if you need to remind us, your reference is',
+  'our team will look into this. if you need to remind us',
+  'you can also fill in details at:',
+]
+function isPromptEcho(text) {
+  if (!text) return false
+  const norm = String(text).toLowerCase().replace(/\s+/g, ' ').trim()
+  return ECHO_MARKERS.some(m => norm.includes(m))
+}
 
 // Holding message in the contact's own language, for the worst-case path: the
 // LLM turn errored, timed out, or returned nothing. A low-literacy contact who
@@ -514,6 +539,13 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // Never send a raw error string or an empty message to the contact. On
     // error/empty, send a safe fallback and keep the case recoverable.
     let text = (result?.result || '').toString().trim()
+    // Reject a reply that parrots the system-prompt example verbatim: record it
+    // as a failed turn and fall through to the safe fallback rather than leak a
+    // canned, robotic message to the contact.
+    if (text && isPromptEcho(text)) {
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model echoed prompt example; replaced with fallback' })
+      text = ''
+    }
     if (!text) {
       if (!errored && result?.error) {
         log.warn?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
@@ -521,7 +553,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       }
       text = fallbackReply(inboundText, fresh)
     }
-    const isFallback = !((result?.result || '').toString().trim())
+    const isFallback = !text || text === fallbackReply(inboundText, fresh)
 
     await store.appendEvent(fresh.id, {
       kind: 'outbound', actor: 'agent', channel,

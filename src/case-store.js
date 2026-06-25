@@ -25,10 +25,15 @@ const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_find', '
 export class CaseStore {
   constructor(opts = {}) {
     this.configPath = opts.config || path.resolve(process.cwd(), 'thatcher.config.yml')
-    // The DB lives at <cwd>/data/app.db and is NOT configurable: thatcher's
-    // query engine primes its better-sqlite3 handle from cwd at module load
-    // (getDatabase() is called argless in thatcher init), so the only way to
-    // relocate the store is to change the process cwd. Tests wipe ./data.
+    // The DB lives at <cwd>/data/app.db and is cwd-bound: thatcher primes its
+    // better-sqlite3 handle by calling getDatabase() argless during init
+    // (index.js initDatabase -> database-core.migrate), which resolves
+    // <cwd>/data/app.db and caches it; importing getDatabase ourselves to
+    // pre-seed a different path forks thatcher's module graph into a second
+    // handle (see file header), so the ONLY safe relocation is the process cwd.
+    // test.js therefore runs from an isolated temp cwd so a run never wipes a
+    // live ./data. dataDir is exposed for diagnostics (doctor/up print it).
+    this.dataDir = path.resolve(process.cwd(), 'data')
     this.workflow = opts.workflow || 'case_lifecycle'
     this.log = opts.log || null
     // Optional hook fired AFTER a real stage change commits:
@@ -53,7 +58,7 @@ export class CaseStore {
     // not bespoke array checks, is the authority on whether a transition is legal.
     this._machine = buildCaseMachine(this._wf)
 
-    fs.mkdirSync(path.resolve(process.cwd(), 'data'), { recursive: true })
+    fs.mkdirSync(this.dataDir, { recursive: true })
     this.thatcher = createThatcher({
       config: this.configPath,
       server: { hotReload: false },

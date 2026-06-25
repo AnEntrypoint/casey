@@ -3,7 +3,10 @@
 // illegal transitions, message dedup, empty-message handling, dashboard
 // auth/paging/escaping/reply, discord WS receive, and whatsapp webhook.
 import assert from 'node:assert'
-import { rmSync } from 'node:fs'
+import { mkdtempSync, copyFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createCasey } from './src/casey.js'
 import { createDashboard } from './src/dashboard/server.js'
 import { runScript, MockAdapter } from './src/sim/inject.js'
@@ -12,6 +15,11 @@ import { intentReply, fallbackReply, reportMissingVisitCritical } from './src/ga
 
 process.env.CASEY_LOG = 'silent'
 
+// Repo root, captured before main() chdirs into an isolated temp cwd. Module
+// resolution for the file:../ freddie dep must stay anchored here, not at the
+// temp cwd the suite runs from.
+const REPO_ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)))
+
 let failures = 0
 const test = async (name, fn) => {
   try { await fn(); console.log('ok  ', name) }
@@ -19,7 +27,15 @@ const test = async (name, fn) => {
 }
 
 async function main() {
-  rmSync('./data', { recursive: true, force: true })
+  // Isolate the suite in a fresh temp cwd so a run NEVER wipes a live ./data
+  // owned by a running `casey up`. thatcher's sqlite handle is cwd-bound (it
+  // primes getDatabase() argless during init -> <cwd>/data/app.db), so the only
+  // safe relocation is the process cwd. We copy the config into the temp dir,
+  // chdir there, and let CaseStore resolve <temp>/data/app.db as usual. The
+  // original ./data is never touched.
+  const testDir = mkdtempSync(join(tmpdir(), 'casey-test-'))
+  copyFileSync(join(REPO_ROOT, 'thatcher.config.yml'), join(testDir, 'thatcher.config.yml'))
+  process.chdir(testDir)
   // sweepIntervalMs:0 disables the periodic health sweep: it would otherwise fire
   // mid-test and mutate tags / append observations concurrently with assertions,
   // making the suite non-deterministic (P11). The sweep has its own direct tests.
@@ -364,7 +380,7 @@ async function main() {
 
   // ---- discord WS receive ----
   await test('discord adapter emits message on MESSAGE_CREATE, ignores bots', async () => {
-    const { DiscordAdapter } = await import('file://' + process.cwd().replace(/\\/g, '/') + '/node_modules/freddie/plugins/platform-discord/handler.js')
+    const { DiscordAdapter } = await import('file://' + REPO_ROOT.replace(/\\/g, '/') + '/node_modules/freddie/plugins/platform-discord/handler.js')
     const a = new DiscordAdapter({ token: 'x', receive: false })
     const got = []
     a.on('message', m => got.push(m))
@@ -376,7 +392,7 @@ async function main() {
 
   // ---- whatsapp webhook payload shape ----
   await test('whatsapp adapter maps a Meta webhook payload to a message', async () => {
-    const { WhatsappAdapter } = await import('file://' + process.cwd().replace(/\\/g, '/') + '/node_modules/freddie/plugins/platform-whatsapp/handler.js')
+    const { WhatsappAdapter } = await import('file://' + REPO_ROOT.replace(/\\/g, '/') + '/node_modules/freddie/plugins/platform-whatsapp/handler.js')
     const a = new WhatsappAdapter({ token: 't', phoneId: 'p' })
     const got = []
     a.on('message', m => got.push(m))
@@ -389,7 +405,7 @@ async function main() {
   })
 
   await test('WhatsApp HMAC-SHA256 signature verification rejects forged requests', async () => {
-    const { WhatsappAdapter } = await import('file://' + process.cwd().replace(/\\/g, '/') + '/node_modules/freddie/plugins/platform-whatsapp/handler.js')
+    const { WhatsappAdapter } = await import('file://' + REPO_ROOT.replace(/\\/g, '/') + '/node_modules/freddie/plugins/platform-whatsapp/handler.js')
     const crypto = await import('crypto')
     const secret = 'test-secret-abc123'
     const a = new WhatsappAdapter({ token: 't', phoneId: 'p', appSecret: secret })
