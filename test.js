@@ -312,6 +312,41 @@ async function main() {
     assert.equal(rankAttention([await store.getCase(c.id)], Date.now()).total, 1, 'the case is back in the inbox after clearing')
   })
 
+  await test('undo: POST /api/cases/:id/undo reverses the last operator transition with a compensating event', async () => {
+    const { case: c } = await store.findOrCreateCase({ channel: 'sim', external_id: 'undo-' + Date.now() })
+    const start = (await store.getCase(c.id)).status
+    const avail = store.availableTransitions(await store.getCase(c.id), { id: 'op', role: 'operator' })
+    assert.ok(avail.length, 'a fresh case has a reachable forward stage')
+    const target = avail[0]
+    // Operator advances the case one stage, then undoes it.
+    const tx = await df('http://localhost:4577/api/cases/' + c.id + '/transition?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ to: target }),
+    })
+    assert.equal(tx.status, 200, 'transition to ' + target + ' succeeds')
+    assert.equal((await store.getCase(c.id)).status, target, 'case is now in ' + target)
+    const u = await df('http://localhost:4577/api/cases/' + c.id + '/undo?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    }).then(r => r.json())
+    assert.equal(u.ok, true, 'undo succeeds')
+    assert.equal(u.undone, 'transition', 'undo identifies the reversible action')
+    assert.equal((await store.getCase(c.id)).status, start, 'case status reverted to the prior stage')
+    // History is append-only: the reverse transition AND a compensating action both exist.
+    const evs = await store.listEvents(c.id)
+    assert.ok(evs.some(e => e.kind === 'transition' && /undo/.test(String(e.data || ''))), 'a reverse transition with reason undo exists')
+    assert.ok(evs.some(e => e.kind === 'action' && /^Undo by/.test(e.text || '')), 'a compensating undo action is audited')
+    // A second undo of the same action is refused (already compensated, nothing fresh in window).
+    const u2 = await df('http://localhost:4577/api/cases/' + c.id + '/undo?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })
+    assert.equal(u2.status, 409, 'a second undo finds nothing to undo')
+    // Token-gated like every operator endpoint (bare fetch -> no token injected).
+    const noTok = await fetch('http://localhost:4577/api/cases/' + c.id + '/undo', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })
+    assert.equal(noTok.status, 401, 'undo requires the dashboard token')
+  })
+
   await test('src/format.js renders real event timestamps in SAST and contacts in +27 (CLI/SPA shared)', async () => {
     // The CLI show timeline and the dashboard SPA both format absolute time and
     // phone numbers through this module; assert it on a REAL stored event, not a

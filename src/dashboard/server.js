@@ -790,6 +790,84 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Undo the last reversible operator action on a case, within a recency window, by
+  // appending a COMPENSATING event -- history is append-only and never mutated. The
+  // 15s window is a client UX affordance; the server bounds undo at 120s so a late
+  // request cannot silently rewrite an old decision. Iteration 1 covers the clean,
+  // self-describing reversible actions whose reverse is fully recorded in the
+  // original event's data:
+  //   transition  -> reverse transition (to = data.from), reason 'undo'
+  //   snooze      -> clear the snooze tag (compensating action event)
+  //   claim       -> restore the prior assignee (data.was)
+  // A sent reply is NOT reversible (the contact already saw it) -- undo of a reply
+  // is the client-side 'disregard my last message' helper, out of scope here. The
+  // acting operator is attributed; the compensating event carries undo_of so the
+  // pair is observable on the timeline.
+  app.post('/api/cases/:id/undo', async (req, res) => {
+    try {
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      const op = actingOperator(req)
+      const evData = (e) => {
+        if (e && typeof e.data === 'string') { try { return JSON.parse(e.data) } catch { return {} } }
+        return e?.data || {}
+      }
+      const WINDOW_MS = 120000
+      const now = Date.now()
+      const events = await store.listEvents(c.id)
+      // Find the most recent UNDOABLE operator action that has not already been
+      // undone, newest-first and within the window.
+      const undoneIds = new Set()
+      for (const e of events) { const d = evData(e); if (d.undo_of) undoneIds.add(String(d.undo_of)) }
+      const isRecent = (e) => {
+        const t = e.created_at ? Date.parse(e.created_at) : NaN
+        return Number.isFinite(t) ? (now - t) <= WINDOW_MS : true   // unparseable -> allow (tests)
+      }
+      let target = null, kind = null
+      for (let i = events.length - 1; i >= 0; i--) {
+        const e = events[i]
+        if (undoneIds.has(String(e.id))) continue
+        if (!isRecent(e)) break   // older than the window: nothing undoable remains
+        if (e.kind === 'transition' && e.actor === 'operator') {
+          // A compensating reverse transition is itself reason 'undo' -- it is not a
+          // fresh operator decision, so undoing it (which would re-apply the original
+          // move) is wrong. Skip it and keep scanning for a real action to reverse.
+          if (evData(e).reason === 'undo') continue
+          target = e; kind = 'transition'; break
+        }
+        if (e.kind === 'action' && e.actor === 'operator') {
+          const txt = String(e.text || '')
+          if (/^Undo by/.test(txt)) continue   // the compensating action itself is not undoable
+          if (/^Claimed by/.test(txt)) { target = e; kind = 'claim'; break }
+          if (/^Snoozed by/.test(txt)) { target = e; kind = 'snooze'; break }
+        }
+      }
+      if (!target) return res.status(409).json({ error: 'nothing to undo in the last 120s' })
+      const d = evData(target)
+      let summary = ''
+      if (kind === 'transition') {
+        const to = d.from
+        if (!to) return res.status(409).json({ error: 'transition has no recorded prior stage' })
+        await store.transition(c.id, to, { user: op, reason: 'undo' })
+        summary = `undid transition: back to ${to}`
+      } else if (kind === 'claim') {
+        const prior = d.was || ''
+        await store.updateCase(c.id, { assignee: prior }, op)
+        summary = prior ? `undid claim: assignee back to ${prior}` : 'undid claim: assignee cleared'
+      } else if (kind === 'snooze') {
+        const tags = String((await store.getCase(c.id)).tags || '').split(',').map(t => t.trim()).filter(Boolean).filter(t => !t.startsWith('snoozed-until:'))
+        await store.updateCase(c.id, { tags: tags.join(',') }, op)
+        summary = 'undid snooze'
+      }
+      await store.appendEvent(c.id, {
+        kind: 'action', actor: 'operator',
+        text: `Undo by ${op.name || op.id}: ${summary}`,
+        data: { by: op.id, undo_of: target.id, undo_kind: kind },
+      })
+      res.json({ ok: true, undone: kind, summary })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   app.post('/api/cases/:id/note', async (req, res) => {
     try {
       const text = str(res, req.body, 'text'); if (text === undefined) return
