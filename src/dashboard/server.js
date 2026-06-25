@@ -747,6 +747,49 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Snooze a case: an operator who has SEEN a case but cannot finish it now drops
+  // it out of the attention inbox until a time, without losing it. The scorer in
+  // attn.js already honours a 'snoozed-until:<epoch-ms>' tag (and never hides a
+  // needs-human case, and un-snoozes on a newer inbound) -- this endpoint is the
+  // write side: it sets/replaces that tag and records an audited action so the
+  // snooze is observable, never a silent disappearance. Body: { minutes } (from now)
+  // or { until } (epoch ms); minutes<=0 or until<=now CLEARS any snooze. The acting
+  // operator is attributed. Snoozing is a soft inbox preference, not a workflow
+  // transition -- the case status is untouched.
+  app.post('/api/cases/:id/snooze', async (req, res) => {
+    try {
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      const op = actingOperator(req)
+      const now = Date.now()
+      let until = null
+      if (req.body && req.body.until != null) {
+        const u = Number(req.body.until)
+        if (!Number.isFinite(u)) return res.status(400).json({ error: '"until" must be an epoch-ms number' })
+        until = u
+      } else if (req.body && req.body.minutes != null) {
+        const m = Number(req.body.minutes)
+        if (!Number.isFinite(m)) return res.status(400).json({ error: '"minutes" must be a number' })
+        // Bound so a fat-fingered value cannot snooze a case effectively forever.
+        until = now + Math.min(Math.max(m, 0), 60 * 24 * 14) * 60000
+      } else {
+        return res.status(400).json({ error: 'snooze requires "minutes" or "until"' })
+      }
+      // Strip any existing snooze tag, then add the new one only if it is in the
+      // future -- a past/zero target is a CLEAR.
+      const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean).filter(t => !t.startsWith('snoozed-until:'))
+      const cleared = !(until > now)
+      if (!cleared) tags.push(`snoozed-until:${Math.floor(until)}`)
+      await store.updateCase(c.id, { tags: tags.join(',') }, op)
+      await store.appendEvent(c.id, {
+        kind: 'action', actor: 'operator',
+        text: cleared ? `Snooze cleared by ${op.name || op.id}` : `Snoozed by ${op.name || op.id} until ${new Date(Math.floor(until)).toISOString()}`,
+        data: { by: op.id, snoozed_until: cleared ? null : Math.floor(until) },
+      })
+      res.json({ ok: true, snoozed_until: cleared ? null : Math.floor(until), cleared })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   app.post('/api/cases/:id/note', async (req, res) => {
     try {
       const text = str(res, req.body, 'text'); if (text === undefined) return

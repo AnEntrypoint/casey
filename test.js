@@ -285,6 +285,33 @@ async function main() {
     assert.equal(bad.status, 400, 'an unknown bulk action is rejected')
   })
 
+  await test('snooze: POST /api/cases/:id/snooze drops a case from the inbox until it expires, then clears', async () => {
+    const { rankAttention } = await import('./src/attn.js')
+    const { case: c } = await store.findOrCreateCase({ channel: 'sim', external_id: 'snooze-' + Date.now() })
+    // Give it an inbox-worthy tag so it scores > 0 before snoozing.
+    await store.updateCase(c.id, { tags: 'health:stale' })
+    const before = await store.getCase(c.id)
+    assert.ok(rankAttention([before], Date.now()).total === 1, 'the case is in the inbox before snoozing')
+    // Snooze 60 minutes.
+    const snz = await df('http://localhost:4577/api/cases/' + c.id + '/snooze?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ minutes: 60 }),
+    }).then(r => r.json())
+    assert.equal(snz.ok, true); assert.ok(snz.snoozed_until > Date.now(), 'snooze target is in the future')
+    const after = await store.getCase(c.id)
+    assert.ok(String(after.tags || '').split(',').some(t => t.startsWith('snoozed-until:')), 'the snooze tag is set')
+    assert.equal(rankAttention([after], Date.now()).total, 0, 'a snoozed case drops out of the inbox')
+    // An audited action records the snooze.
+    assert.ok((await store.listEvents(c.id)).some(e => e.kind === 'action' && /Snoozed by/.test(e.text || '')), 'the snooze is an audited action')
+    // Clearing (minutes:0) returns it to the inbox.
+    const clr = await df('http://localhost:4577/api/cases/' + c.id + '/snooze?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ minutes: 0 }),
+    }).then(r => r.json())
+    assert.equal(clr.cleared, true, 'minutes:0 clears the snooze')
+    assert.equal(rankAttention([await store.getCase(c.id)], Date.now()).total, 1, 'the case is back in the inbox after clearing')
+  })
+
   await test('src/format.js renders real event timestamps in SAST and contacts in +27 (CLI/SPA shared)', async () => {
     // The CLI show timeline and the dashboard SPA both format absolute time and
     // phone numbers through this module; assert it on a REAL stored event, not a
