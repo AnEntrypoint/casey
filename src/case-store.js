@@ -67,6 +67,15 @@ export class CaseStore {
     return this
   }
 
+  // Read, parse, and validate the config WITHOUT booting thatcher or touching a
+  // DB. Returns the parsed workflow stage graph; throws a descriptive Error on
+  // any structural problem. Lets `casey doctor` run the same graph validation
+  // `init()` runs, without creating ./data or a live store. Pure read.
+  validateConfig() {
+    if (!fs.existsSync(this.configPath)) throw new Error(`casey config not found: ${this.configPath}`)
+    return this._validateConfig(yaml.load(fs.readFileSync(this.configPath, 'utf8')))
+  }
+
   // Validate the config and return the parsed workflow stage graph. Throws a
   // descriptive error on any structural problem.
   _validateConfig(cfg) {

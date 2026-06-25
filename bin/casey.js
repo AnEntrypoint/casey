@@ -167,6 +167,19 @@ async function main() {
     const cfgFile = path.join(ROOT, 'thatcher.config.yml')
     console.log(existsSync(cfgFile) ? ok('thatcher.config.yml present') : bad('thatcher.config.yml missing - casey will fail to start (see README Layout section)'))
     if (!existsSync(cfgFile)) problems++
+    // Validate the workflow stage graph the same way init() does, but without
+    // booting thatcher or touching a DB (pure config read). A broken graph
+    // (unknown transition target, status enum missing a stage) otherwise passes
+    // doctor green and only crashes at `casey up`.
+    else {
+      try {
+        createCaseStore({ config: cfgFile }).validateConfig()
+        console.log(ok('case store / workflow config valid'))
+      } catch (e) {
+        console.log(bad(`case store / workflow config: ${e.message}`))
+        problems++
+      }
+    }
     // dashboard token
     console.log(process.env.CASEY_DASHBOARD_TOKEN ? ok('dashboard token set (auth required)') : warn('CASEY_DASHBOARD_TOKEN unset -- dashboard is open to anyone on the network (set a token for production use)'))
     // public URL (optional but useful)
