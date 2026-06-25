@@ -17,6 +17,8 @@ import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
 
 process.env.CASEY_LOG = 'silent'
+// Roster for the operator-identity test (parsed by createDashboard at boot).
+process.env.CASEY_OPERATORS = 'thandi:Thandi M, sipho:Sipho N'
 
 // Repo root, captured before main() chdirs into an isolated temp cwd. Module
 // resolution for the file:../ freddie dep must stay anchored here, not at the
@@ -162,6 +164,28 @@ async function main() {
     assert.equal(adapter.sent.length, sentBefore + 1)
     const last = (await store.listEvents(caseId)).pop()
     assert.equal(last.kind, 'outbound'); assert.equal(last.actor, 'operator')
+  })
+
+  await test('operator roster: GET /api/operators lists the roster; X-Casey-Operator attributes the actor', async () => {
+    const roster = await df('http://localhost:4577/api/operators?token=secret').then(r => r.json())
+    assert.equal(roster.attributed, true, 'roster present means attribution is on')
+    assert.deepEqual(roster.operators.map(o => o.id).sort(), ['sipho', 'thandi'], 'roster ids parsed + slugged from CASEY_OPERATORS')
+    assert.ok(roster.operators.find(o => o.id === 'thandi')?.name === 'Thandi M', 'display name preserved')
+    // No header -> falls back to the generic operator, never an injected actor.
+    assert.equal(roster.current, 'dashboard-operator', 'absent header resolves to the default operator')
+    // A known roster id selected via the header is recorded on the audited event.
+    const r = await df('http://localhost:4577/api/cases/' + caseId + '/reply?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-casey-operator': 'thandi' }, body: JSON.stringify({ text: 'Thandi here' }),
+    })
+    assert.equal(r.status, 200)
+    const evs = await store.listEvents(caseId)
+    const lastOut = [...evs].reverse().find(e => e.kind === 'outbound' && e.text === 'Thandi here')
+    assert.ok(lastOut, 'the Thandi reply was recorded as an outbound event')
+    // thatcher stores event.data as a JSON string; parse before reading the attributed operator.
+    assert.equal((typeof lastOut.data === 'string' ? JSON.parse(lastOut.data) : lastOut.data)?.by, 'thandi', 'the outbound event records the picked operator id')
+    // An unknown id is NOT trusted -- it falls back, so attribution can never be forged into a new actor.
+    const who = await df('http://localhost:4577/api/operators?token=secret', { headers: { 'x-casey-operator': 'nobody-xyz' } }).then(r => r.json())
+    assert.equal(who.current, 'dashboard-operator', 'an off-roster id falls back to the default, never injected')
   })
 
   await test('src/format.js renders real event timestamps in SAST and contacts in +27 (CLI/SPA shared)', async () => {

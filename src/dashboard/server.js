@@ -25,6 +25,50 @@ const DESIGN_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'anentryp
 const OPERATOR = { id: 'dashboard-operator', role: 'operator' }
 const PAGE_MAX = 200
 
+// Operator roster (CASEY_OPERATORS). Lets the team self-attest WHO is acting so
+// every audited event records a real name instead of the generic
+// "dashboard-operator". This is COOPERATIVE ATTRIBUTION, not authentication: any
+// token holder can claim any roster id, so it answers "who, among us, did this"
+// for a trusting team -- never "prove you are X". Per-worker counts are COVERAGE
+// (is everyone reachable getting picked up), never a productivity scoreboard.
+//
+// Format: JSON array [{id,name}], OR a comma list of "id:Display Name" or bare
+// "id" entries. Ids are slugged (lowercase, [a-z0-9_-]) so a roster id is always
+// a safe, log-stable, enum-like token; the human-facing name keeps its spaces.
+function slugOperatorId(raw) {
+  return String(raw || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
+}
+function parseOperators(raw = process.env.CASEY_OPERATORS) {
+  const out = []
+  const seen = new Set()
+  const push = (id, name) => {
+    const sid = slugOperatorId(id)
+    if (!sid || seen.has(sid)) return
+    seen.add(sid)
+    out.push({ id: sid, name: String(name || id).trim().slice(0, 80) || sid })
+  }
+  const s = String(raw || '').trim()
+  if (!s) return out
+  if (s.startsWith('[')) {
+    try {
+      const arr = JSON.parse(s)
+      if (Array.isArray(arr)) for (const e of arr) {
+        if (e && typeof e === 'object') push(e.id ?? e.name, e.name ?? e.id)
+        else push(e, e)
+      }
+    } catch { /* fall through: a malformed roster is no roster, never a crash */ }
+    return out
+  }
+  for (const part of s.split(',')) {
+    const t = part.trim()
+    if (!t) continue
+    const i = t.indexOf(':')
+    if (i >= 0) push(t.slice(0, i), t.slice(i + 1))
+    else push(t, t)
+  }
+  return out
+}
+
 // opts.token   shared secret; when set, /api and / require ?token= or Bearer header.
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
 export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null } = {}) {
@@ -51,6 +95,18 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     // immediately strips it from the address bar and switches to X-Casey-Token
     // header for all subsequent API calls, so it never appears in access logs).
     return matches(bearer) || matches(req.get('x-casey-token')) || matches(req.query.token)
+  }
+  // The roster is fixed at boot from env (never contact/operator input), so an
+  // X-Casey-Operator header can only SELECT a known roster id, never inject a new
+  // actor. An unknown/absent header falls back to the generic operator, so the
+  // attribution is best-effort and never blocks a mutation.
+  const roster = parseOperators()
+  const rosterById = new Map(roster.map(o => [o.id, o]))
+  const actingOperator = (req) => {
+    const sid = slugOperatorId(req.get('x-casey-operator') || '')
+    const picked = sid && rosterById.get(sid)
+    if (picked) return { id: picked.id, name: picked.name, role: 'operator' }
+    return OPERATOR
   }
   // Public contact-facing report form -- no token required.
   // The ref acts as the shared secret: contacts only know their own ref,
@@ -469,12 +525,13 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         return res.status(409).json({ error: 'A case already exists for this contact', existing_id: c.id, existing_ref: c.ref })
       }
       // Tag it as operator-initiated manual intake
+      const op = actingOperator(req)
       const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
       if (!tags.includes('intake_mode:manual')) {
         const newTags = [...tags, 'intake_mode:manual'].join(',')
-        await store.updateCase(c.id, { tags: newTags }, OPERATOR)
+        await store.updateCase(c.id, { tags: newTags }, op)
       }
-      await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'case created via dashboard manual intake' })
+      await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'case created via dashboard manual intake', data: { by: op.id } })
       res.status(201).json(await store.getCase(c.id))
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -536,9 +593,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const unknown = Object.keys(req.body).filter(k => !REPORT_KEY_SET.has(k))
       if (unknown.length) return res.status(400).json({ error: `unknown report fields: ${unknown.join(', ')}` })
       if (!Object.keys(incoming).length) return res.status(400).json({ error: 'no report fields provided' })
-      const result = await store.mergeReport(c.id, incoming, OPERATOR)
+      const op = actingOperator(req)
+      const result = await store.mergeReport(c.id, incoming, op)
       if (result.error) return res.status(400).json({ error: result.error })
-      await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `recorded report fields via dashboard: ${Object.keys(incoming).join(', ')}`, data: incoming })
+      await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `recorded report fields via dashboard: ${Object.keys(incoming).join(', ')}`, data: { ...incoming, by: op.id } })
       res.json({ report: result.report, report_fill_rate: computeFillRate(JSON.stringify(result.report)) })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -571,7 +629,8 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       if (Object.keys(patch).some(k => k !== 'autonomy')) {
         if (prior?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy setting can be changed' })
       }
-      const updated = await store.updateCase(req.params.id, patch, OPERATOR)
+      const op = actingOperator(req)
+      const updated = await store.updateCase(req.params.id, patch, op)
       if (!updated) return res.status(404).json({ error: 'not found' })
       // An autonomy change is a first-class audited event carrying {from,to,by,reason}
       // so the timeline can render it as a distinct chip (like a transition), not a
@@ -581,13 +640,13 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         await store.appendEvent(req.params.id, {
           kind: 'autonomy_change', actor: 'operator',
           text: `autonomy ${prior.autonomy} -> ${patch.autonomy}`,
-          data: { from: prior.autonomy, to: patch.autonomy, by: OPERATOR.id, reason: patchReason || '' },
+          data: { from: prior.autonomy, to: patch.autonomy, by: op.id, reason: patchReason || '' },
         })
       }
       const otherKeys = Object.keys(patch).filter(k => k !== 'autonomy')
       if (otherKeys.length) {
         const otherPatch = Object.fromEntries(otherKeys.map(k => [k, patch[k]]))
-        await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${otherKeys.join(', ')}`, data: otherPatch })
+        await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${otherKeys.join(', ')}`, data: { ...otherPatch, by: op.id } })
       }
       res.json(updated)
     } catch (e) { res.status(500).json({ error: e.message }) }
@@ -605,7 +664,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       if (to !== c.status && !legal.includes(to)) {
         return res.status(400).json({ error: `cannot transition to '${to}'`, allowed: legal })
       }
-      await store.transition(req.params.id, to, { user: OPERATOR, reason: reason || 'operator override' })
+      await store.transition(req.params.id, to, { user: actingOperator(req), reason: reason || 'operator override' })
       res.json(await store.getCase(req.params.id))
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -617,7 +676,8 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const c = await store.getCase(req.params.id)
       if (!c) return res.status(404).json({ error: 'not found' })
       const field = req.body.field && REPORT_KEY_SET.has(req.body.field) ? req.body.field : null
-      await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text, data: field ? { field } : undefined })
+      const op = actingOperator(req)
+      await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text, data: { ...(field ? { field } : {}), by: op.id } })
       res.json({ ok: true })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -689,7 +749,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
           accepted[k] = thresholds[k]
         }
       }
-      await store.setThresholdsPatch(accepted, OPERATOR)
+      await store.setThresholdsPatch(accepted, actingOperator(req))
       const effective = await store.resolveThresholds()
       res.json({ ok: true, thresholds: effective, applied, rejected })
     } catch (e) { res.status(500).json({ error: e.message }) }
@@ -750,6 +810,14 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const fh = await store.getFleetHealth(n)
       res.json(fh)
     } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // The operator roster + who the server resolved THIS request to, so the SPA can
+  // render a "Who is this? [picker]" affordance and label every action with a real
+  // name. Token-gated by the global middleware above. Self-attested attribution,
+  // not auth -- the picked id is informational; the token is the only gate.
+  app.get('/api/operators', (req, res) => {
+    res.json({ operators: roster, current: actingOperator(req).id, attributed: roster.length > 0 })
   })
 
   // Management KPIs over the live case+event history: time-to-first-reply
@@ -908,7 +976,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const into = str(res, req.body, 'into'); if (into === undefined) return
       if (!into.trim()) return res.status(400).json({ error: 'no source case to merge' })
       const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
-      const res2 = await store.mergeCases(into, req.params.id, OPERATOR, { reason: reason || 'operator merge' })
+      const res2 = await store.mergeCases(into, req.params.id, actingOperator(req), { reason: reason || 'operator merge' })
       if (res2.error) return res.status(400).json({ error: res2.error })
       res.json({ ok: true, movedEvents: res2.movedEvents, alreadyMerged: !!res2.alreadyMerged })
     } catch (e) { res.status(500).json({ error: e.message }) }
@@ -920,7 +988,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     try {
       const { event_ids, subject, reason } = req.body
       if (!Array.isArray(event_ids) || !event_ids.length) return res.status(400).json({ error: 'event_ids must be a non-empty array' })
-      const result = await store.splitCase(req.params.id, event_ids, { subject: subject || '', reason: reason || 'operator split' }, OPERATOR)
+      const result = await store.splitCase(req.params.id, event_ids, { subject: subject || '', reason: reason || 'operator split' }, actingOperator(req))
       if (result.error) return res.status(400).json({ error: result.error })
       res.json({ ok: true, new_case_id: result.newCase?.id, new_case_ref: result.newCase?.ref, moved_events: result.movedEvents })
     } catch (e) { res.status(500).json({ error: e.message }) }
@@ -938,6 +1006,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       // Try to deliver before claiming success: if the channel send throws, we
       // record the failure and do NOT clear needs-human, so a contact who never
       // got the reply stays pinned in triage rather than silently dropped (P10).
+      const op = actingOperator(req)
       let delivered = false
       if (sendReply) {
         try { await sendReply(c, text); delivered = true }
@@ -945,14 +1014,14 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
           await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send operator reply on channel: ${e.message || 'unknown error'}` })
         }
       }
-      await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id } })
+      await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id } })
       // The operator personally answered, so the "wants a human" flag is satisfied
       // -- but only once the message actually reached the contact. Clear it then,
       // or the triage inbox keeps this case pinned at the top forever.
       if (delivered) {
         const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
         if (tags.includes('needs-human')) {
-          await store.updateCase(c.id, { tags: tags.filter(t => t !== 'needs-human').join(',') }, OPERATOR)
+          await store.updateCase(c.id, { tags: tags.filter(t => t !== 'needs-human').join(',') }, op)
         }
       }
       res.json({ ok: true, sent: !!sendReply, delivered })
@@ -990,10 +1059,11 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         try { await sendReply(c, text); delivered = true }
         catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
       }
-      await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true } })
+      const op = actingOperator(req)
+      await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id } })
       if (delivered) {
         const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
-        await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending' && t !== 'needs-human').join(',') }, OPERATOR)
+        await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending' && t !== 'needs-human').join(',') }, op)
       }
       res.json({ ok: true, sent: !!sendReply, delivered })
     } catch (e) { res.status(500).json({ error: e.message }) }
@@ -1009,9 +1079,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const draft = await pendingDraft(c)
       if (!draft) return res.status(409).json({ error: 'no pending draft' })
       const reason = (req.body && typeof req.body.reason === 'string' ? req.body.reason.trim() : '') || 'operator discarded'
+      const op = actingOperator(req)
       const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
-      await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending').join(',') }, OPERATOR)
-      await store.appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `DRAFT DISCARDED: ${reason}.` })
+      await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending').join(',') }, op)
+      await store.appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `DRAFT DISCARDED: ${reason}.`, data: { by: op.id } })
       res.json({ ok: true })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
