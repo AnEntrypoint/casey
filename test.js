@@ -456,6 +456,64 @@ async function main() {
     assert.ok(!JSON.stringify(body).includes('external_id'), 'overview payload leaks no external_id')
   })
 
+  // Themes B+C -- triage trust. The inbox ranks the right case to the top over ALL
+  // open cases (not just the page window), an assisted draft is HELD until a human
+  // approves it, and an autonomy flip is an auditable {from,to} event.
+  await test('attn ranking surfaces a needs-human case outside the 200-row window into the top of /api/attention', async () => {
+    const { rankAttention } = await import('./src/attn.js')
+    const now = Date.now()
+    // A needs-human case last touched a while ago must outrank a wall of fresh,
+    // quiet cases -- the enum-weighted scorer, not recency, decides the top.
+    const urgent = { id: 'u1', ref: 'CASE-9001-aa', status: 'waiting', tags: 'needs-human', updated_at: new Date(now - 6 * 3600e3).toISOString() }
+    const quiet = Array.from({ length: 250 }, (_, i) => ({ id: 'q' + i, ref: 'CASE-' + (1000 + i) + '-q', status: 'new', tags: '', updated_at: new Date(now - 60e3).toISOString() }))
+    // Put the urgent case LAST so a naive page-window (first 200) would miss it.
+    const { items } = rankAttention([...quiet, urgent], now, { limit: 10, offset: 0 })
+    assert.ok(items.length && items[0].c.id === 'u1', 'the needs-human case ranks first despite being 251st by position')
+    assert.ok(items[0].reason && /real person|human/i.test(items[0].reason), 'the reason explains why in plain words')
+    // And over the LIVE store, the wired endpoint ranks a real needs-human case high.
+    const { case: nh } = await store.findOrCreateCase({ channel: 'sim', external_id: 'attn-nh-' + Date.now() })
+    await store.updateCase(nh.id, { status: 'waiting', tags: 'needs-human' })
+    const att = await df('http://localhost:4577/api/attention?token=secret&limit=500').then(r => r.json())
+    const row = att.cases.find(c => c.id === nh.id)
+    assert.ok(row && row.score > 0, 'the live needs-human case is ranked with a positive score by /api/attention')
+  })
+
+  await test('assisted draft is held (nothing sent) until an operator approves it, then it sends and clears the flags', async () => {
+    const sentBefore = adapter.sent.length
+    const { case: ac } = await store.findOrCreateCase({ channel: 'sim', external_id: 'assist-' + Date.now() })
+    // Reproduce the held-draft state the assisted path writes: a draft event plus
+    // the draft-pending + needs-human tags. Nothing has been sent to the contact.
+    await store.appendEvent(ac.id, { kind: 'draft', actor: 'agent', channel: ac.channel, text: 'We have your message and will visit soon.', data: { to: ac.external_id, draft: true } })
+    await store.updateCase(ac.id, { tags: 'draft-pending,needs-human' })
+    assert.equal(adapter.sent.length, sentBefore, 'holding a draft sends nothing to the contact')
+    // Approve -> the (operator-editable) text is delivered and the flags clear.
+    const r = await df('http://localhost:4577/api/cases/' + ac.id + '/draft/approve?token=secret', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'We have your message and a vet will visit soon.' }),
+    })
+    assert.equal(r.status, 200, 'approve succeeds')
+    assert.equal(adapter.sent.length, sentBefore + 1, 'approving sends exactly one message to the contact')
+    const after = String((await store.getCase(ac.id)).tags || '').split(',').map(t => t.trim())
+    assert.ok(!after.includes('draft-pending') && !after.includes('needs-human'), 'a delivered draft clears draft-pending and needs-human')
+    const outs = (await store.listEvents(ac.id)).filter(e => e.kind === 'outbound')
+    assert.ok(outs.some(e => /vet will visit/.test(e.text || '')), 'the operator-edited text is recorded as an outbound')
+  })
+
+  await test('an autonomy flip records a kind:autonomy_change event carrying {from,to}', async () => {
+    const { case: au } = await store.findOrCreateCase({ channel: 'sim', external_id: 'auton-' + Date.now() })
+    // The case starts in its default autonomy; flip it and assert the audit event.
+    const prior = (await store.getCase(au.id)).autonomy
+    const to = prior === 'assisted' ? 'auto' : 'assisted'
+    const r = await df('http://localhost:4577/api/cases/' + au.id + '?token=secret', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ autonomy: to, reason: 'operator took the wheel' }),
+    })
+    assert.equal(r.status, 200, 'autonomy patch succeeds')
+    const ev = (await store.listEvents(au.id)).find(e => e.kind === 'autonomy_change')
+    assert.ok(ev, 'a dedicated autonomy_change event is appended, not a generic edit')
+    let data = ev.data; if (typeof data === 'string') { try { data = JSON.parse(data) } catch {} }
+    assert.equal(data.from, prior, 'the event carries the prior autonomy')
+    assert.equal(data.to, to, 'the event carries the new autonomy')
+  })
+
   await test('GET /api/clusters groups two correlated cases into one outbreak component', async () => {
     // Two real cases reporting the SAME place + species must land in one cluster
     // under the same correlation scorer the per-case suggestions use.
