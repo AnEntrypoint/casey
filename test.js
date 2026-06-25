@@ -1511,6 +1511,61 @@ async function main() {
     c2.stopSweep()     // double-stop is safe
   })
 
+  // Theme A -- alerting. The sweep must PAGE a person on the breaches a person
+  // must act on, route the escalated tier to a distinct supervisor channel, and
+  // an observe-mode inbound must flag needs-human and hand off exactly once.
+  await test('runSweepOnce pages notifyBreach on a high-severity breach and routes the escalated tier to notifyEscalation', async () => {
+    const { Casey } = await import('./src/casey.js')
+    const { DEFAULT_THRESHOLDS: T } = await import('./src/case-health.js')
+    // A bare Casey wired to the real store but with notifier STUBS, so we observe
+    // exactly which channel each breach pages. No gateway boot -> the global
+    // case-store singleton the tools resolve through is untouched.
+    // Bare Casey (no init -> the notifier fields init() wires are unset), so set the
+    // store + notifier stubs directly, exactly as the timer-lifecycle test sets store.
+    const breaches = [], escalations = []
+    const c3 = new Casey({ channels: ['sim'] })
+    c3.store = store
+    c3._notifyBreach = async (cs, b) => { breaches.push(b) }
+    c3._notifyEscalation = async (cs, b) => { escalations.push(b) }
+    // An unanswered handoff idle past the ESCALATION window: classifyCaseHealth
+    // emits BOTH unanswered_handoff and unanswered_handoff_escalated (case-health.js:109-118).
+    const escMs = T.escalateHandoffMs ?? (12 * 3600e3)
+    const { case: hc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'alert-' + Date.now() })
+    await store.updateCase(hc.id, { tags: 'needs-human' })
+    await store.t.update('case', hc.id, { last_event_at: new Date(Date.now() - escMs - 3600e3).toISOString() }, { id: 'sys', role: 'admin' })
+    await c3.runSweepOnce(Date.now())
+    assert.ok(breaches.includes('unanswered_handoff'), 'the ordinary tier pages notifyBreach')
+    assert.ok(escalations.includes('unanswered_handoff_escalated'), 'the escalated tier pages notifyEscalation distinctly')
+    assert.ok(!breaches.includes('unanswered_handoff_escalated'), 'the escalated breach does NOT also page the ordinary channel')
+    // A stale-only breach (no needs-human) is surfaced in the inbox but never pages,
+    // and a second sweep does NOT re-page the already-flagged handoff (the health tag
+    // is the dedup key, so a page fires once per newly-entered breach).
+    const sb = breaches.length, se = escalations.length
+    const { case: st } = await store.findOrCreateCase({ channel: 'sim', external_id: 'stale-only-' + Date.now() })
+    await store.t.update('case', st.id, { last_event_at: new Date(Date.now() - T.staleMs - 3600e3).toISOString() }, { id: 'sys', role: 'admin' })
+    await c3.runSweepOnce(Date.now())
+    assert.equal(escalations.length, se, 'an already-flagged handoff is not re-paged on the next sweep')
+    assert.ok(!breaches.slice(sb).includes('stale'), 'a stale-only case is NOT paged (surfaced in inbox, not an alert)')
+  })
+
+  await test('observe-mode inbound flags needs-human and fires notifyHandoff exactly once', async () => {
+    const { makeCaseHandler } = await import('./src/gateway-hooks.js')
+    let handoffs = 0
+    const handle = makeCaseHandler(store, { notifyHandoff: async () => { handoffs++ }, log: { warn() {}, info() {} } })
+    const chan = 'observe-' + Date.now()
+    const { case: oc } = await store.findOrCreateCase({ channel: 'sim', external_id: chan })
+    await store.updateCase(oc.id, { autonomy: 'observe' })
+    const mk = (text) => ({ from: chan, text, platform: 'sim', raw: { channel_id: chan, id: chan + '-' + text } })
+    const r1 = await handle('sim', mk('my cattle are sick'))
+    assert.equal(r1.text, '', 'observe mode sends no auto-reply')
+    assert.equal(r1.observed, true, 'inbound is recorded as observed')
+    const tags = String((await store.getCase(oc.id)).tags || '').split(',').map(t => t.trim())
+    assert.ok(tags.includes('needs-human'), 'observe inbound flags needs-human so the case surfaces')
+    assert.equal(handoffs, 1, 'notifyHandoff fires once on first flag')
+    await handle('sim', mk('still waiting'))
+    assert.equal(handoffs, 1, 'a second observe inbound does NOT re-page (already flagged)')
+  })
+
   await test('disease intake: stub records a report and asks at most one question per reply', async () => {
     const chan = 'farmer-intake-' + Date.now()
     const before = adapter.sent.length
