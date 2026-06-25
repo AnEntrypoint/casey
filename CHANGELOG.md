@@ -54,6 +54,32 @@
   watching, and `--no-supervise` runs the legacy single-process path. An optional
   zombie-receive self-heal (`CASEY_RECEIVE_SILENCE_MS`) restarts a channel that went
   silent too long.
+- Management and staff oversight surface. A worst-first attention inbox
+  (`src/attn.js` `rankAttention`/`caseHints`, `GET /api/attention`) ranks every
+  open case by an enum-weighted urgency score so the most urgent reaches the top
+  even past the list-page window, and the dashboard / `casey attention` CLI both
+  read it. Aggregate read-only endpoints back the metrics, outbreak, hotspot, and
+  audit views: `GET /api/overview` (time-to-first-reply, dwell-per-stage, backlog),
+  `GET /api/clusters` (correlated cases by shared location/species), `GET /api/geo`
+  (hotspots by area), `GET /api/activity` (merged audited event stream),
+  `GET /api/fleet-health` (sweep trend), and `GET /api/runtime` (supervisor health).
+  Operator-tunable health thresholds (`src/thresholds.js`, `GET`/`PUT
+  /api/thresholds`) feed both the periodic sweep and the inbox classifier live, so
+  a team can retune the handoff/stale/abandon windows without a restart.
+  Cooperative operator identity (`CASEY_OPERATORS`, `GET /api/operators`,
+  `X-Casey-Operator`) attributes actions to a known roster member. A high-severity
+  health breach pages an optional alert webhook (`CASEY_ALERT_WEBHOOK`), with a
+  distinct escalated tier (`escalateHandoffMs`) for a handoff left unanswered too
+  long. Shift handover (`GET /api/handover`, `POST /api/handover/start-shift`),
+  an AI-offline queue (`GET /api/unreplied`), bulk actions (`POST /api/cases/bulk`),
+  per-case snooze and a compensating undo (`POST /api/cases/:id/snooze`,
+  `/undo`), and a management report export (`GET /api/report.csv` / `.html`) round
+  out the operator workflow. `GET /api/ready` is an intentionally ungated
+  orchestrator readiness probe that leaks no case data.
+- Assisted autonomy is now real, not a label. An `assisted` case holds the agent's
+  reply as a `draft-pending` draft instead of sending it; an operator reviews and
+  releases it via `POST /api/cases/:id/draft/approve` (or discards it), and an
+  unsent draft past its window surfaces in the inbox as its own breach.
 
 ### Changed
 - First contact greeting is neutral about ownership across en/af/zu/xh, since the

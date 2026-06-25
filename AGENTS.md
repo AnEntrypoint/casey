@@ -45,6 +45,13 @@ src/
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep
   correlate.js             cross-case correlation helpers
+  attn.js                  worst-first attention ranking (rankAttention) + shared caseHints why/to-do policy; backs the inbox and `casey attention`
+  format.js                shared SAST timestamp + +27 phone formatters (CLI and SPA render the same way)
+  thresholds.js            pure validate/clamp/merge of operator-tunable health thresholds (allowlist keys + bounds)
+  overview.js              KPI aggregates over the event log (time-to-first-reply, dwell-per-stage, backlog) for /api/overview
+  clusters.js              correlated-case components (shared location/species) for /api/clusters
+  geo.js                   hotspots-by-area rollup for /api/geo
+  report.js                management report rendering (CSV/HTML) for /api/report.csv and /api/report.html
   extract.js               deterministic field capture from plain contact text (species/symptoms/counts/location/onset/name); shared by the live handler and the stub model so a case is never an empty shell even when the model drives no tools
   gateway-hooks.js         makeCaseHandler: plain-language prompt, intent keywords, dedup, media, observe, fallback
   discord-receive.js       fallback Discord WS receive for older freddie builds
@@ -90,6 +97,8 @@ clone that lacks them. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
 | `WHATSAPP_WEBHOOK_PORT`, `WHATSAPP_WEBHOOK_PATH` | Fixed webhook port/path for a stable public URL. |
 | `CASEY_DASHBOARD_TOKEN` | When set, dashboard API + page require this token (`Authorization: Bearer <token>` or `X-Casey-Token` header). For the initial page load only, `?token=` in the URL is also accepted; the client strips it from the address bar and switches to header for all API calls. |
 | `CASEY_PUBLIC_URL` | When set, the agent includes a `{CASEY_PUBLIC_URL}/report?ref={ref}` link in the first contact message. The `/report` page is a public (no-token) contact-facing form where contacts can fill in case details directly. |
+| `CASEY_ALERT_WEBHOOK` | When set, a high-severity health breach (unanswered handoff, and the escalated tier) POSTs a plain JSON alert to this URL so a team is paged off-dashboard. Each newly-entered breach pages once; an already-flagged case is not re-paged. |
+| `CASEY_OPERATORS` | Cooperative operator roster (comma-separated `id:Name` pairs), fixed at boot. `GET /api/operators` lists it and `X-Casey-Operator` selects a known id to attribute an action; this is attribution, not authentication -- an unknown/absent value falls back to the default actor and can never inject a new identity. |
 | `CASEY_LOG=silent` | Silence structured JSON logs (used by tests). |
 | `CASEY_STUB_LLM=1` | Run `casey up` with the offline stub model. |
 | `CASEY_RELOAD=0` | Disable hot-reload (the supervisor still restarts on crash; it just stops watching source). |
@@ -149,6 +158,15 @@ the crash-budget stop state); the supervisor is its only I/O.
   may do; the dashboard can override stage and reply as a human.
 - **Operator surface is low-jargon**: "Needs you now" inbox, plain-language mode,
   ready-made replies, handoff banner, "what to do now" hints.
+- **Assisted mode actually holds the reply**: an `assisted` case does NOT auto-send.
+  The agent's reply is recorded as a `draft-pending` draft and waits for an operator
+  to release it (`/draft/approve`, with edits) or discard it; an unsent draft past
+  its window surfaces in the inbox as its own breach. `assisted` is a real gate on
+  delivery, not a label -- only `auto` sends without a human.
+- **The inbox classifier reads live thresholds**: the attention ranking and the
+  periodic health sweep both classify against `store.resolveThresholds()`, so a
+  team that retunes a window via `PUT /api/thresholds` changes detection
+  immediately, with no restart and no drift from the shipped defaults.
 
 ## Security invariants (do not regress)
 
