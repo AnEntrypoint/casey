@@ -870,6 +870,55 @@ async function main() {
     assert.equal(after.customized, true, 'GET reports customized after a PUT')
   })
 
+  // ---- oversight: thresholds feed the live inbox, config validation, CLI ranking ----
+  // Three witnesses the management surface depends on: (1) a tightened threshold
+  // persisted via /api/thresholds is the SAME read /api/attention's classifier uses
+  // at request time -- the latent-bug fix that the inbox no longer classifies against
+  // the shipped default after a team tunes it; (2) validateConfig() catches a broken
+  // workflow graph without booting a DB (what `casey doctor` runs); (3) rankAttention
+  // orders an open pool worst-first (what `casey attention` prints).
+  await test('a persisted handoffMs tightening flips a borderline case into /api/attention live, validateConfig catches a broken graph, and rankAttention orders worst-first', async () => {
+    // (1) handoffMs was persisted to 2h by the prior test. A needs-human case idle
+    // ~3h is past the tuned 2h handoff window but UNDER the shipped 4h default --
+    // so its presence in the inbox's breach list proves the classifier read the
+    // live tuned threshold, not the default.
+    const { case: hc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'oversight-handoff-' + Date.now() })
+    await store.updateCase(hc.id, { tags: 'needs-human' })
+    await store.t.update('case', hc.id, { last_event_at: new Date(Date.now() - 3 * 3600e3).toISOString() }, { id: 'sys', role: 'admin' })
+    const att = await df('http://localhost:4577/api/attention?token=secret&limit=500').then(r => r.json())
+    const row = att.cases.find(c => c.id === hc.id)
+    assert.ok(row, 'the borderline needs-human case appears in /api/attention')
+    assert.ok((row.breaches || []).some(b => /handoff/.test(b.breach || b)), 'a 3h-idle handoff breaches against the live 2h threshold (would not at the 4h default) -- the inbox reads resolveThresholds() live')
+
+    // (2) validateConfig() rejects a workflow that references an unknown stage,
+    // the pure-read graph check `casey doctor` runs before any DB boot.
+    const { createCaseStore } = await import('./src/case-store.js')
+    const os = await import('node:os'); const fsp = await import('node:fs/promises'); const pathMod = await import('node:path')
+    const broken = pathMod.join(os.tmpdir(), 'casey-broken-' + Date.now() + '.yml')
+    await fsp.writeFile(broken, [
+      'entities:', '  case: {}', '  event: {}', '  contact: {}',
+      'workflows:', '  case_lifecycle:', '    stages:',
+      '      - name: new', '        forward: [nowhere]',
+    ].join('\n'), 'utf8')
+    let threw = null
+    try { createCaseStore({ config: broken }).validateConfig() } catch (e) { threw = e }
+    await fsp.unlink(broken).catch(() => {})
+    assert.ok(threw && /unknown target "nowhere"/.test(threw.message), 'validateConfig throws on a stage referencing an unknown transition target')
+
+    // (3) rankAttention orders an open pool worst-first by score (the CLI ordering).
+    const { rankAttention } = await import('./src/attn.js')
+    const now = Date.now()
+    const pool = [
+      { id: 'low', status: 'new', tags: '', created_at: new Date(now).toISOString(), last_event_at: new Date(now).toISOString() },
+      { id: 'high', status: 'in_progress', tags: 'needs-human,health:unanswered_handoff_escalated', last_event_at: new Date(now - 20 * 3600e3).toISOString() },
+      { id: 'mid', status: 'waiting', tags: 'needs-human', last_event_at: new Date(now - 5 * 3600e3).toISOString() },
+    ]
+    const { items } = rankAttention(pool, now)
+    assert.ok(items.length >= 2, 'urgent cases survive the score>0 filter')
+    assert.equal(items[0].c.id, 'high', 'the escalated handoff ranks first -- worst-first ordering')
+    for (let i = 1; i < items.length; i++) assert.ok(items[i - 1].score >= items[i].score, 'scores are non-increasing down the ranked list')
+  })
+
   // ---- receive-liveness watchdog ----
   // A gateway WebSocket can go zombie (TCP ESTABLISHED, gateway-dead) and
   // silently stop delivering inbound while the process, HTTP server, and
