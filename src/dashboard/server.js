@@ -737,6 +737,40 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Management KPIs over the live case+event history: time-to-first-reply
+  // (median/p90), median dwell per stage from transition events, opened-vs-closed
+  // per day, open backlog by stage. Aggregate-only -- no per-contact rows or
+  // external_id leak. On-demand (one scan), not a background poll. ?days scopes
+  // the per-day window (default 14, clamped 1..90). buildOverview is the pure
+  // aggregator shared with the CLI/CSV so the maths is identical everywhere.
+  app.get('/api/overview', async (req, res) => {
+    try {
+      const { buildOverview } = await import('../overview.js')
+      const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
+      const cases = await store.listCases({}, { limit: 10000, offset: 0 })
+      const eventsByCaseId = new Map()
+      for (const c of cases) eventsByCaseId.set(c.id, await store.listEvents(c.id).catch(() => []))
+      const overview = buildOverview(cases, eventsByCaseId, Date.now(), days * 24 * 3600 * 1000)
+      res.json({ days, ...overview })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Fleet-wide outbreak view: connected components of the open/non-merged pool
+  // under the same correlation scorer the per-case suggestions use. Surfaces
+  // "these N cases look like one outbreak" so the team sees a spreading disease
+  // without opening each case. On-demand (one O(n^2) scan over the bounded pool),
+  // never per-poll; merge stays per-pair and human-confirmed.
+  app.get('/api/clusters', async (req, res) => {
+    try {
+      const { buildClusters } = await import('../clusters.js')
+      const pool = (await store.listCases({}, { limit: 500 }))
+        .filter(c => c.status !== 'closed'
+          && !String(c.tags || '').split(',').map(s => s.trim()).includes('merged'))
+      const clusters = buildClusters(pool)
+      res.json({ pool: pool.length, count: clusters.length, clusters })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Cases that look like the SAME real-world outbreak as this one -- the
   // operator's view of casey's grouping intelligence, with the reasons shown so
   // the suggestion is explainable, never an opaque score.

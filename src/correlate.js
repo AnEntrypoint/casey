@@ -18,7 +18,7 @@ const STOP = new Set(['the', 'a', 'an', 'of', 'at', 'in', 'on', 'near', 'by', 'a
 // Normalize a free-text field into a set of meaningful lowercased tokens.
 // Accent-stripped so "musina" and "Musína" match; stop-words dropped so a shared
 // "farm"/"area" is not mistaken for a shared place.
-function tokens(s) {
+export function tokens(s) {
   return new Set(
     String(s || '')
       .toLowerCase()

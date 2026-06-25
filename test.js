@@ -14,6 +14,7 @@ import { stubLLM } from './src/sim/stub-llm.js'
 import { intentReply, fallbackReply, reportMissingVisitCritical } from './src/gateway-hooks.js'
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention } from './src/attn.js'
+import { buildOverview } from './src/overview.js'
 
 process.env.CASEY_LOG = 'silent'
 
@@ -194,6 +195,47 @@ async function main() {
     const c = await store.getCase(caseId)
     const legal = store.availableTransitions(c, { id: 'cli-operator', role: 'operator' })
     assert.ok(!legal.includes('definitely_not_a_stage'), 'a bogus stage is never legal (the CLI 400s on it)')
+  })
+
+  await test('GET /api/overview aggregates time-to-first-reply over the live event log (aggregate-only)', async () => {
+    // buildOverview is the pure aggregator GET /api/overview serves; assert it over
+    // the REAL store events, then assert the endpoint returns the same shape and
+    // leaks no per-contact field (no external_id anywhere in the payload).
+    const cases = await store.listCases({}, { limit: 10000 })
+    const ev = new Map()
+    for (const c of cases) ev.set(c.id, await store.listEvents(c.id))
+    const o = buildOverview(cases, ev, Date.now())
+    assert.equal(o.cases.total, cases.length, 'overview counts every case')
+    assert.ok(o.first_response_ms.n >= 1, 'at least one answered inbound in the live log')
+    assert.ok(o.first_response_ms.median === null || o.first_response_ms.median >= 0, 'median is a non-negative ms or null')
+    assert.ok(o.first_response_ms.p90 === null || o.first_response_ms.p90 >= o.first_response_ms.median, 'p90 >= median')
+    const wired = await df('http://localhost:4577/api/overview?days=30&token=secret')
+    assert.equal(wired.status, 200, '/api/overview is token-gated and reachable')
+    const body = await wired.json()
+    assert.equal(body.days, 30, 'window echoed')
+    assert.ok(body.cases && typeof body.cases.total === 'number', 'endpoint returns the aggregate shape')
+    assert.ok(!JSON.stringify(body).includes('external_id'), 'overview payload leaks no external_id')
+  })
+
+  await test('GET /api/clusters groups two correlated cases into one outbreak component', async () => {
+    // Two real cases reporting the SAME place + species must land in one cluster
+    // under the same correlation scorer the per-case suggestions use.
+    const { buildCaseToolset } = await import('./src/case-tools.js')
+    const report = buildCaseToolset(store).find(t => t.name === 'case_report')
+    const stamp = Date.now()
+    const { case: ca } = await store.findOrCreateCase({ channel: 'sim', external_id: 'cluster-a-' + stamp })
+    const { case: cb } = await store.findOrCreateCase({ channel: 'sim', external_id: 'cluster-b-' + stamp })
+    await report.handler({ id: ca.id, species: 'cattle', location: 'Musina farm', symptoms: 'drooling' })
+    await report.handler({ id: cb.id, species: 'cattle', location: 'near Musina', symptoms: 'drooling' })
+    const wired = await df('http://localhost:4577/api/clusters?token=secret')
+    assert.equal(wired.status, 200, '/api/clusters is token-gated and reachable')
+    const body = await wired.json()
+    const ids = new Set([ca.id, cb.id])
+    const comp = (body.clusters || []).find(cl => cl.members.some(m => ids.has(m.id)))
+    assert.ok(comp, 'the two correlated cases form a cluster')
+    assert.ok(comp.members.filter(m => ids.has(m.id)).length === 2, 'both correlated cases are in the same component')
+    assert.ok(comp.location.includes('musina'), 'dominant shared location names the place')
+    assert.ok(!JSON.stringify(body).includes('external_id'), 'clusters payload leaks no external_id')
   })
 
   await test('dashboard reply surfaces the sent flag (delivered vs logged-only)', async () => {
