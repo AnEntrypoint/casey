@@ -36,13 +36,18 @@ async function captureFieldsFromText(store, caseId, text, log) {
     const all = extractFields(text)
     const fields = {}
     for (const [k, v] of Object.entries(all)) if (CAPTURE_KEYS.has(k)) fields[k] = v
-    if (!Object.keys(fields).length) return
+    if (!Object.keys(fields).length) return []
     const res = await store.markReportFieldsIfEmpty(caseId, fields)
     if (res?.filled?.length) {
       // Field KEYS only -- never the raw contact text (PII) in the observation.
       await store.appendEvent(caseId, { kind: 'observation', actor: 'system', text: `fields auto-captured: ${res.filled.join(', ')}` })
     }
-  } catch (e) { log?.warn?.('[casey] auto-capture failed', { caseId, error: e.message }) }
+    // Return the keys we actually newly-filled so the reply path can acknowledge
+    // the contact's plainly-stated fact in the very reply that answers it -- the
+    // weak model returns no tool_calls (so it never confirms what it heard), and a
+    // generic ack reads as a dead-end. Deterministic capture drives the reply.
+    return res?.filled || []
+  } catch (e) { log?.warn?.('[casey] auto-capture failed', { caseId, error: e.message }); return [] }
 }
 
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
@@ -531,8 +536,9 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // are recorded even when the model drives nothing, so a case is never an empty
     // shell. Runs only outside observe mode (returned above). Re-read fresh after so
     // downstream report-aware decisions see what was just captured.
+    let justCaptured = []
     if (inboundText) {
-      await captureFieldsFromText(store, fresh.id, inboundText, log)
+      justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log)
       fresh = await store.getCase(fresh.id)
     }
 
@@ -648,6 +654,16 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       return { to: external_id, text: '', platform, caseId: fresh.id, skipped: true }
     }
     inFlight.add(external_id)
+    // Durable turn-lifecycle marker: record that an agent turn STARTED for this
+    // inbound (keyed by msgId) as an append-only observation, BEFORE the LLM call.
+    // If the process crashes/reloads between here and the outbound below, the boot
+    // resume sweep (resumePendingTurns) finds an inbound with a TURN-START but no
+    // following outbound/draft and re-drives it exactly once -- so a contact whose
+    // message arrived mid-crash still gets a reply instead of waiting forever.
+    // Completion is detected positionally (a later outbound/draft), so no separate
+    // TURN-DONE marker is needed; the outbound IS the completion witness.
+    try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `TURN-START:${msgId}` }) }
+    catch (e) { log.warn?.('[casey] turn-start marker failed', { caseId: fresh.id, error: e.message }) }
     let result, errored = false
     try {
       result = await runTurn({
@@ -715,16 +731,53 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         if (m) askedKeys.add(m[1])
       }
       const next = nextUnaskedMissingField(fresh.report, askedKeys)
-      const advancing = next ? advancingFallbackForHint(inboundText, fresh, next[1]) : fallbackReply(inboundText, fresh)
-      if (next && advancing !== fallbackReply(inboundText, fresh)) {
+      // Capture-driven: lead with an acknowledgement of what the contact just told
+      // us this turn (so 'I see blue eyes' is heard, not swallowed into a generic
+      // ack), then ask the next still-missing on-site fact. When nothing new was
+      // captured and nothing is left to ask, this is exactly the plain holding ack.
+      const advancing = captureDrivenReply(inboundText, fresh, justCaptured, next ? next[1] : null)
+      if (next) {
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${next[0]} degraded reply asked for the next still-missing on-site fact (once per field).` })
       }
       text = advancing
     }
-    // A reply is a (degraded) fallback if it is empty or begins with the holding
-    // ack base -- covers the plain ack and every per-field advancing variant.
+    // PRECEDENCE GATE (the live fix): while visit-critical intake is INCOMPLETE,
+    // the deterministic capture-driven reply REPLACES the model output -- even when
+    // the model produced non-empty prose. The production model is small: it never
+    // calls case_report (so it captures nothing) and returns plausible chatter that
+    // ignores the contact's plainly-stated facts and carries no reference. That
+    // chatter passes the echo/stock-ack guards above (it is neither), so without
+    // this gate it would be sent raw -- the witnessed dead-end where 'I see blue
+    // eyes' is met with a generic greeting that never acknowledges the symptom,
+    // never asks the next on-site fact, and never quotes the ref. So: until the
+    // case has the facts a visit needs, intake is driven deterministically and the
+    // model output is treated as decorative. Once intake is complete, model prose
+    // is trusted (the guards above still apply). The override is an observable,
+    // audited branch; the once-per-field FALLBACK-ASK guard still prevents repeats.
+    if (reportMissingVisitCritical(fresh.report)) {
+      const priorAsk = await store.listEvents(fresh.id)
+      const askedKeys = new Set()
+      for (const e of priorAsk) {
+        const m = e.kind === 'observation' && /FALLBACK-ASK:(\w+)/.exec(e.text || '')
+        if (m) askedKeys.add(m[1])
+      }
+      const next = nextUnaskedMissingField(fresh.report, askedKeys)
+      const driven = captureDrivenReply(inboundText, fresh, justCaptured, next ? next[1] : null)
+      if (driven && driven !== text) {
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'INTAKE-DRIVE: deterministic capture-driven reply used over model output (intake incomplete).' })
+        if (next) {
+          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${next[0]} intake-drive asked the next still-missing on-site fact (once per field).` })
+        }
+        text = driven
+      }
+    }
+    // A reply is a (degraded) fallback if it is empty, begins with the holding ack
+    // base, or CONTAINS it -- the capture-driven reply leads with an acknowledgement
+    // clause before the holding ack, so a plain startsWith would miss it. includes()
+    // covers the plain ack, every per-field advancing variant, and the ack-prefixed
+    // capture-driven reply.
     const fallbackBase = fallbackReply(inboundText, fresh)
-    const isFallback = !text || text === fallbackBase || text.startsWith(fallbackBase)
+    const isFallback = !text || text === fallbackBase || text.startsWith(fallbackBase) || text.includes(fallbackBase)
 
     // Final guard before the reply leaves (send OR assisted draft): correct any
     // fabricated/stale case reference to this case's real ref. A weak model recites
@@ -871,6 +924,46 @@ function mostImportantMissingField(reportRaw) {
   const r = parseReportSafe(reportRaw)
   const hit = VISIT_CRITICAL_ASK.find(([k]) => r[k] == null || String(r[k]).trim() === '')
   return hit ? hit[1] : null
+}
+
+// Plain contact-facing label for a captured field, used to acknowledge what the
+// contact just told us IN THE REPLY -- never internal jargon, never the raw value
+// (the value is the contact's own words, already on the record; we only name the
+// KIND of thing understood, so a re-render is always HTML-safe and PII-light).
+const CAPTURED_ACK = {
+  species: 'which animals',
+  symptoms: 'what you are seeing',
+  location: 'where the animals are',
+  dead_count: 'that some have died',
+  affected_count: 'how many are affected',
+  onset: 'when it started',
+  how_to_find: 'how to find the place',
+  suspected_disease: 'what you think it may be',
+}
+// Build a short warm clause acknowledging the most important field we just
+// captured this turn (priority-ordered so we confirm the most useful fact, not a
+// random one). Returns '' when nothing notable was captured. Deterministic: this
+// is what makes 'I see blue eyes' come back as 'Thank you -- I have noted what you
+// are seeing' instead of vanishing into a generic ack.
+function ackCapturedFields(justFilled) {
+  if (!Array.isArray(justFilled) || !justFilled.length) return ''
+  const order = ['location', 'species', 'symptoms', 'dead_count', 'affected_count', 'onset', 'how_to_find', 'suspected_disease']
+  const pick = order.find(k => justFilled.includes(k)) || justFilled.find(k => CAPTURED_ACK[k])
+  const label = pick && CAPTURED_ACK[pick]
+  return label ? `Thank you -- I have noted ${label}.` : ''
+}
+
+// The full deterministic capture-driven reply: acknowledge what was just captured,
+// then ask the single most-important still-missing on-site fact, carrying the
+// reference once. This is the reply we send when the model produces nothing usable
+// (empty/error/echo/stock-ack -- the common case on the weak local model), so the
+// contact is always heard and the intake always advances by one real field.
+function captureDrivenReply(contactText, caseRow, justFilled, nextHint) {
+  const ack = ackCapturedFields(justFilled)
+  const base = fallbackReply(contactText, caseRow)
+  const ask = nextHint ? ` ${askCarrier(guessLang(contactText), nextHint)}` : ''
+  // Lead with the acknowledgement when we have one, then the reference tail + ask.
+  return ack ? `${ack} ${base}${ask}` : `${base}${ask}`
 }
 
 // Per-field advancing: the highest-priority on-site fact that is BOTH still
