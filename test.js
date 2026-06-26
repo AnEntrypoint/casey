@@ -11,7 +11,7 @@ import { createCasey, Casey } from './src/casey.js'
 import { createDashboard } from './src/dashboard/server.js'
 import { runScript, MockAdapter } from './src/sim/inject.js'
 import { stubLLM } from './src/sim/stub-llm.js'
-import { intentReply, fallbackReply, reportMissingVisitCritical, jargonHits } from './src/gateway-hooks.js'
+import { intentReply, fallbackReply, reportMissingVisitCritical, jargonHits, isContentFreeTurn, warmConversationalReply } from './src/gateway-hooks.js'
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
@@ -2260,6 +2260,39 @@ async function main() {
     for (let i = 0; i < 3; i++) await brain2.callLLM({ messages: [{ role: 'user', content: 'z' }] }).catch(() => {})
     const sThrow = await brain2.status()
     assert.equal(sThrow.degraded, true, 'a window of failing turns reads degraded even though each errored fast')
+  })
+
+  await test('greetings/chit-chat get a warm conversational reply, never the case-ack; a real report still drives intake', async () => {
+    // Pure predicate: a content-free turn (nothing captured this turn, empty report)
+    // is conversational; a turn that captured a field or has a recorded report is not.
+    assert.equal(isContentFreeTurn([], null), true, 'no capture + empty report -> content-free')
+    assert.equal(isContentFreeTurn([], '{}'), true, 'no capture + {} report -> content-free')
+    assert.equal(isContentFreeTurn(['species'], null), false, 'a captured field this turn -> not content-free')
+    assert.equal(isContentFreeTurn([], JSON.stringify({ species: 'cattle' })), false, 'an existing report field -> not content-free')
+    // The warm reply does NOT parrot the holding ack, and reframes the ref as "if you message again".
+    const warm = warmConversationalReply('hi', { ref: 'CASE-9999-zz' })
+    assert.ok(!warm.startsWith('Thank you for letting us know'), 'warm greeting is not the case-ack')
+    assert.ok(warm.includes('CASE-9999-zz') && /message again/.test(warm), 'warm greeting keeps the ref, reframed')
+    // End-to-end on the real chain: a greeting-only conversation must never receive the
+    // FALLBACK_REPLY case-ack ("Thank you for letting us know..."), on the first greeting
+    // or a repeated one -- the witnessed "hi" -> holding-ack nonsense.
+    const chan = 'greet-' + Date.now()
+    for (const g of ['hi', 'hello']) {
+      await runScript(adapter, [g], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const reply = adapter.sent[adapter.sent.length - 1]
+      assert.ok(reply && reply.text, 'a greeting is never a dead-end (a reply is sent)')
+      assert.ok(!/^Thank you for letting us know/.test(reply.text), `greeting "${g}" is not answered with the case-ack: ${reply.text}`)
+      assert.ok(/here to help/i.test(reply.text), `greeting "${g}" gets the warm invite-to-report reply: ${reply.text}`)
+    }
+    const gc = (await store.listCases()).find(c => c.external_id === chan)
+    assert.ok((await store.listEvents(gc.id)).some(e => e.kind === 'observation' && /CONVERSATIONAL: content-free/.test(e.text || '')), 'the content-free conversational path is audited')
+    // Regression guard: a real livestock report on the SAME case still drives intake --
+    // it captures a field, so it is NOT content-free and gets the intake reply (ref-bearing),
+    // not the warm greeting invite.
+    await runScript(adapter, ['my cattle are drooling badly'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const afterReport = adapter.sent[adapter.sent.length - 1]
+    assert.ok(afterReport.text.includes(gc.ref), 'a real report turn drives intake and cites the reference')
+    assert.ok(!/here to help/i.test(afterReport.text), 'a real report is not answered with the content-free greeting invite')
   })
 
   await dash.close()

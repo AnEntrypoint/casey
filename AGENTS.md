@@ -145,6 +145,21 @@ the crash-budget stop state); the supervisor is its only I/O.
   error/timeout/empty and records the failure as an observation, never leaked. A
   reply that parrots a system-prompt example verbatim is treated as a failed turn
   (`isPromptEcho`) and replaced by the fallback.
+- **A greeting is not a report: content-free turns get a warm reply, never the
+  case-ack.** A bare "hi"/"hello"/"help" or other chit-chat carries no livestock
+  content, so the intake-drive and holding-ack paths must not fire on it -- doing so
+  parrots "Thank you for letting us know ... your reference is X" at someone who only
+  said hello. `isContentFreeTurn(justCaptured, report)` (gateway-hooks.js) is the
+  deterministic signal: nothing captured this turn AND an empty running report. On a
+  content-free turn the handler replies with `warmConversationalReply` (a short
+  language-mirrored "Hi! I am here to help -- if any of your animals are sick or have
+  died, tell me what is happening", keeping the reference reframed as "if you message
+  again") and records a `CONVERSATIONAL` observation, while both the empty-text
+  fallback and the precedence/intake-drive gate are skipped. The moment the contact
+  states a real fact (a captured field, or any recorded report field) the turn is no
+  longer content-free and intake proceeds exactly as before -- a symptom-only "blue
+  eyes" still captures and drives intake; the warm reply is strictly for the
+  no-content case.
 - **Never stay degraded: the LLM backend self-heals.** `resolveCallLLM` probes the
   provider once, but the gateway must not latch "AI helper offline" for its whole
   life if the provider was merely down at boot. `makeResilientCallLLM` (in

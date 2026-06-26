@@ -388,6 +388,47 @@ export function fallbackReply(contactText, caseRow) {
   return base + tail
 }
 
+// A bare greeting / "help" / content-free message is conversational, NOT a
+// livestock report. Replying to "hi" with the holding ack ("Thank you for letting
+// us know ... your reference is X") is the witnessed nonsense: it treats a
+// greeting as a disease report and parrots a case acknowledgement before the
+// person has said anything. A warm, plain conversational opener belongs here
+// instead -- it greets, names what casey is for, and invites the real report,
+// without ever pretending a report was made. Language-mirrored like fallbackReply;
+// the reference tail is kept (it is a real datum the person may quote back) but
+// framed as "if you need it" rather than "we have your message". ASCII only.
+const WARM_GREETING_BY_LANG = {
+  en: 'Hi! I am here to help. If any of your animals are sick or have died, just tell me what is happening and I will pass it to the team.',
+  af: 'Hallo! Ek is hier om te help. As enige van u diere siek is of gevrek het, vertel my net wat aangaan en ek gee dit vir die span deur.',
+  zu: 'Sawubona! Ngilapha ukusiza. Uma izilwane zakho zigula noma zifile, ngitshele nje ukuthi kwenzakalani futhi ngizokudlulisela ethimbeni.',
+  xh: 'Molo! Ndilapha ukunceda. Ukuba nayiphi na izilwanyana zakho ziyagula okanye zifile, ndixelele nje ukuba kwenzeka ntoni ndiyithumele kwiqela.',
+}
+export function warmConversationalReply(contactText, caseRow) {
+  const lang = guessLang(contactText)
+  const base = WARM_GREETING_BY_LANG[lang] || WARM_GREETING_BY_LANG.en
+  const ref = caseRow?.ref
+  if (!ref) return base
+  const tail = {
+    af: ` As u weer van ons hoor, is u verwysingsnommer ${ref}.`,
+    zu: ` Uma uphinda usithinta, inombolo yakho yereferensi ngu-${ref}.`,
+    xh: ` Xa uphinda usithinta, inombolo yakho yesalathiso ngu-${ref}.`,
+  }[lang] || ` If you message again, your reference is ${ref}.`
+  return base + tail
+}
+
+// True when this inbound turn carried NO livestock-report content: nothing was
+// deterministically captured this turn AND the running report has no field
+// recorded at all. Such a turn is conversational (a greeting, a "help", chit-chat)
+// rather than intake-in-progress, so the intake-drive / holding-ack paths must not
+// fire on it. A real report ("my sheep are sick" -> species+symptoms) or a
+// symptom-only message ("blue eyes" -> symptoms) captures a field, so this is
+// false for them and intake proceeds exactly as before. Deterministic, no model.
+export function isContentFreeTurn(justCaptured, reportRaw) {
+  if (Array.isArray(justCaptured) && justCaptured.length) return false
+  const r = parseReportSafe(reportRaw)
+  return !Object.keys(r).some(k => r[k] != null && String(r[k]).trim() !== '')
+}
+
 // A single gentle "could you tell me <fact>?" carrier per language. The asked-fact
 // phrase itself stays English plain-language (the canonical VISIT_CRITICAL_ASK
 // hints); the carrier sentence mirrors the contact's language. This is the
@@ -771,6 +812,15 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // field guarantee). Only once every visit-critical field has been asked once
       // does the degraded reply become the plain holding ack and the operator takes
       // over -- never a re-greet, never the same question twice.
+      // Content-free turn (a bare greeting / "help" / chit-chat with nothing
+      // captured and an empty report): this is conversational, not intake. Reply
+      // warmly and invite the report instead of parroting the holding ack -- the
+      // witnessed "hi" -> "Thank you for letting us know ... reference X" nonsense.
+      // Skip the per-field intake advance entirely (there is no report to advance).
+      if (isContentFreeTurn(justCaptured, fresh.report)) {
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'CONVERSATIONAL: content-free turn (greeting/chit-chat) answered with a warm conversational reply, not the case-ack.' })
+        text = warmConversationalReply(inboundText, fresh)
+      } else {
       const priorAsk = await store.listEvents(fresh.id)
       const askedKeys = new Set()
       for (const e of priorAsk) {
@@ -787,6 +837,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${next[0]} degraded reply asked for the next still-missing on-site fact (once per field).` })
       }
       text = advancing
+      }
     }
     // PRECEDENCE GATE (the live fix): while visit-critical intake is INCOMPLETE,
     // the deterministic capture-driven reply REPLACES the model output -- even when
@@ -801,7 +852,11 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // model output is treated as decorative. Once intake is complete, model prose
     // is trusted (the guards above still apply). The override is an observable,
     // audited branch; the once-per-field FALLBACK-ASK guard still prevents repeats.
-    if (reportMissingVisitCritical(fresh.report)) {
+    // A content-free conversational turn is exempt: there is no report to drive,
+    // and the warm reply above must not be overridden by a holding ack. The gate
+    // only applies once the contact has actually started a report (a captured
+    // field this turn or an existing report field), which isContentFreeTurn guards.
+    if (reportMissingVisitCritical(fresh.report) && !isContentFreeTurn(justCaptured, fresh.report)) {
       const priorAsk = await store.listEvents(fresh.id)
       const askedKeys = new Set()
       for (const e of priorAsk) {

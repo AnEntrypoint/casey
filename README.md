@@ -62,6 +62,10 @@ well, and may not speak English as a first language. So casey:
   will not message again unless they ask for `HELP`/`HUMAN`).
 - never sends a blank or dead-end reply -- empty, emoji-only, and media-only messages still
   get a gentle, helpful answer.
+- answers a greeting or chit-chat ("hi", "hello", "help") with a warm invitation to report,
+  not the case-acknowledgement -- a turn that carries no animal-health content does not get
+  "Thank you for letting us know ... your reference is X"; the moment the contact states a
+  real fact, casey switches to gathering the report as usual.
 
 **The operator watching the dashboard.** They may not understand workflow jargon either. So:
 
