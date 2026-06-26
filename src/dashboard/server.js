@@ -1570,6 +1570,11 @@ const PAGE = /* html */ `<!doctype html>
   .ev.inbound{border-left-color:#3b6ea5}.ev.outbound{border-left-color:#2e8b57}
   .ev.note{border-left-color:#8a6d3b}.ev.action{border-left-color:#6a5acd}
   .ev.transition{border-left-color:#b07cc6}.ev.observation{border-left-color:#7a8290}
+  .ev.autonomy_change{border-left-color:#d98a00;background:rgba(217,138,0,.07)}
+  .tcase.heat-3{box-shadow:inset 4px 0 0 #c0392b}
+  .tcase.heat-2{box-shadow:inset 4px 0 0 #d98a00}
+  .tcase.heat-1{box-shadow:inset 4px 0 0 #b8b8b8}
+  .tcase .waiting{font-size:11px;color:#c0392b;font-weight:600;margin-left:6px}
   .ev .k{display:inline-block;min-width:120px;color:#8aa0c0;font-size:11px}
   label{display:block;margin:8px 0 2px;font-size:12px;color:var(--muted)}
   .hint{font-size:11px;color:var(--faint);margin:2px 0 0}
@@ -1709,6 +1714,8 @@ const PAGE = /* html */ `<!doctype html>
     <div class="topbar">
       <h1>casey <span class="counts" id="counts"></span>
         <span class="aihealth" id="aihealth" title="Is the AI helper connected?" style="margin-left:12px;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600"></span>
+        <span class="aihealth" id="runtime-pill" title="Is the casey process healthy?" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;display:none"></span>
+        <span class="aihealth" id="guardrails-pill" title="Latest health-guardrail sweep" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;display:none"></span>
         <button class="icon-btn" id="help" title="What does this screen mean?" style="margin-left:auto">?</button>
         <button class="icon-btn" id="new-case-btn" title="Add a case manually (no WhatsApp or Discord needed)">+ New</button>
         <button class="icon-btn" id="export-btn" title="Download all cases as a spreadsheet (CSV)">Export</button>
@@ -1804,11 +1811,21 @@ function rememberHandoff(id){ handoffSeen.add(id); try{ localStorage.casey_hando
 let handoffQueue = []                         // cases needing a human, freshest last
 const baseTitle = document.title              // one source of truth
 let titleFlip = false, titleTimer = null
+// Steady-state title carries the inbox count so an operator sees it in the tab
+// even when no handoff flash is running. flashTitle falls back to this (not the
+// bare baseTitle) so the count and the flash do not race-erase each other.
+let inboxCount = 0
+function countTitle(){ return inboxCount>0 ? '('+inboxCount+') '+baseTitle : baseTitle }
+function setInboxBadge(n){
+  inboxCount = n||0
+  if(!titleTimer) document.title = countTitle()   // flash owns the title while active
+  try{ if(navigator.setAppBadge){ inboxCount>0 ? navigator.setAppBadge(inboxCount) : navigator.clearAppBadge() } }catch{}
+}
 function flashTitle(on){
   if(on){ if(titleTimer) return
     titleTimer=setInterval(()=>{ titleFlip=!titleFlip
-      document.title = titleFlip ? (handoffQueue.length+' waiting for you') : baseTitle }, 1100) }
-  else { clearInterval(titleTimer); titleTimer=null; document.title=baseTitle }
+      document.title = titleFlip ? (handoffQueue.length+' waiting for you') : countTitle() }, 1100) }
+  else { clearInterval(titleTimer); titleTimer=null; document.title=countTitle() }
 }
 // Two-tone chime via WebAudio so there is no asset/dependency. try/catch because
 // browsers block audio until the operator interacts; that silent failure must
@@ -1892,6 +1909,12 @@ function rel(v){ const d=toDate(v); if(!d)return ''
   const m=Math.round(s/60); if(m<45)return m+'m ago'
   const h=Math.round(m/60); if(h<36)return h+'h ago'
   return Math.round(h/24)+'d ago' }
+// Elapsed duration from a since_ms span -> 'Xh Ym' / 'Xm' / 'Xd Yh', for the
+// inbox waiting timer. Distinct from rel() (which is "time ago" off a timestamp).
+function waitFmt(ms){ const s=Math.max(0,Math.round(ms/1000)); const m=Math.floor(s/60)
+  if(m<60) return m+'m'
+  const h=Math.floor(m/60), rm=m%60; if(h<24) return rm? h+'h '+rm+'m' : h+'h'
+  const d=Math.floor(h/24), rh=h%24; return rh? d+'d '+rh+'h' : d+'d' }
 // Absolute time is always shown in South African Standard Time (SAST, UTC+2, no
 // DST) so an operator anywhere reads the same local time the field team works in,
 // regardless of the browser's own timezone. 'SAST' is appended so it is explicit.
@@ -2065,6 +2088,7 @@ let attentionInbox = []
 function renderTriage(){
   const el=$('#triage'); if(!el) return
   const inbox = attentionInbox.slice(0,12)
+  setInboxBadge(attentionInbox.length)
   if(!inbox.length){
     el.innerHTML='<h2>Needs you now</h2>'+
       '<div class="calm">All caught up. Nothing needs a person right now. '+
@@ -2075,9 +2099,12 @@ function renderTriage(){
     inbox.map(e=>{
       const breaches = e.breaches||[]
       const breachDetail = breaches.length ? ' -- '+breaches.map(b=>b.detail||b.breach).join('; ') : ''
+      const heat = e.score>=8 ? 'heat-3' : e.score>=4 ? 'heat-2' : e.score>0 ? 'heat-1' : ''
+      const ho = breaches.find(b=>b.breach==='unanswered_handoff'||b.breach==='unanswered_handoff_escalated')
+      const waiting = ho && ho.since_ms ? '<span class="waiting">waiting '+waitFmt(ho.since_ms)+'</span>' : ''
       return \`
-      <div class="tcase \${e.id===activeId?'active':''}" data-id="\${esc(e.id)}">
-        <div class="why">\${esc(e.reason||'This one is worth a look.')}\${breachDetail?'<span class="breach-detail"> '+esc(breachDetail)+'</span>':''}</div>
+      <div class="tcase \${heat} \${e.id===activeId?'active':''}" data-id="\${esc(e.id)}">
+        <div class="why">\${esc(e.reason||'This one is worth a look.')}\${waiting}\${breachDetail?'<span class="breach-detail"> '+esc(breachDetail)+'</span>':''}</div>
         <div class="meta">\${esc(e.ref)} - \${esc(e.channel)} - \${esc(e.subject||'(no subject)')} - \${esc(rel(e.updated_at))}</div>
       </div>\`
     }).join('')
@@ -2136,20 +2163,27 @@ const AUTONOMY_HELP = 'auto = agent replies on its own - assisted = agent drafts
 // Plain-words "what to do now" line, picked from the case state. The first
 // matching rule wins so the most action-needed state shows. Derives purely from
 // enum-safe c.status / c.autonomy.
+// Mirrors src/attn.js caseHints().todo policy -- same priority ladder and wording
+// so the detail to-do line never diverges from the server. The client cannot
+// import attn.js, so the ladder is inlined. ageHoursOf is a thin local helper.
+function ageHoursOf(c){ const d=toDate(c.updated_at||c.created_at); return d?(Date.now()-d.getTime())/3600000:0 }
 function todoHint(c){
   const tags=tagList(c)
   if(tags.includes('opted-out')) return 'This person asked to stop. Do not message them. Leave this one alone.'
   if(c.status==='closed') return 'This one is finished. Nothing to do.'
   if(tags.includes('needs-human')) return 'This person asked for a real person. Reply to them below.'
-  if(c.status==='resolved') return 'This one is marked done. Close it if you are finished.'
+  if(tags.includes('draft-pending')) return 'casey drafted a reply -- review it before it sends. Approve or discard it below.'
+  if(tags.includes('health:unanswered_handoff_escalated')) return 'A person was asked for a long time ago and still no one has replied. Step in below.'
   if(tags.includes('health:unanswered_handoff')) return 'A person was asked for and no one has replied. Reply below to take this one on.'
   if(tags.includes('health:incomplete_critical')) return 'The visit-critical facts are still missing and the case is active. Try to reach the farmer now -- once they leave the site some facts cannot be recovered.'
   if(tags.includes('health:abandoned_intake')) return 'On-site facts are still missing and the farmer may be gone. Check if they are still reachable and ask for the most important detail (location or how to find the place).'
-  if(c.autonomy==='observe') return 'This one is waiting for you. Read it and reply, or set Who answers to auto so casey can answer.'
-  if(c.autonomy==='assisted') return 'casey prepared a reply but waits for a person. Check it, then send.'
+  if(c.status==='waiting' && ageHoursOf(c)>=24) return 'No answer for over a day. A check-in may help -- reply below.'
   if(tags.includes('health:stuck')) return 'This case has been in the same stage for a while. Check if it needs a push or can be closed.'
-  if(c.status==='waiting') return 'Waiting on the person to reply. Nothing to do until they answer.'
   if(tags.includes('health:stale')) return 'No activity for a while. Check if anything needs following up.'
+  if(c.autonomy==='observe') return 'This one is waiting for you. Read it and reply, or set Who answers to auto so casey can answer.'
+  if(c.autonomy==='assisted') return 'casey can draft, but you send. Open it and check the draft.'
+  if(c.status==='resolved') return 'This one is marked done. Close it if you are finished.'
+  if(c.status==='waiting') return 'Waiting on the person to reply. Nothing to do until they answer.'
   if(c.status==='new'||c.status==='triaging') return 'A new message came in. casey is sorting it out.'
   return 'casey is handling this one on its own. Step in only if you need to.'
 }
@@ -2504,6 +2538,45 @@ async function refreshHealth(){
   el.title=h.detail+(h.model?(' ('+h.model+')'):'')+(gw&&gw.label?(' - '+gw.label):'')
   el.style.background=h.ok?'rgba(34,160,80,.18)':'rgba(200,140,0,.20)'
   el.style.color=h.ok?'#1c8c44':'#9a6a00'
+  refreshRuntimePill(); refreshGuardrailsPill()
+}
+// Tints a pill green/amber/red. ok=true->green, warn=true->amber, else red.
+function pillTint(el, ok, warn){
+  if(ok){ el.style.background='rgba(34,160,80,.18)'; el.style.color='#1c8c44' }
+  else if(warn){ el.style.background='rgba(200,140,0,.20)'; el.style.color='#9a6a00' }
+  else { el.style.background='rgba(200,40,40,.20)'; el.style.color='#b22222' }
+}
+// Runtime pill: only shown when the process is supervised (standalone hides it,
+// since there is no supervisor state to report). Red on 'degraded'.
+async function refreshRuntimePill(){
+  const el=$('#runtime-pill'); if(!el) return
+  let r; try{ r=await api('/api/runtime').then(x=>x.ok?x.json():null) }catch{ r=null }
+  if(!r || r.supervised===false){ el.style.display='none'; return }
+  el.style.display=''
+  el.textContent=r.label||('Runtime: '+(r.state||'unknown'))
+  el.title='Restarts since boot: '+(r.restarts||0)+(r.lastCrashReason?(' - last: '+r.lastCrashReason):'')
+  pillTint(el, r.state==='healthy', r.state==='restarting'||r.state==='booting')
+}
+// Inline-SVG sparkline (no chart lib): scaled polyline over numeric series.
+function sparkline(vals, w, h2){
+  if(!vals||!vals.length) return ''
+  const max=Math.max(1,...vals)
+  const step=vals.length>1 ? w/(vals.length-1) : 0
+  const pts=vals.map((v,i)=>i*step+','+(h2-(v/max)*h2)).join(' ')
+  return '<svg width="'+w+'" height="'+h2+'" style="vertical-align:middle;margin-left:5px"><polyline points="'+esc(pts)+'" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>'
+}
+// Guardrails pill: green clean / amber flagged>0 / red degraded, with a sparkline
+// of recent flagged counts. Hidden until at least one sweep has run.
+async function refreshGuardrailsPill(){
+  const el=$('#guardrails-pill'); if(!el) return
+  let fh; try{ fh=await api('/api/fleet-health').then(x=>x.ok?x.json():null) }catch{ fh=null }
+  if(!fh || !fh.latest){ el.style.display='none'; return }
+  el.style.display=''
+  const flagged=fh.latest.flagged||0
+  const spark=sparkline((fh.history||[]).map(p=>(p.flagged!=null?p.flagged:(p.data&&p.data.flagged)||0)), 36, 12)
+  el.innerHTML='Guardrails: '+(fh.degraded?'degraded':(flagged>0?(flagged+' flagged'):'clean'))+spark
+  el.title='Last sweep scanned '+(fh.latest.scanned||0)+', flagged '+flagged
+  pillTint(el, !fh.degraded && flagged===0, !fh.degraded && flagged>0)
 }
 // --- channel filter ---
 function fillChannelFilter(){
@@ -2986,7 +3059,7 @@ async function boot(){
 }
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000); const _attnIv = setInterval(refreshAttention, 30000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox},
+window.__casey = { esc, rel, waitFmt, sparkline, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
