@@ -1575,6 +1575,17 @@ const PAGE = /* html */ `<!doctype html>
   .tcase.heat-2{box-shadow:inset 4px 0 0 #d98a00}
   .tcase.heat-1{box-shadow:inset 4px 0 0 #b8b8b8}
   .tcase .waiting{font-size:11px;color:#c0392b;font-weight:600;margin-left:6px}
+  .draft-banner{margin-top:14px;padding:10px 12px;border:1px solid #d98a00;background:rgba(217,138,0,.1);border-radius:8px}
+  .draft-banner .draft-lab{font-size:13px;font-weight:600;color:#d98a00;margin-bottom:8px}
+  .draft-banner .draft-acts{display:flex;gap:8px}
+  .draft-banner .draft-ok{background:#1f7a3d}
+  .draft-banner .draft-no{background:#2a3340}
+  .set-row{margin-bottom:12px}
+  .set-row label{display:block;font-size:13px;font-weight:600;margin-bottom:3px}
+  .set-row .set-in{display:flex;align-items:center;gap:6px}
+  .set-row .set-in input{width:90px}
+  .set-row .set-in span{font-size:12px;color:var(--muted)}
+  .set-state{margin-left:10px;font-size:12px;color:var(--muted)}
   .ev .k{display:inline-block;min-width:120px;color:#8aa0c0;font-size:11px}
   label{display:block;margin:8px 0 2px;font-size:12px;color:var(--muted)}
   .hint{font-size:11px;color:var(--faint);margin:2px 0 0}
@@ -1721,6 +1732,7 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="export-btn" title="Download all cases as a spreadsheet (CSV)">Export</button>
         <button class="icon-btn" id="sweep-btn" title="Run health-guardrail sweep now (re-evaluates all cases for time-based issues)">Sweep</button>
         <button class="icon-btn" id="stats-btn" title="Show fill-rate comparison by intake source">Stats</button>
+        <button class="icon-btn" id="settings-btn" title="Tune how long casey waits before flagging a case">Settings</button>
         <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">dark</button>
         <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names">Aa</button>
@@ -1735,6 +1747,10 @@ const PAGE = /* html */ `<!doctype html>
     <div class="stats-panel" id="stats-panel">
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Fill-rate by intake source</div>
       <div class="stats-grid" id="stats-grid"><div class="empty" style="grid-column:1/-1;padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="settings-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">How long before casey flags a case</div>
+      <div id="settings-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
     </div>
     <div class="triage" id="triage"></div>
     <div class="caselist" id="cases"><div class="empty">Loading cases...</div></div>
@@ -1903,6 +1919,18 @@ async function failMsg(r,fallback){ try{return (await r.json()).error||fallback}
 // --- relative time, absolute on hover ---
 function toDate(v){ if(v==null||v==='')return null
   const d=(typeof v==='number'||/^\\d+$/.test(String(v)))?new Date(Number(v)*1000):new Date(v); return isNaN(d)?null:d }
+// Assisted-mode held draft surfacing. A case is holding a draft only while it
+// carries the draft-pending tag; the text is the latest kind:'draft' event.
+function caseHasDraft(c){ return String(c&&c.tags||'').split(',').map(t=>t.trim()).includes('draft-pending') }
+function latestDraft(events){ const d=(events||[]).filter(e=>e.kind==='draft'); return d.length?d[d.length-1]:null }
+function draftText(c,events){ if(!caseHasDraft(c))return ''; const d=latestDraft(events); return d&&d.text||'' }
+function draftBanner(c,events){
+  if(!caseHasDraft(c)) return ''
+  return '<div class="draft-banner" id="draft-banner">'
+    +'<div class="draft-lab">AI drafted a reply -- review before it sends.</div>'
+    +'<div class="draft-acts"><button id="draft-approve" class="draft-ok">Approve &amp; send</button>'
+    +'<button id="draft-discard" class="draft-no">Discard</button></div></div>'
+}
 function rel(v){ const d=toDate(v); if(!d)return ''
   const s=Math.round((Date.now()-d.getTime())/1000)
   if(s<45)return 'just now'; if(s<90)return '1m ago'
@@ -2245,8 +2273,9 @@ async function openCase(id){
       \${simple?'<p class="hint">Move this case to a new stage. For some stages the contact gets a short automatic note; for internal stages they are not told.</p>':''}
       \${transitions.map(t=>\`<button class="trans" data-to="\${esc(t)}" title="\${esc(t)}" style="background:#2a3340">-&gt; \${esc(stageLabel(t))}</button>\`).join(' ')||'<span class="hint">no transitions available</span>'}
     </div>
+    \${draftBanner(c,events)}
     <div style="margin-top:14px"><label>Reply to contact on \${esc(c.channel)}</label>
-      <textarea id="f-reply" rows="2" placeholder="Send a message as a human operator... (Ctrl+Enter to send)" maxlength="4096"></textarea>
+      <textarea id="f-reply" rows="2" placeholder="Send a message as a human operator... (Ctrl+Enter to send)" maxlength="4096">\${esc(draftText(c,events))}</textarea>
       <div class="reply-counter" id="reply-counter">0 / 4096</div>
       \${contactMaybeNonEnglish(events)?'<p class="canned-lab" style="color:var(--danger)">This person may not be writing in English. Please reply in their language.</p>':''}
       \${cannedReplies(c).length ? \`<p class="canned-lab">Or tap a ready-made reply to start with:</p>
@@ -2350,6 +2379,23 @@ async function openCase(id){
   }
   $('#send-reply').onclick = send
   $('#f-reply').addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); send() } })
+  const draftOk=$('#draft-approve')
+  if(draftOk) draftOk.onclick=async()=>{
+    const text=$('#f-reply').value.trim(); draftOk.disabled=true
+    const r=await api('/api/cases/'+encodeURIComponent(id)+'/draft/approve',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})})
+    draftOk.disabled=false
+    if(!r.ok){ toast(await failMsg(r,'approve failed'),'err'); return }
+    const j=await r.json().catch(()=>({}))
+    toast(j.delivered?'draft sent':'draft logged (channel not connected)','ok'); lastCasesJson=''; await loadCases(); await openCase(id)
+  }
+  const draftNo=$('#draft-discard')
+  if(draftNo) draftNo.onclick=async()=>{
+    const dlg=await showDialog({title:'Discard this draft?',message:'The drafted reply will not be sent. The case stays flagged for a human.',confirmLabel:'Discard'})
+    if(!dlg) return
+    const r=await api('/api/cases/'+encodeURIComponent(id)+'/draft/discard',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({})})
+    if(!r.ok){ toast(await failMsg(r,'discard failed'),'err'); return }
+    toast('draft discarded','ok'); lastCasesJson=''; await loadCases(); await openCase(id)
+  }
   const replyCounter=$('#reply-counter')
   if(replyCounter){
     const updateCounter=()=>{ const n=$('#f-reply').value.length; replyCounter.textContent=n+' / 4096'
@@ -2973,6 +3019,57 @@ if(statsBtn) statsBtn.onclick=async()=>{
   statsBtn.classList.toggle('active',statsOpen)
   if(statsOpen) await loadStats()
 }
+// --- tunable health thresholds (plain-language settings) ---
+// Each scalar threshold is stored in ms; operators tune it in hours. The label
+// and help text are plain words so a non-technical team can retune the windows.
+const THRESH_META={
+  handoffMs:['Wait after a contact asks for a person','How long to wait before flagging that nobody has stepped in yet.'],
+  escalateHandoffMs:['Escalate an unanswered handoff','After this long with no human reply, the case is raised more urgently.'],
+  staleMs:['No activity at all','How long a case can go quiet before it is flagged as going stale.'],
+  abandonMs:['Half-finished intake left sitting','A case that started but never finished gathering details is flagged after this.'],
+  incompleteCriticalMs:['Missing essential visit details','How long an actionable case may lack must-have fields before flagging.'],
+  neverClosedMs:['Open far too long','A case still open past this is surfaced as overdue.'],
+  unsentDraftMs:['Unsent AI draft waiting','How long an assisted draft can wait for an operator before it is flagged.'],
+}
+let settingsOpen=false
+const settingsBtn=$('#settings-btn')
+const settingsPanel=$('#settings-panel')
+function hoursOf(ms){ return Math.round((ms/3600000)*10)/10 }
+async function loadThresholds(){
+  const body=$('#settings-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  try{
+    const j=await api('/api/thresholds').then(r=>r.ok?r.json():null)
+    if(!j){ body.innerHTML='<div class="empty">Could not load settings.</div>'; return }
+    const t=j.thresholds||{}
+    const rows=Object.keys(THRESH_META).filter(k=>t[k]!=null).map(k=>{
+      const [lab,help]=THRESH_META[k]
+      return '<div class="set-row"><label>'+esc(lab)+'</label>'
+        +'<div class="set-in"><input type="number" min="0" step="0.5" data-key="'+esc(k)+'" value="'+hoursOf(t[k])+'"> <span>hours</span></div>'
+        +'<p class="hint">'+esc(help)+'</p></div>'
+    }).join('')
+    body.innerHTML=rows+'<button id="settings-save">Save</button>'
+      +'<span class="set-state">'+(j.customized?'Using your tuned values':'Using the shipped defaults')+'</span>'
+    const save=$('#settings-save')
+    if(save) save.onclick=async()=>{
+      save.disabled=true
+      const patch={}
+      body.querySelectorAll('input[data-key]').forEach(inp=>{
+        const v=parseFloat(inp.value); if(Number.isFinite(v)) patch[inp.dataset.key]=Math.round(v*3600000)
+      })
+      const r=await api('/api/thresholds',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(patch)})
+      save.disabled=false
+      if(!r.ok){ toast(await failMsg(r,'save failed'),'err'); return }
+      toast('settings saved','ok'); await loadThresholds()
+    }
+  }catch(e){ body.innerHTML='<div class="empty">Settings error: '+esc(e.message)+'</div>' }
+}
+if(settingsBtn) settingsBtn.onclick=async()=>{
+  settingsOpen=!settingsOpen
+  settingsPanel.classList.toggle('show',settingsOpen)
+  settingsBtn.classList.toggle('active',settingsOpen)
+  if(settingsOpen) await loadThresholds()
+}
 // Inline modal replacement for native prompt()/confirm() -- works on mobile/PWA.
 // Uses DOM creation (not innerHTML) to avoid conflicts with the outer template literal.
 // Returns a Promise resolving to {value, confirmed:true} or null if cancelled.
@@ -3059,7 +3156,7 @@ async function boot(){
 }
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000); const _attnIv = setInterval(refreshAttention, 30000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, waitFmt, sparkline, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
+window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
