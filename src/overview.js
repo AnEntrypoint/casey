@@ -9,6 +9,19 @@
 
 const SEC = 1000
 
+// thatcher persists event.data as a JSON string (case-store.appendEvent), and
+// store.listEvents returns it unparsed. Read it as an object either way: an object
+// passes through, a string is parsed, anything malformed is {} (never throws).
+// Without this, reads like data.from/data.by silently miss (a string has no such
+// key), mis-attributing dwell-per-stage and reply credit. Shared by workload.js.
+export function evData(e) {
+  const d = e?.data
+  if (d == null) return {}
+  if (typeof d === 'object') return d
+  if (typeof d === 'string') { try { return JSON.parse(d) || {} } catch { return {} } }
+  return {}
+}
+
 // created_at is unix seconds; -> ms, or null if missing/corrupt (never throws).
 function evMs(e) {
   const v = e?.created_at
@@ -52,15 +65,15 @@ function firstResponseMs(events) {
 function accumulateDwell(into, caseRow, events) {
   const trans = [...events].filter(e => e.kind === 'transition' && evMs(e) != null).sort((a, b) => evMs(a) - evMs(b))
   let prevMs = evMs({ created_at: caseRow?.created_at })
-  let prevStage = trans.length ? (trans[0].data?.from || caseRow?.status) : caseRow?.status
+  let prevStage = trans.length ? (evData(trans[0]).from || caseRow?.status) : caseRow?.status
   for (const t of trans) {
-    const from = t.data?.from || prevStage
+    const from = evData(t).from || prevStage
     const at = evMs(t)
     if (prevMs != null && at != null && at >= prevMs) {
       (into[from] = into[from] || []).push(at - prevMs)
     }
     prevMs = at
-    prevStage = t.data?.to || prevStage
+    prevStage = evData(t).to || prevStage
   }
 }
 
@@ -89,7 +102,7 @@ export function buildOverview(cases, eventsByCaseId, now = Date.now(), windowMs 
     if (createdMs != null && createdMs >= since) openedByDay[dayKey(createdMs)] = (openedByDay[dayKey(createdMs)] || 0) + 1
     if (isClosed) {
       // closed time approximated by the last transition INTO a terminal stage
-      const lastClose = [...events].filter(e => e.kind === 'transition' && (e.data?.to === 'resolved' || e.data?.to === 'closed') && evMs(e) != null).sort((a, b) => evMs(a) - evMs(b)).pop()
+      const lastClose = [...events].filter(e => e.kind === 'transition' && (evData(e).to === 'resolved' || evData(e).to === 'closed') && evMs(e) != null).sort((a, b) => evMs(a) - evMs(b)).pop()
       const cm = lastClose ? evMs(lastClose) : null
       if (cm != null && cm >= since) closedByDay[dayKey(cm)] = (closedByDay[dayKey(cm)] || 0) + 1
     }

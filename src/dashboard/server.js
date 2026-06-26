@@ -69,6 +69,22 @@ function parseOperators(raw = process.env.CASEY_OPERATORS) {
   return out
 }
 
+// thatcher persists event.data as a JSON string and store.list* returns it unparsed.
+// The SPA reads e.data.field/.by etc. as objects, so parse `data` to an object at the
+// API boundary before sending -- a parsed object passes through, a string is parsed,
+// anything malformed becomes {} (never throws). Returns a new array of shallow-cloned
+// rows so the store's cached rows are not mutated.
+function parseEventData(events) {
+  return (events || []).map(e => {
+    if (e && typeof e.data === 'string') {
+      let d = {}
+      try { d = JSON.parse(e.data) || {} } catch { d = {} }
+      return { ...e, data: d }
+    }
+    return e
+  })
+}
+
 // opts.token   shared secret; when set, /api and / require ?token= or Bearer header.
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
 export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null } = {}) {
@@ -590,7 +606,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const events_total = await store.countEvents(c.id)
       // newest window first by default; UI loads older via /events?offset=
       const limit = clampLimit(req.query.events_limit, 50)
-      const events = await store.listEventsPage(c.id, { limit, offset: 0 })
+      const events = parseEventData(await store.listEventsPage(c.id, { limit, offset: 0 }))
       const transitions = store.availableTransitions(c, OPERATOR)
       const report_fill_rate = computeFillRate(c.report)
       res.json({ case: c, events, events_total, transitions, report_fill_rate })
@@ -625,7 +641,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     try {
       const limit = clampLimit(req.query.limit, 50)
       const offset = offsetOf(req.query.offset)
-      const events = await store.listEventsPage(req.params.id, { limit, offset })
+      const events = parseEventData(await store.listEventsPage(req.params.id, { limit, offset }))
       res.json({ events, offset, limit })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -1035,6 +1051,25 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       for (const c of cases) eventsByCaseId.set(c.id, await store.listEvents(c.id).catch(() => []))
       const overview = buildOverview(cases, eventsByCaseId, Date.now(), days * 24 * 3600 * 1000)
       res.json({ days, ...overview })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Per-operator workload + accountability: open cases each person holds, stale
+  // claims (held but untouched too long), replies sent in the last 24h, median
+  // first-reply on their cases, and their oldest-waiting case. Aggregate-only --
+  // no per-contact rows, no external_id. On-demand single scan, never per-poll.
+  // buildWorkload is the pure aggregator (like overview/attn) so the maths is one
+  // place. The stale window reads the live operator-tuned thresholds when present.
+  app.get('/api/operators/workload', async (req, res) => {
+    try {
+      const { buildWorkload } = await import('../workload.js')
+      const cases = await store.listCases({}, { limit: 10000, offset: 0 })
+      const eventsByCaseId = new Map()
+      for (const c of cases) eventsByCaseId.set(c.id, await store.listEvents(c.id).catch(() => []))
+      const th = (store.resolveThresholds ? await store.resolveThresholds() : null) || {}
+      const staleMs = Number.isFinite(th.staleMs) ? th.staleMs : 24 * 3600 * 1000
+      const out = buildWorkload(cases, eventsByCaseId, roster, Date.now(), staleMs)
+      res.json(out)
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -1763,6 +1798,13 @@ const PAGE = /* html */ `<!doctype html>
   body.inbox-mode #cases{display:none}
   body.inbox-mode #focus-btn{background:var(--accent);color:#fff;border-color:var(--accent)}
   body.inbox-mode .triage{margin-top:4px}
+  .team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+  .team-card{border:1px solid var(--border);border-radius:8px;padding:8px 10px}
+  .team-stale{border-color:var(--danger,#c0392b)}
+  .team-name{font-weight:700;margin-bottom:4px}
+  .team-stat{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--muted)}
+  .team-stat .n{font-weight:700;color:var(--fg,inherit)}
+  .team-stat.team-warn .n{color:var(--danger,#c0392b)}
 </style></head>
 <body>
 <div id="conn" class="conn">Connection lost - retrying...</div>
@@ -1789,6 +1831,7 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="activity-btn" title="Everything that has happened, newest first">Activity</button>
         <button class="icon-btn" id="handover-btn" title="Start-of-shift digest: what needs you, open handoffs, unsent drafts, what changed">Shift</button>
         <button class="icon-btn" id="offline-btn" title="Cases that came in while casey could not answer -- waiting for a person">AI offline</button>
+        <button class="icon-btn" id="team-btn" title="Who is holding what: open cases per person, stale claims, replies today, response speed">Team</button>
         <select id="op-picker" title="Who you are -- attributed on your actions" style="display:none"></select>
         <button class="icon-btn" id="focus-btn" title="Focus mode: show only the ranked Needs-you-now list, lighten background polling (good on a phone)">Focus</button>
         <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
@@ -1800,6 +1843,7 @@ const PAGE = /* html */ `<!doctype html>
         <select id="statusf"><option value="">all stages</option></select>
         <select id="channelf" title="Filter by channel"><option value="">all channels</option></select>
         <select id="sourcef" title="Filter by intake source"><option value="">all sources</option><option value="manual">Manual (operator)</option><option value="channel">Channel (AI)</option><option value="public_form">Public form</option></select>
+        <button class="icon-btn" id="mine-btn" title="Show only the cases you have claimed (pick who you are first, top-right)">Mine</button>
       </div>
     </div>
     <div class="stats-panel" id="stats-panel">
@@ -1845,6 +1889,10 @@ const PAGE = /* html */ `<!doctype html>
     <div class="stats-panel" id="offline-panel">
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Came in while casey was offline (waiting for a person)</div>
       <div id="offline-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="team-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Who is holding what (worst first)</div>
+      <div id="team-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
     </div>
     <div class="triage" id="triage"></div>
     <div class="bulk-bar" id="bulk-bar" style="display:none">
@@ -1908,8 +1956,31 @@ const PAGE = /* html */ `<!doctype html>
     <h3>How do I answer someone?</h3>
     <p>Open the row. Scroll to <b>Reply to contact</b>, type your message, and press <b>Send reply</b>. The person gets it on WhatsApp or Discord.</p>
     <p class="hint">Tip: the <b>Aa</b> button at the top turns on plain-language labels everywhere.</p>
+    <h3>Keyboard shortcuts (for fast triage)</h3>
+    <ul class="keys">
+      <li><b>j</b> / <b>k</b> - move down / up the list</li>
+      <li><b>o</b> or <b>Enter</b> - open the highlighted case</li>
+      <li><b>c</b> - claim the open case as yours</li>
+      <li><b>e</b> - jump to the reply box</li>
+      <li><b>/</b> - search &nbsp; <b>n</b> - new case &nbsp; <b>Esc</b> - back / close</li>
+      <li><b>?</b> - show this help</li>
+    </ul>
+    <button id="onboard-again">Show me the quick start again</button>
     <button id="help-close">Got it</button>
     <p class="foot">You can open this help again any time with the <b>?</b> button at the top.</p>
+  </div>
+</div>
+<div class="help-ovl" id="onboard-ovl">
+  <div class="help-card">
+    <h2>Quick start - three things</h2>
+    <p class="lead">A new shift starts here. These three steps are all you need to begin.</p>
+    <ol>
+      <li><b>Pick who you are.</b> Use the name box at the top right so every reply and claim is recorded against you.</li>
+      <li><b>The "Needs you now" list is your queue.</b> It puts the cases that cannot wait at the top. Work it from the top down.</li>
+      <li><b>Claim a case before you reply.</b> Claiming tells the rest of the team you have it, so two people do not answer the same person.</li>
+    </ol>
+    <button id="onboard-close">Start working</button>
+    <p class="foot">You can see this again from the <b>?</b> help, under "Show me the quick start again".</p>
   </div>
 </div>
 <div id="toasts"></div>
@@ -2279,8 +2350,9 @@ function renderTriage(){
   const el=$('#triage'); if(!el) return
   // In focus mode the attention list is the whole screen, so show every ranked
   // case; otherwise keep the compact 12-row peek above the full list.
-  const inbox = inboxMode ? attentionInbox : attentionInbox.slice(0,12)
-  setInboxBadge(attentionInbox.length)
+  const ranked = mineOnly ? attentionInbox.filter(isMine) : attentionInbox
+  const inbox = inboxMode ? ranked : ranked.slice(0,12)
+  setInboxBadge(ranked.length)
   if(!inbox.length){
     el.innerHTML='<h2>Needs you now</h2>'+
       '<div class="calm">All caught up. Nothing needs a person right now. '+
@@ -2706,7 +2778,17 @@ function hideHelp(){ helpOpen=false; $('#help-ovl').classList.remove('show'); tr
 $('#help').onclick = showHelp
 $('#help-close').onclick = hideHelp
 $('#help-ovl').addEventListener('click', e=>{ if(e.target===$('#help-ovl')) hideHelp() })
-if(!helpSeen()) showHelp()
+// First-run onboarding: a focused 3-step card shown once per browser. The flag is
+// set the moment it is dismissed, so it never nags a returning operator.
+function onboarded(){ try{ return localStorage.casey_onboarded==='1' }catch{ return false } }
+function showOnboard(){ $('#onboard-ovl').classList.add('show') }
+function hideOnboard(){ $('#onboard-ovl').classList.remove('show'); try{ localStorage.casey_onboarded='1' }catch{} }
+$('#onboard-close').onclick = hideOnboard
+$('#onboard-ovl').addEventListener('click', e=>{ if(e.target===$('#onboard-ovl')) hideOnboard() })
+// "Show me again" from inside the help card: close help, reopen the quick start.
+const _onboardAgain=$('#onboard-again'); if(_onboardAgain) _onboardAgain.onclick=()=>{ hideHelp(); showOnboard() }
+// On a brand-new browser show the quick start; otherwise leave help to the ? button.
+if(!onboarded()){ showOnboard() } else if(!helpSeen()){ showHelp() }
 // --- filters ---
 let qTimer
 $('#q').addEventListener('input',e=>{ clearTimeout(qTimer); qTimer=setTimeout(()=>{ filt.q=e.target.value; lastCasesJson=''; loadCases() },300) })
@@ -2717,7 +2799,8 @@ document.addEventListener('keydown',e=>{
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)
   if(e.key==='n' && !typing){ e.preventDefault(); openIntakeForm(null); return }
   if(e.key==='/' && !typing){ e.preventDefault(); $('#q').focus(); return }
-  if(e.key==='Escape'){ if(helpOpen){hideHelp()} else if(typing){document.activeElement.blur()} else if($('#q').value){filt.q='';$('#q').value='';renderListFull()} return }
+  if(e.key==='Escape'){ const bk=$('#back'); if($('#onboard-ovl').classList.contains('show')){hideOnboard()} else if(helpOpen){hideHelp()} else if(typing){document.activeElement.blur()} else if(bk&&$('#wrap').classList.contains('detail-open')){bk.click()} else if($('#q').value){filt.q='';$('#q').value='';renderListFull()} return }
+  if(e.key==='?' && !typing){ e.preventDefault(); helpOpen?hideHelp():showHelp(); return }
   if(typing) return
   if(e.key==='j'||e.key==='k'||e.key==='ArrowDown'||e.key==='ArrowUp'){
     const shown=allCases.filter(matchesFull); if(!shown.length)return
@@ -2725,7 +2808,16 @@ document.addEventListener('keydown',e=>{
     i = (e.key==='j'||e.key==='ArrowDown') ? Math.min(shown.length-1,i+1) : Math.max(0,i<0?0:i-1)
     openCase(shown[i].id)
     const el=document.querySelector('.case.active'); if(el)el.scrollIntoView({block:'nearest'})
+    return
   }
+  // o / Enter open the highlighted case; if none is open yet, open the first shown.
+  if(e.key==='o'||e.key==='Enter'){
+    if(!activeId){ const shown=allCases.filter(matchesFull); if(shown.length){ e.preventDefault(); openCase(shown[0].id) } }
+    return
+  }
+  // c claims the open case (same path as the Claim button); e jumps to the reply box.
+  if(e.key==='c'){ const b=$('#claim-btn'); if(b){ e.preventDefault(); b.click() } return }
+  if(e.key==='e'){ const ta=$('#f-reply'); if(ta){ e.preventDefault(); ta.focus() } return }
 })
 // --- deep-link restore + poll ---
 function restoreFromHash(){ const m=/#case=([^&]+)/.exec(location.hash); if(m) return decodeURIComponent(m[1]) }
@@ -2816,7 +2908,12 @@ function fillChannelFilter(){
 }
 $('#channelf').addEventListener('change',e=>{ filt.channel=e.target.value; lastCasesJson=''; loadCases() })
 $('#sourcef').addEventListener('change',e=>{ filt.source=e.target.value; renderListFull(); renderTriage() })
+let mineOnly = false
+// True when the case is owned by the operator currently signed in (top-right
+// picker). The agent/unclaimed pseudo-owner is never "mine".
+function isMine(c){ return !!selectedOperator && c && c.assignee===selectedOperator }
 function matchesFull(c){
+  if(mineOnly && !isMine(c)) return false
   if(filt.channel && c.channel!==filt.channel) return false
   if(filt.source){
     const tags=tagList(c)
@@ -3437,6 +3534,29 @@ async function loadOffline(){
   }catch(e){ body.innerHTML='<div class="empty">Offline-queue error: '+esc(e.message)+'</div>' }
 }
 panelToggle('#offline-btn','#offline-panel',loadOffline)
+// --- team workload (who is holding what) ---
+function teamHtml(j){
+  const ops=(j&&j.operators)||[]
+  if(!ops.length) return '<div class="empty" style="padding:8px 0">No operators configured -- set CASEY_OPERATORS to give people a name on their work.</div>'
+  return '<div class="team-grid">'+ops.map(o=>
+    '<div class="team-card'+(o.stale_claims>0?' team-stale':'')+'">'
+    +'<div class="team-name">'+esc(o.name||o.id)+'</div>'
+    +'<div class="team-stat"><span class="n">'+esc(String(o.open_assigned||0))+'</span> <span class="lbl">open</span></div>'
+    +(o.stale_claims>0?'<div class="team-stat team-warn"><span class="n">'+esc(String(o.stale_claims))+'</span> <span class="lbl">sitting too long</span></div>':'')
+    +'<div class="team-stat"><span class="n">'+esc(String(o.replies_24h||0))+'</span> <span class="lbl">replies today</span></div>'
+    +'<div class="team-stat"><span class="n">'+esc(fmtDur(o.first_reply_ms_median))+'</span> <span class="lbl">usual first reply</span></div>'
+    +'<div class="team-stat"><span class="n">'+esc(fmtDur(o.oldest_waiting_ms))+'</span> <span class="lbl">oldest waiting</span></div>'
+    +'</div>'
+  ).join('')+'</div>'
+}
+async function loadTeam(){
+  const body=$('#team-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  try{ const j=await api('/api/operators/workload').then(r=>r.ok?r.json():null)
+    body.innerHTML=j?teamHtml(j):'<div class="empty">Could not load the team view.</div>'
+  }catch(e){ body.innerHTML='<div class="empty">Team-view error: '+esc(e.message)+'</div>' }
+}
+panelToggle('#team-btn','#team-panel',loadTeam)
 // --- bulk toolbar wiring ---
 ;(function wireBulk(){
   const stageSel=$('#bulk-stage')
@@ -3578,8 +3698,15 @@ const _casesIv = setInterval(() => { if(!inboxMode) loadCases() }, 5000)
 const _healthIv = setInterval(refreshHealth, 15000)
 const _attnIv = setInterval(refreshAttention, 30000)
 const _focusBtn = $('#focus-btn'); if(_focusBtn) _focusBtn.onclick = () => setInboxMode(!inboxMode)
+function setMineOnly(on){
+  if(on && !selectedOperator){ toast('Pick who you are first (top-right) so "Mine" knows whose cases to show.','warn'); return }
+  mineOnly=!!on
+  const b=$('#mine-btn'); if(b) b.classList.toggle('active',mineOnly)
+  renderListFull(); renderTriage()
+}
+const _mineBtn = $('#mine-btn'); if(_mineBtn) _mineBtn.onclick = () => setMineOnly(!mineOnly)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, undoToast, replyUndoToast, toggleSelect, clearSelection, syncBulkBar, bulkAction, get selectedIds(){return selectedIds}, applyInboxMode, setInboxMode, get inboxMode(){return inboxMode}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
+window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, teamHtml, loadTeam, fieldNotes, fieldSources, isMine, setMineOnly, get mineOnly(){return mineOnly}, undoToast, replyUndoToast, toggleSelect, clearSelection, syncBulkBar, bulkAction, get selectedIds(){return selectedIds}, applyInboxMode, setInboxMode, get inboxMode(){return inboxMode}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
@@ -3587,6 +3714,7 @@ window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHas
   renderList: renderListFull, renderListFull, matchesFull, openIntakeForm,
   // help overlay + per-case hint, exposed for browser-witness
   showHelp, hideHelp, helpSeen, todoHint, get helpOpen(){return helpOpen},
+  showOnboard, hideOnboard, onboarded,
   // triage inbox + coaching + handoff, exposed for browser-witness
   cannedReplies, renderTriage,
   checkHandoffs, clearHandoff, hasHandoff, contactMaybeNonEnglish,

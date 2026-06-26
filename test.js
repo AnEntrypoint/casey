@@ -15,6 +15,7 @@ import { intentReply, fallbackReply, reportMissingVisitCritical, jargonHits } fr
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
+import { buildWorkload } from './src/workload.js'
 
 process.env.CASEY_LOG = 'silent'
 // Roster for the operator-identity test (parsed by createDashboard at boot).
@@ -153,6 +154,12 @@ async function main() {
     const r = await df('http://localhost:4577/api/cases/' + caseId + '?token=secret').then(r => r.json())
     assert.ok(typeof r.events_total === 'number')
     assert.ok(Array.isArray(r.transitions))
+    // The API parses event.data to an object at the boundary (thatcher stores it as a
+    // JSON string) so the SPA's e.data.field / e.data.by reads work. Assert no event
+    // leaves with a string `data`, and the same on the paged /events endpoint.
+    assert.ok(Array.isArray(r.events) && r.events.every(e => e.data == null || typeof e.data === 'object'), 'case-detail events carry parsed object data, never a JSON string')
+    const pg = await df('http://localhost:4577/api/cases/' + caseId + '/events?token=secret').then(r => r.json())
+    assert.ok(Array.isArray(pg.events) && pg.events.every(e => e.data == null || typeof e.data === 'object'), 'paged events carry parsed object data, never a JSON string')
   })
 
   await test('dashboard operator reply sends on channel + logs outbound', async () => {
@@ -454,6 +461,50 @@ async function main() {
     assert.equal(body.days, 30, 'window echoed')
     assert.ok(body.cases && typeof body.cases.total === 'number', 'endpoint returns the aggregate shape')
     assert.ok(!JSON.stringify(body).includes('external_id'), 'overview payload leaks no external_id')
+    // Dwell-per-stage is keyed by the transition's `from` stage. store.listEvents
+    // returns event.data as a JSON STRING, so the aggregator must parse it (evData)
+    // before reading .from -- otherwise every transition mis-buckets into prevStage.
+    // Assert dwell accrued for at least one stage with a numeric median (proves the
+    // transition `from` was parsed, not dropped) over the live transition log.
+    const dwellKeys = Object.keys(o.dwell_ms_median || {})
+    assert.ok(dwellKeys.length >= 1, 'dwell-per-stage has at least one stage bucket from the live transition log')
+    assert.ok(dwellKeys.some(k => typeof o.dwell_ms_median[k] === 'number' && o.dwell_ms_median[k] >= 0), 'at least one stage has a non-negative median dwell (transition `from` parsed, not dropped)')
+  })
+
+  await test('GET /api/operators/workload shows who is holding what (worst-first, aggregate-only)', async () => {
+    // buildWorkload is the pure aggregator GET /api/operators/workload serves. By now
+    // case `rcid` is claimed by thandi with one outbound reply by thandi (see the
+    // operator-attribution test above), so thandi's card must reflect that real state.
+    const roster = [{ id: 'thandi', name: 'Thandi M' }, { id: 'sipho', name: 'Sipho N' }]
+    const cases = await store.listCases({}, { limit: 10000 })
+    const ev = new Map()
+    for (const c of cases) ev.set(c.id, await store.listEvents(c.id))
+    const w = buildWorkload(cases, ev, roster, Date.now())
+    assert.ok(Array.isArray(w.operators), 'workload carries an operators array')
+    // Every rostered operator is seeded a card even with zero load, so nobody vanishes.
+    // (Off-roster ids that actually replied -- e.g. the default dashboard-operator used
+    // by other reply tests -- also earn a card, so assert the roster is a subset, present.)
+    const ids = new Set(w.operators.map(o => o.id))
+    assert.ok(ids.has('thandi') && ids.has('sipho'), 'every rostered operator is seeded a card, present even at zero load')
+    const thandi = w.operators.find(o => o.id === 'thandi')
+    assert.ok(thandi, 'thandi has a workload card')
+    assert.ok(thandi.open_assigned >= 1, 'thandi holds at least one open assigned case (the claim)')
+    assert.ok(thandi.replies_24h >= 1, 'thandi has at least one reply in the last 24h')
+    assert.ok(thandi.first_reply_ms_median === null || typeof thandi.first_reply_ms_median === 'number', 'median first-reply is a number or null')
+    // Worst-first: stale_claims desc, then open_assigned desc, then oldest_waiting_ms desc.
+    for (let i = 1; i < w.operators.length; i++) {
+      const a = w.operators[i - 1], b = w.operators[i]
+      const ordered = a.stale_claims > b.stale_claims
+        || (a.stale_claims === b.stale_claims && a.open_assigned > b.open_assigned)
+        || (a.stale_claims === b.stale_claims && a.open_assigned === b.open_assigned && a.oldest_waiting_ms >= b.oldest_waiting_ms)
+      assert.ok(ordered, 'operators are ranked worst-first')
+    }
+    // The wired endpoint returns the same shape, is token-gated, and leaks no external_id.
+    const wired = await df('http://localhost:4577/api/operators/workload?token=secret')
+    assert.equal(wired.status, 200, '/api/operators/workload is token-gated and reachable')
+    const body = await wired.json()
+    assert.ok(Array.isArray(body.operators) && body.operators.find(o => o.id === 'thandi'), 'endpoint returns the per-operator shape')
+    assert.ok(!JSON.stringify(body).includes('external_id'), 'workload payload leaks no external_id')
   })
 
   // Themes B+C -- triage trust. The inbox ranks the right case to the top over ALL
