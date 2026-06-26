@@ -906,6 +906,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const cases = items.map(({ c, score, reason }) => ({
         id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
         status: c.status, updated_at: c.updated_at || c.created_at,
+        assignee: c.assignee || '',
         score, reason, breaches: classifyCaseHealth(c, now, thresholds)
       }))
       res.json({ count: cases.length, total, limit, offset, cases })
@@ -1605,6 +1606,19 @@ const PAGE = /* html */ `<!doctype html>
   .act-who{color:var(--muted);white-space:nowrap}
   .act-text{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #op-picker{background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px}
+  .owner-chip{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:var(--bg2);color:var(--muted);border:1px solid var(--border);vertical-align:middle}
+  .owner-chip.mine{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .tcase.claimed-other{opacity:.62}
+  #offline-btn.has-queue{background:var(--danger);color:#fff}
+  .off-badge{color:var(--danger);font-weight:700}
+  .ho-since{font-size:11px;color:var(--muted);margin-bottom:6px}
+  .ho-sec{margin-bottom:10px}
+  .ho-h{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:3px}
+  .ho-h .n{color:var(--danger)}
+  .ho-row{display:flex;gap:8px;align-items:baseline;padding:3px 0;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap}
+  .ho-ref{font-weight:700;cursor:pointer;color:var(--accent)}
+  .ho-sub{color:var(--fg)}
+  .ho-why{color:var(--muted)}
   .ev .k{display:inline-block;min-width:120px;color:#8aa0c0;font-size:11px}
   label{display:block;margin:8px 0 2px;font-size:12px;color:var(--muted)}
   .hint{font-size:11px;color:var(--faint);margin:2px 0 0}
@@ -1756,6 +1770,8 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="clusters-btn" title="Cases that look like one outbreak">Outbreaks</button>
         <button class="icon-btn" id="geo-btn" title="Where reports are concentrating">Hotspots</button>
         <button class="icon-btn" id="activity-btn" title="Everything that has happened, newest first">Activity</button>
+        <button class="icon-btn" id="handover-btn" title="Start-of-shift digest: what needs you, open handoffs, unsent drafts, what changed">Shift</button>
+        <button class="icon-btn" id="offline-btn" title="Cases that came in while casey could not answer -- waiting for a person">AI offline</button>
         <select id="op-picker" title="Who you are -- attributed on your actions" style="display:none"></select>
         <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">dark</button>
@@ -1799,6 +1815,18 @@ const PAGE = /* html */ `<!doctype html>
         <select id="act-actor"><option value="">Anyone</option><option value="agent">casey</option><option value="operator">Operator</option><option value="contact">Contact</option><option value="system">System</option></select>
       </div>
       <div id="activity-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="handover-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <div style="font-size:12px;font-weight:700;color:var(--muted)">Shift handover</div>
+        <span><button id="start-shift-btn" class="icon-btn" title="Mark the start of your shift -- 'what changed' is measured from now">Start my shift</button>
+        <a id="handover-print" class="icon-btn" style="text-decoration:none;margin-left:4px" href="/api/handover?format=html" target="_blank">Printable</a></span>
+      </div>
+      <div id="handover-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="offline-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Came in while casey was offline (waiting for a person)</div>
+      <div id="offline-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
     </div>
     <div class="triage" id="triage"></div>
     <div class="caselist" id="cases"><div class="empty">Loading cases...</div></div>
@@ -2186,9 +2214,13 @@ function renderTriage(){
       const heat = e.score>=8 ? 'heat-3' : e.score>=4 ? 'heat-2' : e.score>0 ? 'heat-1' : ''
       const ho = breaches.find(b=>b.breach==='unanswered_handoff'||b.breach==='unanswered_handoff_escalated')
       const waiting = ho && ho.since_ms ? '<span class="waiting">waiting '+waitFmt(ho.since_ms)+'</span>' : ''
+      const owner = e.assignee && e.assignee!=='agent' ? e.assignee : ''
+      const mine = owner && owner===selectedOperator
+      const ownerChip = owner ? '<span class="owner-chip'+(mine?' mine':'')+'">'+(mine?'you':esc(owner))+'</span>' : ''
+      const otherClaim = owner && !mine ? ' claimed-other' : ''
       return \`
-      <div class="tcase \${heat} \${e.id===activeId?'active':''}" data-id="\${esc(e.id)}">
-        <div class="why">\${esc(e.reason||'This one is worth a look.')}\${waiting}\${breachDetail?'<span class="breach-detail"> '+esc(breachDetail)+'</span>':''}</div>
+      <div class="tcase \${heat}\${otherClaim} \${e.id===activeId?'active':''}" data-id="\${esc(e.id)}">
+        <div class="why">\${esc(e.reason||'This one is worth a look.')}\${waiting}\${ownerChip}\${breachDetail?'<span class="breach-detail"> '+esc(breachDetail)+'</span>':''}</div>
         <div class="meta">\${esc(e.ref)} - \${esc(e.channel)} - \${esc(e.subject||'(no subject)')} - \${esc(rel(e.updated_at))}</div>
       </div>\`
     }).join('')
@@ -2308,7 +2340,10 @@ async function openCase(id){
       <button class="copy" data-copy="\${esc(c.ref)}" title="copy ref">copy</button>
       <button class="copy" data-copy="\${esc(location.origin+location.pathname+'#case='+encodeURIComponent(c.id))}" title="copy direct link to this case (no token in link)" style="margin-left:4px">link</button>
       <a href="/api/cases/\${encodeURIComponent(c.id)}/report.html" target="_blank" class="icon-btn" style="margin-left:4px;text-decoration:none;display:inline-block">Print</a>
-      <button id="share-form-btn" class="icon-btn" style="margin-left:4px" title="Get a link to share with the contact so they can fill in their own details">Share form</button></h2>
+      <button id="share-form-btn" class="icon-btn" style="margin-left:4px" title="Get a link to share with the contact so they can fill in their own details">Share form</button>
+      \${(c.assignee&&c.assignee!=='agent')
+        ? '<span class="owner-chip'+(c.assignee===selectedOperator?' mine':'')+'" style="margin-left:4px" title="Who is handling this">'+(c.assignee===selectedOperator?'yours':esc(c.assignee))+'</span>'
+        : '<button id="claim-btn" class="icon-btn" style="margin-left:4px" title="Take this case as yours (recorded against you)">Claim</button>'}</h2>
     <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
     \${healthBadges(c.tags)}\${intakeModeBadge(c.tags)}
     <div style="color:var(--muted);margin-bottom:12px">\${esc(c.channel)}/\${esc(fmtPhone(c.external_id))}
@@ -2358,6 +2393,16 @@ async function openCase(id){
     el.addEventListener('blur',()=>{editing=false})
   })
   const back=$('#back'); if(back) back.onclick=()=>{ $('#wrap').classList.remove('detail-open') }
+  const claimBtn=$('#claim-btn')
+  if(claimBtn) claimBtn.onclick=async()=>{
+    if(!selectedOperator){ toast('Pick who you are first (top-right) so the claim is recorded against you.','warn'); return }
+    claimBtn.disabled=true
+    try{
+      const r=await api('/api/cases/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id],action:'claim'})})
+      if(r.ok){ toast('Claimed -- this one is yours now','ok'); openCase(id); refreshAttention() }
+      else{ claimBtn.disabled=false; toast('Could not claim this case','warn') }
+    }catch(e){ claimBtn.disabled=false; toast('Claim error: '+e.message,'warn') }
+  }
   const shareFormBtn=$('#share-form-btn')
   if(shareFormBtn) shareFormBtn.onclick=()=>{
     const url=location.origin+'/report?ref='+encodeURIComponent(c.ref)
@@ -3225,6 +3270,62 @@ async function loadActivity(){
 panelToggle('#activity-btn','#activity-panel',loadActivity)
 if($('#act-kind')) $('#act-kind').onchange=loadActivity
 if($('#act-actor')) $('#act-actor').onchange=loadActivity
+// --- shift handover digest ---
+function hoSection(title,rows,render){
+  if(!rows||!rows.length) return '<div class="ho-sec"><div class="ho-h">'+esc(title)+'</div><div class="empty" style="padding:4px 0">None.</div></div>'
+  return '<div class="ho-sec"><div class="ho-h">'+esc(title)+' <span class="n">'+rows.length+'</span></div>'+rows.map(render).join('')+'</div>'
+}
+function handoverHtml(j){
+  const link=(ref,id)=>'<span class="ho-ref" data-id="'+esc(id||'')+'">'+esc(ref||'')+'</span>'
+  const at=t=>t?esc(fmtTime(t)):''
+  return '<div class="ho-since">Since '+(j.since?esc(fmtTime(j.since)):'the last day')+(j.since_by?' ('+esc(j.since_by)+')':'')+'</div>'
+    +hoSection('Needs you now',j.attention,r=>'<div class="ho-row">'+link(r.ref,r.id)+' <span class="ho-sub">'+esc(r.subject||'(no subject)')+'</span> <span class="ho-why">'+esc(r.reason||'')+'</span>'+(r.assignee?' <span class="owner-chip">'+esc(r.assignee)+'</span>':'')+'</div>')
+    +hoSection('Open handoffs',j.handoffs,r=>'<div class="ho-row">'+link(r.ref,r.id)+' <span class="ho-sub">'+esc(r.subject||'')+'</span> <span class="ho-why">'+esc(r.reason||'')+'</span></div>')
+    +hoSection('Unsent drafts',j.drafts,r=>'<div class="ho-row">'+link(r.ref,r.id)+' <span class="ho-sub">'+esc(r.subject||'')+'</span> <span class="ho-why">'+esc((r.text||'').slice(0,120))+'</span></div>')
+    +hoSection('Changed this shift',j.touched,r=>'<div class="ho-row">'+link(r.ref,r.id)+' <span class="ho-sub">'+esc(r.subject||'')+'</span> <span class="ho-why">'+esc(r.last_kind||'')+(r.last_actor?' by '+esc(r.last_actor):'')+'</span> <span class="act-when">'+at(r.at)+'</span></div>')
+}
+async function loadHandover(){
+  const body=$('#handover-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  try{ const j=await api('/api/handover').then(r=>r.ok?r.json():null)
+    body.innerHTML=j?handoverHtml(j):'<div class="empty">Could not load the handover digest.</div>'
+    body.querySelectorAll('.ho-ref').forEach(r=>r.onclick=()=>{ if(r.dataset.id) openCase(r.dataset.id) })
+  }catch(e){ body.innerHTML='<div class="empty">Handover error: '+esc(e.message)+'</div>' }
+}
+panelToggle('#handover-btn','#handover-panel',loadHandover)
+const startShiftBtn=$('#start-shift-btn')
+if(startShiftBtn) startShiftBtn.onclick=async()=>{
+  startShiftBtn.disabled=true
+  try{ const r=await api('/api/handover/start-shift',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    if(r.ok){ toast('Shift started -- "changed this shift" counts from now','ok'); await loadHandover() }
+    else toast('Could not start the shift','warn')
+  }catch(e){ toast('Start-shift error: '+e.message,'warn') }
+  startShiftBtn.disabled=false
+}
+// --- AI offline queue ---
+function offlineHtml(j){
+  const rows=j.items||[]
+  if(!rows.length) return '<div class="empty" style="padding:8px 0">Nothing waiting -- casey is answering normally.</div>'
+  return '<div class="act-list">'+rows.map(r=>
+    '<div class="act-row off-row" data-id="'+esc(r.id)+'">'
+    +'<span class="act-kind off-badge">AI offline</span>'
+    +'<span class="ho-ref">'+esc(r.ref||'')+'</span>'
+    +'<span class="act-text">'+esc(r.subject||'(no subject)')+'</span>'
+    +'<span class="act-who">'+esc(r.channel||'')+'</span>'
+    +(r.assignee&&r.assignee!=='agent'?'<span class="owner-chip">'+esc(r.assignee)+'</span>':'')
+    +'<span class="act-when">'+esc(fmtTime(r.last_event_at))+'</span></div>'
+  ).join('')+'</div>'
+}
+async function loadOffline(){
+  const body=$('#offline-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  try{ const j=await api('/api/unreplied').then(r=>r.ok?r.json():null)
+    body.innerHTML=j?offlineHtml(j):'<div class="empty">Could not load the offline queue.</div>'
+    if($('#offline-btn')) $('#offline-btn').classList.toggle('has-queue',!!(j&&j.total))
+    body.querySelectorAll('.off-row').forEach(r=>r.onclick=()=>{ if(r.dataset.id) openCase(r.dataset.id) })
+  }catch(e){ body.innerHTML='<div class="empty">Offline-queue error: '+esc(e.message)+'</div>' }
+}
+panelToggle('#offline-btn','#offline-panel',loadOffline)
 // --- operator picker (cooperative attribution) ---
 async function initOperatorPicker(){
   const sel=$('#op-picker'); if(!sel) return
@@ -3325,7 +3426,7 @@ async function boot(){
 }
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000); const _attnIv = setInterval(refreshAttention, 30000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
+window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
