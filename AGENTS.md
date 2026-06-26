@@ -53,6 +53,7 @@ src/
   clusters.js              correlated-case components (shared location/species) for /api/clusters
   geo.js                   hotspots-by-area rollup for /api/geo
   report.js                management report rendering (CSV/HTML) for /api/report.csv and /api/report.html; composes buildWorkload into a per-operator by_operator section (aggregate-only, no external_id)
+  report-analytics.js      pure management analytics for /api/report.json: buildSLAReport (pass/fail vs the live handoff SLA, answered-late vs never-answered), buildReportComparison (this window vs the prior adjacent window, signed deltas), buildChannelMetrics (first-response speed + volume per intake channel); all aggregate-only, no external_id
   extract.js               deterministic field capture from plain contact text (species/symptoms/counts/location/onset/name); shared by the live handler and the stub model so a case is never an empty shell even when the model drives no tools
   gateway-hooks.js         makeCaseHandler: plain-language prompt, intent keywords, dedup, media, observe, fallback
   discord-receive.js       fallback Discord WS receive for older freddie builds
@@ -207,6 +208,19 @@ the crash-budget stop state); the supervisor is its only I/O.
   `atRiskCount` (and `/api/attention` exposes `wait_ms`/`at_risk`/`sla_target_ms`),
   so an operator sees not only worst-first order but how close each case is to
   breaching its reply target.
+- **Management aggregates are exportable as structured JSON and an audit trail, not
+  just CSV/HTML**: `/api/report.json` returns the same briefing as `/api/report.csv`
+  plus three analytics the flat briefing never carried -- SLA compliance pass/fail
+  (`buildSLAReport`: met vs answered-late vs never-answered against the live handoff
+  SLA), period-over-period comparison (`buildReportComparison`: this window vs the
+  prior adjacent window, signed deltas), and per-intake-channel response speed
+  (`buildChannelMetrics`). `/api/audit.csv` is a compliance trail -- one row per
+  event over a `?days` window joined to its case ref -- built off the same
+  append-only event log via `evData()`. Both are aggregate-only and NEVER emit
+  `external_id`: the audit export scrubs any cell equal to a case's external_id
+  (so a delivered-reply event whose `data.to` is the contact id cannot leak a phone
+  number into a compliance file). `case_type` (outbreak/follow_up/lab_sample/
+  import_alert, default unset) is the enabling primitive for later per-type SLAs.
 - **Event `data` is parsed at the read edge, never assumed an object**: thatcher
   persists `event.data` as a JSON string and `store.listEvents` returns it
   unparsed, so any consumer reading `data.from`/`data.to`/`data.by`/`data.field`

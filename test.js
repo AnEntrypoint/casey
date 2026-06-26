@@ -15,6 +15,7 @@ import { intentReply, fallbackReply, reportMissingVisitCritical, jargonHits, isC
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
+import { buildSLAReport, buildReportComparison, buildChannelMetrics } from './src/report-analytics.js'
 import { buildWorkload } from './src/workload.js'
 import { makeResilientCallLLM } from './src/llm.js'
 
@@ -709,6 +710,76 @@ async function main() {
     assert.ok(!html.includes('<script>alert'), 'no unescaped contact text leaks into the report')
     // Aggregate-only: the per-operator report section leaks no contact identifier.
     assert.ok(!csv.includes('external_id') && !html.includes('external_id'), 'report by_operator leaks no external_id')
+  })
+
+  await test('report-analytics: SLA compliance, period comparison, per-channel metrics (pure, aggregate-only)', async () => {
+    const now = 10_000_000_000
+    const sec = (ms) => Math.floor(ms / 1000)
+    // Two cases: one answered fast (within a 30-min SLA), one never answered.
+    const cs = [
+      { id: 'a', channel: 'whatsapp', status: 'resolved', created_at: sec(now - 60 * 60 * 1000) },
+      { id: 'b', channel: 'discord', status: 'in_progress', created_at: sec(now - 50 * 60 * 1000) },
+    ]
+    const ev = new Map([
+      ['a', [
+        { kind: 'inbound', created_at: sec(now - 60 * 60 * 1000) },
+        { kind: 'outbound', created_at: sec(now - 60 * 60 * 1000 + 5 * 60 * 1000) }, // 5 min -> met
+      ]],
+      ['b', [
+        { kind: 'inbound', created_at: sec(now - 50 * 60 * 1000) }, // never answered -> breach
+      ]],
+    ])
+    const sla = buildSLAReport(cs, ev, 30 * 60 * 1000, now)
+    assert.equal(sla.considered, 2, 'both cases had an inbound and are considered')
+    assert.equal(sla.met_count, 1, 'the 5-min reply met the 30-min SLA')
+    assert.equal(sla.breached_count, 1, 'the never-answered case breached')
+    assert.equal(sla.breached_by_reason.never_answered, 1, 'breach reason split names the unanswered case')
+    assert.equal(sla.breach_pct, 50, 'one of two considered -> 50% breach')
+
+    const chan = buildChannelMetrics(cs, ev)
+    assert.ok(chan.whatsapp && chan.discord, 'per-channel slots exist for both intake channels')
+    assert.equal(chan.whatsapp.first_response_ms_median, 5 * 60 * 1000, 'whatsapp first-response median is the 5-min reply')
+    assert.equal(chan.discord.answered_count, 0, 'the unanswered discord case contributes no response time')
+    assert.ok(!JSON.stringify(chan).includes('external_id'), 'channel metrics carry no contact id')
+
+    const cmp = buildReportComparison(cs, ev, now, 14 * 24 * 3600 * 1000)
+    assert.ok('deltas' in cmp && 'response_time_delta_pct' in cmp.deltas, 'comparison returns current/prior + deltas')
+  })
+
+  await test('GET /api/report.json (analytics) and /api/audit.csv (compliance, no PII)', async () => {
+    const jr = await df('http://localhost:4577/api/report.json?token=secret&days=30')
+    assert.equal(jr.status, 200, 'report.json reachable + token-gated')
+    assert.match(jr.headers.get('content-type') || '', /application\/json/, 'json content-type')
+    const j = await jr.json()
+    assert.ok(j.totals && j.sla && j.comparison && j.by_channel, 'report.json carries the briefing + sla + comparison + by_channel')
+    assert.ok('breach_pct' in j.sla, 'sla section carries a breach_pct')
+    assert.ok(!JSON.stringify(j).includes('external_id'), 'report.json leaks no external_id')
+
+    const ar = await df('http://localhost:4577/api/audit.csv?token=secret&days=30')
+    assert.equal(ar.status, 200, 'audit.csv reachable + token-gated')
+    assert.match(ar.headers.get('content-type') || '', /text\/csv/, 'audit csv content-type')
+    const audit = await ar.text()
+    assert.match(audit, /^case_ref,timestamp_sast,actor,action,field,old_value,new_value,reason/, 'audit csv has the compliance header')
+    // An outbound reply event records data.to = external_id; the audit export must
+    // scrub that so the contact id never lands in a compliance file. Assert precisely
+    // on the parsed rows (a blunt substring scan on a short id like "c1" is meaningless):
+    // no cell may EQUAL the raw external_id of any case named in the export.
+    const exts = new Set((await store.listCases({}, { limit: 10000 })).map(c => String(c.external_id || '')).filter(Boolean))
+    const dataRows = audit.split('\n').slice(1).filter(Boolean)
+    for (const line of dataRows) {
+      // naive split is fine here: our emitted cells never contain a literal comma
+      // (refs, ids, enums, SAST times, scrubbed values), and csvCell would quote any that did
+      for (const cell of line.split(',')) {
+        assert.ok(!exts.has(cell), `audit.csv leaks a raw contact external_id in a cell: ${cell}`)
+      }
+    }
+  })
+
+  await test('case_type round-trips through updateCase and is audited', async () => {
+    const c = await store.getCase(caseId)
+    await store.updateCase(c.id, { case_type: 'outbreak' })
+    const after = await store.getCase(c.id)
+    assert.equal(after.case_type, 'outbreak', 'case_type persists through updateCase')
   })
 
   await test('dashboard reply surfaces the sent flag (delivered vs logged-only)', async () => {

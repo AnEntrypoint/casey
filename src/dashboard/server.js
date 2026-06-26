@@ -1193,6 +1193,76 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Same management briefing as .csv/.html but as structured JSON for BI ingest,
+  // plus three analytics the flat briefing does not carry: SLA compliance pass/
+  // fail, period-over-period comparison, and per-intake-channel response speed.
+  // Aggregate-only (no external_id); read-only. The SLA target is the live handoff
+  // threshold (what "should have been answered by"), falling back to 30 minutes.
+  app.get('/api/report.json', async (req, res) => {
+    try {
+      const days = reportDays(req)
+      const r = await gatherReport(days)
+      const { buildSLAReport, buildReportComparison, buildChannelMetrics } = await import('../report-analytics.js')
+      const thresholds = await store.resolveThresholds()
+      const now = Date.now()
+      const cases = await store.listCases({}, { limit: 10000, offset: 0 })
+      const eventsByCaseId = new Map()
+      for (const c of cases) eventsByCaseId.set(c.id, await store.listEvents(c.id).catch(() => []))
+      const slaTargetMs = Number.isFinite(thresholds?.handoffMs) ? thresholds.handoffMs : 30 * 60 * 1000
+      res.json({
+        ...r,
+        sla: buildSLAReport(cases, eventsByCaseId, slaTargetMs, now),
+        comparison: buildReportComparison(cases, eventsByCaseId, now, days * 24 * 3600 * 1000),
+        by_channel: buildChannelMetrics(cases, eventsByCaseId),
+      })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Compliance audit trail: a flat CSV of every mutation over a ?days window,
+  // one row per event, joined to its case ref. Built off the same append-only
+  // event log the timeline uses, parsed via evData(). NEVER emits external_id or
+  // any contact phone/handle -- the actor is the operator/agent/system id, and
+  // the to/from fields are scrubbed of the case external_id so a delivered-reply
+  // event cannot leak the contact number into a compliance export. Read-only.
+  app.get('/api/audit.csv', async (req, res) => {
+    try {
+      const { evData } = await import('../overview.js')
+      const days = reportDays(req)
+      const sinceSec = Math.floor((Date.now() - days * 24 * 3600 * 1000) / 1000)
+      const optActor = ['agent', 'operator', 'contact', 'system'].includes(req.query.actor) ? req.query.actor : null
+      const cases = await store.listCases({}, { limit: 10000, offset: 0 })
+      const refById = new Map(cases.map(c => [c.id, c.ref]))
+      const extById = new Map(cases.map(c => [c.id, String(c.external_id || '')]))
+      let rows = await store.listAllEvents(optActor ? { actor: optActor } : {}, { limit: 100000 })
+      rows = rows.filter(e => Number(e.created_at) >= sinceSec)
+      const lines = []
+      lines.push(['case_ref', 'timestamp_sast', 'actor', 'action', 'field', 'old_value', 'new_value', 'reason'].join(','))
+      for (const e of rows) {
+        const d = evData(e)
+        const ext = extById.get(e.case_id) || ''
+        // scrub: drop any value equal to the case external_id (contact id/number)
+        const scrub = (v) => (v != null && ext && String(v) === ext) ? '[contact]' : (v == null ? '' : String(v))
+        const field = d.field || (d.from != null || d.to != null ? 'status' : (d.claimed_by != null ? 'assignee' : ''))
+        const oldVal = d.from != null ? d.from : (d.was != null ? d.was : (d.old != null ? d.old : ''))
+        const newVal = d.to != null ? scrub(d.to) : (d.claimed_by != null ? d.claimed_by : (d.new != null ? d.new : ''))
+        const reason = d.reason || ''
+        lines.push([
+          csvCell(refById.get(e.case_id) || e.case_id),
+          csvCell(fmtTimeSAST(Number(e.created_at))),
+          csvCell(e.actor || ''),
+          csvCell(e.kind || ''),
+          csvCell(field),
+          csvCell(scrub(oldVal)),
+          csvCell(newVal),
+          csvCell(reason),
+        ].join(','))
+      }
+      res.setHeader('Content-Type', 'text/csv')
+      res.setHeader('Content-Disposition', 'attachment; filename="casey-audit-trail.csv"')
+      res.send(lines.join('\n'))
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   app.get('/api/report.html', async (req, res) => {
     try {
       const r = await gatherReport(reportDays(req))
