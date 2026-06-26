@@ -38,10 +38,29 @@ function dominantTokens(members, field, max = 3) {
   return [...freq.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, max).map(([t]) => t)
 }
 
+// How urgent a cluster is, so the panel ranks suspected outbreaks by data, not by
+// the operator opening each in turn. Member count dominates (a six-farm spread
+// outranks a pair), and the case_type mix biases it up: a cluster of outbreaks is
+// more urgent than the same-size cluster of routine follow_ups. Pure of the member
+// rows already on the cluster; aggregate-only.
+const TYPE_WEIGHT = { outbreak: 4, import_alert: 3, lab_sample: 2, follow_up: 1, unset: 1 }
+export function clusterSeverity(cluster) {
+  const members = cluster.members || []
+  const count = cluster.count || members.length
+  // Mean case_type weight across members (default 1 for an unscored member), so a
+  // cluster skewed to outbreaks scores above an equal-size routine cluster.
+  let wsum = 0
+  for (const m of members) wsum += (TYPE_WEIGHT[m.case_type] || 1)
+  const typeBias = members.length ? wsum / members.length : 1
+  // Count is the spine; typeBias scales it. Round to one decimal for a stable sort.
+  return Math.round(count * typeBias * 10) / 10
+}
+
 // Build the outbreak clusters. `cases` is the open/non-merged pool. Returns the
 // connected components of size >= 2, each with member refs, dominant shared
-// location/species/disease tokens, the count, and the report-date span (SAST
-// rendering is the caller's job; here it is raw unix-seconds min/max).
+// location/species/disease tokens, the count, a severity score, and the
+// report-date span (SAST rendering is the caller's job; here it is raw
+// unix-seconds min/max).
 export function buildClusters(cases, threshold = SUGGEST_THRESHOLD) {
   const pool = (cases || []).filter(Boolean)
   const n = pool.length
@@ -64,15 +83,18 @@ export function buildClusters(cases, threshold = SUGGEST_THRESHOLD) {
     if (idxs.length < 2) continue
     const members = idxs.map(i => pool[i])
     const created = members.map(c => Number(c.created_at)).filter(Number.isFinite)
-    clusters.push({
+    const cluster = {
       count: members.length,
-      members: members.map(c => ({ id: c.id, ref: c.ref, status: c.status, subject: c.subject || '' })),
+      members: members.map(c => ({ id: c.id, ref: c.ref, status: c.status, subject: c.subject || '', case_type: c.case_type || 'unset' })),
       location: dominantTokens(members, 'location'),
       species: dominantTokens(members, 'species'),
       disease: dominantTokens(members, 'suspected_disease'),
       span: { from: created.length ? Math.min(...created) : null, to: created.length ? Math.max(...created) : null },
-    })
+    }
+    cluster.severity = clusterSeverity(cluster)
+    clusters.push(cluster)
   }
-  // Biggest suspected outbreak first.
-  return clusters.sort((a, b) => b.count - a.count)
+  // Most severe suspected outbreak first (count scaled by case_type mix); count
+  // breaks ties so the ordering stays stable for equal-severity clusters.
+  return clusters.sort((a, b) => b.severity - a.severity || b.count - a.count)
 }

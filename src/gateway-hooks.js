@@ -19,6 +19,7 @@
 import { runTurn } from 'freddie'
 import { VISIT_CRITICAL } from './case-health.js'
 import { extractFields } from './extract.js'
+import { buildAlertPayload } from './report-analytics.js'
 
 // Report fields casey is allowed to fill deterministically at ingress. Mirrors
 // REPORT_KEYS in case-store.js; extractFields may emit keys outside the report
@@ -1575,23 +1576,31 @@ export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WE
 // safety as the handoff notifier (no @-mentions, 5s timeout, degrade-not-throw),
 // but driven by the periodic sweep rather than an inbound turn. Returns null with
 // no URL so a sweep runs alert-free when nothing is configured.
-export function breachNotifier(webhookUrl = process.env.CASEY_ALERT_WEBHOOK || process.env.CASEY_HANDOFF_WEBHOOK, log = null) {
+export function breachNotifier(webhookUrl = process.env.CASEY_ALERT_WEBHOOK || process.env.CASEY_HANDOFF_WEBHOOK, log = null, opts = {}) {
   if (!webhookUrl) return null
   return async (c, breach, detail) => {
     const content = `Case ${c.ref}: ${detail || breach}`
-    await postWebhook(webhookUrl, content, log, 'discord breach webhook')
+    // Attach a structured, aggregate-only payload (no external_id) so a generic
+    // pager can route on case_type/severity while Discord still renders `content`.
+    const alert = buildAlertPayload(c, breach, detail, { escalated: !!opts.escalated })
+    await postWebhook(webhookUrl, content, log, 'discord breach webhook', alert)
   }
 }
 
 // Shared Discord-webhook POST: blocks @-mention injection, aborts after 5s, and
-// degrades a failure to a warning so a flaky webhook never breaks the caller.
-async function postWebhook(webhookUrl, content, log, label) {
+// degrades a failure to a warning so a flaky webhook never breaks the caller. When
+// an `alert` object is given it is merged into the body so a non-Discord pager gets
+// machine-parseable breach metadata; Discord ignores the extra keys and renders
+// `content`. The alert is aggregate-only (no external_id) by construction.
+async function postWebhook(webhookUrl, content, log, label, alert = null) {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), 5000)
+  const body = { content, allowed_mentions: { parse: [] } }
+  if (alert) body.alert = alert
   await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
+    body: JSON.stringify(body),
     signal: ac.signal,
   }).then(() => clearTimeout(timer), (e) => { clearTimeout(timer); log?.warn?.(`[casey] ${label} failed`, e.message) })
 }

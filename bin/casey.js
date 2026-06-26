@@ -571,6 +571,46 @@ async function main() {
     process.exit(0)
   }
 
+  if (cmd === 'report') {
+    // Management briefing on the command line: the same per-case-type SLA, per-type
+    // and per-channel response metrics the dashboard serves at /api/report.json, for
+    // an operator who lives in the terminal. Reuses the pure builders verbatim (no DB
+    // change, aggregate-only, never an external_id). `--json` emits the machine shape;
+    // `--days N` sets the comparison window (default 30).
+    const store = createCaseStore(); await store.init()
+    const { buildSLAReportByType, buildCaseTypeMetrics, buildChannelMetrics } = await import('../src/report-analytics.js')
+    const days = Number.isFinite(Number(flags.days)) && Number(flags.days) > 0 ? Number(flags.days) : 30
+    const now = Date.now()
+    const thresholds = await store.resolveThresholds()
+    const slaTargetMs = Number.isFinite(thresholds?.handoffMs) ? thresholds.handoffMs : 30 * 60 * 1000
+    const cases = await store.listCases({}, { limit: 10000 })
+    const eventsByCaseId = new Map()
+    for (const cs of cases) eventsByCaseId.set(cs.id, await store.listEvents(cs.id).catch(() => []))
+    const slaByType = buildSLAReportByType(cases, eventsByCaseId, slaTargetMs, now)
+    const byCaseType = buildCaseTypeMetrics(cases, eventsByCaseId)
+    const byChannel = buildChannelMetrics(cases, eventsByCaseId)
+    if (flags.json) {
+      console.log(JSON.stringify({ generated_at: now, days, sla_target_ms: slaTargetMs, sla_by_type: slaByType, by_case_type: byCaseType, by_channel: byChannel }, null, 2))
+      process.exit(0)
+    }
+    const ms = (n) => n == null ? dim('n/a') : `${Math.round(n / 1000)}s`
+    console.log(bold('casey management report') + dim(`  SLA target ${Math.round(slaTargetMs / 60000)}min  window ${days}d`) + '\n')
+    console.log(bold(`SLA compliance by case type  (overall ${slaByType.overall.met_count}/${slaByType.overall.considered} met, ${slaByType.overall.breach_pct}% breached)`))
+    for (const [t, r] of Object.entries(slaByType.by_type)) {
+      console.log(`  ${bold(t)}\tmet ${r.met_count}/${r.considered}\t${r.breach_pct}% breach\t${dim(`late ${r.breached_by_reason.answered_late} / unanswered ${r.breached_by_reason.never_answered}`)}`)
+    }
+    console.log(bold('\nresponse + closure by case type'))
+    for (const [t, m] of Object.entries(byCaseType)) {
+      console.log(`  ${bold(t)}\tmedian ${ms(m.first_response_ms_median)}\topened ${m.opened_count}\tclosed ${m.closed_pct}%\t${dim(`reopened ${m.reopen_count}`)}`)
+    }
+    console.log(bold('\nresponse + closure by intake channel'))
+    for (const [ch, m] of Object.entries(byChannel)) {
+      console.log(`  ${bold(ch)}\tmedian ${ms(m.first_response_ms_median)}\topened ${m.opened_count}\tclosed ${m.closed_pct}%\t${dim(`reopened ${m.reopen_count}`)}`)
+    }
+    console.log(dim(`\n  the same figures are served at ${cyan('/api/report.json')} for dashboards.`))
+    process.exit(0)
+  }
+
   if (cmd === 'health') {
     const store = createCaseStore(); await store.init()
     const { classifyCaseHealth } = await import('../src/case-health.js')

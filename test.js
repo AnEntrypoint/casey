@@ -15,7 +15,8 @@ import { intentReply, fallbackReply, reportMissingVisitCritical, jargonHits, isC
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
-import { buildSLAReport, buildReportComparison, buildChannelMetrics } from './src/report-analytics.js'
+import { buildSLAReport, buildReportComparison, buildChannelMetrics, buildSLAReportByType, buildCaseTypeMetrics, buildAlertPayload } from './src/report-analytics.js'
+import { buildClusters } from './src/clusters.js'
 import { buildWorkload } from './src/workload.js'
 import { makeResilientCallLLM } from './src/llm.js'
 
@@ -744,6 +745,50 @@ async function main() {
 
     const cmp = buildReportComparison(cs, ev, now, 14 * 24 * 3600 * 1000)
     assert.ok('deltas' in cmp && 'response_time_delta_pct' in cmp.deltas, 'comparison returns current/prior + deltas')
+
+    // by-case-type SLA split: tag the two cases and assert the slices reconcile to overall.
+    const typed = [
+      { ...cs[0], case_type: 'outbreak' },
+      { ...cs[1], case_type: 'follow_up' },
+    ]
+    const slaT = buildSLAReportByType(typed, ev, 30 * 60 * 1000, now)
+    assert.ok(slaT.by_type.outbreak && slaT.by_type.follow_up, 'sla-by-type carries a slice per case_type')
+    assert.equal(slaT.by_type.outbreak.met_count, 1, 'the answered outbreak met its SLA')
+    assert.equal(slaT.by_type.follow_up.breached_count, 1, 'the unanswered follow_up breached')
+    assert.equal(slaT.overall.considered, slaT.by_type.outbreak.considered + slaT.by_type.follow_up.considered, 'by-type considered reconciles to overall')
+    assert.ok(!JSON.stringify(slaT).includes('external_id'), 'sla-by-type carries no contact id')
+
+    // per-case-type metrics with closure rate + reopen count.
+    const ctm = buildCaseTypeMetrics(typed, ev)
+    assert.ok(ctm.outbreak && ctm.follow_up, 'case-type metrics keyed per enum value')
+    assert.equal(ctm.outbreak.closed_pct, 100, 'the resolved outbreak is 100% closed')
+    assert.ok('reopen_count' in ctm.outbreak, 'case-type metrics carry a reopen_count')
+
+    // channel metrics gained closure rate + reopen count (untyped fixture).
+    assert.ok('closed_pct' in chan.whatsapp && 'reopen_count' in chan.whatsapp, 'channel metrics carry closed_pct + reopen_count')
+
+    // structured alert payload: shape present, escalated tier, NO external_id.
+    const al = buildAlertPayload({ ref: 'CASE-1', case_type: 'outbreak', external_id: '+27123' }, 'unanswered_handoff', 'breach detail', { escalated: true, sinceMs: 1234, slaWindowMs: 1800000 })
+    assert.equal(al.case_ref, 'CASE-1', 'alert carries the case ref')
+    assert.equal(al.case_type, 'outbreak', 'alert carries the case_type for routing')
+    assert.equal(al.severity_tier, 'escalated', 'escalated opt sets the supervisor tier')
+    assert.equal(al.since_ms, 1234, 'alert carries elapsed ms')
+    assert.ok(!JSON.stringify(al).includes('27123') && !('external_id' in al), 'alert payload never leaks the contact external_id')
+
+    // cluster severity: a multi-member outbreak cluster outranks a routine one of equal size.
+    const mk = (id, loc, sp, type) => ({ id, ref: id, status: 'in_progress', case_type: type, report: { location: loc, species: sp } })
+    const pool = [
+      mk('o1', 'limpopo', 'cattle', 'outbreak'), mk('o2', 'limpopo', 'cattle', 'outbreak'),
+      mk('f1', 'gauteng', 'goats', 'follow_up'), mk('f2', 'gauteng', 'goats', 'follow_up'),
+    ]
+    const clusters = buildClusters(pool)
+    assert.ok(clusters.length >= 1 && clusters.every(c => 'severity' in c), 'every cluster carries a severity score')
+    if (clusters.length >= 2) {
+      assert.ok(clusters[0].severity >= clusters[1].severity, 'clusters sort by severity desc')
+      const outbreakC = clusters.find(c => c.members.some(m => m.case_type === 'outbreak'))
+      const routineC = clusters.find(c => c.members.every(m => m.case_type === 'follow_up'))
+      if (outbreakC && routineC) assert.ok(outbreakC.severity > routineC.severity, 'equal-size outbreak cluster outranks the routine one')
+    }
   })
 
   await test('GET /api/report.json (analytics) and /api/audit.csv (compliance, no PII)', async () => {
@@ -753,6 +798,8 @@ async function main() {
     const j = await jr.json()
     assert.ok(j.totals && j.sla && j.comparison && j.by_channel, 'report.json carries the briefing + sla + comparison + by_channel')
     assert.ok('breach_pct' in j.sla, 'sla section carries a breach_pct')
+    assert.ok(j.sla_by_type && 'by_type' in j.sla_by_type && 'overall' in j.sla_by_type, 'report.json carries the per-case-type SLA split')
+    assert.ok(j.by_case_type && typeof j.by_case_type === 'object', 'report.json carries per-case-type metrics')
     assert.ok(!JSON.stringify(j).includes('external_id'), 'report.json leaks no external_id')
 
     const ar = await df('http://localhost:4577/api/audit.csv?token=secret&days=30')
@@ -780,6 +827,38 @@ async function main() {
     await store.updateCase(c.id, { case_type: 'outbreak' })
     const after = await store.getCase(c.id)
     assert.equal(after.case_type, 'outbreak', 'case_type persists through updateCase')
+  })
+
+  await test('PATCH /api/cases/:id reclassifies case_type and records a distinct audit event', async () => {
+    // case_type is a non-autonomy field, so the patch is rejected while a case is in
+    // observe mode; ensure the case is editable first (auto), then reclassify.
+    await store.updateCase(caseId, { autonomy: 'auto' })
+    const r = await df('http://localhost:4577/api/cases/' + caseId + '?token=secret', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_type: 'lab_sample' }),
+    })
+    assert.equal(r.status, 200, 'case_type PATCH accepted')
+    const after = await store.getCase(caseId)
+    assert.equal(after.case_type, 'lab_sample', 'PATCH persisted the new case_type')
+    const ev = (await store.listEvents(caseId)).filter(e => e.kind === 'action' && /case_type .* -> .*/.test(e.text || '')).pop()
+    assert.ok(ev, 'a distinct case_type reclassify action event is appended')
+
+    // an unknown enum value is rejected, not silently stored.
+    const bad = await df('http://localhost:4577/api/cases/' + caseId + '?token=secret', {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ case_type: 'nonsense' }),
+    })
+    assert.equal(bad.status, 400, 'an out-of-enum case_type is rejected')
+  })
+
+  await test('GET /api/sla-at-risk/by-type slices open cases by case_type (aggregate-only)', async () => {
+    const r = await df('http://localhost:4577/api/sla-at-risk/by-type?token=secret')
+    assert.equal(r.status, 200, 'sla-at-risk/by-type reachable + token-gated')
+    const j = await r.json()
+    assert.ok(j.by_type && typeof j.by_type === 'object', 'response carries a per-case-type at-risk map')
+    assert.ok(Number.isFinite(j.total), 'response carries a total at-risk count')
+    assert.ok(Number.isFinite(j.sla_target_ms), 'response carries the live SLA target')
+    assert.ok(!JSON.stringify(j).includes('external_id'), 'at-risk-by-type leaks no contact id')
   })
 
   await test('dashboard reply surfaces the sent flag (delivered vs logged-only)', async () => {

@@ -34,7 +34,7 @@ an append-only `event` row. The dashboard reads/edits thatcher over its API.
 
 ```
 thatcher.config.yml        entities + case workflow (system of record)
-bin/casey.js               CLI: init / doctor / up / dashboard / sim / cases / show
+bin/casey.js               CLI: init / doctor / up / dashboard / sim / cases / show / report (per-case-type SLA + per-type/per-channel metrics, --json)
 plugins/case-tools/        freddie plugin registering case_* tools (auto-discovered)
 src/
   casey.js                 top-level assembly: store + host + gateway + adapters + logger
@@ -50,10 +50,10 @@ src/
   thresholds.js            pure validate/clamp/merge of operator-tunable health thresholds (allowlist keys + bounds)
   overview.js              KPI aggregates over the event log (time-to-first-reply, dwell-per-stage, backlog) for /api/overview; exports shared evData() event.data parser
   workload.js              per-operator workload rollup (open/stale-claims/replies-24h/first-reply-median/oldest-waiting, worst-first) for /api/operators/workload; aggregate-only
-  clusters.js              correlated-case components (shared location/species) for /api/clusters
+  clusters.js              correlated-case components (shared location/species) for /api/clusters; clusterSeverity ranks suspected outbreaks by member count scaled by case_type mix (outbreak>import_alert>lab_sample>follow_up), severity-desc sorted
   geo.js                   hotspots-by-area rollup for /api/geo
   report.js                management report rendering (CSV/HTML) for /api/report.csv and /api/report.html; composes buildWorkload into a per-operator by_operator section (aggregate-only, no external_id)
-  report-analytics.js      pure management analytics for /api/report.json: buildSLAReport (pass/fail vs the live handoff SLA, answered-late vs never-answered), buildReportComparison (this window vs the prior adjacent window, signed deltas), buildChannelMetrics (first-response speed + volume per intake channel); all aggregate-only, no external_id
+  report-analytics.js      pure management analytics for /api/report.json: buildSLAReport (pass/fail vs the live handoff SLA, answered-late vs never-answered), buildSLAReportByType (the same compliance partitioned by case_type, with an `overall` that reconciles), buildReportComparison (this window vs the prior adjacent window, signed deltas), buildChannelMetrics + buildCaseTypeMetrics (shared rollupByKey: first-response median, opened/closed, closed_pct, reopen_count per channel / per case_type), buildAlertPayload (structured machine-parseable breach payload for an external pager: case_ref/case_type/breach_type/severity_tier/since_ms, NEVER external_id); all aggregate-only, no external_id
   extract.js               deterministic field capture from plain contact text (species/symptoms/counts/location/onset/name); shared by the live handler and the stub model so a case is never an empty shell even when the model drives no tools
   gateway-hooks.js         makeCaseHandler: plain-language prompt, intent keywords, dedup, media, observe, fallback
   discord-receive.js       fallback Discord WS receive for older freddie builds
@@ -219,14 +219,25 @@ the crash-budget stop state); the supervisor is its only I/O.
   append-only event log via `evData()`. Both are aggregate-only and NEVER emit
   `external_id`: the audit export scrubs any cell equal to a case's external_id
   (so a delivered-reply event whose `data.to` is the contact id cannot leak a phone
-  number into a compliance file). `case_type` (outbreak/follow_up/lab_sample/
-  import_alert, default unset) is the enabling primitive for later per-type SLAs.
+  number into a compliance file).
+- **`case_type` is a live management lens, not just a tag**: `case_type`
+  (outbreak/follow_up/lab_sample/import_alert, default unset) segments every
+  aggregate. `/api/report.json` carries `sla_by_type` (`buildSLAReportByType`:
+  per-type SLA compliance with an `overall` that reconciles) and `by_case_type`
+  (`buildCaseTypeMetrics`: median first-response, opened/closed, closed_pct,
+  reopen_count). `GET /api/sla-at-risk/by-type` slices open cases by type against the
+  live `resolveThresholds().handoffMs` so an operator sees which category is closest
+  to breaching. `PATCH /api/cases/:id` accepts `case_type` (enum-validated) and
+  records a distinct `case_type a -> b` action event so every per-type analytic can
+  trace when and by whom a case was reclassified. `casey report [--json]` renders the
+  same per-type/per-channel briefing on the command line. A breach pages with a
+  structured `buildAlertPayload` (case_ref/case_type/breach_type/severity_tier/
+  since_ms) so an external pager can route an outbreak differently from a follow_up.
+  All aggregate-only, NEVER `external_id`.
 - **Event `data` is parsed at the read edge, never assumed an object**: thatcher
-  persists `event.data` as a JSON string and `store.listEvents` returns it
-  unparsed, so any consumer reading `data.from`/`data.to`/`data.by`/`data.field`
-  must parse first. The shared parser is `overview.js evData()` (reused by
-  `workload.js`); the dashboard parses at the `/api/cases/:id` + `/events` boundary
-  (`parseEventData`) so the SPA always receives object `data`.
+  returns `event.data` as a JSON string; parse before reading `data.*`. Shared parser
+  is `overview.js evData()`; dashboard parses at `/api/cases/:id`+`/events`
+  (`parseEventData`). (Details in recall.)
 - **Assisted mode actually holds the reply**: an `assisted` case does NOT auto-send.
   The agent's reply is recorded as a `draft-pending` draft and waits for an operator
   to release it (`/draft/approve`, with edits) or discard it; an unsent draft past

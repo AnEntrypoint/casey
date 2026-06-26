@@ -379,6 +379,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   const MAX_LEN = 4000
   const AUTONOMY = new Set(['auto', 'assisted', 'observe'])
   const PRIORITY = new Set(['low', 'normal', 'high', 'urgent'])
+  const CASE_TYPE = new Set(['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'])
   // Returns a validated string, or sends a 4xx and returns undefined so the
   // caller short-circuits: `const x = str(...); if (x === undefined) return`.
   const str = (res, body, field, { required = true } = {}) => {
@@ -662,13 +663,14 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
 
   app.patch('/api/cases/:id', async (req, res) => {
     try {
-      const allowed = ['subject', 'summary', 'priority', 'tags', 'assignee', 'autonomy']
+      const allowed = ['subject', 'summary', 'priority', 'tags', 'assignee', 'autonomy', 'case_type']
       const patch = {}
       for (const k of allowed) {
         if (!(k in req.body)) continue
         const v = str(res, req.body, k); if (v === undefined) return
         if (k === 'autonomy' && !AUTONOMY.has(v)) return res.status(400).json({ error: `invalid autonomy: ${v}` })
         if (k === 'priority' && !PRIORITY.has(v)) return res.status(400).json({ error: `invalid priority: ${v}` })
+        if (k === 'case_type' && !CASE_TYPE.has(v)) return res.status(400).json({ error: `invalid case_type: ${v}` })
         patch[k] = v
       }
       if (!Object.keys(patch).length) return res.status(400).json({ error: 'no editable fields' })
@@ -693,7 +695,18 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
           data: { from: prior.autonomy, to: patch.autonomy, by: op.id, reason: patchReason || '' },
         })
       }
-      const otherKeys = Object.keys(patch).filter(k => k !== 'autonomy')
+      // A case_type reclassification is audited as its own from/to action so every
+      // per-type analytic can trace when (and by whom) a case changed category,
+      // rather than a generic edit row that drops the prior value.
+      const caseTypeChanged = 'case_type' in patch && prior && (prior.case_type || 'unset') !== patch.case_type
+      if (caseTypeChanged) {
+        await store.appendEvent(req.params.id, {
+          kind: 'action', actor: 'operator',
+          text: `case_type ${prior.case_type || 'unset'} -> ${patch.case_type}`,
+          data: { from: prior.case_type || 'unset', to: patch.case_type, by: op.id, field: 'case_type' },
+        })
+      }
+      const otherKeys = Object.keys(patch).filter(k => k !== 'autonomy' && k !== 'case_type')
       if (otherKeys.length) {
         const otherPatch = Object.fromEntries(otherKeys.map(k => [k, patch[k]]))
         await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${otherKeys.join(', ')}`, data: { ...otherPatch, by: op.id } })
@@ -944,6 +957,31 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         score, reason, breaches: classifyCaseHealth(c, now, thresholds)
       }))
       res.json({ count: cases.length, total, limit, offset, at_risk: atRisk, sla_target_ms: slaTargetMs, cases })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // How many open cases are waiting past the reply SLA, bucketed by case_type, so an
+  // operator can attack the worst category first (e.g. "4 outbreaks past SLA vs 1
+  // follow_up"). Reuses the live handoff threshold (resolveThresholds) and the same
+  // atRiskCount the inbox header shows, run per case_type slice. Aggregate-only --
+  // counts only, never a case ref or external_id.
+  app.get('/api/sla-at-risk/by-type', async (req, res) => {
+    try {
+      const { atRiskCount } = await import('../attn.js')
+      const now = Date.now()
+      const thresholds = await store.resolveThresholds()
+      const slaTargetMs = Number.isFinite(thresholds?.handoffMs) ? thresholds.handoffMs : 30 * 60 * 1000
+      const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
+      const byType = {}
+      const groups = new Map()
+      for (const c of open) {
+        const t = c.case_type || 'unset'
+        if (!groups.has(t)) groups.set(t, [])
+        groups.get(t).push(c)
+      }
+      for (const [t, slice] of groups) byType[t] = atRiskCount(slice, now, slaTargetMs)
+      const total = atRiskCount(open, now, slaTargetMs)
+      res.json({ by_type: byType, total, sla_target_ms: slaTargetMs })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -1202,7 +1240,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     try {
       const days = reportDays(req)
       const r = await gatherReport(days)
-      const { buildSLAReport, buildReportComparison, buildChannelMetrics } = await import('../report-analytics.js')
+      const { buildSLAReport, buildReportComparison, buildChannelMetrics, buildSLAReportByType, buildCaseTypeMetrics } = await import('../report-analytics.js')
       const thresholds = await store.resolveThresholds()
       const now = Date.now()
       const cases = await store.listCases({}, { limit: 10000, offset: 0 })
@@ -1212,8 +1250,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       res.json({
         ...r,
         sla: buildSLAReport(cases, eventsByCaseId, slaTargetMs, now),
+        sla_by_type: buildSLAReportByType(cases, eventsByCaseId, slaTargetMs, now),
         comparison: buildReportComparison(cases, eventsByCaseId, now, days * 24 * 3600 * 1000),
         by_channel: buildChannelMetrics(cases, eventsByCaseId),
+        by_case_type: buildCaseTypeMetrics(cases, eventsByCaseId),
       })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })

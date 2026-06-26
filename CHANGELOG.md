@@ -3,6 +3,27 @@
 ## Unreleased
 
 ### Added
+- Per-case-type management analytics: `/api/report.json` gains `sla_by_type`
+  (per-type SLA compliance with a reconciling `overall`) and `by_case_type`
+  (median first-response, opened/closed, closed_pct, reopen_count), so a director
+  can compare outbreak vs routine intake. Aggregate-only, no external_id.
+- `GET /api/sla-at-risk/by-type`: open cases sliced by case_type against the live
+  handoff SLA, so an operator sees which category is closest to breaching.
+- `PATCH /api/cases/:id` accepts `case_type` (enum-validated) and records a distinct
+  `case_type a -> b` action event, so every per-type analytic can trace a
+  reclassification to when and by whom.
+- Channel + case-type metrics gain `closed_pct` and `reopen_count` (a reopen is a
+  transition out of resolved/closed back to an active stage), surfacing premature
+  closures per channel and per type.
+- `clusterSeverity`: suspected-outbreak clusters now rank by member count scaled by
+  their case_type mix (outbreak > import_alert > lab_sample > follow_up), so the
+  panel orders by data instead of the operator opening each in turn.
+- `buildAlertPayload`: a structured, machine-parseable breach payload
+  (case_ref/case_type/breach_type/severity_tier/since_ms, never external_id) that the
+  breach notifier POSTs to `CASEY_ALERT_WEBHOOK`, so an external pager can route an
+  outbreak differently from a follow_up.
+- `casey report [--json] [--days N]`: the per-case-type SLA + per-type/per-channel
+  briefing on the command line, reusing the same pure builders as the dashboard.
 - Coverage-gap team alert: the health sweep now pages once (rising edge) when a
   rostered team has open breaching cases yet nobody has replied in the window, so a
   whole-team outage surfaces even when no single case crosses a per-case threshold.
