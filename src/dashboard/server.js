@@ -1586,6 +1586,17 @@ const PAGE = /* html */ `<!doctype html>
   .set-row .set-in input{width:90px}
   .set-row .set-in span{font-size:12px;color:var(--muted)}
   .set-state{margin-left:10px;font-size:12px;color:var(--muted)}
+  .metric-trend{margin-top:10px;display:flex;gap:24px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+  .metric-trend b{color:var(--fg)}
+  .cl-row{padding:8px 0;border-bottom:1px solid var(--border)}
+  .cl-head{font-size:13px;margin-bottom:5px}
+  .cl-chips{display:flex;flex-wrap:wrap;gap:4px}
+  .ref-chip{background:#2a3340;font-size:12px;padding:2px 8px}
+  .geo-list{display:flex;flex-direction:column}
+  .geo-row{display:grid;grid-template-columns:1fr auto 2fr 2fr;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
+  .geo-place{font-weight:600}
+  .geo-count{font-weight:700;color:var(--danger)}
+  .geo-mix,.geo-when{color:var(--muted);font-size:12px}
   .ev .k{display:inline-block;min-width:120px;color:#8aa0c0;font-size:11px}
   label{display:block;margin:8px 0 2px;font-size:12px;color:var(--muted)}
   .hint{font-size:11px;color:var(--faint);margin:2px 0 0}
@@ -1733,6 +1744,9 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="sweep-btn" title="Run health-guardrail sweep now (re-evaluates all cases for time-based issues)">Sweep</button>
         <button class="icon-btn" id="stats-btn" title="Show fill-rate comparison by intake source">Stats</button>
         <button class="icon-btn" id="settings-btn" title="Tune how long casey waits before flagging a case">Settings</button>
+        <button class="icon-btn" id="metrics-btn" title="Response times, backlog and trend">Metrics</button>
+        <button class="icon-btn" id="clusters-btn" title="Cases that look like one outbreak">Outbreaks</button>
+        <button class="icon-btn" id="geo-btn" title="Where reports are concentrating">Hotspots</button>
         <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">dark</button>
         <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names">Aa</button>
@@ -1751,6 +1765,22 @@ const PAGE = /* html */ `<!doctype html>
     <div class="stats-panel" id="settings-panel">
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">How long before casey flags a case</div>
       <div id="settings-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="metrics-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <div style="font-size:12px;font-weight:700;color:var(--muted)">How the team is doing (last 14 days)</div>
+        <span><a id="report-csv" class="icon-btn" style="text-decoration:none" href="/api/report.csv?days=14" target="_blank">Export CSV</a>
+        <a id="report-html" class="icon-btn" style="text-decoration:none;margin-left:4px" href="/api/report.html?days=14" target="_blank">Printable</a></span>
+      </div>
+      <div id="metrics-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="clusters-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Possible outbreaks (cases that look related)</div>
+      <div id="clusters-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="geo-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Hotspots by area</div>
+      <div id="geo-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
     </div>
     <div class="triage" id="triage"></div>
     <div class="caselist" id="cases"><div class="empty">Loading cases...</div></div>
@@ -3070,6 +3100,78 @@ if(settingsBtn) settingsBtn.onclick=async()=>{
   settingsBtn.classList.toggle('active',settingsOpen)
   if(settingsOpen) await loadThresholds()
 }
+// --- Metrics / Outbreaks / Hotspots panels ---
+function fmtDur(ms){ if(ms==null) return '--'; const s=Math.round(ms/1000); const m=Math.round(s/60); if(m<60) return m+'m'; const h=Math.round(m/60); if(h<48) return h+'h'; return Math.round(h/24)+'d' }
+const STAGE_LABELS_M={new:'New',triaging:'Triage',in_progress:'In progress',waiting:'Waiting',resolved:'Resolved',closed:'Closed'}
+function loadMetricsHtml(j){
+  const fr=j.first_response_ms||{}
+  const dwell=j.dwell_ms_median||{}, backlog=j.backlog_by_stage||{}
+  const card=(lab,val,sub)=>'<div class="stats-card"><div class="sc-mode">'+esc(lab)+'</div><div class="sc-count">'+esc(val)+'</div>'+(sub?'<div class="sc-detail">'+esc(sub)+'</div>':'')+'</div>'
+  const dwellRows=Object.keys(dwell).map(s=>card(STAGE_LABELS_M[s]||s,fmtDur(dwell[s]),'median dwell')).join('')
+  const backlogRows=Object.keys(backlog).map(s=>card(STAGE_LABELS_M[s]||s,backlog[s],'open now')).join('')
+  // opened-vs-closed sparklines over the per-day buckets
+  const days=Object.keys(Object.assign({},j.opened_by_day,j.closed_by_day)).sort()
+  const opened=days.map(d=>j.opened_by_day[d]||0), closed=days.map(d=>j.closed_by_day[d]||0)
+  const trend=days.length
+    ? '<div class="metric-trend"><div>Opened per day '+sparkline(opened,160,28)+' <b>'+opened.reduce((a,b)=>a+b,0)+'</b></div>'
+      +'<div>Closed per day '+sparkline(closed,160,28)+' <b>'+closed.reduce((a,b)=>a+b,0)+'</b></div></div>'
+    : ''
+  return '<div class="stats-grid">'
+    +card('Median first reply',fmtDur(fr.median),'p90 '+fmtDur(fr.p90)+' ('+(fr.n||0)+' answered)')
+    +card('Open',j.cases?j.cases.open:0,'cases')
+    +card('Closed',j.cases?j.cases.closed:0,'cases')
+    +dwellRows+backlogRows+'</div>'+trend
+}
+async function loadMetrics(){
+  const body=$('#metrics-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  try{ const j=await api('/api/overview?days=14').then(r=>r.ok?r.json():null)
+    body.innerHTML=j?loadMetricsHtml(j):'<div class="empty">Could not load metrics.</div>'
+  }catch(e){ body.innerHTML='<div class="empty">Metrics error: '+esc(e.message)+'</div>' }
+}
+function clustersHtml(j){
+  const cl=j.clusters||[]
+  if(!cl.length) return '<div class="empty" style="padding:8px 0">No related-looking groups right now.</div>'
+  return cl.map(c=>{
+    const loc=(c.location||[]).join(', '), sp=(c.species||[]).join(', ')
+    const chips=(c.members||[]).map(m=>'<button class="ref-chip" data-id="'+esc(m.id)+'" title="'+esc(m.subject||'')+'">'+esc(m.ref)+'</button>').join(' ')
+    return '<div class="cl-row"><div class="cl-head"><b>'+c.count+' cases</b>'
+      +(loc?' near '+esc(loc):'')+(sp?' -- '+esc(sp):'')+'</div><div class="cl-chips">'+chips+'</div></div>'
+  }).join('')
+}
+async function loadClusters(){
+  const body=$('#clusters-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  try{ const j=await api('/api/clusters').then(r=>r.ok?r.json():null)
+    body.innerHTML=j?clustersHtml(j):'<div class="empty">Could not load outbreaks.</div>'
+    body.querySelectorAll('.ref-chip').forEach(b=>b.onclick=()=>openCase(b.dataset.id))
+  }catch(e){ body.innerHTML='<div class="empty">Outbreaks error: '+esc(e.message)+'</div>' }
+}
+function geoHtml(j){
+  const places=j.places||[]
+  if(!places.length) return '<div class="empty" style="padding:8px 0">No location data yet.</div>'
+  return '<div class="geo-list">'+places.map(p=>{
+    const mix=Object.entries(p.species||{}).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([s,n])=>esc(s)+' x'+n).join(', ')
+    return '<div class="geo-row"><span class="geo-place">'+esc(p.place)+'</span>'
+      +'<span class="geo-count">'+p.count+'</span>'
+      +'<span class="geo-mix">'+(mix||'--')+'</span>'
+      +'<span class="geo-when">'+esc(p.latest?fmtTime(p.latest):'')+'</span></div>'
+  }).join('')+'</div>'
+}
+async function loadGeo(){
+  const body=$('#geo-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  try{ const j=await api('/api/geo').then(r=>r.ok?r.json():null)
+    body.innerHTML=j?geoHtml(j):'<div class="empty">Could not load hotspots.</div>'
+  }catch(e){ body.innerHTML='<div class="empty">Hotspots error: '+esc(e.message)+'</div>' }
+}
+function panelToggle(btnId,panelId,loader){
+  const btn=$(btnId), panel=$(panelId); let open=false
+  if(btn) btn.onclick=async()=>{ open=!open; panel.classList.toggle('show',open); btn.classList.toggle('active',open); if(open) await loader() }
+}
+panelToggle('#metrics-btn','#metrics-panel',loadMetrics)
+panelToggle('#clusters-btn','#clusters-panel',loadClusters)
+panelToggle('#geo-btn','#geo-panel',loadGeo)
 // Inline modal replacement for native prompt()/confirm() -- works on mobile/PWA.
 // Uses DOM creation (not innerHTML) to avoid conflicts with the outer template literal.
 // Returns a Promise resolving to {value, confirmed:true} or null if cancelled.
@@ -3156,7 +3258,7 @@ async function boot(){
 }
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000); const _attnIv = setInterval(refreshAttention, 30000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
+window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
