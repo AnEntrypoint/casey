@@ -1756,6 +1756,13 @@ const PAGE = /* html */ `<!doctype html>
   .stats-card .sc-count{font-size:22px;font-weight:700;color:var(--fg)}
   .stats-card .sc-detail{font-size:11px;color:var(--muted);margin-top:2px}
   .stats-card .sc-vc{font-size:12px;color:var(--accent);font-weight:600;margin-top:4px}
+  /* Focus / inbox mode: only the ranked attention list, chrome stripped, list poll quieted. */
+  body.inbox-mode .filters,
+  body.inbox-mode .stats-panel,
+  body.inbox-mode #bulk-bar,
+  body.inbox-mode #cases{display:none}
+  body.inbox-mode #focus-btn{background:var(--accent);color:#fff;border-color:var(--accent)}
+  body.inbox-mode .triage{margin-top:4px}
 </style></head>
 <body>
 <div id="conn" class="conn">Connection lost - retrying...</div>
@@ -1783,6 +1790,7 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="handover-btn" title="Start-of-shift digest: what needs you, open handoffs, unsent drafts, what changed">Shift</button>
         <button class="icon-btn" id="offline-btn" title="Cases that came in while casey could not answer -- waiting for a person">AI offline</button>
         <select id="op-picker" title="Who you are -- attributed on your actions" style="display:none"></select>
+        <button class="icon-btn" id="focus-btn" title="Focus mode: show only the ranked Needs-you-now list, lighten background polling (good on a phone)">Focus</button>
         <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">dark</button>
         <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names">Aa</button>
@@ -2263,9 +2271,15 @@ function renderCounts(){
 // ref/channel/subject/updated_at/reason/breaches; renderTriage never reaches into
 // allCases for triage, so the two surfaces cannot drift.
 let attentionInbox = []
+// Focus / inbox mode: render ONLY the ranked attention list, skip the full
+// ~200-row case poll, and quiet the background polls. Driven by the #inbox hash
+// so the mode survives a reload and is deep-linkable.
+let inboxMode = /(^|&)inbox(&|$)/.test((location.hash||'').replace(/^#/,''))
 function renderTriage(){
   const el=$('#triage'); if(!el) return
-  const inbox = attentionInbox.slice(0,12)
+  // In focus mode the attention list is the whole screen, so show every ranked
+  // case; otherwise keep the compact 12-row peek above the full list.
+  const inbox = inboxMode ? attentionInbox : attentionInbox.slice(0,12)
   setInboxBadge(attentionInbox.length)
   if(!inbox.length){
     el.innerHTML='<h2>Needs you now</h2>'+
@@ -3529,14 +3543,43 @@ function showDialog(opts){
     setTimeout(function(){ if(inp) inp.focus(); else okBtn.focus() }, 60)
   })
 }
+// Apply the focus-mode body class and keep the #inbox hash in sync. Returns the
+// effective mode so callers can branch their first paint.
+function applyInboxMode(){
+  document.body.classList.toggle('inbox-mode', inboxMode)
+  return inboxMode
+}
+function setInboxMode(on){
+  inboxMode = !!on
+  // Preserve any deep-link hash already present (e.g. #case=...) by only
+  // adding/removing the inbox token, never clobbering the rest.
+  const rest = (location.hash||'').replace(/^#/,'').split('&').filter(p=>p&&p!=='inbox')
+  if(inboxMode) rest.unshift('inbox')
+  const want = rest.length ? '#'+rest.join('&') : location.pathname+location.search
+  if(location.hash !== (rest.length?'#'+rest.join('&'):'')) history.replaceState(null,'',want)
+  applyInboxMode()
+  renderTriage()
+  // Leaving focus mode needs the full list it skipped at boot.
+  if(!inboxMode && !allCases.length) loadCases()
+}
 async function boot(){
-  await loadCases(); await refreshHealth(); refreshAttention()
+  applyInboxMode()
+  // In focus mode skip the heavy ~200-row case poll entirely; the ranked
+  // attention list is the whole screen and comes from /api/attention.
+  if(!inboxMode) await loadCases()
+  await refreshHealth(); refreshAttention()
   const id=restoreFromHash(); if(id){ openCase(id); return }
   await restoreRefFromHash()
 }
-boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000); const _attnIv = setInterval(refreshAttention, 30000)
+boot()
+// Background polls. The 5s full-list poll is the expensive one; in focus mode it
+// is suppressed so a phone only runs the cheap 30s attention poll plus health.
+const _casesIv = setInterval(() => { if(!inboxMode) loadCases() }, 5000)
+const _healthIv = setInterval(refreshHealth, 15000)
+const _attnIv = setInterval(refreshAttention, 30000)
+const _focusBtn = $('#focus-btn'); if(_focusBtn) _focusBtn.onclick = () => setInboxMode(!inboxMode)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, undoToast, replyUndoToast, toggleSelect, clearSelection, syncBulkBar, bulkAction, get selectedIds(){return selectedIds}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
+window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, undoToast, replyUndoToast, toggleSelect, clearSelection, syncBulkBar, bulkAction, get selectedIds(){return selectedIds}, applyInboxMode, setInboxMode, get inboxMode(){return inboxMode}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
