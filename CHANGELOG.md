@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Fixed
+- Event `data` was read as an object in several aggregators while thatcher
+  persists it as a JSON string (and `store.listEvents` returns it unparsed), so
+  the reads silently missed: operator reply credit in the workload rollup was
+  always zero, dwell-per-stage and closed-by-day in the overview mis-bucketed on
+  every transition that carried a `from`/`to`, and the dashboard's per-field notes
+  never grouped. A shared `evData()` parse in `overview.js` (reused by
+  `workload.js`) and a `parseEventData()` at the `/api/cases/:id` + `/events`
+  boundary now hand object `data` to every consumer.
 - Event ordering: a same-millisecond inbound+outbound pair could be returned
   outbound-first because the tie-break sorted ids lexicographically (`"10"` before
   `"9"`). It now compares numeric ids numerically, restoring insertion order, so the
@@ -25,6 +33,15 @@
   send-failure observation instead of being silently lost.
 
 ### Added
+- Staff/management surface for the team running casey: a worst-first **Team
+  workload** panel (`/api/operators/workload`) showing, per rostered operator,
+  open cases held, stale claims, replies today, usual first-reply speed and the
+  oldest case still waiting (aggregate-only, no per-contact rows); a **Mine**
+  filter that scopes the case list and "Needs you now" inbox to the cases you have
+  claimed; **keyboard triage** shortcuts (`j`/`k` move, `o`/`Enter` open, `c`
+  claim, `e` reply, `/` search, `?` help, `Esc` back); and a first-run **quick-start
+  onboarding** overlay. The single real-services `test.js` gains a workload
+  assertion block (worst-first card, open/replies/median, no `external_id` leak).
 - Focus mode: a "Focus" header button (and the `#inbox` deep-link hash) collapses
   the dashboard to only the ranked "Needs you now" list, hides the filters, bulk
   bar and full case list, skips the heavy ~200-row case poll at load, and quiets

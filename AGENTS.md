@@ -48,7 +48,8 @@ src/
   attn.js                  worst-first attention ranking (rankAttention) + shared caseHints why/to-do policy; backs the inbox and `casey attention`
   format.js                shared SAST timestamp + +27 phone formatters (CLI and SPA render the same way)
   thresholds.js            pure validate/clamp/merge of operator-tunable health thresholds (allowlist keys + bounds)
-  overview.js              KPI aggregates over the event log (time-to-first-reply, dwell-per-stage, backlog) for /api/overview
+  overview.js              KPI aggregates over the event log (time-to-first-reply, dwell-per-stage, backlog) for /api/overview; exports shared evData() event.data parser
+  workload.js              per-operator workload rollup (open/stale-claims/replies-24h/first-reply-median/oldest-waiting, worst-first) for /api/operators/workload; aggregate-only
   clusters.js              correlated-case components (shared location/species) for /api/clusters
   geo.js                   hotspots-by-area rollup for /api/geo
   report.js                management report rendering (CSV/HTML) for /api/report.csv and /api/report.html
@@ -157,7 +158,17 @@ the crash-budget stop state); the supervisor is its only I/O.
 - **Autonomy modes** per case (`auto | assisted | observe`) scope what the agent
   may do; the dashboard can override stage and reply as a human.
 - **Operator surface is low-jargon**: "Needs you now" inbox, plain-language mode,
-  ready-made replies, handoff banner, "what to do now" hints.
+  ready-made replies, handoff banner, "what to do now" hints, a first-run
+  quick-start onboarding overlay, keyboard triage (`j`/`k`/`o`/`Enter`/`c`/`e`/`/`/`?`/`Esc`),
+  a `Mine` filter scoping the list+inbox to the picked operator's claimed cases,
+  and a worst-first `Team` workload panel (open/stale-claims/replies-today/first-reply
+  speed per rostered operator, aggregate-only, no per-contact rows).
+- **Event `data` is parsed at the read edge, never assumed an object**: thatcher
+  persists `event.data` as a JSON string and `store.listEvents` returns it
+  unparsed, so any consumer reading `data.from`/`data.to`/`data.by`/`data.field`
+  must parse first. The shared parser is `overview.js evData()` (reused by
+  `workload.js`); the dashboard parses at the `/api/cases/:id` + `/events` boundary
+  (`parseEventData`) so the SPA always receives object `data`.
 - **Assisted mode actually holds the reply**: an `assisted` case does NOT auto-send.
   The agent's reply is recorded as a `draft-pending` draft and waits for an operator
   to release it (`/draft/approve`, with edits) or discard it; an unsent draft past

@@ -147,11 +147,22 @@ The dashboard is the whole operator surface -- one page, no build step:
   logged, and whether the stage change sent the person a note.
 - **Handoff alert:** when a contact asks for a real person, a loud banner (chime + flashing tab) fires
   once for that case so an idle operator notices; opening the case clears it.
+- **Team workload (`Team` button):** a worst-first, aggregate-only view of who is holding what -- per
+  operator: open cases assigned, claims sitting too long, replies sent today, usual first-reply speed,
+  and the oldest case still waiting. A card per rostered operator (`CASEY_OPERATORS`) even at zero load,
+  so management sees overload and dropped claims at a glance without opening a case; no per-contact rows.
+- **Mine filter (`Mine` button):** once you have picked who you are (top-right), `Mine` scopes both the
+  case list and the "Needs you now" inbox to just the cases you have claimed, so a busy shift can work
+  its own queue.
+- **Keyboard triage:** `j`/`k` move the selection, `o`/`Enter` opens the top case, `c` claims the open
+  case as yours, `e` jumps to the reply box, `/` focuses search, `?` toggles help, `Esc` steps back.
 - **Timeline:** every inbound/outbound/note/action/transition/observation as an append-only row,
   colour-coded by kind, with relative timestamps (hover for the absolute time).
-- **Plain-language help:** a first-run **help overlay** (re-open with `?`) explains everything in plain
-  words, an **`Aa` plain-mode** toggle relabels stages to friendly names everywhere (remembered), and
-  each open case shows a **"what to do now"** hint derived from its state.
+- **Plain-language help + first-run onboarding:** a focused three-step **quick-start overlay** greets a
+  first-time operator (pick who you are; the inbox is your queue; claim before you reply) and is
+  remembered once dismissed (re-open from help). A separate **help overlay** (`?`) explains everything
+  including the keyboard shortcuts; an **`Aa` plain-mode** toggle relabels stages to friendly names
+  everywhere (remembered), and each open case shows a **"what to do now"** hint derived from its state.
 - Non-blocking **toasts** replace alert popups, a banner appears if the connection drops, the list
   auto-refreshes every 5s (paused while you're typing so it never clobbers an edit), new cases raise a
   toast, the open case is **deep-linked** in the URL (shareable), and a **light/dark** toggle persists.
