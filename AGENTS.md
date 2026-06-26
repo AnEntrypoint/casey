@@ -56,7 +56,7 @@ src/
   extract.js               deterministic field capture from plain contact text (species/symptoms/counts/location/onset/name); shared by the live handler and the stub model so a case is never an empty shell even when the model drives no tools
   gateway-hooks.js         makeCaseHandler: plain-language prompt, intent keywords, dedup, media, observe, fallback
   discord-receive.js       fallback Discord WS receive for older freddie builds
-  llm.js                   model call wiring
+  llm.js                   model call wiring; resolveCallLLM (boot precedence: stub/acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row)
   sim/inject.js            MockAdapter + scripted-conversation runner (offline)
   sim/scenarios.js         named low-literacy personas
   sim/stub-llm.js          deterministic model for sim + tests (never used in production)
@@ -122,7 +122,12 @@ the crash-budget stop state); the supervisor is its only I/O.
 - Hot reload: a `.js`/`.mjs` save under a watched dir (default `src/` +
   `../freddie/src`) drains in-flight turns (up to `CASEY_DRAIN_DEADLINE_MS`) then
   re-forks the worker on fresh code. The store (`app.db`) is the durable boundary,
-  reopened per worker -- nothing is lost across a reload.
+  reopened per worker -- nothing is lost across a reload. Reload keys on file
+  mtimes, so `git commit`/`checkout`/`pull` alone does NOT refresh a running
+  worker -- a committed fix stays inert until the next `casey up` restart (or a
+  save/`touch` of a watched source file). When re-verifying a fix against a live
+  process, confirm the running process started AFTER the fix commit, not just that
+  the fix is on disk.
 - Crash restart: a worker that exits non-zero is re-forked with exponential
   backoff, bounded by the crash budget so a boot-loop stops instead of thrashing.
 - The watch list is a fixed allowlist (`src/`, `../freddie/src`, `CASEY_RELOAD_PATHS`),
@@ -140,6 +145,14 @@ the crash-budget stop state); the supervisor is its only I/O.
   error/timeout/empty and records the failure as an observation, never leaked. A
   reply that parrots a system-prompt example verbatim is treated as a failed turn
   (`isPromptEcho`) and replaced by the fallback.
+- **Never stay degraded: the LLM backend self-heals.** `resolveCallLLM` probes the
+  provider once, but the gateway must not latch "AI helper offline" for its whole
+  life if the provider was merely down at boot. `makeResilientCallLLM` (in
+  `llm.js`) re-resolves the backend lazily -- a single in-flight probe, debounced
+  to at most once per interval -- and throws while degraded so the never-dead-end
+  fallback still fires; once a real provider is reachable it delegates with no probe
+  overhead. The dashboard health row reads the SAME backend via `status()`, so a
+  recovered provider resumes real auto-replies (and shows green) with no restart.
 - **No copyable reply examples in the prompt**: `caseSystemPrompt` must not give
   the model a full quoted sample reply -- small models copy it word-for-word. Only
   literal tokens that must be reproduced exactly (the reference, a link) may

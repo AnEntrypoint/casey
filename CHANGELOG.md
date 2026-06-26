@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Fixed
+- The AI helper no longer latches "offline" for the whole process life when the
+  LLM provider happens to be down at boot. `resolveCallLLM` probed once and the
+  case handler closed over a static `callLLM`, so a provider that recovered minutes
+  later was never picked up without a restart -- contacts kept getting only the
+  holding message. `makeResilientCallLLM` re-resolves the backend lazily (single
+  in-flight probe, debounced) and throws while degraded so the handler's existing
+  fallback still sends a holding reply; its `status()` is the single live source
+  for the dashboard health row, so recovery shows -- and auto-replies resume --
+  with no restart.
 - Event `data` was read as an object in several aggregators while thatcher
   persists it as a JSON string (and `store.listEvents` returns it unparsed), so
   the reads silently missed: operator reply credit in the workload rollup was
