@@ -43,9 +43,9 @@ src/
   case-tools.js            case_* tool defs (get/list/update/observe/transition), autonomy-enforced
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
-  case-sweep.js            periodic health-guardrail sweep
+  case-sweep.js            periodic health-guardrail sweep; detectCoverageGap (rostered team, open breaching cases, zero in-window operator replies) pages a synthetic TEAM-COVERAGE breach
   correlate.js             cross-case correlation helpers
-  attn.js                  worst-first attention ranking (rankAttention) + shared caseHints why/to-do policy; backs the inbox and `casey attention`
+  attn.js                  worst-first attention ranking (rankAttention, with an SLA clock: waitingOnUs/waitAgeMs/atRiskCount/slaTargetMs) + shared caseHints why/to-do policy; backs the inbox and `casey attention`
   format.js                shared SAST timestamp + +27 phone formatters (CLI and SPA render the same way)
   thresholds.js            pure validate/clamp/merge of operator-tunable health thresholds (allowlist keys + bounds)
   overview.js              KPI aggregates over the event log (time-to-first-reply, dwell-per-stage, backlog) for /api/overview; exports shared evData() event.data parser
@@ -174,8 +174,24 @@ the crash-budget stop state); the supervisor is its only I/O.
   ready-made replies, handoff banner, "what to do now" hints, a first-run
   quick-start onboarding overlay, keyboard triage (`j`/`k`/`o`/`Enter`/`c`/`e`/`/`/`?`/`Esc`),
   a `Mine` filter scoping the list+inbox to the picked operator's claimed cases,
-  and a worst-first `Team` workload panel (open/stale-claims/replies-today/first-reply
-  speed per rostered operator, aggregate-only, no per-contact rows).
+  a worst-first `Team` workload panel (open/stale-claims/replies-today/first-reply
+  speed per rostered operator, aggregate-only, no per-contact rows), saved filter
+  views (named, persisted in localStorage and shareable via a `view=` URL hash that
+  encodes only filter knobs -- never `external_id`), and a per-operator skills
+  checklist overlay that walks a new operator through keyboard triage / `Mine` /
+  draft release once, keyed to the selected operator id.
+- **A team is paged when nobody is covering, not just per case**: the health sweep
+  runs `detectCoverageGap` each pass -- a rostered team with open breaching cases
+  yet zero operator replies in the window is a coverage gap. It pages once on the
+  rising edge via the same `CASEY_ALERT_WEBHOOK` path with a synthetic
+  `{ ref: 'TEAM-COVERAGE' }` (no `external_id`), clears on the falling edge, and
+  counts replies only on the breaching cases so a busy day on unrelated cases does
+  not mask the gap.
+- **The inbox carries an SLA clock, not just an order**: `rankAttention` stamps
+  each waiting case with `waitAgeMs` against `slaTargetMs` and surfaces
+  `atRiskCount` (and `/api/attention` exposes `wait_ms`/`at_risk`/`sla_target_ms`),
+  so an operator sees not only worst-first order but how close each case is to
+  breaching its reply target.
 - **Event `data` is parsed at the read edge, never assumed an object**: thatcher
   persists `event.data` as a JSON string and `store.listEvents` returns it
   unparsed, so any consumer reading `data.from`/`data.to`/`data.by`/`data.field`
@@ -219,11 +235,9 @@ casey depends on the fixed thatcher release. See README "thatcher" section.
 - ES modules (`"type": "module"`), Node >= 22.
 - The single end-to-end `test.js` against real services is the test surface;
   do not add a parallel mock-heavy unit suite.
-- thatcher's sqlite handle is cwd-bound: it primes `getDatabase()` argless at
-  init, resolving `<cwd>/data/app.db`, and importing `getDatabase` ourselves to
-  relocate it forks thatcher's module graph into a second handle. So the only
-  safe way to point the store elsewhere is the process cwd. `test.js` therefore
-  copies the config into a temp dir and `chdir`s there, so a run never wipes a
-  live `casey up` store; freddie `file:../` imports stay anchored to `REPO_ROOT`.
+- thatcher's sqlite handle is cwd-bound (primes `getDatabase()` from `<cwd>/data/app.db`
+  at init; re-importing the accessor forks a second handle). Relocate only via process
+  cwd: `test.js` copies the config to a temp dir and `chdir`s there so a run never wipes
+  a live `casey up` store, with freddie `file:../` imports anchored to `REPO_ROOT`.
 
 @.gm/next-step.md

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+- Coverage-gap team alert: the health sweep now pages once (rising edge) when a
+  rostered team has open breaching cases yet nobody has replied in the window, so a
+  whole-team outage surfaces even when no single case crosses a per-case threshold.
+  Replies are counted only on the breaching cases, so a busy day on unrelated cases
+  cannot mask the gap; the page uses a synthetic `TEAM-COVERAGE` ref and leaks no
+  contact id.
+- Attention SLA clock: the inbox ranking stamps each waiting case with its age
+  against an SLA target and reports an at-risk count, so an operator sees how close
+  each case is to breaching, not just worst-first order.
+- Saved filter views: operators can name and persist filter combinations and share
+  one via a `view=` URL hash; the encoding carries only filter knobs, never a
+  contact id.
+- Per-operator skills checklist: a first-run overlay walks a new operator through
+  keyboard triage, the `Mine` filter, and draft release once, keyed to their
+  operator id so each person sees it once.
+
 ### Fixed
 - The AI helper no longer latches "offline" for the whole process life when the
   LLM provider happens to be down at boot. `resolveCallLLM` probed once and the
