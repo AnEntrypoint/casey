@@ -69,11 +69,31 @@ export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {
 //
 // This keeps the never-dead-end guarantee (holding message on every miss) AND adds
 // the missing never-stay-degraded half (auto-resume when the provider returns).
-export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, intervalMs = 30000, resolve = resolveCallLLM, now = null } = {}) {
+export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, intervalMs = 30000, resolve = resolveCallLLM, now = null, slowMs = 20000, slowWindow = 5 } = {}) {
   let backend = null                 // resolved real callLLM, or null while degraded
   let last = { source: 'none', model: null, url: null }
   let inflight = null                // shared promise so concurrent inbounds probe once
   let lastAttempt = -Infinity        // monotonic ms of the last resolve attempt (debounce)
+
+  // Completion-path health: a provider can resolve (source acptoapi, /v1/models
+  // answers) yet have every real turn hang for tens of seconds while it walks a
+  // failing provider chain. Reachability alone is then a false green -- the pill
+  // says "online" while contacts wait minutes. So we time the REAL turns the
+  // gateway already makes (no synthetic probe burning provider quota) and keep a
+  // small rolling window of {ms, ok}. The health row reads `degraded` from it, so
+  // a slow/erroring brain shows degraded instead of online. `slowMs` is the
+  // per-turn ceiling; `slowWindow` is how many recent turns we keep.
+  const recent = []                  // newest-last: { ms, ok }
+  const recordTurn = (ms, ok) => { recent.push({ ms, ok }); if (recent.length > slowWindow) recent.shift() }
+  // Degraded when the recent window has any turns and ALL of them were slow or
+  // failed -- one fast turn (a recovered provider) clears it. Conservative: a
+  // mixed window (some fast) is still online, so a single slow turn never flips
+  // the pill, but a sustained slow/failing brain does.
+  const completionHealth = () => {
+    if (!recent.length) return { degraded: false, lastMs: null, recentSlow: 0 }
+    const slow = recent.filter(r => !r.ok || r.ms >= slowMs)
+    return { degraded: slow.length === recent.length, lastMs: recent[recent.length - 1].ms, recentSlow: slow.length }
+  }
 
   // `resolve` and `now` are injectable so the single real-services test can drive the
   // recovery transition and the debounce clock deterministically (a real resolver
@@ -102,14 +122,27 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   const callLLM = async ({ messages, tools }) => {
     const b = await ensure()
     if (!b) throw new Error('AI helper offline (provider unreachable); using holding reply')
-    return b({ messages, tools })
+    // Time the real turn so the health row sees completion-path latency. A throw
+    // (timeout/error) records an unhealthy turn too, so a hanging provider that
+    // never returns ok still flips the window to degraded on the next read.
+    const t0 = clock()
+    try {
+      const r = await b({ messages, tools })
+      recordTurn(clock() - t0, true)
+      return r
+    } catch (e) {
+      recordTurn(clock() - t0, false)
+      throw e
+    }
   }
 
   // status() forces an initial resolve so the first health read is accurate, then
   // returns the live snapshot. Subsequent reads are cheap (cached between probes).
+  // It folds in completion-path health so a resolved-but-slow backend reads
+  // degraded -- the operator can tell "online" from "online but answering nobody".
   const status = async () => {
     if (!backend && clock() - lastAttempt >= intervalMs) await ensure()
-    return { ...last }
+    return { ...last, ...completionHealth() }
   }
 
   return { callLLM, status, _ensure: ensure }

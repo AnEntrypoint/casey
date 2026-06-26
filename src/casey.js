@@ -15,7 +15,22 @@ import { createCaseStore } from './case-store.js'
 import { setCaseStore, resetCaseStore } from './case-runtime.js'
 import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier, breachNotifier } from './gateway-hooks.js'
 import { sweepCases } from './case-sweep.js'
+import { ALL_HEALTH_TAGS } from './case-health.js'
 import { MockAdapter } from './sim/inject.js'
+
+const CASE_HEALTH_SET = new Set(ALL_HEALTH_TAGS)
+
+// Roster size from CASEY_OPERATORS (comma-separated id:Name or a JSON array). We
+// only need the count of people EXPECTED to cover for the coverage-gap check, so a
+// tolerant count is enough: a malformed roster counts as no roster (never a crash).
+function rosterFromEnv(raw = process.env.CASEY_OPERATORS) {
+  const s = String(raw || '').trim()
+  if (!s) return []
+  if (s.startsWith('[')) {
+    try { const a = JSON.parse(s); return Array.isArray(a) ? a.filter(Boolean) : [] } catch { return [] }
+  }
+  return s.split(',').map(t => t.trim()).filter(Boolean)
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CASEY_PLUGINS = path.resolve(__dirname, '..', 'plugins')
@@ -42,6 +57,8 @@ export class Casey {
     this._inflight = new Set()      // track inbound turns for deterministic sim
     this._disconnects = []
     this._sweepTimer = null         // periodic health-guardrail interval handle
+    this._roster = rosterFromEnv()  // people expected to cover (for the coverage-gap check)
+    this._coverageGapActive = false // rising-edge dedup so a persistent gap pages once
     // Per-channel receive liveness. A gateway WebSocket can go zombie (TCP still
     // ESTABLISHED, gateway-dead) and silently stop delivering inbound while the
     // process, the HTTP server, and outbound send all stay healthy -- the exact
@@ -266,7 +283,48 @@ export class Casey {
     // not fail the sweep itself, so it is best-effort and recorded as a warning.
     try { this._lastSweepSummary = await this.store.recordSweepSummary(summary, now) }
     catch (e) { this.log?.warn?.('[casey] fleet-health persist failed', { error: e.message }) }
+    // Team-level coverage gap: distinct from a per-case breach. If the whole roster
+    // is idle while breaches pile up, page the team-lead once on the rising edge and
+    // clear on the falling edge (the same "once per newly-entered breach" discipline
+    // as the per-case path, so a persistent gap is not re-spammed every 15 minutes).
+    // Best-effort: a coverage-check failure must never fail the sweep itself.
+    try { await this._checkCoverageGap(now) }
+    catch (e) { this.log?.warn?.('[casey] coverage-gap check failed', { error: e.message }) }
     return summary
+  }
+
+  // Compute the team coverage gap and page once on the rising edge. The roster is
+  // the configured CASEY_OPERATORS (people expected to cover); with no roster there
+  // is no one to page about a gap, so the check no-ops. The event load is bounded to
+  // open cases and only runs when at least one breaching case exists (no breaches ->
+  // no gap regardless of replies), so a healthy quiet hour costs one cheap case scan.
+  async _checkCoverageGap(now = Date.now()) {
+    if (!this._notifyBreach) return                 // no alert channel configured
+    const roster = this._roster || []
+    if (!roster.length) return                      // no one expected to cover
+    const open = (await this.store.listCases({}, { limit: 10000 }))
+      .filter(c => c.status !== 'closed' && c.status !== 'resolved')
+    const breaching = open.filter(c => String(c.tags || '').split(',').map(s => s.trim()).some(t => CASE_HEALTH_SET.has(t)))
+    if (!breaching.length) {                        // no breaches -> gap is impossible
+      this._coverageGapActive = false
+      return
+    }
+    const eventsByCaseId = new Map()
+    for (const c of open) eventsByCaseId.set(c.id, await this.store.listEvents(c.id).catch(() => []))
+    const { detectCoverageGap } = await import('./case-sweep.js')
+    const verdict = detectCoverageGap(open, eventsByCaseId, roster, now)
+    if (verdict.gap && !this._coverageGapActive) {
+      // Rising edge: page once. Reuse the breach webhook transport; the synthetic
+      // case carries a stable ref so the alert reads as a team-coverage page, not a
+      // per-case one. No external_id -- aggregate-only.
+      this._coverageGapActive = true
+      try { await this._notifyBreach({ ref: 'TEAM-COVERAGE' }, 'coverage_gap', verdict.reason) }
+      catch (e) { this.log?.warn?.('[casey] coverage-gap page failed', { error: e.message }) }
+      this.log?.warn?.('[casey] coverage gap', { open_breaches: verdict.open_breaches, roster_size: verdict.roster_size })
+    } else if (!verdict.gap) {
+      this._coverageGapActive = false               // falling edge: armed to page again
+    }
+    return verdict
   }
 
   // Start (or restart) the periodic guardrail sweep. Opt-in: a non-positive

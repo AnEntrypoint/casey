@@ -530,6 +530,37 @@ async function main() {
     assert.ok(row && row.score > 0, 'the live needs-human case is ranked with a positive score by /api/attention')
   })
 
+  await test('SLA clock: a contact waiting past target surfaces its wait age + an aggregate at-risk count; a case casey is handling has no clock', async () => {
+    const { rankAttention, waitAgeMs, atRiskCount } = await import('./src/attn.js')
+    const now = Date.now()
+    // Waiting-on-us cases: status=waiting, or a needs-human/handoff/draft tag. A 40m
+    // wait is past the 30m default target; a 5m wait is inside it.
+    // needs-human so it is BOTH at-risk (waiting on us) AND ranked into the inbox --
+    // a plain status=waiting case under 24h scores 0 and never reaches items, yet
+    // still has an SLA clock, which is exactly the at-risk-vs-inbox distinction below.
+    const overdue = { id: 'sla-1', ref: 'CASE-7001-a', status: 'waiting', tags: 'needs-human', updated_at: new Date(now - 40 * 60e3).toISOString() }
+    const fresh = { id: 'sla-2', ref: 'CASE-7002-b', status: 'waiting', tags: 'needs-human', updated_at: new Date(now - 5 * 60e3).toISOString() }
+    // A case casey is actively handling (auto, no waiting tag, not status=waiting) is
+    // NOT waiting on us -- no SLA clock, so it must not inflate the at-risk count.
+    const handled = { id: 'sla-3', ref: 'CASE-7003-c', status: 'new', tags: '', autonomy: 'auto', updated_at: new Date(now - 90 * 60e3).toISOString() }
+    assert.ok(waitAgeMs(overdue, now) >= 39 * 60e3, 'an overdue waiting case reports its real wait age')
+    assert.equal(waitAgeMs(handled, now), null, 'a case casey is handling has no SLA clock (null), not a false wait age')
+    assert.equal(atRiskCount([overdue, fresh, handled], now), 1, 'only the case past the 30m target counts as at-risk -- the fresh and casey-handled ones do not')
+    assert.equal(atRiskCount([overdue, fresh, handled], now, 3 * 60e3), 2, 'a tighter 3m target pulls the 5m-waiting case in too -- the target is tunable')
+    const ranked = rankAttention([overdue, fresh, handled], now)
+    assert.equal(ranked.atRisk, 1, 'rankAttention carries the aggregate at-risk count for the team header')
+    const overdueItem = ranked.items.find(x => x.c.id === 'sla-1')
+    assert.ok(overdueItem && overdueItem.waitMs >= 39 * 60e3, 'each ranked item carries its own wait age for the inbox row')
+    // Live endpoint exposes at_risk + per-row wait_ms.
+    const { case: sc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'sla-live-' + Date.now() })
+    await store.updateCase(sc.id, { status: 'waiting', tags: 'needs-human' })
+    const att = await df('http://localhost:4577/api/attention?token=secret&limit=500').then(r => r.json())
+    assert.ok(typeof att.at_risk === 'number', '/api/attention exposes an aggregate at_risk count')
+    assert.ok(att.sla_target_ms > 0, '/api/attention exposes the SLA target it measured against')
+    const srow = att.cases.find(c => c.id === sc.id)
+    assert.ok(srow && typeof srow.wait_ms === 'number' && srow.wait_ms >= 0, 'a live waiting case carries a numeric wait_ms SLA clock')
+  })
+
   await test('assisted draft is held (nothing sent) until an operator approves it, then it sends and clears the flags', async () => {
     const sentBefore = adapter.sent.length
     const { case: ac } = await store.findOrCreateCase({ channel: 'sim', external_id: 'assist-' + Date.now() })
@@ -1712,6 +1743,46 @@ async function main() {
     assert.ok(!breaches.slice(sb).includes('stale'), 'a stale-only case is NOT paged (surfaced in inbox, not an alert)')
   })
 
+  await test('coverage-gap: a roster idle while breaches pile up pages the team once (rising edge), and an operator reply clears it', async () => {
+    const { detectCoverageGap } = await import('./src/case-sweep.js')
+    const now = Date.now()
+    // Pure detector first. A breaching open case + a non-empty roster + zero operator
+    // replies in the window IS a coverage gap.
+    const breachCase = { id: 'cg1', status: 'waiting', tags: 'health:unanswered_handoff' }
+    const ev = new Map([['cg1', []]])
+    const roster = [{ id: 'thandi' }, { id: 'sipho' }]
+    assert.equal(detectCoverageGap([breachCase], ev, roster, now).gap, true, 'breaches + idle roster = a coverage gap')
+    assert.equal(detectCoverageGap([breachCase], ev, [], now).gap, false, 'no roster = no one expected to cover = no gap')
+    assert.equal(detectCoverageGap([{ id: 'x', status: 'waiting', tags: '' }], new Map([['x', []]]), roster, now).gap, false, 'no breaching case = no gap even with an idle roster')
+    // An operator reply landing in the window clears the gap.
+    const replied = new Map([['cg1', [{ kind: 'outbound', actor: 'operator', created_at: new Date(now - 5 * 60e3).toISOString() }]]])
+    assert.equal(detectCoverageGap([breachCase], replied, roster, now).gap, false, 'a recent operator reply means the team is covering -- no gap')
+    // A reply OLDER than the window does not clear it.
+    const old = new Map([['cg1', [{ kind: 'outbound', actor: 'operator', created_at: new Date(now - 3 * 3600e3).toISOString() }]]])
+    assert.equal(detectCoverageGap([breachCase], old, roster, now, { windowMs: 60 * 60e3 }).gap, true, 'a reply older than the window does not clear the gap')
+
+    // Live rising-edge dedup against a real Casey. A bare Casey with a stubbed
+    // notifier and the env roster (set at top of file) pages coverage_gap once.
+    const { Casey } = await import('./src/casey.js')
+    const pages = []
+    const c4 = new Casey({ channels: ['sim'] })
+    c4.store = store
+    c4._notifyBreach = async (cs, b, detail) => { pages.push({ b, ref: cs?.ref, detail }) }
+    assert.ok(c4._roster.length > 0, 'the env roster is parsed so a coverage gap is pageable')
+    // A breaching, never-replied case in the live store. needs-human + an old
+    // last_event_at makes the sweep tag health:unanswered_handoff.
+    const { case: gc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'coverage-' + Date.now() })
+    await store.updateCase(gc.id, { tags: 'needs-human' })
+    await store.t.update('case', gc.id, { last_event_at: new Date(now - 6 * 3600e3).toISOString() }, { id: 'sys', role: 'admin' })
+    await c4.runSweepOnce(now)
+    const cg = pages.filter(p => p.b === 'coverage_gap')
+    assert.equal(cg.length, 1, 'the team is paged once for the coverage gap')
+    assert.equal(cg[0].ref, 'TEAM-COVERAGE', 'the page reads as a team-coverage alert, not a per-case one')
+    // A second sweep with the gap still open does NOT re-page (rising-edge dedup).
+    await c4.runSweepOnce(now)
+    assert.equal(pages.filter(p => p.b === 'coverage_gap').length, 1, 'a persistent gap is not re-paged every sweep')
+  })
+
   await test('observe-mode inbound flags needs-human and fires notifyHandoff exactly once', async () => {
     const { makeCaseHandler } = await import('./src/gateway-hooks.js')
     let handoffs = 0
@@ -2144,6 +2215,51 @@ async function main() {
     clock += 30001
     const r2 = await brain.callLLM({ messages: [{ role: 'user', content: 'x' }] })
     assert.ok(r2 && /real reply/.test(r2.content), 'a resolved backend stays bound and does not re-probe on every call')
+  })
+
+  await test('health reflects completion-path latency: a resolved-but-slow brain reads degraded, a fast turn clears it', async () => {
+    // The "not responding" incident hid behind a false green: /v1/models answered
+    // (source acptoapi -> "online") while every /v1/chat/completions hung 20s+, so
+    // contacts waited minutes with the pill showing online. makeResilientCallLLM now
+    // times the REAL turns it already makes and folds completion health into status(),
+    // so a sustained-slow brain reads degraded. We drive it with a controllable clock:
+    // the backend advances the clock by `turnMs` per call, so each timed turn lands at
+    // a known latency -- no sleeps, no mock framework, just the injection points.
+    let clock = 1000
+    let turnMs = 25000                  // every turn takes 25s -- past the 20s slowMs ceiling
+    const slowUp = async () => { clock += turnMs; return { content: 'slow reply', tool_calls: [] } }
+    const resolve = async () => ({ callLLM: slowUp, source: 'acptoapi', model: 'test/model', url: 'http://x' })
+    const brain = makeResilientCallLLM({ resolve, now: () => clock, intervalMs: 30000, slowMs: 20000, slowWindow: 3 })
+
+    // Before any turn, no completion data -> not degraded (never a false alarm pre-traffic).
+    const s0 = await brain.status()
+    assert.equal(s0.degraded, false, 'with no turns yet the completion path is not yet judged degraded')
+    assert.equal(s0.source, 'acptoapi', 'reachability still reports the resolved provider')
+
+    // Drive the window full of slow turns (3 = slowWindow). Each returns ok but slow,
+    // so once EVERY turn in the window is slow the brain reads degraded -- the operator
+    // can tell "online" from "online but answering nobody".
+    for (let i = 0; i < 3; i++) await brain.callLLM({ messages: [{ role: 'user', content: 'q' + i }] })
+    const sSlow = await brain.status()
+    assert.equal(sSlow.degraded, true, 'a window of all-slow turns reads degraded')
+    assert.ok(sSlow.lastMs >= 20000, 'status carries the last turn latency for the operator (' + sSlow.lastMs + 'ms)')
+    assert.equal(sSlow.source, 'acptoapi', 'degraded is independent of reachability -- the provider still resolves')
+
+    // One fast turn (a recovered provider) clears it: the window is no longer ALL slow.
+    // Conservative by design -- a single slow turn never flips the pill, but a sustained
+    // slow brain does, and one fast turn restores green.
+    turnMs = 1500
+    await brain.callLLM({ messages: [{ role: 'user', content: 'fast' }] })
+    const sFast = await brain.status()
+    assert.equal(sFast.degraded, false, 'one fast turn in the window clears the degraded flag')
+
+    // A throwing/timed-out backend also records an unhealthy turn -- a hanging provider
+    // that never returns ok still surfaces as degraded, not a silent stall.
+    const throwUp = async () => { clock += 5000; throw new Error('provider timed out') }
+    const brain2 = makeResilientCallLLM({ resolve: async () => ({ callLLM: throwUp, source: 'acptoapi', model: 'm', url: 'u' }), now: () => clock, intervalMs: 30000, slowMs: 20000, slowWindow: 3 })
+    for (let i = 0; i < 3; i++) await brain2.callLLM({ messages: [{ role: 'user', content: 'z' }] }).catch(() => {})
+    const sThrow = await brain2.status()
+    assert.equal(sThrow.degraded, true, 'a window of failing turns reads degraded even though each errored fast')
   })
 
   await dash.close()

@@ -406,7 +406,21 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         none: { ok: false, label: 'AI helper: offline', detail: 'Auto-replies are paused. Contacts get a holding message and wait for a person.' },
         unknown: { ok: false, label: 'AI helper: unknown', detail: 'Cannot tell if the AI helper is connected.' },
       }
-      const view = map[s.source] || map.unknown
+      let view = map[s.source] || map.unknown
+      // Completion-path degradation: source resolved (acptoapi) but recent real
+      // turns are slow/failing. Reachability is a false green here -- the brain
+      // answers /v1/models but every turn hangs -- so override the online pill to
+      // a degraded amber so the operator sees "answering, but slowly" not "fine".
+      if (view.ok && s.degraded) {
+        const secs = Number.isFinite(s.lastMs) ? Math.round(s.lastMs / 1000) : null
+        view = {
+          ok: false,
+          label: 'AI helper: slow',
+          detail: secs != null
+            ? `Auto-replies are working but the AI helper is slow (last turn ${secs}s). Contacts may wait. Check the provider.`
+            : 'Auto-replies are working but the AI helper is slow. Contacts may wait. Check the provider.',
+        }
+      }
       // Bound the externally-supplied model/url so a misconfigured or hostile
       // llmStatus cannot return a multi-megabyte string into the operator's UI.
       const model = s.model ? String(s.model).slice(0, 100) : null
@@ -431,7 +445,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
           }
         }
       } catch { gateway = null }   // receive status is best-effort; never break health
-      res.json({ ...view, source: s.source, model, url, gateway })
+      res.json({ ...view, source: s.source, model, url, degraded: !!s.degraded, last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null, gateway })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -916,16 +930,20 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500)
       const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
-      const { total, items } = rankAttention(open, now, { limit, offset })
+      const { total, items, atRisk, slaTargetMs } = rankAttention(open, now, { limit, offset })
       // Recompute the live breach detail per ranked case so the reason is current,
       // not a stale tag snapshot. classifyCaseHealth is the source of detail text.
-      const cases = items.map(({ c, score, reason }) => ({
+      // waitMs is the live SLA clock -- ms the contact has waited on a human reply
+      // (null when nobody owes a reply), so the row can show "waited 18m, target 30m"
+      // without the SPA recomputing it. The header at_risk count is aggregate-only.
+      const cases = items.map(({ c, score, reason, waitMs }) => ({
         id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
         status: c.status, updated_at: c.updated_at || c.created_at,
         assignee: c.assignee || '',
+        wait_ms: waitMs == null ? null : waitMs,
         score, reason, breaches: classifyCaseHealth(c, now, thresholds)
       }))
-      res.json({ count: cases.length, total, limit, offset, cases })
+      res.json({ count: cases.length, total, limit, offset, at_risk: atRisk, sla_target_ms: slaTargetMs, cases })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -1719,6 +1737,11 @@ const PAGE = /* html */ `<!doctype html>
   .help-card li{margin:4px 0}
   .help-card .swatch{display:inline-block;width:9px;height:9px;border-radius:50%;background:#d8a000;vertical-align:middle;margin-right:4px}
   .help-card .foot{font-size:12px;color:var(--faint);margin-top:10px}
+  .skills-list{list-style:none;margin:10px 0;padding:0}
+  .skills-list li{display:flex;align-items:flex-start;gap:8px;margin:8px 0;cursor:pointer;color:var(--fg)}
+  .skills-list li .box{flex:0 0 auto;width:18px;height:18px;border:2px solid var(--border);border-radius:4px;text-align:center;line-height:15px;font-size:12px;color:transparent}
+  .skills-list li.done .box{background:var(--accent,#2f6fb0);border-color:var(--accent,#2f6fb0);color:#fff}
+  .skills-list li.done span.lbl{color:var(--muted);text-decoration:line-through}
   .icon-btn.active{background:var(--accent-soft);color:var(--fg);border-color:var(--accent)}
   .todo{background:var(--accent-soft);border:1px solid var(--border);border-left:3px solid var(--accent);
         border-radius:6px;padding:9px 12px;margin:10px 0 14px;font-size:13px;color:var(--fg);line-height:1.5}
@@ -1862,6 +1885,8 @@ const PAGE = /* html */ `<!doctype html>
         <select id="channelf" title="Filter by channel"><option value="">all channels</option></select>
         <select id="sourcef" title="Filter by intake source"><option value="">all sources</option><option value="manual">Manual (operator)</option><option value="channel">Channel (AI)</option><option value="public_form">Public form</option></select>
         <button class="icon-btn" id="mine-btn" title="Show only the cases you have claimed (pick who you are first, top-right)">Mine</button>
+        <select id="viewsf" title="Saved views: a named bundle of your current filters. Pick one to apply, or Save view to keep the current set."><option value="">saved views</option></select>
+        <button class="icon-btn" id="view-save" title="Save the current filters (search, stage, channel, source, Mine, Focus) as a named view you can return to or share by link">Save view</button>
       </div>
     </div>
     <div class="stats-panel" id="stats-panel">
@@ -1999,6 +2024,15 @@ const PAGE = /* html */ `<!doctype html>
     </ol>
     <button id="onboard-close">Start working</button>
     <p class="foot">You can see this again from the <b>?</b> help, under "Show me the quick start again".</p>
+  </div>
+</div>
+<div class="help-ovl" id="skills-ovl">
+  <div class="help-card">
+    <h2>Getting the hang of it</h2>
+    <p class="lead">A short checklist of the three moves that make a shift fast. Tick each one as you learn it -- this is just for you, kept on this device, and it will not nag you again once you finish or close it.</p>
+    <ul id="skills-list" class="skills-list"></ul>
+    <button id="skills-close">Close</button>
+    <p class="foot">Reopen this any time from the <b>?</b> help.</p>
   </div>
 </div>
 <div id="toasts"></div>
@@ -2805,8 +2839,43 @@ $('#onboard-close').onclick = hideOnboard
 $('#onboard-ovl').addEventListener('click', e=>{ if(e.target===$('#onboard-ovl')) hideOnboard() })
 // "Show me again" from inside the help card: close help, reopen the quick start.
 const _onboardAgain=$('#onboard-again'); if(_onboardAgain) _onboardAgain.onclick=()=>{ hideHelp(); showOnboard() }
+// --- per-operator skills checklist -------------------------------------------
+// Distinct from the one-per-browser quick start: this tracks, PER OPERATOR, whether
+// they have learned the three shift-speed moves. State is a localStorage map keyed
+// by operator id (or a "default" bucket before anyone is picked) so a shared
+// machine does not leak one person's progress onto the next. Dismissed or fully
+// ticked, it does not reappear. ASCII only; client-only; no server state.
+const SKILLS = [
+  { id:'keys', label:'Keyboard triage: j and k move through the list, Enter opens, c claims, e jumps to the reply box.' },
+  { id:'mine', label:'The Mine filter shows only the cases you have claimed -- pick who you are top-right, then press Mine.' },
+  { id:'draft', label:'In assisted mode a reply waits as a draft until you approve it -- open the case and use Send draft or Discard.' },
+]
+function skillsKey(){ return 'casey_skills_'+(selectedOperator||'default') }
+function loadSkills(){ try{ const o=JSON.parse(localStorage.getItem(skillsKey())||'{}'); return (o&&typeof o==='object')?o:{} }catch{ return {} } }
+function saveSkills(o){ try{ localStorage.setItem(skillsKey(), JSON.stringify(o)) }catch{} }
+function skillsDone(o){ return SKILLS.every(s=>o[s.id]) }
+function skillsDismissed(){ return loadSkills().__dismissed===true }
+function renderSkills(){
+  const o=loadSkills(); const ul=$('#skills-list'); if(!ul) return
+  ul.innerHTML=SKILLS.map(s=>'<li data-id="'+esc(s.id)+'"'+(o[s.id]?' class="done"':'')+'><span class="box">'+(o[s.id]?'x':'')+'</span><span class="lbl">'+esc(s.label)+'</span></li>').join('')
+  ul.querySelectorAll('li').forEach(li=>li.onclick=()=>{
+    const m=loadSkills(); const id=li.dataset.id; m[id]=!m[id]; saveSkills(m); renderSkills()
+    if(skillsDone(loadSkills())) toast('Nice -- you have got the three core moves.','ok')
+  })
+}
+function showSkills(){ renderSkills(); $('#skills-ovl').classList.add('show') }
+function hideSkills(){ $('#skills-ovl').classList.remove('show'); const m=loadSkills(); m.__dismissed=true; saveSkills(m) }
+const _skClose=$('#skills-close'); if(_skClose) _skClose.onclick=hideSkills
+const _skOvl=$('#skills-ovl'); if(_skOvl) _skOvl.addEventListener('click', e=>{ if(e.target===_skOvl) hideSkills() })
+// Surface for the witness harness.
+window.__caseySkills = { SKILLS, skillsKey, loadSkills, saveSkills, skillsDone, skillsDismissed, renderSkills, showSkills, hideSkills }
+
 // On a brand-new browser show the quick start; otherwise leave help to the ? button.
-if(!onboarded()){ showOnboard() } else if(!helpSeen()){ showHelp() }
+// Once the quick start is done, a fresh operator who has not finished or dismissed
+// the skills checklist sees it next (never both at once).
+if(!onboarded()){ showOnboard() }
+else if(!skillsDismissed() && !skillsDone(loadSkills())){ showSkills() }
+else if(!helpSeen()){ showHelp() }
 // --- filters ---
 let qTimer
 $('#q').addEventListener('input',e=>{ clearTimeout(qTimer); qTimer=setTimeout(()=>{ filt.q=e.target.value; lastCasesJson=''; loadCases() },300) })
@@ -2817,7 +2886,7 @@ document.addEventListener('keydown',e=>{
   const typing=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)
   if(e.key==='n' && !typing){ e.preventDefault(); openIntakeForm(null); return }
   if(e.key==='/' && !typing){ e.preventDefault(); $('#q').focus(); return }
-  if(e.key==='Escape'){ const bk=$('#back'); if($('#onboard-ovl').classList.contains('show')){hideOnboard()} else if(helpOpen){hideHelp()} else if(typing){document.activeElement.blur()} else if(bk&&$('#wrap').classList.contains('detail-open')){bk.click()} else if($('#q').value){filt.q='';$('#q').value='';renderListFull()} return }
+  if(e.key==='Escape'){ const bk=$('#back'); if($('#onboard-ovl').classList.contains('show')){hideOnboard()} else if($('#skills-ovl').classList.contains('show')){hideSkills()} else if(helpOpen){hideHelp()} else if(typing){document.activeElement.blur()} else if(bk&&$('#wrap').classList.contains('detail-open')){bk.click()} else if($('#q').value){filt.q='';$('#q').value='';renderListFull()} return }
   if(e.key==='?' && !typing){ e.preventDefault(); helpOpen?hideHelp():showHelp(); return }
   if(typing) return
   if(e.key==='j'||e.key==='k'||e.key==='ArrowDown'||e.key==='ArrowUp'){
@@ -2926,6 +2995,75 @@ function fillChannelFilter(){
 }
 $('#channelf').addEventListener('change',e=>{ filt.channel=e.target.value; lastCasesJson=''; loadCases() })
 $('#sourcef').addEventListener('change',e=>{ filt.source=e.target.value; renderListFull(); renderTriage() })
+
+// --- saved views: a named bundle of the current filter set ---------------------
+// A "view" is just the operator's filters captured as plain data: search text,
+// stage, channel, source, the Mine toggle, and Focus mode. We keep it client-only
+// (no server state) and encode it two ways: a base64url 'view=' segment of the URL
+// hash so a view is shareable by link (building on the existing #inbox/#case hash
+// pattern, and never carrying the ?token= secret since that lives in the query
+// string), and a small named-view map in localStorage so an operator's own views
+// survive a reload. No external_id is ever part of a view -- only filter knobs.
+function currentView(){ return { q: filt.q||'', status: filt.status||'', channel: filt.channel||'', source: filt.source||'', mine: !!mineOnly, focus: !!inboxMode } }
+function encodeView(v){ try{ return btoa(unescape(encodeURIComponent(JSON.stringify(v)))).replace(/=+$/,'').replace(/\\+/g,'-').replace(/\\//g,'_') }catch{ return '' } }
+function decodeView(s){ try{ const b=s.replace(/-/g,'+').replace(/_/g,'/'); const o=JSON.parse(decodeURIComponent(escape(atob(b)))); return (o&&typeof o==='object')?o:null }catch{ return null } }
+// Apply a view object to the live filter state + controls, then reload the list.
+function applyView(v){
+  if(!v||typeof v!=='object') return
+  filt.q=String(v.q||''); const qel=$('#q'); if(qel) qel.value=filt.q
+  filt.status=String(v.status||''); const sel=$('#statusf'); if(sel) sel.value=filt.status
+  filt.channel=String(v.channel||''); const cel=$('#channelf'); if(cel) cel.value=filt.channel
+  filt.source=String(v.source||''); const oel=$('#sourcef'); if(oel) oel.value=filt.source
+  setMineOnly(!!v.mine)
+  setInboxMode(!!v.focus)
+  lastCasesJson=''; loadCases()
+}
+// Write the active view into the hash (preserving any #case= deep-link segment).
+function viewToHash(v){
+  const enc=encodeView(v); if(!enc) return
+  const parts=(location.hash||'').replace(/^#/,'').split('&').filter(p=>p&&!p.startsWith('view='))
+  parts.unshift('view='+enc)
+  const want='#'+parts.join('&')
+  if(location.hash!==want) history.replaceState(null,'',location.pathname+location.search+want)
+}
+function viewFromHash(){ const m=/(?:^|[#&])view=([^&]+)/.exec(location.hash||''); return m?decodeView(m[1]):null }
+// Named views persisted per browser. Map of name -> view object.
+function loadNamedViews(){ try{ const o=JSON.parse(localStorage.casey_views||'{}'); return (o&&typeof o==='object')?o:{} }catch{ return {} } }
+function saveNamedViews(m){ try{ localStorage.casey_views=JSON.stringify(m) }catch{} }
+function refreshViewsDropdown(){
+  const sel=$('#viewsf'); if(!sel) return
+  const m=loadNamedViews(); const names=Object.keys(m).sort()
+  sel.innerHTML='<option value="">saved views</option>'+names.map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join('')+(names.length?'<option value="__del__">-- delete a view...</option>':'')
+}
+function saveCurrentView(){
+  const name=(prompt('Name this view (e.g. "my urgent", "Musina handoffs"):')||'').trim()
+  if(!name) return
+  if(name.length>60){ toast('That name is too long.','err'); return }
+  const m=loadNamedViews(); m[name]=currentView(); saveNamedViews(m); refreshViewsDropdown()
+  const sel=$('#viewsf'); if(sel) sel.value=name
+  viewToHash(currentView())
+  toast('Saved view "'+name+'"','ok')
+}
+{
+  const sel=$('#viewsf'); const btn=$('#view-save')
+  if(btn) btn.onclick=saveCurrentView
+  if(sel) sel.onchange=()=>{
+    const v=sel.value
+    if(v==='__del__'){
+      const m=loadNamedViews(); const names=Object.keys(m).sort()
+      const name=(prompt('Delete which view? '+names.join(', '))||'').trim()
+      if(name&&m[name]){ delete m[name]; saveNamedViews(m); toast('Deleted view "'+name+'"','ok') }
+      refreshViewsDropdown(); return
+    }
+    if(!v){ return }
+    const m=loadNamedViews(); if(m[v]){ applyView(m[v]); viewToHash(m[v]) }
+  }
+  refreshViewsDropdown()
+}
+// Expose for the browser-witness harness: it asserts a hash-encoded view restores
+// the full filter set after a reload.
+window.__caseyViews = { currentView, encodeView, decodeView, applyView, viewToHash, viewFromHash }
+
 let mineOnly = false
 // True when the case is owned by the operator currently signed in (top-right
 // picker). The agent/unclaimed pseudo-owner is never "mine".
@@ -3701,6 +3839,15 @@ function setInboxMode(on){
   if(!inboxMode && !allCases.length) loadCases()
 }
 async function boot(){
+  // A shared '#view=' link restores its full filter set before the first list
+  // load, so the case list arrives already filtered (no flash of all-cases).
+  const hv=viewFromHash()
+  if(hv){
+    filt.q=String(hv.q||''); const qel=$('#q'); if(qel) qel.value=filt.q
+    filt.status=String(hv.status||''); filt.channel=String(hv.channel||''); filt.source=String(hv.source||'')
+    mineOnly=!!hv.mine; const mb=$('#mine-btn'); if(mb) mb.classList.toggle('active',mineOnly)
+    inboxMode=!!hv.focus
+  }
   applyInboxMode()
   // In focus mode skip the heavy ~200-row case poll entirely; the ranked
   // attention list is the whole screen and comes from /api/attention.

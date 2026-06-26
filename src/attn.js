@@ -13,12 +13,23 @@ function tagList(c) {
   return String(c?.tags || '').split(',').map(t => t.trim()).filter(Boolean)
 }
 
+// Normalize a timestamp to epoch ms, or NaN when unknown. thatcher persists
+// updated_at/created_at as unix-SECONDS (a number), while the dashboard and tests
+// pass ISO strings; both must yield the same epoch ms or the live age/SLA clock
+// silently reads 0 for every real case (a number fed to Date.parse coerces to a
+// string and returns NaN). Mirrors case-health.js ms() so the two surfaces agree.
+function tsMs(raw) {
+  if (raw == null || raw === '') return NaN
+  if (typeof raw === 'number') return raw < 1e12 ? raw * 1000 : raw   // seconds -> ms
+  const t = Date.parse(raw)
+  return Number.isNaN(t) ? NaN : t
+}
+
 // Age in hours from the last-touch timestamp, relative to `now`. Tolerates a
 // missing/corrupt timestamp (returns 0 -- a brand-new or unparseable case is not
 // "old"), so a bad row never throws mid-sort.
 function ageHours(c, now) {
-  const raw = c?.updated_at || c?.created_at
-  const t = raw ? Date.parse(raw) : NaN
+  const t = tsMs(c?.updated_at || c?.created_at)
   if (!Number.isFinite(t) || !Number.isFinite(now)) return 0
   const h = (now - t) / 3.6e6
   return h > 0 ? h : 0
@@ -26,8 +37,7 @@ function ageHours(c, now) {
 
 // Last-touch epoch ms, for the recency tiebreak. 0 when unparseable.
 function touchMs(c) {
-  const raw = c?.updated_at || c?.created_at
-  const t = raw ? Date.parse(raw) : NaN
+  const t = tsMs(c?.updated_at || c?.created_at)
   return Number.isFinite(t) ? t : 0
 }
 
@@ -40,6 +50,47 @@ function snoozedUntil(c) {
     }
   }
   return null
+}
+
+// A case is "waiting on us" -- the contact has spoken and is now awaiting a human
+// reply -- when status is `waiting`, or a tag marks an unanswered ask (needs-human,
+// either handoff tier, or a draft sitting unsent). For those, the SLA clock is real:
+// the contact is counting the minutes. A case casey is actively handling (auto, no
+// such tag) is NOT waiting on us, so it has no SLA clock (returns null) rather than a
+// misleading "waited 40m" when no one owes a reply.
+const WAITING_TAGS = ['needs-human', 'health:unanswered_handoff', 'health:unanswered_handoff_escalated', 'unsent_draft', 'health:unsent_draft', 'draft-pending']
+function waitingOnUs(c) {
+  if (!c) return false
+  if (c.status === 'resolved' || c.status === 'closed') return false
+  const tags = tagList(c)
+  if (tags.includes('opted-out')) return false
+  if (c.status === 'waiting') return true
+  return WAITING_TAGS.some(t => tags.includes(t))
+}
+
+// Milliseconds the contact has been waiting on a human reply, from the last touch.
+// null when the case is not waiting on us (no SLA clock to show) or the timestamp is
+// unparseable. Pure (case, now) like the rest of this module -- the last-touch epoch
+// stands in for last-inbound, which is correct here because an inbound IS a touch and
+// a case waiting-on-us has had no outbound since (an operator reply clears the wait
+// state). A negative/zero age clamps to 0.
+function waitAgeMs(c, now = Date.now()) {
+  if (!waitingOnUs(c)) return null
+  const t = touchMs(c)
+  if (!t || !Number.isFinite(now)) return null
+  const d = now - t
+  return d > 0 ? d : 0
+}
+
+// How many open cases have been waiting on a human past the SLA target (default
+// 30 min). Aggregate-only -- a single count for the team header, no per-contact rows.
+function atRiskCount(cases, now = Date.now(), targetMs = 30 * 60 * 1000) {
+  let n = 0
+  for (const c of cases || []) {
+    const w = waitAgeMs(c, now)
+    if (w != null && w >= targetMs) n++
+  }
+  return n
 }
 
 // attnScore: 0 means "no human action needed" (hidden from the inbox).
@@ -123,14 +174,17 @@ function todoHint(c, now = Date.now()) { return caseHints(c, now).todo }
 // Rank a set of cases worst-first. Returns [{ c, score, reason }] for cases that
 // need attention (score > 0), sorted by score then recency. `cases` should be the
 // open pool; closed/resolved score 0 and drop out anyway.
-function rankAttention(cases, now = Date.now(), { limit = 0, offset = 0 } = {}) {
+function rankAttention(cases, now = Date.now(), { limit = 0, offset = 0, slaTargetMs = 30 * 60 * 1000 } = {}) {
   const ranked = (cases || [])
-    .map(c => ({ c, score: attnScore(c, now), reason: attnReason(c) }))
+    .map(c => ({ c, score: attnScore(c, now), reason: attnReason(c), waitMs: waitAgeMs(c, now) }))
     .filter(x => x.score > 0)
     .sort((a, b) => b.score - a.score || touchMs(b.c) - touchMs(a.c))
   const total = ranked.length
+  // Aggregate at-risk count over the WHOLE open pool, not just the page slice, so the
+  // team header is honest even when the operator is paging through the list.
+  const atRisk = atRiskCount(cases, now, slaTargetMs)
   const sliced = limit > 0 ? ranked.slice(offset, offset + limit) : ranked.slice(offset)
-  return { total, items: sliced }
+  return { total, items: sliced, atRisk, slaTargetMs }
 }
 
-export { attnScore, attnReason, todoHint, caseHints, rankAttention, tagList, ageHours, touchMs, snoozedUntil }
+export { attnScore, attnReason, todoHint, caseHints, rankAttention, tagList, ageHours, touchMs, snoozedUntil, waitingOnUs, waitAgeMs, atRiskCount }

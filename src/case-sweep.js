@@ -16,6 +16,56 @@ import { classifyCaseHealth, healthTag, ALL_HEALTH_TAGS, DEFAULT_THRESHOLDS } fr
 
 const HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
+// Normalize a thatcher/ISO timestamp to epoch ms (thatcher persists unix-seconds as
+// a number; events/ISO strings parse directly). Mirrors attn.js tsMs/case-health.js
+// ms so every surface reads the same epoch. NaN when unknown.
+function tsMs(raw) {
+  if (raw == null || raw === '') return NaN
+  if (typeof raw === 'number') return raw < 1e12 ? raw * 1000 : raw
+  const t = Date.parse(raw)
+  return Number.isNaN(t) ? NaN : t
+}
+
+// Coverage gap: a TEAM-level signal distinct from a per-case breach. The per-case
+// path pages when one case breaches; this fires when the WHOLE roster is idle while
+// breaches pile up -- nobody is covering, so the team-lead must be paged even though
+// each individual case is already (separately) flagged. The condition is deliberately
+// conservative: at least one open case carries a health:* breach tag AND zero operator
+// replies (outbound, actor=operator) landed anywhere in the coverage window. A roster
+// of zero is treated as "no one is expected to cover", so an unstaffed deployment does
+// not page on every quiet hour -- the gap needs someone who SHOULD be replying.
+// "Replies-in-window" counts operator outbound ON THE BREACHING CASES ONLY: a reply to
+// some unrelated open case is not the team covering the breaches that are piling up, so
+// only a reply touching a flagged case clears the gap.
+// Pure (inputs, now): the caller owns the page + the once-only dedup.
+function detectCoverageGap(cases, eventsByCaseId, roster = [], now = Date.now(), { windowMs = 60 * 60 * 1000 } = {}) {
+  const get = id => (eventsByCaseId?.get?.(id)) || (eventsByCaseId ? eventsByCaseId[id] : null) || []
+  let openBreaches = 0
+  let repliesInWindow = 0
+  const windowStart = now - windowMs
+  for (const c of cases || []) {
+    if (c.status === 'closed' || c.status === 'resolved') continue
+    const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
+    if (!tags.some(t => HEALTH_SET.has(t))) continue   // only breaching cases bear on the gap
+    openBreaches++
+    for (const e of get(c.id)) {
+      if (e.kind === 'outbound' && e.actor === 'operator') {
+        const m = tsMs(e.created_at ?? e.ts)
+        if (Number.isFinite(m) && m >= windowStart) repliesInWindow++
+      }
+    }
+  }
+  const rosterSize = Array.isArray(roster) ? roster.length : 0
+  const gap = rosterSize > 0 && openBreaches > 0 && repliesInWindow === 0
+  return {
+    gap, open_breaches: openBreaches, replies_in_window: repliesInWindow,
+    roster_size: rosterSize, window_ms: windowMs,
+    reason: gap
+      ? `${openBreaches} open case(s) need attention and no one on the team of ${rosterSize} has replied in the last ${Math.round(windowMs / 60000)} minutes`
+      : '',
+  }
+}
+
 // Run one full pass. Pure-ish: all mutation goes through the store, `now` is
 // injected. Returns a summary { scanned, flagged, cleared, breaches:{type:count} }.
 export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_THRESHOLDS, { log = null, notifyBreach = null } = {}) {
@@ -80,3 +130,5 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
   log?.info?.('[sweep] pass complete', summary)
   return summary
 }
+
+export { detectCoverageGap }
