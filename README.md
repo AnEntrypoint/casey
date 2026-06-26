@@ -132,7 +132,9 @@ The dashboard is the whole operator surface -- one page, no build step:
 - **"Needs you now" inbox (top of the list):** a ranked, plain-worded queue of just the cases that
   need a person now -- someone asked for a human, a case casey will not auto-answer, or a request stuck
   waiting over a day. Each row leads with the reason; opting-out contacts are never listed. It reads
-  "All caught up" when there is nothing to do.
+  "All caught up" when there is nothing to do. The **Focus** button (or a `#inbox`
+  link) collapses the page to just this ranked list and lightens background
+  polling -- a phone-friendly, single-column triage view; tap a row to open it.
 - **Case list (left):** every case, with a priority badge, last-activity time, and an amber dot on
   cases that need a human (autonomy `observe`/`assisted`, or someone who asked for a person). A live
   **search** box (press `/`) filters by ref/subject/summary/contact, and a **stage** dropdown filters

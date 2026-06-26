@@ -25,6 +25,12 @@
   send-failure observation instead of being silently lost.
 
 ### Added
+- Focus mode: a "Focus" header button (and the `#inbox` deep-link hash) collapses
+  the dashboard to only the ranked "Needs you now" list, hides the filters, bulk
+  bar and full case list, skips the heavy ~200-row case poll at load, and quiets
+  the 5s list poll so a phone runs only the cheap attention poll plus health.
+  Case detail still opens on tap; the mode survives reload and preserves any
+  open-case hash alongside it.
 - Deterministic field capture every turn (`src/extract.js`). The production model
   is a small local model that does not reliably call the `case_report` tool, so a
   real conversation would log an empty case. casey now runs `extractFields` on
