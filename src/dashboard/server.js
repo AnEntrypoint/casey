@@ -1619,6 +1619,16 @@ const PAGE = /* html */ `<!doctype html>
   .ho-ref{font-weight:700;cursor:pointer;color:var(--accent)}
   .ho-sub{color:var(--fg)}
   .ho-why{color:var(--muted)}
+  .bulk-bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 8px;border-bottom:1px solid var(--border);background:var(--bg2)}
+  .bulk-bar .bulk-all{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);margin:0}
+  .bulk-bar input[type=checkbox]{width:auto;margin:0}
+  .bulk-bar select{width:auto;font-size:12px;padding:4px 6px;margin:0}
+  .case{display:flex;align-items:flex-start;gap:6px}
+  .case .case-body{flex:1;min-width:0;cursor:pointer}
+  .case-cb{width:auto;margin:4px 0 0;flex:0 0 auto}
+  .case.selected{background:var(--bg2);box-shadow:inset 3px 0 0 var(--accent)}
+  .undo-toast{display:flex;align-items:center;gap:10px}
+  .undo-toast .undo-btn{margin:0;padding:3px 10px;font-size:12px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4)}
   .ev .k{display:inline-block;min-width:120px;color:#8aa0c0;font-size:11px}
   label{display:block;margin:8px 0 2px;font-size:12px;color:var(--muted)}
   .hint{font-size:11px;color:var(--faint);margin:2px 0 0}
@@ -1829,6 +1839,15 @@ const PAGE = /* html */ `<!doctype html>
       <div id="offline-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
     </div>
     <div class="triage" id="triage"></div>
+    <div class="bulk-bar" id="bulk-bar" style="display:none">
+      <label class="bulk-all"><input type="checkbox" id="bulk-all"> <span id="bulk-count">0 selected</span></label>
+      <button class="icon-btn" id="bulk-claim">Claim</button>
+      <select id="bulk-stage" title="Move selected to a stage"><option value="">Move to...</option></select>
+      <button class="icon-btn" id="bulk-tag">Tag</button>
+      <button class="icon-btn" id="bulk-untag">Untag</button>
+      <button class="icon-btn" id="bulk-note">Note</button>
+      <button class="icon-btn" id="bulk-clear" title="Clear selection">Clear</button>
+    </div>
     <div class="caselist" id="cases"><div class="empty">Loading cases...</div></div>
   </div>
   <div class="detail" id="detail"><p class="empty">Select a case to observe, edit, reply, or override its workflow stage.</p></div>
@@ -2000,6 +2019,53 @@ function toast(msg,kind='ok'){
   return el
 }
 async function failMsg(r,fallback){ try{return (await r.json()).error||fallback}catch{return fallback} }
+// ~15s actionable Undo toast after a reversible operator action (transition /
+// claim / snooze). The server picks the most-recent undoable action itself, so the
+// client only needs to POST /undo within the window; we do NOT track which action.
+// A sent reply is NOT reversible -- replyUndoToast handles that separately.
+function undoToast(id,label){
+  const el=document.createElement('div'); el.className='toast ok undo-toast'
+  const span=document.createElement('span'); span.textContent=label||'Done.'
+  const btn=document.createElement('button'); btn.className='undo-btn'; btn.textContent='Undo'
+  el.appendChild(span); el.appendChild(btn)
+  $('#toasts').appendChild(el)
+  let done=false
+  const dismiss=()=>{ if(!el.parentNode) return; el.remove() }
+  btn.onclick=async()=>{
+    if(done) return; done=true; btn.disabled=true
+    try{
+      const r=await api('/api/cases/'+encodeURIComponent(id)+'/undo',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})
+      if(r.ok){ const j=await r.json().catch(()=>({})); toast(j.summary?('Undone -- '+j.summary):'Undone','ok'); lastCasesJson=''; await loadCases(); if(activeId===id) await openCase(id); refreshAttention() }
+      else toast(await failMsg(r,'Nothing to undo (the window may have passed)'),'err')
+    }catch(e){ toast('Undo error: '+e.message,'err') }
+    dismiss()
+  }
+  setTimeout(dismiss,15000)
+  return el
+}
+// A sent reply cannot be unsent (the contact already saw it). 'Undo' degrades to
+// queuing a 'disregard my last message' correction and re-flagging needs-human so a
+// person revisits it -- never a silent rewrite of what the contact received.
+function replyUndoToast(id,channel){
+  const el=document.createElement('div'); el.className='toast ok undo-toast'
+  const span=document.createElement('span'); span.textContent='Reply sent.'
+  const btn=document.createElement('button'); btn.className='undo-btn'; btn.textContent='Take it back'
+  el.appendChild(span); el.appendChild(btn)
+  $('#toasts').appendChild(el)
+  let done=false
+  btn.onclick=async()=>{
+    if(done) return; done=true; btn.disabled=true
+    const correction='Sorry, please disregard my last message.'
+    try{
+      const r=await api('/api/cases/'+encodeURIComponent(id)+'/reply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:correction})})
+      if(r.ok){ await api('/api/cases/bulk',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ids:[id],action:'tag',tag:'needs-human'})}).catch(()=>{}); toast('Sent a correction and flagged this for a person -- a reply cannot be unsent.','ok'); lastCasesJson=''; await loadCases(); if(activeId===id) await openCase(id) }
+      else toast(await failMsg(r,'Could not send the correction'),'err')
+    }catch(e){ toast('Correction error: '+e.message,'err') }
+    el.remove()
+  }
+  setTimeout(()=>el.remove(),15000)
+  return el
+}
 // --- relative time, absolute on hover ---
 function toDate(v){ if(v==null||v==='')return null
   const d=(typeof v==='number'||/^\\d+$/.test(String(v)))?new Date(Number(v)*1000):new Date(v); return isNaN(d)?null:d }
@@ -2399,7 +2465,7 @@ async function openCase(id){
     claimBtn.disabled=true
     try{
       const r=await api('/api/cases/bulk',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[id],action:'claim'})})
-      if(r.ok){ toast('Claimed -- this one is yours now','ok'); openCase(id); refreshAttention() }
+      if(r.ok){ undoToast(id,'Claimed -- this one is yours now'); openCase(id); refreshAttention() }
       else{ claimBtn.disabled=false; toast('Could not claim this case','warn') }
     }catch(e){ claimBtn.disabled=false; toast('Claim error: '+e.message,'warn') }
   }
@@ -2476,7 +2542,9 @@ async function openCase(id){
     btn.disabled=false; editing=false
     if(!r.ok){ toast(await failMsg(r,'send failed'),'err'); return }
     const j=await r.json().catch(()=>({})); ta.value=''
-    toast(j.delivered?'reply sent':(j.sent?'reply sent but it did not reach the contact - check the timeline':'reply logged (channel not connected)'),'ok'); await openCase(id)
+    if(j.delivered) replyUndoToast(id,c.channel)
+    else toast(j.sent?'reply sent but it did not reach the contact - check the timeline':'reply logged (channel not connected)','ok')
+    await openCase(id)
   }
   $('#send-reply').onclick = send
   $('#f-reply').addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); send() } })
@@ -2548,7 +2616,7 @@ async function openCase(id){
     if(!r.ok){ toast(await failMsg(r,'transition failed'),'err'); return }
     const updated = await r.json().catch(()=>({}))
     const NOTIFIED=['in_progress','waiting','resolved']
-    toast(NOTIFIED.includes(updated.status)?'Moved to '+toLabel+'. A short note was queued to the contact.':'Moved to '+toLabel+'. The contact was not told.','ok')
+    undoToast(id,NOTIFIED.includes(updated.status)?'Moved to '+toLabel+'. A short note was queued to the contact.':'Moved to '+toLabel+'. The contact was not told.')
     lastCasesJson=''; await loadCases(); await openCase(id)
   })
   renderListFull(); renderTriage()              // reflect the new active row in both lists
@@ -2749,13 +2817,42 @@ function renderListFull(){
   if(!allCases.length){ $('#cases').innerHTML='<div class="empty">No cases yet.<br>Run <code>casey sim</code> or connect a channel to create one.</div>'; return }
   if(!shown.length){ $('#cases').innerHTML='<div class="empty">No cases match your filter.</div>'; return }
   $('#cases').innerHTML = shown.map(c=>\`
-    <div class="case \${c.id===activeId?'active':''}" data-id="\${esc(c.id)}">
+    <div class="case \${c.id===activeId?'active':''}\${selectedIds.has(c.id)?' selected':''}" data-id="\${esc(c.id)}">
+      <input type="checkbox" class="case-cb" data-id="\${esc(c.id)}" title="Select for a bulk action"\${selectedIds.has(c.id)?' checked':''}>
+      <div class="case-body">
       <div class="top">\${attn(c)?'<span class="dot attn" title="needs attention (autonomy: '+esc(c.autonomy)+')"></span>':''}
         <span class="ref">\${esc(c.ref)}</span><span class="badge \${esc(c.priority)}">\${esc(c.priority)}</span>
+        \${c.assignee&&c.assignee!=='agent'?'<span class="owner-chip'+(c.assignee===selectedOperator?' mine':'')+'">'+(c.assignee===selectedOperator?'you':esc(c.assignee))+'</span>':''}
         <span class="when" style="margin-left:auto" title="\${esc(fmtTime(c.updated_at||c.created_at))}">\${esc(rel(c.updated_at||c.created_at))}</span></div>
       <div class="sub">\${(()=>{ const tg=tagList(c); if(tg.includes('intake_mode:manual')) return '<span class="src-tag src-manual" style="font-size:10px;padding:1px 6px">Manual</span> '; if(tg.includes('intake_mode:public_form')) return '<span class="src-tag src-both" style="font-size:10px;padding:1px 6px">Form</span> '; if(tg.includes('intake_mode:channel')) return '<span class="src-tag src-ai" style="font-size:10px;padding:1px 6px">AI</span> '; return '' })()\}\${esc(c.channel)} - \${esc(stageLabel(c.status))} - \${esc(c.subject||'(no subject)')}\${c.fill_rate?fillPill(c.fill_rate):''}</div>
+      </div>
     </div>\`).join('')
-  document.querySelectorAll('.case').forEach(el=>el.onclick=()=>openCase(el.dataset.id))
+  document.querySelectorAll('.case .case-body').forEach(el=>el.onclick=()=>openCase(el.parentNode.dataset.id))
+  document.querySelectorAll('.case-cb').forEach(cb=>cb.onclick=e=>{ e.stopPropagation(); toggleSelect(cb.dataset.id,cb.checked) })
+  syncBulkBar()
+}
+// --- bulk selection state + toolbar ---
+const selectedIds=new Set()
+function toggleSelect(id,on){ if(on) selectedIds.add(id); else selectedIds.delete(id); const row=document.querySelector('.case[data-id="'+(window.CSS&&CSS.escape?CSS.escape(id):id)+'"]'); if(row) row.classList.toggle('selected',on); syncBulkBar() }
+function clearSelection(){ selectedIds.clear(); document.querySelectorAll('.case-cb').forEach(cb=>cb.checked=false); document.querySelectorAll('.case.selected').forEach(r=>r.classList.remove('selected')); syncBulkBar() }
+function syncBulkBar(){
+  const bar=$('#bulk-bar'); if(!bar) return
+  const n=selectedIds.size
+  bar.style.display = n>0 ? 'flex' : 'none'
+  const cnt=$('#bulk-count'); if(cnt) cnt.textContent = n+' selected'
+  const all=$('#bulk-all'); if(all){ const shownIds=allCases.filter(matchesFull).map(c=>c.id); all.checked = shownIds.length>0 && shownIds.every(id=>selectedIds.has(id)) }
+}
+async function bulkAction(action,extra){
+  const ids=[...selectedIds]; if(!ids.length) return
+  if(action==='claim' && !selectedOperator){ toast('Pick who you are first (top-right) so claims are recorded against you.','warn'); return }
+  try{
+    const r=await api('/api/cases/bulk',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(Object.assign({ids,action},extra||{}))})
+    if(!r.ok){ toast(await failMsg(r,'bulk action failed'),'err'); return }
+    const j=await r.json().catch(()=>({}))
+    const verb={claim:'claimed',transition:'moved',tag:'tagged',untag:'untagged',note:'noted'}[action]||action
+    toast(verb+' '+(j.ok||0)+(j.failed?(', '+j.failed+' could not be '+verb):''), j.failed?'warn':'ok')
+    clearSelection(); lastCasesJson=''; await loadCases(); refreshAttention()
+  }catch(e){ toast('Bulk error: '+e.message,'err') }
 }
 filt.channel = ''
 filt.source = ''
@@ -3326,6 +3423,19 @@ async function loadOffline(){
   }catch(e){ body.innerHTML='<div class="empty">Offline-queue error: '+esc(e.message)+'</div>' }
 }
 panelToggle('#offline-btn','#offline-panel',loadOffline)
+// --- bulk toolbar wiring ---
+;(function wireBulk(){
+  const stageSel=$('#bulk-stage')
+  if(stageSel){ stageSel.innerHTML='<option value="">Move to...</option>'+['new','triaging','in_progress','waiting','resolved','closed'].map(s=>'<option value="'+s+'">'+esc(STAGE_LABEL[s]||s)+'</option>').join('') }
+  const all=$('#bulk-all')
+  if(all) all.onclick=()=>{ const shown=allCases.filter(matchesFull); if(all.checked) shown.forEach(c=>selectedIds.add(c.id)); else shown.forEach(c=>selectedIds.delete(c.id)); renderListFull() }
+  const claim=$('#bulk-claim'); if(claim) claim.onclick=()=>bulkAction('claim')
+  if(stageSel) stageSel.onchange=()=>{ const to=stageSel.value; if(!to) return; bulkAction('transition',{to}); stageSel.value='' }
+  const tag=$('#bulk-tag'); if(tag) tag.onclick=async()=>{ const dlg=await showDialog({title:'Tag selected cases',inputLabel:'Tag to add',inputPlaceholder:'e.g. follow-up',confirmLabel:'Add tag'}); if(dlg&&dlg.value.trim()) bulkAction('tag',{tag:dlg.value.trim()}) }
+  const untag=$('#bulk-untag'); if(untag) untag.onclick=async()=>{ const dlg=await showDialog({title:'Untag selected cases',inputLabel:'Tag to remove',inputPlaceholder:'e.g. follow-up',confirmLabel:'Remove tag'}); if(dlg&&dlg.value.trim()) bulkAction('untag',{tag:dlg.value.trim()}) }
+  const note=$('#bulk-note'); if(note) note.onclick=async()=>{ const dlg=await showDialog({title:'Add a note to selected cases',inputLabel:'Note',inputPlaceholder:'Visible on each timeline',confirmLabel:'Add note'}); if(dlg&&dlg.value.trim()) bulkAction('note',{text:dlg.value.trim()}) }
+  const clr=$('#bulk-clear'); if(clr) clr.onclick=clearSelection
+})()
 // --- operator picker (cooperative attribution) ---
 async function initOperatorPicker(){
   const sel=$('#op-picker'); if(!sel) return
@@ -3426,7 +3536,7 @@ async function boot(){
 }
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000); const _attnIv = setInterval(refreshAttention, 30000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
+window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, undoToast, replyUndoToast, toggleSelect, clearSelection, syncBulkBar, bulkAction, get selectedIds(){return selectedIds}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
