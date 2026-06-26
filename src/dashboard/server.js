@@ -1597,6 +1597,14 @@ const PAGE = /* html */ `<!doctype html>
   .geo-place{font-weight:600}
   .geo-count{font-weight:700;color:var(--danger)}
   .geo-mix,.geo-when{color:var(--muted);font-size:12px}
+  .act-list{display:flex;flex-direction:column}
+  .act-row{display:grid;grid-template-columns:auto auto auto 1fr;gap:10px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer}
+  .act-row:hover{background:var(--bg2)}
+  .act-when{color:var(--muted);white-space:nowrap}
+  .act-kind{font-weight:600;white-space:nowrap}
+  .act-who{color:var(--muted);white-space:nowrap}
+  .act-text{color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #op-picker{background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:12px}
   .ev .k{display:inline-block;min-width:120px;color:#8aa0c0;font-size:11px}
   label{display:block;margin:8px 0 2px;font-size:12px;color:var(--muted)}
   .hint{font-size:11px;color:var(--faint);margin:2px 0 0}
@@ -1747,6 +1755,8 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="metrics-btn" title="Response times, backlog and trend">Metrics</button>
         <button class="icon-btn" id="clusters-btn" title="Cases that look like one outbreak">Outbreaks</button>
         <button class="icon-btn" id="geo-btn" title="Where reports are concentrating">Hotspots</button>
+        <button class="icon-btn" id="activity-btn" title="Everything that has happened, newest first">Activity</button>
+        <select id="op-picker" title="Who you are -- attributed on your actions" style="display:none"></select>
         <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
         <button class="icon-btn" id="theme" title="Toggle light/dark">dark</button>
         <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names">Aa</button>
@@ -1781,6 +1791,14 @@ const PAGE = /* html */ `<!doctype html>
     <div class="stats-panel" id="geo-panel">
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Hotspots by area</div>
       <div id="geo-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="activity-panel">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+        <div style="font-size:12px;font-weight:700;color:var(--muted)">Activity (newest first)</div>
+        <select id="act-kind"><option value="">All kinds</option><option value="inbound">Inbound</option><option value="outbound">Outbound</option><option value="transition">Stage change</option><option value="note">Note</option><option value="observation">Observation</option><option value="action">Action</option></select>
+        <select id="act-actor"><option value="">Anyone</option><option value="agent">casey</option><option value="operator">Operator</option><option value="contact">Contact</option><option value="system">System</option></select>
+      </div>
+      <div id="activity-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
     </div>
     <div class="triage" id="triage"></div>
     <div class="caselist" id="cases"><div class="empty">Loading cases...</div></div>
@@ -1933,9 +1951,17 @@ function stageLabel(s){ return simple ? (STAGE_LABEL[s] || s) : s }
 // so it never appears in server access logs or Referer headers either.
 const TOKEN = new URLSearchParams(location.search).get('token')
 if(TOKEN){ try{ const u=new URL(location.href); u.searchParams.delete('token'); history.replaceState(null,'',u.pathname+u.search+u.hash) }catch{} }
+// The operator picker persists a chosen roster id; every fetch carries it as
+// X-Casey-Operator for cooperative attribution (the server can only SELECT a
+// known roster id, never inject a new actor, so this is safe to always send).
+let selectedOperator = ''
+try{ selectedOperator = localStorage.getItem('casey-operator')||'' }catch{}
 const api = (url,opts={})=>{
-  if(!TOKEN) return fetch(url,opts)
-  const headers = Object.assign({}, opts.headers||{}, { 'X-Casey-Token': TOKEN })
+  const extra = {}
+  if(TOKEN) extra['X-Casey-Token']=TOKEN
+  if(selectedOperator) extra['X-Casey-Operator']=selectedOperator
+  if(!TOKEN && !selectedOperator) return fetch(url,opts)
+  const headers = Object.assign({}, opts.headers||{}, extra)
   return fetch(url, Object.assign({}, opts, { headers }))
 }
 // --- toasts (replace alert): ok auto-dismisses, err persists until clicked ---
@@ -3172,6 +3198,47 @@ function panelToggle(btnId,panelId,loader){
 panelToggle('#metrics-btn','#metrics-panel',loadMetrics)
 panelToggle('#clusters-btn','#clusters-panel',loadClusters)
 panelToggle('#geo-btn','#geo-panel',loadGeo)
+// --- Activity / audit stream ---
+const ACT_KIND_LABEL={inbound:'Inbound',outbound:'Reply',transition:'Stage change',note:'Note',observation:'Note',action:'Action',autonomy_change:'Autonomy'}
+const ACT_ACTOR_LABEL={agent:'casey',operator:'Operator',contact:'Contact',system:'System'}
+function activityHtml(j){
+  const ev=j.events||[]
+  if(!ev.length) return '<div class="empty" style="padding:8px 0">Nothing matches.</div>'
+  return '<div class="act-list">'+ev.map(e=>
+    '<div class="act-row" data-id="'+esc(e.case_id)+'">'
+    +'<span class="act-when">'+esc(fmtTime(e.created_at))+'</span>'
+    +'<span class="act-kind">'+esc(ACT_KIND_LABEL[e.kind]||e.kind)+'</span>'
+    +'<span class="act-who">'+esc(ACT_ACTOR_LABEL[e.actor]||e.actor||'')+'</span>'
+    +'<span class="act-text">'+esc((e.text||'').slice(0,160))+'</span></div>'
+  ).join('')+'</div>'
+}
+async function loadActivity(){
+  const body=$('#activity-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  const k=$('#act-kind')?$('#act-kind').value:'', a=$('#act-actor')?$('#act-actor').value:''
+  const qs=new URLSearchParams(); if(k)qs.set('kind',k); if(a)qs.set('actor',a); qs.set('limit','100')
+  try{ const j=await api('/api/activity?'+qs.toString()).then(r=>r.ok?r.json():null)
+    body.innerHTML=j?activityHtml(j):'<div class="empty">Could not load activity.</div>'
+    body.querySelectorAll('.act-row').forEach(r=>r.onclick=()=>{ if(r.dataset.id) openCase(r.dataset.id) })
+  }catch(e){ body.innerHTML='<div class="empty">Activity error: '+esc(e.message)+'</div>' }
+}
+panelToggle('#activity-btn','#activity-panel',loadActivity)
+if($('#act-kind')) $('#act-kind').onchange=loadActivity
+if($('#act-actor')) $('#act-actor').onchange=loadActivity
+// --- operator picker (cooperative attribution) ---
+async function initOperatorPicker(){
+  const sel=$('#op-picker'); if(!sel) return
+  try{
+    const j=await api('/api/operators').then(r=>r.ok?r.json():null)
+    const ops=(j&&j.operators)||[]
+    if(!ops.length) return            // no roster configured: leave the picker hidden
+    sel.innerHTML='<option value="">(not set)</option>'+ops.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.name||o.id)+'</option>').join('')
+    if(selectedOperator) sel.value=selectedOperator
+    sel.style.display=''
+    sel.onchange=()=>{ selectedOperator=sel.value; try{ selectedOperator?localStorage.setItem('casey-operator',selectedOperator):localStorage.removeItem('casey-operator') }catch{}; toast(selectedOperator?'You are '+sel.options[sel.selectedIndex].text:'Operator cleared','ok') }
+  }catch{}
+}
+initOperatorPicker()
 // Inline modal replacement for native prompt()/confirm() -- works on mobile/PWA.
 // Uses DOM creation (not innerHTML) to avoid conflicts with the outer template literal.
 // Returns a Promise resolving to {value, confirmed:true} or null if cancelled.
@@ -3258,7 +3325,7 @@ async function boot(){
 }
 boot(); const _casesIv = setInterval(loadCases, 5000); const _healthIv = setInterval(refreshHealth, 15000); const _attnIv = setInterval(refreshAttention, 30000)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
+window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
