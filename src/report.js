@@ -10,13 +10,19 @@
 
 import { buildOverview } from './overview.js'
 import { buildGeo } from './geo.js'
+import { buildWorkload } from './workload.js'
 
 // breachRows: array of {breach} objects (classifyCaseHealth output) flattened
 // across the open pool; counted here into a breach -> count map.
-export function buildReport(cases, eventsByCaseId, breachRows, now = Date.now(), days = 14) {
+// roster ([{id,name}], may be empty) + staleMs feed the per-operator workload
+// rollup so a manager's briefing names who is holding what and how responsive
+// each person has been -- the same aggregate-only (no PII) cards the dashboard
+// Team panel shows, composed here instead of fetched separately.
+export function buildReport(cases, eventsByCaseId, breachRows, now = Date.now(), days = 14, roster = [], staleMs = 24 * 3600 * 1000) {
   const overview = buildOverview(cases, eventsByCaseId, now, days * 24 * 3600 * 1000)
   const open = (cases || []).filter(c => c.status !== 'resolved' && c.status !== 'closed')
   const geo = buildGeo(open)
+  const workload = buildWorkload(cases, eventsByCaseId, roster, now, staleMs)
 
   const byStage = {}
   for (const c of cases || []) byStage[c.status] = (byStage[c.status] || 0) + 1
@@ -42,5 +48,15 @@ export function buildReport(cases, eventsByCaseId, breachRows, now = Date.now(),
     dwell_ms_median: overview.dwell_ms_median,
     by_area: geo.map(g => ({ place: g.place, count: g.count })),
     breaches,
+    // Aggregate-only worst-first per-operator cards (no external_id, no per-contact
+    // rows): name + how much each holds and how responsive they have been.
+    by_operator: workload.operators.map(o => ({
+      name: o.name,
+      open_assigned: o.open_assigned,
+      stale_claims: o.stale_claims,
+      replies_24h: o.replies_24h,
+      first_reply_ms_median: o.first_reply_ms_median,
+      oldest_waiting_ms: o.oldest_waiting_ms,
+    })),
   }
 }

@@ -667,12 +667,17 @@ async function main() {
     assert.match(csv, /^section,key,value/, 'csv has the briefing header')
     assert.match(csv, /totals,all,/, 'csv carries totals')
     assert.match(csv, /response,median_first_response_hours,/, 'csv carries median response time')
+    assert.match(csv, /by_operator,Thandi M replies_24h,/, 'csv carries the per-operator workload section by name')
     const htmlRes = await df('http://localhost:4577/api/report.html?token=secret')
     assert.equal(htmlRes.status, 200, 'report.html reachable')
     const html = await htmlRes.text()
     assert.match(html, /casey management report/, 'html briefing renders')
     assert.match(html, /SAST/, 'generated time is shown in SAST')
+    assert.match(html, /Team workload/, 'html briefing carries the per-operator workload table')
+    assert.match(html, /Thandi M/, 'an operator is named in the workload table')
     assert.ok(!html.includes('<script>alert'), 'no unescaped contact text leaks into the report')
+    // Aggregate-only: the per-operator report section leaks no contact identifier.
+    assert.ok(!csv.includes('external_id') && !html.includes('external_id'), 'report by_operator leaks no external_id')
   })
 
   await test('dashboard reply surfaces the sent flag (delivered vs logged-only)', async () => {

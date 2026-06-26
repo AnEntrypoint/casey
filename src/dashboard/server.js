@@ -1136,8 +1136,9 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     const breachRows = cases
       .filter(c => c.status !== 'resolved' && c.status !== 'closed')
       .flatMap(c => classifyCaseHealth(c, now, thresholds))
+    const staleMs = Number.isFinite(thresholds?.staleMs) ? thresholds.staleMs : 24 * 3600 * 1000
     const { buildReport } = await import('../report.js')
-    return buildReport(cases, eventsByCaseId, breachRows, now, days)
+    return buildReport(cases, eventsByCaseId, breachRows, now, days, roster, staleMs)
   }
   const reportDays = (req) => Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
   const msToHrs = (ms) => ms == null ? '' : Math.round(ms / 3600000 * 10) / 10
@@ -1158,6 +1159,16 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       for (const [stage, n] of Object.entries(r.by_stage)) lines.push(['by_stage', csvCell(stage), csvCell(n)].join(','))
       for (const a of r.by_area) lines.push(['by_area', csvCell(a.place), csvCell(a.count)].join(','))
       for (const [b, n] of Object.entries(r.breaches)) lines.push(['breach', csvCell(b), csvCell(n)].join(','))
+      // Per-operator workload, one line per metric so the flat section/key/value
+      // shape holds. Aggregate-only: operator name + counts, never a contact id.
+      for (const o of r.by_operator) {
+        const k = (m) => csvCell(o.name + ' ' + m)
+        lines.push(['by_operator', k('open_assigned'), csvCell(o.open_assigned)].join(','))
+        lines.push(['by_operator', k('stale_claims'), csvCell(o.stale_claims)].join(','))
+        lines.push(['by_operator', k('replies_24h'), csvCell(o.replies_24h)].join(','))
+        lines.push(['by_operator', k('first_reply_hours'), csvCell(msToHrs(o.first_reply_ms_median))].join(','))
+        lines.push(['by_operator', k('oldest_waiting_hours'), csvCell(msToHrs(o.oldest_waiting_ms))].join(','))
+      }
       res.setHeader('Content-Type', 'text/csv')
       res.setHeader('Content-Disposition', 'attachment; filename="casey-management-report.csv"')
       res.send(lines.join('\n'))
@@ -1171,6 +1182,12 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const stageRows = Object.entries(r.by_stage).map(([s, n]) => row(s, n)).join('')
       const areaRows = r.by_area.slice(0, 20).map(a => row(a.place, a.count)).join('')
       const breachRows = Object.entries(r.breaches).map(([b, n]) => row(b, n)).join('') || row('none', 0)
+      const opHead = `<tr><td>operator</td><td>open</td><td>stale claims</td><td>replies 24h</td><td>first reply (hrs)</td><td>oldest waiting (hrs)</td></tr>`
+      const opRows = r.by_operator.map(o =>
+        `<tr><td>${esc(o.name)}</td><td>${esc(o.open_assigned)}</td><td>${esc(o.stale_claims)}</td>`
+        + `<td>${esc(o.replies_24h)}</td><td>${esc(msToHrs(o.first_reply_ms_median))}</td>`
+        + `<td>${esc(msToHrs(o.oldest_waiting_ms))}</td></tr>`).join('')
+        || `<tr><td>none</td><td>0</td><td>0</td><td>0</td><td></td><td></td></tr>`
       const html = `<!doctype html><html><head><meta charset="utf-8"><title>casey management report</title>`
         + `<style>body{font:14px system-ui,sans-serif;margin:2rem;color:#1a1a1a}h1{font-size:1.3rem}h2{font-size:1rem;margin-top:1.5rem}table{border-collapse:collapse;margin:.3rem 0}td{border:1px solid #ccc;padding:.2rem .6rem}@media print{body{margin:0}}</style>`
         + `</head><body><h1>casey management report</h1>`
@@ -1179,6 +1196,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         + `<h2>Response time</h2><table>${row('median first reply (hours)', msToHrs(r.median_first_response_ms))}${row('p90 first reply (hours)', msToHrs(r.p90_first_response_ms))}</table>`
         + `<h2>By stage</h2><table>${stageRows}</table>`
         + `<h2>Hotspots by area</h2><table>${areaRows || row('none', 0)}</table>`
+        + `<h2>Team workload</h2><table>${opHead}${opRows}</table>`
         + `<h2>Current health breaches</h2><table>${breachRows}</table>`
         + `</body></html>`
       res.setHeader('Content-Type', 'text/html; charset=utf-8')

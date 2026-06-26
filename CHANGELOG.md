@@ -42,6 +42,13 @@
   send-failure observation instead of being silently lost.
 
 ### Added
+- The management report (`/api/report.csv`, `/api/report.html`) now carries a
+  per-operator **Team workload** section -- open cases held, stale claims, replies
+  in the last 24h, usual first-reply speed and oldest case still waiting, worst-first.
+  A manager's exported or printed shift/period briefing now names who did what, not
+  just the aggregate counts. Composed from the same aggregate-only `buildWorkload`
+  rollup the dashboard panel uses (operator name + numbers only, never a contact
+  id), so the briefing leaks no `external_id`.
 - Staff/management surface for the team running casey: a worst-first **Team
   workload** panel (`/api/operators/workload`) showing, per rostered operator,
   open cases held, stale claims, replies today, usual first-reply speed and the
