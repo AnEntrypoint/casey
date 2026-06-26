@@ -79,8 +79,12 @@ async function main() {
     process.exit(1)
   }
 
-  const { resolveCallLLM } = await import('../src/llm.js')
-  const brain = await resolveCallLLM({ probe: true }).catch(() => ({ callLLM: null, source: 'none' }))
+  // Self-healing LLM backend: a provider that is down at boot must not latch casey
+  // into holding-message-only mode for the whole process life. makeResilientCallLLM
+  // re-resolves lazily (debounced) so a recovered provider resumes real auto-replies
+  // with no restart, and its status() is the single live source for the health row.
+  const { makeResilientCallLLM } = await import('../src/llm.js')
+  const brain = makeResilientCallLLM({ probe: true })
   const casey = await createCasey({ channels, callLLM: brain.callLLM })
   await casey.start()
 
@@ -89,11 +93,11 @@ async function main() {
     const a = casey.adapters[caseRow.channel]
     return a?.send ? a.send({ to: caseRow.external_id, text }) : Promise.resolve()
   }
-  const { resolveCallLLM: _rc } = await import('../src/llm.js')
+  // Health reads the SAME backend the handler uses, so the dashboard shows recovery
+  // the instant the provider comes back -- no separate probe to drift from reality.
   const llmStatus = async () => {
     if (process.env.CASEY_STUB_LLM) return { source: 'stub' }
-    const b = await _rc({ probe: true }).catch(() => ({ source: 'none' }))
-    return { source: b.source, model: b.model, url: b.url }
+    return brain.status()
   }
 
   // Runtime snapshot the parent pushes down (PARENT_MSG.STATE). Held in a mutable

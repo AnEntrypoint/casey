@@ -51,3 +51,66 @@ export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {
   const bridge = { callLLM: freddie.acptoapiCallLLM, getAcptoapiUrl: freddie.getAcptoapiUrl }
   return { callLLM: bridgeBackend(bridge, model), source: 'acptoapi', model, url: bridge.getAcptoapiUrl() }
 }
+
+// A long-lived gateway must not latch "AI helper offline" for its whole life just
+// because the provider was down at boot. resolveCallLLM probes ONCE; the handler
+// then closes over a static callLLM, so a provider that recovers minutes later is
+// never picked up without a restart -- contacts keep getting the holding message
+// forever. makeResilientCallLLM wraps resolveCallLLM in a self-healing backend:
+//
+//   - status() always reflects the CURRENT resolution, so the dashboard health row
+//     shows recovery live (no separate re-probe to drift from the real backend).
+//   - the returned callLLM is ALWAYS a function. While no real backend is resolved,
+//     each call triggers a debounced re-resolve (single in-flight probe, at most one
+//     attempt per intervalMs) and, if still unreachable, THROWS -- the case handler
+//     already catches a failing callLLM and sends its safe fallback, so a contact
+//     still gets a reply and the next inbound re-probes. Once resolved, calls delegate
+//     to the real backend with no probe overhead.
+//
+// This keeps the never-dead-end guarantee (holding message on every miss) AND adds
+// the missing never-stay-degraded half (auto-resume when the provider returns).
+export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, intervalMs = 30000, resolve = resolveCallLLM, now = null } = {}) {
+  let backend = null                 // resolved real callLLM, or null while degraded
+  let last = { source: 'none', model: null, url: null }
+  let inflight = null                // shared promise so concurrent inbounds probe once
+  let lastAttempt = -Infinity        // monotonic ms of the last resolve attempt (debounce)
+
+  // `resolve` and `now` are injectable so the single real-services test can drive the
+  // recovery transition and the debounce clock deterministically (a real resolver
+  // function and a real clock, not a mock framework); both default to production.
+  const clock = now || (() => Date.now())
+
+  async function resolveOnce() {
+    const r = await resolve({ probe, model }).catch(() => ({ callLLM: null, source: 'none' }))
+    backend = r.callLLM || null
+    last = { source: r.source || (backend ? 'acptoapi' : 'none'), model: r.model || null, url: r.url || null }
+    return backend
+  }
+
+  // Debounced lazy re-resolve: returns the live backend (possibly still null). A
+  // probe already in flight is shared; an attempt within intervalMs of the last is
+  // skipped so a down provider never adds a round-trip to every inbound or stampedes.
+  async function ensure() {
+    if (backend) return backend
+    if (inflight) return inflight
+    if (clock() - lastAttempt < intervalMs) return backend
+    lastAttempt = clock()
+    inflight = resolveOnce().finally(() => { inflight = null })
+    return inflight
+  }
+
+  const callLLM = async ({ messages, tools }) => {
+    const b = await ensure()
+    if (!b) throw new Error('AI helper offline (provider unreachable); using holding reply')
+    return b({ messages, tools })
+  }
+
+  // status() forces an initial resolve so the first health read is accurate, then
+  // returns the live snapshot. Subsequent reads are cheap (cached between probes).
+  const status = async () => {
+    if (!backend && clock() - lastAttempt >= intervalMs) await ensure()
+    return { ...last }
+  }
+
+  return { callLLM, status, _ensure: ensure }
+}

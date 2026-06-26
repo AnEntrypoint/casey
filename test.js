@@ -16,6 +16,7 @@ import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
 import { buildWorkload } from './src/workload.js'
+import { makeResilientCallLLM } from './src/llm.js'
 
 process.env.CASEY_LOG = 'silent'
 // Roster for the operator-identity test (parsed by createDashboard at boot).
@@ -2093,6 +2094,51 @@ async function main() {
     const evsD = await store.listEvents(dc.id)
     assert.equal(evsD.filter(e => /^resume-attempted:/.test(e.text || '')).length, 0, 'a completed turn gets no resume marker')
     assert.equal(adapter.sent.length, sentDone, 'a completed turn is never re-driven')
+  })
+
+  await test('LLM backend self-heals when a provider that was down at boot recovers (no restart, no latch)', async () => {
+    // A provider down at boot must NOT latch casey into holding-message-only mode for
+    // the process life. makeResilientCallLLM re-resolves (debounced) so recovery is
+    // picked up live. We drive it with a REAL resolver function (down, then up) and a
+    // controllable clock -- no mock framework, just the injection points the wrapper
+    // exposes. `up` is the real callLLM contract ({messages,tools}) => {content,...}.
+    let clock = 1000
+    let provider = 'down'
+    const up = async ({ messages }) => ({ content: 'real reply for ' + (messages?.length || 0), tool_calls: [] })
+    const resolve = async () => provider === 'up'
+      ? { callLLM: up, source: 'acptoapi', model: 'test/model', url: 'http://x' }
+      : { callLLM: null, source: 'none' }
+    const brain = makeResilientCallLLM({ resolve, now: () => clock, intervalMs: 30000 })
+
+    // Boot state: provider down -> status none, callLLM throws (handler then sends its
+    // safe holding reply; a throwing backend is the never-dead-end path, not a crash).
+    const s0 = await brain.status()
+    assert.equal(s0.source, 'none', 'at boot with the provider down the helper reports offline')
+    await assert.rejects(() => brain.callLLM({ messages: [{ role: 'user', content: 'hi' }] }),
+      /offline/, 'a down provider makes callLLM throw so the handler falls back to a holding reply')
+
+    // Provider recovers, but we are still inside the debounce window: no re-probe yet,
+    // so the backend is still degraded (a down provider never adds a probe to every inbound).
+    provider = 'up'
+    const sDebounced = await brain.status()
+    assert.equal(sDebounced.source, 'none', 'within the debounce window the recovered provider is not yet re-probed')
+
+    // Past the debounce window: the next call re-resolves and now delegates to the real
+    // backend, and the health row flips to online -- recovery with no restart.
+    clock += 30001
+    const r = await brain.callLLM({ messages: [{ role: 'user', content: 'hi' }, { role: 'user', content: 'again' }] })
+    assert.ok(r && /real reply/.test(r.content), 'after recovery callLLM delegates to the live provider')
+    const s1 = await brain.status()
+    assert.equal(s1.source, 'acptoapi', 'the health row flips to online once the provider is reachable again')
+    assert.equal(s1.model, 'test/model', 'the live model is reported from the re-resolved backend, not the boot snapshot')
+
+    // Once resolved, calls no longer re-probe even if the provider flaps back down
+    // (a resolved backend is sticky for this process; the next genuine failure surfaces
+    // through the handler's turn-error fallback, not by re-probing on the hot path).
+    provider = 'down'
+    clock += 30001
+    const r2 = await brain.callLLM({ messages: [{ role: 'user', content: 'x' }] })
+    assert.ok(r2 && /real reply/.test(r2.content), 'a resolved backend stays bound and does not re-probe on every call')
   })
 
   await dash.close()
