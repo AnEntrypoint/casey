@@ -1773,7 +1773,15 @@ const PAGE = /* html */ `<!doctype html>
   .cl-row{padding:8px 0;border-bottom:1px solid var(--border)}
   .cl-head{font-size:13px;margin-bottom:5px}
   .cl-chips{display:flex;flex-wrap:wrap;gap:4px}
+  .cl-sev{display:inline-block;background:var(--danger,#b4432e);color:#fff;font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;margin-right:6px}
   .ref-chip{background:#2a3340;font-size:12px;padding:2px 8px}
+  .bt-sec{margin-top:14px}
+  .bt-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+  .bt-table th,.bt-table td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)}
+  .bt-table th{color:var(--muted);font-weight:600}
+  .bt-overall td{border-top:2px solid var(--border)}
+  .risk-strip{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .risk-chip{background:#3a2a2a;border:1px solid var(--danger,#b4432e);font-size:12px;padding:2px 8px;border-radius:4px}
   .geo-list{display:flex;flex-direction:column}
   .geo-row{display:grid;grid-template-columns:1fr auto 2fr 2fr;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px}
   .geo-place{font-weight:600}
@@ -2668,6 +2676,7 @@ async function openCase(id){
       <div><label>Priority</label><select id="f-priority">\${['low','normal','high','urgent'].map(p=>opt(p,c.priority)).join('')}</select>\${simple?'<p class="hint">How urgent this is.</p>':''}</div>
       <div><label>Autonomy</label><select id="f-autonomy" title="\${esc(AUTONOMY_HELP)}">\${['auto','assisted','observe'].map(p=>opt(p,c.autonomy)).join('')}</select>\${simple?'<p class="hint">Who answers the contact: the robot, a draft for you, or nobody.</p>':''}</div>
       <div><label>Assignee</label><input id="f-assignee" value="\${esc(c.assignee||'')}"></div>
+      <div><label>Case type</label><select id="f-case-type" title="Management lens: segments every report aggregate. Changing it records a case_type a -> b audit event.">\${['unset','outbreak','follow_up','lab_sample','import_alert'].map(p=>opt(p,c.case_type||'unset')).join('')}</select>\${simple?'<p class="hint">What kind of case this is, for the team\\'s reports.</p>':''}</div>
     </div>
     <p class="hint">\${esc(AUTONOMY_HELP)}</p>
     <label>Subject</label><input id="f-subject" value="\${esc(c.subject||'')}">
@@ -2778,6 +2787,7 @@ async function openCase(id){
   $('#save').onclick = async ()=>{
     const btn=$('#save'); btn.disabled=true
     const body = {subject:$('#f-subject').value, summary:$('#f-summary').value, priority:$('#f-priority').value, tags:$('#f-tags').value, assignee:$('#f-assignee').value, autonomy:$('#f-autonomy').value}
+    const ctSel=$('#f-case-type'); if(ctSel && ctSel.value!==(c.case_type||'unset')) body.case_type=ctSel.value
     const r = await api('/api/cases/'+encodeURIComponent(id),{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
     btn.disabled=false; editing=false
     if(!r.ok){ toast(await failMsg(r,'save failed'),'err'); return }
@@ -3667,11 +3677,46 @@ function loadMetricsHtml(j){
     +card('Closed',j.cases?j.cases.closed:0,'cases')
     +dwellRows+backlogRows+'</div>'+trend
 }
+const CASE_TYPE_LABEL={unset:'Unclassified',outbreak:'Outbreak',follow_up:'Follow-up',lab_sample:'Lab sample',import_alert:'Import alert'}
+function ctLabel(t){ return CASE_TYPE_LABEL[t]||t }
+function slaMetPct(s){ return s&&s.considered?Math.round((s.met_count||0)/s.considered*100)+'%':'--' }
+function slaRow(label,s,m,cls){
+  const late=(s&&s.breached_by_reason&&s.breached_by_reason.answered_late)
+  const never=(s&&s.breached_by_reason&&s.breached_by_reason.never_answered)
+  return '<tr'+(cls?' class="'+cls+'"':'')+'><td>'+label+'</td><td>'+esc(s&&s.considered!=null?s.considered:'--')+'</td><td>'+esc(slaMetPct(s))
+    +'</td><td>'+esc(late!=null?late:'--')+'</td><td>'+esc(never!=null?never:'--')
+    +'</td><td>'+fmtDur(m?m.first_response_ms_median:null)+'</td><td>'+esc(m&&m.closed_pct!=null?m.closed_pct+'%':'--')+'</td></tr>'
+}
+function byTypeHtml(rep){
+  const sbt=(rep&&rep.sla_by_type&&rep.sla_by_type.by_type)||{}
+  const ov=(rep&&rep.sla_by_type&&rep.sla_by_type.overall)||null
+  const met=(rep&&rep.by_case_type)||{}
+  const types=Array.from(new Set([...Object.keys(sbt),...Object.keys(met)]))
+  if(!types.length) return ''
+  const rows=types.map(t=>slaRow(esc(ctLabel(t)),sbt[t],met[t])).join('')
+  const ovRow=ov?slaRow('<b>Overall</b>',ov,null,'bt-overall'):''
+  return '<div class="bt-sec"><div class="ho-h">By case type</div>'
+    +'<table class="bt-table"><thead><tr><th>Type</th><th>Cases</th><th>SLA met</th><th>Late</th><th>Never</th><th>1st reply</th><th>Closed</th></tr></thead>'
+    +'<tbody>'+rows+ovRow+'</tbody></table></div>'
+}
+function atRiskByTypeHtml(j){
+  // /api/sla-at-risk/by-type returns by_type[t] as a plain count (atRiskCount).
+  const bt=(j&&j.by_type)||{}
+  const types=Object.keys(bt).filter(t=>(bt[t]||0)>0)
+  if(!types.length) return ''
+  const tgt=j.sla_target_ms!=null?fmtDur(j.sla_target_ms):''
+  const chips=types.sort((a,b)=>(bt[b]||0)-(bt[a]||0)).map(t=>
+    '<span class="risk-chip" title="open cases of this type within reach of the '+esc(tgt)+' reply target">'+esc(ctLabel(t))+' <b>'+esc(bt[t])+'</b></span>').join(' ')
+  return '<div class="bt-sec"><div class="ho-h">At risk now (reply target '+esc(tgt)+')</div><div class="risk-strip">'+chips+'</div></div>'
+}
 async function loadMetrics(){
   const body=$('#metrics-body'); if(!body) return
   body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
   try{ const j=await api('/api/overview?days=14').then(r=>r.ok?r.json():null)
-    body.innerHTML=j?loadMetricsHtml(j):'<div class="empty">Could not load metrics.</div>'
+    const rep=await api('/api/report.json?days=14').then(r=>r.ok?r.json():null).catch(()=>null)
+    const risk=await api('/api/sla-at-risk/by-type').then(r=>r.ok?r.json():null).catch(()=>null)
+    body.innerHTML=(j?loadMetricsHtml(j):'<div class="empty">Could not load metrics.</div>')
+      +(risk?atRiskByTypeHtml(risk):'')+(rep?byTypeHtml(rep):'')
   }catch(e){ body.innerHTML='<div class="empty">Metrics error: '+esc(e.message)+'</div>' }
 }
 function clustersHtml(j){
@@ -3679,8 +3724,9 @@ function clustersHtml(j){
   if(!cl.length) return '<div class="empty" style="padding:8px 0">No related-looking groups right now.</div>'
   return cl.map(c=>{
     const loc=(c.location||[]).join(', '), sp=(c.species||[]).join(', ')
-    const chips=(c.members||[]).map(m=>'<button class="ref-chip" data-id="'+esc(m.id)+'" title="'+esc(m.subject||'')+'">'+esc(m.ref)+'</button>').join(' ')
-    return '<div class="cl-row"><div class="cl-head"><b>'+c.count+' cases</b>'
+    const chips=(c.members||[]).map(m=>'<button class="ref-chip" data-id="'+esc(m.id)+'" title="'+esc((m.case_type&&m.case_type!=='unset'?m.case_type+': ':'')+(m.subject||''))+'">'+esc(m.ref)+'</button>').join(' ')
+    const sev=(c.severity!=null)?'<span class="cl-sev" title="Suspected-outbreak severity: member count scaled by case_type mix (outbreak>import_alert>lab_sample>follow_up)">severity '+esc(c.severity)+'</span> ':''
+    return '<div class="cl-row"><div class="cl-head">'+sev+'<b>'+c.count+' cases</b>'
       +(loc?' near '+esc(loc):'')+(sp?' -- '+esc(sp):'')+'</div><div class="cl-chips">'+chips+'</div></div>'
   }).join('')
 }
