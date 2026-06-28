@@ -846,6 +846,14 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // instead, and overwrites the reply -- recording field A as asked-once while
     // its question is never delivered, burning the field forever.
     let droveIntake = false
+    // The FALLBACK-ASK:<key> marker that records a field as asked-once MUST be
+    // written only after the question is actually delivered. Recording it before
+    // adapter.send means a transient send failure burns the field forever (the
+    // once-per-field guard skips it next turn though the contact never received
+    // it). So the intake branches set this pending key and the marker is appended
+    // only after a confirmed-delivered outbound (and skipped in the send catch and
+    // the assisted/jargon draft-hold early returns).
+    let pendingFallbackAsk = null
     if (!text) {
       if (!errored && result?.error) {
         log.warn?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
@@ -877,15 +885,23 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         const m = e.kind === 'observation' && /FALLBACK-ASK:(\w+)/.exec(e.text || '')
         if (m) askedKeys.add(m[1])
       }
-      const next = nextUnaskedMissingField(fresh.report, askedKeys)
+      // On a genuine wrap-up (closingCapture set), the farmer is leaving, so a
+      // degraded reply asks the single MOST IMPORTANT still-missing fact, not just
+      // the next unasked one -- this is the one-shot closing ask, kept warm and
+      // singular. Otherwise advance field-by-field as usual. Either way the chosen
+      // field is recorded once via FALLBACK-ASK so the once-per-field guarantee and
+      // the append-only audit hold.
+      let next = nextUnaskedMissingField(fresh.report, askedKeys)
+      if (closingCapture != null) {
+        const mostKey = VISIT_CRITICAL_ASK.find(([, hint]) => hint === closingCapture)
+        if (mostKey && !askedKeys.has(mostKey[0])) next = mostKey
+      }
       // Capture-driven: lead with an acknowledgement of what the contact just told
       // us this turn (so 'I see blue eyes' is heard, not swallowed into a generic
       // ack), then ask the next still-missing on-site fact. When nothing new was
       // captured and nothing is left to ask, this is exactly the plain holding ack.
       const advancing = captureDrivenReply(inboundText, fresh, justCaptured, next ? next[1] : null)
-      if (next) {
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${next[0]} degraded reply asked for the next still-missing on-site fact (once per field).` })
-      }
+      if (next) pendingFallbackAsk = { key: next[0], via: 'degraded reply' }
       text = advancing
       droveIntake = true
       }
@@ -912,7 +928,15 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // (see droveIntake note above). The gate's job is only to override non-empty
     // MODEL prose during incomplete intake; it has nothing to override when the
     // degraded branch already drove intake.
-    if (reportMissingVisitCritical(fresh.report) && !isContentFreeTurn(justCaptured, fresh.report) && !droveIntake) {
+    // closingTurn: a genuine wrap-up where the model was given the closingCapture
+    // directive (warm thanks + the single most-important ask). The gate must NOT
+    // override that warm reply with the holding-ack parrot -- the whole point of
+    // the closing nudge is a kind goodbye plus one gentle ask, which the model
+    // composed. The echo/stock-ack/jargon guards above still blank a genuinely
+    // degraded closing reply and route it to the !text branch, so a closing turn
+    // is never a dead-end.
+    const closingTurn = closingCapture != null
+    if (reportMissingVisitCritical(fresh.report) && !isContentFreeTurn(justCaptured, fresh.report) && !droveIntake && !closingTurn) {
       const priorAsk = await store.listEvents(fresh.id)
       const askedKeys = new Set()
       for (const e of priorAsk) {
@@ -920,13 +944,23 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         if (m) askedKeys.add(m[1])
       }
       const next = nextUnaskedMissingField(fresh.report, askedKeys)
-      const driven = captureDrivenReply(inboundText, fresh, justCaptured, next ? next[1] : null)
-      if (driven && driven !== text) {
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'INTAKE-DRIVE: deterministic capture-driven reply used over model output (intake incomplete).' })
-        if (next) {
-          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${next[0]} intake-drive asked the next still-missing on-site fact (once per field).` })
+      // Only override the model when the deterministic path has something to add:
+      // a next field to ask OR a freshly-captured fact to acknowledge. Once every
+      // askable field is exhausted (next is null) AND nothing was captured this
+      // turn, the capture-driven reply would just be the bare stock holding-ack --
+      // strictly worse than the model's contextual (already echo/stock-ack/jargon-
+      // guarded) prose, and a repeating content-free dead-end if forced every turn.
+      // Three of the six VISIT_CRITICAL fields are never deterministically
+      // extractable, so reportMissingVisitCritical stays true for the life of a
+      // content-only conversation; without this guard the gate would parrot the
+      // holding ack forever.
+      if (next || justCaptured.length) {
+        const driven = captureDrivenReply(inboundText, fresh, justCaptured, next ? next[1] : null)
+        if (driven && driven !== text) {
+          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'INTAKE-DRIVE: deterministic capture-driven reply used over model output (intake incomplete).' })
+          if (next) pendingFallbackAsk = { key: next[0], via: 'intake-drive' }
+          text = driven
         }
-        text = driven
       }
     }
     // A reply is a (degraded) fallback if it is empty, begins with the holding ack
@@ -1049,12 +1083,23 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // conversationKey falls back to the phone number. msg.from (author id) silently
     // 404s on Discord and the contact never sees the reply.
     const reply = { to: external_id, text, platform, caseId: fresh.id }
+    let delivered = true
     if (adapter?.send) {
       try { await adapter.send(reply) }
       catch (e) {
+        delivered = false
         log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message })
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` })
       }
+    }
+    // Record the once-per-field marker ONLY now that the question was actually
+    // delivered. A transient send failure leaves the field unmarked so it is
+    // re-asked next turn rather than silently burned. Best-effort: a marker append
+    // failure must never mask the reply that already went out.
+    if (delivered && pendingFallbackAsk) {
+      try {
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${pendingFallbackAsk.key} ${pendingFallbackAsk.via} asked the next still-missing on-site fact (once per field).` })
+      } catch (e) { log.warn?.('[casey] FALLBACK-ASK marker append failed', { caseId: fresh.id, error: e.message }) }
     }
     return reply
   }

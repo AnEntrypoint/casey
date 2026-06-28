@@ -51,7 +51,7 @@ export function extractFields(text) {
   const SPECIES = ['cattle', 'cow', 'cows', 'sheep', 'goat', 'goats', 'pig', 'pigs',
     'horse', 'horses', 'donkey', 'donkeys', 'chicken', 'chickens', 'poultry',
     'beeste', 'skape', 'varke', 'perd', 'esel', 'hoender',
-    'izinkomo', 'iinkomo', 'izimvu', 'iimvu', 'imbongolo', 'inkukhu']
+    'izinkomo', 'iinkomo', 'inkomo', 'izimvu', 'iimvu', 'imvu', 'imbuzi', 'imbongolo', 'inkukhu']
   const species = SPECIES.find(s => new RegExp(`\\b${s}\\b`).test(t))
   if (species) f.species = species
 
@@ -64,13 +64,25 @@ export function extractFields(text) {
     'eye discharge', 'discharge', 'swollen', 'swelling', 'bleeding', 'foaming',
     'foam at the mouth', 'not eating', 'not drinking', 'eet nie', 'cant walk',
     "can't walk", 'falling over', 'coughing', 'diarrhoea', 'diarrhea', 'fever',
+    // Controlled-disease signs a reporter commonly states that were dropped:
+    // abortion (RVF/brucellosis), mouth sores/wounds (FMD), salivation (FMD/rabies),
+    // recumbency. Anchored multi-word substrings -- high precision, low collision.
+    'aborted', 'aborting', 'abortion', 'mouth sores', 'sores on', 'open wound', 'wounds',
+    'salivating', 'salivation', 'cannot stand', "can't stand", 'cant stand',
+    'wont stand', "won't stand", 'will not stand', 'cannot get up',
   ]
+  // Stem words match leading-boundary + optional inflection suffix, so "limping",
+  // "drooling", "blisters" are captured but the stem cannot bleed into an unrelated
+  // word (the bare-prefix match read 'limp' inside 'Limpopo', the home province of
+  // most reporters, as a false symptom). Nguni sick verbs are concord-prefixed, so
+  // the agglutinated whole forms (ziyagula/iyagula/...) are listed explicitly --
+  // never a bare infix like 'gula' alone catches them, and never bare 'file'/'fa'
+  // (English false positives).
   const SYMPTOM_WORDS = ['drool', 'blister', 'limp', 'lame', 'died', 'dying', 'sick',
-    'siek', 'gula', 'kwyl', 'kreupel', 'amathe']
+    'siek', 'gula', 'kwyl', 'kreupel', 'amathe', 'salivat',
+    'ziyagula', 'iyagula', 'uyagula', 'bayagula', 'yagula']
   const phrase = SYMPTOM_PHRASES.find(s => t.includes(s))
-  // Stem match: a farmer writes "limping", "drooling", "blisters" -- match the
-  // stem at a word boundary so the inflected form is still captured, not dropped.
-  const word = SYMPTOM_WORDS.find(s => new RegExp(`\\b${escapeRe(s)}`).test(t))
+  const word = SYMPTOM_WORDS.find(s => new RegExp(`\\b${escapeRe(s)}(?:s|ed|ing|er)?\\b`).test(t))
   if (phrase) f.symptoms = phrase
   else if (word) f.symptoms = word
 
@@ -90,7 +102,10 @@ export function extractFields(text) {
     if (m) nums.push({ value: String(v), at: m.index })
   }
   nums.sort((a, b) => a.at - b.at)
-  const deathMatch = /\b(died|dead|dood|gevrek)\b/.exec(t)
+  // Death words: English/Afrikaans plus the concord-prefixed isiZulu/isiXhosa
+  // "ifile/zifile/ufile/bafile/fele" (it/they have died). Only the prefixed whole
+  // forms -- never bare "file" (English file/profile) or bare "fa".
+  const deathMatch = /\b(died|dead|dood|gevrek|ifile|zifile|ufile|bafile|fele)\b/.exec(t)
   const isDeath = !!deathMatch
   if (isDeath && nums.length >= 2) {
     // Number closest to the death word is the death count; the earliest remaining
@@ -116,7 +131,7 @@ export function extractFields(text) {
     // Cut the captured place at the first temporal/clause word so a run-on like
     // "Musina since Monday" yields the place "Musina", not the whole tail.
     f.location = locMatch[1]
-      .split(/\s+(?:since|started|from|near|past|and|but|because|they|we|it|my)\b/i)[0]
+      .split(/\s+(?:since|started|from|near|past|and|but|because|they|we|it|my|monday|tuesday|wednesday|thursday|friday|saturday|sunday|yesterday|today|tomorrow|week|month)\b/i)[0]
       .trim()
       // Drop a trailing place-type noun so "Greenvalley farm" stores as the bare
       // place "Greenvalley" -- the locPat branch pre-empts the farmMatch branch
@@ -124,9 +139,22 @@ export function extractFields(text) {
       // and into any later equality/cluster matching on it.
       .replace(/\s+(?:farm|area|plaas|dorp)$/i, '')
       .trim()
+    // A bare temporal after "from" ("from Monday", "from Tuesday morning") is a
+    // date, not a place -- "from" is also an onset preposition. Never store a
+    // day-of-week as a location or it poisons cluster/equality matching and wrongly
+    // stops intake asking where the animals are. The onset capture below still
+    // records the day; only the bogus location is dropped.
+    if (/^(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|yesterday|today|tomorrow|week|month)\b/i.test(f.location)) {
+      delete f.location
+    }
   }
   if (!f.location) {
-    const farmMatch = raw.match(/\b([A-Z][a-zA-Z\s]{2,20})\s+(?:farm|area|dorp|plaas)\b/i)
+    // Anchor the captured place to a run of Capitalized tokens immediately before
+    // the place-type noun, so "from the Limpopo area" yields "Limpopo", not the
+    // leading lowercase "from the Limpopo" the old case-insensitive capture
+    // absorbed (which never equality/cluster-matched the bare place). The place-type
+    // noun stays case-insensitive; only the place itself must start uppercase.
+    const farmMatch = raw.match(/([A-Z][a-zA-Z]+(?:[\s-][A-Z][a-zA-Z]+)*)\s+(?:[Ff]arm|[Aa]rea|[Dd]orp|[Pp]laas)\b/)
     if (farmMatch && !STOP_WORDS.has(farmMatch[1].trim().toLowerCase())) {
       f.location = farmMatch[1].trim()
     }

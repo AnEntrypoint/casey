@@ -2203,6 +2203,25 @@ async function main() {
     assert.equal(f.contact_name, 'Thabo', `name after "my name is": ${JSON.stringify(f)}`)
     // A bare greeting captures nothing (no false fields off "Hi Casey").
     assert.equal(Object.keys(extractFields('hi casey')).length, 0, 'greeting yields no fields')
+    // "limp" must not match inside "Limpopo" (the home province of most reporters)
+    // -- a fabricated symptom there would stop intake asking the real sign.
+    assert.ok(!extractFields('from the Limpopo area').symptoms, 'Limpopo is not a "limp" symptom')
+    assert.equal(extractFields('from the Limpopo area').location, 'Limpopo', 'bare place captured without the "from the" article')
+    // A weekday after "from" is a date, not a place -- never stored as a location.
+    assert.ok(extractFields('from Monday').location == null, 'a weekday is not a location')
+    assert.ok(/monday/i.test(extractFields('from Monday').onset || ''), 'a weekday after "from" is still an onset')
+    // isiZulu/isiXhosa agglutinated verbs are captured (documented support).
+    const zu = extractFields('inkomo ziyagula')
+    assert.equal(zu.species, 'inkomo', `singular isiZulu species: ${JSON.stringify(zu)}`)
+    assert.ok(zu.symptoms, `isiZulu "ziyagula" (sick) captured: ${JSON.stringify(zu)}`)
+    assert.ok(extractFields('inkomo yam ifile').dead_count, 'isiZulu "ifile" (died) sets a death')
+    // Controlled-disease signs a reporter commonly states are captured.
+    assert.ok(extractFields('my cattle are aborting').symptoms, 'abortion captured')
+    assert.ok(extractFields('sores on their mouths').symptoms, 'mouth sores captured')
+    assert.ok(extractFields('the cattle are salivating').symptoms, 'salivation captured')
+    // ... but ordinary English/Afrikaans words are NOT mis-read as a death/symptom.
+    assert.ok(!extractFields('the file is here').dead_count, '"file" is not a death')
+    assert.ok(!extractFields('my family is fine').symptoms, '"family" is not a symptom')
   })
 
   await test('multi-turn conversation accumulates every stated field even as the model stays degraded', async () => {
