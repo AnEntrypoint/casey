@@ -2436,6 +2436,19 @@ async function main() {
     }
     const gc = (await store.listCases()).find(c => c.external_id === chan)
     assert.ok((await store.listEvents(gc.id)).some(e => e.kind === 'observation' && /CONVERSATIONAL: content-free/.test(e.text || '')), 'the content-free conversational path is audited')
+    // A bot-mention greeting (Discord renders "@memobot hello" as "<@BOTID> hello")
+    // must still be content-free: the mention's numeric id must NOT be captured as a
+    // livestock count. Witnessed regression -- the snowflake became affected_count,
+    // flipping the greeting into the case-ack with a fabricated number.
+    const mchan = 'ment-' + Date.now()
+    await runScript(adapter, ['<@1234567890> hello'], { from: mchan, channel_id: mchan, username: mchan, wait: () => casey.drain() })
+    const mreply = adapter.sent[adapter.sent.length - 1]
+    assert.ok(mreply && mreply.text, 'a mention greeting is never a dead-end')
+    assert.ok(!/^Thank you for letting us know/.test(mreply.text), `mention greeting is not the case-ack: ${mreply.text}`)
+    assert.ok(/here to help/i.test(mreply.text), `mention greeting gets the warm invite reply: ${mreply.text}`)
+    const mc = (await store.listCases()).find(c => c.external_id === mchan)
+    const mrep = mc.report ? JSON.parse(mc.report) : {}
+    assert.ok(mrep.affected_count == null && mrep.dead_count == null, `mention id is not captured as a count: ${JSON.stringify(mrep)}`)
     // Regression guard: a real livestock report on the SAME case still drives intake --
     // it captures a field, so it is NOT content-free and gets the intake reply (ref-bearing),
     // not the warm greeting invite.

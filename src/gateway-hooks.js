@@ -415,6 +415,25 @@ export function fallbackReply(contactText, caseRow) {
 // instead -- it greets, names what casey is for, and invites the real report,
 // without ever pretending a report was made. Language-mirrored like fallbackReply;
 // the reference tail is kept (it is a real datum the person may quote back) but
+// Strip channel mention/markup tokens that a chat platform injects when a
+// contact addresses the bot. On Discord, "@memobot hello" arrives as msg.content
+// "<@BOTID> hello"; the numeric snowflake id inside the mention was being
+// captured by extractFields as a livestock COUNT, so a bare greeting stopped
+// reading as content-free and got the case-ack with a fabricated affected_count.
+// We strip Discord-style user/role/channel mentions (<@id>, <@!id>, <@&id>,
+// <#id>), Discord custom-emoji tokens (<:name:id> / <a:name:id>), and a leading
+// bare "@name" handle, for the text used to drive capture/intent/replies. The
+// raw inbound is still recorded verbatim in the event log for audit -- only the
+// reasoning copy is cleaned. Returns the trimmed, collapsed remainder.
+export function stripChannelMarkup(text) {
+  return (text || '')
+    .replace(/<a?:\w+:\d+>/g, ' ')        // custom emoji <:name:id> / <a:name:id>
+    .replace(/<[@#][!&]?\d+>/g, ' ')      // <@id> <@!id> <@&id> <#id>
+    .replace(/^\s*@[\w.-]+\b/, ' ')       // a leading bare @handle (e.g. "@memobot")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 // framed as "if you need it" rather than "we have your message". ASCII only.
 const WARM_GREETING_BY_LANG = {
   en: 'Hi! I am here to help. If any of your animals are sick or have died, just tell me what is happening and I will pass it to the team.',
@@ -529,7 +548,12 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // once. recordInbound runs on the per-conversation lock so the dedup check
     // and the append are atomic -- duplicates are structurally unrepresentable,
     // not merely improbable.
-    const inboundText = (msg.text || '').trim()
+    // Strip channel mention markup (e.g. Discord's "<@BOTID> hello" for an
+    // "@memobot hello") so it never reaches capture/intent: the mention's numeric
+    // id was being read as a livestock count, flipping a bare greeting out of the
+    // content-free path into the case-ack. The raw msg.text is still recorded by
+    // recordInbound below for audit; only the reasoning copy is cleaned.
+    const inboundText = stripChannelMarkup(msg.text || '')
     const media = describeMedia(msg)
     const inboundEvent = await store.recordInbound(caseRow, {
       channel,

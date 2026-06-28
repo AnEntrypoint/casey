@@ -29,7 +29,15 @@ function escapeRe(s) {
 }
 
 export function extractFields(text) {
-  const raw = (text || '').slice(0, MAX_SCAN)
+  // Defense in depth: drop chat-platform mention/emoji markup before scanning so
+  // the numeric id inside a Discord mention (<@123...>, <#123...>, <:emoji:123>)
+  // is never read as a livestock count. The handler also strips this upstream;
+  // doing it here too means a stray id can never become affected_count/dead_count
+  // through any caller (e.g. the sim or a future channel).
+  const cleaned = (text || '')
+    .replace(/<a?:\w+:\d+>/g, ' ')
+    .replace(/<[@#][!&]?\d+>/g, ' ')
+  const raw = cleaned.slice(0, MAX_SCAN)
   const t = raw.toLowerCase()
   const f = {}
   if (!t.trim()) return f

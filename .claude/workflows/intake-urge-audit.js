@@ -89,6 +89,11 @@ const ALL_DIMENSIONS = [
     files: 'src/gateway-hooks.js (the assisted-mode draft hold + JARGON-HELD + REF-CORRECTED guards ~line 877-925)',
     invariant: 'An intake-urging reply still passes every delivery guard: assisted mode holds it as a draft (never auto-sends), a jargon leak holds it for a human in ANY mode, and a fabricated/stale case reference is rewritten to the real ref before the reply leaves. Check: can an intake-drive reply ever bypass the assisted hold? Can the deterministic ask leak internal jargon (case/triage/workflow/status/priority)? Does the ref-correction run on the deterministic reply too, not just model prose?',
   },
+  {
+    key: 'content-free-boundary',
+    files: 'src/gateway-hooks.js (stripChannelMarkup ~418, inboundText ~532, isContentFreeTurn ~445, captureFieldsFromText), src/extract.js (extractFields top markup strip + number regex), src/discord-receive.js (onMessageCreate text=m.content)',
+    invariant: 'A content-free turn must STAY content-free regardless of the channel markup wrapping it. A platform injects markup when a contact addresses the bot -- Discord renders "@memobot hello" as "<@BOTID> hello", "<@!id>", "<@&id>", "<#id>", "<:emoji:id>". That markup must be stripped before capture/intent/content-free reasoning so a bare greeting reads as content-free and gets warmConversationalReply, NOT the case-ack with a fabricated count (the witnessed bug: the mention snowflake digits were captured as affected_count, flipping isContentFreeTurn to false). Check: does the inbound boundary strip every mention/emoji form (user/role/channel, with and without !/&)? Does extractFields independently refuse to read a bracketed-snowflake id as a count (defense in depth)? Does a REAL report after a mention ("<@id> my cattle are dying", "<@id> 5 cows died") still capture species/symptoms/the real count and drive intake? Is the raw inbound still recorded verbatim for audit while only the reasoning copy is cleaned? WhatsApp/web paths must be unaffected (no markup to strip).',
+  },
 ]
 
 const FINDING_SCHEMA = {
