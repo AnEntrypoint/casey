@@ -53,6 +53,26 @@
   operator id so each person sees it once.
 
 ### Fixed
+- Channel mention markup no longer flips a greeting into the case-ack: a Discord
+  "@memobot hello" arrives as "<@BOTID> hello" and the mention's numeric id was
+  captured as a livestock count, so a bare greeting got the holding-ack with a
+  fabricated number instead of the warm reply. stripChannelMarkup cleans the
+  inbound copy (raw still recorded for audit) and extractFields drops the markup
+  defensively.
+- Precedence gate no longer parrots the holding-ack forever: three of six
+  visit-critical fields are never deterministically extractable, so the gate fired
+  on every turn of a content-only conversation; it now overrides the model only
+  when there is a next field to ask or a fact captured this turn.
+- Precedence gate no longer clobbers the one-shot closing ask: a genuine wrap-up
+  keeps the model's warm thanks+single-ask, and the degraded closing path asks the
+  single most-important missing fact.
+- Once-per-field marker is recorded only after the question is delivered, so a
+  transient send failure re-asks the field next turn instead of burning it.
+- Field capture: "limp" no longer matches inside "Limpopo"; a weekday after "from"
+  is an onset, not a location; a place no longer absorbs the "from the" article;
+  isiZulu/isiXhosa sick/died verbs and singular species are captured; and common
+  controlled-disease signs (abortion, mouth sores, salivation, recumbency) are
+  recognised -- all without mis-reading ordinary English/Afrikaans words.
 - Intake-urge once-per-field: the empty-model branch and the INTAKE-DRIVE
   precedence gate no longer both fire in one turn. They were independent `if`
   blocks, so the gate re-read the event log, saw the field the empty branch had
