@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- `intake-urge-audit` workflow (`.claude/workflows/intake-urge-audit.js`): a
+  reusable multi-agent audit of the chat agent's on-site completion drive -- one
+  gm-driving subagent per dimension (one-chance prompt, precedence gate,
+  once-per-field, greeting exemption, closing capture, field-capture
+  completeness, assisted-draft hold), each finding adversarially verified by an
+  independent gm-driving refuter. Aggregate-only, never external_id. Re-runnable
+  via `Workflow({name:'intake-urge-audit'})`; the audit surfaced the intake-urge
+  fixes below.
+- Dashboard case-type management lens: an editable Case type select on the case
+  editor whose change sends `case_type` on PATCH (recording the audit event), and
+  a "By case type" report panel rendering per-type SLA compliance with an Overall
+  row. Wires the existing server-side case_type analytics into the operator UI.
 - Per-case-type management analytics: `/api/report.json` gains `sla_by_type`
   (per-type SLA compliance with a reconciling `overall`) and `by_case_type`
   (median first-response, opened/closed, closed_pct, reopen_count), so a director
@@ -41,6 +53,31 @@
   operator id so each person sees it once.
 
 ### Fixed
+- Intake-urge once-per-field: the empty-model branch and the INTAKE-DRIVE
+  precedence gate no longer both fire in one turn. They were independent `if`
+  blocks, so the gate re-read the event log, saw the field the empty branch had
+  just recorded as asked, and overwrote the reply with the next field's ask --
+  recording a field as asked-once while its question was never delivered, burning
+  it forever. A `droveIntake` flag now skips the gate when the empty branch
+  already drove intake.
+- Intake-urge field capture: `dead_count` no longer takes the first number in the
+  message regardless of meaning. "I have 100 cattle and 3 died" recorded 100 dead
+  (a wrong visit-critical fact that then stopped intake asking); counts are now
+  bound by proximity to the death word, with the herd total going to
+  `affected_count`.
+- Intake-urge: the photos nudge fires on the deterministically-capturable core
+  (species/symptoms/location) instead of all six visit-critical fields (three of
+  which are never deterministically captured, so it effectively never fired), and
+  composes the question structurally rather than quoting a copyable phrase.
+- Intake-urge closing capture: an engaged "thanks, what next?" no longer spends
+  the one-shot closing nudge meant for a genuine wrap-up; `isWrapUpThanks`
+  excludes forward-looking tokens, and a token merely containing "thank"
+  ("thankfully") no longer classifies as thanks.
+- Field capture: horse/donkey/chicken/poultry and isiXhosa `iimvu` are captured
+  as species (were silently dropped, so intake re-asked a stated animal); a
+  location no longer absorbs the trailing place-type word ("Greenvalley farm" ->
+  "Greenvalley"); and a captured-field acknowledgement no longer stacks on the
+  generic holding ack (a double thank-you that overran the 240-char reply cap).
 - The AI helper no longer latches "offline" for the whole process life when the
   LLM provider happens to be down at boot. `resolveCallLLM` probed once and the
   case handler closed over a static `callLLM`, so a provider that recovered minutes

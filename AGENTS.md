@@ -229,7 +229,9 @@ the crash-budget stop state); the supervisor is its only I/O.
   live `resolveThresholds().handoffMs` so an operator sees which category is closest
   to breaching. `PATCH /api/cases/:id` accepts `case_type` (enum-validated) and
   records a distinct `case_type a -> b` action event so every per-type analytic can
-  trace when and by whom a case was reclassified. `casey report [--json]` renders the
+  trace when and by whom a case was reclassified -- the dashboard case editor wires
+  this as an editable Case type select (the change sends `case_type` on PATCH) and a
+  "By case type" report panel renders the per-type SLA compliance. `casey report [--json]` renders the
   same per-type/per-channel briefing on the command line. A breach pages with a
   structured `buildAlertPayload` (case_ref/case_type/breach_type/severity_tier/
   since_ms) so an external pager can route an outbreak differently from a follow_up.
