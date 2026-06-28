@@ -34,10 +34,16 @@ export function extractFields(text) {
   const f = {}
   if (!t.trim()) return f
 
-  // Species -- English, Afrikaans (beeste=cattle, skape=sheep, varke=pigs),
-  // isiZulu/isiXhosa (izinkomo/iinkomo=cattle, izimvu=sheep).
+  // Species -- English, Afrikaans (beeste=cattle, skape=sheep, varke=pigs,
+  // perd=horse, esel=donkey, hoender=chicken), isiZulu/isiXhosa
+  // (izinkomo/iinkomo=cattle, izimvu/iimvu=sheep, imbongolo=donkey,
+  // inkukhu=chicken). Horse/donkey/chicken/poultry are commonly reported in this
+  // surveillance context and were silently dropped, so intake kept re-asking
+  // "which animals" for an animal the farmer had already named.
   const SPECIES = ['cattle', 'cow', 'cows', 'sheep', 'goat', 'goats', 'pig', 'pigs',
-    'beeste', 'skape', 'varke', 'izinkomo', 'iinkomo', 'izimvu']
+    'horse', 'horses', 'donkey', 'donkeys', 'chicken', 'chickens', 'poultry',
+    'beeste', 'skape', 'varke', 'perd', 'esel', 'hoender',
+    'izinkomo', 'iinkomo', 'izimvu', 'iimvu', 'imbongolo', 'inkukhu']
   const species = SPECIES.find(s => new RegExp(`\\b${s}\\b`).test(t))
   if (species) f.species = species
 
@@ -60,19 +66,38 @@ export function extractFields(text) {
   if (phrase) f.symptoms = phrase
   else if (word) f.symptoms = word
 
-  // Counts -- numbers written as digits or common English words.
+  // Counts -- numbers written as digits or common English words. Collect ALL of
+  // them WITH their character offsets, because a single message often states two
+  // distinct facts -- a herd total and a smaller death count ("I have 100 cattle
+  // and 3 died"). Taking the first number for dead_count recorded the herd size
+  // as deaths and dropped the real count, a WRONG visit-critical fact that then
+  // stopped intake from asking. So when there is a death word and >=2 numbers,
+  // bind dead_count to the number nearest the death word and affected_count to
+  // another. With exactly one number the original behaviour is preserved.
   const WORD_NUMS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 }
-  let num = null
-  const digitMatch = (t.match(/\b(\d+)\b/) || [])[1]
-  if (digitMatch) {
-    num = digitMatch
-  } else {
-    const wordMatch = Object.keys(WORD_NUMS).find(w => new RegExp(`\\b${w}\\b`).test(t))
-    if (wordMatch) num = String(WORD_NUMS[wordMatch])
+  const nums = []   // { value: string, at: charOffset }
+  for (const m of t.matchAll(/\b(\d+)\b/g)) nums.push({ value: m[1], at: m.index })
+  for (const [w, v] of Object.entries(WORD_NUMS)) {
+    const m = new RegExp(`\\b${w}\\b`).exec(t)
+    if (m) nums.push({ value: String(v), at: m.index })
   }
-  const isDeath = /\b(died|dead|dood|gevrek)\b/.test(t)
-  if (num && isDeath) f.dead_count = num
-  else if (num) f.affected_count = num
+  nums.sort((a, b) => a.at - b.at)
+  const deathMatch = /\b(died|dead|dood|gevrek)\b/.exec(t)
+  const isDeath = !!deathMatch
+  if (isDeath && nums.length >= 2) {
+    // Number closest to the death word is the death count; the earliest remaining
+    // number (typically the herd total, stated first) is the affected count.
+    const deathAt = deathMatch.index
+    const nearest = nums.reduce((best, n) =>
+      Math.abs(n.at - deathAt) < Math.abs(best.at - deathAt) ? n : best)
+    f.dead_count = nearest.value
+    const other = nums.find(n => n !== nearest)
+    if (other) f.affected_count = other.value
+  } else if (nums.length) {
+    const num = nums[0].value
+    if (isDeath) f.dead_count = num
+    else f.affected_count = num
+  }
   if (isDeath) f.dead_count = f.dead_count || 'some'
 
   // Location -- "near X", "farm X", "on the R\d+ road", "X area", "past X". Reject
@@ -84,6 +109,12 @@ export function extractFields(text) {
     // "Musina since Monday" yields the place "Musina", not the whole tail.
     f.location = locMatch[1]
       .split(/\s+(?:since|started|from|near|past|and|but|because|they|we|it|my)\b/i)[0]
+      .trim()
+      // Drop a trailing place-type noun so "Greenvalley farm" stores as the bare
+      // place "Greenvalley" -- the locPat branch pre-empts the farmMatch branch
+      // below, so without this the generic suffix leaked into the stored location
+      // and into any later equality/cluster matching on it.
+      .replace(/\s+(?:farm|area|plaas|dorp)$/i, '')
       .trim()
   }
   if (!f.location) {

@@ -142,15 +142,25 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     `demands, never re-ask something already in "report so far" above. Most facts`,
     `come out on their own as they talk. Ask at most one gentle question per message,`,
     `and it is fine to ask nothing and simply reassure them.`,
-    // If most VC fields are filled and photos not yet mentioned, gentle ask
+    // If the deterministically-capturable core (where/which/what) is recorded and
+    // photos not yet mentioned, a gentle photo ask. Gated on the core three rather
+    // than all six VISIT_CRITICAL: how_to_find/farmer_available/contact_fallback are
+    // never deterministically extracted, so an all-six gate effectively never fired
+    // and the one irrecoverable on-site artifact (a photo) was never nudged. The
+    // ask stays subordinate to any still-missing higher-priority field above, and
+    // is a STRUCTURAL instruction (the model composes the question itself) -- never
+    // a quoted phrase a small model could parrot.
     ...( (() => {
       if (!reportObj) return []
-      const vcMissing = VISIT_CRITICAL.filter(k => reportObj[k] == null).length
+      const core = ['species', 'symptoms', 'location']
+      const coreReady = core.every(k => reportObj[k] != null)
       const hasPhotos = reportObj && reportObj.photos != null
-      if (vcMissing === 0 && !hasPhotos) {
-        return [`PHOTOS: Most of the important details are recorded. If the farmer has a`,
-                `photo of the sick animals, a gentle "do you have any photos?" is useful`,
-                `-- but only if the conversation is still going naturally. Never demand it.`]
+      if (coreReady && !hasPhotos) {
+        return [`PHOTOS: The animals, the signs, and the place are recorded. If the`,
+                `conversation is still flowing naturally and the farmer is still with the`,
+                `animals, you may gently ask -- in your own warm words, never a fixed`,
+                `phrase -- whether they can send a photo of the sick or dead animals.`,
+                `Never demand it, and never ahead of a more important on-site fact still missing.`]
       }
       return []
     })() ),
@@ -375,18 +385,26 @@ export function guessLang(text) {
   return tie ? 'en' : best
 }
 
+// Localised "your reference is X" tail, kept short. Exposed on its own so a reply
+// that already leads with a specific captured-field acknowledgement can append
+// just the reference without a second, redundant "thank you" preamble.
+export function refTail(contactText, caseRow) {
+  const ref = caseRow?.ref
+  if (!ref) return ''
+  const lang = guessLang(contactText)
+  return {
+    af: ` U verwysingsnommer is ${ref}.`,
+    zu: ` Inombolo yakho yereferensi ngu-${ref}.`,
+    xh: ` Inombolo yakho yesalathiso ngu-${ref}.`,
+  }[lang] || ` Your reference is ${ref}.`
+}
+
 export function fallbackReply(contactText, caseRow) {
   const lang = guessLang(contactText)
   const base = FALLBACK_BY_LANG[lang] || FALLBACK_REPLY
   const ref = caseRow?.ref
   if (!ref) return base
-  // Localised "your reference is X" tail, kept short.
-  const tail = {
-    af: ` U verwysingsnommer is ${ref}.`,
-    zu: ` Inombolo yakho yereferensi ngu-${ref}.`,
-    xh: ` Inombolo yakho yesalathiso ngu-${ref}.`,
-  }[lang] || ` Your reference is ${ref}.`
-  return base + tail
+  return base + refTail(contactText, caseRow)
 }
 
 // A bare greeting / "help" / content-free message is conversational, NOT a
@@ -651,7 +669,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // for the single most important missing fact, once, before they go. Once we
     // have asked (closing-nudged tag) or the report is visit-ready, thanks is
     // answered deterministically as before (no nagging, never block a goodbye).
-    if (intent === 'thanks' && !optedOut) {
+    if (intent === 'thanks' && !optedOut && isWrapUpThanks(inboundText)) {
       // "already nudged" is tracked via a durable observation marker, NOT a tag --
       // the agent's own case_update can rewrite tags mid-turn and would clobber a
       // tag set here. The observation is append-only, so the once-only guarantee
@@ -724,7 +742,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // still missing, hand the agent an explicit one-shot directive so it reliably
     // makes the single gentle ask (rather than hoping it infers it). We name the
     // most important missing fact so the ask is concrete.
-    const closingCapture = detectContactIntent(inboundText) === 'thanks' && reportMissingVisitCritical(fresh.report)
+    const closingCapture = isWrapUpThanks(inboundText) && reportMissingVisitCritical(fresh.report)
       ? mostImportantMissingField(fresh.report)
       : null
 
@@ -797,6 +815,13 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model recited stock ack (no case-specific content); replaced with advancing fallback' })
       text = ''
     }
+    // Set when the empty-model degraded branch has ALREADY produced the
+    // deterministic capture-driven reply (and recorded its FALLBACK-ASK). The
+    // precedence gate below must then NOT re-drive: a second drive re-reads the
+    // event log, sees the just-written FALLBACK-ASK for field A, asks field B
+    // instead, and overwrites the reply -- recording field A as asked-once while
+    // its question is never delivered, burning the field forever.
+    let droveIntake = false
     if (!text) {
       if (!errored && result?.error) {
         log.warn?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
@@ -838,6 +863,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${next[0]} degraded reply asked for the next still-missing on-site fact (once per field).` })
       }
       text = advancing
+      droveIntake = true
       }
     }
     // PRECEDENCE GATE (the live fix): while visit-critical intake is INCOMPLETE,
@@ -857,7 +883,12 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // and the warm reply above must not be overridden by a holding ack. The gate
     // only applies once the contact has actually started a report (a captured
     // field this turn or an existing report field), which isContentFreeTurn guards.
-    if (reportMissingVisitCritical(fresh.report) && !isContentFreeTurn(justCaptured, fresh.report)) {
+    // !droveIntake: when the empty-model branch already produced the deterministic
+    // capture-driven reply this turn, re-driving here would clobber the asked field
+    // (see droveIntake note above). The gate's job is only to override non-empty
+    // MODEL prose during incomplete intake; it has nothing to override when the
+    // degraded branch already drove intake.
+    if (reportMissingVisitCritical(fresh.report) && !isContentFreeTurn(justCaptured, fresh.report) && !droveIntake) {
       const priorAsk = await store.listEvents(fresh.id)
       const askedKeys = new Set()
       for (const e of priorAsk) {
@@ -1196,10 +1227,14 @@ async function syncSummaryFromCaptured(store, caseRow, log) {
 // contact is always heard and the intake always advances by one real field.
 function captureDrivenReply(contactText, caseRow, justFilled, nextHint) {
   const ack = ackCapturedFields(justFilled)
-  const base = fallbackReply(contactText, caseRow)
   const ask = nextHint ? ` ${askCarrier(guessLang(contactText), nextHint)}` : ''
-  // Lead with the acknowledgement when we have one, then the reference tail + ask.
-  return ack ? `${ack} ${base}${ask}` : `${base}${ask}`
+  // When we have a specific captured-field acknowledgement ("I have noted which
+  // animals"), it IS the acknowledgement -- append only the reference tail, not
+  // the generic "thank you for letting us know" preamble too (a double thank-you
+  // that also overran the 240-char reply cap). With no ack, fall back to the full
+  // holding reply so a bare turn still acknowledges + cites the reference.
+  if (ack) return `${ack}${refTail(contactText, caseRow)}${ask}`
+  return `${fallbackReply(contactText, caseRow)}${ask}`
 }
 
 // Per-field advancing: the highest-priority on-site fact that is BOTH still
@@ -1309,6 +1344,19 @@ export function detectContactIntent(text) {
   return null
 }
 
+// A genuine wrap-up "thanks" vs an engaged "thanks, what next?". The closing
+// nudge spends a one-shot CLOSING-NUDGE marker for the whole case, so it must
+// only fire when the contact is actually leaving -- a thanks that also carries a
+// forward-looking word ("next", "now", "what") is someone still in the
+// conversation, not someone going. Intent stays 'thanks' (so the warm canned
+// reply still fires, never a dead-end); only the wrap-up deferral is suppressed.
+const WRAPUP_BLOCK = new Set(['next', 'now', 'when', 'what', 'then', 'after', 'how'])
+function isWrapUpThanks(text) {
+  if (detectContactIntent(text) !== 'thanks') return false
+  const t = normalizeIntentText(text)
+  return !t.split(' ').some(w => WRAPUP_BLOCK.has(w))
+}
+
 // Keyword tables. Single-word keys match as whole tokens; multi-word keys as
 // space-bounded phrases. Accent-stripped, lowercase (see normalizeIntentText).
 // Languages: en, es, pt, it, fr, de, zu (Zulu), xh (Xhosa), ar (transliterated),
@@ -1359,7 +1407,10 @@ const HELP_KEYS = [
 ]
 
 const THANKS_KEYS = [
-  'thanks', 'thank you', 'thank', 'thx', 'ty', 'cheers', 'appreciate',
+  // NB: no bare 'thank' key -- it would substring-match any token containing it
+  // ("thankfully it rained" -> false 'thanks'). 'thanks'/'thank you'/'thx'/'ty'
+  // already cover every real thanks; the lone 'thank' only ever mis-fired.
+  'thanks', 'thank you', 'thx', 'ty', 'cheers', 'appreciate',
   'dankie', 'baie dankie',                           // af
   'ngiyabonga', 'siyabonga',                         // zu
   'enkosi', 'enkosi kakhulu',                        // xh
