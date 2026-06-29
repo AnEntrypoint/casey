@@ -156,11 +156,20 @@ the crash-budget stop state); the supervisor is its only I/O.
   `../freddie/src`) drains in-flight turns (up to `CASEY_DRAIN_DEADLINE_MS`) then
   re-forks the worker on fresh code. The store (`app.db`) is the durable boundary,
   reopened per worker -- nothing is lost across a reload. Reload keys on file
-  mtimes, so `git commit`/`checkout`/`pull` alone does NOT refresh a running
-  worker -- a committed fix stays inert until the next `casey up` restart (or a
-  save/`touch` of a watched source file). When re-verifying a fix against a live
-  process, confirm the running process started AFTER the fix commit, not just that
-  the fix is on disk.
+  mtimes, so a raw `git commit` alone does NOT refresh a running worker -- a
+  committed fix is inert until a watched source file's mtime changes. When
+  re-verifying a fix against a live process, confirm the running process started
+  AFTER the fix commit, not just that the fix is on disk.
+- Auto-reload on pull (`hooks/` + `npm run install-hooks`): the gap above is closed
+  for `git pull`/`checkout` by tracked git hooks. `scripts/install-hooks.mjs` points
+  `core.hooksPath` at the tracked `hooks/` dir (one command per clone, since
+  `.git/hooks` is not tracked); `hooks/post-merge` and `hooks/post-checkout` then
+  `touch src/casey.js` after a pull/merge/checkout, bumping a watched file's mtime so
+  the supervisor hot-reloads on the freshly-pulled code with no manual restart
+  (`touch` changes only the timestamp, never the bytes). For an unattended host,
+  `scripts/auto-update.mjs` (`npm run auto-update`, opt-in via `CASEY_AUTO_UPDATE=1`)
+  periodically `git pull --ff-only` so a push to origin auto-deploys via the hook;
+  off by default so a dev checkout never auto-pulls.
 - Crash restart: a worker that exits non-zero is re-forked with exponential
   backoff, bounded by the crash budget so a boot-loop stops instead of thrashing.
 - The watch list is a fixed allowlist (`src/`, `../freddie/src`, `CASEY_RELOAD_PATHS`),
