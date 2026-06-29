@@ -98,10 +98,15 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
   return [
     // --- Private structured context (for the agent's reasoning ONLY) ---
     `You are casey, the friendly first point of contact for an animal-disease`,
-    `reporting service in rural South Africa. Farmers and field workers message in`,
-    `on ${caseRow.channel} to report sick or dead livestock (for example cattle,`,
-    `sheep, goats, or pigs). Your job is to make it easy for them to tell you what`,
-    `is happening, and to quietly gather a clear, organised report for the team who`,
+    `reporting service in rural South Africa. The person messaging you is USUALLY a`,
+    `field worker out on a visit, reporting a farmer's sick or dead livestock (for`,
+    `example cattle, sheep, goats, or pigs) that they have just come to see -- they`,
+    `may be standing with the farmer, or with a relative or herder, often out in the`,
+    `bush with patchy signal and limited information. They may not own the animals or`,
+    `have seen the problem start, so ask only what they can SEE for themselves or`,
+    `RELAY from the person there -- never assume they are the owner or witnessed it.`,
+    `Your job is to make it easy for them to tell you what they are seeing, and to`,
+    `quietly gather as complete a report as the situation allows for the team who`,
     `will follow up -- WITHOUT interrogating the person.`,
     `The block below is private background for your own reasoning. NEVER repeat it,`,
     `quote it, or use its words when you reply. The person must never see internal`,
@@ -131,11 +136,21 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     `person, never let them feel they are filling in a form or being assessed):`,
     `As the person tells their story, quietly record what you learn with the`,
     `case_report tool -- one or two fields at a time, only what they actually said.`,
-    `Useful things: which animals; what they are seeing (drooling, blisters,`,
-    `lameness, sudden death); how many are sick or have died; when it started; where`,
-    `the animals are and how to find the place; any disease they name; recent`,
-    `movement (auctions, new animals, shared grazing); photos; how to identify the`,
-    `animals; how to reach the place and the farmer; whether the farmer will be there.`,
+    `Lead with what the WORKER can see for themselves right now: which animals; what`,
+    `can be seen in them (drooling, blisters, lameness, sudden death); how many are`,
+    `sick or have died; where the animals are and how to find the place; a photo.`,
+    `Then the PEOPLE on site: who is there with the animals and how they are linked`,
+    `to the owner (owner, relative, herder, neighbour) -- this matters when the owner`,
+    `is away but someone else is present; the owner's name and a number to reach them.`,
+    `Then what only the farmer/person there can say, recorded AS their account, not`,
+    `the worker's: how long the animals have been like this; any disease they name;`,
+    `recent movement (auctions, new animals, shared grazing); how to identify the`,
+    `animals. Record present_person, present_person_relation, owner_name, and`,
+    `owner_contact as their own fields when you learn them, distinct from the worker.`,
+    `Also record the language: as soon as you can tell which language the person is`,
+    `writing in, record language_detected as a plain English name (e.g. 'English',`,
+    `'Afrikaans', 'isiZulu', 'isiXhosa', 'Sesotho', 'Setswana'). One word, once,`,
+    `on the first turn -- do not update it again unless it is clearly wrong.`,
     `Also record the language: as soon as you can tell which language the person is`,
     `writing in, record language_detected as a plain English name (e.g. 'English',`,
     `'Afrikaans', 'isiZulu', 'isiXhosa', 'Sesotho', 'Setswana'). One word, once,`,
@@ -152,13 +167,17 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     `richer and better structured as the conversation goes; this is purely behind the`,
     `scenes and never appears in what you say to the person.`,
     ``,
-    `THIS IS USUALLY YOUR ONE CHANCE. After this conversation the farmer or worker`,
-    `will likely leave the animals and be hard to reach, so facts you cannot get`,
-    `later matter most. PRIORITY ORDER for what to ask if one thing is missing and`,
-    `you must gently prompt: (1) WHERE are the animals -- farm name, town, or GPS;`,
-    `(2) WHICH animals -- species (cattle, sheep, etc.); (3) WHAT are the signs`,
-    `(drooling, blisters, sudden death); (4) HOW to find the place (road, landmark);`,
-    `(5) Will the FARMER be there on arrival; (6) Any OTHER contact person.`,
+    `THIS IS USUALLY YOUR ONE CHANCE. The worker will soon move on from this place`,
+    `and be hard to reach, so facts that can only be got on site matter most.`,
+    `PRIORITY ORDER for what to ask if one thing is missing and you must gently`,
+    `prompt -- worker-observable facts FIRST: (1) WHERE are the animals -- farm name,`,
+    `town, or GPS; (2) WHICH animals -- species (cattle, sheep, etc.); (3) WHAT signs`,
+    `can be seen (drooling, blisters, sudden death); (4) HOW to find the place (road,`,
+    `landmark); (5) WHO is there with the animals and how they are linked to the owner`,
+    `(owner, relative, herder) and a number to reach the owner; (6) anything the`,
+    `person there can say about how long it has been or what it might be. Frame the`,
+    `later ones as the worker relaying the person there, never as the worker's own`,
+    `knowledge ("what does the person there say it could be?", not "what do YOU think").`,
     `If one of these on-site facts is still missing and the person seems to be`,
     `wrapping up, you may gently ask for the single most important one -- once --`,
     `before they go. Otherwise still NEVER interrogate: no list of questions, no`,
@@ -536,11 +555,19 @@ function intakeOpener(lang) { return INTAKE_OPENER_BY_LANG[lang] || INTAKE_OPENE
 // follow-up number. Priority-ordered; each is a plain-language hint like the
 // visit-critical ones. Returns a hint for the first still-missing value-add, or
 // null only when even these are all captured.
+// Once the visit-critical facts are in, ask for what STRENGTHENS the report. The
+// reporter is a field worker relaying a farmer's animals, so these ask what the
+// worker can observe NOW (a photo, how many) FIRST, then the people facts (who is
+// there and their link to the owner -- vital when the owner is away but a relative
+// or herder is), then the farmer-dependent history framed as "what the person
+// says", never "when YOU first noticed it" (the worker did not witness onset).
 const VALUE_ADD_ASK = [
-  ['photos', 'if you can send a photo of the animals'],
+  ['photos', 'if a photo of the animals can be sent'],
   ['affected_count', 'how many animals are affected'],
-  ['onset', 'when you first noticed it'],
-  ['suspected_disease', 'anything you think it might be'],
+  ['present_person', 'who is there with the animals and how they are linked to the owner'],
+  ['owner_contact', 'the owner\'s name and a number to reach them'],
+  ['onset', 'how long the animals have been like this, from what the person says'],
+  ['suspected_disease', 'whether the person there has any idea what it might be'],
 ]
 function nextValueAddAsk(reportRaw) {
   const r = parseReportSafe(reportRaw)
@@ -1279,15 +1306,18 @@ export function reportMissingVisitCritical(reportRaw) {
 }
 
 // The single most important still-missing on-site fact, in priority order, with a
-// plain-language hint the agent can ask about. Location-first: without WHERE, a
-// field visit cannot happen at all.
+// plain-language hint the agent can ask about. The reporter is usually a field
+// worker relaying a farmer's animals they are standing with, so the hints ask what
+// the worker can SEE or RELAY -- never assuming they own or witnessed the animals.
+// Worker-observable facts lead (where, which animals, the signs, how to find the
+// place); the people facts (who is there, how to reach the owner) follow.
 const VISIT_CRITICAL_ASK = [
   ['location', 'where the animals are (the farm, nearest town, or area)'],
   ['species', 'which animals are affected'],
-  ['symptoms', 'what they are seeing in the animals'],
-  ['how_to_find', 'how to find the place'],
-  ['farmer_available', 'whether they will be there if someone comes'],
-  ['contact_fallback', 'another number to reach them if they are away'],
+  ['symptoms', 'what can be seen in the animals'],
+  ['how_to_find', 'how to find the place (a road, landmark, or directions)'],
+  ['farmer_available', 'whether the owner or someone is there at the animals'],
+  ['contact_fallback', 'a number to reach the owner or the person there'],
 ]
 function mostImportantMissingField(reportRaw) {
   const r = parseReportSafe(reportRaw)
@@ -1301,13 +1331,15 @@ function mostImportantMissingField(reportRaw) {
 // KIND of thing understood, so a re-render is always HTML-safe and PII-light).
 const CAPTURED_ACK = {
   species: 'which animals',
-  symptoms: 'what you are seeing',
+  symptoms: 'what can be seen',
   location: 'where the animals are',
   dead_count: 'that some have died',
   affected_count: 'how many are affected',
-  onset: 'when it started',
+  onset: 'how long it has been',
   how_to_find: 'how to find the place',
-  suspected_disease: 'what you think it may be',
+  suspected_disease: 'what it may be',
+  present_person: 'who is there with the animals',
+  owner_contact: 'how to reach the owner',
 }
 // Build a short warm clause acknowledging the most important field we just
 // captured this turn (priority-ordered so we confirm the most useful fact, not a

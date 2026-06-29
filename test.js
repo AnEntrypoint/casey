@@ -2450,6 +2450,13 @@ async function main() {
     assert.ok(/\?/.test(warm), `greeting asks for the next needed fact: ${warm}`)
     assert.ok(warm.includes('CASE-9999-zz'), 'greeting keeps the reference')
     assert.ok(warm.length <= 240, `greeting reply stays short (${warm.length})`)
+    // The reporter is a field worker relaying a farmer's animals, so an ask must
+    // never assume the worker witnessed onset ("when you first noticed it"); once
+    // the visit-critical facts and a photo + count are in, the next ask is the
+    // people-on-site fact (who is there, link to the owner), framed for a relay.
+    const vcDone = warmConversationalReply('hi', { ref: 'CASE-8', report: JSON.stringify({ species: 'cow', symptoms: 'blue eye', location: 'Musina', how_to_find: 'R101', farmer_available: 'yes', contact_fallback: '082', photos: 'x', affected_count: '3' }) })
+    assert.ok(!/first noticed|when you first/i.test(vcDone), `ask never assumes the worker witnessed onset: ${vcDone}`)
+    assert.ok(/owner|there with the animals/i.test(vcDone), `ask captures who is on site and link to the owner: ${vcDone}`)
     // End-to-end: a greeting-only conversation must drive intake on the first and a
     // repeated greeting, never the case-ack, always asking the next thing.
     const chan = 'greet-' + Date.now()
