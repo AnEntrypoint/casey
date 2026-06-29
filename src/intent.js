@@ -48,7 +48,7 @@ const GREETING_ONLY = /^(hi|hello|hey|hallo|hi there|good morning|good day|molo|
 // Enquiry SHAPE: asking about cases/reports/work, optionally with a place or "today".
 const ENQUIRY_NEAR = /\b(near|nearest|closest|around|close to|close by)\b/
 const ENQUIRY_MINE = /\b(my (cases?|reports?|work|visits?|jobs?|list|plate))\b|\bwhat am i working on\b|\bassigned to me\b/
-const ENQUIRY_OPEN = /\b(open (cases?|work)|available work|anything (i can help|open)|what can i help|help with anything)\b/
+const ENQUIRY_OPEN = /\b(open (cases?|reports?|work)|available work|anything (i can help|open)|what can i help|help with anything|(show me|list)( the| all)? (open )?(cases?|reports?))\b/
 const ENQUIRY_TODAY = /\b(itinerary|itenerary|agenda|schedule|today|todays?|on the go|whats up|what'?s up|whats on|what'?s on|whats happening|what'?s happening|whats going on|whats new|anything (today|for me))\b/
 const QUESTION_LEAD = /^(what|whats|what'?s|where|which|who|how|hows|when|is there|are there|any (cases?|reports?)|do (we|i)|can (you|i)|show me|list|find|tell me)\b/
 
@@ -91,6 +91,17 @@ export function classifyIntentFallback(text) {
   // "any reports/cases in <place>" is a clear enquiry and still enquires below.)
   if (ANIMAL_WORDS.test(t) && !clearEnquiryLead) return { kind: 'report', source: 'fallback' }
   if (ENQUIRY_NEAR.test(t) && mentionsCases) return { kind: 'enquiry', enquiry_kind: 'near', place: extractPlace(t), source: 'fallback' }
+  // A proximity ENQUIRY ("whats near margate", "nearest case to margate", "any near
+  // X") where the place RESOLVES to a known SA town/province is an enquiry even
+  // without a "cases"/"reports" word -- the near-lead plus a question/listing shape
+  // signals a store query. Gated on QUESTION_LEAD (or nearest/closest, which are
+  // inherently a query) so a DECLARATIVE location statement ("the farm is near
+  // Ermelo" -- report content) does NOT trip it.
+  const nearQueryShape = QUESTION_LEAD.test(t) || /\b(nearest|closest)\b/.test(t)
+  if (ENQUIRY_NEAR.test(t) && nearQueryShape) {
+    const np = resolvePlace(t)
+    if (np) return { kind: 'enquiry', enquiry_kind: 'near', place: np.matchedAlias, source: 'fallback' }
+  }
   if (ENQUIRY_MINE.test(t)) return { kind: 'enquiry', enquiry_kind: 'mine', source: 'fallback' }
   if (ENQUIRY_OPEN.test(t)) return { kind: 'enquiry', enquiry_kind: 'open', source: 'fallback' }
   if (ENQUIRY_TODAY.test(t)) return { kind: 'enquiry', enquiry_kind: 'today', source: 'fallback' }
