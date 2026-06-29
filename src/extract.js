@@ -96,7 +96,11 @@ export function extractFields(text) {
   // another. With exactly one number the original behaviour is preserved.
   const WORD_NUMS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 }
   const nums = []   // { value: string, at: charOffset }
-  for (const m of t.matchAll(/\b(\d+)\b/g)) nums.push({ value: m[1], at: m.index })
+  // A livestock count is a small number; a 17-19 digit run is an id, not a herd
+  // (e.g. a Discord snowflake that slipped past mention-stripping). Cap at 6 digits
+  // (up to 999999 animals) so an id can never be recorded as affected_count/
+  // dead_count -- defense in depth alongside stripChannelMarkup.
+  for (const m of t.matchAll(/\b(\d{1,6})\b/g)) nums.push({ value: m[1], at: m.index })
   for (const [w, v] of Object.entries(WORD_NUMS)) {
     const m = new RegExp(`\\b${w}\\b`).exec(t)
     if (m) nums.push({ value: String(v), at: m.index })

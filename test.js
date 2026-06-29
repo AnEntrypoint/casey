@@ -2222,6 +2222,11 @@ async function main() {
     // ... but ordinary English/Afrikaans words are NOT mis-read as a death/symptom.
     assert.ok(!extractFields('the file is here').dead_count, '"file" is not a death')
     assert.ok(!extractFields('my family is fine').symptoms, '"family" is not a symptom')
+    // A 17-19 digit id (e.g. a Discord snowflake that slipped past mention-stripping)
+    // is never recorded as a livestock count; a real (even large) herd still is.
+    const sf = extractFields('502921403385774090 animals are sick')
+    assert.ok(sf.affected_count == null && sf.dead_count == null, `a snowflake id is not a count: ${JSON.stringify(sf)}`)
+    assert.equal(extractFields('50000 sheep').affected_count, '50000', 'a large but real herd count is captured')
   })
 
   await test('multi-turn conversation accumulates every stated field even as the model stays degraded', async () => {
