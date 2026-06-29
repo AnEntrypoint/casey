@@ -53,6 +53,13 @@
   operator id so each person sees it once.
 
 ### Fixed
+- Two workers in one Discord channel no longer share a case: the case key is now
+  per-contact (channel + author) instead of per-channel, so a second author's
+  message starts their own case rather than landing on the first's. Replies still
+  target the channel (delivery target is split from the case-identity key).
+- A complete report no longer dead-ends on "Thank you. Your reference is X": once
+  every field is captured, memobot confirms the report is on record and invites a
+  fresh report for any other animal or place, so a finished case has a clean exit.
 - Intake no longer loops when an asked field has no extractor: a worker's free-text
   answer ("boyi son of the owner") to a question like "who is there and how are they
   linked to the owner?" is now bound to that field (bindPendingAsk) instead of being

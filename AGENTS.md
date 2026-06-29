@@ -170,6 +170,21 @@ the crash-budget stop state); the supervisor is its only I/O.
   real field was captured this turn and it is not a fixed-intent message). So a
   field is asked at most once and its answer is always recorded -- the same question
   is never asked on two consecutive turns.
+- **A case is keyed per CONTACT, not per channel; delivery target is separate.**
+  `conversationKey` returns `container:author` when a channel/chat carries multiple
+  authors (a Discord server channel) and the single id for a 1:1 chat -- so two
+  workers in one channel get DISTINCT cases (a second author's message must not land
+  on the first's case). The reply DELIVERY target is `replyTarget()` (the channel --
+  Discord posts to `/channels/{channel}/messages`; an author id 404s), kept separate
+  from the per-contact key: the key drives find-or-create, the in-flight lock, and
+  dedup, while every `to:` is `replyTo`.
+- **A complete report confirms and EXITS, never a bare acknowledgement.** When every
+  visit-critical and value-add field is captured (`nextAsk` returns null), the reply
+  is `completeReply`: it confirms the full report is on record and the team will
+  follow up, AND invites a fresh report for any other animal or place -- so a
+  finished case is never the "Thank you. Your reference is X" dead-end. A new
+  substantive message then branches a new case (via `detectNewCaseConflict` /
+  find-or-create).
 - **A greeting is the OPENING of a report: every turn DRIVES collection, never the
   case-ack and never a no-ask pleasantry.** memobot's job is to gather the case
   while someone is on-site, so even a bare "hi"/"hello"/"help" must reply with a warm
