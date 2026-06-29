@@ -607,6 +607,32 @@ async function renderItinerary(store, kind, author, inboundText, now = Date.now(
   return `${intro}\n${lines}`
 }
 
+// The most recent model-declared intent (case_intent -> INTENT-DECLARED observation)
+// that is FRESH: recorded after the last outbound, so a declaration from an earlier
+// answered message is never reused. Returns a normalized intent {source:'model'} or
+// null. This is how the in-loop model's reading governs routing without reordering
+// the turn -- the model declares, the next inbound honors it.
+async function latestModelIntent(store, caseId) {
+  try {
+    const events = await store.listEvents(caseId)
+    let lastOutboundIdx = -1
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].kind === 'outbound') { lastOutboundIdx = i; break }
+    }
+    for (let i = events.length - 1; i > lastOutboundIdx; i--) {
+      const e = events[i]
+      if (e.kind !== 'observation') continue
+      const m = /INTENT-DECLARED\s+(\{.*\})/.exec(e.text || '')
+      if (!m) continue
+      let payload = null
+      try { payload = JSON.parse(m[1]) } catch { payload = null }
+      const norm = normalizeIntent(payload, 'model')
+      if (norm) return norm
+    }
+  } catch { /* fall back to the deterministic classifier */ }
+  return null
+}
+
 // A general QUESTION that is not a report and not a known enquiry. The cardinal rule:
 // never the complete-report exit. Acknowledge the question warmly, say the team can
 // help, and keep the channel open -- a worker who asks something we cannot answer
@@ -1152,7 +1178,14 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // classifier, not a phrase maze) so a weak model that declares nothing still
     // routes. The report-content veto inside the classifier keeps a real report
     // ("my cattle are sick", "2 cows died today") from ever being read as an enquiry.
-    const turnIntent = classifyIntentFallback(inboundText)
+    // Prefer a model DECLARATION (case_intent) recorded since the last inbound was
+    // routed, over the deterministic fallback: a capable model that read the message
+    // wins; a weak model that declared nothing falls back to the shape classifier.
+    // We only consider a declaration newer than the most recent prior outbound (so a
+    // stale declaration from an earlier message is not reused). The declaration is an
+    // append-only observation written by the case_intent handler.
+    const declared = await latestModelIntent(store, fresh.id)
+    const turnIntent = declared || classifyIntentFallback(inboundText)
     const conv = await advanceConversation(turnIntent, { fsmFromState: reportMissingVisitCritical(fresh.report) ? 'gathering' : 'complete' })
     // Record the soft decision (intent + FSM trace) as an observation -- observable to
     // operators, never shown to the contact. This is the guardrail INFORMING, not

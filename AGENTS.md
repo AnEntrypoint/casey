@@ -23,6 +23,7 @@ casey composes three existing projects and owns only the glue:
 | Agent + channels | `freddie` (`file:../freddie`) | Agent harness + Gateway with WhatsApp/Discord adapters, tools, sessions. |
 | System of record | `thatcher` (npm) | Config-driven CRUD + workflow + RBAC + audit. Holds `case` / `event` / `contact` and the lifecycle state machine. |
 | UI | `anentrypoint-design` (`file:../anentrypoint-design`) | webjsx + ripple-ui design system theming the dashboard. |
+| Conversation state | `adaptogen` (`file:../dstate`) | Agent-owned DAG+FSM with soft/hard enforcement -- casey's SOFT conversation machine (intent-driven, guardrails flag not block). Optional: a bare clone degrades to a pure intent->route map. |
 
 Inbound flow: channel message -> freddie Gateway -> casey case handler (replaces
 `handleInbound`) -> find/create thatcher case (locked, deduped by message id) ->
@@ -70,6 +71,8 @@ src/
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep; detectCoverageGap (rostered team, open breaching cases, zero in-window operator replies) pages a synthetic TEAM-COVERAGE breach
   correlate.js             cross-case correlation helpers
+  intent.js                interpret a message into a structured intent (report|enquiry{today,mine,open,near+place}|question|chitchat|service) by shape; classifyIntentFallback (soft deterministic fallback) + normalizeIntent (model case_intent declaration) + extractPlace; report-content veto
+  conversation-fsm.js      the conversation as an adaptogen (../dstate) DAG+FSM with SOFT enforcement (CONVERSATION_SPEC); advanceConversation maps intent->route+soft-transition trace; optional-imports adaptogen (degrades to a pure intent->route map when ../dstate absent)
   attn.js                  worst-first attention ranking (rankAttention, with an SLA clock: waitingOnUs/waitAgeMs/atRiskCount/slaTargetMs) + shared caseHints why/to-do policy; backs the inbox and `casey attention`
   format.js                shared SAST timestamp + +27 phone formatters (CLI and SPA render the same way)
   thresholds.js            pure validate/clamp/merge of operator-tunable health thresholds (allowlist keys + bounds)
@@ -80,7 +83,7 @@ src/
   report.js                management report rendering (CSV/HTML) for /api/report.csv and /api/report.html; composes buildWorkload into a per-operator by_operator section (aggregate-only, no external_id)
   report-analytics.js      pure management analytics for /api/report.json: buildSLAReport (pass/fail vs the live handoff SLA, answered-late vs never-answered), buildSLAReportByType (the same compliance partitioned by case_type, with an `overall` that reconciles), buildReportComparison (this window vs the prior adjacent window, signed deltas), buildChannelMetrics + buildCaseTypeMetrics (shared rollupByKey: first-response median, opened/closed, closed_pct, reopen_count per channel / per case_type), buildAlertPayload (structured machine-parseable breach payload for an external pager: case_ref/case_type/breach_type/severity_tier/since_ms, NEVER external_id); all aggregate-only, no external_id
   extract.js               deterministic field capture from plain contact text (species/symptoms/counts/location/onset/name); shared by the live handler and the stub model so a case is never an empty shell even when the model drives no tools
-  gateway-hooks.js         makeCaseHandler: plain-language prompt, intent keywords, dedup, media, observe, fallback
+  gateway-hooks.js         makeCaseHandler: plain-language prompt, INTERPRETED intent routing (intent.js + conversation-fsm.js soft FSM; renderItinerary/answerQuestion answer enquiry/question without the complete-report dead-end), irreversible-intent keywords (stop/human), dedup, media, observe, fallback
   discord-receive.js       fallback Discord WS receive for older freddie builds
   llm.js                   model call wiring; resolveCallLLM (boot precedence: stub/acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row)
   sim/inject.js            MockAdapter + scripted-conversation runner (offline)
@@ -108,10 +111,14 @@ push and PR. It is dependency-free on purpose -- it does NOT need the `file:../`
 siblings, so it stays green in a bare clone. Keep `test.js` as the real-services
 witness; do not move its real-services assertions into the lint gate.
 
-Note: `freddie` and `anentrypoint-design` are `file:../` dependencies. Without
-those sibling checkouts (and `thatcher` from npm) installed, `node test.js` and
-`casey up` fail with `ERR_MODULE_NOT_FOUND`; only static review is possible in a
-clone that lacks them. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
+Note: `freddie`, `anentrypoint-design`, and `adaptogen` are `file:../` dependencies
+(`../freddie`, `../anentrypoint-design`, `../dstate`). Without those sibling checkouts
+(and `thatcher` from npm) installed, `node test.js` and `casey up` fail with
+`ERR_MODULE_NOT_FOUND`; only static review is possible in a clone that lacks them.
+`adaptogen` is the exception that degrades gracefully: `conversation-fsm.js`
+optional-imports it, so its absence drops the durable soft-FSM trace but the
+intent->route map (and the no-dead-end guarantee) still hold -- the dependency-free
+CI lint and a bare clone stay green. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
 
 ## Environment
 
@@ -249,20 +256,33 @@ the crash-budget stop state); the supervisor is its only I/O.
   instruction; everything else is a structural instruction the model composes.
 - **Fixed keywords short-circuit the LLM**: `HELP` / `STATUS` / `HUMAN` / `STOP`
   answer instantly in any phrasing/language.
-- **An enquiry question is answered deterministically, never treated as report
-  intake**: a worker ASKING about their work ("what's on the itinerary today", "my
-  cases", "anything I can help with") is a different act from REPORTING an animal.
-  The weak production model never calls the freddie enquiry tools
-  (`case_today`/`case_mine`/...), so an enquiry question used to fall through to
-  intake and -- on a complete case -- got the complete-report exit ("we have the
-  full report ... your reference is X"). `detectEnquiryIntent` (gateway-hooks.js)
-  classifies the question (`today`/`mine`/`open`) and `renderItinerary` answers it
-  from the same `store.listCases` the enquiry tools use, projected PII-free via
-  freddie's `projectCase` (a phone number can never reach a worker's list),
-  short-circuiting before the agent/intake path -- exactly like the fixed-keyword
-  short-circuit. A report-content veto (sick/dead/drooling/"the farm is near ...")
-  keeps a real report from ever being misread as an enquiry; an empty list invites a
-  fresh report rather than dead-ending.
+- **Soft states, soft transitions: the message is INTERPRETED, not keyword-matched,
+  and guardrails inform rather than interfere**: a worker ASKING about their work
+  ("what's on the itinerary today", "my cases", "the nearest case to <place>") or
+  asking a general question is a different act from REPORTING an animal -- but a
+  fixed-phrase detector could never cover the open-ended ways a worker phrases it
+  (the witnessed whack-a-mole: each new phrasing slipped through to the
+  complete-report exit "we have the full report ... your reference is X"). So casey
+  INTERPRETS each message into a structured intent (`intent.js`: report | enquiry
+  {today,mine,open,near+place} | question | chitchat | service) by SHAPE, and the
+  conversation is an `adaptogen` (`../dstate`) DAG+FSM with SOFT enforcement
+  (`conversation-fsm.js`): every transition is allowed and merely FLAGGED, so a
+  question or enquiry from a "complete" case moves freely out of that state -- the
+  complete-report dead-end is structurally impossible. The interpreter is the in-loop
+  agent model when it declares a `case_intent` (recorded as an `INTENT-DECLARED`
+  observation the gateway prefers on the next turn); a deterministic SOFT shape
+  classifier is the fallback when a weak model declares nothing -- it SUGGESTS, the
+  soft FSM never blocks. A report-content veto keeps a real report
+  (sick/dead/drooling, "2 cows died today") from ever being read as an enquiry.
+  Enquiries answer from the PII-free surface (`renderItinerary`, incl.
+  near-by-location-text since lat/lon is optional and there's no geocoder); a general
+  question gets a helpful answer, NEVER the complete exit; report/chitchat fall
+  through to the agent turn. The soft decision (intent + FSM trace) is recorded as an
+  observation -- the guardrail informing, never shown to the contact. adaptogen holds
+  CONVERSATION state; thatcher stays the case system-of-record. Only the IRREVERSIBLE
+  service intents (`stop`/`human`, and `status`/`help`) stay hard-deterministic
+  (`detectContactIntent`) -- a safety layer that must fire in any language without a
+  model.
 - **Full observability**: every action is an append-only audited `event` row.
 - **Receive-liveness is observable, never a false green**: a real-time channel
   (Discord/WhatsApp) can have a live TCP socket yet a dead gateway and deliver no
