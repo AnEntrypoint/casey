@@ -476,8 +476,10 @@ const WARM_GREETING_BY_LANG = {
 export function warmConversationalReply(contactText, caseRow) {
   const lang = guessLang(contactText)
   const base = WARM_GREETING_BY_LANG[lang] || WARM_GREETING_BY_LANG.en
-  const fact = mostImportantMissingField(caseRow?.report)
-  const ask = fact ? ` ${askCarrier(lang, fact)}` : ''
+  // Drive forward: the most-important missing visit-critical fact, or a value-add
+  // ask when the critical six are all in -- never a no-ask greeting.
+  const hint = mostImportantMissingField(caseRow?.report) || nextValueAddAsk(caseRow?.report)
+  const ask = hint ? ` ${askCarrier(lang, hint)}` : ''
   const ref = caseRow?.ref
   if (!ref) return base + ask
   const tail = {
@@ -527,16 +529,39 @@ const INTAKE_OPENER_BY_LANG = {
 }
 function intakeOpener(lang) { return INTAKE_OPENER_BY_LANG[lang] || INTAKE_OPENER_BY_LANG.en }
 
+// Value-add facts to ask for once every visit-critical field is captured -- so a
+// reply is NEVER a bare "Thank you. Your reference is X" dead-end. These strengthen
+// the report when the critical six are already in: a photo (the most useful on-site
+// artifact a field visit cannot recreate), how many animals, when it started, a
+// follow-up number. Priority-ordered; each is a plain-language hint like the
+// visit-critical ones. Returns a hint for the first still-missing value-add, or
+// null only when even these are all captured.
+const VALUE_ADD_ASK = [
+  ['photos', 'if you can send a photo of the animals'],
+  ['affected_count', 'how many animals are affected'],
+  ['onset', 'when you first noticed it'],
+  ['suspected_disease', 'anything you think it might be'],
+]
+function nextValueAddAsk(reportRaw) {
+  const r = parseReportSafe(reportRaw)
+  const hit = VALUE_ADD_ASK.find(([k]) => r[k] == null || String(r[k]).trim() === '')
+  return hit ? hit[1] : null
+}
+
 // Build the intake-driving reply: [ack of a just-captured fact OR a warm opener] +
-// the ask for `fact` + a short reference tail. This REPLACES the holding-ack
+// the ask for the next fact + a short reference tail. This REPLACES the holding-ack
 // preamble so every intake turn urges the next fact rather than parroting a case
-// acknowledgement. `fact` is a VISIT_CRITICAL_ASK hint (or null when nothing left
-// to ask, in which case the caller decides on a brief confirming close).
+// acknowledgement. `fact` is a VISIT_CRITICAL_ASK hint; when it is null (every
+// visit-critical fact is captured) we DRIVE FORWARD with a value-add ask rather
+// than degrade to a bare "Thank you. + ref" -- a content-free acknowledgement is
+// the dead-end memobot must never send. Only when even the value-add facts are all
+// in does the reply become a brief warm confirming line.
 function intakeAdvanceReply(contactText, caseRow, justFilled, fact) {
   const lang = guessLang(contactText)
   const ack = ackCapturedFields(justFilled)          // '' when nothing captured this turn
   const lead = ack || intakeOpener(lang)
-  const ask = fact ? ` ${askCarrier(lang, fact)}` : ''
+  const hint = fact || nextValueAddAsk(caseRow?.report)
+  const ask = hint ? ` ${askCarrier(lang, hint)}` : ''
   return `${lead}${ask}${refTail(contactText, caseRow)}`
 }
 
