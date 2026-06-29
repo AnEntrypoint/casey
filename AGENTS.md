@@ -157,8 +157,19 @@ the crash-budget stop state); the supervisor is its only I/O.
   facts lead; the people-on-site facts (who is there and their link to the owner --
   owner/relative/herder/neighbour -- and the owner's name + a number, recorded as
   `present_person`/`present_person_relation`/`owner_name`/`owner_contact`) and the
-  farmer-dependent history come after, framed as the person's account. The report
-  is free-form JSON, so these fields need no schema migration.
+  farmer-dependent history come after, framed as the person's account. (REPORT_KEYS
+  in case-store.js carries these fields; the report itself is free-form JSON.)
+- **Every ask must be answerable: a free-text answer is bound to the field just
+  asked.** Many fields (the people/owner facts, `how_to_find`) have NO deterministic
+  extractor and the weak production model rarely calls `case_report`, so a worker's
+  free-text answer ("boyi son of the owner") would be dropped and the same question
+  re-asked forever. `nextAsk(report, askedKeys)` is the single source of truth for
+  the next field (visit-critical first, then value-add, skipping any already asked),
+  and every ask path records a durable `ASKED:`/`FALLBACK-ASK:` marker. On the next
+  turn `bindPendingAsk` binds the free-text inbound to that pending field (when no
+  real field was captured this turn and it is not a fixed-intent message). So a
+  field is asked at most once and its answer is always recorded -- the same question
+  is never asked on two consecutive turns.
 - **A greeting is the OPENING of a report: every turn DRIVES collection, never the
   case-ack and never a no-ask pleasantry.** memobot's job is to gather the case
   while someone is on-site, so even a bare "hi"/"hello"/"help" must reply with a warm

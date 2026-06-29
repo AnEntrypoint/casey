@@ -52,6 +52,13 @@
   keyboard triage, the `Mine` filter, and draft release once, keyed to their
   operator id so each person sees it once.
 
+### Fixed
+- Intake no longer loops when an asked field has no extractor: a worker's free-text
+  answer ("boyi son of the owner") to a question like "who is there and how are they
+  linked to the owner?" is now bound to that field (bindPendingAsk) instead of being
+  dropped, and nextAsk skips already-asked fields, so the same question is never
+  asked on two consecutive turns.
+
 ### Changed
 - Intake is reframed for a field worker relaying a farmer's animals rather than the
   owner: the asks and the system prompt request only what the worker can see ("what
