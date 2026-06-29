@@ -30,6 +30,31 @@ agent turn with case context + `case_*` tools -> reply, with a safe fallback whe
 the model errors/empties. Every inbound/outbound/observation/action/transition is
 an append-only `event` row. The dashboard reads/edits thatcher over its API.
 
+**Layering mandate: agentic code -> freddie, CRM code -> thatcher, casey is
+setup + configuration.** The agentic case + worker-enquiry toolset lives in freddie
+(`freddie/src/plugins/case/`): the `case_*` tools plus the enquiry surface
+(`case_mine` / `case_today` / `case_today_open` / `case_near` / `case_select` /
+`case_new`), application-agnostic -- the store, the field/enum/projection vocabulary,
+and the role model arrive via a per-turn `toolCtx` and `plugins.case` config. CRM
+querying lives in thatcher (consumed via npm, published by CI on push): `list()`
+supports operator where-objects (`{field:{$gte,$lte,$in}}`, `$or`), array tie-broken
+sort, and opt-in row-access scoping (`opts.user` + a configurable owner field). casey
+is the configuration instance: `thatcher.config.yml` declares the entities,
+`row_access`, `list.defaultSort`, and the lat/lon/active_case_id fields; the handler
+passes `toolCtx{author,role,store,principal,activeCaseRef}` so the enquiry tools
+answer FOR the asking worker.
+
+**Worker identity = the channel author; a worker selects a case before data-dumping
+into it.** A worker negotiates/selects a case (by ref or from an enquiry list) which
+binds active (`contact.active_case_id`); their field updates append to THAT case, and
+a new case is opened only on an explicit `case_new`. Role-scoped enquiries return only
+what the worker may see and are PII-free: every per-case enquiry row is projected to a
+whitelist that EXCLUDES `external_id`/`contact_id`, so a list can never surface a phone
+number. casey's `case-store.js` carries an operator-where FEATURE-DETECT shim (probe
+the published thatcher; fall back to equality-only + JS operator predicates + recency
+sort) so a bare clone and a pre-publish install stay green -- the same npm-publish-lag
+caveat the thatcher shim section documents.
+
 ## Source map
 
 ```

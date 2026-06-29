@@ -3,6 +3,27 @@
 ## Unreleased
 
 ### Added
+- Worker enquiry + active-case re-architecture (layered across casey/freddie/
+  thatcher). A field worker can negotiate/select a case before an excursion and
+  data-dump into THAT case, run role-scoped enquiries, and gets a new case only on
+  explicit request:
+  - thatcher (CRM, published via npm): list() gains operator where-objects
+    ($gt/$gte/$lt/$lte/$in/$or), array tie-broken sort, and opt-in row-access
+    scoping with a configurable owner field. Backs "today" (date range), "near me"
+    (lat/lon box), "my cases" (assignee+user scope), and "anything I can help with"
+    (open status set).
+  - freddie (agentic): an application-agnostic `case` plugin with the case_* tools
+    plus the enquiry toolset (case_mine/case_today/case_today_open/case_near/
+    case_select/case_new). Identity comes from a per-turn toolCtx (now threaded
+    through the agent machine), and every enquiry row is projected PII-free
+    (external_id/contact_id never reach the agent). A `field-worker` distribution.
+  - casey (config + glue): the inbound handler passes toolCtx{author,role,store,
+    principal,activeCaseRef} into runTurn; case-store gains active-case binding
+    (findCaseByRef/setActiveCase/getActiveCase/createCase) and an operator-where
+    feature-detect shim so a bare clone / pre-publish install stays green;
+    thatcher.config.yml declares lat/lon, claimed_at, contact.active_case_id,
+    row_access{scope:assigned,field:assignee}, and list.defaultSort -- so casey's
+    recency order and ownership scope are configuration.
 - `intake-urge-audit` workflow (`.claude/workflows/intake-urge-audit.js`): a
   reusable multi-agent audit of the chat agent's on-site completion drive -- one
   gm-driving subagent per dimension (one-chance prompt, precedence gate,
