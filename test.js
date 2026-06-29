@@ -2537,10 +2537,13 @@ async function main() {
     assert.notEqual(caseA.id, caseB.id, 'two authors in one channel are not the same case')
     // The reply to either still targets the channel (Discord posts to the channel).
     assert.ok(adapter.sent.slice(-2).every(r => r.to === sharedChan), 'replies target the channel, not the author')
-    // A COMPLETE report confirms + invites a fresh report, never a bare "Thank you.+ref".
+    // A greeting on a COMPLETE report is a warm RE-OPENER that invites a fresh report
+    // (or today's list), never a bare "Thank you.+ref" AND never the complete-report
+    // exit dead-end ("we have the full report ...") -- the witnessed "hi there" failure.
     const done = warmConversationalReply('hi', { ref: 'CASE-9', report: JSON.stringify({ species: 'cow', symptoms: 'blue eye', location: 'Musina', how_to_find: 'R101', farmer_available: 'yes', contact_fallback: '082', photos: 'x', affected_count: '3', present_person: 'boyi', owner_contact: 'joe', onset: '3 weeks', suspected_disease: 'fmd' }) })
     assert.ok(!/^Thank you\. Your reference/.test(done), `a complete report is not a bare acknowledgement: ${done}`)
-    assert.ok(/fresh report|another|different place/i.test(done), `a complete report invites a new one: ${done}`)
+    assert.ok(!/full report/i.test(done), `a greeting on a complete case is NOT the complete-report exit: ${done}`)
+    assert.ok(/start a report|fresh report|another|different place|what is on today/i.test(done), `a complete report invites a new one or the list: ${done}`)
   })
 
   await test('worker enquiry plumbing: active-case binding, explicit create, and a PII-free enquiry projection', async () => {
@@ -2634,6 +2637,25 @@ async function main() {
     assert.ok(!/full report/i.test(nearReply), `near-enquiry must NOT get the complete-report exit: ${nearReply}`)
     assert.ok(/closest reports|could not find a report/i.test(nearReply), `near-enquiry got a proximity answer: ${nearReply}`)
     assert.ok(!nearReply.includes(sc), 'the near answer leaks no contact id')
+  })
+
+  await test('a greeting ("hi there") on a COMPLETE case gets a warm re-opener, never the complete-report exit', async () => {
+    const { classifyIntentFallback } = await import('./src/intent.js')
+    const { chitchatReply } = await import('./src/gateway-hooks.js')
+    // "hi there" is chit-chat, and the re-opener never recites the complete exit.
+    assert.equal(classifyIntentFallback('hi there').kind, 'chitchat', 'a bare greeting is chit-chat')
+    const reopen = chitchatReply('hi there', { ref: 'CASE-9' })
+    assert.ok(!/full report/i.test(reopen), `chit-chat reply is not the complete-report exit: ${reopen}`)
+    assert.ok(/start a report|what is on today/i.test(reopen), `chit-chat reply re-opens the conversation: ${reopen}`)
+    // End-to-end: complete a report, then send a bare "hi there" -- the reply must NOT
+    // be the complete-report exit (the witnessed CASE-1089 "hi there" dead-end).
+    const cc = 'chitchat-' + Date.now()
+    await runScript(adapter, ['my cattle are drooling at the farm near Musina, look for the blue gate, the owner Joe is on 082, a photo is coming'], { from: cc, channel_id: cc, username: cc, wait: () => casey.drain() })
+    const b = adapter.sent.length
+    await runScript(adapter, ['hi there'], { from: cc, channel_id: cc, username: cc, wait: () => casey.drain() })
+    assert.ok(adapter.sent.length > b, 'the greeting got a reply')
+    const greetReply = adapter.sent[adapter.sent.length - 1].text || ''
+    assert.ok(!/full report/i.test(greetReply), `a greeting on a complete case must NOT be the complete-report exit: ${greetReply}`)
   })
 
   await dash.close()

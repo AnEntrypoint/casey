@@ -687,6 +687,25 @@ const WARM_GREETING_BY_LANG = {
   zu: 'Sawubona! Ngisiza ngezilwane ezigulayo noma ezifile.',
   xh: 'Molo! Ndinceda ngezilwanyana ezigulayo okanye ezifileyo.',
 }
+// A warm RE-OPENER for a greeting / chit-chat on a case with nothing left to ask
+// (e.g. a finished report). The cardinal rule: NEVER the complete-report exit -- a
+// worker who just says "hi there" must get a friendly door back in, not "we have the
+// full report ... your reference is X" (the witnessed dead-end). It invites a fresh
+// report OR offers to pull up today's list, so the conversation continues.
+const CHITCHAT_REOPEN_BY_LANG = {
+  en: 'Hi! Good to hear from you. If you are seeing a sick or dead animal, just tell me about it and I will start a report -- or say "what is on today" to see your list.',
+  af: 'Hallo! Lekker om van u te hoor. As u \'n siek of dooie dier sien, vertel my net en ek begin \'n verslag -- of se "wat is vandag aan die gang" om u lys te sien.',
+  zu: 'Sawubona! Kuhle ukuzwa kuwe. Uma ubona isilwane esigulayo noma esifile, ngitshele nje ngizoqala umbiko -- noma uthi "yini ekhona namuhla" ukuze ubone uhlu lwakho.',
+  xh: 'Molo! Kuhle ukuva kuwe. Ukuba ubona isilwanyana esigulayo okanye esifileyo, ndixelele ndiza kuqala ingxelo -- okanye uthi "yintoni ekhoyo namhlanje" ukubona uluhlu lwakho.',
+}
+// A warm conversational re-opener for a greeting / chit-chat turn. Mirrors language
+// and carries the reference, but NEVER recites the complete-report exit -- this is
+// the reply that keeps a "hi there" from dead-ending on a finished case.
+export function chitchatReply(contactText, caseRow) {
+  const lang = guessLang(contactText)
+  const base = CHITCHAT_REOPEN_BY_LANG[lang] || CHITCHAT_REOPEN_BY_LANG.en
+  return base + refTail(contactText, caseRow)
+}
 // A greeting/content-light turn must DRIVE collection, not deflect with a
 // pleasantry: memobot's job is to gather the report while someone is on-site, so
 // even a bare "hi" opens warmly AND asks for the single most-important still-
@@ -700,9 +719,11 @@ export function warmConversationalReply(contactText, caseRow, hintOverride) {
   // fields) when given, else the most-important missing visit-critical fact or a
   // value-add ask -- never a no-ask greeting.
   const hint = hintOverride || mostImportantMissingField(caseRow?.report) || nextValueAddAsk(caseRow?.report)
-  // Complete report: a greeting on a finished case confirms + invites a fresh
-  // report (with the exit), never a no-ask "Hi! ... Your reference is X" dead-end.
-  if (!hint) return completeReply(contactText, caseRow)
+  // Complete report: a greeting on a finished case must NOT recite the complete-
+  // report exit ("we have the full report ...") -- the witnessed dead-end where
+  // "hi there" reads as a closed-out non-answer. Give the warm re-opener instead: a
+  // friendly door back in that invites a fresh report or offers today's list.
+  if (!hint) return chitchatReply(contactText, caseRow)
   const ask = ` ${askCarrier(lang, hint)}`
   const ref = caseRow?.ref
   if (!ref) return base + ask
@@ -1200,11 +1221,24 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // Enquiry and question routes answer here and return -- read-only, worker-facing,
     // safe in every autonomy mode (they do not mutate the case). author is the
     // per-author identity so a multi-author channel answers FOR the asking worker.
-    if (conv.route === 'enquiry' || conv.route === 'answer') {
+    // Chit-chat ("hi there") on a case that is NOT brand-new is handled
+    // deterministically too -- otherwise it falls through to the agent turn, which on
+    // a COMPLETE case empties and hits the completeReply dead-end (the witnessed
+    // "hi there" -> "we have the full report ... CASE-1089"). warmConversationalReply
+    // drives intake when visit-critical facts are still missing, and gives the warm
+    // RE-OPENER (never the complete-report exit) when nothing is left to ask. A
+    // first-message greeting on a brand-new empty case is LEFT to the agent turn (its
+    // warm intro + reference is better than a canned line), matching the existing
+    // isFirstMessage deferral -- so we only short-circuit chit-chat once the case has
+    // some history (not the very first turn).
+    const chitchatDeterministic = conv.route === 'chitchat' && !isFirstMessage
+    if (conv.route === 'enquiry' || conv.route === 'answer' || chitchatDeterministic) {
       const author = msg.from || external_id
       const text = conv.route === 'enquiry'
         ? await renderItinerary(store, turnIntent.enquiry_kind || 'today', author, inboundText, Date.now(), turnIntent.place || '')
-        : answerQuestion(inboundText, fresh)
+        : conv.route === 'answer'
+          ? answerQuestion(inboundText, fresh)
+          : warmConversationalReply(inboundText, fresh, mostImportantMissingField(fresh.report))
       await store.appendEvent(fresh.id, {
         kind: 'outbound', actor: 'system', channel,
         text, data: { to: replyTo, route: conv.route, intent: turnIntent.kind },
