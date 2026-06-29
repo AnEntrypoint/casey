@@ -26,6 +26,8 @@ import { VISIT_CRITICAL } from './case-health.js'
 import { extractFields } from './extract.js'
 import { buildAlertPayload } from './report-analytics.js'
 import { fmtTimeSAST } from './format.js'
+import { classifyIntentFallback, normalizeIntent } from './intent.js'
+import { advanceConversation } from './conversation-fsm.js'
 
 // Report fields casey is allowed to fill deterministically at ingress. Mirrors
 // REPORT_KEYS in case-store.js; extractFields may emit keys outside the report
@@ -554,8 +556,9 @@ function itineraryLine(row, lang) {
 // Render a warm, plain-language itinerary answer for a worker enquiry. Pulls the
 // rows via the store's enquiry queries (the same listCases the freddie enquiry
 // tools use), projects each PII-free, and never dead-ends: an empty list invites
-// the worker to start a report rather than leaving them with nothing.
-async function renderItinerary(store, kind, author, inboundText, now = Date.now()) {
+// the worker to start a report rather than leaving them with nothing. `kind` is the
+// enquiry_kind (today|mine|open|near); `place` is set for a near-enquiry.
+async function renderItinerary(store, kind, author, inboundText, now = Date.now(), place = '') {
   const lang = guessLang(inboundText)
   let rows = []
   try {
@@ -564,6 +567,15 @@ async function renderItinerary(store, kind, author, inboundText, now = Date.now(
     } else if (kind === 'open') {
       rows = await store.listCases({ status: { $in: ['new', 'triaging', 'in_progress', 'waiting'] } }, { limit: 20 })
       rows = rows.filter(r => !r.assignee || r.assignee === 'agent')
+    } else if (kind === 'near') {
+      // lat/lon is optional on a case and there is no geocoder, so a "near <place>"
+      // enquiry matches on the free-text location field (contains the place name),
+      // not a lat/lon box. Most-recent first among the matches.
+      const all = await store.listCases({}, { limit: 200 })
+      const p = String(place || '').toLowerCase().trim()
+      rows = p
+        ? all.filter(r => String(r.location || '').toLowerCase().includes(p) || String(r.subject || '').toLowerCase().includes(p)).slice(0, 20)
+        : []
     } else { // 'today'
       const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0)
       const since = String(Math.floor(dayStart.getTime() / 1000))   // case timestamps are unix seconds
@@ -575,21 +587,33 @@ async function renderItinerary(store, kind, author, inboundText, now = Date.now(
     // Never leak a store error to a worker; a warm holding line keeps the channel safe.
     return 'I could not pull up the list just now. Please try again in a moment, or tell me about an animal and I will start a report.'
   }
+  const placeLabel = place ? ` ${place}` : ''
   const intro = {
     today: 'Here is what is on the go today:',
     mine: 'Here are the reports on your list:',
     open: 'Here is open work you could help with:',
+    near: `Here are the closest reports to${placeLabel}:`,
   }[kind] || 'Here is your list:'
   if (!rows.length) {
     const empty = {
       today: 'Nothing is on your list for today yet.',
       mine: 'You have no reports on your list yet.',
       open: 'There is no open work waiting right now.',
+      near: `I could not find a report near${placeLabel || ' there'} yet.`,
     }[kind] || 'Your list is empty for now.'
     return `${empty} If you are seeing a sick or dead animal, just tell me about it and I will start a report.`
   }
   const lines = rows.map(r => itineraryLine(r, lang)).join('\n')
   return `${intro}\n${lines}`
+}
+
+// A general QUESTION that is not a report and not a known enquiry. The cardinal rule:
+// never the complete-report exit. Acknowledge the question warmly, say the team can
+// help, and keep the channel open -- a worker who asks something we cannot answer
+// deterministically is handed to the team, never closed out.
+function answerQuestion(inboundText, caseRow) {
+  const base = 'Good question. I do not have that to hand, but the team can help with it -- I have noted it for them.'
+  return base + refTail(inboundText, caseRow)
 }
 
 export function fallbackReply(contactText, caseRow) {
@@ -1114,26 +1138,45 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       return reply
     }
 
-    // ENQUIRY short-circuit: a worker ASKING about their work ("what's on the
-    // itinerary today", "my cases", "anything I can help with") is answered from the
-    // PII-free enquiry surface deterministically -- never treated as report intake.
-    // Without this, the weak production model (which never calls the freddie enquiry
-    // tools) let the question fall through to intake, and a complete case answered
-    // with the complete-report exit ("we have the full report ... reference X").
-    // Read-only and worker-facing, so it is safe in every autonomy mode (it does not
-    // mutate the case). Skipped for opted-out contacts (handled above) -- this runs
-    // after that guard. author is the per-author identity (msg.from), matching the
-    // toolCtx the agent enquiry tools use, so a multi-author channel answers FOR the
-    // asking worker only.
-    const enquiry = detectEnquiryIntent(inboundText)
-    if (enquiry) {
+    // SOFT-STATE intent route. casey no longer hard-routes by keyword lists (the
+    // whack-a-mole that let "whats the nearest case to margate" fall through to the
+    // complete-report exit). Instead the message is INTERPRETED into a structured
+    // intent and the conversation FSM (adaptogen, soft enforcement) decides the route:
+    // an enquiry is answered from the PII-free surface, a general question is answered
+    // (never closed out), and a report/chitchat falls through to the agent turn. The
+    // soft transition means a question or enquiry from a "complete" case moves freely
+    // out of that state -- the dead-end is structurally impossible.
+    //
+    // The interpreter is the in-loop agent model when it declares a case_intent; here
+    // at the pre-turn gate we use the deterministic SOFT fallback (a small shape
+    // classifier, not a phrase maze) so a weak model that declares nothing still
+    // routes. The report-content veto inside the classifier keeps a real report
+    // ("my cattle are sick", "2 cows died today") from ever being read as an enquiry.
+    const turnIntent = classifyIntentFallback(inboundText)
+    const conv = await advanceConversation(turnIntent, { fsmFromState: reportMissingVisitCritical(fresh.report) ? 'gathering' : 'complete' })
+    // Record the soft decision (intent + FSM trace) as an observation -- observable to
+    // operators, never shown to the contact. This is the guardrail INFORMING, not
+    // interfering.
+    try {
+      await store.appendEvent(fresh.id, {
+        kind: 'observation', actor: 'system',
+        text: `INTENT ${turnIntent.kind}${turnIntent.enquiry_kind ? '/' + turnIntent.enquiry_kind : ''} -> ${conv.route} (fsm ${conv.trace?.from || '?'}->${conv.trace?.to || '?'}${conv.trace?.degraded ? ', no-fsm' : ''}${conv.trace?.soft?.length ? ', soft:' + conv.trace.soft.join(',') : ''})`,
+        data: { intent: turnIntent, route: conv.route, fsm: conv.trace },
+      })
+    } catch (e) { log.warn?.('[casey] intent observation failed', { caseId: fresh.id, error: e.message }) }
+    // Enquiry and question routes answer here and return -- read-only, worker-facing,
+    // safe in every autonomy mode (they do not mutate the case). author is the
+    // per-author identity so a multi-author channel answers FOR the asking worker.
+    if (conv.route === 'enquiry' || conv.route === 'answer') {
       const author = msg.from || external_id
-      const text = await renderItinerary(store, enquiry, author, inboundText, Date.now())
+      const text = conv.route === 'enquiry'
+        ? await renderItinerary(store, turnIntent.enquiry_kind || 'today', author, inboundText, Date.now(), turnIntent.place || '')
+        : answerQuestion(inboundText, fresh)
       await store.appendEvent(fresh.id, {
         kind: 'outbound', actor: 'system', channel,
-        text, data: { to: replyTo, enquiry, deterministic: true },
+        text, data: { to: replyTo, route: conv.route, intent: turnIntent.kind },
       })
-      const reply = { to: replyTo, text, platform, caseId: fresh.id, enquiry }
+      const reply = { to: replyTo, text, platform, caseId: fresh.id, route: conv.route }
       if (adapter?.send) {
         try { await adapter.send(reply) }
         catch (e) {

@@ -2602,6 +2602,40 @@ async function main() {
     assert.ok(evs.some(e => e.kind === 'outbound' && /enquiry/.test(typeof e.data === 'string' ? e.data : JSON.stringify(e.data || {}))), 'the enquiry answer is recorded as a deterministic enquiry outbound')
   })
 
+  await test('soft-state: intent is interpreted, not keyword-matched; near/question never hit the complete-report exit', async () => {
+    const { classifyIntentFallback } = await import('./src/intent.js')
+    const { advanceConversation, routeForIntent } = await import('./src/conversation-fsm.js')
+    // The three witnessed live failures must each interpret as an enquiry/question,
+    // never a report -- the soft classifier reads the SHAPE, not a phrase list.
+    assert.equal(classifyIntentFallback('whats on the itinerary today').kind, 'enquiry', 'itinerary question is an enquiry')
+    assert.equal(classifyIntentFallback('hi there whats up today').kind, 'enquiry', 'colloquial check-in is an enquiry')
+    const near = classifyIntentFallback('whats the nearest case to margate')
+    assert.equal(near.kind, 'enquiry', 'nearest-case is an enquiry'); assert.equal(near.enquiry_kind, 'near'); assert.equal(near.place, 'margate', 'the place is extracted')
+    // Reports stay reports (the veto wins over any today/question signal).
+    for (const r of ['my cattle are sick', '2 cows died today', 'the farm is near Ermelo']) {
+      assert.equal(classifyIntentFallback(r).kind, 'report', `a report is interpreted as a report: ${r}`)
+    }
+    // A general question routes to 'answer', never the complete-report exit.
+    assert.equal(routeForIntent({ kind: 'question' }).route, 'answer', 'a question is answered, not closed out')
+    // The conversation FSM is SOFT: from a COMPLETE case, an enquiry/question/report
+    // transition is all ALLOWED (flagged, never blocked) -- the dead-end is gone.
+    for (const intent of [{ kind: 'enquiry', enquiry_kind: 'today' }, { kind: 'question' }, { kind: 'report' }]) {
+      const c = await advanceConversation(intent, { fsmFromState: 'complete' })
+      assert.ok(c.trace.allowed !== false, `complete -> ${c.state} is a soft (allowed) transition for ${intent.kind}`)
+    }
+    // End-to-end: on a COMPLETE case, the near-enquiry and a general question both get
+    // a real answer, NOT the complete-report exit.
+    const sc = 'softworker-' + Date.now()
+    await runScript(adapter, ['my cattle are drooling at the farm near Margate'], { from: sc, channel_id: sc, username: sc, wait: () => casey.drain() })
+    const b1 = adapter.sent.length
+    await runScript(adapter, ['whats the nearest case to margate'], { from: sc, channel_id: sc, username: sc, wait: () => casey.drain() })
+    assert.ok(adapter.sent.length > b1, 'the near-enquiry got a reply')
+    const nearReply = adapter.sent[adapter.sent.length - 1].text || ''
+    assert.ok(!/full report/i.test(nearReply), `near-enquiry must NOT get the complete-report exit: ${nearReply}`)
+    assert.ok(/closest reports|could not find a report/i.test(nearReply), `near-enquiry got a proximity answer: ${nearReply}`)
+    assert.ok(!nearReply.includes(sc), 'the near answer leaks no contact id')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
