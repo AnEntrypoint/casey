@@ -165,14 +165,14 @@ export function buildCaseToolset(storeOrNull) {
       toolset: 'cases',
       schema: {
         name: 'case_intent',
-        description: 'Declare what the person\'s latest message IS, so casey routes it correctly. Call this when the message is NOT a fresh animal report -- e.g. they are asking about existing cases ("what is on today", "my cases", "the nearest case to <place>"), asking a general question, or just greeting. casey answers an enquiry/question itself; you do not need to. Leave report intake to your normal tools.',
+        description: 'Declare what the person\'s latest message IS, so casey routes it correctly. Call this when the message is NOT a fresh animal report -- e.g. they are asking about existing cases ("what is on today", "my cases", "any reports in <a town or province like Margate or KZN>"), asking a general question, or just greeting. casey lists the reports / answers the question itself; you do not need to. Leave report intake to your normal tools.',
         parameters: {
           type: 'object',
           properties: {
             id: str('Case id'),
             kind: str('What the message is', { enum: ['report', 'enquiry', 'question', 'chitchat', 'status', 'help', 'human', 'stop'] }),
             enquiry_kind: str('For an enquiry: which list', { enum: ['today', 'mine', 'open', 'near'] }),
-            place: str('For a near-enquiry: the place named (e.g. a town)'),
+            place: str('For a place enquiry: the town or province named (e.g. "Margate" or "kzn" / "Eastern Cape")'),
           },
           required: ['id', 'kind'],
         },

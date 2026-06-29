@@ -2635,8 +2635,45 @@ async function main() {
     assert.ok(adapter.sent.length > b1, 'the near-enquiry got a reply')
     const nearReply = adapter.sent[adapter.sent.length - 1].text || ''
     assert.ok(!/full report/i.test(nearReply), `near-enquiry must NOT get the complete-report exit: ${nearReply}`)
-    assert.ok(/closest reports|could not find a report/i.test(nearReply), `near-enquiry got a proximity answer: ${nearReply}`)
+    // Margate resolves to KwaZulu-Natal (the SA place vocabulary), so the answer is a
+    // region listing or the proximity wording, never the complete-report exit.
+    assert.ok(/reports in|closest reports|could not find a report/i.test(nearReply), `near-enquiry got a real answer: ${nearReply}`)
+    assert.ok(/kwazulu-natal|margate/i.test(nearReply), `near margate resolves to KZN and lists the case: ${nearReply}`)
     assert.ok(!nearReply.includes(sc), 'the near answer leaks no contact id')
+  })
+
+  await test('region understanding: "any cases in kzn" resolves the province and lists a Margate case, never deflected', async () => {
+    const { classifyIntentFallback } = await import('./src/intent.js')
+    const { resolvePlace, containsTerm } = await import('./src/places.js')
+    // kzn -> KwaZulu-Natal, and Margate is a KZN town the expansion includes.
+    const r = resolvePlace('kzn')
+    assert.ok(r && r.regions.includes('KwaZulu-Natal'), 'kzn resolves to KwaZulu-Natal')
+    assert.ok(r.terms.includes('margate'), 'the KZN expansion includes Margate')
+    // The headline queries classify as a region enquiry, NOT a deflected question.
+    for (const q of ['any cases in kzn', 'eastern cape', 'anything in limpopo']) {
+      assert.equal(classifyIntentFallback(q).kind, 'enquiry', `region query is an enquiry: ${q}`)
+    }
+    // Report-veto + boundary safety witnesses.
+    assert.equal(classifyIntentFallback('cattle dying in vryheid').kind, 'report', 'a report mentioning a KZN town stays a report')
+    assert.equal(classifyIntentFallback('any cattle in kzn?').kind, 'report', 'livestock + province defaults to report')
+    assert.equal(containsTerm('a specimen pen', 'pe'), false, 'a 2-char alias does not substring-match unrelated prose')
+    // End-to-end on real services: seed a case located in Margate, then a SEPARATE
+    // worker asks "any cases in kzn" -- the reply lists that case (alias->province->
+    // town expansion + the declared case_intent -> renderItinerary path), province
+    // labelled, no canned deflection, no PII.
+    const owner = 'kznowner-' + Date.now()
+    await runScript(adapter, ['my cattle are drooling at the farm near Margate, the owner is on 082'], { from: owner, channel_id: owner, username: owner, wait: () => casey.drain() })
+    const ownerCase = (await store.listCases({}, { limit: 10000 })).find(c => c.external_id === (owner + ':' + owner) || c.external_id === owner)
+    assert.ok(ownerCase, 'the Margate case was created')
+    const asker = 'kznasker-' + Date.now()
+    const before = adapter.sent.length
+    await runScript(adapter, ['any cases in kzn'], { from: asker, channel_id: asker, username: asker, wait: () => casey.drain() })
+    assert.ok(adapter.sent.length > before, 'the kzn enquiry got a reply')
+    const kznReply = adapter.sent[adapter.sent.length - 1].text || ''
+    assert.ok(!/do not have that to hand|full report/i.test(kznReply), `kzn enquiry must NOT be deflected or closed out: ${kznReply}`)
+    assert.ok(/kwazulu-natal/i.test(kznReply), `the answer names the resolved province: ${kznReply}`)
+    assert.ok(kznReply.includes(ownerCase.ref), `the kzn list includes the Margate case ${ownerCase.ref}: ${kznReply}`)
+    assert.ok(!kznReply.includes(owner) && !kznReply.includes('082'), 'the region list leaks no contact id / phone')
   })
 
   await test('a greeting ("hi there") on a COMPLETE case gets a warm re-opener, never the complete-report exit', async () => {

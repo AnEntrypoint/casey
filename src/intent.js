@@ -17,6 +17,8 @@
 //   status|help|human|stop -- the fixed service intents (still deterministic)
 // source is 'model' (declared) or 'fallback' (heuristic).
 
+import { resolvePlace } from './places.js'
+
 export const INTENT_KINDS = ['report', 'enquiry', 'question', 'chitchat', 'status', 'help', 'human', 'stop']
 export const ENQUIRY_KINDS = ['today', 'mine', 'open', 'near']
 
@@ -63,18 +65,47 @@ export function classifyIntentFallback(text) {
   const raw = String(text || '').trim()
   if (!raw) return { kind: 'chitchat', source: 'fallback' }
   const t = raw.toLowerCase()
+  const mentionsCases = /\b(cases?|reports?)\b/.test(t)
+  // A CLEAR enquiry lead: an explicit "any/show me/list/how many/which ...
+  // cases/reports", "what is on", "my cases", "open work". This distinguishes the
+  // NOUN reports (an enquiry: "any reports in kzn", "any reports of sick cattle in
+  // kzn") from the VERB report ("report some losses"), and -- because it is checked
+  // FIRST -- lets an explicit enquiry frame win even when the message also names a
+  // symptom/animal, so "any reports of sick cattle in kzn" is a store query, not a
+  // new report.
+  // NOTE: deliberately does NOT include the loose ENQUIRY_TODAY (it matches a bare
+  // "today" anywhere, which would mark "2 cows died today" as an enquiry). Only an
+  // explicit cases/reports/open/my-list lead counts as clear.
+  const clearEnquiryLead = /\b(any|show me|list|how many|whats|what'?s|which)\b.{0,24}\b(cases?|reports?|open)\b/.test(t)
+    || ENQUIRY_MINE.test(t) || ENQUIRY_OPEN.test(t)
   // A clear animal description is a REPORT, however it is phrased -- this wins over
-  // every enquiry/question shape so a real report is never mis-read.
-  const looksReport = REPORT_WORDS.test(t) || (ANIMAL_WORDS.test(t) && /\b(is|are|got|have|has|my|the)\b/.test(t) && !QUESTION_LEAD.test(t))
+  // every enquiry/question shape so a real report is never mis-read. EXCEPT when the
+  // message opens with a clear enquiry frame (above), which pre-empts it.
+  const looksReport = !clearEnquiryLead && (REPORT_WORDS.test(t) || (ANIMAL_WORDS.test(t) && /\b(is|are|got|have|has|my|the)\b/.test(t) && !QUESTION_LEAD.test(t)))
   if (looksReport) return { kind: 'report', source: 'fallback' }
   // Bare greeting -> chitchat (the warm opener path drives intake from there).
   if (GREETING_ONLY.test(t)) return { kind: 'chitchat', source: 'fallback' }
-  // Enquiry SHAPES about existing cases.
-  const mentionsCases = /\b(cases?|reports?)\b/.test(t)
+  // Disease-service safe default: a message naming livestock that is NOT a clear
+  // enquiry is intake, not a store query -- "any cattle in kzn", "report some sheep
+  // losses around musina" describe animals, so they open a report. (An explicit
+  // "any reports/cases in <place>" is a clear enquiry and still enquires below.)
+  if (ANIMAL_WORDS.test(t) && !clearEnquiryLead) return { kind: 'report', source: 'fallback' }
   if (ENQUIRY_NEAR.test(t) && mentionsCases) return { kind: 'enquiry', enquiry_kind: 'near', place: extractPlace(t), source: 'fallback' }
   if (ENQUIRY_MINE.test(t)) return { kind: 'enquiry', enquiry_kind: 'mine', source: 'fallback' }
   if (ENQUIRY_OPEN.test(t)) return { kind: 'enquiry', enquiry_kind: 'open', source: 'fallback' }
   if (ENQUIRY_TODAY.test(t)) return { kind: 'enquiry', enquiry_kind: 'today', source: 'fallback' }
+  // REGION / PLACE enquiry: "any cases in kzn", "anything in the eastern cape",
+  // "margate". resolvePlace turns a SA province/alias/town into a region, so a place
+  // question is answered from the store instead of deflected. Gated so it never
+  // swallows a report: ANIMAL_WORDS present -> default to report (a disease service's
+  // safe default for "any cattle in kzn"); and a bare place needs either a
+  // cases/reports word OR a STRONG term (a province name/alias) to count, so a lone
+  // WEAK common-word town in report prose does not flip intent. (looksReport already
+  // returned above, so "cattle dying in vryheid" never reaches here.)
+  const resolved = resolvePlace(t)
+  if (resolved && (!ANIMAL_WORDS.test(t) || clearEnquiryLead) && (mentionsCases || resolved.strong)) {
+    return { kind: 'enquiry', enquiry_kind: 'near', place: resolved.matchedAlias, source: 'fallback' }
+  }
   // A question that is not a report or a known enquiry: a general question. It must
   // be ANSWERED, never closed out with the complete-report exit.
   if (raw.endsWith('?') || QUESTION_LEAD.test(t)) return { kind: 'question', source: 'fallback' }

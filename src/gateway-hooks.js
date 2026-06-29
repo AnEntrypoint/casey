@@ -28,6 +28,7 @@ import { buildAlertPayload } from './report-analytics.js'
 import { fmtTimeSAST } from './format.js'
 import { classifyIntentFallback, normalizeIntent } from './intent.js'
 import { advanceConversation } from './conversation-fsm.js'
+import { resolvePlace, placeRegionLabel, containsTerm } from './places.js'
 
 // Report fields casey is allowed to fill deterministically at ingress. Mirrors
 // REPORT_KEYS in case-store.js; extractFields may emit keys outside the report
@@ -154,6 +155,18 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     ` - auto -- act and move things along freely behind the scenes.`,
     ` - assisted -- act, but leave anything risky for a human to confirm.`,
     ` - observe -- do not change records; only reply and note what you observe.`,
+    ``,
+    // Tell the model the ENQUIRY path exists -- a structural instruction, no copyable
+    // sample reply (prompt-echo invariant). This is the first place case_intent is
+    // named; it turns the model's only enquiry hook from discover-it-yourself into an
+    // instruction, so "any cases in kzn" gets listed instead of deflected.
+    `Sometimes the worker is not reporting a new animal but ASKING about existing`,
+    `reports -- what is on today, their own reports, open work they could help with,`,
+    `or any reports in a place (a town or a province such as KwaZulu-Natal/kzn). When`,
+    `the latest message is such an ask, call case_intent with kind "enquiry" and the`,
+    `matching enquiry_kind (today / mine / open / near), putting any town or province`,
+    `in place; casey lists the reports for you, so do not answer from memory. Leave a`,
+    `fresh animal report to your normal tools.`,
     ``,
     // The "CURRENT CASE <ref> (id=<id>)" token is parsed by tooling/tests; keep it.
     `CURRENT CASE ${caseRow.ref} (id=${caseRow.id})  [private -- do not mention to the person]`,
@@ -547,7 +560,11 @@ export function detectEnquiryIntent(text) {
 // number can never reach a worker's list.
 function itineraryLine(row, lang) {
   const p = projectCase(row, DEFAULT_PROJECTION)
-  const subj = (p.subject || p.species || p.location || 'a report').toString().slice(0, 60)
+  // species/location live in the report JSON, not as columns -- projectCase reads raw
+  // columns, so p.species/p.location are undefined. Hydrate the report for a real
+  // subject fallback (otherwise every line read "a report"). subject is a real column.
+  const rep = parseReportSafe(row.report)
+  const subj = (p.subject || rep.species || rep.location || 'a report').toString().slice(0, 60)
   const when = p.last_event_at ? fmtTimeSAST(p.last_event_at) : ''
   const tail = when ? ` (last active ${when})` : ''
   return `- ${p.ref}: ${plainStatus(p.status, lang)} -- ${subj}${tail}`
@@ -560,6 +577,10 @@ function itineraryLine(row, lang) {
 // enquiry_kind (today|mine|open|near); `place` is set for a near-enquiry.
 async function renderItinerary(store, kind, author, inboundText, now = Date.now(), place = '') {
   const lang = guessLang(inboundText)
+  // Resolve the place to a SA region (province + its towns) once, up front, so both
+  // the row match and the reply copy can use it. null when the place names no known
+  // region (then we fall back to a raw substring match on the place text).
+  const resolvedPlace = place ? resolvePlace(place) : null
   let rows = []
   try {
     if (kind === 'mine') {
@@ -568,13 +589,22 @@ async function renderItinerary(store, kind, author, inboundText, now = Date.now(
       rows = await store.listCases({ status: { $in: ['new', 'triaging', 'in_progress', 'waiting'] } }, { limit: 20 })
       rows = rows.filter(r => !r.assignee || r.assignee === 'agent')
     } else if (kind === 'near') {
-      // lat/lon is optional on a case and there is no geocoder, so a "near <place>"
-      // enquiry matches on the free-text location field (contains the place name),
-      // not a lat/lon box. Most-recent first among the matches.
+      // lat/lon is optional on a case and there is no geocoder, so a place/region
+      // enquiry matches on the free-text location TEXT, not a lat/lon box. The place
+      // is resolved through the SA province vocabulary (resolvePlace), so "kzn"
+      // expands to every KZN town and a case in Durban/Margate matches "any cases in
+      // kzn". A case's location lives in the report JSON (NOT a column), so we hydrate
+      // the report and match location + subject + species. Word-boundary matching
+      // (containsTerm) keeps a 2-char alias from substring-hitting unrelated prose.
       const all = await store.listCases({}, { limit: 200 })
       const p = String(place || '').toLowerCase().trim()
-      rows = p
-        ? all.filter(r => String(r.location || '').toLowerCase().includes(p) || String(r.subject || '').toLowerCase().includes(p)).slice(0, 20)
+      const terms = resolvedPlace ? resolvedPlace.terms : (p ? [p] : [])
+      rows = terms.length
+        ? all.filter(r => {
+          const rep = parseReportSafe(r.report)
+          const hay = `${rep.location || ''} ${r.subject || ''} ${rep.species || ''}`.toLowerCase()
+          return terms.some(term => containsTerm(hay, term))
+        }).slice(0, 20)
         : []
     } else { // 'today'
       const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0)
@@ -587,19 +617,24 @@ async function renderItinerary(store, kind, author, inboundText, now = Date.now(
     // Never leak a store error to a worker; a warm holding line keeps the channel safe.
     return 'I could not pull up the list just now. Please try again in a moment, or tell me about an animal and I will start a report.'
   }
-  const placeLabel = place ? ` ${place}` : ''
+  // For a resolved region the copy reads as a province-wide query ("reports in
+  // KwaZulu-Natal"); for an unresolved raw place it stays the proximity wording.
+  const regionLabel = resolvedPlace ? placeRegionLabel(resolvedPlace.regions) : ''
+  const placeLabel = regionLabel ? ` ${regionLabel}` : (place ? ` ${place}` : '')
+  const nearIntro = resolvedPlace ? `Here are the reports in${placeLabel}:` : `Here are the closest reports to${placeLabel}:`
   const intro = {
     today: 'Here is what is on the go today:',
     mine: 'Here are the reports on your list:',
     open: 'Here is open work you could help with:',
-    near: `Here are the closest reports to${placeLabel}:`,
+    near: nearIntro,
   }[kind] || 'Here is your list:'
   if (!rows.length) {
+    const nearEmpty = resolvedPlace ? `I could not find a report in${placeLabel} yet.` : `I could not find a report near${placeLabel || ' there'} yet.`
     const empty = {
       today: 'Nothing is on your list for today yet.',
       mine: 'You have no reports on your list yet.',
       open: 'There is no open work waiting right now.',
-      near: `I could not find a report near${placeLabel || ' there'} yet.`,
+      near: nearEmpty,
     }[kind] || 'Your list is empty for now.'
     return `${empty} If you are seeing a sick or dead animal, just tell me about it and I will start a report.`
   }
@@ -637,8 +672,13 @@ async function latestModelIntent(store, caseId) {
 // never the complete-report exit. Acknowledge the question warmly, say the team can
 // help, and keep the channel open -- a worker who asks something we cannot answer
 // deterministically is handed to the team, never closed out.
+// A general question that resolvePlace + the enquiry classifier did NOT turn into a
+// store lookup. Rather than the old bare deflection ("I do not have that to hand"),
+// name what casey CAN do -- pull up today's list, the worker's own reports, open
+// work, or reports in a place -- so the reply is a productive door back in, never a
+// dead-end. Still hands a genuinely out-of-scope ask to the team.
 function answerQuestion(inboundText, caseRow) {
-  const base = 'Good question. I do not have that to hand, but the team can help with it -- I have noted it for them.'
+  const base = 'I cannot answer that one myself, but the team can -- I have noted it for them. I can also pull up reports for you: what is on today, your own list, open work, or reports in a place (for example any cases in KwaZulu-Natal). Or tell me about an animal and I will start a report.'
   return base + refTail(inboundText, caseRow)
 }
 

@@ -5,6 +5,7 @@
 //
 // Shape matches freddie's callLLM contract: ({messages,tools}) => {content, tool_calls}.
 import { extractFields } from '../extract.js'
+import { classifyIntentFallback } from '../intent.js'
 //
 // The reply is deterministic but context-aware so the disease-report scenario
 // harness (src/sim/scenarios.js) can assert real behaviours: the reply is never
@@ -20,6 +21,17 @@ export function stubLLM() {
     const lastUser = [...messages].reverse().find(m => m.role === 'user')?.content || ''
     const toolResults = messages.filter(m => m.role === 'tool').length
 
+    // Enquiry pre-branch: a message that the soft classifier reads as an enquiry is
+    // DECLARED via case_intent (the in-loop-model path), so the offline surface
+    // witnesses the declared intent -> renderItinerary route end to end (the gateway's
+    // latestModelIntent override answers it next turn). This is what a capable
+    // production model would do; the stub stands in for it deterministically.
+    if (caseId && toolResults === 0) {
+      const fb = classifyIntentFallback(lastUser)
+      if (fb.kind === 'enquiry') {
+        return { content: '', tool_calls: [{ id: 'i1', name: 'case_intent', arguments: { id: caseId, kind: 'enquiry', enquiry_kind: fb.enquiry_kind, ...(fb.place ? { place: fb.place } : {}) } }] }
+      }
+    }
     // First turn: record what the message plainly says (a stand-in for the real
     // model's extraction) and gently move the case along. Later turns: just reply.
     if (caseId && toolResults === 0) {
