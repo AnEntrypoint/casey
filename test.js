@@ -2431,50 +2431,56 @@ async function main() {
     assert.equal(sThrow.degraded, true, 'a window of failing turns reads degraded even though each errored fast')
   })
 
-  await test('greetings/chit-chat get a warm conversational reply, never the case-ack; a real report still drives intake', async () => {
+  await test('a greeting DRIVES intake (warm opener + the next needed fact), never the case-ack; a new case escapes', async () => {
     // Pure predicate: a content-free turn (nothing captured this turn, empty report)
     // is conversational; a turn that captured a field or has a recorded report is not.
     assert.equal(isContentFreeTurn([], null), true, 'no capture + empty report -> content-free')
-    assert.equal(isContentFreeTurn([], '{}'), true, 'no capture + {} report -> content-free')
     assert.equal(isContentFreeTurn(['species'], null), false, 'a captured field this turn -> not content-free')
     assert.equal(isContentFreeTurn([], JSON.stringify({ species: 'cattle' })), false, 'an existing report field -> not content-free')
-    // The warm reply does NOT parrot the holding ack, and reframes the ref as "if you message again".
-    const warm = warmConversationalReply('hi', { ref: 'CASE-9999-zz' })
-    assert.ok(!warm.startsWith('Thank you for letting us know'), 'warm greeting is not the case-ack')
-    assert.ok(warm.includes('CASE-9999-zz') && /message again/.test(warm), 'warm greeting keeps the ref, reframed')
-    // End-to-end on the real chain: a greeting-only conversation must never receive the
-    // FALLBACK_REPLY case-ack ("Thank you for letting us know..."), on the first greeting
-    // or a repeated one -- the witnessed "hi" -> holding-ack nonsense.
+    // A greeting reply DRIVES collection: warm opener + an ask for the next needed
+    // fact + the ref. NOT the "Thank you for letting us know" case-ack, and NOT a
+    // no-ask pleasantry -- memobot gathers the report, it does not just chat.
+    const warm = warmConversationalReply('hi', { ref: 'CASE-9999-zz', report: '{}' })
+    assert.ok(!warm.startsWith('Thank you for letting us know'), 'greeting is not the case-ack')
+    assert.ok(/\?/.test(warm), `greeting asks for the next needed fact: ${warm}`)
+    assert.ok(warm.includes('CASE-9999-zz'), 'greeting keeps the reference')
+    assert.ok(warm.length <= 240, `greeting reply stays short (${warm.length})`)
+    // End-to-end: a greeting-only conversation must drive intake on the first and a
+    // repeated greeting, never the case-ack, always asking the next thing.
     const chan = 'greet-' + Date.now()
     for (const g of ['hi', 'hello']) {
       await runScript(adapter, [g], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
       const reply = adapter.sent[adapter.sent.length - 1]
       assert.ok(reply && reply.text, 'a greeting is never a dead-end (a reply is sent)')
-      assert.ok(!/^Thank you for letting us know/.test(reply.text), `greeting "${g}" is not answered with the case-ack: ${reply.text}`)
-      assert.ok(/here to help/i.test(reply.text), `greeting "${g}" gets the warm invite-to-report reply: ${reply.text}`)
+      assert.ok(!/^Thank you for letting us know/.test(reply.text), `greeting "${g}" is not the case-ack: ${reply.text}`)
+      assert.ok(/\?/.test(reply.text), `greeting "${g}" drives intake by asking the next fact: ${reply.text}`)
     }
     const gc = (await store.listCases()).find(c => c.external_id === chan)
-    assert.ok((await store.listEvents(gc.id)).some(e => e.kind === 'observation' && /CONVERSATIONAL: content-free/.test(e.text || '')), 'the content-free conversational path is audited')
-    // A bot-mention greeting (Discord renders "@memobot hello" as "<@BOTID> hello")
-    // must still be content-free: the mention's numeric id must NOT be captured as a
-    // livestock count. Witnessed regression -- the snowflake became affected_count,
-    // flipping the greeting into the case-ack with a fabricated number.
+    assert.ok((await store.listEvents(gc.id)).some(e => e.kind === 'observation' && /GREETING-DRIVE/.test(e.text || '')), 'the greeting-drive path is audited')
+    // A bot-mention greeting ("<@BOTID> hello") still drives intake and the mention
+    // id is never captured as a count.
     const mchan = 'ment-' + Date.now()
     await runScript(adapter, ['<@1234567890> hello'], { from: mchan, channel_id: mchan, username: mchan, wait: () => casey.drain() })
     const mreply = adapter.sent[adapter.sent.length - 1]
-    assert.ok(mreply && mreply.text, 'a mention greeting is never a dead-end')
     assert.ok(!/^Thank you for letting us know/.test(mreply.text), `mention greeting is not the case-ack: ${mreply.text}`)
-    assert.ok(/here to help/i.test(mreply.text), `mention greeting gets the warm invite reply: ${mreply.text}`)
+    assert.ok(/\?/.test(mreply.text), `mention greeting drives intake: ${mreply.text}`)
     const mc = (await store.listCases()).find(c => c.external_id === mchan)
     const mrep = mc.report ? JSON.parse(mc.report) : {}
     assert.ok(mrep.affected_count == null && mrep.dead_count == null, `mention id is not captured as a count: ${JSON.stringify(mrep)}`)
-    // Regression guard: a real livestock report on the SAME case still drives intake --
-    // it captures a field, so it is NOT content-free and gets the intake reply (ref-bearing),
-    // not the warm greeting invite.
+    // A real livestock report on the SAME case drives intake and cites the reference.
     await runScript(adapter, ['my cattle are drooling badly'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
     const afterReport = adapter.sent[adapter.sent.length - 1]
     assert.ok(afterReport.text.includes(gc.ref), 'a real report turn drives intake and cites the reference')
-    assert.ok(!/here to help/i.test(afterReport.text), 'a real report is not answered with the content-free greeting invite')
+    // ESCAPE ROUTE: the same contact now states a clearly NEW situation (different
+    // species). The conflicting fact is not silently swallowed -- the case is flagged
+    // for an operator to split rather than staying trapped on the old report.
+    await runScript(adapter, ['now my pigs are dying'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const gc2 = (await store.listCases()).find(c => c.external_id === chan)
+    // The escape signal is a DURABLE append-only observation (the agent's own
+    // case_update can rewrite tags mid-turn -- as the stub model does here, even
+    // overwriting the report -- so the once-only signal cannot live only in a tag,
+    // exactly like FALLBACK-ASK / CLOSING-NUDGE).
+    assert.ok((await store.listEvents(gc2.id)).some(e => /NEW-CASE-SIGNAL/.test(e.text || '')), 'a clearly-new situation is flagged for split (durable observation)')
   })
 
   await dash.close()

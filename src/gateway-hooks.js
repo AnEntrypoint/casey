@@ -51,6 +51,29 @@ async function captureFieldsFromText(store, caseId, text, log) {
   } catch (e) { log?.warn?.('[casey] auto-capture failed', { caseId, error: e.message }); return [] }
 }
 
+// Escape route for a returning contact who starts a CLEARLY NEW situation on a
+// case that already holds a different report. markReportFieldsIfEmpty is fill-if-
+// empty, so a conflicting species/location is silently dropped and intake would
+// keep urging the OLD case's missing fields forever. This detects the conflict
+// deterministically: a freshly-extracted species OR location that is present in
+// the running report AND differs from it. We do NOT auto-split (a fuzzy signal
+// must not fragment one outbreak); we flag the case for an operator to split,
+// once, via a durable observation + a needs-split tag. Same outbreak continuing
+// (same or unstated species/location) never trips it.
+export function detectNewCaseConflict(inboundText, reportRaw) {
+  const ex = extractFields(inboundText || '')
+  const r = parseReportSafe(reportRaw)
+  const conflicts = []
+  for (const k of ['species', 'location']) {
+    const had = r[k] != null && String(r[k]).trim() !== ''
+    const now = ex[k] != null && String(ex[k]).trim() !== ''
+    if (had && now && String(ex[k]).trim().toLowerCase() !== String(r[k]).trim().toLowerCase()) {
+      conflicts.push(k)
+    }
+  }
+  return conflicts
+}
+
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 
 // Build the system context the agent sees for a given case + recent timeline.
@@ -407,14 +430,14 @@ export function fallbackReply(contactText, caseRow) {
   return base + refTail(contactText, caseRow)
 }
 
-// A bare greeting / "help" / content-free message is conversational, NOT a
-// livestock report. Replying to "hi" with the holding ack ("Thank you for letting
-// us know ... your reference is X") is the witnessed nonsense: it treats a
-// greeting as a disease report and parrots a case acknowledgement before the
-// person has said anything. A warm, plain conversational opener belongs here
-// instead -- it greets, names what casey is for, and invites the real report,
-// without ever pretending a report was made. Language-mirrored like fallbackReply;
-// the reference tail is kept (it is a real datum the person may quote back) but
+// A bare greeting is the OPENING of a report, not chit-chat to deflect: memobot's
+// job is to gather the case while someone is on-site, so even "hi" must DRIVE
+// collection -- a warm opener PLUS the first needed fact (warmConversationalReply
+// below). Replying to "hi" with the holding ack ("Thank you for letting us
+// know ... your reference is X") is the witnessed nonsense (it parrots a case
+// acknowledgement before the person has said anything); a no-ask pleasantry is the
+// other dead-end (it collects nothing). The right reply greets briefly and asks.
+//
 // Strip channel mention/markup tokens that a chat platform injects when a
 // contact addresses the bot. On Discord, "@memobot hello" arrives as msg.content
 // "<@BOTID> hello"; the numeric snowflake id inside the mention was being
@@ -435,23 +458,34 @@ export function stripChannelMarkup(text) {
 }
 
 // framed as "if you need it" rather than "we have your message". ASCII only.
+// Short orienting opener -- the most-important-fact ask (appended below) carries
+// the substance, so this stays brief to keep the whole reply under the 240-char
+// cap once the ask and reference are added.
 const WARM_GREETING_BY_LANG = {
-  en: 'Hi! I am here to help. If any of your animals are sick or have died, just tell me what is happening and I will pass it to the team.',
-  af: 'Hallo! Ek is hier om te help. As enige van u diere siek is of gevrek het, vertel my net wat aangaan en ek gee dit vir die span deur.',
-  zu: 'Sawubona! Ngilapha ukusiza. Uma izilwane zakho zigula noma zifile, ngitshele nje ukuthi kwenzakalani futhi ngizokudlulisela ethimbeni.',
-  xh: 'Molo! Ndilapha ukunceda. Ukuba nayiphi na izilwanyana zakho ziyagula okanye zifile, ndixelele nje ukuba kwenzeka ntoni ndiyithumele kwiqela.',
+  en: 'Hi! I am here to help with any animals that are sick or have died.',
+  af: 'Hallo! Ek help met enige diere wat siek is of gevrek het.',
+  zu: 'Sawubona! Ngisiza ngezilwane ezigulayo noma ezifile.',
+  xh: 'Molo! Ndinceda ngezilwanyana ezigulayo okanye ezifileyo.',
 }
+// A greeting/content-light turn must DRIVE collection, not deflect with a
+// pleasantry: memobot's job is to gather the report while someone is on-site, so
+// even a bare "hi" opens warmly AND asks for the single most-important still-
+// missing fact (on a brand-new case that is "where the animals are"). Never a
+// no-ask pleasantry, never the "Thank you for letting us know" case-ack. The warm
+// opener orients a brand-new contact; the appended ask starts the collection.
 export function warmConversationalReply(contactText, caseRow) {
   const lang = guessLang(contactText)
   const base = WARM_GREETING_BY_LANG[lang] || WARM_GREETING_BY_LANG.en
+  const fact = mostImportantMissingField(caseRow?.report)
+  const ask = fact ? ` ${askCarrier(lang, fact)}` : ''
   const ref = caseRow?.ref
-  if (!ref) return base
+  if (!ref) return base + ask
   const tail = {
-    af: ` As u weer van ons hoor, is u verwysingsnommer ${ref}.`,
-    zu: ` Uma uphinda usithinta, inombolo yakho yereferensi ngu-${ref}.`,
-    xh: ` Xa uphinda usithinta, inombolo yakho yesalathiso ngu-${ref}.`,
-  }[lang] || ` If you message again, your reference is ${ref}.`
-  return base + tail
+    af: ` U verwysingsnommer is ${ref}.`,
+    zu: ` Inombolo yakho yereferensi ngu-${ref}.`,
+    xh: ` Inombolo yakho yesalathiso ngu-${ref}.`,
+  }[lang] || ` Your reference is ${ref}.`
+  return base + ask + tail
 }
 
 // True when this inbound turn carried NO livestock-report content: nothing was
@@ -481,18 +515,40 @@ function askCarrier(lang, fact) {
   return c || `Could you tell me ${fact}?`
 }
 
+// A short language-mirrored opener that DRIVES collection instead of acknowledging
+// receipt. memobot's job is to gather the report while someone is on-site, so an
+// intake turn must read as "warmly asking for the next thing", never as the
+// "Thank you for letting us know ... we have your message" holding-ack (which
+// reads as a dead-end even when an ask is appended). When a fact was just captured
+// we lead by naming it ("Thank you -- I have noted X"); otherwise a one-word warm
+// opener. The ask for the next needed fact follows, then a short ref tail.
+const INTAKE_OPENER_BY_LANG = {
+  en: 'Thank you.', af: 'Dankie.', zu: 'Ngiyabonga.', xh: 'Enkosi.',
+}
+function intakeOpener(lang) { return INTAKE_OPENER_BY_LANG[lang] || INTAKE_OPENER_BY_LANG.en }
+
+// Build the intake-driving reply: [ack of a just-captured fact OR a warm opener] +
+// the ask for `fact` + a short reference tail. This REPLACES the holding-ack
+// preamble so every intake turn urges the next fact rather than parroting a case
+// acknowledgement. `fact` is a VISIT_CRITICAL_ASK hint (or null when nothing left
+// to ask, in which case the caller decides on a brief confirming close).
+function intakeAdvanceReply(contactText, caseRow, justFilled, fact) {
+  const lang = guessLang(contactText)
+  const ack = ackCapturedFields(justFilled)          // '' when nothing captured this turn
+  const lead = ack || intakeOpener(lang)
+  const ask = fact ? ` ${askCarrier(lang, fact)}` : ''
+  return `${lead}${ask}${refTail(contactText, caseRow)}`
+}
+
 // The degraded reply that does NOT dead-end: when the model errored/echoed/emptied
-// but the case still needs a visit-critical fact, the holding ack is followed by
-// ONE gentle question for the single most important missing fact, so the intake
-// advances even on the fallback path. When nothing is missing (or no report yet
-// has a clear next ask), it is exactly fallbackReply -- the safe holding ack.
-// Caller guards once-only via an observation marker so a contact is not re-asked
-// the same fact every degraded turn.
+// but the case still needs a visit-critical fact, an intake-driving opener is
+// followed by ONE gentle question for the single most important missing fact, so
+// the intake advances even on the fallback path. When nothing is missing, it is a
+// brief warm confirming close (never the holding-ack preamble). Caller guards
+// once-only via an observation marker so a contact is not re-asked the same fact.
 export function advancingFallback(contactText, caseRow) {
-  const base = fallbackReply(contactText, caseRow)
   const fact = mostImportantMissingField(caseRow?.report)
-  if (!fact) return base
-  return `${base} ${askCarrier(guessLang(contactText), fact)}`
+  return intakeAdvanceReply(contactText, caseRow, [], fact)
 }
 
 export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
@@ -663,6 +719,23 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       if (justCaptured.length) {
         const wrote = await syncSummaryFromCaptured(store, fresh, log)
         if (wrote) fresh = await store.getCase(fresh.id)
+      }
+      // Escape route: a returning contact who states a clearly NEW situation
+      // (a species/location that conflicts with the recorded report) must not be
+      // trapped urging the old case's missing fields. The conflicting value was
+      // dropped by fill-if-empty, so flag the case for an operator to split --
+      // once, on the rising edge -- rather than auto-splitting a fuzzy signal.
+      const conflicts = detectNewCaseConflict(inboundText, fresh.report)
+      if (conflicts.length && !(fresh.tags || '').split(',').map(s => s.trim()).includes('needs-split')) {
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-SIGNAL: contact stated a different ${conflicts.join(' and ')} than the recorded report -- may be a new situation; flagged for an operator to split.` })
+        try {
+          await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-split') })
+          if (notifyHandoff) {
+            try { await notifyHandoff({ case: fresh, channel, from: msg.from, reason: 'possible new case' }) }
+            catch (e) { log.warn?.('[casey] new-case notify failed', { caseId: fresh.id, error: e.message }) }
+          }
+        } catch (e) { log.warn?.('[casey] needs-split flag failed', { caseId: fresh.id, error: e.message }) }
+        fresh = await store.getCase(fresh.id)
       }
     }
 
@@ -870,13 +943,14 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // field guarantee). Only once every visit-critical field has been asked once
       // does the degraded reply become the plain holding ack and the operator takes
       // over -- never a re-greet, never the same question twice.
-      // Content-free turn (a bare greeting / "help" / chit-chat with nothing
-      // captured and an empty report): this is conversational, not intake. Reply
-      // warmly and invite the report instead of parroting the holding ack -- the
-      // witnessed "hi" -> "Thank you for letting us know ... reference X" nonsense.
-      // Skip the per-field intake advance entirely (there is no report to advance).
+      // Content-free turn (a bare greeting / "help" with nothing captured and an
+      // empty report): memobot must still DRIVE collection -- a warm opener PLUS the
+      // first needed fact (which animals / where), never a no-ask pleasantry and
+      // never the "Thank you for letting us know ... reference X" case-ack. The
+      // empty report means warmConversationalReply asks the most-important first
+      // field, starting intake on turn one.
       if (isContentFreeTurn(justCaptured, fresh.report)) {
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'CONVERSATIONAL: content-free turn (greeting/chit-chat) answered with a warm conversational reply, not the case-ack.' })
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'GREETING-DRIVE: greeting answered with a warm opener + the first needed fact, driving intake (not the case-ack, not a no-ask pleasantry).' })
         text = warmConversationalReply(inboundText, fresh)
       } else {
       const priorAsk = await store.listEvents(fresh.id)
@@ -1295,15 +1369,14 @@ async function syncSummaryFromCaptured(store, caseRow, log) {
 // (empty/error/echo/stock-ack -- the common case on the weak local model), so the
 // contact is always heard and the intake always advances by one real field.
 function captureDrivenReply(contactText, caseRow, justFilled, nextHint) {
-  const ack = ackCapturedFields(justFilled)
-  const ask = nextHint ? ` ${askCarrier(guessLang(contactText), nextHint)}` : ''
-  // When we have a specific captured-field acknowledgement ("I have noted which
-  // animals"), it IS the acknowledgement -- append only the reference tail, not
-  // the generic "thank you for letting us know" preamble too (a double thank-you
-  // that also overran the 240-char reply cap). With no ack, fall back to the full
-  // holding reply so a bare turn still acknowledges + cites the reference.
-  if (ack) return `${ack}${refTail(contactText, caseRow)}${ask}`
-  return `${fallbackReply(contactText, caseRow)}${ask}`
+  // Drive collection: lead with the just-captured-fact acknowledgement (or a brief
+  // warm opener when nothing was captured this turn), then ask the next needed
+  // fact, then the reference. Never the "Thank you for letting us know ... we have
+  // your message" holding-ack preamble -- that read as a dead-end case-ack even
+  // with an ask appended (the witnessed "@memobot hi -> Thank you for letting us
+  // know ..." on an existing case). When nothing is left to ask (nextHint null),
+  // this is a brief warm confirming line, not the holding-ack.
+  return intakeAdvanceReply(contactText, caseRow, justFilled, nextHint)
 }
 
 // Per-field advancing: the highest-priority on-site fact that is BOTH still
