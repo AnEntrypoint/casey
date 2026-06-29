@@ -71,7 +71,8 @@ src/
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep; detectCoverageGap (rostered team, open breaching cases, zero in-window operator replies) pages a synthetic TEAM-COVERAGE breach
   correlate.js             cross-case correlation helpers
-  intent.js                interpret a message into a structured intent (report|enquiry{today,mine,open,near+place}|question|chitchat|service) by shape; classifyIntentFallback (soft deterministic fallback) + normalizeIntent (model case_intent declaration) + extractPlace; report-content veto
+  places.js                SA province understanding: PROVINCES (every alias kzn/EC/GP/... + major towns), resolvePlace(text)->{regions,terms,strong} for a region enquiry, word-boundary containsTerm (a 2-char alias never hits inside unrelated prose), ambiguous towns span provinces; pure/ASCII/no geocoder, degrades to null in a bare clone
+  intent.js                interpret a message into a structured intent (report|enquiry{today,mine,open,near+place}|question|chitchat|service) by shape; classifyIntentFallback (soft deterministic fallback, region/place via places.js, report+animal veto, clear-enquiry-lead) + normalizeIntent (model case_intent declaration) + extractPlace
   conversation-fsm.js      the conversation as an adaptogen (../dstate) DAG+FSM with SOFT enforcement (CONVERSATION_SPEC); advanceConversation maps intent->route+soft-transition trace; optional-imports adaptogen (degrades to a pure intent->route map when ../dstate absent)
   attn.js                  worst-first attention ranking (rankAttention, with an SLA clock: waitingOnUs/waitAgeMs/atRiskCount/slaTargetMs) + shared caseHints why/to-do policy; backs the inbox and `casey attention`
   format.js                shared SAST timestamp + +27 phone formatters (CLI and SPA render the same way)
@@ -284,8 +285,13 @@ the crash-budget stop state); the supervisor is its only I/O.
   soft FSM never blocks. A report-content veto keeps a real report
   (sick/dead/drooling, "2 cows died today") from ever being read as an enquiry.
   Enquiries answer from the PII-free surface (`renderItinerary`, incl.
-  near-by-location-text since lat/lon is optional and there's no geocoder); a general
-  question gets a helpful answer, NEVER the complete exit; report/chitchat fall
+  near/region-by-location-text since lat/lon is optional and there's no geocoder).
+  Place/region understanding lives in `places.js`: a worker's "any cases in kzn" /
+  "anything in the eastern cape" resolves the SA province (`resolvePlace`) and lists
+  every case whose hydrated report location falls in it, province-labelled -- so a
+  free-form region ask is answered from the store, not deflected. A disease-service
+  animal-veto keeps "any cattle in kzn" a report; a question gets a helpful answer
+  that NAMES the enquiry surface, NEVER the complete exit; report/chitchat fall
   through to the agent turn. The soft decision (intent + FSM trace) is recorded as an
   observation -- the guardrail informing, never shown to the contact. adaptogen holds
   CONVERSATION state; thatcher stays the case system-of-record. Only the IRREVERSIBLE
