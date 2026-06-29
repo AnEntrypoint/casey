@@ -2573,8 +2573,17 @@ async function main() {
     // The deterministic detector classifies the enquiry and -- critically -- does
     // NOT misread a plain report field as one.
     assert.equal(detectEnquiryIntent('whats on the itenerary today'), 'today', 'the witnessed real message is an enquiry')
+    // Colloquial check-in phrasings a worker actually uses must all classify (these
+    // regressed against a fixed-phrase list -- the detector is now structural).
+    for (const q of ['hi there whats up today', 'whats up today', 'whats up', 'anything today', 'hows today', 'what is happening today', 'whats happening']) {
+      assert.equal(detectEnquiryIntent(q), 'today', `colloquial check-in is a today-enquiry: ${q}`)
+    }
     assert.equal(detectEnquiryIntent('my cattle are sick'), null, 'a report is never an enquiry')
     assert.equal(detectEnquiryIntent('the farm is near Ermelo'), null, 'a location report is never an enquiry')
+    // A report that merely mentions "today" must NOT be read as a today-enquiry: the
+    // report veto wins over the today signal.
+    assert.equal(detectEnquiryIntent('2 cows died today'), null, 'a report mentioning today is still a report')
+    assert.equal(detectEnquiryIntent('they got sick today'), null, 'a symptom report mentioning today is still a report')
     // End-to-end on the real handler: a worker with a case who asks the enquiry
     // question must get a list/itinerary reply, not the complete-report exit, and
     // no phone number can leak into it.

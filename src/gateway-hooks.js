@@ -485,33 +485,58 @@ export function refTail(contactText, caseRow) {
 // deterministic detector recognises the question and routes it to a real itinerary
 // answer, mirroring how detectContactIntent short-circuits status/help.
 //
-// Returns 'today' | 'mine' | 'open' | null. Conservative on purpose: it requires
-// an explicit listing/question phrasing so a plain report field ("the farm is near
-// Ermelo", "my cattle are sick") is NEVER swallowed as an enquiry. A report keyword
-// (sick/dead/dying/blood/animals named with a symptom) vetoes the match.
-const ENQUIRY_TODAY = ['itinerary', 'itenerary', 'agenda', 'schedule', 'on today', 'on for today',
-  'todays list', 'today list', 'whats on', 'what is on', 'whats happening today', 'on the go today',
-  'my day', 'my list today', 'plan for today', 'rooster', 'vandag se lys']   // af: vandag = today
+// Returns 'today' | 'mine' | 'open' | null. The today-enquiry is matched
+// STRUCTURALLY, not by a fixed phrase list: a worker checks in with whatever
+// colloquial shape comes naturally ("hi there whats up today", "whats up", "anything
+// today", "hows today", "what is happening today"), often behind a greeting. A fixed
+// list missed all of these (the witnessed regression). So a today-enquiry is a
+// "checking-in" question shape -- optionally paired with a today/now signal -- and
+// the explicit itinerary words still match too. The REPORT_VETO is checked FIRST so
+// a report that merely mentions "today" ("2 cows died today") is never swallowed.
+//
+// EXPLICIT today/itinerary words: always a today-enquiry on their own.
+const ENQUIRY_TODAY_WORDS = ['itinerary', 'itenerary', 'agenda', 'schedule', 'on today', 'on for today',
+  'todays list', 'today list', 'on the go today', 'my day', 'my list today', 'plan for today',
+  'rooster', 'vandag se lys']   // af: vandag = today
+// A "checking-in" question shape -- how a worker casually asks what is going on.
+// On its own this is a today-enquiry (a worker checking in); with a today signal it
+// is unambiguous. Kept deliberately broad and colloquial.
+const CHECKIN_SHAPES = ['whats up', 'what is up', 'whats on', 'what is on', 'whats happening',
+  'what is happening', 'whats going on', 'what is going on', 'whats new', 'what is new', 'hows it going',
+  'hows it', 'hows today', 'how is today', 'anything for me', 'what do i have', 'what have i got',
+  'what is there', 'whats there', 'anything today', 'anything for today']
+// A today/now signal: pairs with a checking-in shape, but a bare checking-in shape
+// already counts (see below).
+const TODAY_SIGNAL = ['today', 'vandag', 'right now', 'on the go', 'going on']
 const ENQUIRY_MINE = ['my cases', 'my case', 'my reports', 'what am i working on', 'what i am working on',
-  'assigned to me', 'on my plate', 'my work', 'my visits', 'whats mine', 'my jobs']
+  'assigned to me', 'on my plate', 'my work', 'my visits', 'whats mine', 'my jobs', 'my list']
 const ENQUIRY_OPEN = ['anything i can help', 'what can i help', 'open cases', 'open work',
   'available work', 'anything open', 'whats open', 'what is open', 'jobs available', 'help with anything']
 // A report-content veto: if the message reads like someone describing animals, it is
-// intake, not an enquiry, even if it happens to contain a question word.
-const REPORT_VETO = ['sick', 'dead', 'dying', 'died', 'blood', 'bleeding', 'drooling', 'limping',
+// intake, not an enquiry, even if it happens to contain a question or a "today".
+const REPORT_VETO = ['sick', 'dead', 'dying', 'died', 'die', 'blood', 'bleeding', 'drooling', 'limping',
   'lame', 'blisters', 'cough', 'collaps', 'swollen', 'not eating', 'cattle are', 'cow is', 'goats are',
-  'sheep are', 'pigs are', 'animals are']
+  'sheep are', 'pigs are', 'animals are', 'is sick', 'are sick']
+
+function hasKey(t, keys) {
+  const padded = ` ${t} `
+  const words = t.split(' ')
+  return keys.some(k => padded.includes(` ${k} `) || (!k.includes(' ') && words.includes(k)))
+}
 
 export function detectEnquiryIntent(text) {
   const t = normalizeIntentText(text)
   if (!t) return null
-  const padded = ` ${t} `
-  const has = (keys) => keys.some(k => padded.includes(` ${k} `) || (!k.includes(' ') && t.split(' ').includes(k)))
-  // A clear report description is never an enquiry, however it is phrased.
-  if (has(REPORT_VETO)) return null
-  if (has(ENQUIRY_OPEN)) return 'open'
-  if (has(ENQUIRY_MINE)) return 'mine'
-  if (has(ENQUIRY_TODAY)) return 'today'
+  // A clear report description is never an enquiry, however it is phrased -- checked
+  // FIRST so "2 cows died today" stays a report despite the "today" signal.
+  if (hasKey(t, REPORT_VETO)) return null
+  if (hasKey(t, ENQUIRY_OPEN)) return 'open'
+  if (hasKey(t, ENQUIRY_MINE)) return 'mine'
+  if (hasKey(t, ENQUIRY_TODAY_WORDS)) return 'today'
+  // Structural today-enquiry: a colloquial checking-in shape (with or without an
+  // explicit today/now signal) is a worker asking what is on for them. The shape
+  // itself carries the intent, so a bare "whats up" / "anything today" both match.
+  if (hasKey(t, CHECKIN_SHAPES)) return 'today'
   return null
 }
 
