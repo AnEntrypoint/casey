@@ -63,6 +63,8 @@ entities:
       external_id:  { type: text, required: true }   # phone number / discord user id
       handle:       { type: text }
       notes:        { type: textarea }
+      active_case_id: { type: text }                 # the case a worker has bound active (enquiry/excursion flow);
+                                                     # their field updates append to THIS case until they switch or clear it
 
   case:
     label: Case
@@ -92,6 +94,21 @@ entities:
       status:      { type: enum, options: [new, triaging, in_progress, waiting, resolved, closed], default: new }
       transition_reason: { type: text }              # written by thatcher's workflow engine on transition
       last_event_at: { type: text }
+      lat:         { type: number }                  # case location for proximity ("cases near me"); optional
+      lon:         { type: number }
+      claimed_at:  { type: text }                    # when a worker claimed/assigned themselves (enquiry flow)
+    # Row-access scope for worker enquiries: scope=assigned keys on the `assignee`
+    # field (thatcher's checkRowAccess reads rowAccess.field), so a worker's 'my
+    # cases' returns only cases assigned to them. Enforced when list() is called
+    # with opts.user (the worker principal); internal/admin reads pass no user.
+    row_access: { scope: assigned, field: assignee }
+    # Default list order: most-recently-active first, created_at as the tiebreak --
+    # so casey's recency sort is configuration, honoured upstream once the published
+    # thatcher with array-sort is installed (the case-store shim sorts in JS until).
+    list:
+      defaultSort:
+        - { field: last_event_at, dir: DESC }
+        - { field: created_at, dir: DESC }
 
   event:
     label: Event

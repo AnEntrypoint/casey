@@ -361,12 +361,104 @@ export class CaseStore {
     const [row] = await this.t.list('case', { ref }, { limit: 1 })
     return row || null
   }
+  // Alias used by the enquiry/active-case tools (case_select by ref).
+  async findCaseByRef(ref) { return this.getCaseByRef(ref) }
 
+  // ---- active-case binding (worker enquiry / excursion flow) --------------
+  // A worker NEGOTIATES a case before an excursion and data-dumps into THAT case.
+  // The binding lives on the worker's contact row (active_case_id), keyed by the
+  // worker identity (the channel author). Their subsequent field updates append to
+  // the bound case; a new case is opened only when they explicitly ask.
+
+  // The contact row for a worker identity (channel author). Reused for the binding.
+  async _workerContact(author, channel = 'enquiry') {
+    const [existing] = await this.t.list('contact', { external_id: author }, { limit: 1 })
+    if (existing) return existing
+    return this.findOrCreateContact({ channel, external_id: author })
+  }
+
+  async setActiveCase(author, caseId) {
+    if (!author) return null
+    const contact = await this._workerContact(author)
+    await this.t.update('contact', contact.id, { active_case_id: caseId || '' }, SYSTEM_USER)
+    return caseId
+  }
+
+  async getActiveCase(author) {
+    if (!author) return null
+    const [contact] = await this.t.list('contact', { external_id: author }, { limit: 1 })
+    if (!contact?.active_case_id) return null
+    return this.getCase(contact.active_case_id)
+  }
+
+  // Explicitly create a new case (the worker asked to start one). Distinct from
+  // findOrCreateCase, which is the per-conversation auto path -- this one always
+  // creates and is bound active by the caller.
+  async createCase({ subject = '', assignee = AGENT_USER, channel = 'enquiry', external_id = null } = {}) {
+    const ref = await this._nextRef()
+    const ext = external_id || `worker:${assignee}:${ref}`
+    return this._createReload('case', {
+      ref, channel, external_id: ext,
+      subject, summary: '', priority: 'normal', tags: '',
+      assignee, autonomy: 'auto', status: 'new', last_event_at: nowIso(),
+    }, AGENT_USER, { ref })
+  }
+
+  // List cases with an operator-aware where ({field:{$gte,$lte,$in,...}}, top-level
+  // $or, bare-array IN) and an optional opts.user for row-access scoping. The new
+  // worker-enquiry queries (today=created_at range, near=lat/lon box, mine=assignee
+  // + user scope, open=status $in) ride these.
+  //
+  // FEATURE-DETECT SHIM: the published thatcher that understands operator where +
+  // row-access-in-list lands via npm only after its CI publish. Until casey's
+  // installed thatcher has it, sending an operator object would break the equality-
+  // only .eq() path. So we probe support once; when absent we strip the where to its
+  // equality-only subset for the thatcher call and apply the operator predicates +
+  // recency sort in JS here (today's behaviour, just generalized). A bare clone and
+  // a pre-publish install both stay green; once the new thatcher is installed the
+  // operators + user scope push down to the store with no code change.
   async listCases(where = {}, opts = {}) {
-    const { limit = 50, offset = 0 } = opts
-    const rows = await this.t.list('case', where, { limit: Math.max(limit + offset, 1000) })
+    const { limit = 50, offset = 0, user = null, sort = null } = opts
+    const supported = await this._thatcherSupportsOperators()
+    if (supported) {
+      const rows = await this.t.list('case', where, {
+        limit: Math.max(limit + offset, 1000),
+        ...(user ? { user } : {}),
+        sort: sort || [{ field: 'last_event_at', dir: 'DESC' }, { field: 'created_at', dir: 'DESC' }],
+      })
+      return rows.slice(offset, offset + limit)
+    }
+    // Fallback: equality-only to thatcher, operators + sort applied in JS.
+    const eqWhere = {}
+    const ops = []
+    for (const [k, v] of Object.entries(where)) {
+      if (k === '$or') { ops.push(orPredicate(v)); continue }
+      if (v && typeof v === 'object' && !Array.isArray(v)) { ops.push(opPredicate(k, v)); continue }
+      if (Array.isArray(v)) { ops.push(r => v.includes(r[k])); continue }
+      eqWhere[k] = v
+    }
+    let rows = await this.t.list('case', eqWhere, { limit: Math.max(limit + offset, 1000) })
+    for (const p of ops) rows = rows.filter(p)
     rows.sort((a, b) => recencyKey(b) - recencyKey(a))
     return rows.slice(offset, offset + limit)
+  }
+
+  // Probe (once, cached) whether the installed thatcher list() honours operator
+  // where-objects. A supporting thatcher returns rows for a never-true range filter
+  // as 0; an old thatcher .eq()'s the object and also returns 0 -- so we instead
+  // detect by a TRUE-for-all operator that an old thatcher cannot satisfy: a
+  // `{ $gte: '' }` on a string field matches every row on a new thatcher and zero on
+  // an old one (it builds gte.field= which the equality store drops). We compare the
+  // operator result to the unfiltered count; equal => supported.
+  async _thatcherSupportsOperators() {
+    if (this._opSupport !== undefined) return this._opSupport
+    try {
+      const all = await this.t.list('case', {}, { limit: 5 })
+      if (!all.length) { this._opSupport = false; return false }   // cannot probe; safe fallback
+      const probe = await this.t.list('case', { created_at: { $gte: 0 } }, { limit: 5 })
+      this._opSupport = probe.length === all.length
+    } catch { this._opSupport = false }
+    return this._opSupport
   }
 
   // Returns the count of cases, capped at 50,000 for performance. If the true count
@@ -849,6 +941,38 @@ function byCreatedDescList(rows) { return sortByCreatedStable(rows, -1) }
 function recencyKey(c) {
   const le = c?.last_event_at ? Date.parse(c.last_event_at) : NaN
   return Number.isNaN(le) ? ca(c) * 1000 : le
+}
+
+// JS predicates mirroring the thatcher operator-where compiler, used by the
+// feature-detect fallback when the installed thatcher is the pre-publish version
+// that cannot push operators down. Same operator vocabulary as
+// busybase-store.js applyWhere, evaluated client-side.
+function opPredicate(field, opObj) {
+  const tests = Object.entries(opObj).map(([op, val]) => {
+    switch (op) {
+      case '$eq': return (x) => x === val
+      case '$ne': return (x) => x !== val
+      case '$gt': return (x) => x > val
+      case '$gte': return (x) => x >= val
+      case '$lt': return (x) => x < val
+      case '$lte': return (x) => x <= val
+      case '$in': return (x) => (Array.isArray(val) ? val : [val]).includes(x)
+      case '$like': case '$ilike': {
+        const re = new RegExp(String(val).replace(/%/g, '.*'), op === '$ilike' ? 'i' : '')
+        return (x) => re.test(String(x ?? ''))
+      }
+      default: return () => true
+    }
+  })
+  return (row) => tests.every(t => t(row[field]))
+}
+function orPredicate(clauses) {
+  const preds = (clauses || []).map(sub => {
+    const ps = Object.entries(sub).map(([k, v]) =>
+      (v && typeof v === 'object' && !Array.isArray(v)) ? opPredicate(k, v) : (row) => row[k] === v)
+    return (row) => ps.every(p => p(row))
+  })
+  return (row) => preds.some(p => p(row))
 }
 
 function randomSuffix() {

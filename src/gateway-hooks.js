@@ -1030,6 +1030,22 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         sessionKey: `case:${fresh.id}`,
         callLLM,
         enabledToolsets: ['cases', 'core'],
+        // Identity for the case/enquiry tools: WHO is asking (the message author),
+        // the live store, the role for row-scoped enquiries, and the active case.
+        // The freddie case toolset reads these from toolCtx rather than a global, so
+        // "my cases"/"near me"/"today" answer FOR this worker and writes target the
+        // bound case. author = msg.from (the per-author identity); the channel author
+        // is the worker (no login). principal feeds thatcher row-access scoping.
+        toolCtx: {
+          author: msg.from || external_id,
+          channel,
+          role: 'operator',
+          store,
+          principal: { id: msg.from || external_id, role: 'operator' },
+          activeCaseRef: fresh.ref,
+          activeCaseId: fresh.id,
+          now: Date.now(),
+        },
         // freddie's runTurn defaults to 30s, which is too tight for a COLD first
         // turn (host boot + first provider probe) against the real bridge -- the
         // crucible run timed out there and the contact got a degraded reply. The
