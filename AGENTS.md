@@ -249,6 +249,20 @@ the crash-budget stop state); the supervisor is its only I/O.
   instruction; everything else is a structural instruction the model composes.
 - **Fixed keywords short-circuit the LLM**: `HELP` / `STATUS` / `HUMAN` / `STOP`
   answer instantly in any phrasing/language.
+- **An enquiry question is answered deterministically, never treated as report
+  intake**: a worker ASKING about their work ("what's on the itinerary today", "my
+  cases", "anything I can help with") is a different act from REPORTING an animal.
+  The weak production model never calls the freddie enquiry tools
+  (`case_today`/`case_mine`/...), so an enquiry question used to fall through to
+  intake and -- on a complete case -- got the complete-report exit ("we have the
+  full report ... your reference is X"). `detectEnquiryIntent` (gateway-hooks.js)
+  classifies the question (`today`/`mine`/`open`) and `renderItinerary` answers it
+  from the same `store.listCases` the enquiry tools use, projected PII-free via
+  freddie's `projectCase` (a phone number can never reach a worker's list),
+  short-circuiting before the agent/intake path -- exactly like the fixed-keyword
+  short-circuit. A report-content veto (sick/dead/drooling/"the farm is near ...")
+  keeps a real report from ever being misread as an enquiry; an empty list invites a
+  fresh report rather than dead-ending.
 - **Full observability**: every action is an append-only audited `event` row.
 - **Receive-liveness is observable, never a false green**: a real-time channel
   (Discord/WhatsApp) can have a live TCP socket yet a dead gateway and deliver no

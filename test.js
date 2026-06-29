@@ -2568,6 +2568,31 @@ async function main() {
     assert.equal(projected.ref, 'CASE-Z', 'enquiry projection keeps the safe ref')
   })
 
+  await test('worker enquiry ("whats on the itinerary today") gets an itinerary answer, never the complete-report exit', async () => {
+    const { detectEnquiryIntent } = await import('./src/gateway-hooks.js')
+    // The deterministic detector classifies the enquiry and -- critically -- does
+    // NOT misread a plain report field as one.
+    assert.equal(detectEnquiryIntent('whats on the itenerary today'), 'today', 'the witnessed real message is an enquiry')
+    assert.equal(detectEnquiryIntent('my cattle are sick'), null, 'a report is never an enquiry')
+    assert.equal(detectEnquiryIntent('the farm is near Ermelo'), null, 'a location report is never an enquiry')
+    // End-to-end on the real handler: a worker with a case who asks the enquiry
+    // question must get a list/itinerary reply, not the complete-report exit, and
+    // no phone number can leak into it.
+    const wchan = 'enquiryworker-' + Date.now()
+    await runScript(adapter, ['my cattle are drooling at the farm near Musina'], { from: wchan, channel_id: wchan, username: wchan, wait: () => casey.drain() })
+    const before = adapter.sent.length
+    await runScript(adapter, ['whats on the itinerary today'], { from: wchan, channel_id: wchan, username: wchan, wait: () => casey.drain() })
+    assert.ok(adapter.sent.length > before, 'the enquiry got a reply')
+    const reply = adapter.sent[adapter.sent.length - 1].text || ''
+    assert.ok(!/full report/i.test(reply), `enquiry must NOT get the complete-report exit: ${reply}`)
+    assert.ok(/on the go today|nothing is on your list|here is/i.test(reply), `enquiry got an itinerary-shaped answer: ${reply}`)
+    assert.ok(!reply.includes(wchan), 'the itinerary answer leaks no contact id / phone number')
+    // The outbound was recorded as a deterministic enquiry, not an agent turn.
+    const wcase = (await store.listCases({}, { limit: 10000 })).find(c => c.external_id === (wchan + ':' + wchan) || c.external_id === wchan)
+    const evs = wcase ? await store.listEvents(wcase.id) : []
+    assert.ok(evs.some(e => e.kind === 'outbound' && /enquiry/.test(typeof e.data === 'string' ? e.data : JSON.stringify(e.data || {}))), 'the enquiry answer is recorded as a deterministic enquiry outbound')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')

@@ -17,9 +17,15 @@
 // an operator can override case state at any time.
 
 import { runTurn } from 'freddie'
+// The PII-free enquiry projection vocabulary is owned by freddie (the layering
+// mandate: agentic + enquiry code lives in freddie). casey reuses projectCase so a
+// deterministic itinerary answer is scrubbed by the SAME whitelist the agent's
+// enquiry tools use -- external_id/contact_id can never leak into a worker's list.
+import { projectCase, DEFAULT_PROJECTION } from '../../freddie/src/plugins/case/toolset.js'
 import { VISIT_CRITICAL } from './case-health.js'
 import { extractFields } from './extract.js'
 import { buildAlertPayload } from './report-analytics.js'
+import { fmtTimeSAST } from './format.js'
 
 // Report fields casey is allowed to fill deterministically at ingress. Mirrors
 // REPORT_KEYS in case-store.js; extractFields may emit keys outside the report
@@ -468,6 +474,97 @@ export function refTail(contactText, caseRow) {
     zu: ` Inombolo yakho yereferensi ngu-${ref}.`,
     xh: ` Inombolo yakho yesalathiso ngu-${ref}.`,
   }[lang] || ` Your reference is ${ref}.`
+}
+
+// An ENQUIRY is a worker asking ABOUT their work -- "what's on the itinerary
+// today", "my cases", "what am I working on", "anything I can help with" -- as
+// opposed to REPORTING an animal (the intake content). The weak production model
+// never calls the freddie enquiry tools (case_today/case_mine/...), so an enquiry
+// question fell through to intake and -- on a complete case -- got the
+// complete-report exit ("we have the full report ... your reference is X"). This
+// deterministic detector recognises the question and routes it to a real itinerary
+// answer, mirroring how detectContactIntent short-circuits status/help.
+//
+// Returns 'today' | 'mine' | 'open' | null. Conservative on purpose: it requires
+// an explicit listing/question phrasing so a plain report field ("the farm is near
+// Ermelo", "my cattle are sick") is NEVER swallowed as an enquiry. A report keyword
+// (sick/dead/dying/blood/animals named with a symptom) vetoes the match.
+const ENQUIRY_TODAY = ['itinerary', 'itenerary', 'agenda', 'schedule', 'on today', 'on for today',
+  'todays list', 'today list', 'whats on', 'what is on', 'whats happening today', 'on the go today',
+  'my day', 'my list today', 'plan for today', 'rooster', 'vandag se lys']   // af: vandag = today
+const ENQUIRY_MINE = ['my cases', 'my case', 'my reports', 'what am i working on', 'what i am working on',
+  'assigned to me', 'on my plate', 'my work', 'my visits', 'whats mine', 'my jobs']
+const ENQUIRY_OPEN = ['anything i can help', 'what can i help', 'open cases', 'open work',
+  'available work', 'anything open', 'whats open', 'what is open', 'jobs available', 'help with anything']
+// A report-content veto: if the message reads like someone describing animals, it is
+// intake, not an enquiry, even if it happens to contain a question word.
+const REPORT_VETO = ['sick', 'dead', 'dying', 'died', 'blood', 'bleeding', 'drooling', 'limping',
+  'lame', 'blisters', 'cough', 'collaps', 'swollen', 'not eating', 'cattle are', 'cow is', 'goats are',
+  'sheep are', 'pigs are', 'animals are']
+
+export function detectEnquiryIntent(text) {
+  const t = normalizeIntentText(text)
+  if (!t) return null
+  const padded = ` ${t} `
+  const has = (keys) => keys.some(k => padded.includes(` ${k} `) || (!k.includes(' ') && t.split(' ').includes(k)))
+  // A clear report description is never an enquiry, however it is phrased.
+  if (has(REPORT_VETO)) return null
+  if (has(ENQUIRY_OPEN)) return 'open'
+  if (has(ENQUIRY_MINE)) return 'mine'
+  if (has(ENQUIRY_TODAY)) return 'today'
+  return null
+}
+
+// One PII-free itinerary line per case: reference, plain status, subject, and when
+// it was last active in SAST. projectCase strips external_id/contact_id, so a phone
+// number can never reach a worker's list.
+function itineraryLine(row, lang) {
+  const p = projectCase(row, DEFAULT_PROJECTION)
+  const subj = (p.subject || p.species || p.location || 'a report').toString().slice(0, 60)
+  const when = p.last_event_at ? fmtTimeSAST(p.last_event_at) : ''
+  const tail = when ? ` (last active ${when})` : ''
+  return `- ${p.ref}: ${plainStatus(p.status, lang)} -- ${subj}${tail}`
+}
+
+// Render a warm, plain-language itinerary answer for a worker enquiry. Pulls the
+// rows via the store's enquiry queries (the same listCases the freddie enquiry
+// tools use), projects each PII-free, and never dead-ends: an empty list invites
+// the worker to start a report rather than leaving them with nothing.
+async function renderItinerary(store, kind, author, inboundText, now = Date.now()) {
+  const lang = guessLang(inboundText)
+  let rows = []
+  try {
+    if (kind === 'mine') {
+      rows = await store.listCases({ assignee: author }, { limit: 20 })
+    } else if (kind === 'open') {
+      rows = await store.listCases({ status: { $in: ['new', 'triaging', 'in_progress', 'waiting'] } }, { limit: 20 })
+      rows = rows.filter(r => !r.assignee || r.assignee === 'agent')
+    } else { // 'today'
+      const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0)
+      const since = String(Math.floor(dayStart.getTime() / 1000))   // case timestamps are unix seconds
+      const where = { last_event_at: { $gte: since } }
+      if (author) where.assignee = author
+      rows = await store.listCases(where, { limit: 20 })
+    }
+  } catch {
+    // Never leak a store error to a worker; a warm holding line keeps the channel safe.
+    return 'I could not pull up the list just now. Please try again in a moment, or tell me about an animal and I will start a report.'
+  }
+  const intro = {
+    today: 'Here is what is on the go today:',
+    mine: 'Here are the reports on your list:',
+    open: 'Here is open work you could help with:',
+  }[kind] || 'Here is your list:'
+  if (!rows.length) {
+    const empty = {
+      today: 'Nothing is on your list for today yet.',
+      mine: 'You have no reports on your list yet.',
+      open: 'There is no open work waiting right now.',
+    }[kind] || 'Your list is empty for now.'
+    return `${empty} If you are seeing a sick or dead animal, just tell me about it and I will start a report.`
+  }
+  const lines = rows.map(r => itineraryLine(r, lang)).join('\n')
+  return `${intro}\n${lines}`
 }
 
 export function fallbackReply(contactText, caseRow) {
@@ -982,6 +1079,36 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // contact never sees a reply. external_id is correct for WhatsApp too, where
       // conversationKey falls back to msg.from (the phone number).
       const reply = { to: replyTo, text, platform, caseId: fresh.id, intent }
+      if (adapter?.send) {
+        try { await adapter.send(reply) }
+        catch (e) {
+          log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message })
+          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` })
+        }
+      }
+      return reply
+    }
+
+    // ENQUIRY short-circuit: a worker ASKING about their work ("what's on the
+    // itinerary today", "my cases", "anything I can help with") is answered from the
+    // PII-free enquiry surface deterministically -- never treated as report intake.
+    // Without this, the weak production model (which never calls the freddie enquiry
+    // tools) let the question fall through to intake, and a complete case answered
+    // with the complete-report exit ("we have the full report ... reference X").
+    // Read-only and worker-facing, so it is safe in every autonomy mode (it does not
+    // mutate the case). Skipped for opted-out contacts (handled above) -- this runs
+    // after that guard. author is the per-author identity (msg.from), matching the
+    // toolCtx the agent enquiry tools use, so a multi-author channel answers FOR the
+    // asking worker only.
+    const enquiry = detectEnquiryIntent(inboundText)
+    if (enquiry) {
+      const author = msg.from || external_id
+      const text = await renderItinerary(store, enquiry, author, inboundText, Date.now())
+      await store.appendEvent(fresh.id, {
+        kind: 'outbound', actor: 'system', channel,
+        text, data: { to: replyTo, enquiry, deterministic: true },
+      })
+      const reply = { to: replyTo, text, platform, caseId: fresh.id, enquiry }
       if (adapter?.send) {
         try { await adapter.send(reply) }
         catch (e) {
