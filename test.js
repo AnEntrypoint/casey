@@ -2543,6 +2543,31 @@ async function main() {
     assert.ok(/fresh report|another|different place/i.test(done), `a complete report invites a new one: ${done}`)
   })
 
+  await test('worker enquiry plumbing: active-case binding, explicit create, and a PII-free enquiry projection', async () => {
+    // The store-level seams the freddie enquiry/active-case toolset rides on. (The
+    // full agent-driven "my cases"/"near me" need an LLM; the deterministic seams
+    // are witnessed here on real services.)
+    // Explicit create + active-case binding: a worker negotiates a case and binds it.
+    const worker = 'worker-' + Date.now()
+    const created = await store.createCase({ subject: 'pre-excursion', assignee: worker })
+    assert.ok(created && created.id && created.ref, 'createCase opens a real case')
+    await store.setActiveCase(worker, created.id)
+    const active = await store.getActiveCase(worker)
+    assert.equal(active.id, created.id, 'the active case round-trips for the worker')
+    // findCaseByRef resolves a selection by reference.
+    const byRef = await store.findCaseByRef(created.ref)
+    assert.equal(byRef.id, created.id, 'a case is selectable by its reference')
+    // operator-where listCases works through the feature-detect shim (open status set).
+    const open = await store.listCases({ status: { $in: ['new', 'triaging', 'in_progress'] } }, { limit: 50 })
+    assert.ok(open.some(c => c.id === created.id), 'an operator-where ($in) list finds the open case')
+    // The enquiry projection (freddie) strips external_id/contact_id before any row
+    // reaches the agent -- a worker's list can never surface a phone number.
+    const { projectCase, DEFAULT_PROJECTION } = await import('../freddie/src/plugins/case/toolset.js')
+    const projected = projectCase({ id: 'x', ref: 'CASE-Z', status: 'new', external_id: '+27820001111', contact_id: 'c1', location: 'Musina' }, DEFAULT_PROJECTION)
+    assert.ok(!('external_id' in projected) && !('contact_id' in projected), `enquiry projection excludes PII: ${JSON.stringify(projected)}`)
+    assert.equal(projected.ref, 'CASE-Z', 'enquiry projection keeps the safe ref')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
