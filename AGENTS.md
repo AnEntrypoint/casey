@@ -146,21 +146,30 @@ the crash-budget stop state); the supervisor is its only I/O.
   error/timeout/empty and records the failure as an observation, never leaked. A
   reply that parrots a system-prompt example verbatim is treated as a failed turn
   (`isPromptEcho`) and replaced by the fallback.
-- **A greeting is not a report: content-free turns get a warm reply, never the
-  case-ack.** A bare "hi"/"hello"/"help" or other chit-chat carries no livestock
-  content, so the intake-drive and holding-ack paths must not fire on it -- doing so
-  parrots "Thank you for letting us know ... your reference is X" at someone who only
-  said hello. `isContentFreeTurn(justCaptured, report)` (gateway-hooks.js) is the
-  deterministic signal: nothing captured this turn AND an empty running report. On a
-  content-free turn the handler replies with `warmConversationalReply` (a short
-  language-mirrored "Hi! I am here to help -- if any of your animals are sick or have
-  died, tell me what is happening", keeping the reference reframed as "if you message
-  again") and records a `CONVERSATIONAL` observation, while both the empty-text
-  fallback and the precedence/intake-drive gate are skipped. The moment the contact
-  states a real fact (a captured field, or any recorded report field) the turn is no
-  longer content-free and intake proceeds exactly as before -- a symptom-only "blue
-  eyes" still captures and drives intake; the warm reply is strictly for the
-  no-content case.
+- **A greeting is the OPENING of a report: every turn DRIVES collection, never the
+  case-ack and never a no-ask pleasantry.** memobot's job is to gather the case
+  while someone is on-site, so even a bare "hi"/"hello"/"help" must reply with a warm
+  opener PLUS the single most-important still-missing fact (on a brand-new case that
+  is "where the animals are"). The two dead-ends to avoid: parroting "Thank you for
+  letting us know ... your reference is X" (treats hello as a report), and a warm
+  pleasantry that asks for nothing (collects nothing). Every intake-driving reply is
+  built by `intakeAdvanceReply` (gateway-hooks.js): a just-captured-fact ack OR a
+  brief warm opener, then the ask, then a short ref tail -- NEVER the holding-ack
+  preamble. `isContentFreeTurn(justCaptured, report)` (nothing captured AND empty
+  report) routes a greeting to `warmConversationalReply`, which now opens warmly and
+  asks the first needed fact (records a `GREETING-DRIVE` observation). Intake keeps
+  asking every still-missing visit-critical fact one per turn, once each, INCLUDING
+  the tool-only how_to_find/farmer_available/contact_fallback, until the report is as
+  complete as can be achieved.
+- **Escape route for a returning contact with a NEW case.** Because find-or-create
+  reuses the open case per conversation and `markReportFieldsIfEmpty` is fill-if-
+  empty, a contact who returns and states a clearly different situation would be
+  trapped urging the old report's missing fields. `detectNewCaseConflict` flags it:
+  a freshly-extracted species/location present in the report AND different from it
+  is a `NEW-CASE-SIGNAL` (a durable append-only observation -- the agent's own
+  case_update can rewrite tags, so the signal cannot live only in the `needs-split`
+  tag) so an operator can split. Same outbreak continuing (same or unstated
+  species/location) never trips it.
 - **Never stay degraded: the LLM backend self-heals.** `resolveCallLLM` probes the
   provider once, but the gateway must not latch "AI helper offline" for its whole
   life if the provider was merely down at boot. `makeResilientCallLLM` (in

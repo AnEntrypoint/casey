@@ -52,6 +52,19 @@
   keyboard triage, the `Mine` filter, and draft release once, keyed to their
   operator id so each person sees it once.
 
+### Changed
+- memobot now DRIVES report collection on every turn instead of deflecting. Every
+  intake reply (intakeAdvanceReply) leads with a brief greeting or a just-captured-
+  fact acknowledgement plus the ask for the next needed fact, never the "Thank you
+  for letting us know ... your reference is X" holding-ack preamble. A bare greeting
+  opens warmly and asks the first needed fact (where/which animals); intake keeps
+  asking every still-missing visit-critical fact, one per turn, once each, including
+  the tool-only how_to_find/farmer_available/contact_fallback.
+- Escape route for a returning contact with a new case: detectNewCaseConflict flags
+  a clearly different species/location (a durable NEW-CASE-SIGNAL observation, since
+  the agent can rewrite the needs-split tag) so an operator can split, without
+  false-triggering on the same outbreak continuing.
+
 ### Fixed
 - Channel mention markup no longer flips a greeting into the case-ack: a Discord
   "@memobot hello" arrives as "<@BOTID> hello" and the mention's numeric id was
