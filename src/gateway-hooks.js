@@ -528,7 +528,10 @@ export function warmConversationalReply(contactText, caseRow, hintOverride) {
   // fields) when given, else the most-important missing visit-critical fact or a
   // value-add ask -- never a no-ask greeting.
   const hint = hintOverride || mostImportantMissingField(caseRow?.report) || nextValueAddAsk(caseRow?.report)
-  const ask = hint ? ` ${askCarrier(lang, hint)}` : ''
+  // Complete report: a greeting on a finished case confirms + invites a fresh
+  // report (with the exit), never a no-ask "Hi! ... Your reference is X" dead-end.
+  if (!hint) return completeReply(contactText, caseRow)
+  const ask = ` ${askCarrier(lang, hint)}`
   const ref = caseRow?.ref
   if (!ref) return base + ask
   const tail = {
@@ -577,6 +580,23 @@ const INTAKE_OPENER_BY_LANG = {
   en: 'Thank you.', af: 'Dankie.', zu: 'Ngiyabonga.', xh: 'Enkosi.',
 }
 function intakeOpener(lang) { return INTAKE_OPENER_BY_LANG[lang] || INTAKE_OPENER_BY_LANG.en }
+
+// The reply when a report is COMPLETE (every field captured): confirm it is on
+// record and the team will follow up, AND give an EXIT -- invite a fresh report for
+// any OTHER animal or place -- so a finished case is never a bare "Thank you. + ref"
+// dead-end the worker is stuck on. A new substantive message then branches a new
+// case (detectNewCaseConflict / find-or-create). Language-mirrored, <=240 with ref.
+const COMPLETE_REPLY_BY_LANG = {
+  en: 'Thank you -- we have the full report and the team will follow up. If you are seeing another animal or a different place, just tell me and I will start a fresh report.',
+  af: 'Dankie -- ons het die volledige verslag en die span sal opvolg. As u nog \'n dier of \'n ander plek sien, vertel my net en ek begin \'n nuwe verslag.',
+  zu: 'Ngiyabonga -- sinawo wonke umbiko futhi ithimba lizolandela. Uma ubona esinye isilwane noma enye indawo, ngitshele nje ngizoqala umbiko omusha.',
+  xh: 'Enkosi -- sinayo yonke ingxelo kwaye iqela liza kulandela. Ukuba ubona esinye isilwanyana okanye enye indawo, ndixelele ndiza kuqala ingxelo entsha.',
+}
+function completeReply(contactText, caseRow) {
+  const lang = guessLang(contactText)
+  const base = COMPLETE_REPLY_BY_LANG[lang] || COMPLETE_REPLY_BY_LANG.en
+  return base + refTail(contactText, caseRow)
+}
 
 // Value-add facts to ask for once every visit-critical field is captured -- so a
 // reply is NEVER a bare "Thank you. Your reference is X" dead-end. These strengthen
@@ -660,10 +680,17 @@ function pendingAskKey(events, reportRaw) {
 function intakeAdvanceReply(contactText, caseRow, justFilled, fact) {
   const lang = guessLang(contactText)
   const ack = ackCapturedFields(justFilled)          // '' when nothing captured this turn
-  const lead = ack || intakeOpener(lang)
   const hint = fact || nextValueAddAsk(caseRow?.report)
-  const ask = hint ? ` ${askCarrier(lang, hint)}` : ''
-  return `${lead}${ask}${refTail(contactText, caseRow)}`
+  // Report complete (nothing left to ask) AND nothing new captured this turn: this
+  // is a finished case, so confirm + invite a fresh report rather than dead-ending
+  // on a bare "Thank you. + ref". When a fact WAS just captured we still lead with
+  // its acknowledgement (the completing answer) before the confirm-and-exit.
+  if (!hint) {
+    const close = completeReply(contactText, caseRow)
+    return ack ? `${ack} ${close}` : close
+  }
+  const lead = ack || intakeOpener(lang)
+  return `${lead} ${askCarrier(lang, hint)}${refTail(contactText, caseRow)}`
 }
 
 // The degraded reply that does NOT dead-end: when the model errored/echoed/emptied
@@ -686,7 +713,8 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
   const inFlight = new Set()
   return async function handleInbound(platform, msg) {
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
-    const external_id = conversationKey(msg)
+    const external_id = conversationKey(msg)   // per-contact case IDENTITY
+    const replyTo = replyTarget(msg)           // channel/chat DELIVERY target
     const adapter = this?.platforms?.get?.(platform)
     if (!store) {
       log?.error?.('[casey] store not initialized')
@@ -696,10 +724,10 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // the contact ONLY if we send it ourselves. Target external_id (channel id
       // on Discord, phone on WhatsApp) -- msg.from is the author id and would 404.
       if (adapter?.send) {
-        try { await adapter.send({ to: external_id, text: warmText, platform }) }
+        try { await adapter.send({ to: replyTo, text: warmText, platform }) }
         catch (e) { log?.error?.('[casey] store-not-ready holding send failed', { channel, error: e.message }) }
       }
-      return { to: external_id, text: warmText, platform, error: 'store_not_ready' }
+      return { to: replyTo, text: warmText, platform, error: 'store_not_ready' }
     }
     const msgId = messageId(msg)
 
@@ -719,10 +747,10 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // on Discord, the phone on WhatsApp); msg.from is the author id and 404s.
       const storeDownText = fallbackReply(msg.text || '', null)
       if (adapter?.send) {
-        try { await adapter.send({ to: external_id, text: storeDownText, platform }) }
+        try { await adapter.send({ to: replyTo, text: storeDownText, platform }) }
         catch (sendErr) { log.error?.('[casey] store-down holding send failed', { channel, error: sendErr.message }) }
       }
-      return { to: external_id, text: storeDownText, platform, error: e.message }
+      return { to: replyTo, text: storeDownText, platform, error: e.message }
     }
 
     // Dedup: a redelivered platform message (webhook retry, gateway replay, or
@@ -749,7 +777,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // never went out. Fall through to the agent turn instead of short-circuiting.
     if (!inboundEvent && !msg.resume) {
       log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
-      return { to: external_id, text: '', platform, caseId: caseRow.id, duplicate: true }
+      return { to: replyTo, text: '', platform, caseId: caseRow.id, duplicate: true }
     }
     // A fresh inbound supersedes any pending assisted draft: the contact has said
     // more, so a draft composed against the old conversation is stale. Clear the
@@ -804,7 +832,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` })
     }
 
-    if (!autoRespond) return { to: external_id, text: '', platform, caseId: caseRow.id }
+    if (!autoRespond) return { to: replyTo, text: '', platform, caseId: caseRow.id }
 
     let fresh = await store.getCase(caseRow.id)
 
@@ -825,7 +853,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
           catch (e) { log.warn?.('[casey] observe handoff notify failed', { caseId: fresh.id, error: e.message }) }
         }
       } catch (e) { log.warn?.('[casey] observe needs-human flag failed', { caseId: fresh.id, error: e.message }) }
-      return { to: external_id, text: '', platform, caseId: fresh.id, observed: true }
+      return { to: replyTo, text: '', platform, caseId: fresh.id, observed: true }
     }
 
     // Deterministic field capture FIRST -- before any reply path (intent shortcut,
@@ -915,7 +943,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // unless they explicitly ask for help or a human.
     if (optedOut && intent !== 'help' && intent !== 'human') {
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'contact previously opted out; no auto-reply' })
-      return { to: external_id, text: '', platform, caseId: fresh.id, optedOut: true }
+      return { to: replyTo, text: '', platform, caseId: fresh.id, optedOut: true }
     }
     if (intent) {
       if (intent === 'human') {
@@ -945,7 +973,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       const text = intentReply(intent, fresh, guessLang(inboundText))
       await store.appendEvent(fresh.id, {
         kind: 'outbound', actor: 'system', channel,
-        text, data: { to: external_id, intent, deterministic: true },
+        text, data: { to: replyTo, intent, deterministic: true },
       })
       // Reply target is external_id (the conversation key), NOT msg.from. On
       // Discord, freddie's adapter POSTs to /channels/{to}/messages, so `to` must
@@ -953,7 +981,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // author id silently fails (Discord 404, swallowed by .then(json)) and the
       // contact never sees a reply. external_id is correct for WhatsApp too, where
       // conversationKey falls back to msg.from (the phone number).
-      const reply = { to: external_id, text, platform, caseId: fresh.id, intent }
+      const reply = { to: replyTo, text, platform, caseId: fresh.id, intent }
       if (adapter?.send) {
         try { await adapter.send(reply) }
         catch (e) {
@@ -981,7 +1009,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     if (inFlight.has(external_id)) {
       log.info?.('[casey] skipping concurrent LLM turn', { caseId: fresh.id })
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'concurrent turn skipped: prior LLM turn still in-flight for this contact' })
-      return { to: external_id, text: '', platform, caseId: fresh.id, skipped: true }
+      return { to: replyTo, text: '', platform, caseId: fresh.id, skipped: true }
     }
     inFlight.add(external_id)
     // Durable turn-lifecycle marker: record that an agent turn STARTED for this
@@ -1202,7 +1230,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       })
       await store.appendEvent(fresh.id, {
         kind: 'draft', actor: 'agent', channel,
-        text, data: { to: external_id, fallback: isFallback, draft: true, jargon: jHits },
+        text, data: { to: replyTo, fallback: isFallback, draft: true, jargon: jHits },
       })
       const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
       try {
@@ -1212,7 +1240,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
           catch (e) { log.warn?.('[casey] jargon-held notify failed', { caseId: fresh.id, error: e.message }) }
         }
       } catch (e) { log.warn?.('[casey] jargon-held flag failed', { caseId: fresh.id, error: e.message }) }
-      return { to: external_id, text: '', platform, caseId: fresh.id, drafted: true, jargonHeld: jHits }
+      return { to: replyTo, text: '', platform, caseId: fresh.id, drafted: true, jargonHeld: jHits }
     }
 
     // ASSISTED mode: the agent composed a reply, but a human must approve before
@@ -1222,7 +1250,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     if (canAgentAct(fresh, 'reply') === 'draft') {
       await store.appendEvent(fresh.id, {
         kind: 'draft', actor: 'agent', channel,
-        text, data: { to: external_id, fallback: isFallback, draft: true },
+        text, data: { to: replyTo, fallback: isFallback, draft: true },
       })
       const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
       try {
@@ -1234,7 +1262,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       } catch (e) { log.warn?.('[casey] assisted draft flag failed', { caseId: fresh.id, error: e.message }) }
       // Nothing is sent in assisted mode -- return empty text so the gateway sends
       // nothing and the contact waits on a human-approved reply.
-      return { to: external_id, text: '', platform, caseId: fresh.id, drafted: true }
+      return { to: replyTo, text: '', platform, caseId: fresh.id, drafted: true }
     }
 
     // Deterministic intake advance: a substantive inbound on a brand-new case
@@ -1276,7 +1304,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
 
     await store.appendEvent(fresh.id, {
       kind: 'outbound', actor: 'agent', channel,
-      text, data: { to: external_id, fallback: isFallback },
+      text, data: { to: replyTo, fallback: isFallback },
     })
 
     // Reply target is external_id (conversationKey), NOT msg.from -- see the note
@@ -1284,7 +1312,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // /channels/{to}/messages, so `to` must be the channel id; on WhatsApp,
     // conversationKey falls back to the phone number. msg.from (author id) silently
     // 404s on Discord and the contact never sees the reply.
-    const reply = { to: external_id, text, platform, caseId: fresh.id }
+    const reply = { to: replyTo, text, platform, caseId: fresh.id }
     let delivered = true
     if (adapter?.send) {
       try { await adapter.send(reply) }
@@ -1307,9 +1335,25 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
   }
 }
 
-// The conversation identity: prefer an explicit chat/channel id from the raw
-// payload (Discord channel id, WhatsApp chat), else the sender.
-function conversationKey(msg) {
+// The conversation/case IDENTITY -- per CONTACT, not per channel. A Discord server
+// channel carries many authors; keying on the channel alone made everyone in it
+// share ONE case (a second worker's "hello" landed on the first worker's case). So
+// when the container (channel/chat) and the author differ -- a multi-person channel
+// -- the key is "container:author". A 1:1 chat (WhatsApp, where the chat id IS the
+// person, or there is no separate container) stays the single id. This is identity
+// only; the reply DELIVERY target is replyTarget() below (the channel), because
+// Discord posts to the channel, not the author.
+export function conversationKey(msg) {
+  const container = msg.raw?.channel_id || msg.raw?.chatId || msg.chatId || ''
+  const author = msg.from || ''
+  if (container && author && container !== author) return `${container}:${author}`
+  return container || author || 'unknown'
+}
+
+// Where a reply is DELIVERED: the channel/chat container (Discord posts to
+// /channels/{channel}/messages; an author id 404s). Falls back to the sender for a
+// 1:1 chat. Distinct from conversationKey, which is the per-contact case identity.
+export function replyTarget(msg) {
   return msg.raw?.channel_id || msg.raw?.chatId || msg.chatId || msg.from || 'unknown'
 }
 

@@ -125,7 +125,9 @@ async function main() {
     const sentBefore = adapter.sent.length
     adapter.inject({ from: 'carol', channel_id: 'c3', text: '', id: 'm1', type: 'image' })
     await casey.drain()
-    const c3 = (await store.listCases()).find(c => c.external_id === 'c3')
+    // The case key is per-contact (channel:author), so two people in one channel get
+    // distinct cases; the reply still targets the channel.
+    const c3 = (await store.listCases()).find(c => c.external_id === 'c3:carol')
     assert.ok(c3, 'case opened for media-only message')
     const reply = adapter.sent[adapter.sent.length - 1]
     assert.ok(reply.text && reply.text.trim().length > 0, 'reply is never blank')
@@ -2517,6 +2519,28 @@ async function main() {
     // The reply after the answer is NOT the identical question that preceded it.
     const afterAnswer = adapter.sent[adapter.sent.length - 1].text
     assert.notEqual(afterAnswer, askedReply, `the same question is not asked twice in a row: ${afterAnswer}`)
+  })
+
+  await test('two authors in one channel get distinct cases; a complete report confirms and invites a fresh one', async () => {
+    // Witnessed: a second Discord user's "hello" landed on the first user's case
+    // because the case was keyed by the channel, not the contact. Each author must
+    // get their own case; replies still target the channel.
+    const sharedChan = 'multiuser-' + Date.now()
+    adapter.inject({ from: 'authorA', channel_id: sharedChan, username: 'A', text: 'my cattle are sick at Musina' })
+    await casey.drain()
+    adapter.inject({ from: 'authorB', channel_id: sharedChan, username: 'B', text: 'hello' })
+    await casey.drain()
+    const cases = await store.listCases()
+    const caseA = cases.find(c => c.external_id === `${sharedChan}:authorA`)
+    const caseB = cases.find(c => c.external_id === `${sharedChan}:authorB`)
+    assert.ok(caseA && caseB, `each author has their own case: A=${!!caseA} B=${!!caseB}`)
+    assert.notEqual(caseA.id, caseB.id, 'two authors in one channel are not the same case')
+    // The reply to either still targets the channel (Discord posts to the channel).
+    assert.ok(adapter.sent.slice(-2).every(r => r.to === sharedChan), 'replies target the channel, not the author')
+    // A COMPLETE report confirms + invites a fresh report, never a bare "Thank you.+ref".
+    const done = warmConversationalReply('hi', { ref: 'CASE-9', report: JSON.stringify({ species: 'cow', symptoms: 'blue eye', location: 'Musina', how_to_find: 'R101', farmer_available: 'yes', contact_fallback: '082', photos: 'x', affected_count: '3', present_person: 'boyi', owner_contact: 'joe', onset: '3 weeks', suspected_disease: 'fmd' }) })
+    assert.ok(!/^Thank you\. Your reference/.test(done), `a complete report is not a bare acknowledgement: ${done}`)
+    assert.ok(/fresh report|another|different place/i.test(done), `a complete report invites a new one: ${done}`)
   })
 
   await dash.close()
