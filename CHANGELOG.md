@@ -53,6 +53,14 @@
   operator id so each person sees it once.
 
 ### Changed
+- A reply is never a bare "Thank you. Your reference is X": once every visit-critical
+  fact is captured, memobot asks a value-add fact (a photo, how many, when it started,
+  a suspected disease) so it keeps strengthening the report instead of acknowledging.
+  Only a case with every visit-critical AND value-add fact already in degrades to a
+  brief warm confirming line.
+- A livestock count is capped at 6 digits so an id (e.g. a Discord snowflake that
+  slipped past mention-stripping) is never stored as a count; a real large herd still
+  is.
 - memobot now DRIVES report collection on every turn instead of deflecting. Every
   intake reply (intakeAdvanceReply) leads with a brief greeting or a just-captured-
   fact acknowledgement plus the ask for the next needed fact, never the "Thank you
