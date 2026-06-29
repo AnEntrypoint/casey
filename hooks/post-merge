@@ -1,0 +1,17 @@
+#!/bin/sh
+# casey post-merge hook -- fires after `git pull`/`git merge`.
+#
+# A running `casey up` hot-reloads its worker when a watched source file changes
+# (the supervisor fs.watch on src/ + ../freddie/src). A `git pull` rewrites file
+# CONTENT, but content-only changes do not always surface as an fs.watch event the
+# same way a save does, so a pulled fix could stay inert until a manual restart.
+# This hook removes that gap: after every merge it bumps the mtime of a watched
+# source file, which the supervisor sees as a change and reloads the worker on the
+# freshly-pulled code -- no manual restart. Reloads are debounced + drained by the
+# supervisor, so a no-op merge that touches nothing still costs at most one reload.
+#
+# Touch the actual entry the worker imports so the reload is unambiguous; `touch`
+# only updates the timestamp, never the bytes (no spurious diff).
+here="$(cd "$(dirname "$0")/.." && pwd)"
+touch "$here/src/casey.js" 2>/dev/null || true
+echo "[casey hook] post-merge: nudged src/casey.js so a running 'casey up' reloads on the pulled code"

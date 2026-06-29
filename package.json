@@ -11,7 +11,9 @@
     "start": "node bin/casey.js up",
     "sim": "node bin/casey.js sim",
     "lint": "node scripts/lint.mjs",
-    "test": "node test.js"
+    "test": "node test.js",
+    "install-hooks": "node scripts/install-hooks.mjs",
+    "auto-update": "node scripts/auto-update.mjs"
   },
   "dependencies": {
     "adaptogen": "file:../dstate",
