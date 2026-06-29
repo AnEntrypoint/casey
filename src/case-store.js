@@ -22,7 +22,12 @@ import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
 export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
 
-const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_find', 'affected_count', 'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits', 'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'audio', 'notes'])
+const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_find', 'affected_count', 'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits', 'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'audio', 'notes',
+  // People on site for a field-worker report: who the worker spoke to and their
+  // link to the owner, plus the owner's identity/contact -- so an absent owner with
+  // a relative present is still captured. Reported by the worker, model- or
+  // pending-ask-captured (no deterministic extractor).
+  'present_person', 'present_person_relation', 'owner_name', 'owner_contact'])
 
 export class CaseStore {
   constructor(opts = {}) {

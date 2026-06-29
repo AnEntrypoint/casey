@@ -2495,6 +2495,30 @@ async function main() {
     assert.ok((await store.listEvents(gc2.id)).some(e => /NEW-CASE-SIGNAL/.test(e.text || '')), 'a clearly-new situation is flagged for split (durable observation)')
   })
 
+  await test('an asked field with no extractor is captured from the free-text answer; the same question is never asked twice', async () => {
+    // The witnessed loop: memobot asks "who is there and how linked to the owner?",
+    // the worker answers "boyi son of the owner", and -- because present_person has
+    // no deterministic extractor and the stub/weak model does not record it -- the
+    // answer was dropped and the identical question repeated forever. The pending-ask
+    // binder must record the free-text answer and the next ask must differ.
+    const pchan = 'pend-' + Date.now()
+    // Drive to the value-add stage: state the visit-critical facts so the next ask
+    // is a value-add people fact.
+    await runScript(adapter, ['cattle with blue eyes at Musina farm, on the R101, the owner is here, reach him on 0820001111'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
+    // Greet to elicit a value-add ask, capture which field was asked.
+    await runScript(adapter, ['hello'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
+    const askedReply = adapter.sent[adapter.sent.length - 1].text
+    // Answer in free text -- the answer to whatever was asked.
+    await runScript(adapter, ['boyi son of the owner'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
+    const pc = (await store.listCases()).find(c => c.external_id === pchan)
+    const events = await store.listEvents(pc.id)
+    // The free-text answer was bound to a report field (not dropped).
+    assert.ok(events.some(e => /pending-ask answer bound to/.test(e.text || '')), 'the free-text answer was bound to the asked field')
+    // The reply after the answer is NOT the identical question that preceded it.
+    const afterAnswer = adapter.sent[adapter.sent.length - 1].text
+    assert.notEqual(afterAnswer, askedReply, `the same question is not asked twice in a row: ${afterAnswer}`)
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')

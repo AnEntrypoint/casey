@@ -51,6 +51,35 @@ async function captureFieldsFromText(store, caseId, text, log) {
   } catch (e) { log?.warn?.('[casey] auto-capture failed', { caseId, error: e.message }); return [] }
 }
 
+// Bind a free-text inbound to the field memobot just asked for, when the
+// deterministic extractor has no regex for it (e.g. present_person, owner_contact,
+// how_to_find -- a worker's free-text answer like "boyi son of the owner"). Without
+// this an asked-but-unextractable field is never recorded and intake re-asks the
+// same question forever. Guards: only when there IS a pending ask whose field is
+// still empty; only when nothing real was captured this turn (the inbound was the
+// answer, not a new fact); never a fixed-intent message (help/status/stop/human/
+// thanks/greeting); the value is trimmed and length-capped (PII is stored like any
+// contact text and HTML-escaped at render). Returns the bound key or null.
+async function bindPendingAsk(store, caseId, text, justCaptured, log) {
+  try {
+    if (Array.isArray(justCaptured) && justCaptured.length) return null   // a real fact, not an answer
+    const t = (text || '').trim()
+    if (!t) return null
+    if (detectContactIntent(t)) return null                              // a fixed-intent message
+    const events = await store.listEvents(caseId)
+    const c = await store.getCase(caseId)
+    const key = pendingAskKey(events, c?.report)
+    if (!key) return null
+    const value = t.slice(0, 200)
+    const res = await store.markReportFieldsIfEmpty(caseId, { [key]: value })
+    if (res?.filled?.length) {
+      await store.appendEvent(caseId, { kind: 'observation', actor: 'system', text: `pending-ask answer bound to ${key}` })
+      return key
+    }
+    return null
+  } catch (e) { log?.warn?.('[casey] pending-ask bind failed', { caseId, error: e.message }); return null }
+}
+
 // Escape route for a returning contact who starts a CLEARLY NEW situation on a
 // case that already holds a different report. markReportFieldsIfEmpty is fill-if-
 // empty, so a conflicting species/location is silently dropped and intake would
@@ -492,12 +521,13 @@ const WARM_GREETING_BY_LANG = {
 // missing fact (on a brand-new case that is "where the animals are"). Never a
 // no-ask pleasantry, never the "Thank you for letting us know" case-ack. The warm
 // opener orients a brand-new contact; the appended ask starts the collection.
-export function warmConversationalReply(contactText, caseRow) {
+export function warmConversationalReply(contactText, caseRow, hintOverride) {
   const lang = guessLang(contactText)
   const base = WARM_GREETING_BY_LANG[lang] || WARM_GREETING_BY_LANG.en
-  // Drive forward: the most-important missing visit-critical fact, or a value-add
-  // ask when the critical six are all in -- never a no-ask greeting.
-  const hint = mostImportantMissingField(caseRow?.report) || nextValueAddAsk(caseRow?.report)
+  // Drive forward: the caller's chosen next ask (nextAsk, skipping already-asked
+  // fields) when given, else the most-important missing visit-critical fact or a
+  // value-add ask -- never a no-ask greeting.
+  const hint = hintOverride || mostImportantMissingField(caseRow?.report) || nextValueAddAsk(caseRow?.report)
   const ask = hint ? ` ${askCarrier(lang, hint)}` : ''
   const ref = caseRow?.ref
   if (!ref) return base + ask
@@ -573,6 +603,50 @@ function nextValueAddAsk(reportRaw) {
   const r = parseReportSafe(reportRaw)
   const hit = VALUE_ADD_ASK.find(([k]) => r[k] == null || String(r[k]).trim() === '')
   return hit ? hit[1] : null
+}
+
+// THE single source of truth for "what to ask next": the first still-missing field
+// (visit-critical first, then value-add) that has NOT already been asked. Returns
+// [key, hint] or null when every askable field is filled-or-asked. askedKeys is the
+// set reconstructed from the durable ASK markers, so a field is never asked twice
+// across turns -- the loop where the same question repeats because its answer could
+// not be captured is structurally impossible (the field is marked asked once and
+// skipped thereafter; the next inbound is bound to it by the pending-ask binder).
+function nextAsk(reportRaw, askedKeys = new Set()) {
+  const r = parseReportSafe(reportRaw)
+  const missing = ([k]) => (r[k] == null || String(r[k]).trim() === '') && !askedKeys.has(k)
+  return VISIT_CRITICAL_ASK.find(missing) || VALUE_ADD_ASK.find(missing) || null
+}
+
+// Reconstruct the set of fields already asked from the durable ASK markers
+// (FALLBACK-ASK + ASKED), so the next ask skips them and the pending-ask binder
+// knows which field the last question was for.
+function askedKeysFromEvents(events) {
+  const asked = new Set()
+  for (const e of events) {
+    if (e.kind !== 'observation') continue
+    const m = /(?:FALLBACK-ASK|ASKED):(\w+)/.exec(e.text || '')
+    if (m) asked.add(m[1])
+  }
+  return asked
+}
+
+// The most recent field memobot asked for and that is STILL empty in the report --
+// the field a free-text answer this turn should be bound to. Scans the event log
+// newest-first for an ASK marker whose field has not since been filled.
+function pendingAskKey(events, reportRaw) {
+  const r = parseReportSafe(reportRaw)
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    if (e.kind !== 'observation') continue
+    const m = /(?:FALLBACK-ASK|ASKED):(\w+)/.exec(e.text || '')
+    if (m) {
+      const k = m[1]
+      const filled = r[k] != null && String(r[k]).trim() !== ''
+      return filled ? null : k
+    }
+  }
+  return null
 }
 
 // Build the intake-driving reply: [ack of a just-captured fact OR a warm opener] +
@@ -763,6 +837,13 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     if (inboundText) {
       justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log)
       fresh = await store.getCase(fresh.id)
+      // Bind a free-text answer to the field memobot just asked for, when the
+      // extractor had no regex for it (e.g. "boyi son of the owner" -> present_person).
+      // Without this an asked-but-unextractable field is never recorded and intake
+      // re-asks the same question forever. The bound key counts as captured this turn
+      // so the reply acknowledges it and advances to the next field.
+      const boundKey = await bindPendingAsk(store, fresh.id, inboundText, justCaptured, log)
+      if (boundKey) { justCaptured = [...justCaptured, boundKey]; fresh = await store.getCase(fresh.id) }
       // Keep the operator-facing subject/summary populated from the captured
       // fields when the model never set them (additive only -- never clobbers a
       // model/human value). Same captured-field projection that drives the
@@ -1002,30 +1083,30 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // empty report means warmConversationalReply asks the most-important first
       // field, starting intake on turn one.
       if (isContentFreeTurn(justCaptured, fresh.report)) {
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'GREETING-DRIVE: greeting answered with a warm opener + the first needed fact, driving intake (not the case-ack, not a no-ask pleasantry).' })
-        text = warmConversationalReply(inboundText, fresh)
+        // Pick the next field to ask, skipping any already asked, and DURABLY record
+        // it (ASKED:<key>) so the next inbound is bound to it by the pending-ask
+        // binder and the same field is never asked twice in a row.
+        const gAsked = askedKeysFromEvents(await store.listEvents(fresh.id))
+        const gNext = nextAsk(fresh.report, gAsked)
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'GREETING-DRIVE: greeting answered with a warm opener + the next needed fact, driving intake (not the case-ack, not a no-ask pleasantry).' })
+        if (gNext) await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `ASKED:${gNext[0]} greeting-drive asked this field (once per field).` })
+        text = warmConversationalReply(inboundText, fresh, gNext ? gNext[1] : null)
       } else {
-      const priorAsk = await store.listEvents(fresh.id)
-      const askedKeys = new Set()
-      for (const e of priorAsk) {
-        const m = e.kind === 'observation' && /FALLBACK-ASK:(\w+)/.exec(e.text || '')
-        if (m) askedKeys.add(m[1])
-      }
-      // On a genuine wrap-up (closingCapture set), the farmer is leaving, so a
-      // degraded reply asks the single MOST IMPORTANT still-missing fact, not just
-      // the next unasked one -- this is the one-shot closing ask, kept warm and
-      // singular. Otherwise advance field-by-field as usual. Either way the chosen
-      // field is recorded once via FALLBACK-ASK so the once-per-field guarantee and
-      // the append-only audit hold.
-      let next = nextUnaskedMissingField(fresh.report, askedKeys)
+      const askedKeys = askedKeysFromEvents(await store.listEvents(fresh.id))
+      // The next still-missing, not-yet-asked field (visit-critical first, then
+      // value-add). On a genuine wrap-up (closingCapture set), instead ask the single
+      // MOST IMPORTANT still-missing fact -- the one-shot closing ask. Either way the
+      // chosen field is recorded once (FALLBACK-ASK) so it is never re-asked and the
+      // next inbound binds to it.
+      let next = nextAsk(fresh.report, askedKeys)
       if (closingCapture != null) {
         const mostKey = VISIT_CRITICAL_ASK.find(([, hint]) => hint === closingCapture)
         if (mostKey && !askedKeys.has(mostKey[0])) next = mostKey
       }
       // Capture-driven: lead with an acknowledgement of what the contact just told
       // us this turn (so 'I see blue eyes' is heard, not swallowed into a generic
-      // ack), then ask the next still-missing on-site fact. When nothing new was
-      // captured and nothing is left to ask, this is exactly the plain holding ack.
+      // ack), then ask the next still-missing fact. When nothing new was captured and
+      // nothing is left to ask, this is a brief warm confirming line.
       const advancing = captureDrivenReply(inboundText, fresh, justCaptured, next ? next[1] : null)
       if (next) pendingFallbackAsk = { key: next[0], via: 'degraded reply' }
       text = advancing
@@ -1063,13 +1144,8 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // is never a dead-end.
     const closingTurn = closingCapture != null
     if (reportMissingVisitCritical(fresh.report) && !isContentFreeTurn(justCaptured, fresh.report) && !droveIntake && !closingTurn) {
-      const priorAsk = await store.listEvents(fresh.id)
-      const askedKeys = new Set()
-      for (const e of priorAsk) {
-        const m = e.kind === 'observation' && /FALLBACK-ASK:(\w+)/.exec(e.text || '')
-        if (m) askedKeys.add(m[1])
-      }
-      const next = nextUnaskedMissingField(fresh.report, askedKeys)
+      const askedKeys = askedKeysFromEvents(await store.listEvents(fresh.id))
+      const next = nextAsk(fresh.report, askedKeys)
       // Only override the model when the deterministic path has something to add:
       // a next field to ask OR a freshly-captured fact to acknowledge. Once every
       // askable field is exhausted (next is null) AND nothing was captured this
