@@ -146,6 +146,19 @@ the crash-budget stop state); the supervisor is its only I/O.
   error/timeout/empty and records the failure as an observation, never leaked. A
   reply that parrots a system-prompt example verbatim is treated as a failed turn
   (`isPromptEcho`) and replaced by the fallback.
+- **The reporter is usually a field worker relaying a farmer's animals, not the
+  owner.** The person messaging is typically a field worker out on a visit,
+  reporting livestock they have just come to see -- standing with the farmer, a
+  relative, or a herder, out in the bush with limited info -- so they may not own
+  the animals or have seen the problem start. The ask hints (`VISIT_CRITICAL_ASK`,
+  `VALUE_ADD_ASK`) and `caseSystemPrompt` ask only what the worker can SEE ("what
+  can be seen in the animals") or RELAY ("how long the animals have been like this,
+  from what the person says") -- NEVER "when you first noticed it". Worker-observable
+  facts lead; the people-on-site facts (who is there and their link to the owner --
+  owner/relative/herder/neighbour -- and the owner's name + a number, recorded as
+  `present_person`/`present_person_relation`/`owner_name`/`owner_contact`) and the
+  farmer-dependent history come after, framed as the person's account. The report
+  is free-form JSON, so these fields need no schema migration.
 - **A greeting is the OPENING of a report: every turn DRIVES collection, never the
   case-ack and never a no-ask pleasantry.** memobot's job is to gather the case
   while someone is on-site, so even a bare "hi"/"hello"/"help" must reply with a warm

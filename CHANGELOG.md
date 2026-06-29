@@ -53,6 +53,13 @@
   operator id so each person sees it once.
 
 ### Changed
+- Intake is reframed for a field worker relaying a farmer's animals rather than the
+  owner: the asks and the system prompt request only what the worker can see ("what
+  can be seen in the animals") or relay ("how long the animals have been like this,
+  from what the person says" -- never "when you first noticed it"), lead with
+  worker-observable facts, and capture who is on site and their link to the owner
+  (owner/relative/herder) plus the owner's contact, so an absent owner with a
+  relative present is still recorded.
 - A reply is never a bare "Thank you. Your reference is X": once every visit-critical
   fact is captured, memobot asks a value-add fact (a photo, how many, when it started,
   a suspected disease) so it keeps strengthening the report instead of acknowledging.
