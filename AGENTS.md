@@ -300,7 +300,18 @@ the crash-budget stop state); the supervisor is its only I/O.
   per-case row, ref, external_id, phone, or operator identity (the outbreaks branch
   never iterates `buildClusters` members -- they carry contact free text). The
   species-count guard ("how many sick cattle") and the report/animal veto keep a real
-  report from ever being read as an aggregate enquiry. A disease-service
+  report from ever being read as an aggregate enquiry. A worker can also ask the
+  STATUS of a specific case by reference ("status of CASE-1089-dgpgd", bare
+  "CASE-1089?"): `resolveRefForStatus` looks it up (`getCaseByRef` exact, or a unique
+  prefix scan for a bare partial) and answers that case's plain status, gated so a ref
+  inside a report never hijacks intake. The fleet aggregates read the store UNSCOPED
+  (no `user:author`): thatcher row-access is `{scope:assigned, field:assignee}` and the
+  chat author is the reporter (never an assignee), so a scoped pull returned ~0 rows
+  and answered reassuring-when-wrong -- the aggregates emit only PII-free scalars, so
+  unscoped is worker-safe, while `user:author` scoping stays on the per-worker "mine"
+  itinerary. Operator-only levers (`buildWorkload`, `rankAttention` items,
+  per-operator/case-type metrics) are NEVER reached from the chat router -- a "who is
+  busy" ask deflects, so no operator identity reaches a field worker. A disease-service
   animal-veto keeps "any cattle in kzn" a report; a question gets a helpful answer
   that NAMES the enquiry surface, NEVER the complete exit; report/chitchat fall
   through to the agent turn. The soft decision (intent + FSM trace) is recorded as an
