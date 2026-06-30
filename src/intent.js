@@ -59,7 +59,9 @@ const QUESTION_LEAD = /^(what|whats|what'?s|wat|wats|where|which|wic|wich|who|ho
 // OVERVIEW enquiry, handled later) -- status-of-mine is about THE WORKER'S OWN report,
 // so it keys on my/the report|case, "any update/news", "where are we at", "did the vet
 // come", etc., never a bare "how are things".
-const STATUS_OF_MINE = /\b(any (news|update|feedback)|hows? (it|my|the) (going|report|case)|how (is|are) (my|the) (report|case|thing)|how far|w(h)?ats? the (status|update)|w(h)?ats? happening (with|to|on) (my|the|it)|is (my|the) report|any reply|did (the|u|you|someone) (vet|come|send|check|guys|get)|(u|you|yous|guys) (get|got|recieved?|received) (my|the|that)|get my report|been looked|being looked|where (are we|do we stand)|wat now|update on|progress on)\b/
+// STATUS_OF_MINE tolerates truncations/typos of 'status' (workers send cut-off or
+// misspelt words: statu/staus/stats from a clipped 'status') in its 'whats the X' arm.
+const STATUS_OF_MINE =/\b(any (news|update|feedback)|hows? (it|my|the) (going|report|case)|how (is|are) (my|the) (report|case|thing)|how far|w(h)?ats? the (status|statu|staus|stats|update|updat)|w(h)?ats? happening (with|to|on) (my|the|it)|is (my|the) report|any reply|did (the|u|you|someone) (vet|come|send|check|guys|get)|(u|you|yous|guys) (get|got|recieved?|received) (my|the|that)|get my report|been looked|being looked|where (are we|do we stand)|wat now|update on|progress on)\b/
 const COUNT_VERB = /^(count|tally)\b/
 // FLEET-AGGREGATE enquiry shapes -- the same reach the dashboard GUI has, brought to
 // the chat: counts, hotspots-by-area, suspected outbreaks, an overall picture, and

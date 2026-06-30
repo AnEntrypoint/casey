@@ -2405,7 +2405,7 @@ const HUMAN_EXCLUDE = [
 // The live model handles anything else; these only drive the deterministic,
 // no-LLM shortcuts, so they cover en/af/zu/xh/st/tn rather than es/pt/fr/de.
 const STATUS_KEYS = [
-  'status', 'update', 'progress', 'how long', 'any news', 'news', 'eta',
+  'status', 'statu', 'staus', 'stats', 'update', 'progress', 'how long', 'any news', 'news', 'eta',
   'whats happening', 'what is happening', 'still waiting', 'where is',
   'feedback', 'any feedback', 'being looked', 'looked at', 'how far',
   'hows it going', 'any reply', 'reply yet', 'did you get', 'did u get',

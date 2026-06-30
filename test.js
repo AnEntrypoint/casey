@@ -2900,9 +2900,12 @@ async function main() {
     const { classifyIntentFallback } = await import('./src/intent.js')
     const { resolveRefForStatus, detectContactIntent } = await import('./src/gateway-hooks.js')
     // STATUS-OF-MINE: a worker asking the progress of THEIR report -> status, not deflection.
-    for (const q of ['hows my case going', 'wats happening with my report', 'how is my report doing', 'u get my report?', 'any feedback on what i sent', 'is my report being looked at', 'my case how far', 'how far with my report', 'did the vet come yet', 'wat now', 'where are we at', 'any update']) {
+    for (const q of ['hows my case going', 'wats happening with my report', 'how is my report doing', 'u get my report?', 'any feedback on what i sent', 'is my report being looked at', 'my case how far', 'how far with my report', 'did the vet come yet', 'wat now', 'where are we at', 'any update',
+      'whats the statu', 'wats the statu', 'whats the staus', 'whats the status']) {  // truncated/typo'd 'status'
       assert.equal(classifyIntentFallback(q).kind, 'status', `status-of-mine: ${q}`)
     }
+    // The deterministic keyword path also catches the truncation.
+    assert.equal(detectContactIntent('whats the statu'), 'status', 'detectContactIntent catches truncated status')
     // Enquiry typo/place/today gaps.
     assert.equal(classifyIntentFallback('wic cases i must do').enquiry_kind, 'mine', 'wic cases i must do -> mine')
     assert.equal(classifyIntentFallback('count open cases pls').enquiry_kind, 'count', 'count verb -> count')
