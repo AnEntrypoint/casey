@@ -260,10 +260,32 @@ async function main() {
         : `  live reload: ${yellow('off')}${dim('   (--no-reload: restart manually to pick up code changes)')}`)
       console.log(dim('  press ctrl-c to stop'))
       await sup.start()
+      // Opt-in AUTO-UPDATE: pull from origin on an interval and let the post-merge
+      // hook (or the mtime change of the pulled source) trigger the supervisor's
+      // hot-reload, so a pushed commit lands on the live worker with no human on the
+      // box. Runs in the supervisor PARENT (which never re-imports app code, so it is
+      // safe across reloads). Off by default -- a dev checkout must not auto-pull.
+      // Enable with CASEY_AUTO_UPDATE=1; tune CASEY_AUTO_UPDATE_INTERVAL_MS (default
+      // 60000). The post-merge hook touches a watched file; if hooks are not armed,
+      // git pull still rewrites src/*.js whose mtime the supervisor watches.
+      let autoUpdateTimer = null
+      if (process.env.CASEY_AUTO_UPDATE === '1') {
+        const { execFile } = await import('node:child_process')
+        const interval = Number(process.env.CASEY_AUTO_UPDATE_INTERVAL_MS) || 60_000
+        const repoRoot = path.resolve(__dirname, '..')
+        const pull = () => execFile('git', ['pull', '--ff-only'], { cwd: repoRoot }, (err, stdout) => {
+          if (err) { console.error(dim('[auto-update] pull failed (will retry): ' + err.message)); return }
+          if (/Updating|Fast-forward/.test(stdout || '')) console.log(green('[auto-update] pulled new code; the worker will reload.'))
+        })
+        console.log(`  auto-update: ${green('on')}${dim(`   (git pull --ff-only every ${Math.round(interval / 1000)}s; the worker reloads on the new code)`)}`)
+        pull()
+        autoUpdateTimer = setInterval(pull, interval)
+      }
       let exiting = false
       const shutdown = async () => {
         if (exiting) return
         exiting = true
+        if (autoUpdateTimer) clearInterval(autoUpdateTimer)
         try { await sup.stop() } catch (e) { console.error('shutdown error:', e.message) }
         process.exit(0)
       }

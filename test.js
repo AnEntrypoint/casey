@@ -2839,6 +2839,12 @@ async function main() {
     const { extractFields } = await import('./src/extract.js')
     // The witnessed bug: a lowercase descriptive place must be captured as location.
     assert.equal(extractFields('a small holding near amapondos').location, 'amapondos', 'lowercase descriptive place is captured')
+    // Every natural spatial lead binds (the witnessed 'close to amapondos' re-ask).
+    assert.equal(extractFields('close to amapondos').location, 'amapondos', '"close to X" binds')
+    assert.equal(extractFields('just outside engcobo').location, 'engcobo', '"just outside X" binds')
+    assert.equal(extractFields('right by ngqeleni').location, 'ngqeleni', '"right by X" binds')
+    assert.ok(!extractFields('around the clock').location, '"around the clock" is not a location')
+    assert.ok(!extractFields('close to nothing').location, '"close to nothing" is not a location')
     assert.equal(extractFields('near tsolo').location, 'tsolo', 'a bare lowercase place after near is captured')
     // No false location from report prose (allowlist-by-shape rejects known words).
     assert.ok(!extractFields('the cow is near death').location, '"near death" is not a location')

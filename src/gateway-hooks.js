@@ -89,7 +89,13 @@ async function captureFieldsFromText(store, caseId, text, log, callLLM = null, p
     // vocabulary; the LLM fills the rest). Off when callLLM is absent/down -> {}.
     if (callLLM) {
       const llm = await llmExtractFields({ callLLM, text, pendingKey, log })
-      for (const [k, v] of Object.entries(llm)) if (fields[k] == null) fields[k] = v
+      const added = Object.keys(llm).filter(k => fields[k] == null)
+      for (const k of added) fields[k] = llm[k]
+      // Observability: record what the LLM floor contributed (KEYS only, never raw
+      // text), so production behaviour is visible -- if the model never returns the
+      // record_fields call, this stays empty and the deterministic floor is doing all
+      // the work, which is the signal to broaden the regex (not silently re-ask).
+      log?.info?.('[casey] llm-extract', { added, regex: Object.keys(all) })
     }
     if (!Object.keys(fields).length) return []
     const res = await store.markReportFieldsIfEmpty(caseId, fields)

@@ -178,8 +178,11 @@ export function extractFields(text) {
   // enquiry routing, but guarding here keeps extractFields correct on its own.
   const enquiryShaped = /^\s*(any|how many|which|where (are|is)|show me|list|whats|what'?s)\b/.test(t) || /\b(cases?|reports?|outbreaks?|hotspots?)\b/.test(t)
   if (!f.location && !enquiryShaped) {
-    const m3 = t.match(/\b(?:near|past|outside|next to)\s+(?:the\s+)?([a-z][a-z\-]{3,30})\b/)
-      || t.match(/\b(?:smallholding|small holding|plot|holding|kraal)\s+(?:near|at|by|outside)\s+(?:the\s+)?([a-z][a-z\-]{3,30})\b/)
+    // Every natural spatial lead a worker uses for a place: close to / close by /
+    // just outside / right by / next to / near / past / around / outside, plus the
+    // smallholding/plot/farm/kraal-near-X shape. "close to amapondos" must bind.
+    const m3 = t.match(/\b(?:close to|close by|closeby|just outside|right (?:by|near|next to)|next to|nearby|near|past|outside)\s+(?:the\s+)?([a-z][a-z\-]{3,30})\b/)
+      || t.match(/\b(?:smallholding|small ?holding|small farm|plot|holding|kraal|plaas|farm|stead|outpost)\s+(?:near|at|by|close to|just outside|outside|in|on)\s+(?:the\s+)?([a-z][a-z\-]{3,30})\b/)
     const cand = m3 && m3[1] ? m3[1].trim() : ''
     // Reject a captured token that is a common English/collision word (so report
     // prose -- "near death", "next to nothing", "near the river/road/home" -- never
