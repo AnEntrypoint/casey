@@ -80,6 +80,12 @@ async function bindPendingAsk(store, caseId, text, justCaptured, log) {
     if (detectContactIntent(t)) return null                              // a fixed-intent message
     const events = await store.listEvents(caseId)
     const c = await store.getCase(caseId)
+    // Never bind an ENQUIRY or a NEW-CASE statement as a field value: "any cases near
+    // margate" is a query, not the answer to "where are the animals"; a differing
+    // species/location is a new-case signal. detectEnquiryIntent carries the
+    // REPORT_VETO so a genuine report answer is NOT falsely rejected.
+    if (detectEnquiryIntent(t)) return null
+    if (detectNewCaseConflict(t, c?.report).length) return null
     const key = pendingAskKey(events, c?.report)
     if (!key) return null
     const value = t.slice(0, 200)
@@ -1779,6 +1785,24 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // capture-driven reply.
     const fallbackBase = fallbackReply(inboundText, fresh)
     const isFallback = !text || text === fallbackBase || text.startsWith(fallbackBase) || text.includes(fallbackBase)
+
+    // TOTAL ASKED-MARKER: when the MODEL's own prose carries the turn (non-fallback,
+    // not overridden by the deterministic intake-drive) and the report still wants a
+    // visit-critical fact, record which field the next turn should expect an answer
+    // for. Without this, a model-prompted "where are the animals?" leaves NO ASKED
+    // marker, so the worker's next free-text answer ("a small holding near amapondos")
+    // has no pending key to bind to and the field is re-asked. The marker names the
+    // deterministic most-wanted field (not necessarily the exact field the prose
+    // asked); a bounded one-field divergence self-corrects next turn. Stamped only
+    // after a confirmed-delivered reply (the existing FALLBACK-ASK writer below), so a
+    // send failure never burns the field. Guarded so the gate/degraded paths (which
+    // already set pendingFallbackAsk) are never double-stamped.
+    if (!pendingFallbackAsk && !isFallback && reportMissingVisitCritical(fresh.report)
+        && !isContentFreeTurn(justCaptured, fresh.report) && !droveIntake && !closingTurn) {
+      const mAsked = askedKeysFromEvents(await store.listEvents(fresh.id))
+      const mNext = nextAsk(fresh.report, mAsked)
+      if (mNext) pendingFallbackAsk = { key: mNext[0], via: 'model-prompted' }
+    }
 
     // Final guard before the reply leaves (send OR assisted draft): correct any
     // fabricated/stale case reference to this case's real ref. A weak model recites

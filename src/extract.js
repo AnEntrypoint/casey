@@ -163,6 +163,33 @@ export function extractFields(text) {
       f.location = farmMatch[1].trim()
     }
   }
+  // BRANCH 3 -- lowercase descriptive place. Workers type fast and lowercase, so the
+  // capitalised branches above miss "a small holding near amapondos" / "near tsolo".
+  // We accept a lowercase token after a STRONGLY-spatial lead (near/past/outside/next
+  // to, or a smallholding/plot/farm/kraal lead) but ONLY when it is NOT a common
+  // English word -- an unknown, proper-noun-shaped token (a place name) -- so report
+  // prose like "near death" / "next to nothing" / "near the river" never becomes a
+  // location. Allowlist-by-shape, not a denylist: reject any token that is a known
+  // English word or a symptom word. This is the fast-path floor; the LLM covers the
+  // long tail.
+  // Skip the lowercase-place branch entirely on an ENQUIRY-shaped message ("any cases
+  // near margate", "how many ... in kzn", "where are the outbreaks") -- a place there
+  // is a query target, not a report datum. The handler also gates capture behind
+  // enquiry routing, but guarding here keeps extractFields correct on its own.
+  const enquiryShaped = /^\s*(any|how many|which|where (are|is)|show me|list|whats|what'?s)\b/.test(t) || /\b(cases?|reports?|outbreaks?|hotspots?)\b/.test(t)
+  if (!f.location && !enquiryShaped) {
+    const m3 = t.match(/\b(?:near|past|outside|next to)\s+(?:the\s+)?([a-z][a-z\-]{3,30})\b/)
+      || t.match(/\b(?:smallholding|small holding|plot|holding|kraal)\s+(?:near|at|by|outside)\s+(?:the\s+)?([a-z][a-z\-]{3,30})\b/)
+    const cand = m3 && m3[1] ? m3[1].trim() : ''
+    // Reject a captured token that is a common English/collision word (so report
+    // prose -- "near death", "next to nothing", "near the river/road/home" -- never
+    // becomes a location); accept only an unknown proper-noun-shaped place name. Also
+    // reject a symptom word (a place must not be a sign of illness).
+    const DENY = /^(death|dead|dying|nothing|collapse|panic|caring|sick|drool|blister|limp|lame|cough|blood|fever|water|nothing|home|road|river|gate|fence|farm|plaas|area|town|city|owner|vet|help|here|there|now|them|that|this|some|many|few|cattle|cows|sheep|goats|pigs|herd|animals|morning|evening|night|today|yesterday|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month)$/
+    if (cand && !STOP_WORDS.has(cand) && !DENY.test(cand)) {
+      f.location = cand
+    }
+  }
 
   // Onset -- "started yesterday", "since Monday", "X days ago", "last week".
   const onsetPat = /\b(?:since|started|since last|from)\s+(yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|last\s+\w+|\d+\s+days?\s+ago)/i

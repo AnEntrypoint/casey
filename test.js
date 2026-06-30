@@ -2829,6 +2829,36 @@ async function main() {
     assert.ok(!enq.includes(w), 'enquiry list leaks no contact id')
   })
 
+  await test('flexible intake: a natural-language location answer binds and is never re-asked', async () => {
+    const { extractFields } = await import('./src/extract.js')
+    // The witnessed bug: a lowercase descriptive place must be captured as location.
+    assert.equal(extractFields('a small holding near amapondos').location, 'amapondos', 'lowercase descriptive place is captured')
+    assert.equal(extractFields('near tsolo').location, 'tsolo', 'a bare lowercase place after near is captured')
+    // No false location from report prose (allowlist-by-shape rejects known words).
+    assert.ok(!extractFields('the cow is near death').location, '"near death" is not a location')
+    assert.ok(!extractFields('next to nothing left').location, '"next to nothing" is not a location')
+    assert.ok(!extractFields('any cases near margate').location, 'an enquiry place is not a captured location (no report content)')
+    // End-to-end arc: greeting asks where, a natural location answer advances (does
+    // NOT re-ask where), and the next reply is a DIFFERENT question.
+    const iw = 'intakeworker-' + Date.now()
+    const say = async (msg) => { const b = adapter.sent.length; await runScript(adapter, [msg], { from: iw, channel_id: iw, username: iw, wait: () => casey.drain() }); return adapter.sent[adapter.sent.length - 1].text || '' }
+    const t1 = await say('hi im on a site here')
+    assert.ok(/where|animals are|farm|town|area/i.test(t1), `turn 1 asks where: ${t1}`)
+    const t2 = await say('a small holding near amapondos')
+    // The location is now on the report; the reply must NOT re-ask the same where
+    // question -- it advances to a different field (or acknowledges + asks next).
+    const ic = (await store.listCases({}, { limit: 10000 })).find(c => c.external_id === (iw + ':' + iw) || c.external_id === iw)
+    const rep = ic ? (() => { try { return JSON.parse(ic.report || '{}') } catch { return {} } })() : {}
+    assert.ok(rep.location, `the location answer was captured: ${JSON.stringify(rep)}`)
+    assert.ok(!/where are the animals/i.test(t2) || /which animals|what can be seen|signs|species/i.test(t2), `turn 2 does not just re-ask where: ${t2}`)
+    // No mis-bind: an enquiry while a field is pending must not become a field value.
+    const before = JSON.stringify(rep)
+    await say('any cases near margate')
+    const ic2 = (await store.listCases({}, { limit: 10000 })).find(c => c.id === ic.id)
+    const rep2 = (() => { try { return JSON.parse(ic2.report || '{}') } catch { return {} } })()
+    assert.equal(rep2.location, rep.location, 'an enquiry did not overwrite the bound location')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
