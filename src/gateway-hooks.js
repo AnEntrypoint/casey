@@ -44,11 +44,53 @@ const CAPTURE_KEYS = new Set(['species', 'symptoms', 'location', 'affected_count
 // case ("only logs cases from messages, without the relevant details"). Fills only
 // fields still empty (never clobbers the model's or a prior turn's richer value),
 // is observe-guarded + locked inside the store, and records which keys it filled.
-async function captureFieldsFromText(store, caseId, text, log) {
+// LLM field-extraction floor: a cheap forced single-tool call that interprets ONE
+// worker message into report fields, so natural-language answers the regex misses
+// ("a small holding near amapondos", "theyre coughing and wont eat", "about 20, three
+// down") are understood. Returns a {key:value} object (only the whitelisted report
+// keys, owner_contact excluded -- a phone must never enter capture/summary). Strictly
+// additive: merged fill-if-empty by the caller. Returns {} on any error / model-down
+// so the deterministic path is the byte-identical fallback. Gated by the caller to
+// run only on confirmed intake (never an enquiry/greeting/fixed-intent).
+const LLM_EXTRACT_KEYS = ['species', 'symptoms', 'location', 'how_to_find', 'affected_count',
+  'dead_count', 'onset', 'suspected_disease', 'present_person', 'present_person_relation', 'owner_name']
+const EXTRACT_TOOL = {
+  name: 'record_fields',
+  description: 'Record the animal-report fields the worker LITERALLY stated in their latest message. Only fields actually stated; never guess. A place in any spelling or description (even lowercase, "a small holding near X") IS the location.',
+  parameters: {
+    type: 'object',
+    properties: Object.fromEntries(LLM_EXTRACT_KEYS.map(k => [k, { type: 'string' }])),
+  },
+}
+async function llmExtractFields({ callLLM, text, pendingKey, log }) {
+  if (!callLLM || !text) return {}
+  try {
+    const sys = `You convert ONE field-worker message about sick or dead farm animals into report fields. Record ONLY fields the message literally states; never guess. A place in any casing or description (e.g. "a small holding near amapondos") IS the location.${pendingKey ? ` The worker was just asked for "${pendingKey}" -- if their message answers it, set that field.` : ''} If the message is only a greeting, question, thanks, or "I don't know", call the tool with NO fields.`
+    const res = await callLLM({ messages: [{ role: 'system', content: sys }, { role: 'user', content: String(text).slice(0, 500) }], tools: [EXTRACT_TOOL], tool_choice: 'required', max_tokens: 200 })
+    const call = (res?.tool_calls || []).find(c => c.name === 'record_fields')
+    const args = call ? (typeof call.arguments === 'string' ? JSON.parse(call.arguments) : call.arguments) : null
+    if (!args || typeof args !== 'object') return {}
+    const out = {}
+    for (const k of LLM_EXTRACT_KEYS) {
+      const v = args[k]
+      if (v != null && String(v).trim()) out[k] = String(v).trim().slice(0, 200)
+    }
+    return out
+  } catch (e) { log?.warn?.('[casey] llm-extract failed', { error: e.message }); return {} }
+}
+
+async function captureFieldsFromText(store, caseId, text, log, callLLM = null, pendingKey = null) {
   try {
     const all = extractFields(text)
     const fields = {}
     for (const [k, v] of Object.entries(all)) if (CAPTURE_KEYS.has(k)) fields[k] = v
+    // LLM floor: interpret the natural-language message into the long-tail fields the
+    // regex misses, merged UNDER the deterministic capture (regex wins on its closed
+    // vocabulary; the LLM fills the rest). Off when callLLM is absent/down -> {}.
+    if (callLLM) {
+      const llm = await llmExtractFields({ callLLM, text, pendingKey, log })
+      for (const [k, v] of Object.entries(llm)) if (fields[k] == null) fields[k] = v
+    }
     if (!Object.keys(fields).length) return []
     const res = await store.markReportFieldsIfEmpty(caseId, fields)
     if (res?.filled?.length) {
@@ -1295,7 +1337,15 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     // downstream report-aware decisions see what was just captured.
     let justCaptured = []
     if (inboundText) {
-      justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log)
+      // The LLM extraction floor runs ONLY on a genuine intake message -- never an
+      // enquiry ("any cases near margate"), a fixed intent (help/status/stop/human),
+      // or a content-free greeting -- so a query place is never written as a field.
+      // The deterministic regex always runs; callLLM is passed only when the message
+      // is intake-shaped. pendingKey = the field last asked, so the model can bind the
+      // answer to it.
+      const isIntakeShaped = !detectContactIntent(inboundText) && !detectEnquiryIntent(inboundText)
+      const pend = isIntakeShaped ? pendingAskKey(await store.listEvents(fresh.id), fresh.report) : null
+      justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log, isIntakeShaped ? callLLM : null, pend)
       fresh = await store.getCase(fresh.id)
       // Bind a free-text answer to the field memobot just asked for, when the
       // extractor had no regex for it (e.g. "boyi son of the owner" -> present_person).

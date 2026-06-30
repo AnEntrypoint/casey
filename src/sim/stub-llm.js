@@ -14,8 +14,16 @@ import { classifyIntentFallback } from '../intent.js'
 // records whatever report fields the message plainly contains, so the offline
 // path also exercises case_report.
 export function stubLLM() {
-  return async ({ messages }) => {
+  return async ({ messages, tools }) => {
     const sys = messages.find(m => m.role === 'system')?.content || ''
+    // LLM field-extraction floor call: a forced single-tool call with the
+    // record_fields tool. The stub stands in for the real model by returning the
+    // deterministic extractFields result -- so the offline witness exercises the
+    // merge path (the broadened branch-3 lowercase place flows through here too).
+    if (Array.isArray(tools) && tools.some(t => (t.name || t.function?.name) === 'record_fields')) {
+      const u = [...messages].reverse().find(m => m.role === 'user')?.content || ''
+      return { content: '', tool_calls: [{ id: 'rf1', name: 'record_fields', arguments: extractFields(u) }] }
+    }
     const caseId = (sys.match(/id=(\S+?)\)/) || [])[1]
     const ref = (sys.match(/CURRENT CASE (\S+)/) || [])[1] || caseId || ''
     const lastUser = [...messages].reverse().find(m => m.role === 'user')?.content || ''

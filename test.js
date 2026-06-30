@@ -380,7 +380,13 @@ async function main() {
     const JARGON = 'Thank you. Your case is now in triage and we set its priority.'
     const jargonModel = () => {
       let call = 0
-      return async ({ messages }) => {
+      return async ({ messages, tools }) => {
+        // The LLM field-extraction floor (record_fields tool) is a separate cheap call
+        // -- answer it with no fields and do NOT advance the turn parity, exactly as a
+        // real model would treat a side extraction call.
+        if (Array.isArray(tools) && tools.some(t => (t.name || t.function?.name) === 'record_fields')) {
+          return { content: '', tool_calls: [{ id: 'rf', name: 'record_fields', arguments: {} }] }
+        }
         const sys = (messages.find(m => m.role === 'system')?.content) || ''
         const idm = /id=([^)\s]+)/.exec(sys)
         const caseId = idm ? idm[1] : null
