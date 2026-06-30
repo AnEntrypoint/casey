@@ -72,7 +72,7 @@ src/
   case-sweep.js            periodic health-guardrail sweep; detectCoverageGap (rostered team, open breaching cases, zero in-window operator replies) pages a synthetic TEAM-COVERAGE breach
   correlate.js             cross-case correlation helpers
   places.js                SA province understanding: PROVINCES (every alias kzn/EC/GP/... + major towns), resolvePlace(text)->{regions,terms,strong} for a region enquiry, word-boundary containsTerm (a 2-char alias never hits inside unrelated prose), ambiguous towns span provinces; pure/ASCII/no geocoder, degrades to null in a bare clone
-  intent.js                interpret a message into a structured intent (report|enquiry{today,mine,open,near+place}|question|chitchat|service) by shape; classifyIntentFallback (soft deterministic fallback, region/place via places.js, report+animal veto, clear-enquiry-lead) + normalizeIntent (model case_intent declaration) + extractPlace
+  intent.js                interpret a message into a structured intent (report|enquiry{today,mine,open,near+place,count,geo,outbreaks,overview,overdue}|question|chitchat|service) by shape; classifyIntentFallback (soft deterministic fallback, region/place via places.js, fleet-aggregate kinds, report+animal veto, species-count guard, clear-enquiry-lead) + normalizeIntent (model case_intent declaration) + extractPlace
   conversation-fsm.js      the conversation as an adaptogen (../dstate) DAG+FSM with SOFT enforcement (CONVERSATION_SPEC); advanceConversation maps intent->route+soft-transition trace; optional-imports adaptogen (degrades to a pure intent->route map when ../dstate absent)
   attn.js                  worst-first attention ranking (rankAttention, with an SLA clock: waitingOnUs/waitAgeMs/atRiskCount/slaTargetMs) + shared caseHints why/to-do policy; backs the inbox and `casey attention`
   format.js                shared SAST timestamp + +27 phone formatters (CLI and SPA render the same way)
@@ -289,7 +289,18 @@ the crash-budget stop state); the supervisor is its only I/O.
   Place/region understanding lives in `places.js`: a worker's "any cases in kzn" /
   "anything in the eastern cape" resolves the SA province (`resolvePlace`) and lists
   every case whose hydrated report location falls in it, province-labelled -- so a
-  free-form region ask is answered from the store, not deflected. A disease-service
+  free-form region ask is answered from the store, not deflected.
+  **The chat reaches GUI parity**: five FLEET-AGGREGATE enquiry kinds (count / geo /
+  outbreaks / overview / overdue) let a worker ask "how many open cases", "which area
+  has the most reports", "where are the outbreaks", "how are we doing", "whats
+  overdue" -- `renderAggregate` (gateway-hooks.js) calls the SAME pure dashboard
+  aggregators the GUI does (`buildGeo` / `buildClusters` / `buildOverview` /
+  `buildSLAReport`, with a capped `hydrateEvents`) and renders a warm reply that is
+  strictly AGGREGATE-ONLY and PII-FREE: counts and place/species tokens only, NEVER a
+  per-case row, ref, external_id, phone, or operator identity (the outbreaks branch
+  never iterates `buildClusters` members -- they carry contact free text). The
+  species-count guard ("how many sick cattle") and the report/animal veto keep a real
+  report from ever being read as an aggregate enquiry. A disease-service
   animal-veto keeps "any cattle in kzn" a report; a question gets a helpful answer
   that NAMES the enquiry surface, NEVER the complete exit; report/chitchat fall
   through to the agent turn. The soft decision (intent + FSM trace) is recorded as an
