@@ -1383,17 +1383,32 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // detectNewCaseConflict needs a PRESENT-AND-DIFFERENT key, so a same/unstated
       // follow-up returns [] and never branches; an INCOMPLETE case has nextAsk != null
       // and takes the needs-split path below, never this branch.
-      const startsFreshReport = conflicts.length > 0
+      // A worker is starting a FRESH report on a complete case when the case is
+      // complete, the message is report-shaped/intent-free, AND it carries report
+      // content that the complete case cannot absorb -- either a DIFFERING key
+      // (conflicts) OR report fields that NO-OP'd because the complete report already
+      // holds them (the witnessed trap: 'close to amapondos'/'2 cows' on a complete
+      // CASE-1089 -- same place/species, no conflict, but the worker is re-reporting
+      // a NEW incident and their facts land nowhere). carriesReportContent: the
+      // deterministic extractor found a report field in this message (so it is intake
+      // content, not a bare greeting/ack) yet nothing was newly captured -> the
+      // complete case swallowed it as a no-op.
+      const extractedNow = extractFields(inboundText || '')
+      const carriesReportContent = Object.keys(extractedNow).some(k => CAPTURE_KEYS.has(k))
+      const completeNoOp = carriesReportContent && justCaptured.length === 0
+      const startsFreshReport = (conflicts.length > 0 || completeNoOp)
         && nextAsk(fresh.report) === null
         && REPORT_SHAPED_RE.test(inboundText || '')
         && detectContactIntent(inboundText) == null
+        && !detectEnquiryIntent(inboundText)
         && !REF_STATUS_RE.test(inboundText || '')
       if (startsFreshReport) {
         try {
           const oldRef = fresh.ref
           const branched = await store.branchCase({ channel, external_id, contact_id: fresh.contact_id })
           await store.setActiveCase(msg.from || external_id, branched.id)
-          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-BRANCHED:${oldRef}->${branched.ref} worker started a fresh report (different ${conflicts.join(' and ')}) on a complete case.` })
+          const why = conflicts.length ? `different ${conflicts.join(' and ')}` : 'new report facts a complete case could not absorb'
+          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-BRANCHED:${oldRef}->${branched.ref} worker started a fresh report (${why}) on a complete case.` })
           await store.appendEvent(branched.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-BRANCHED:${oldRef}->${branched.ref} opened for a fresh report.` })
           try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'branched-from-lineage') }) } catch { /* best effort */ }
           fresh = branched

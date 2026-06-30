@@ -2835,6 +2835,31 @@ async function main() {
     assert.ok(!enq.includes(w), 'enquiry list leaks no contact id')
   })
 
+  await test('intake: report facts that NO-OP against a complete case (same place/species) still branch a fresh report', async () => {
+    // The witnessed CASE-1089 trap: a worker re-reports on a complete case with the
+    // SAME place/species (no conflict), so each fact fill-if-empty no-ops and the case
+    // recites "we have the full report" -- the new incident is lost. A complete case +
+    // report content it cannot absorb must branch a fresh case. We seed a COMPLETE case
+    // directly (isolating the branch logic from stub completion timing) and bind it
+    // active, then send a re-report whose every field the complete case already holds.
+    const nw = 'noopworker-' + Date.now()
+    const ext = nw + ':' + nw
+    const { case: seed } = await store.findOrCreateCase({ channel: 'sim', external_id: ext, contact: { display_name: nw, handle: nw } })
+    await store.mergeReport(seed.id, { species: 'cattle', symptoms: 'sick', location: 'Musina', how_to_find: 'blue gate', farmer_available: 'yes', contact_fallback: '082' })
+    const seeded = await store.getCase(seed.id)
+    const { reportMissingVisitCritical } = await import('./src/gateway-hooks.js')
+    assert.ok(!reportMissingVisitCritical(seeded.report), 'the seeded case is visit-complete')
+    const n = (await store.listCases({}, { limit: 10000 })).length
+    const before = adapter.sent.length
+    // Re-report with the same species/location the complete case already holds.
+    await runScript(adapter, ['there are cattle at Musina'], { from: nw, channel_id: nw, username: nw, wait: () => casey.drain() })
+    const r = adapter.sent[adapter.sent.length - 1].text || ''
+    assert.ok(adapter.sent.length > before, 'the re-report got a reply')
+    assert.ok(!/we have the full report/i.test(r), `same-place re-report must NOT get the complete-exit: ${r}`)
+    const n2 = (await store.listCases({}, { limit: 10000 })).length
+    assert.ok(n2 > n, `a fresh case was branched for the new (no-op) report (cases ${n}->${n2})`)
+  })
+
   await test('flexible intake: a natural-language location answer binds and is never re-asked', async () => {
     const { extractFields } = await import('./src/extract.js')
     // The witnessed bug: a lowercase descriptive place must be captured as location.
