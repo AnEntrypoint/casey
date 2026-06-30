@@ -375,6 +375,30 @@ function isPromptEcho(text) {
 // ref. Deterministic, ASCII, no model in the loop -- the contact can never be
 // handed a fabricated reference. Returns { text, corrected:[wrong refs] }.
 const CASE_REF_RE = /CASE-\d+-[a-z0-9]+/gi
+// A worker asking the STATUS of a case by reference: a full "CASE-1089-dgpgd" OR a
+// bare partial "CASE-1089". Matched on the RAW inbound (normalizeIntentText strips
+// the hyphens). Anchored to the CASE- token so a number alone never trips it.
+const REF_STATUS_RE = /\bCASE-\d+(?:-[a-z0-9]+)?\b/i
+// Resolve a status-lookup target from the message: an exact ref via getCaseByRef,
+// else a bare partial ("CASE-1089") via a UNIQUE prefix scan over a recency slice
+// (>1 or 0 matches -> null, so an ambiguous partial does not answer the wrong case).
+// Returns the case row or null.
+export async function resolveRefForStatus(store, text) {
+  const m = REF_STATUS_RE.exec(String(text || ''))
+  if (!m) return null
+  const ref = m[0].toUpperCase()
+  // Full ref (CASE-<digits>-<suffix>): exact equality lookup.
+  if (/CASE-\d+-[a-z0-9]+/i.test(ref)) {
+    try { const c = await store.getCaseByRef(ref); if (c) return c } catch { /* fall through to prefix */ }
+  }
+  // Bare partial (CASE-<digits>): unique prefix match, else null.
+  try {
+    const rows = await store.listCases({}, { limit: 500 })
+    const hits = rows.filter(r => String(r.ref || '').toUpperCase().startsWith(ref + '-') || String(r.ref || '').toUpperCase() === ref)
+    return hits.length === 1 ? hits[0] : null
+  } catch { return null }
+}
+
 export function sanitizeOutboundRef(text, realRef) {
   if (!text || !realRef) return { text, corrected: [] }
   const corrected = []
@@ -593,13 +617,34 @@ async function hydrateEvents(store, cases) {
 // only. Never a dead-end -- every branch invites a fresh report. The whole body is in
 // one try with the same warm catch as renderItinerary, so a store hiccup degrades
 // gracefully.
-async function renderAggregate(store, kind, author, inboundText, now = Date.now()) {
+async function renderAggregate(store, kind, author, inboundText, now = Date.now(), place = '') {
   try {
     const CAP = 500
-    const all = await store.listCases({}, { limit: CAP, user: author })
+    // UNSCOPED fleet read -- deliberately NO user:author. thatcher row_access is
+    // {scope:assigned, field:assignee} (thatcher.config.yml), and the chat author is
+    // the field-worker REPORTER, never an assignee -- so a scoped pull returns ~0
+    // rows and every fleet answer became a reassuring-when-wrong false-safe ("0 open
+    // reports" on a busy store). The fleet aggregates emit ONLY PII-free scalars and
+    // projected place/species tokens (no per-case row, ref, external_id, phone, or
+    // operator identity), so reading the whole fleet is worker-safe. Row-access
+    // scoping stays ONLY on the per-worker "mine" itinerary, where assignee-scoping
+    // is the intent.
+    const all = await store.listCases({}, { limit: CAP })
     const open = all.filter(c => c.status !== 'closed')
     const tail = ' Tell me about an animal and I will start a report.'
     if (kind === 'count') {
+      // Place-scoped count ("how many open in limpopo"): filter open by the resolved
+      // region terms over the hydrated report, then COUNT (never list rows). Framed as
+      // a FLOOR because the CAP=500 recency slice can under-count a very busy area.
+      const rp = place ? resolvePlace(place) : null
+      if (rp) {
+        const inPlace = open.filter(c => {
+          const rep = parseReportSafe(c.report)
+          const hay = `${rep.location || ''} ${c.subject || ''}`.toLowerCase()
+          return rp.terms.some(term => containsTerm(hay, term))
+        }).length
+        return `There are at least ${inPlace} open reports in ${placeRegionLabel(rp.regions)}.` + tail
+      }
       const todayCut = new Date(now); todayCut.setHours(0, 0, 0, 0)
       // last_event_at/created_at are ISO strings -- Date.parse, not Number().
       const today = open.filter(c => Date.parse(c.last_event_at || c.created_at) >= todayCut.getTime()).length
@@ -672,7 +717,7 @@ async function renderItinerary(store, kind, author, inboundText, now = Date.now(
   // "where are the hotspots/outbreaks", "how are we doing", "whats overdue". They
   // never touch itineraryLine (no per-case rows) so no PII path is involved.
   const AGGREGATE = new Set(['count', 'geo', 'outbreaks', 'overview', 'overdue'])
-  if (AGGREGATE.has(kind)) return await renderAggregate(store, kind, author, inboundText, now)
+  if (AGGREGATE.has(kind)) return await renderAggregate(store, kind, author, inboundText, now, place)
   try {
     if (kind === 'mine') {
       rows = await store.listCases({ assignee: author }, { limit: 20 })
@@ -1232,6 +1277,42 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     const isFirstMessage = (await store.listEvents(fresh.id)).filter(e => e.kind === 'inbound').length <= 1
     const optedOut = (fresh.tags || '').split(',').map(s => s.trim()).includes('opted-out')
     let intent = detectContactIntent(inboundText)
+    // STATUS-BY-REF: a worker naming a case ref ("status of CASE-1089-dgpgd",
+    // "how is CASE-1089 going", bare "CASE-1089?") -- or asking after their own
+    // report with the active-case binding -- gets THAT case's plain status. Gated so a
+    // ref mentioned INSIDE a report ("2 cows died, see CASE-1042") never hijacks
+    // intake: only when the message is not report-shaped (the intent classifier reads
+    // it as a question/enquiry/chitchat, not a report) AND a ref resolves. PII-free:
+    // ref + plain status sentence only, never external_id/phone.
+    {
+      const namesRef = REF_STATUS_RE.test(inboundText || '')
+      // Block only on a GENUINE report (animal/symptom content), not the classifier's
+      // catch-all report default -- "status of CASE-1089" names no animal and must
+      // look up the status, while "CASE-1089 my cow is sick" is intake.
+      const reportShaped = /\b(sick|ill|dead|dying|died|drool|blood|bleed|limp|lame|blister|cough|swollen|cattle|cow|cows|calf|sheep|lamb|goat|goats|pig|pigs|herd|livestock|animal|animals)\b/.test((inboundText || '').toLowerCase())
+      if (namesRef && !reportShaped) {
+        const target = await resolveRefForStatus(store, inboundText)
+        if (target) {
+          const text = intentReply('status', target, guessLang(inboundText))
+          await store.appendEvent(target.id, { kind: 'outbound', actor: 'system', channel, text, data: { to: replyTo, intent: 'status-by-ref' } })
+          const reply = { to: replyTo, text, platform, caseId: target.id, intent: 'status-by-ref' }
+          if (adapter?.send) {
+            try { await adapter.send(reply) }
+            catch (e) { log.error?.('[casey] adapter.send failed', { caseId: target.id, platform, error: e.message }); await store.appendEvent(target.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` }) }
+          }
+          return reply
+        }
+        // A ref that does not resolve (unknown/garbled) and no other intent: a warm
+        // non-dead-end line, never another case's status, never the complete exit.
+        if (!intent) {
+          const text = `I could not find that reference. If you can, send the full reference like CASE-1234-ab, or tell me about the animal and I will help.` + refTail(inboundText, fresh)
+          await store.appendEvent(fresh.id, { kind: 'outbound', actor: 'system', channel, text, data: { to: replyTo, intent: 'status-noref' } })
+          const reply = { to: replyTo, text, platform, caseId: fresh.id, intent: 'status-noref' }
+          if (adapter?.send) { try { await adapter.send(reply) } catch (e) { log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message }) } }
+          return reply
+        }
+      }
+    }
     // On a brand-new contact, greeting/help deserve the agent's warm intro +
     // reference, not a canned line -- so defer them to the agent on message one.
     // (status/human/stop/thanks still answered deterministically.)

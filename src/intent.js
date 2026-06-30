@@ -59,12 +59,23 @@ const QUESTION_LEAD = /^(what|whats|what'?s|where|which|who|how|hows|when|is the
 // prose "cattle dying, spreading across the farm").
 const ENQUIRY_OUTBREAK = /\b(outbreaks?|clusters?|linked (cases?|reports?)|related (cases?|reports?)|suspected outbreak)\b/
 const ENQUIRY_GEO = /\b(hotspots?|which (area|areas|place|places|region|town)|where.{0,12}(most|busiest|hotspot)|busiest (area|place)|most (reports?|cases?))\b/
-const ENQUIRY_OVERDUE = /\b(overdue|over due|past due|late|at[- ]risk|breach(ed|ing)?|behind|unanswered|waiting too long|need(s|ing)? (a )?reply|sla)\b/
+const ENQUIRY_OVERDUE = /\b(overdue|over due|past due|late|at[- ]risk|urgent|breach(ed|ing)?|behind|unanswered|waiting too long|need(s|ing)? (a )?reply|sla)\b/
 const ENQUIRY_OVERVIEW = /\b(how (are|is) (things|it going|everything|we doing)|whats the (situation|picture|state)|overview|summary|sum up|status report|overall|how are we doing)\b/
 // Interrogative count head only -- "how many / number of / count of / how much".
 // Deliberately NOT a bare "total" (a quantity statement "10 total animals" is a
 // report correction, not a count question).
 const COUNT_HEAD = /\b(how many|how much|number of|count of)\b/
+// Typo-tolerant variants of the high-value triggers (workers type fast on a phone).
+// Wired AFTER the report/animal vetoes so a typo never overrides a real report.
+const FUZ_HOWMANY = /\b(how m[ae]ny|hw many|how mny)\b/
+const FUZ_OUTBREAK = /\b(out ?br[ea]?kes?|outbrak|clu?ster|cluser)\b/
+const FUZ_OVERDUE = /\b(over ?d(ue|o|ew)|past ?due|breach\w*|unanswered)\b/
+const FUZ_OPEN = /\b(op[ae]n)\b/
+// Polite/filler leads stripped ONLY for the enquiry-lead test (never for the report
+// veto), so "could you tell me how many are open" reads as an enquiry. No REPORT or
+// ANIMAL word appears here, so stripping can never turn a report into an enquiry.
+const POLITE_LEAD = /^(please|could you|can you|would you|will you|kindly|hey|hi|hello|just|so|um|er|tell me|let me know|i want to know|i'?d like to know|do you know|may i ask)[\s,]+/
+const LEAD_FILLER = /\b(currently|right now|now|at the moment|sitting|are there|is there|today|still|yet|just)\b/g
 
 // Pull a place out of a near-enquiry: the words after the proximity connector.
 export function extractPlace(text) {
@@ -80,6 +91,12 @@ export function classifyIntentFallback(text) {
   if (!raw) return { kind: 'chitchat', source: 'fallback' }
   const t = raw.toLowerCase()
   const mentionsCases = /\b(cases?|reports?)\b/.test(t)
+  // A polite/filler-stripped copy used ONLY for the enquiry-lead test (never for the
+  // report veto): strip up to 3 polite leads then collapse connective filler, so
+  // "could you tell me how many are currently sitting open" reads as a clear lead.
+  let leadCompact = t
+  for (let i = 0; i < 3 && POLITE_LEAD.test(leadCompact); i++) leadCompact = leadCompact.replace(POLITE_LEAD, '')
+  leadCompact = leadCompact.replace(LEAD_FILLER, ' ').replace(/\s+/g, ' ').trim()
   // A CLEAR enquiry lead: an explicit "any/show me/list/how many/which ...
   // cases/reports", "what is on", "my cases", "open work". This distinguishes the
   // NOUN reports (an enquiry: "any reports in kzn", "any reports of sick cattle in
@@ -90,7 +107,7 @@ export function classifyIntentFallback(text) {
   // NOTE: deliberately does NOT include the loose ENQUIRY_TODAY (it matches a bare
   // "today" anywhere, which would mark "2 cows died today" as an enquiry). Only an
   // explicit cases/reports/open/my-list lead counts as clear.
-  const clearEnquiryLead = /\b(any|show me|list|how many|whats|what'?s|which)\b.{0,24}\b(cases?|reports?|open)\b/.test(t)
+  const clearEnquiryLead = /\b(any|show me|list|how many|whats|what'?s|which)\b.{0,24}\b(cases?|reports?|open)\b/.test(leadCompact)
     || ENQUIRY_MINE.test(t) || ENQUIRY_OPEN.test(t)
   // Species-count guard, BEFORE looksReport: "how many sick cattle" must answer as a
   // count, but it names an animal so looksReport / the ANIMAL_WORDS veto would
@@ -98,7 +115,7 @@ export function classifyIntentFallback(text) {
   // cases-lead is a count enquiry (the renderer tallies by species over the reports).
   // "how many cattle died" still reads as report below (it has the animal but the
   // count head + no enquiry frame -> the count renderer handles the species tally).
-  const howMany = COUNT_HEAD.test(t)
+  const howMany = COUNT_HEAD.test(t) || FUZ_HOWMANY.test(t)
   const countsAnimals = howMany && (REPORT_WORDS.test(t) || ANIMAL_WORDS.test(t))
   if (countsAnimals && !clearEnquiryLead) return { kind: 'enquiry', enquiry_kind: 'count', source: 'fallback' }
   // A clear animal description is a REPORT, however it is phrased -- this wins over
@@ -120,16 +137,21 @@ export function classifyIntentFallback(text) {
   // list; overdue is noun-gated so it never fires on report prose ("waiting to give
   // birth"); count needs a cases/reports noun here (the animal form already returned
   // above via the species-count guard).
-  if (ENQUIRY_OUTBREAK.test(t)) return { kind: 'enquiry', enquiry_kind: 'outbreaks', source: 'fallback' }
+  // A "how many ..." count question wins over the overdue/outbreak triggers it may
+  // also contain ("how many cases are open and unanswered" is a COUNT, not overdue).
+  if (howMany && (mentionsCases || FUZ_OPEN.test(t))) {
+    const cp0 = resolvePlace(t)
+    return { kind: 'enquiry', enquiry_kind: 'count', source: 'fallback', ...(cp0 ? { place: cp0.matchedAlias } : {}) }
+  }
+  if (ENQUIRY_OUTBREAK.test(t) || FUZ_OUTBREAK.test(t)) return { kind: 'enquiry', enquiry_kind: 'outbreaks', source: 'fallback' }
   if (ENQUIRY_GEO.test(t)) return { kind: 'enquiry', enquiry_kind: 'geo', source: 'fallback' }
   // Overdue is noun-gated on an EXISTING-DATA context word (cases/reports/open/reply/
   // sla/anything/everything) -- NOT on the trigger word itself ("late"/"overdue"),
   // which appears in plain report prose ("my order is late", "the cow is waiting").
   // So "whats overdue"/"anything running late"/"any reports overdue" enquire, while a
   // bare "X is late" stays a report.
-  if (ENQUIRY_OVERDUE.test(t) && (mentionsCases || /\b(open|reply|sla|anything|everything|whats|what'?s)\b/.test(t))) return { kind: 'enquiry', enquiry_kind: 'overdue', source: 'fallback' }
+  if ((ENQUIRY_OVERDUE.test(t) || FUZ_OVERDUE.test(t)) && (mentionsCases || /\b(open|reply|sla|anything|everything|urgent|whats|what'?s)\b/.test(t))) return { kind: 'enquiry', enquiry_kind: 'overdue', source: 'fallback' }
   if (ENQUIRY_OVERVIEW.test(t)) return { kind: 'enquiry', enquiry_kind: 'overview', source: 'fallback' }
-  if (howMany && mentionsCases) return { kind: 'enquiry', enquiry_kind: 'count', source: 'fallback' }
   if (ENQUIRY_NEAR.test(t) && mentionsCases) return { kind: 'enquiry', enquiry_kind: 'near', place: extractPlace(t), source: 'fallback' }
   // A proximity ENQUIRY ("whats near margate", "nearest case to margate", "any near
   // X") where the place RESOLVES to a known SA town/province is an enquiry even

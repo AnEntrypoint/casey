@@ -2748,6 +2748,51 @@ async function main() {
     if (cl.length) assert.ok(cl[0].members, 'clusters carry members internally (which the chat must NOT render)')
   })
 
+  await test('status-by-ref, classifier robustness, and the unscoped-fleet fix', async () => {
+    const { classifyIntentFallback } = await import('./src/intent.js')
+    const { resolveRefForStatus } = await import('./src/gateway-hooks.js')
+    // Long-tail robustness: typos, polite framings, multi-clause, place-on-count.
+    assert.equal(classifyIntentFallback('wheres the outbrakes').enquiry_kind, 'outbreaks', 'typo outbreak')
+    assert.equal(classifyIntentFallback('anything overdo').enquiry_kind, 'overdue', 'typo overdue')
+    assert.equal(classifyIntentFallback('could you tell me how many are open').enquiry_kind, 'count', 'polite count')
+    assert.equal(classifyIntentFallback('how many cases are currently sitting open and unanswered right now').enquiry_kind, 'count', 'filler count')
+    assert.equal(classifyIntentFallback('is anything urgent').enquiry_kind, 'overdue', 'urgent -> overdue')
+    const cplace = classifyIntentFallback('how many open in limpopo')
+    assert.equal(cplace.enquiry_kind, 'count'); assert.ok(cplace.place, 'count carries the place')
+    // Report-veto holds against the aggregate triggers.
+    for (const r of ['open wound on the goats left leg', 'the cow had a breach calving last night', 'late-term abortion in two ewes']) {
+      assert.equal(classifyIntentFallback(r).kind, 'report', `a report is not an enquiry: ${r}`)
+    }
+    // Status-by-ref resolution (unit): full ref exact, bare partial unique, unknown null.
+    const refStore = { getCaseByRef: async (ref) => (await store.listCases({}, { limit: 9999 })).find(c => c.ref === ref) || null, listCases: (w, o) => store.listCases(w, o) }
+    const anyCase = (await store.listCases({}, { limit: 5 }))[0]
+    assert.ok(anyCase && anyCase.ref, 'a real case exists to look up')
+    const full = await resolveRefForStatus(refStore, `status of ${anyCase.ref}`)
+    assert.ok(full && full.id === anyCase.id, `full ref resolves the case: ${anyCase.ref}`)
+    const partial = anyCase.ref.replace(/-[a-z0-9]+$/, '')
+    const byPartial = await resolveRefForStatus(refStore, `how is ${partial} going`)
+    assert.ok(byPartial && byPartial.id === anyCase.id, `bare partial ${partial} resolves uniquely`)
+    assert.equal(await resolveRefForStatus(refStore, 'status of CASE-99999-zzzzz'), null, 'an unknown ref resolves to null')
+    // End-to-end: a worker asks the status of a real ref -> THAT case's plain status,
+    // PII-free, and the audit logs the named case (not a fresh one).
+    const sref = anyCase.ref
+    const sasker = 'statusasker-' + Date.now()
+    const sb = adapter.sent.length
+    await runScript(adapter, [`whats the status of ${sref}`], { from: sasker, channel_id: sasker, username: sasker, wait: () => casey.drain() })
+    assert.ok(adapter.sent.length > sb, 'the status ask got a reply')
+    const sReply = adapter.sent[adapter.sent.length - 1].text || ''
+    assert.ok(sReply.includes(sref), `the status reply names the asked case ${sref}: ${sReply}`)
+    assert.ok(!sReply.includes(sasker), 'the status reply leaks no contact id')
+    // The unscoped-fleet fix: an aggregate count over the whole fleet returns the real
+    // open total (not ~0 from a reporter-scoped pull). By now many cases are seeded.
+    const casker = 'countasker-' + Date.now()
+    const cb = adapter.sent.length
+    await runScript(adapter, ['how many open cases'], { from: casker, channel_id: casker, username: casker, wait: () => casey.drain() })
+    const cReply = adapter.sent[adapter.sent.length - 1].text || ''
+    const n = Number((cReply.match(/(\d+) open reports/) || [])[1])
+    assert.ok(n >= 1, `the fleet count is the real total, not a scoped ~0: ${cReply}`)
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
