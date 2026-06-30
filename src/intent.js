@@ -20,7 +20,7 @@
 import { resolvePlace } from './places.js'
 
 export const INTENT_KINDS = ['report', 'enquiry', 'question', 'chitchat', 'status', 'help', 'human', 'stop']
-export const ENQUIRY_KINDS = ['today', 'mine', 'open', 'near']
+export const ENQUIRY_KINDS = ['today', 'mine', 'open', 'near', 'count', 'geo', 'outbreaks', 'overview', 'overdue']
 
 // Validate + normalise a model-declared intent (from the case_intent tool call).
 // Returns a clean intent or null when the declaration is unusable.
@@ -51,6 +51,20 @@ const ENQUIRY_MINE = /\b(my (cases?|reports?|work|visits?|jobs?|list|plate))\b|\
 const ENQUIRY_OPEN = /\b(open (cases?|reports?|work)|available work|anything (i can help|open)|what can i help|help with anything|(show me|list)( the| all)? (open )?(cases?|reports?))\b/
 const ENQUIRY_TODAY = /\b(itinerary|itenerary|agenda|schedule|today|todays?|on the go|whats up|what'?s up|whats on|what'?s on|whats happening|what'?s happening|whats going on|whats new|anything (today|for me))\b/
 const QUESTION_LEAD = /^(what|whats|what'?s|where|which|who|how|hows|when|is there|are there|any (cases?|reports?)|do (we|i)|can (you|i)|show me|list|find|tell me)\b/
+// FLEET-AGGREGATE enquiry shapes -- the same reach the dashboard GUI has, brought to
+// the chat: counts, hotspots-by-area, suspected outbreaks, an overall picture, and
+// what is overdue for a reply. Each maps to a pure dashboard aggregator
+// (buildGeo/buildClusters/buildOverview/buildSLAReport) over the case store, rendered
+// PII-free. 'spreading' is deliberately NOT an outbreak trigger (it mis-routes report
+// prose "cattle dying, spreading across the farm").
+const ENQUIRY_OUTBREAK = /\b(outbreaks?|clusters?|linked (cases?|reports?)|related (cases?|reports?)|suspected outbreak)\b/
+const ENQUIRY_GEO = /\b(hotspots?|which (area|areas|place|places|region|town)|where.{0,12}(most|busiest|hotspot)|busiest (area|place)|most (reports?|cases?))\b/
+const ENQUIRY_OVERDUE = /\b(overdue|over due|past due|late|at[- ]risk|breach(ed|ing)?|behind|unanswered|waiting too long|need(s|ing)? (a )?reply|sla)\b/
+const ENQUIRY_OVERVIEW = /\b(how (are|is) (things|it going|everything|we doing)|whats the (situation|picture|state)|overview|summary|sum up|status report|overall|how are we doing)\b/
+// Interrogative count head only -- "how many / number of / count of / how much".
+// Deliberately NOT a bare "total" (a quantity statement "10 total animals" is a
+// report correction, not a count question).
+const COUNT_HEAD = /\b(how many|how much|number of|count of)\b/
 
 // Pull a place out of a near-enquiry: the words after the proximity connector.
 export function extractPlace(text) {
@@ -78,6 +92,15 @@ export function classifyIntentFallback(text) {
   // explicit cases/reports/open/my-list lead counts as clear.
   const clearEnquiryLead = /\b(any|show me|list|how many|whats|what'?s|which)\b.{0,24}\b(cases?|reports?|open)\b/.test(t)
     || ENQUIRY_MINE.test(t) || ENQUIRY_OPEN.test(t)
+  // Species-count guard, BEFORE looksReport: "how many sick cattle" must answer as a
+  // count, but it names an animal so looksReport / the ANIMAL_WORDS veto would
+  // otherwise swallow it as intake. A "how many <animal/symptom>" with no explicit
+  // cases-lead is a count enquiry (the renderer tallies by species over the reports).
+  // "how many cattle died" still reads as report below (it has the animal but the
+  // count head + no enquiry frame -> the count renderer handles the species tally).
+  const howMany = COUNT_HEAD.test(t)
+  const countsAnimals = howMany && (REPORT_WORDS.test(t) || ANIMAL_WORDS.test(t))
+  if (countsAnimals && !clearEnquiryLead) return { kind: 'enquiry', enquiry_kind: 'count', source: 'fallback' }
   // A clear animal description is a REPORT, however it is phrased -- this wins over
   // every enquiry/question shape so a real report is never mis-read. EXCEPT when the
   // message opens with a clear enquiry frame (above), which pre-empts it.
@@ -90,6 +113,23 @@ export function classifyIntentFallback(text) {
   // losses around musina" describe animals, so they open a report. (An explicit
   // "any reports/cases in <place>" is a clear enquiry and still enquires below.)
   if (ANIMAL_WORDS.test(t) && !clearEnquiryLead) return { kind: 'report', source: 'fallback' }
+  // FLEET-AGGREGATE enquiries -- the dashboard's reach in the chat. Checked after the
+  // report/animal veto (a real report always wins) and BEFORE the per-case
+  // near/mine/open/today cascade. Order matters: outbreaks/geo are distinct fleet
+  // rollups, so "which area has the most" is a hotspot summary, not a place-scoped
+  // list; overdue is noun-gated so it never fires on report prose ("waiting to give
+  // birth"); count needs a cases/reports noun here (the animal form already returned
+  // above via the species-count guard).
+  if (ENQUIRY_OUTBREAK.test(t)) return { kind: 'enquiry', enquiry_kind: 'outbreaks', source: 'fallback' }
+  if (ENQUIRY_GEO.test(t)) return { kind: 'enquiry', enquiry_kind: 'geo', source: 'fallback' }
+  // Overdue is noun-gated on an EXISTING-DATA context word (cases/reports/open/reply/
+  // sla/anything/everything) -- NOT on the trigger word itself ("late"/"overdue"),
+  // which appears in plain report prose ("my order is late", "the cow is waiting").
+  // So "whats overdue"/"anything running late"/"any reports overdue" enquire, while a
+  // bare "X is late" stays a report.
+  if (ENQUIRY_OVERDUE.test(t) && (mentionsCases || /\b(open|reply|sla|anything|everything|whats|what'?s)\b/.test(t))) return { kind: 'enquiry', enquiry_kind: 'overdue', source: 'fallback' }
+  if (ENQUIRY_OVERVIEW.test(t)) return { kind: 'enquiry', enquiry_kind: 'overview', source: 'fallback' }
+  if (howMany && mentionsCases) return { kind: 'enquiry', enquiry_kind: 'count', source: 'fallback' }
   if (ENQUIRY_NEAR.test(t) && mentionsCases) return { kind: 'enquiry', enquiry_kind: 'near', place: extractPlace(t), source: 'fallback' }
   // A proximity ENQUIRY ("whats near margate", "nearest case to margate", "any near
   // X") where the place RESOLVES to a known SA town/province is an enquiry even

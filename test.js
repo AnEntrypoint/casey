@@ -2695,6 +2695,59 @@ async function main() {
     assert.ok(!/full report/i.test(greetReply), `a greeting on a complete case must NOT be the complete-report exit: ${greetReply}`)
   })
 
+  await test('chat reaches GUI: fleet-aggregate enquiries (count/geo/outbreaks/overview/overdue) answer from the store, PII-free', async () => {
+    const { classifyIntentFallback } = await import('./src/intent.js')
+    // Classifier precedence -- the whole correctness of routing.
+    assert.equal(classifyIntentFallback('how many open reports').enquiry_kind, 'count', 'open count -> count')
+    assert.equal(classifyIntentFallback('how many sick cattle').enquiry_kind, 'count', 'animal count -> count (pre-veto guard)')
+    assert.equal(classifyIntentFallback('where are the outbreaks').enquiry_kind, 'outbreaks', 'outbreaks -> outbreaks')
+    assert.equal(classifyIntentFallback('which area has the most reports').enquiry_kind, 'geo', 'which area -> geo (not near)')
+    assert.equal(classifyIntentFallback('any cases near margate').enquiry_kind, 'near', 'near <place> stays near, not geo')
+    assert.equal(classifyIntentFallback('whats running late').enquiry_kind, 'overdue', 'late -> overdue')
+    assert.equal(classifyIntentFallback('how are we doing').enquiry_kind, 'overview', 'how are we doing -> overview')
+    // Report-veto: report prose with an aggregate-ish word stays a report.
+    assert.equal(classifyIntentFallback('the cow has been waiting to give birth').kind, 'report', '"waiting" in report prose is not overdue')
+    assert.equal(classifyIntentFallback('report some sheep losses around musina').kind, 'report', 'a loss report is not geo/near')
+    // End-to-end on real services: seed open cases sharing a place (so geo/outbreaks
+    // have something), then drive each aggregate enquiry through the handler. Assert a
+    // real aggregate answer AND no external_id / phone / case ref leaks.
+    const stamp = Date.now()
+    const seeded = []
+    for (const loc of ['Thohoyandou', 'Thohoyandou']) {
+      const who = `agg-${loc}-${stamp}-${seeded.length}`
+      await runScript(adapter, [`my cattle are coughing at the farm near ${loc}, owner on 0820001111`], { from: who, channel_id: who, username: who, wait: () => casey.drain() })
+      seeded.push(who)
+    }
+    const ask = async (msg) => {
+      const who = `aggasker-${stamp}-${msg.replace(/\W+/g, '').slice(0, 8)}`
+      const before = adapter.sent.length
+      await runScript(adapter, [msg], { from: who, channel_id: who, username: who, wait: () => casey.drain() })
+      assert.ok(adapter.sent.length > before, `"${msg}" got a reply`)
+      return { who, text: adapter.sent[adapter.sent.length - 1].text || '' }
+    }
+    const count = await ask('how many open cases')
+    assert.ok(/\d+ open reports/i.test(count.text), `count answers with a number: ${count.text}`)
+    const geo = await ask('which area has the most reports')
+    assert.ok(/busiest areas|no reports have a place/i.test(geo.text), `geo answers with hotspots: ${geo.text}`)
+    const over = await ask('how are we doing')
+    assert.ok(/here is the picture|open and \d+ closed/i.test(over.text), `overview answers with the picture: ${over.text}`)
+    const late = await ask('whats overdue')
+    assert.ok(/overdue|waiting longer|the team has been flagged/i.test(late.text), `overdue answers about SLA: ${late.text}`)
+    const breaks = await ask('where are the outbreaks')
+    assert.ok(/linked report groups|no groups of linked/i.test(breaks.text), `outbreaks answers about clusters: ${breaks.text}`)
+    // PII veto: NONE of the aggregate replies may carry a seeded external_id or phone.
+    for (const r of [count, geo, over, late, breaks]) {
+      assert.ok(!r.text.includes('0820001111'), `aggregate reply leaks no phone: ${r.text}`)
+      for (const s of seeded) assert.ok(!r.text.includes(s), `aggregate reply leaks no external_id: ${r.text}`)
+    }
+    // Direct PII witness: the outbreaks renderer must never surface a cluster member's
+    // id/subject. buildClusters members carry contact-supplied free text.
+    const { buildClusters } = await import('./src/clusters.js')
+    const pool = (await store.listCases({}, { limit: 500 }))
+    const cl = buildClusters(pool)
+    if (cl.length) assert.ok(cl[0].members, 'clusters carry members internally (which the chat must NOT render)')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')

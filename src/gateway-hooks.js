@@ -24,7 +24,10 @@ import { runTurn } from 'freddie'
 import { projectCase, DEFAULT_PROJECTION } from '../../freddie/src/plugins/case/toolset.js'
 import { VISIT_CRITICAL } from './case-health.js'
 import { extractFields } from './extract.js'
-import { buildAlertPayload } from './report-analytics.js'
+import { buildAlertPayload, buildSLAReport } from './report-analytics.js'
+import { buildGeo } from './geo.js'
+import { buildClusters } from './clusters.js'
+import { buildOverview } from './overview.js'
 import { fmtTimeSAST } from './format.js'
 import { classifyIntentFallback, normalizeIntent } from './intent.js'
 import { advanceConversation } from './conversation-fsm.js'
@@ -162,11 +165,14 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     // instruction, so "any cases in kzn" gets listed instead of deflected.
     `Sometimes the worker is not reporting a new animal but ASKING about existing`,
     `reports -- what is on today, their own reports, open work they could help with,`,
-    `or any reports in a place (a town or a province such as KwaZulu-Natal/kzn). When`,
-    `the latest message is such an ask, call case_intent with kind "enquiry" and the`,
-    `matching enquiry_kind (today / mine / open / near), putting any town or province`,
-    `in place; casey lists the reports for you, so do not answer from memory. Leave a`,
-    `fresh animal report to your normal tools.`,
+    `any reports in a place (a town or a province such as KwaZulu-Natal/kzn), how many`,
+    `reports are open, where the busiest areas or suspected outbreaks are, an overall`,
+    `picture of how things are going, or what is overdue for a reply. When the latest`,
+    `message is such an ask, call case_intent with kind "enquiry" and the matching`,
+    `enquiry_kind (today / mine / open / near / count / geo / outbreaks / overview /`,
+    `overdue), putting any town or province in place; casey works out the numbers and`,
+    `lists the reports for you, so do not answer from memory. Leave a fresh animal`,
+    `report to your normal tools.`,
     ``,
     // The "CURRENT CASE <ref> (id=<id>)" token is parsed by tooling/tests; keep it.
     `CURRENT CASE ${caseRow.ref} (id=${caseRow.id})  [private -- do not mention to the person]`,
@@ -570,6 +576,85 @@ function itineraryLine(row, lang) {
   return `- ${p.ref}: ${plainStatus(p.status, lang)} -- ${subj}${tail}`
 }
 
+// Hydrate the per-case event log for the aggregators that need it (overview, sla).
+// Sequential by design but capped by the caller's slice so a latency-sensitive chat
+// turn never fans out unboundedly. Returns the Map<caseId, events[]> shape
+// buildOverview/buildSLAReport expect (they call evData internally on raw events).
+async function hydrateEvents(store, cases) {
+  const m = new Map()
+  for (const c of cases) m.set(c.id, await store.listEvents(c.id).catch(() => []))
+  return m
+}
+
+// Answer a FLEET-AGGREGATE enquiry -- the same reach the dashboard GUI has -- by
+// calling the existing pure aggregators over the case store and rendering a warm,
+// plain-language, PII-FREE summary. NEVER a per-case row, ref, external_id, phone, or
+// operator identity reaches a field worker here: counts and place/species tokens
+// only. Never a dead-end -- every branch invites a fresh report. The whole body is in
+// one try with the same warm catch as renderItinerary, so a store hiccup degrades
+// gracefully.
+async function renderAggregate(store, kind, author, inboundText, now = Date.now()) {
+  try {
+    const CAP = 500
+    const all = await store.listCases({}, { limit: CAP, user: author })
+    const open = all.filter(c => c.status !== 'closed')
+    const tail = ' Tell me about an animal and I will start a report.'
+    if (kind === 'count') {
+      const todayCut = new Date(now); todayCut.setHours(0, 0, 0, 0)
+      // last_event_at/created_at are ISO strings -- Date.parse, not Number().
+      const today = open.filter(c => Date.parse(c.last_event_at || c.created_at) >= todayCut.getTime()).length
+      const mine = author ? open.filter(c => c.assignee === author).length : 0
+      let body = `Right now there are ${open.length} open reports. ${today} had activity today.`
+      if (author) body += ` ${mine} are on your list.`
+      // Animal-bearing count -> a per-species tally over the open reports (reported
+      // head is a lower bound -- only what workers entered).
+      if (/\b(cattle|cow|cows|calf|calves|ox|oxen|sheep|lamb|goat|goats|pig|pigs|chicken|chickens|poultry|herd|livestock|animal|animals)\b/.test((inboundText || '').toLowerCase())) {
+        const bySpecies = {}
+        for (const c of open) {
+          const sp = String(parseReportSafe(c.report).species || '').toLowerCase().trim()
+          if (sp) bySpecies[sp] = (bySpecies[sp] || 0) + 1
+        }
+        const lines = Object.entries(bySpecies).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([sp, n]) => `- ${sp}: ${n} reports`)
+        if (lines.length) body += `\nBy what workers entered:\n${lines.join('\n')}`
+      }
+      return body + tail
+    }
+    if (kind === 'geo') {
+      const places = buildGeo(open).filter(p => p.place && p.place !== 'unknown').slice(0, 3)
+      if (!places.length) return 'No reports have a place on them yet.' + tail
+      return `The busiest areas right now:\n${places.map(p => `- ${p.place}: ${p.count}`).join('\n')}` + tail
+    }
+    if (kind === 'outbreaks') {
+      // Tokenized merged-tag filter (matches the dashboard), then surface ONLY the
+      // aggregate count/species/location -- NEVER iterate cl.members (they carry
+      // id/subject = contact-supplied free text, a PII path).
+      const pool = open.filter(c => !String(c.tags || '').split(',').map(s => s.trim()).includes('merged'))
+      const cl = buildClusters(pool).slice(0, 3)
+      if (!cl.length) return 'No groups of linked reports stand out yet.' + tail
+      return `Possible linked report groups:\n${cl.map(c => `- ${c.count} reports${c.species && c.species[0] ? ` of ${c.species[0]}` : ''} around ${(c.location && c.location[0]) || 'an area'}`).join('\n')}` + tail
+    }
+    if (kind === 'overview') {
+      const ev = await hydrateEvents(store, all.slice(0, 200))
+      const o = buildOverview(all, ev, now)
+      const closed = all.filter(c => c.status === 'closed').length
+      const med = o.first_response_ms?.median
+      const speed = med == null ? 'no reply speed measured yet' : `usually replying in about ${Math.round(med / 60000)} min`
+      return `Here is the picture: ${open.length} open and ${closed} closed, ${speed}.` + tail
+    }
+    if (kind === 'overdue') {
+      const ev = await hydrateEvents(store, all.slice(0, 200))
+      const th = store.resolveThresholds ? await store.resolveThresholds() : null
+      const target = Number.isFinite(th?.handoffMs) ? th.handoffMs : 30 * 60 * 1000
+      const sla = buildSLAReport(all, ev, target, now)
+      const late = sla.breached_count
+      return (late ? `${late} report(s) are waiting longer than they should for a reply. The team has been flagged.` : 'Good news -- nothing is overdue right now.') + tail
+    }
+    return 'Your list is empty for now.' + tail
+  } catch {
+    return 'I could not pull that up just now. Please try again in a moment, or tell me about an animal and I will start a report.'
+  }
+}
+
 // Render a warm, plain-language itinerary answer for a worker enquiry. Pulls the
 // rows via the store's enquiry queries (the same listCases the freddie enquiry
 // tools use), projects each PII-free, and never dead-ends: an empty list invites
@@ -582,6 +667,12 @@ async function renderItinerary(store, kind, author, inboundText, now = Date.now(
   // region (then we fall back to a raw substring match on the place text).
   const resolvedPlace = place ? resolvePlace(place) : null
   let rows = []
+  // FLEET-AGGREGATE kinds (count/geo/outbreaks/overview/overdue) reach the dashboard
+  // aggregators rather than listing per-case rows -- they answer "how many open",
+  // "where are the hotspots/outbreaks", "how are we doing", "whats overdue". They
+  // never touch itineraryLine (no per-case rows) so no PII path is involved.
+  const AGGREGATE = new Set(['count', 'geo', 'outbreaks', 'overview', 'overdue'])
+  if (AGGREGATE.has(kind)) return await renderAggregate(store, kind, author, inboundText, now)
   try {
     if (kind === 'mine') {
       rows = await store.listCases({ assignee: author }, { limit: 20 })

@@ -165,13 +165,13 @@ export function buildCaseToolset(storeOrNull) {
       toolset: 'cases',
       schema: {
         name: 'case_intent',
-        description: 'Declare what the person\'s latest message IS, so casey routes it correctly. Call this when the message is NOT a fresh animal report -- e.g. they are asking about existing cases ("what is on today", "my cases", "any reports in <a town or province like Margate or KZN>"), asking a general question, or just greeting. casey lists the reports / answers the question itself; you do not need to. Leave report intake to your normal tools.',
+        description: 'Declare what the person\'s latest message IS, so casey routes it correctly. Call this when the message is NOT a fresh animal report -- e.g. they are asking about existing cases ("what is on today", "my cases", "any reports in <a town or province like Margate or KZN>"), asking how many reports are open ("how many open cases"), where the hotspots are ("which area has the most reports"), which outbreaks are suspected ("where are the outbreaks"), an overall picture ("how are we doing"), or what is overdue for a reply ("whats running late") -- as well as a general question or a greeting. casey lists the reports / answers the question itself; you do not need to. Leave report intake to your normal tools.',
         parameters: {
           type: 'object',
           properties: {
             id: str('Case id'),
             kind: str('What the message is', { enum: ['report', 'enquiry', 'question', 'chitchat', 'status', 'help', 'human', 'stop'] }),
-            enquiry_kind: str('For an enquiry: which list', { enum: ['today', 'mine', 'open', 'near'] }),
+            enquiry_kind: str('For an enquiry: which view', { enum: ['today', 'mine', 'open', 'near', 'count', 'geo', 'outbreaks', 'overview', 'overdue'] }),
             place: str('For a place enquiry: the town or province named (e.g. "Margate" or "kzn" / "Eastern Cape")'),
           },
           required: ['id', 'kind'],
