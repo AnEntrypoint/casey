@@ -617,7 +617,7 @@ async function hydrateEvents(store, cases) {
 // only. Never a dead-end -- every branch invites a fresh report. The whole body is in
 // one try with the same warm catch as renderItinerary, so a store hiccup degrades
 // gracefully.
-async function renderAggregate(store, kind, author, inboundText, now = Date.now(), place = '') {
+async function renderAggregate(store, kind, author, inboundText, now = Date.now(), place = '', status = '') {
   try {
     const CAP = 500
     // UNSCOPED fleet read -- deliberately NO user:author. thatcher row_access is
@@ -633,6 +633,16 @@ async function renderAggregate(store, kind, author, inboundText, now = Date.now(
     const open = all.filter(c => c.status !== 'closed')
     const tail = ' Tell me about an animal and I will start a report.'
     if (kind === 'count') {
+      // Per-status breakdown ("how many waiting/new/resolved"): count cases in that
+      // status over the whole fleet (open is the non-closed slice; a closed/resolved
+      // ask counts over `all`). Plain worker-facing sentence, count only.
+      if (status) {
+        const want = String(status).toLowerCase()
+        const pool = (want === 'closed' || want === 'resolved' || want === 'done' || want === 'finished') ? all : open
+        const n = pool.filter(c => String(c.status || '').toLowerCase() === want).length
+        const label = want.replace(/_/g, ' ')
+        return `There are ${n} reports ${label}.` + tail
+      }
       // Place-scoped count ("how many open in limpopo"): filter open by the resolved
       // region terms over the hydrated report, then COUNT (never list rows). Framed as
       // a FLOOR because the CAP=500 recency slice can under-count a very busy area.
@@ -705,7 +715,7 @@ async function renderAggregate(store, kind, author, inboundText, now = Date.now(
 // tools use), projects each PII-free, and never dead-ends: an empty list invites
 // the worker to start a report rather than leaving them with nothing. `kind` is the
 // enquiry_kind (today|mine|open|near); `place` is set for a near-enquiry.
-async function renderItinerary(store, kind, author, inboundText, now = Date.now(), place = '') {
+async function renderItinerary(store, kind, author, inboundText, now = Date.now(), place = '', status = '') {
   const lang = guessLang(inboundText)
   // Resolve the place to a SA region (province + its towns) once, up front, so both
   // the row match and the reply copy can use it. null when the place names no known
@@ -717,7 +727,7 @@ async function renderItinerary(store, kind, author, inboundText, now = Date.now(
   // "where are the hotspots/outbreaks", "how are we doing", "whats overdue". They
   // never touch itineraryLine (no per-case rows) so no PII path is involved.
   const AGGREGATE = new Set(['count', 'geo', 'outbreaks', 'overview', 'overdue'])
-  if (AGGREGATE.has(kind)) return await renderAggregate(store, kind, author, inboundText, now, place)
+  if (AGGREGATE.has(kind)) return await renderAggregate(store, kind, author, inboundText, now, place, status)
   try {
     if (kind === 'mine') {
       rows = await store.listCases({ assignee: author }, { limit: 20 })
@@ -1447,7 +1457,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
     if (conv.route === 'enquiry' || conv.route === 'answer' || chitchatDeterministic) {
       const author = msg.from || external_id
       const text = conv.route === 'enquiry'
-        ? await renderItinerary(store, turnIntent.enquiry_kind || 'today', author, inboundText, Date.now(), turnIntent.place || '')
+        ? await renderItinerary(store, turnIntent.enquiry_kind || 'today', author, inboundText, Date.now(), turnIntent.place || '', turnIntent.status || '')
         : conv.route === 'answer'
           ? answerQuestion(inboundText, fresh)
           : warmConversationalReply(inboundText, fresh, mostImportantMissingField(fresh.report))

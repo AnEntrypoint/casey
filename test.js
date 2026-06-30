@@ -2759,6 +2759,10 @@ async function main() {
     assert.equal(classifyIntentFallback('is anything urgent').enquiry_kind, 'overdue', 'urgent -> overdue')
     const cplace = classifyIntentFallback('how many open in limpopo')
     assert.equal(cplace.enquiry_kind, 'count'); assert.ok(cplace.place, 'count carries the place')
+    // Status-breakdown: "how many waiting/new/resolved" -> count carrying the status.
+    const cwait = classifyIntentFallback('how many waiting')
+    assert.equal(cwait.enquiry_kind, 'count'); assert.equal(cwait.status, 'waiting', 'count carries the status')
+    assert.equal(classifyIntentFallback('the cow is waiting to calve').kind, 'report', 'a status word in report prose stays a report')
     // Report-veto holds against the aggregate triggers.
     for (const r of ['open wound on the goats left leg', 'the cow had a breach calving last night', 'late-term abortion in two ewes']) {
       assert.equal(classifyIntentFallback(r).kind, 'report', `a report is not an enquiry: ${r}`)

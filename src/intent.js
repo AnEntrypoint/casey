@@ -139,9 +139,15 @@ export function classifyIntentFallback(text) {
   // above via the species-count guard).
   // A "how many ..." count question wins over the overdue/outbreak triggers it may
   // also contain ("how many cases are open and unanswered" is a COUNT, not overdue).
-  if (howMany && (mentionsCases || FUZ_OPEN.test(t))) {
+  // A status word ("how many waiting/new/resolved/in progress/...") routes to a
+  // per-status breakdown -- the count head guards against a report ("the cow is
+  // waiting" has no "how many"), so report-veto is preserved. The status is carried
+  // for the renderer to count cases in THAT status.
+  const statusWord = (t.match(/\b(waiting|new|resolved|closed|triaging|in[ _]progress|in progress|done|finished|active|pending)\b/) || [])[1]
+  if (howMany && (mentionsCases || FUZ_OPEN.test(t) || statusWord)) {
     const cp0 = resolvePlace(t)
-    return { kind: 'enquiry', enquiry_kind: 'count', source: 'fallback', ...(cp0 ? { place: cp0.matchedAlias } : {}) }
+    const status = statusWord ? statusWord.replace(/[ ]/g, '_') : null
+    return { kind: 'enquiry', enquiry_kind: 'count', source: 'fallback', ...(cp0 ? { place: cp0.matchedAlias } : {}), ...(status ? { status } : {}) }
   }
   if (ENQUIRY_OUTBREAK.test(t) || FUZ_OUTBREAK.test(t)) return { kind: 'enquiry', enquiry_kind: 'outbreaks', source: 'fallback' }
   if (ENQUIRY_GEO.test(t)) return { kind: 'enquiry', enquiry_kind: 'geo', source: 'fallback' }
