@@ -375,6 +375,10 @@ function isPromptEcho(text) {
 // ref. Deterministic, ASCII, no model in the loop -- the contact can never be
 // handed a fabricated reference. Returns { text, corrected:[wrong refs] }.
 const CASE_REF_RE = /CASE-\d+-[a-z0-9]+/gi
+// Report-shaped content: a symptom or an animal word. One source of truth for "is
+// this an animal report?" used by the status-by-ref guard and the fresh-report
+// branch, so the two cannot drift.
+const REPORT_SHAPED_RE = /\b(sick|ill|dead|dying|died|drool|blood|bleed|limp|lame|blister|cough|swollen|cattle|cow|cows|calf|sheep|lamb|goat|goats|pig|pigs|herd|livestock|animal|animals)\b/i
 // A worker asking the STATUS of a case by reference: a full "CASE-1089-dgpgd" OR a
 // bare partial "CASE-1089". Matched on the RAW inbound (normalizeIntentText strips
 // the hyphens). Anchored to the CASE- token so a number alone never trips it.
@@ -590,14 +594,18 @@ export function detectEnquiryIntent(text) {
 // number can never reach a worker's list.
 function itineraryLine(row, lang) {
   const p = projectCase(row, DEFAULT_PROJECTION)
-  // species/location live in the report JSON, not as columns -- projectCase reads raw
-  // columns, so p.species/p.location are undefined. Hydrate the report for a real
-  // subject fallback (otherwise every line read "a report"). subject is a real column.
+  // CONTENT-FIRST + terse: show the REPORT subject (species/location from the report
+  // JSON, not a column), NOT the verbose plainStatus sentence (which read like a
+  // holding reply in a list). Status is demoted to a short parenthetical label. No
+  // trailing comma. PII-free via projectCase.
   const rep = parseReportSafe(row.report)
-  const subj = (p.subject || rep.species || rep.location || 'a report').toString().slice(0, 60)
+  const clean = (s) => String(s || '').replace(/\s*,\s*/g, ' ').replace(/\s+/g, ' ').trim()
+  const species = clean(rep.species), location = clean(rep.location)
+  let subject = (species && location) ? `${species} near ${location}` : species || location || clean(p.subject) || 'a report'
+  subject = subject.slice(0, 60).replace(/[\s,]+$/, '')
   const when = p.last_event_at ? fmtTimeSAST(p.last_event_at) : ''
-  const tail = when ? ` (last active ${when})` : ''
-  return `- ${p.ref}: ${plainStatus(p.status, lang)} -- ${subj}${tail}`
+  const meta = `${shortStatus(p.status, lang)}${when ? `, last active ${when}` : ''}`
+  return `- ${p.ref} -- ${subject} (${meta})`
 }
 
 // Hydrate the per-case event log for the aggregators that need it (overview, sla).
@@ -745,12 +753,26 @@ async function renderItinerary(store, kind, author, inboundText, now = Date.now(
       const all = await store.listCases({}, { limit: 200 })
       const p = String(place || '').toLowerCase().trim()
       const terms = resolvedPlace ? resolvedPlace.terms : (p ? [p] : [])
+      // The EXACT named town (not the whole resolved region) for "closest" ordering.
+      const exactTerm = p || null
       rows = terms.length
         ? all.filter(r => {
           const rep = parseReportSafe(r.report)
           const hay = `${rep.location || ''} ${r.subject || ''} ${rep.species || ''}`.toLowerCase()
           return terms.some(term => containsTerm(hay, term))
-        }).slice(0, 20)
+        })
+          // Closest-first: a case whose location names the EXACT town the worker asked
+          // about ranks above other towns in the same region (no geocoder, so an exact
+          // place-name match is the proxy for proximity); recency breaks ties.
+          .map(r => {
+            const rep = parseReportSafe(r.report)
+            const hay = `${rep.location || ''} ${r.subject || ''}`.toLowerCase()
+            const exact = exactTerm && containsTerm(hay, exactTerm) ? 0 : 1
+            return { r, exact, recency: Date.parse(r.last_event_at || r.created_at) || 0 }
+          })
+          .sort((a, b) => a.exact - b.exact || b.recency - a.recency)
+          .slice(0, 20)
+          .map(x => x.r)
         : []
     } else { // 'today'
       const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0)
@@ -1065,11 +1087,36 @@ function intakeAdvanceReply(contactText, caseRow, justFilled, fact) {
   // on a bare "Thank you. + ref". When a fact WAS just captured we still lead with
   // its acknowledgement (the completing answer) before the confirm-and-exit.
   if (!hint) {
-    const close = completeReply(contactText, caseRow)
-    return ack ? `${ack} ${close}` : close
+    // Defence-in-depth: completeReply (the "we have the full report" EXIT) fires only
+    // on a GENUINE completion arc -- the report is complete AND either a fact was
+    // captured this turn (the completing answer) OR this inbound introduces no
+    // differing species/location (a real wrap-up/thanks). A fresh-content turn on a
+    // complete case is handled by the branch in handleInbound; if it ever reaches here
+    // (the model-error fallback), we do NOT exit -- we fall through to drive the most
+    // important missing field rather than dead-end. (An animal word alone, e.g.
+    // "thanks, the cattle are fine now", does NOT block the exit -- only a DIFFERING
+    // species/location does.)
+    if (isCompletionArc(justFilled, caseRow?.report, contactText)) {
+      const close = completeReply(contactText, caseRow)
+      return ack ? `${ack} ${close}` : close
+    }
+    const drive = mostImportantMissingField(caseRow?.report)
+    const lead0 = ack || intakeOpener(lang)
+    return drive ? `${lead0} ${askCarrier(lang, drive)}${refTail(contactText, caseRow)}` : completeReply(contactText, caseRow)
   }
   const lead = ack || intakeOpener(lang)
   return `${lead} ${askCarrier(lang, hint)}${refTail(contactText, caseRow)}`
+}
+
+// completeReply (the complete-report EXIT) may fire ONLY on a genuine completion arc:
+// the report is complete (nextAsk null) AND either a fact was captured this turn (the
+// completing answer) OR the inbound names no differing species/location (a real
+// wrap-up). A fresh-content turn that names a different species/location is NOT a
+// completion -- it must not dead-end on the exit.
+function isCompletionArc(justCaptured, reportRaw, inboundText) {
+  if (nextAsk(reportRaw) !== null) return false
+  if (Array.isArray(justCaptured) && justCaptured.length) return true
+  return detectNewCaseConflict(inboundText || '', reportRaw).length === 0
 }
 
 // The degraded reply that does NOT dead-end: when the model errored/echoed/emptied
@@ -1260,13 +1307,45 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         const wrote = await syncSummaryFromCaptured(store, fresh, log)
         if (wrote) fresh = await store.getCase(fresh.id)
       }
-      // Escape route: a returning contact who states a clearly NEW situation
-      // (a species/location that conflicts with the recorded report) must not be
-      // trapped urging the old case's missing fields. The conflicting value was
-      // dropped by fill-if-empty, so flag the case for an operator to split --
-      // once, on the rising edge -- rather than auto-splitting a fuzzy signal.
+      // A returning worker who states a clearly NEW situation (a species/location that
+      // conflicts with the recorded report). Two cases, by whether the bound case is
+      // already complete:
       const conflicts = detectNewCaseConflict(inboundText, fresh.report)
-      if (conflicts.length && !(fresh.tags || '').split(',').map(s => s.trim()).includes('needs-split')) {
+      // FRESH-REPORT BRANCH: the bound case is COMPLETE (nextAsk null), the message is
+      // report-shaped, names a DIFFERENT species/location, and is not a fixed intent or
+      // a ref-status ask -> the worker is STARTING a new report. Open a fresh case on
+      // the same conversation, rebind it active, replay the inbound onto the empty case
+      // so the new facts land there, and drive intake from it -- instead of the
+      // complete-report exit (the witnessed "amapondos near the main road" -> "we have
+      // the full report ... CASE-1089" dead-end). The continuation guard is structural:
+      // detectNewCaseConflict needs a PRESENT-AND-DIFFERENT key, so a same/unstated
+      // follow-up returns [] and never branches; an INCOMPLETE case has nextAsk != null
+      // and takes the needs-split path below, never this branch.
+      const startsFreshReport = conflicts.length > 0
+        && nextAsk(fresh.report) === null
+        && REPORT_SHAPED_RE.test(inboundText || '')
+        && detectContactIntent(inboundText) == null
+        && !REF_STATUS_RE.test(inboundText || '')
+      if (startsFreshReport) {
+        try {
+          const oldRef = fresh.ref
+          const branched = await store.branchCase({ channel, external_id, contact_id: fresh.contact_id })
+          await store.setActiveCase(msg.from || external_id, branched.id)
+          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-BRANCHED:${oldRef}->${branched.ref} worker started a fresh report (different ${conflicts.join(' and ')}) on a complete case.` })
+          await store.appendEvent(branched.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-BRANCHED:${oldRef}->${branched.ref} opened for a fresh report.` })
+          try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'branched-from-lineage') }) } catch { /* best effort */ }
+          fresh = branched
+          // Replay the inbound onto the empty new case so the dropped facts (location,
+          // how_to_find, ...) land on the FRESH report, then drive intake from there.
+          justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log)
+          fresh = await store.getCase(fresh.id)
+          const bk = await bindPendingAsk(store, fresh.id, inboundText, justCaptured, log)
+          if (bk) { justCaptured = [...justCaptured, bk]; fresh = await store.getCase(fresh.id) }
+          if (justCaptured.length) { const w = await syncSummaryFromCaptured(store, fresh, log); if (w) fresh = await store.getCase(fresh.id) }
+        } catch (e) { log.warn?.('[casey] fresh-report branch failed', { caseId: fresh.id, error: e.message }) }
+      } else if (conflicts.length && !(fresh.tags || '').split(',').map(s => s.trim()).includes('needs-split')) {
+        // INCOMPLETE conflicting case: flag for an operator to split (the old
+        // behaviour) -- do not auto-branch a half-done report on a fuzzy signal.
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-SIGNAL: contact stated a different ${conflicts.join(' and ')} than the recorded report -- may be a new situation; flagged for an operator to split.` })
         try {
           await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-split') })
@@ -1299,7 +1378,7 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       // Block only on a GENUINE report (animal/symptom content), not the classifier's
       // catch-all report default -- "status of CASE-1089" names no animal and must
       // look up the status, while "CASE-1089 my cow is sick" is intake.
-      const reportShaped = /\b(sick|ill|dead|dying|died|drool|blood|bleed|limp|lame|blister|cough|swollen|cattle|cow|cows|calf|sheep|lamb|goat|goats|pig|pigs|herd|livestock|animal|animals)\b/.test((inboundText || '').toLowerCase())
+      const reportShaped = REPORT_SHAPED_RE.test(inboundText || '')
       if (namesRef && !reportShaped) {
         const target = await resolveRefForStatus(store, inboundText)
         if (target) {
@@ -2323,6 +2402,19 @@ const STATUS_STRINGS = {
 
 function plainStatus(status, lang = 'en') {
   const S = STATUS_STRINGS[lang] || STATUS_STRINGS.en
+  return S[status] || S._
+}
+
+// Short status LABELS for a list context (an enquiry itinerary line), distinct from
+// the verbose plainStatus SENTENCES (which read like a holding reply in a list).
+const STATUS_LABELS = {
+  en: { new: 'new', triaging: 'being looked at', in_progress: 'in progress', waiting: 'waiting', resolved: 'sorted', closed: 'closed', _: 'open' },
+  af: { new: 'nuut', triaging: 'word bekyk', in_progress: 'aan die gang', waiting: 'wag', resolved: 'reggemaak', closed: 'gesluit', _: 'oop' },
+  zu: { new: 'okusha', triaging: 'kuyabhekwa', in_progress: 'kuyaqhubeka', waiting: 'kulindile', resolved: 'kulungisiwe', closed: 'kuvaliwe', _: 'kuvuliwe' },
+  xh: { new: 'entsha', triaging: 'kuyajongwa', in_progress: 'kuyaqhubeka', waiting: 'kulindile', resolved: 'kulungisiwe', closed: 'kuvaliwe', _: 'kuvuliwe' },
+}
+function shortStatus(status, lang = 'en') {
+  const S = STATUS_LABELS[lang] || STATUS_LABELS.en
   return S[status] || S._
 }
 

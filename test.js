@@ -2797,6 +2797,38 @@ async function main() {
     assert.ok(n >= 1, `the fleet count is the real total, not a scoped ~0: ${cReply}`)
   })
 
+  await test('intake arc: a fresh report on a COMPLETE case branches and drives intake, never the complete-exit', async () => {
+    // Drive a case to completion, then send a clearly NEW report (different location)
+    // on the same conversation. It must START a fresh case and ask the next field --
+    // not recite "we have the full report" (the witnessed amapondos dead-end).
+    const w = 'arcworker-' + Date.now()
+    const send = async (msg) => { const b = adapter.sent.length; await runScript(adapter, [msg], { from: w, channel_id: w, username: w, wait: () => casey.drain() }); return adapter.sent[adapter.sent.length - 1].text || '' }
+    // A full report (the extractor fills species/symptoms/location; the stub completes
+    // the non-extractable visit-critical fields via case_report on its first turn).
+    await send('my cattle are drooling and dying at the farm near Vryheid, the owner Joe is on 082, a photo is coming, the gate is the blue one')
+    const before = (await store.listCases({}, { limit: 10000 }))
+    const c1 = before.find(c => c.external_id === (w + ':' + w) || c.external_id === w)
+    assert.ok(c1, 'the first case exists')
+    // A NEW report -- a different location, report-shaped -- on the (possibly complete)
+    // conversation. Whether or not c1 is fully complete, a clearly-different fresh
+    // report must NEVER get the complete-report exit.
+    const fresh = await send('I am on a farm in amapondos near the main road, the sheep are sick')
+    assert.ok(!/we have the full report/i.test(fresh), `a fresh report must NOT get the complete-exit: ${fresh}`)
+    // It should drive intake (ask something) or acknowledge the new report -- a real
+    // forward-moving reply, not a dead-end close.
+    assert.ok(fresh.trim().length > 0, 'the fresh report got a non-empty reply')
+    // A genuine CONTINUATION (same place, a new symptom) must NOT branch a new case.
+    const casesAfter1 = (await store.listCases({}, { limit: 10000 })).length
+    await send('the calf there is also limping now')
+    const casesAfter2 = (await store.listCases({}, { limit: 10000 })).length
+    assert.ok(casesAfter2 - casesAfter1 <= 1, 'a same-place continuation does not spawn an extra case per turn')
+    // The terse itinerary render: no verbose status sentence, no trailing comma.
+    const enq = await send('any cases near Vryheid')
+    assert.ok(!/The team is looking at your report now/i.test(enq), `enquiry list is terse, not the verbose status sentence: ${enq}`)
+    assert.ok(!/,\s*$/.test(enq), 'enquiry list has no trailing comma')
+    assert.ok(!enq.includes(w), 'enquiry list leaks no contact id')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')

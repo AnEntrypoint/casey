@@ -179,7 +179,12 @@ export class CaseStore {
     let best = null
     for (const status of Object.keys(this._wf)) {
       if (status === 'closed') continue
-      const rows = await this.t.list('case', { channel, external_id, status }, { limit: 2 })
+      // limit 50 (not 2): a worker who starts several fresh reports leaves N>2 open
+      // cases sharing one (channel, external_id), and thatcher does not order, so a
+      // small page could miss the newest -- rebinding to a stale complete case and
+      // re-creating the completeReply dead-end. We page wide and pick the GLOBAL max
+      // created_at across all open statuses in JS (the only ordering authority).
+      const rows = await this.t.list('case', { channel, external_id, status }, { limit: 50 })
       for (const r of rows) if (!best || (r.created_at || 0) > (best.created_at || 0)) best = r
     }
     return best
@@ -402,6 +407,24 @@ export class CaseStore {
       subject, summary: '', priority: 'normal', tags: '',
       assignee, autonomy: 'auto', status: 'new', last_event_at: nowIso(),
     }, AGENT_USER, { ref })
+  }
+
+  // Branch a FRESH case onto the SAME (channel, external_id) as an existing one --
+  // used when a worker starts a genuinely new report on a conversation whose bound
+  // case is already complete. Unlike findOrCreateCase it ALWAYS creates (no
+  // find-open short-circuit), and unlike createCase it reuses the conversationKey as
+  // external_id so the next plain inbound binds to this newest sibling (findOpenCase
+  // newest-wins). Locked on the same key so two near-simultaneous fresh-report turns
+  // cannot duplicate. Carries the parent contact_id so the worker stays one contact.
+  async branchCase({ channel, external_id, contact_id = '' }) {
+    return this._withLock(`${channel}|${external_id}`, async () => {
+      const ref = await this._nextRef()
+      return this._createReload('case', {
+        ref, channel, external_id, contact_id: contact_id || '',
+        subject: '', summary: '', priority: 'normal', tags: '',
+        assignee: AGENT_USER.id, autonomy: 'auto', status: 'new', last_event_at: nowIso(),
+      }, AGENT_USER, { ref })
+    })
   }
 
   // List cases with an operator-aware where ({field:{$gte,$lte,$in,...}}, top-level
