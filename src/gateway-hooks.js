@@ -436,7 +436,10 @@ const REPORT_SHAPED_RE = /\b(sick|ill|dead|dying|died|drool|blood|bleed|limp|lam
 // A worker asking the STATUS of a case by reference: a full "CASE-1089-dgpgd" OR a
 // bare partial "CASE-1089". Matched on the RAW inbound (normalizeIntentText strips
 // the hyphens). Anchored to the CASE- token so a number alone never trips it.
-const REF_STATUS_RE = /\bCASE-\d+(?:-[a-z0-9]+)?\b/i
+// Tolerant case-ref match: "CASE-1089", "case 1089", "case1089", "CASE 1089-ab".
+// A separator (space/hyphen) OR none between CASE and the digits, so a worker who
+// drops the hyphen still gets a status lookup. resolveRefForStatus normalises it.
+const REF_STATUS_RE = /\bcase[\s-]?\d+(?:-[a-z0-9]+)?\b/i
 // Resolve a status-lookup target from the message: an exact ref via getCaseByRef,
 // else a bare partial ("CASE-1089") via a UNIQUE prefix scan over a recency slice
 // (>1 or 0 matches -> null, so an ambiguous partial does not answer the wrong case).
@@ -444,7 +447,9 @@ const REF_STATUS_RE = /\bCASE-\d+(?:-[a-z0-9]+)?\b/i
 export async function resolveRefForStatus(store, text) {
   const m = REF_STATUS_RE.exec(String(text || ''))
   if (!m) return null
-  const ref = m[0].toUpperCase()
+  // Normalise to canonical 'CASE-<digits>' / 'CASE-<digits>-<suffix>' (uppercase,
+  // a single hyphen for the space/no-sep forms) before lookup.
+  const ref = m[0].toUpperCase().replace(/^CASE[\s-]?/, 'CASE-').replace(/(\d)[\s-]([a-z0-9]+)$/i, '$1-$2')
   // Full ref (CASE-<digits>-<suffix>): exact equality lookup.
   if (/CASE-\d+-[a-z0-9]+/i.test(ref)) {
     try { const c = await store.getCaseByRef(ref); if (c) return c } catch { /* fall through to prefix */ }
@@ -1596,6 +1601,21 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         data: { intent: turnIntent, route: conv.route, fsm: conv.trace },
       })
     } catch (e) { log.warn?.('[casey] intent observation failed', { caseId: fresh.id, error: e.message }) }
+    // STATUS-OF-MINE: the worker asked the progress of THEIR report ("where are we at",
+    // "any update", "did the vet come"). Answer with this case's plain status -- fresh
+    // IS the per-contact active/most-recent case -- via intentReply, so the same
+    // PII-free reply (a plain status sentence + ref, no external_id) the deterministic
+    // STATUS keyword path gives. Never the generic question deflection.
+    if (turnIntent.kind === 'status') {
+      const text = intentReply('status', fresh, guessLang(inboundText))
+      await store.appendEvent(fresh.id, { kind: 'outbound', actor: 'system', channel, text, data: { to: replyTo, intent: 'status', deterministic: true } })
+      const reply = { to: replyTo, text, platform, caseId: fresh.id, intent: 'status' }
+      if (adapter?.send) {
+        try { await adapter.send(reply) }
+        catch (e) { log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message }); await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` }) }
+      }
+      return reply
+    }
     // Enquiry and question routes answer here and return -- read-only, worker-facing,
     // safe in every autonomy mode (they do not mutate the case). author is the
     // per-author identity so a multi-author channel answers FOR the asking worker.
@@ -2357,8 +2377,9 @@ function isWrapUpThanks(text) {
 const STOP_KEYS = [
   'stop', 'unsubscribe', 'cancel', 'quit', 'leave me alone', 'go away',
   'no more', 'remove me', 'opt out', 'optout', 'enough',
+  'stop msgs', 'stop sending', 'stop pls', 'i want stop',
   'hou op', 'los my', 'genoeg',                      // af
-  'yeka', 'hambani', 'ngeke',                        // zu
+  'yeka', 'hambani', 'ngeke', 'yima', 'misa',        // zu
   'yeka oku', 'hamba',                               // xh
 ]
 const STOP_EXCLUDE = [
@@ -2377,6 +2398,7 @@ const HUMAN_KEYS = [
 const HUMAN_EXCLUDE = [
   'a person told me', 'person told me', 'someone told me', 'another person',
   'in person', 'no person', 'wrong person',
+  'someone come', 'someone came', 'anyone coming', 'did someone',
 ]
 
 // Keyword lists focus on English + the SA languages a farmer is likely to type.
@@ -2385,17 +2407,21 @@ const HUMAN_EXCLUDE = [
 const STATUS_KEYS = [
   'status', 'update', 'progress', 'how long', 'any news', 'news', 'eta',
   'whats happening', 'what is happening', 'still waiting', 'where is',
+  'feedback', 'any feedback', 'being looked', 'looked at', 'how far',
+  'hows it going', 'any reply', 'reply yet', 'did you get', 'did u get',
+  'get my report', 'received', 'sorted', 'done yet', 'fixed yet', 'came yet',
+  'any answer',
   'enige nuus', 'hoe lank', 'wat gebeur',            // af
-  'izindaba', 'kuphi', 'isimo',                      // zu
+  'izindaba', 'kuphi', 'isimo', 'kunjani', 'sekwenzekani', 'sekuhanjwe', 'nuus', 'kuthiwani', // zu
   'iindaba', 'kuphi na',                             // xh
 ]
 
 const HELP_KEYS = [
   'help', 'menu', 'options', 'what can', 'how do', 'confused', 'lost',
-  'dont understand', 'do not understand', 'huh', '?',
+  'dont understand', 'do not understand', 'huh', '?', 'hlp', 'help me', 'can u help',
   'hulp', 'verdwaal',                                // af
-  'usizo', 'ngidukile',                              // zu
-  'uncedo', 'ndilahlekile',                          // xh
+  'usizo', 'ngidukile', 'siza', 'siza mina', 'ngicela usizo', 'ngicela', // zu
+  'uncedo', 'ndilahlekile', 'ncedani', 'ndicela uncedo', // xh
   'thusa',                                           // st/tn
 ]
 
@@ -2403,7 +2429,7 @@ const THANKS_KEYS = [
   // NB: no bare 'thank' key -- it would substring-match any token containing it
   // ("thankfully it rained" -> false 'thanks'). 'thanks'/'thank you'/'thx'/'ty'
   // already cover every real thanks; the lone 'thank' only ever mis-fired.
-  'thanks', 'thank you', 'thx', 'ty', 'cheers', 'appreciate',
+  'thanks', 'thank you', 'thx', 'thnx', 'thank u', 'ta', 'ty', 'cheers', 'appreciate',
   'dankie', 'baie dankie',                           // af
   'ngiyabonga', 'siyabonga',                         // zu
   'enkosi', 'enkosi kakhulu',                        // xh
@@ -2412,9 +2438,9 @@ const THANKS_KEYS = [
 
 const GREETING_KEYS = [
   'hi', 'hello', 'hey', 'hallo', 'hiya', 'yo', 'good morning',
-  'good afternoon', 'good evening', 'greetings',
+  'good afternoon', 'good evening', 'greetings', 'morning', 'gud morning', 'heita', 'aweh',
   'goeie more', 'goeie middag', 'goeie naand',       // af
-  'sawubona', 'molo', 'dumela', 'dumelang',          // zu/xh/st/tn
+  'sawubona', 'molo', 'dumela', 'dumelang', 'molweni', 'sanibonani', 'unjani', 'ninjani', // zu/xh/st/tn
 ]
 
 // Lowercase, strip diacritics/emoji/punctuation, COLLAPSE any run of '?' to a

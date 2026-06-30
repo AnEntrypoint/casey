@@ -47,10 +47,20 @@ const ANIMAL_WORDS = /\b(cattle|cow|cows|calf|calves|ox|oxen|sheep|lamb|goat|goa
 const GREETING_ONLY = /^(hi|hello|hey|hallo|hi there|good morning|good day|molo|sawubona|dumela|yebo|howzit|hoezit)[\s!.,]*$/
 // Enquiry SHAPE: asking about cases/reports/work, optionally with a place or "today".
 const ENQUIRY_NEAR = /\b(near|nearest|closest|around|close to|close by)\b/
-const ENQUIRY_MINE = /\b(my (cases?|reports?|work|visits?|jobs?|list|plate))\b|\bwhat am i working on\b|\bassigned to me\b/
+const ENQUIRY_MINE = /\b(my (cases?|reports?|work|visits?|jobs?|list|plate|area|patch|side))\b|\bwhat am i working on\b|\bassigned to me\b|\b(cases?|reports?) (i|to) (must|should|need to|have to) (do|visit|see|handle)\b|\b(which|wic|wich|what) (cases?|reports?) (i|do i|must i)\b/
 const ENQUIRY_OPEN = /\b(open (cases?|reports?|work)|available work|anything (i can help|open)|what can i help|help with anything|(show me|list)( the| all)? (open )?(cases?|reports?))\b/
 const ENQUIRY_TODAY = /\b(itinerary|itenerary|agenda|schedule|today|todays?|on the go|whats up|what'?s up|whats on|what'?s on|whats happening|what'?s happening|whats going on|whats new|anything (today|for me))\b/
-const QUESTION_LEAD = /^(what|whats|what'?s|where|which|who|how|hows|when|is there|are there|any (cases?|reports?)|do (we|i)|can (you|i)|show me|list|find|tell me)\b/
+const QUESTION_LEAD = /^(what|whats|what'?s|wat|wats|where|which|wic|wich|who|how|hows|hw|when|is there|are there|any (cases?|reports?)|do (we|i)|can (you|i)|show me|list|find|tell me)\b/
+// STATUS-OF-MINE: a worker asking the status/progress of THEIR OWN report ("where are
+// we at", "any update", "how is my report going", "did the vet come"). Routes to the
+// status reply (the active case's plain status), NOT the generic question deflection.
+// Gated in the classifier to NOT fire on a report (animal words) or a cases-list ask.
+// NOTE: deliberately excludes "how are we doing"/"how are things" (those are an
+// OVERVIEW enquiry, handled later) -- status-of-mine is about THE WORKER'S OWN report,
+// so it keys on my/the report|case, "any update/news", "where are we at", "did the vet
+// come", etc., never a bare "how are things".
+const STATUS_OF_MINE = /\b(any (news|update|feedback)|hows? (it|my|the) (going|report|case)|how (is|are) (my|the) (report|case|thing)|how far|w(h)?ats? the (status|update)|w(h)?ats? happening (with|to|on) (my|the|it)|is (my|the) report|any reply|did (the|u|you|someone) (vet|come|send|check|guys|get)|(u|you|yous|guys) (get|got|recieved?|received) (my|the|that)|get my report|been looked|being looked|where (are we|do we stand)|wat now|update on|progress on)\b/
+const COUNT_VERB = /^(count|tally)\b/
 // FLEET-AGGREGATE enquiry shapes -- the same reach the dashboard GUI has, brought to
 // the chat: counts, hotspots-by-area, suspected outbreaks, an overall picture, and
 // what is overdue for a reply. Each maps to a pure dashboard aggregator
@@ -60,7 +70,7 @@ const QUESTION_LEAD = /^(what|whats|what'?s|where|which|who|how|hows|when|is the
 const ENQUIRY_OUTBREAK = /\b(outbreaks?|clusters?|linked (cases?|reports?)|related (cases?|reports?)|suspected outbreak)\b/
 const ENQUIRY_GEO = /\b(hotspots?|which (area|areas|place|places|region|town)|where.{0,12}(most|busiest|hotspot)|busiest (area|place)|most (reports?|cases?))\b/
 const ENQUIRY_OVERDUE = /\b(overdue|over due|past due|late|at[- ]risk|urgent|breach(ed|ing)?|behind|unanswered|waiting too long|need(s|ing)? (a )?reply|sla)\b/
-const ENQUIRY_OVERVIEW = /\b(how (are|is) (things|it going|everything|we doing)|whats the (situation|picture|state)|overview|summary|sum up|status report|overall|how are we doing)\b/
+const ENQUIRY_OVERVIEW = /\b(how (are|is) (things|it going|everything|we doing)|how (things|everything) (look|looking|going)|hw are things|whats the (situation|picture|state)|overview|summary|sum up|status report|status of all|overall|how are we doing)\b/
 // Interrogative count head only -- "how many / number of / count of / how much".
 // Deliberately NOT a bare "total" (a quantity statement "10 total animals" is a
 // report correction, not a count question).
@@ -107,7 +117,7 @@ export function classifyIntentFallback(text) {
   // NOTE: deliberately does NOT include the loose ENQUIRY_TODAY (it matches a bare
   // "today" anywhere, which would mark "2 cows died today" as an enquiry). Only an
   // explicit cases/reports/open/my-list lead counts as clear.
-  const clearEnquiryLead = /\b(any|show me|list|how many|whats|what'?s|which)\b.{0,24}\b(cases?|reports?|open)\b/.test(leadCompact)
+  const clearEnquiryLead = /\b(any|show me|list|how many|whats|what'?s|wat|wats|which|wic|wich)\b.{0,24}\b(cases?|reports?|open)\b/.test(leadCompact)
     || ENQUIRY_MINE.test(t) || ENQUIRY_OPEN.test(t)
   // Species-count guard, BEFORE looksReport: "how many sick cattle" must answer as a
   // count, but it names an animal so looksReport / the ANIMAL_WORDS veto would
@@ -115,7 +125,9 @@ export function classifyIntentFallback(text) {
   // cases-lead is a count enquiry (the renderer tallies by species over the reports).
   // "how many cattle died" still reads as report below (it has the animal but the
   // count head + no enquiry frame -> the count renderer handles the species tally).
-  const howMany = COUNT_HEAD.test(t) || FUZ_HOWMANY.test(t)
+  // "count open cases" / "tally cases per area" is a count enquiry -- but only with a
+  // cases/reports noun, so "count is 10" (a report quantity) is not a count question.
+  const howMany = COUNT_HEAD.test(t) || FUZ_HOWMANY.test(t) || (COUNT_VERB.test(t) && mentionsCases)
   const countsAnimals = howMany && (REPORT_WORDS.test(t) || ANIMAL_WORDS.test(t))
   if (countsAnimals && !clearEnquiryLead) return { kind: 'enquiry', enquiry_kind: 'count', source: 'fallback' }
   // A clear animal description is a REPORT, however it is phrased -- this wins over
@@ -125,6 +137,17 @@ export function classifyIntentFallback(text) {
   if (looksReport) return { kind: 'report', source: 'fallback' }
   // Bare greeting -> chitchat (the warm opener path drives intake from there).
   if (GREETING_ONLY.test(t)) return { kind: 'chitchat', source: 'fallback' }
+  // STATUS-OF-MINE: a worker asking the progress of THEIR report ("where are we at",
+  // "any update", "did the vet come") -> status (the active case's plain status), not
+  // a deflection. Gated !ANIMAL_WORDS (so "where are the animals" stays report-intake)
+  // and !mentionsCases (so a cases-list ask stays an enquiry). looksReport already
+  // returned for a real report, so a "morning, any news on the sick cows" never lands
+  // here (the report veto wins).
+  // "my report"/"my case" (singular possessive) is a status-of-MINE query even though
+  // it mentions "case/report"; only a PLURAL/listy "my cases"/"the cases" is an
+  // enquiry-list. So the cases-gate excludes the singular-possessive form.
+  const listyCases = mentionsCases && !/\bmy (case|report)\b/.test(t)
+  if (STATUS_OF_MINE.test(t) && !ANIMAL_WORDS.test(t) && !listyCases) return { kind: 'status', source: 'fallback' }
   // Disease-service safe default: a message naming livestock that is NOT a clear
   // enquiry is intake, not a store query -- "any cattle in kzn", "report some sheep
   // losses around musina" describe animals, so they open a report. (An explicit
@@ -172,7 +195,14 @@ export function classifyIntentFallback(text) {
   }
   if (ENQUIRY_MINE.test(t)) return { kind: 'enquiry', enquiry_kind: 'mine', source: 'fallback' }
   if (ENQUIRY_OPEN.test(t)) return { kind: 'enquiry', enquiry_kind: 'open', source: 'fallback' }
-  if (ENQUIRY_TODAY.test(t)) return { kind: 'enquiry', enquiry_kind: 'today', source: 'fallback' }
+  // A bare "open" cases ask without the full ENQUIRY_OPEN frame ("wat is still open",
+  // "what i got open") -- gated on a cases/reports word so report prose never trips it.
+  if (mentionsCases && FUZ_OPEN.test(t) && !looksReport) return { kind: 'enquiry', enquiry_kind: 'open', source: 'fallback' }
+  // The bare-"today" route must carry an enquiry frame: a cases word, an explicit
+  // today-list cue (itinerary/agenda/whats on/...), or a question lead. Otherwise
+  // "whats the weather today" / "is the road open today" / "u guys working today?"
+  // wrongly dumped today's CASES.
+  if (ENQUIRY_TODAY.test(t) && (mentionsCases || /\b(itinerary|itenerary|agenda|schedule|my (day|list)|whats on|what'?s on|whats up|what'?s up|whats happening|what'?s happening|going on|on the go)\b/.test(t))) return { kind: 'enquiry', enquiry_kind: 'today', source: 'fallback' }
   // REGION / PLACE enquiry: "any cases in kzn", "anything in the eastern cape",
   // "margate". resolvePlace turns a SA province/alias/town into a region, so a place
   // question is answered from the store instead of deflected. Gated so it never

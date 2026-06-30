@@ -16,7 +16,7 @@
 
 const PROVINCES = {
   'KwaZulu-Natal': {
-    aliases: ['kzn', 'kwazulu natal', 'kwazulu-natal', 'natal', 'kn'],
+    aliases: ['kzn', 'kwazulu natal', 'kwazulu-natal', 'kwa zulu', 'kwa-zulu', 'natal', 'kn'],
     towns: ['durban', 'ethekwini', 'pietermaritzburg', 'pmb', 'maritzburg', 'newcastle',
             'richards bay', 'ladysmith', 'margate', 'port shepstone', 'ulundi', 'empangeni',
             'estcourt', 'vryheid', 'kokstad', 'howick', 'eshowe', 'dundee'],

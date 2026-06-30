@@ -2896,6 +2896,49 @@ async function main() {
     assert.equal(rep2.location, rep.location, 'an enquiry did not overwrite the bound location')
   })
 
+  await test('intent coverage: 161 misroutes -- status-of-mine, typos, multilingual, today/open gaps; report-veto + PII hold', async () => {
+    const { classifyIntentFallback } = await import('./src/intent.js')
+    const { resolveRefForStatus, detectContactIntent } = await import('./src/gateway-hooks.js')
+    // STATUS-OF-MINE: a worker asking the progress of THEIR report -> status, not deflection.
+    for (const q of ['hows my case going', 'wats happening with my report', 'how is my report doing', 'u get my report?', 'any feedback on what i sent', 'is my report being looked at', 'my case how far', 'how far with my report', 'did the vet come yet', 'wat now', 'where are we at', 'any update']) {
+      assert.equal(classifyIntentFallback(q).kind, 'status', `status-of-mine: ${q}`)
+    }
+    // Enquiry typo/place/today gaps.
+    assert.equal(classifyIntentFallback('wic cases i must do').enquiry_kind, 'mine', 'wic cases i must do -> mine')
+    assert.equal(classifyIntentFallback('count open cases pls').enquiry_kind, 'count', 'count verb -> count')
+    assert.equal(classifyIntentFallback('hw are things').enquiry_kind, 'overview', 'hw are things -> overview')
+    assert.equal(classifyIntentFallback('status of all cases').enquiry_kind, 'overview', 'status of all cases -> overview')
+    // The bare-today over-trigger is gated: a non-cases "today" is not an enquiry.
+    assert.notEqual(classifyIntentFallback('whats the weather today').enquiry_kind, 'today', 'weather today is not a today-enquiry')
+    // REPORT-VETO holds against all the new intent additions.
+    for (const r of ['morning any news on the sick cows i reported', '2 cows died today', 'where are the animals', 'my cattle are sick', 'the cow is waiting to calve']) {
+      assert.equal(classifyIntentFallback(r).kind, 'report', `report-veto holds: ${r}`)
+    }
+    // Tolerant case-ref resolution (no-sep / spaced).
+    const anyCase = (await store.listCases({}, { limit: 5 }))[0]
+    if (anyCase && anyCase.ref) {
+      const noSep = anyCase.ref.replace('-', '').replace(/-[a-z0-9]+$/, '')   // e.g. CASE1089
+      const refStore = { getCaseByRef: async (ref) => (await store.listCases({}, { limit: 9999 })).find(c => c.ref === ref) || null, listCases: (w, o) => store.listCases(w, o) }
+      const r = await resolveRefForStatus(refStore, `hw is ${noSep} going`)
+      assert.ok(r && r.id === anyCase.id, `no-separator ref ${noSep} resolves: ${anyCase.ref}`)
+    }
+    // Multilingual + typo service keywords route deterministically.
+    assert.equal(detectContactIntent('molweni'), 'greeting', 'molweni -> greeting')
+    assert.equal(detectContactIntent('hlp'), 'help', 'hlp -> help')
+    assert.equal(detectContactIntent('thnx'), 'thanks', 'thnx -> thanks')
+    // "did someone come for the animals" is a STATUS-ish ask, NOT a human handoff.
+    assert.notEqual(detectContactIntent('did someone come for the animals'), 'human', 'someone-come is not a handoff')
+    // End-to-end: "where are we at" gets the case's plain status, not the deflection.
+    const sw = 'statusworker-' + Date.now()
+    await runScript(adapter, ['my cattle are sick near Musina, owner Joe 082, blue gate, he is there, photo coming'], { from: sw, channel_id: sw, username: sw, wait: () => casey.drain() })
+    const b = adapter.sent.length
+    await runScript(adapter, ['where are we at'], { from: sw, channel_id: sw, username: sw, wait: () => casey.drain() })
+    const sr = adapter.sent[adapter.sent.length - 1].text || ''
+    assert.ok(adapter.sent.length > b, 'the status ask got a reply')
+    assert.ok(!/I cannot answer that one myself/i.test(sr), `"where are we at" is not the deflection: ${sr}`)
+    assert.ok(!sr.includes(sw), 'the status reply leaks no contact id')
+  })
+
   await dash.close()
   await casey.stop()
   console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
