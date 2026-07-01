@@ -95,8 +95,22 @@ for (const f of all) {
   })
 }
 
+// Pure-agent invariant: the deterministic text-processing layer was removed. The
+// inbound handler + top-level assembly must NOT re-import intent.js/places.js
+// (deleted); the agent classifies + routes + answers via the case tools. extract.js
+// is ALLOWED -- it is the retained empty-case capture floor. This grep-gate keeps a
+// future edit from quietly reintroducing keyword routing.
+const NO_INTENT_IMPORT = ['src/gateway-hooks.js', 'src/casey.js']
+for (const rel of NO_INTENT_IMPORT) {
+  let src = ''
+  try { src = readFileSync(join(ROOT, rel), 'utf8') } catch { continue }
+  if (/from\s+['"][^'"]*\b(intent|places)\.js['"]/.test(src) || /import\(\s*['"][^'"]*\b(intent|places)\.js['"]/.test(src)) {
+    note(`pure-agent: ${rel} imports intent.js/places.js -- the deterministic routing layer was removed; the agent classifies + routes via the case tools (extract.js is the allowed empty-case floor)`)
+  }
+}
+
 if (fails.length) {
   console.error('lint FAIL:\n' + fails.map((m) => '  - ' + m).join('\n'))
   process.exit(1)
 }
-console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii clean`)
+console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii + pure-agent clean`)

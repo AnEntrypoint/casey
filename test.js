@@ -2580,16 +2580,9 @@ async function main() {
     assert.ok(!reply.includes(owner) && !reply.includes('082'), 'the place list leaks no contact id / phone')
   })
 
-  await test('a greeting ("hi there") on a COMPLETE case gets a warm re-opener, never the complete-report exit', async () => {
-    const { classifyIntentFallback } = await import('./src/intent.js')
-    const { chitchatReply } = await import('./src/gateway-hooks.js')
-    // "hi there" is chit-chat, and the re-opener never recites the complete exit.
-    assert.equal(classifyIntentFallback('hi there').kind, 'chitchat', 'a bare greeting is chit-chat')
-    const reopen = chitchatReply('hi there', { ref: 'CASE-9' })
-    assert.ok(!/full report/i.test(reopen), `chit-chat reply is not the complete-report exit: ${reopen}`)
-    assert.ok(/start a report|what is on today/i.test(reopen), `chit-chat reply re-opens the conversation: ${reopen}`)
-    // End-to-end: complete a report, then send a bare "hi there" -- the reply must NOT
-    // be the complete-report exit (the witnessed CASE-1089 "hi there" dead-end).
+  await test('a greeting ("hi there") on a COMPLETE case gets a reply, never the complete-report exit', async () => {
+    // PURE-AGENT: the agent handles a greeting on a complete case -- it must never be
+    // the "we have the full report" dead-end (the witnessed CASE-1089 "hi there" trap).
     const cc = 'chitchat-' + Date.now()
     await runScript(adapter, ['my cattle are drooling at the farm near Musina, look for the blue gate, the owner Joe is on 082, a photo is coming'], { from: cc, channel_id: cc, username: cc, wait: () => casey.drain() })
     const b = adapter.sent.length

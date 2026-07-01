@@ -90,20 +90,33 @@ export function stubLLM() {
     const caseId = (sys.match(/id=(\S+?)\)/) || [])[1]
     const ref = (sys.match(/CURRENT CASE (\S+)/) || [])[1] || caseId || ''
     const lastUser = [...messages].reverse().find(m => m.role === 'user')?.content || ''
-    const toolMsgs = messages.filter(m => m.role === 'tool')
 
-    // PHASE 2: a tool result is in the conversation -> compose a plain reply FROM it.
-    // This is where an enquiry/status answer is rendered (the model relays the tool's
-    // rows/case body into warm plain language). Guarded so we reply once.
-    if (toolMsgs.length) {
-      const lastTool = toolMsgs[toolMsgs.length - 1]
-      const payload = safeJson(lastTool?.content)
-      const reply = composeFromToolResult(payload, ref, lastUser)
-      if (reply) return { content: reply, tool_calls: [] }
+    // PHASE 2: the trailing messages (since the last user turn) are tool RESULTS from
+    // the tool calls THIS turn -> compose a plain reply from them. Detected by the tail
+    // being tool results, NOT by any tool message anywhere in the session history (a
+    // prior turn's tool messages must not short-circuit a fresh turn -- the bug that
+    // made a later enquiry skip its tool call and fall to the plain reply). We render
+    // from the last tool result whose payload is an enquiry/status answer.
+    const lastUserIdx = messages.map(m => m.role).lastIndexOf('user')
+    const tail = messages.slice(lastUserIdx + 1)
+    const tailTools = tail.filter(m => m.role === 'tool')
+    // Phase 2 iff the tail (since the last user turn) carries tool results AND no
+    // assistant TEXT reply has been produced after them yet (a trailing assistant with
+    // no tool_calls would mean the turn is already answered). freddie may append
+    // hook `system` messages after the tool results, so we do NOT require the very last
+    // message to be the tool result -- only that no answering assistant turn follows.
+    const answered = tail.some(m => m.role === 'assistant' && !(m.tool_calls && m.tool_calls.length))
+    if (tailTools.length && !answered) {
+      // Render from the first tail tool result that yields an enquiry/status reply
+      // (case_update/transition/report results yield '' and are skipped).
+      for (const tm of tailTools) {
+        const reply = composeFromToolResult(safeJson(tm?.content), ref, lastUser)
+        if (reply) return { content: reply, tool_calls: [] }
+      }
       return { content: composeReply(lastUser, ref), tool_calls: [] }
     }
 
-    // PHASE 1: no tool result yet -> classify the message and CALL the right tool.
+    // PHASE 1: no tool result yet for this turn -> classify the message and CALL the tool.
     if (!caseId) return { content: composeReply(lastUser, ref), tool_calls: [] }
     const shape = shapeOf(lastUser)
 
@@ -134,18 +147,26 @@ export function stubLLM() {
       if (toolNames.has('case_list')) return { content: '', tool_calls: [{ id: 'a1', name: 'case_list', arguments: {} }] }
     }
 
-    // REPORT / chitchat: record any plainly-stated fields via case_report (the agent's
-    // extraction), then reply. This drives intake -- the empty-case floor also records
-    // fields, but the stub calling case_report exercises the real tool path.
+    // REPORT / chitchat: the agent logs the case for the team. On the FIRST turn it
+    // sets a summary + priority (case_update) and moves the case into triaging
+    // (case_transition), and records any plainly-stated report fields (case_report) --
+    // exercising the real action/transition tool path. `firstTurn` = no prior agent
+    // outbound in this conversation (the sys prompt has no tool result and this is the
+    // opening turn). The empty-case floor also records fields; case_report here
+    // exercises the model-driven path.
+    const isFirstTurn = messages.filter(m => m.role === 'assistant').length === 0
     const fields = extractFields(lastUser)
     const calls = []
+    if (isFirstTurn) {
+      calls.push({ id: 'u1', name: 'case_update', arguments: { id: caseId, summary: `Report: ${lastUser.slice(0, 80)}`, priority: 'high' } })
+      calls.push({ id: 't1', name: 'case_transition', arguments: { id: caseId, to: 'triaging', reason: 'logged for the team (stub)' } })
+    }
     if (Object.keys(fields).length && toolNames.has('case_report')) {
       calls.push({ id: 'r1', name: 'case_report', arguments: { id: caseId, ...fields } })
     }
     if (calls.length) return { content: '', tool_calls: calls }
-    // Nothing to record (a greeting/chitchat): drive intake with a warm opener + the
-    // first needed fact, or a warm reply. The agent composes this in production; the
-    // stub gives a deterministic plain line.
+    // Nothing to record (a later greeting/chitchat): a warm reply. The agent composes
+    // this in production; the stub gives a deterministic plain line.
     return { content: composeReply(lastUser, ref), tool_calls: [] }
   }
 }
@@ -162,8 +183,10 @@ function safeJson(s) {
 // external_id/phone is present to leak.
 function composeFromToolResult(payload, ref, userText) {
   if (!payload || typeof payload !== 'object') return ''
-  // case_get -> a status body.
-  if (payload.case && typeof payload.case === 'object') {
+  // case_get -> a status body. It carries BOTH `case` and `events`; case_update's
+  // result also carries `case` but no `events`, and is logging (not an answer), so
+  // only a case_get result (has `events`) renders a status reply.
+  if (payload.case && typeof payload.case === 'object' && Array.isArray(payload.events)) {
     const c = payload.case
     const cref = c.ref || ref
     const status = plainStatusWord(c.status)
@@ -187,13 +210,11 @@ function composeFromToolResult(payload, ref, userText) {
     const refs = [...new Set(payload.cases.map(c => c.ref).filter(Boolean))].slice(0, 5).join(', ')
     return `Here is what is on the go today: ${n} ${n === 1 ? 'report' : 'reports'}${refs ? ` (${refs})` : ''}.`
   }
-  // case_report / case_update results ({ok, report/fieldsRecorded/case}) are NOT a
-  // reply -- intake continues, so fall through to composeReply (which cites the ref
-  // and gives the warm intake line). Only a BARE {ok:true} (case_stop/case_handoff,
-  // no report/case/count) is a control acknowledgement.
-  if (payload.ok === true && !payload.report && !payload.fieldsRecorded && !payload.case && !('count' in payload)) {
-    return `Done -- I have taken care of that for you.`
-  }
+  // Everything else (case_update/case_transition/case_report/case_stop/case_handoff
+  // results -- {ok:true} with or without report/case) is NOT an enquiry answer: it is
+  // logging or a control action. Return '' so the caller falls through to composeReply,
+  // which gives the ref-citing intake line (or the stop/human line keyed off the user
+  // text). This keeps a report/control turn from rendering a bare "Done".
   return ''
 }
 
