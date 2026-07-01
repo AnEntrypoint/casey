@@ -216,7 +216,7 @@ async function main() {
   }
 
   if (cmd === 'up') {
-    if (flags.help) { console.log('casey up [--channels sim,discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise]\n  Start the gateway (all configured channels) and the dashboard.\n  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,\n  reopening the same case store so nothing is lost. --no-reload disables the watcher (explicit\n  restarts only); --no-supervise runs the legacy single-process path for debugging.'); return }
+    if (flags.help) { console.log('casey up [--channels sim,discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise] [--no-auto-update]\n  Start the gateway (all configured channels) and the dashboard.\n  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,\n  reopening the same case store so nothing is lost. AUTO-UPDATE is on by default -- it pulls\n  from origin on an interval (git pull --ff-only, safe: it never clobbers local edits) so a\n  pushed fix deploys with no manual restart. --no-reload disables the file watcher; --no-auto-update\n  (or CASEY_AUTO_UPDATE=0) disables the origin pull; --no-supervise runs the legacy single-process\n  path for debugging.'); return }
     const requested = (flags.channels || 'sim,discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
     // Security invariant (AGENTS.md): WhatsApp must NOT serve without
     // WHATSAPP_APP_SECRET -- without it freddie cannot HMAC-verify inbound
@@ -260,24 +260,39 @@ async function main() {
         : `  live reload: ${yellow('off')}${dim('   (--no-reload: restart manually to pick up code changes)')}`)
       console.log(dim('  press ctrl-c to stop'))
       await sup.start()
-      // Opt-in AUTO-UPDATE: pull from origin on an interval and let the post-merge
-      // hook (or the mtime change of the pulled source) trigger the supervisor's
-      // hot-reload, so a pushed commit lands on the live worker with no human on the
-      // box. Runs in the supervisor PARENT (which never re-imports app code, so it is
-      // safe across reloads). Off by default -- a dev checkout must not auto-pull.
-      // Enable with CASEY_AUTO_UPDATE=1; tune CASEY_AUTO_UPDATE_INTERVAL_MS (default
-      // 60000). The post-merge hook touches a watched file; if hooks are not armed,
-      // git pull still rewrites src/*.js whose mtime the supervisor watches.
+      // AUTO-UPDATE (default ON): pull from origin on an interval and let the pulled
+      // source's mtime change (and the post-merge hook) trigger the supervisor's
+      // hot-reload, so a pushed commit lands on the live worker with NO manual restart
+      // -- the whole point of running supervised. Runs in the supervisor PARENT (which
+      // never re-imports app code, so it is safe across reloads). It is SAFE on a dev
+      // checkout: `git pull --ff-only` REFUSES on a dirty or divergent tree ("your
+      // local changes would be overwritten" / "not possible to fast-forward") and
+      // leaves the working tree untouched -- a dev with uncommitted edits or local
+      // commits simply gets a skipped pull, logged, never a clobber. Opt OUT with
+      // CASEY_AUTO_UPDATE=0 or --no-auto-update (e.g. an offline box, or to pin code);
+      // tune CASEY_AUTO_UPDATE_INTERVAL_MS (default 60000). If git hooks are not armed,
+      // the pull still rewrites src/*.js whose mtime the supervisor watches.
       let autoUpdateTimer = null
-      if (process.env.CASEY_AUTO_UPDATE === '1') {
+      const autoUpdate = !flags['no-auto-update'] && process.env.CASEY_AUTO_UPDATE !== '0'
+      if (autoUpdate) {
         const { execFile } = await import('node:child_process')
         const interval = Number(process.env.CASEY_AUTO_UPDATE_INTERVAL_MS) || 60_000
         const repoRoot = path.resolve(__dirname, '..')
-        const pull = () => execFile('git', ['pull', '--ff-only'], { cwd: repoRoot }, (err, stdout) => {
-          if (err) { console.error(dim('[auto-update] pull failed (will retry): ' + err.message)); return }
+        let warnedSkip = false
+        const pull = () => execFile('git', ['pull', '--ff-only'], { cwd: repoRoot }, (err, stdout, stderr) => {
+          if (err) {
+            // A dirty/divergent tree makes --ff-only REFUSE (local edits or local
+            // commits present) -- that is EXPECTED on a dev box, not a failure. Note it
+            // once, quietly, and keep retrying; a clean deploy host pulls normally.
+            const skip = /would be overwritten|not possible to fast-forward|Not possible to fast-forward|diverging/i.test(String(stderr || err.message || ''))
+            if (skip) { if (!warnedSkip) { warnedSkip = true; console.log(dim('[auto-update] local changes present; skipping auto-pull until the tree is clean.')) } }
+            else console.error(dim('[auto-update] pull failed (will retry): ' + err.message))
+            return
+          }
+          warnedSkip = false
           if (/Updating|Fast-forward/.test(stdout || '')) console.log(green('[auto-update] pulled new code; the worker will reload.'))
         })
-        console.log(`  auto-update: ${green('on')}${dim(`   (git pull --ff-only every ${Math.round(interval / 1000)}s; the worker reloads on the new code)`)}`)
+        console.log(`  auto-update: ${green('on')}${dim(`   (git pull --ff-only every ${Math.round(interval / 1000)}s; the worker reloads on the new code -- opt out: CASEY_AUTO_UPDATE=0)`)}`)
         pull()
         autoUpdateTimer = setInterval(pull, interval)
       }

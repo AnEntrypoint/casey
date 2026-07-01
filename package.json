@@ -13,6 +13,7 @@
     "lint": "node scripts/lint.mjs",
     "test": "node test.js",
     "install-hooks": "node scripts/install-hooks.mjs",
+    "postinstall": "node scripts/install-hooks.mjs",
     "auto-update": "node scripts/auto-update.mjs"
   },
   "dependencies": {

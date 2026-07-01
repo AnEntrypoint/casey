@@ -26,6 +26,9 @@ try {
   console.log('[casey] git hooks installed: core.hooksPath -> hooks/')
   console.log('[casey] post-merge + post-checkout will nudge a watched file so a running `casey up` reloads on pulled code.')
 } catch (e) {
-  console.error('[casey] hook install failed:', e.message)
-  process.exit(1)
+  // NON-FATAL: this runs from postinstall, so a failure (no .git -- a tarball/CI
+  // install, or git absent) must NEVER break `npm install`. The hooks are only a
+  // convenience layer: even without them, `casey up`'s auto-update pull rewrites
+  // src/*.js whose mtime the supervisor watches, so a pushed change still reloads.
+  console.error('[casey] hook install skipped (non-fatal):', e.message)
 }
