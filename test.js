@@ -11,7 +11,7 @@ import { createCasey, Casey } from './src/casey.js'
 import { createDashboard } from './src/dashboard/server.js'
 import { runScript, MockAdapter } from './src/sim/inject.js'
 import { stubLLM } from './src/sim/stub-llm.js'
-import { intentReply, fallbackReply, reportMissingVisitCritical, jargonHits, isContentFreeTurn, warmConversationalReply } from './src/gateway-hooks.js'
+import { intentReply, fallbackReply, reportMissingVisitCritical, jargonHits } from './src/gateway-hooks.js'
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
@@ -952,7 +952,9 @@ async function main() {
     await runScript(adapter, ['can i talk to a real person'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
     c = await store.getCase(c.id)
     assert.ok((c.tags || '').includes('needs-human'), 'handoff flagged needs-human')
-    assert.equal(c.priority, 'high', 'handoff keeps/raises priority to high')
+    // PURE-AGENT: handoff flags needs-human as an OBSERVABLE signal but does NOT
+    // auto-raise priority -- casey amplifies the team's intent, the operator decides
+    // urgency (the case_handoff tool only tags; priority stays where people set it).
 
     const beforeOp = adapter.sent.length
     await df('http://localhost:4577/api/cases/' + c.id + '/reply?token=secret', {
@@ -1333,15 +1335,17 @@ async function main() {
       assert.equal(adapter.sent.length, afterStop, 'no auto-reply after opt-out')
     })
 
-    await test('HELP keyword returns a plain menu without an LLM turn', async () => {
+    await test('HELP is answered by the agent (no canned menu), always a non-dead-end reply', async () => {
+      // PURE-AGENT: "help" is no longer a deterministic menu -- the agent answers it.
+      // The contract that survives is: it always gets a warm, non-empty reply (never a
+      // dead-end), and the case exists.
       const chan = 'scn-help'
-      // first message must NOT be help (first-message greeting wins), so seed one
       await runScript(adapter, ['hi there'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
       const before = adapter.sent.length
       await runScript(adapter, ['help'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
       const last = adapter.sent[adapter.sent.length - 1]
       assert.ok(adapter.sent.length > before, 'help produced a reply')
-      assert.ok(/STATUS|HUMAN|STOP/.test(last.text), `help menu shown: ${last.text}`)
+      assert.ok((last.text || '').trim().length > 0, `help got a non-empty reply: ${last.text}`)
     })
 
     await test('intent: irreversible-action false positives stay safe (substrings do not trigger stop/handoff)', async () => {
@@ -1374,33 +1378,36 @@ async function main() {
         '"stopped" inside a report must not match the STOP keyword')
     })
 
-    await test('intent: true positives across languages and the "???" help signal', async () => {
+    await test('intent: only the irreversible controls (STOP/HUMAN) are deterministic; everything else is the agent', async () => {
+      // PURE-AGENT: detectContactIntent keeps ONLY the two irreversible safety controls
+      // (opt-out, handoff) that must fire in any language even model-down. status/help/
+      // thanks/greeting are now the AGENT'S job (no deterministic shortcut), so they
+      // return null here and fall through to the agent turn.
       const { detectContactIntent } = await import('./src/gateway-hooks.js')
-      const cases = [
+      const stopHuman = [
         ['STOP', 'stop'], ['hou op', 'stop'], ['yeka', 'stop'], ['genoeg', 'stop'],
         ['i want to talk to a human', 'human'], ['umuntu', 'human'], ['regte persoon', 'human'],
         ['call me please', 'human'],
-        ['any news?', 'status'], ['enige nuus', 'status'],
-        ['???', 'help'], ['usizo', 'help'], ['hulp', 'help'],
-        ['thank you', 'thanks'], ['ngiyabonga', 'thanks'], ['dankie', 'thanks'],
-        ['hi', 'greeting'], ['sawubona', 'greeting'], ['goeie more', 'greeting'],
         ['stop i need a human', 'stop'], ['help me reach a person', 'human'],
       ]
-      for (const [inp, exp] of cases)
+      for (const [inp, exp] of stopHuman)
         assert.equal(detectContactIntent(inp), exp, `"${inp}" -> ${detectContactIntent(inp)} expected ${exp}`)
+      // No longer deterministic -- the agent handles these now.
+      for (const inp of ['any news?', 'enige nuus', '???', 'usizo', 'hulp', 'thank you', 'ngiyabonga', 'dankie', 'hi', 'sawubona', 'goeie more'])
+        assert.equal(detectContactIntent(inp), null, `"${inp}" is now the agent's job, not a deterministic shortcut`)
     })
 
-    await test('STATUS on a later message hits the deterministic status reply (offers a person, cites ref)', async () => {
+    await test('STATUS on a later message is answered by the agent (the case status, PII-free)', async () => {
+      // PURE-AGENT: a status ask is answered by the agent calling case_get -- not a
+      // deterministic shortcut. The reply is non-empty and names the case ref.
       const chan = 'fp-status'
-      await runScript(adapter, ['hello'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      await runScript(adapter, ['my cattle are sick near Musina'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      const c = (await store.listCases()).find(x => x.external_id === chan)
       const before = adapter.sent.length
-      await runScript(adapter, ['status'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      await runScript(adapter, ['whats the status'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
       const last = adapter.sent[adapter.sent.length - 1]
       assert.ok(adapter.sent.length > before)
-      assert.ok(/HUMAN/.test(last.text), `status shortcut taken: ${last.text}`)
-      const id = (await store.listCases()).find(c => c.external_id === chan).id
-      const ev = (await store.listEvents(id)).pop()
-      assert.equal(ev.data && JSON.parse(ev.data).deterministic, true, 'answered deterministically')
+      assert.ok((last.text || '').includes(c.ref), `status reply names the case ref: ${last.text}`)
     })
 
     await test('HELP on the FIRST message is NOT shortcut: the agent greeting wins and cites the reference', async () => {
@@ -1981,23 +1988,18 @@ async function main() {
     const full = { species: 'cattle', symptoms: 'drooling', location: 'Musina', how_to_find: 'past baobab', farmer_available: 'yes', contact_fallback: '0721234567' }
     assert.equal(reportMissingVisitCritical(JSON.stringify(full)), false, 'all visit-critical present -> ready')
   })
-  await test('closing "thanks" with a missing on-site fact defers (one-shot), fires once only', async () => {
+  await test('closing "thanks" always gets a reply, never silence (the agent handles the close)', async () => {
+    // PURE-AGENT: the deterministic one-shot CLOSING-NUDGE is removed -- the agent
+    // handles a closing "thanks". The surviving contract is that a thanks is never a
+    // dead-end: every closing turn still gets a non-empty reply.
     const chan = 'closing-' + Date.now()
-    // intake: gives only symptoms (no location/availability/etc)
-    const t0 = await runScript(adapter, ['my cattle are drooling'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
-    const caseId = [...t0].reverse().find(t => t.caseId)?.caseId
-    assert.ok(caseId, 'intake produced a case')
-    // first "thanks": report still missing visit-critical -> defer + tag closing-nudged.
+    await runScript(adapter, ['my cattle are drooling'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
     const before1 = adapter.sent.length
     await runScript(adapter, ['ok thank you'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
-    const reply1 = (adapter.sent.slice(before1)[0] || {}).text || ''
-    const ev1 = await store.listEvents(caseId)
-    assert.ok(ev1.some(e => e.kind === 'observation' && /CLOSING-NUDGE/.test(e.text || '')), 'first closing thanks records the one-shot CLOSING-NUDGE marker')
-    assert.ok(reply1.length > 0, 'first thanks still produced a reply')
-    // second "thanks": already nudged -> canned shortcut, never nags, never silent
+    assert.ok((adapter.sent.slice(before1)[0] || {}).text, 'a closing thanks gets a reply')
     const before2 = adapter.sent.length
     await runScript(adapter, ['thanks again'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
-    assert.ok((adapter.sent.slice(before2)[0] || {}).text, 'second thanks still gets a reply, never silence')
+    assert.ok((adapter.sent.slice(before2)[0] || {}).text, 'a second thanks still gets a reply, never silence')
   })
   await test('closing "thanks" with a complete report just closes warmly (no extra question)', async () => {
     const chan = 'closing-ready-' + Date.now()
@@ -2254,16 +2256,14 @@ async function main() {
     assert.equal(rep.location, 'Musina', `location from turn 3, nothing lost: ${JSON.stringify(rep)}`)
   })
 
-  await test('degraded fallback advances field-by-field and never re-greets an in-progress case', async () => {
-    const { advancingFallback } = await import('./src/gateway-hooks.js')
-    // A case missing several fields: the fallback names a MISSING field to ask,
-    // and asking twice for a case at different fill states asks DIFFERENT things.
-    const empty = { ref: 'CASE-1', report: JSON.stringify({}) }
-    const partial = { ref: 'CASE-1', report: JSON.stringify({ species: 'cattle', symptoms: 'drooling', location: 'Musina', affected_count: '6' }) }
-    const a1 = advancingFallback('ok', empty)
-    const a2 = advancingFallback('ok', partial)
-    assert.ok(a1 && a1.length > 0, 'fallback is never blank')
-    assert.notEqual(a1, a2, 'the ask advances as fields fill -- not the same line every turn')
+  await test('the safe fallback is a warm, non-blank, ref-citing holding line', async () => {
+    // PURE-AGENT: the deterministic field-by-field ask ladder is removed. What
+    // survives is the safe fallback used on a degraded turn -- warm, never blank,
+    // cites the ref, and is not the complete-report dead-end.
+    const fb = fallbackReply('ok', { ref: 'CASE-1', report: JSON.stringify({}) })
+    assert.ok(fb && fb.length > 0, 'fallback is never blank')
+    assert.ok(fb.includes('CASE-1'), 'fallback cites the reference')
+    assert.ok(!/full report/i.test(fb), 'fallback is not the complete-report exit')
   })
 
   await test('a later greeting on an in-progress case still captures content and does not reset', async () => {
@@ -2444,87 +2444,47 @@ async function main() {
     assert.equal(sThrow.degraded, true, 'a window of failing turns reads degraded even though each errored fast')
   })
 
-  await test('a greeting DRIVES intake (warm opener + the next needed fact), never the case-ack; a new case escapes', async () => {
-    // Pure predicate: a content-free turn (nothing captured this turn, empty report)
-    // is conversational; a turn that captured a field or has a recorded report is not.
-    assert.equal(isContentFreeTurn([], null), true, 'no capture + empty report -> content-free')
-    assert.equal(isContentFreeTurn(['species'], null), false, 'a captured field this turn -> not content-free')
-    assert.equal(isContentFreeTurn([], JSON.stringify({ species: 'cattle' })), false, 'an existing report field -> not content-free')
-    // A greeting reply DRIVES collection: warm opener + an ask for the next needed
-    // fact + the ref. NOT the "Thank you for letting us know" case-ack, and NOT a
-    // no-ask pleasantry -- memobot gathers the report, it does not just chat.
-    const warm = warmConversationalReply('hi', { ref: 'CASE-9999-zz', report: '{}' })
-    assert.ok(!warm.startsWith('Thank you for letting us know'), 'greeting is not the case-ack')
-    assert.ok(/\?/.test(warm), `greeting asks for the next needed fact: ${warm}`)
-    assert.ok(warm.includes('CASE-9999-zz'), 'greeting keeps the reference')
-    assert.ok(warm.length <= 240, `greeting reply stays short (${warm.length})`)
-    // The reporter is a field worker relaying a farmer's animals, so an ask must
-    // never assume the worker witnessed onset ("when you first noticed it"); once
-    // the visit-critical facts and a photo + count are in, the next ask is the
-    // people-on-site fact (who is there, link to the owner), framed for a relay.
-    const vcDone = warmConversationalReply('hi', { ref: 'CASE-8', report: JSON.stringify({ species: 'cow', symptoms: 'blue eye', location: 'Musina', how_to_find: 'R101', farmer_available: 'yes', contact_fallback: '082', photos: 'x', affected_count: '3' }) })
-    assert.ok(!/first noticed|when you first/i.test(vcDone), `ask never assumes the worker witnessed onset: ${vcDone}`)
-    assert.ok(/owner|there with the animals/i.test(vcDone), `ask captures who is on site and link to the owner: ${vcDone}`)
-    // End-to-end: a greeting-only conversation must drive intake on the first and a
-    // repeated greeting, never the case-ack, always asking the next thing.
+  await test('a greeting is never a dead-end; a report cites the reference', async () => {
+    // PURE-AGENT: the deterministic greeting-drive/intake ladder is removed -- the
+    // agent decides the reply. The surviving contract is only that a greeting is never
+    // a dead-end (a non-empty reply is sent) and a real report turn cites the ref. The
+    // mention id is never captured as a count (the empty-case floor's extractor guard).
     const chan = 'greet-' + Date.now()
     for (const g of ['hi', 'hello']) {
       await runScript(adapter, [g], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
       const reply = adapter.sent[adapter.sent.length - 1]
-      assert.ok(reply && reply.text, 'a greeting is never a dead-end (a reply is sent)')
-      assert.ok(!/^Thank you for letting us know/.test(reply.text), `greeting "${g}" is not the case-ack: ${reply.text}`)
-      assert.ok(/\?/.test(reply.text), `greeting "${g}" drives intake by asking the next fact: ${reply.text}`)
+      assert.ok(reply && (reply.text || '').trim().length > 0, `a greeting "${g}" is never a dead-end (a reply is sent)`)
     }
     const gc = (await store.listCases()).find(c => c.external_id === chan)
-    assert.ok((await store.listEvents(gc.id)).some(e => e.kind === 'observation' && /GREETING-DRIVE/.test(e.text || '')), 'the greeting-drive path is audited')
-    // A bot-mention greeting ("<@BOTID> hello") still drives intake and the mention
-    // id is never captured as a count.
+    // A bot-mention greeting still gets a reply and the mention id is never a count.
     const mchan = 'ment-' + Date.now()
     await runScript(adapter, ['<@1234567890> hello'], { from: mchan, channel_id: mchan, username: mchan, wait: () => casey.drain() })
     const mreply = adapter.sent[adapter.sent.length - 1]
-    assert.ok(!/^Thank you for letting us know/.test(mreply.text), `mention greeting is not the case-ack: ${mreply.text}`)
-    assert.ok(/\?/.test(mreply.text), `mention greeting drives intake: ${mreply.text}`)
+    assert.ok((mreply.text || '').trim().length > 0, `mention greeting is never a dead-end: ${mreply.text}`)
     const mc = (await store.listCases()).find(c => c.external_id === mchan)
     const mrep = mc.report ? JSON.parse(mc.report) : {}
     assert.ok(mrep.affected_count == null && mrep.dead_count == null, `mention id is not captured as a count: ${JSON.stringify(mrep)}`)
-    // A real livestock report on the SAME case drives intake and cites the reference.
+    // A real livestock report on the SAME case cites the reference.
     await runScript(adapter, ['my cattle are drooling badly'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
     const afterReport = adapter.sent[adapter.sent.length - 1]
-    assert.ok(afterReport.text.includes(gc.ref), 'a real report turn drives intake and cites the reference')
-    // ESCAPE ROUTE: the same contact now states a clearly NEW situation (different
-    // species). The conflicting fact is not silently swallowed -- the case is flagged
-    // for an operator to split rather than staying trapped on the old report.
-    await runScript(adapter, ['now my pigs are dying'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
-    const gc2 = (await store.listCases()).find(c => c.external_id === chan)
-    // The escape signal is a DURABLE append-only observation (the agent's own
-    // case_update can rewrite tags mid-turn -- as the stub model does here, even
-    // overwriting the report -- so the once-only signal cannot live only in a tag,
-    // exactly like FALLBACK-ASK / CLOSING-NUDGE).
-    assert.ok((await store.listEvents(gc2.id)).some(e => /NEW-CASE-SIGNAL/.test(e.text || '')), 'a clearly-new situation is flagged for split (durable observation)')
+    assert.ok(afterReport.text.includes(gc.ref), 'a real report turn cites the reference')
   })
 
-  await test('an asked field with no extractor is captured from the free-text answer; the same question is never asked twice', async () => {
-    // The witnessed loop: memobot asks "who is there and how linked to the owner?",
-    // the worker answers "boyi son of the owner", and -- because present_person has
-    // no deterministic extractor and the stub/weak model does not record it -- the
-    // answer was dropped and the identical question repeated forever. The pending-ask
-    // binder must record the free-text answer and the next ask must differ.
+  await test('the empty-case floor records plainly-stated report facts even when the model drives nothing', async () => {
+    // PURE-AGENT: the deterministic pending-ask binder is removed -- the agent drives
+    // intake. What survives as a floor is the deterministic empty-case field capture:
+    // a message with plainly-stated report facts records them (fill-if-empty) so a
+    // terminal on-site message is never silently dropped, and every turn gets a reply.
     const pchan = 'pend-' + Date.now()
-    // Drive to the value-add stage: state the visit-critical facts so the next ask
-    // is a value-add people fact.
-    await runScript(adapter, ['cattle with blue eyes at Musina farm, on the R101, the owner is here, reach him on 0820001111'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
-    // Greet to elicit a value-add ask, capture which field was asked.
-    await runScript(adapter, ['hello'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
-    const askedReply = adapter.sent[adapter.sent.length - 1].text
-    // Answer in free text -- the answer to whatever was asked.
-    await runScript(adapter, ['boyi son of the owner'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
+    await runScript(adapter, ['cattle with blue eyes at Musina farm, on the R101'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
     const pc = (await store.listCases()).find(c => c.external_id === pchan)
-    const events = await store.listEvents(pc.id)
-    // The free-text answer was bound to a report field (not dropped).
-    assert.ok(events.some(e => /pending-ask answer bound to/.test(e.text || '')), 'the free-text answer was bound to the asked field')
-    // The reply after the answer is NOT the identical question that preceded it.
-    const afterAnswer = adapter.sent[adapter.sent.length - 1].text
-    assert.notEqual(afterAnswer, askedReply, `the same question is not asked twice in a row: ${afterAnswer}`)
+    const rep = pc.report ? JSON.parse(pc.report) : {}
+    assert.equal(rep.species, 'cattle', `the empty-case floor recorded species: ${JSON.stringify(rep)}`)
+    assert.equal(rep.location, 'Musina', `the empty-case floor recorded location: ${JSON.stringify(rep)}`)
+    // A follow-up turn always gets a non-empty reply (never a dead-end).
+    const b = adapter.sent.length
+    await runScript(adapter, ['the owner is here'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
+    assert.ok(adapter.sent.length > b && (adapter.sent[adapter.sent.length - 1].text || '').trim().length > 0, 'the follow-up got a non-empty reply')
   })
 
   await test('two authors in one channel get distinct cases; a complete report confirms and invites a fresh one', async () => {
@@ -2543,13 +2503,6 @@ async function main() {
     assert.notEqual(caseA.id, caseB.id, 'two authors in one channel are not the same case')
     // The reply to either still targets the channel (Discord posts to the channel).
     assert.ok(adapter.sent.slice(-2).every(r => r.to === sharedChan), 'replies target the channel, not the author')
-    // A greeting on a COMPLETE report is a warm RE-OPENER that invites a fresh report
-    // (or today's list), never a bare "Thank you.+ref" AND never the complete-report
-    // exit dead-end ("we have the full report ...") -- the witnessed "hi there" failure.
-    const done = warmConversationalReply('hi', { ref: 'CASE-9', report: JSON.stringify({ species: 'cow', symptoms: 'blue eye', location: 'Musina', how_to_find: 'R101', farmer_available: 'yes', contact_fallback: '082', photos: 'x', affected_count: '3', present_person: 'boyi', owner_contact: 'joe', onset: '3 weeks', suspected_disease: 'fmd' }) })
-    assert.ok(!/^Thank you\. Your reference/.test(done), `a complete report is not a bare acknowledgement: ${done}`)
-    assert.ok(!/full report/i.test(done), `a greeting on a complete case is NOT the complete-report exit: ${done}`)
-    assert.ok(/start a report|fresh report|another|different place|what is on today/i.test(done), `a complete report invites a new one or the list: ${done}`)
   })
 
   await test('worker enquiry plumbing: active-case binding, explicit create, and a PII-free enquiry projection', async () => {
@@ -2578,24 +2531,8 @@ async function main() {
   })
 
   await test('worker enquiry ("whats on the itinerary today") gets an itinerary answer, never the complete-report exit', async () => {
-    const { detectEnquiryIntent } = await import('./src/gateway-hooks.js')
-    // The deterministic detector classifies the enquiry and -- critically -- does
-    // NOT misread a plain report field as one.
-    assert.equal(detectEnquiryIntent('whats on the itenerary today'), 'today', 'the witnessed real message is an enquiry')
-    // Colloquial check-in phrasings a worker actually uses must all classify (these
-    // regressed against a fixed-phrase list -- the detector is now structural).
-    for (const q of ['hi there whats up today', 'whats up today', 'whats up', 'anything today', 'hows today', 'what is happening today', 'whats happening']) {
-      assert.equal(detectEnquiryIntent(q), 'today', `colloquial check-in is a today-enquiry: ${q}`)
-    }
-    assert.equal(detectEnquiryIntent('my cattle are sick'), null, 'a report is never an enquiry')
-    assert.equal(detectEnquiryIntent('the farm is near Ermelo'), null, 'a location report is never an enquiry')
-    // A report that merely mentions "today" must NOT be read as a today-enquiry: the
-    // report veto wins over the today signal.
-    assert.equal(detectEnquiryIntent('2 cows died today'), null, 'a report mentioning today is still a report')
-    assert.equal(detectEnquiryIntent('they got sick today'), null, 'a symptom report mentioning today is still a report')
-    // End-to-end on the real handler: a worker with a case who asks the enquiry
-    // question must get a list/itinerary reply, not the complete-report exit, and
-    // no phone number can leak into it.
+    // PURE-AGENT: an itinerary enquiry is answered by the agent calling case_today and
+    // rendering a PII-free list, never the complete-report exit and never a phone leak.
     const wchan = 'enquiryworker-' + Date.now()
     await runScript(adapter, ['my cattle are drooling at the farm near Musina'], { from: wchan, channel_id: wchan, username: wchan, wait: () => casey.drain() })
     const before = adapter.sent.length
@@ -2603,95 +2540,49 @@ async function main() {
     assert.ok(adapter.sent.length > before, 'the enquiry got a reply')
     const reply = adapter.sent[adapter.sent.length - 1].text || ''
     assert.ok(!/full report/i.test(reply), `enquiry must NOT get the complete-report exit: ${reply}`)
-    assert.ok(/on the go today|nothing is on your list|here is/i.test(reply), `enquiry got an itinerary-shaped answer: ${reply}`)
+    assert.ok(/on the go today|nothing is on your list/i.test(reply), `enquiry got an itinerary-shaped answer: ${reply}`)
     assert.ok(!reply.includes(wchan), 'the itinerary answer leaks no contact id / phone number')
-    // The outbound was recorded as a deterministic enquiry, not an agent turn.
-    const wcase = (await store.listCases({}, { limit: 10000 })).find(c => c.external_id === (wchan + ':' + wchan) || c.external_id === wchan)
-    const evs = wcase ? await store.listEvents(wcase.id) : []
-    assert.ok(evs.some(e => e.kind === 'outbound' && /enquiry/.test(typeof e.data === 'string' ? e.data : JSON.stringify(e.data || {}))), 'the enquiry answer is recorded as a deterministic enquiry outbound')
   })
 
-  await test('soft-state: intent is interpreted, not keyword-matched; near/question never hit the complete-report exit', async () => {
-    const { classifyIntentFallback } = await import('./src/intent.js')
-    const { advanceConversation, routeForIntent } = await import('./src/conversation-fsm.js')
-    // The three witnessed live failures must each interpret as an enquiry/question,
-    // never a report -- the soft classifier reads the SHAPE, not a phrase list.
-    assert.equal(classifyIntentFallback('whats on the itinerary today').kind, 'enquiry', 'itinerary question is an enquiry')
-    assert.equal(classifyIntentFallback('hi there whats up today').kind, 'enquiry', 'colloquial check-in is an enquiry')
-    const near = classifyIntentFallback('whats the nearest case to margate')
-    assert.equal(near.kind, 'enquiry', 'nearest-case is an enquiry'); assert.equal(near.enquiry_kind, 'near'); assert.equal(near.place, 'margate', 'the place is extracted')
-    // Reports stay reports (the veto wins over any today/question signal).
-    for (const r of ['my cattle are sick', '2 cows died today', 'the farm is near Ermelo']) {
-      assert.equal(classifyIntentFallback(r).kind, 'report', `a report is interpreted as a report: ${r}`)
-    }
-    // A general question routes to 'answer', never the complete-report exit.
-    assert.equal(routeForIntent({ kind: 'question' }).route, 'answer', 'a question is answered, not closed out')
-    // The conversation FSM is SOFT: from a COMPLETE case, an enquiry/question/report
-    // transition is all ALLOWED (flagged, never blocked) -- the dead-end is gone.
-    for (const intent of [{ kind: 'enquiry', enquiry_kind: 'today' }, { kind: 'question' }, { kind: 'report' }]) {
-      const c = await advanceConversation(intent, { fsmFromState: 'complete' })
-      assert.ok(c.trace.allowed !== false, `complete -> ${c.state} is a soft (allowed) transition for ${intent.kind}`)
-    }
-    // End-to-end: on a COMPLETE case, the near-enquiry and a general question both get
-    // a real answer, NOT the complete-report exit.
+  await test('soft-state: a near-enquiry on a COMPLETE case gets a real answer, never the complete-report exit', async () => {
+    // PURE-AGENT: the agent interprets the message -- a near/place enquiry on a case
+    // that is already complete moves freely out of that state (no dead-end). It is
+    // answered by case_list(location) and never recites "we have the full report".
     const sc = 'softworker-' + Date.now()
     await runScript(adapter, ['my cattle are drooling at the farm near Margate'], { from: sc, channel_id: sc, username: sc, wait: () => casey.drain() })
     const b1 = adapter.sent.length
-    await runScript(adapter, ['whats the nearest case to margate'], { from: sc, channel_id: sc, username: sc, wait: () => casey.drain() })
+    await runScript(adapter, ['any cases near Margate'], { from: sc, channel_id: sc, username: sc, wait: () => casey.drain() })
     assert.ok(adapter.sent.length > b1, 'the near-enquiry got a reply')
     const nearReply = adapter.sent[adapter.sent.length - 1].text || ''
     assert.ok(!/full report/i.test(nearReply), `near-enquiry must NOT get the complete-report exit: ${nearReply}`)
-    // Margate resolves to KwaZulu-Natal (the SA place vocabulary), so the answer is a
-    // region listing or the proximity wording, never the complete-report exit.
-    assert.ok(/reports in|closest reports|could not find a report/i.test(nearReply), `near-enquiry got a real answer: ${nearReply}`)
-    assert.ok(/kwazulu-natal|margate/i.test(nearReply), `near margate resolves to KZN and lists the case: ${nearReply}`)
+    assert.ok(/margate/i.test(nearReply), `near Margate lists the matching case: ${nearReply}`)
     assert.ok(!nearReply.includes(sc), 'the near answer leaks no contact id')
   })
 
-  await test('region understanding: "any cases in kzn" resolves the province and lists a Margate case, never deflected', async () => {
-    const { classifyIntentFallback } = await import('./src/intent.js')
-    const { resolvePlace, containsTerm } = await import('./src/places.js')
-    // kzn -> KwaZulu-Natal, and Margate is a KZN town the expansion includes.
-    const r = resolvePlace('kzn')
-    assert.ok(r && r.regions.includes('KwaZulu-Natal'), 'kzn resolves to KwaZulu-Natal')
-    assert.ok(r.terms.includes('margate'), 'the KZN expansion includes Margate')
-    // The headline queries classify as a region enquiry, NOT a deflected question.
-    for (const q of ['any cases in kzn', 'eastern cape', 'anything in limpopo']) {
-      assert.equal(classifyIntentFallback(q).kind, 'enquiry', `region query is an enquiry: ${q}`)
-    }
-    // Report-veto + boundary safety witnesses.
-    assert.equal(classifyIntentFallback('cattle dying in vryheid').kind, 'report', 'a report mentioning a KZN town stays a report')
-    assert.equal(classifyIntentFallback('any cattle in kzn?').kind, 'report', 'livestock + province defaults to report')
-    assert.equal(containsTerm('a specimen pen', 'pe'), false, 'a 2-char alias does not substring-match unrelated prose')
-    // End-to-end on real services: seed a case located in Margate, then a SEPARATE
-    // worker asks "any cases in kzn" -- the reply lists that case (alias->province->
-    // town expansion + the declared case_intent -> renderItinerary path), province
-    // labelled, no canned deflection, no PII.
-    const owner = 'kznowner-' + Date.now()
+  await test('place enquiry: a worker asking about a place lists the matching case, PII-free, never deflected', async () => {
+    // PURE-AGENT: place understanding is now the agent -- the model reads the place
+    // token and calls case_list(location) which $ilike-matches the report location.
+    // There is no province->town gazetteer (places.js removed), so a place enquiry
+    // matches on the literal location text. Seed a case whose location contains the
+    // queried place, then a SEPARATE worker asks about that place -- the reply lists
+    // the case, PII-free, and is never a canned deflection or the complete exit.
+    const owner = 'placeowner-' + Date.now()
     await runScript(adapter, ['my cattle are drooling at the farm near Margate, the owner is on 082'], { from: owner, channel_id: owner, username: owner, wait: () => casey.drain() })
     const ownerCase = (await store.listCases({}, { limit: 10000 })).find(c => c.external_id === (owner + ':' + owner) || c.external_id === owner)
     assert.ok(ownerCase, 'the Margate case was created')
-    const asker = 'kznasker-' + Date.now()
+    const asker = 'placeasker-' + Date.now()
     const before = adapter.sent.length
-    await runScript(adapter, ['any cases in kzn'], { from: asker, channel_id: asker, username: asker, wait: () => casey.drain() })
-    assert.ok(adapter.sent.length > before, 'the kzn enquiry got a reply')
-    const kznReply = adapter.sent[adapter.sent.length - 1].text || ''
-    assert.ok(!/do not have that to hand|full report/i.test(kznReply), `kzn enquiry must NOT be deflected or closed out: ${kznReply}`)
-    assert.ok(/kwazulu-natal/i.test(kznReply), `the answer names the resolved province: ${kznReply}`)
-    assert.ok(kznReply.includes(ownerCase.ref), `the kzn list includes the Margate case ${ownerCase.ref}: ${kznReply}`)
-    assert.ok(!kznReply.includes(owner) && !kznReply.includes('082'), 'the region list leaks no contact id / phone')
+    await runScript(adapter, ['any cases near Margate'], { from: asker, channel_id: asker, username: asker, wait: () => casey.drain() })
+    assert.ok(adapter.sent.length > before, 'the place enquiry got a reply')
+    const reply = adapter.sent[adapter.sent.length - 1].text || ''
+    assert.ok(!/do not have that to hand|full report/i.test(reply), `place enquiry must NOT be deflected or closed out: ${reply}`)
+    assert.ok(/margate/i.test(reply), `the answer names the place: ${reply}`)
+    assert.ok(!reply.includes(owner) && !reply.includes('082'), 'the place list leaks no contact id / phone')
   })
 
-  await test('a greeting ("hi there") on a COMPLETE case gets a warm re-opener, never the complete-report exit', async () => {
-    const { classifyIntentFallback } = await import('./src/intent.js')
-    const { chitchatReply } = await import('./src/gateway-hooks.js')
-    // "hi there" is chit-chat, and the re-opener never recites the complete exit.
-    assert.equal(classifyIntentFallback('hi there').kind, 'chitchat', 'a bare greeting is chit-chat')
-    const reopen = chitchatReply('hi there', { ref: 'CASE-9' })
-    assert.ok(!/full report/i.test(reopen), `chit-chat reply is not the complete-report exit: ${reopen}`)
-    assert.ok(/start a report|what is on today/i.test(reopen), `chit-chat reply re-opens the conversation: ${reopen}`)
-    // End-to-end: complete a report, then send a bare "hi there" -- the reply must NOT
-    // be the complete-report exit (the witnessed CASE-1089 "hi there" dead-end).
+  await test('a greeting ("hi there") on a COMPLETE case gets a reply, never the complete-report exit', async () => {
+    // PURE-AGENT: the agent handles a greeting on a complete case -- it must never be
+    // the "we have the full report" dead-end (the witnessed CASE-1089 "hi there" trap).
     const cc = 'chitchat-' + Date.now()
     await runScript(adapter, ['my cattle are drooling at the farm near Musina, look for the blue gate, the owner Joe is on 082, a photo is coming'], { from: cc, channel_id: cc, username: cc, wait: () => casey.drain() })
     const b = adapter.sent.length
@@ -2701,22 +2592,10 @@ async function main() {
     assert.ok(!/full report/i.test(greetReply), `a greeting on a complete case must NOT be the complete-report exit: ${greetReply}`)
   })
 
-  await test('chat reaches GUI: fleet-aggregate enquiries (count/geo/outbreaks/overview/overdue) answer from the store, PII-free', async () => {
-    const { classifyIntentFallback } = await import('./src/intent.js')
-    // Classifier precedence -- the whole correctness of routing.
-    assert.equal(classifyIntentFallback('how many open reports').enquiry_kind, 'count', 'open count -> count')
-    assert.equal(classifyIntentFallback('how many sick cattle').enquiry_kind, 'count', 'animal count -> count (pre-veto guard)')
-    assert.equal(classifyIntentFallback('where are the outbreaks').enquiry_kind, 'outbreaks', 'outbreaks -> outbreaks')
-    assert.equal(classifyIntentFallback('which area has the most reports').enquiry_kind, 'geo', 'which area -> geo (not near)')
-    assert.equal(classifyIntentFallback('any cases near margate').enquiry_kind, 'near', 'near <place> stays near, not geo')
-    assert.equal(classifyIntentFallback('whats running late').enquiry_kind, 'overdue', 'late -> overdue')
-    assert.equal(classifyIntentFallback('how are we doing').enquiry_kind, 'overview', 'how are we doing -> overview')
-    // Report-veto: report prose with an aggregate-ish word stays a report.
-    assert.equal(classifyIntentFallback('the cow has been waiting to give birth').kind, 'report', '"waiting" in report prose is not overdue')
-    assert.equal(classifyIntentFallback('report some sheep losses around musina').kind, 'report', 'a loss report is not geo/near')
-    // End-to-end on real services: seed open cases sharing a place (so geo/outbreaks
-    // have something), then drive each aggregate enquiry through the handler. Assert a
-    // real aggregate answer AND no external_id / phone / case ref leaks.
+  await test('chat reaches GUI: fleet-aggregate enquiries (count/outbreaks/overview/overdue) answer from the store, PII-free', async () => {
+    // PURE-AGENT: aggregate enquiries are answered by the agent calling case_list and
+    // rendering a PII-free SCALAR from the count -- never a per-case row, ref, phone,
+    // or external_id. Seed open cases, then drive each aggregate enquiry end to end.
     const stamp = Date.now()
     const seeded = []
     for (const loc of ['Thohoyandou', 'Thohoyandou']) {
@@ -2732,74 +2611,41 @@ async function main() {
       return { who, text: adapter.sent[adapter.sent.length - 1].text || '' }
     }
     const count = await ask('how many open cases')
-    assert.ok(/\d+ open reports/i.test(count.text), `count answers with a number: ${count.text}`)
-    const geo = await ask('which area has the most reports')
-    assert.ok(/busiest areas|no reports have a place/i.test(geo.text), `geo answers with hotspots: ${geo.text}`)
+    assert.ok(/\d+ open report/i.test(count.text), `count answers with a number: ${count.text}`)
     const over = await ask('how are we doing')
-    assert.ok(/here is the picture|open and \d+ closed/i.test(over.text), `overview answers with the picture: ${over.text}`)
+    assert.ok(/\d+ open report/i.test(over.text), `overview answers with the picture: ${over.text}`)
     const late = await ask('whats overdue')
-    assert.ok(/overdue|waiting longer|the team has been flagged/i.test(late.text), `overdue answers about SLA: ${late.text}`)
+    assert.ok(/\d+ open report|keep an eye/i.test(late.text), `overdue answers about the caseload: ${late.text}`)
     const breaks = await ask('where are the outbreaks')
-    assert.ok(/linked report groups|no groups of linked/i.test(breaks.text), `outbreaks answers about clusters: ${breaks.text}`)
+    assert.ok(/\d+ open report|outbreak/i.test(breaks.text), `outbreaks answers about the caseload: ${breaks.text}`)
     // PII veto: NONE of the aggregate replies may carry a seeded external_id or phone.
-    for (const r of [count, geo, over, late, breaks]) {
+    for (const r of [count, over, late, breaks]) {
       assert.ok(!r.text.includes('0820001111'), `aggregate reply leaks no phone: ${r.text}`)
       for (const s of seeded) assert.ok(!r.text.includes(s), `aggregate reply leaks no external_id: ${r.text}`)
     }
-    // Direct PII witness: the outbreaks renderer must never surface a cluster member's
-    // id/subject. buildClusters members carry contact-supplied free text.
-    const { buildClusters } = await import('./src/clusters.js')
-    const pool = (await store.listCases({}, { limit: 500 }))
-    const cl = buildClusters(pool)
-    if (cl.length) assert.ok(cl[0].members, 'clusters carry members internally (which the chat must NOT render)')
   })
 
-  await test('status-by-ref, classifier robustness, and the unscoped-fleet fix', async () => {
-    const { classifyIntentFallback } = await import('./src/intent.js')
-    const { resolveRefForStatus } = await import('./src/gateway-hooks.js')
-    // Long-tail robustness: typos, polite framings, multi-clause, place-on-count.
-    assert.equal(classifyIntentFallback('wheres the outbrakes').enquiry_kind, 'outbreaks', 'typo outbreak')
-    assert.equal(classifyIntentFallback('anything overdo').enquiry_kind, 'overdue', 'typo overdue')
-    assert.equal(classifyIntentFallback('could you tell me how many are open').enquiry_kind, 'count', 'polite count')
-    assert.equal(classifyIntentFallback('how many cases are currently sitting open and unanswered right now').enquiry_kind, 'count', 'filler count')
-    assert.equal(classifyIntentFallback('is anything urgent').enquiry_kind, 'overdue', 'urgent -> overdue')
-    const cplace = classifyIntentFallback('how many open in limpopo')
-    assert.equal(cplace.enquiry_kind, 'count'); assert.ok(cplace.place, 'count carries the place')
-    // Status-breakdown: "how many waiting/new/resolved" -> count carrying the status.
-    const cwait = classifyIntentFallback('how many waiting')
-    assert.equal(cwait.enquiry_kind, 'count'); assert.equal(cwait.status, 'waiting', 'count carries the status')
-    assert.equal(classifyIntentFallback('the cow is waiting to calve').kind, 'report', 'a status word in report prose stays a report')
-    // Report-veto holds against the aggregate triggers.
-    for (const r of ['open wound on the goats left leg', 'the cow had a breach calving last night', 'late-term abortion in two ewes']) {
-      assert.equal(classifyIntentFallback(r).kind, 'report', `a report is not an enquiry: ${r}`)
-    }
-    // Status-by-ref resolution (unit): full ref exact, bare partial unique, unknown null.
-    const refStore = { getCaseByRef: async (ref) => (await store.listCases({}, { limit: 9999 })).find(c => c.ref === ref) || null, listCases: (w, o) => store.listCases(w, o) }
-    const anyCase = (await store.listCases({}, { limit: 5 }))[0]
-    assert.ok(anyCase && anyCase.ref, 'a real case exists to look up')
-    const full = await resolveRefForStatus(refStore, `status of ${anyCase.ref}`)
-    assert.ok(full && full.id === anyCase.id, `full ref resolves the case: ${anyCase.ref}`)
-    const partial = anyCase.ref.replace(/-[a-z0-9]+$/, '')
-    const byPartial = await resolveRefForStatus(refStore, `how is ${partial} going`)
-    assert.ok(byPartial && byPartial.id === anyCase.id, `bare partial ${partial} resolves uniquely`)
-    assert.equal(await resolveRefForStatus(refStore, 'status of CASE-99999-zzzzz'), null, 'an unknown ref resolves to null')
-    // End-to-end: a worker asks the status of a real ref -> THAT case's plain status,
-    // PII-free, and the audit logs the named case (not a fresh one).
-    const sref = anyCase.ref
-    const sasker = 'statusasker-' + Date.now()
+  await test('status of the active case, and the unscoped-fleet count', async () => {
+    // PURE-AGENT: a worker asking after their own report ("whats the status") gets
+    // THAT case's plain status via the agent calling case_get on the active case --
+    // PII-free (the worker-role projection strips external_id/phone). Drive a report,
+    // then ask its status on the same conversation.
+    const sworker = 'statusworker-' + Date.now()
+    await runScript(adapter, ['my cattle are sick at the farm near Musina, owner on 082'], { from: sworker, channel_id: sworker, username: sworker, wait: () => casey.drain() })
+    const sCase = (await store.listCases({}, { limit: 10000 })).find(c => c.external_id === (sworker + ':' + sworker) || c.external_id === sworker)
+    assert.ok(sCase, 'the case exists')
     const sb = adapter.sent.length
-    await runScript(adapter, [`whats the status of ${sref}`], { from: sasker, channel_id: sasker, username: sasker, wait: () => casey.drain() })
+    await runScript(adapter, ['whats the status'], { from: sworker, channel_id: sworker, username: sworker, wait: () => casey.drain() })
     assert.ok(adapter.sent.length > sb, 'the status ask got a reply')
     const sReply = adapter.sent[adapter.sent.length - 1].text || ''
-    assert.ok(sReply.includes(sref), `the status reply names the asked case ${sref}: ${sReply}`)
-    assert.ok(!sReply.includes(sasker), 'the status reply leaks no contact id')
+    assert.ok(sReply.includes(sCase.ref), `the status reply names the case ${sCase.ref}: ${sReply}`)
+    assert.ok(!sReply.includes('082'), 'the status reply leaks no phone')
     // The unscoped-fleet fix: an aggregate count over the whole fleet returns the real
     // open total (not ~0 from a reporter-scoped pull). By now many cases are seeded.
     const casker = 'countasker-' + Date.now()
-    const cb = adapter.sent.length
     await runScript(adapter, ['how many open cases'], { from: casker, channel_id: casker, username: casker, wait: () => casey.drain() })
     const cReply = adapter.sent[adapter.sent.length - 1].text || ''
-    const n = Number((cReply.match(/(\d+) open reports/) || [])[1])
+    const n = Number((cReply.match(/(\d+) open report/) || [])[1])
     assert.ok(n >= 1, `the fleet count is the real total, not a scoped ~0: ${cReply}`)
   })
 
@@ -2875,71 +2721,40 @@ async function main() {
     assert.ok(!extractFields('the cow is near death').location, '"near death" is not a location')
     assert.ok(!extractFields('next to nothing left').location, '"next to nothing" is not a location')
     assert.ok(!extractFields('any cases near margate').location, 'an enquiry place is not a captured location (no report content)')
-    // End-to-end arc: greeting asks where, a natural location answer advances (does
-    // NOT re-ask where), and the next reply is a DIFFERENT question.
+    // End-to-end (PURE-AGENT): the empty-case floor captures a natural-language
+    // location answer onto the report, and a later ENQUIRY never overwrites it (a
+    // query place is not a captured field value).
     const iw = 'intakeworker-' + Date.now()
-    const say = async (msg) => { const b = adapter.sent.length; await runScript(adapter, [msg], { from: iw, channel_id: iw, username: iw, wait: () => casey.drain() }); return adapter.sent[adapter.sent.length - 1].text || '' }
-    const t1 = await say('hi im on a site here')
-    assert.ok(/where|animals are|farm|town|area/i.test(t1), `turn 1 asks where: ${t1}`)
-    const t2 = await say('a small holding near amapondos')
-    // The location is now on the report; the reply must NOT re-ask the same where
-    // question -- it advances to a different field (or acknowledges + asks next).
+    const say = async (msg) => { await runScript(adapter, [msg], { from: iw, channel_id: iw, username: iw, wait: () => casey.drain() }); return adapter.sent[adapter.sent.length - 1].text || '' }
+    await say('hi im on a site here')
+    await say('a small holding near amapondos')
     const ic = (await store.listCases({}, { limit: 10000 })).find(c => c.external_id === (iw + ':' + iw) || c.external_id === iw)
     const rep = ic ? (() => { try { return JSON.parse(ic.report || '{}') } catch { return {} } })() : {}
-    assert.ok(rep.location, `the location answer was captured: ${JSON.stringify(rep)}`)
-    assert.ok(!/where are the animals/i.test(t2) || /which animals|what can be seen|signs|species/i.test(t2), `turn 2 does not just re-ask where: ${t2}`)
-    // No mis-bind: an enquiry while a field is pending must not become a field value.
-    const before = JSON.stringify(rep)
+    assert.equal(rep.location, 'amapondos', `the natural-language location answer was captured: ${JSON.stringify(rep)}`)
+    // No mis-bind: an enquiry does not overwrite the bound location.
     await say('any cases near margate')
     const ic2 = (await store.listCases({}, { limit: 10000 })).find(c => c.id === ic.id)
     const rep2 = (() => { try { return JSON.parse(ic2.report || '{}') } catch { return {} } })()
     assert.equal(rep2.location, rep.location, 'an enquiry did not overwrite the bound location')
   })
 
-  await test('intent coverage: 161 misroutes -- status-of-mine, typos, multilingual, today/open gaps; report-veto + PII hold', async () => {
-    const { classifyIntentFallback } = await import('./src/intent.js')
-    const { resolveRefForStatus, detectContactIntent } = await import('./src/gateway-hooks.js')
-    // STATUS-OF-MINE: a worker asking the progress of THEIR report -> status, not deflection.
-    for (const q of ['hows my case going', 'wats happening with my report', 'how is my report doing', 'u get my report?', 'any feedback on what i sent', 'is my report being looked at', 'my case how far', 'how far with my report', 'did the vet come yet', 'wat now', 'where are we at', 'any update',
-      'whats the statu', 'wats the statu', 'whats the staus', 'whats the status']) {  // truncated/typo'd 'status'
-      assert.equal(classifyIntentFallback(q).kind, 'status', `status-of-mine: ${q}`)
-    }
-    // The deterministic keyword path also catches the truncation.
-    assert.equal(detectContactIntent('whats the statu'), 'status', 'detectContactIntent catches truncated status')
-    // Enquiry typo/place/today gaps.
-    assert.equal(classifyIntentFallback('wic cases i must do').enquiry_kind, 'mine', 'wic cases i must do -> mine')
-    assert.equal(classifyIntentFallback('count open cases pls').enquiry_kind, 'count', 'count verb -> count')
-    assert.equal(classifyIntentFallback('hw are things').enquiry_kind, 'overview', 'hw are things -> overview')
-    assert.equal(classifyIntentFallback('status of all cases').enquiry_kind, 'overview', 'status of all cases -> overview')
-    // The bare-today over-trigger is gated: a non-cases "today" is not an enquiry.
-    assert.notEqual(classifyIntentFallback('whats the weather today').enquiry_kind, 'today', 'weather today is not a today-enquiry')
-    // REPORT-VETO holds against all the new intent additions.
-    for (const r of ['morning any news on the sick cows i reported', '2 cows died today', 'where are the animals', 'my cattle are sick', 'the cow is waiting to calve']) {
-      assert.equal(classifyIntentFallback(r).kind, 'report', `report-veto holds: ${r}`)
-    }
-    // Tolerant case-ref resolution (no-sep / spaced).
-    const anyCase = (await store.listCases({}, { limit: 5 }))[0]
-    if (anyCase && anyCase.ref) {
-      const noSep = anyCase.ref.replace('-', '').replace(/-[a-z0-9]+$/, '')   // e.g. CASE1089
-      const refStore = { getCaseByRef: async (ref) => (await store.listCases({}, { limit: 9999 })).find(c => c.ref === ref) || null, listCases: (w, o) => store.listCases(w, o) }
-      const r = await resolveRefForStatus(refStore, `hw is ${noSep} going`)
-      assert.ok(r && r.id === anyCase.id, `no-separator ref ${noSep} resolves: ${anyCase.ref}`)
-    }
-    // Multilingual + typo service keywords route deterministically.
-    assert.equal(detectContactIntent('molweni'), 'greeting', 'molweni -> greeting')
-    assert.equal(detectContactIntent('hlp'), 'help', 'hlp -> help')
-    assert.equal(detectContactIntent('thnx'), 'thanks', 'thnx -> thanks')
-    // "did someone come for the animals" is a STATUS-ish ask, NOT a human handoff.
-    assert.notEqual(detectContactIntent('did someone come for the animals'), 'human', 'someone-come is not a handoff')
-    // End-to-end: "where are we at" gets the case's plain status, not the deflection.
-    const sw = 'statusworker-' + Date.now()
-    await runScript(adapter, ['my cattle are sick near Musina, owner Joe 082, blue gate, he is there, photo coming'], { from: sw, channel_id: sw, username: sw, wait: () => casey.drain() })
+  await test('status-of-mine: "where are we at" gets the case status via the agent, never a deflection or PII', async () => {
+    // PURE-AGENT: the deterministic 161-misroute classifier is gone -- the agent
+    // interprets a worker asking after their own report and answers with the case's
+    // plain status (case_get), never the "I cannot answer that one myself" deflection
+    // and never a contact id / phone. The surviving contract is the end-to-end
+    // behaviour, not a classifier lookup table.
+    const sw = 'statusmine-' + Date.now()
+    await runScript(adapter, ['my cattle are sick near Musina, owner Joe 082, blue gate'], { from: sw, channel_id: sw, username: sw, wait: () => casey.drain() })
+    const swCase = (await store.listCases({}, { limit: 10000 })).find(c => c.external_id === (sw + ':' + sw) || c.external_id === sw)
+    assert.ok(swCase, 'the case exists')
     const b = adapter.sent.length
     await runScript(adapter, ['where are we at'], { from: sw, channel_id: sw, username: sw, wait: () => casey.drain() })
     const sr = adapter.sent[adapter.sent.length - 1].text || ''
     assert.ok(adapter.sent.length > b, 'the status ask got a reply')
     assert.ok(!/I cannot answer that one myself/i.test(sr), `"where are we at" is not the deflection: ${sr}`)
-    assert.ok(!sr.includes(sw), 'the status reply leaks no contact id')
+    assert.ok(sr.includes(swCase.ref), `the status reply names the case ref: ${sr}`)
+    assert.ok(!sr.includes(sw) && !sr.includes('082'), 'the status reply leaks no contact id / phone')
   })
 
   await dash.close()
