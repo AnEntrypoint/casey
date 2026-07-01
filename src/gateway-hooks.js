@@ -1203,47 +1203,10 @@ const HUMAN_EXCLUDE = [
   'someone come', 'someone came', 'anyone coming', 'did someone',
 ]
 
-// Keyword lists focus on English + the SA languages a farmer is likely to type.
-// The live model handles anything else; these only drive the deterministic,
-// no-LLM shortcuts, so they cover en/af/zu/xh/st/tn rather than es/pt/fr/de.
-const STATUS_KEYS = [
-  'status', 'statu', 'staus', 'stats', 'update', 'progress', 'how long', 'any news', 'news', 'eta',
-  'whats happening', 'what is happening', 'still waiting', 'where is',
-  'feedback', 'any feedback', 'being looked', 'looked at', 'how far',
-  'hows it going', 'any reply', 'reply yet', 'did you get', 'did u get',
-  'get my report', 'received', 'sorted', 'done yet', 'fixed yet', 'came yet',
-  'any answer',
-  'enige nuus', 'hoe lank', 'wat gebeur',            // af
-  'izindaba', 'kuphi', 'isimo', 'kunjani', 'sekwenzekani', 'sekuhanjwe', 'nuus', 'kuthiwani', // zu
-  'iindaba', 'kuphi na',                             // xh
-]
-
-const HELP_KEYS = [
-  'help', 'menu', 'options', 'what can', 'how do', 'confused', 'lost',
-  'dont understand', 'do not understand', 'huh', '?', 'hlp', 'help me', 'can u help',
-  'hulp', 'verdwaal',                                // af
-  'usizo', 'ngidukile', 'siza', 'siza mina', 'ngicela usizo', 'ngicela', // zu
-  'uncedo', 'ndilahlekile', 'ncedani', 'ndicela uncedo', // xh
-  'thusa',                                           // st/tn
-]
-
-const THANKS_KEYS = [
-  // NB: no bare 'thank' key -- it would substring-match any token containing it
-  // ("thankfully it rained" -> false 'thanks'). 'thanks'/'thank you'/'thx'/'ty'
-  // already cover every real thanks; the lone 'thank' only ever mis-fired.
-  'thanks', 'thank you', 'thx', 'thnx', 'thank u', 'ta', 'ty', 'cheers', 'appreciate',
-  'dankie', 'baie dankie',                           // af
-  'ngiyabonga', 'siyabonga',                         // zu
-  'enkosi', 'enkosi kakhulu',                        // xh
-  'kea leboha', 'ke a leboga',                       // st/tn
-]
-
-const GREETING_KEYS = [
-  'hi', 'hello', 'hey', 'hallo', 'hiya', 'yo', 'good morning',
-  'good afternoon', 'good evening', 'greetings', 'morning', 'gud morning', 'heita', 'aweh',
-  'goeie more', 'goeie middag', 'goeie naand',       // af
-  'sawubona', 'molo', 'dumela', 'dumelang', 'molweni', 'sanibonani', 'unjani', 'ninjani', // zu/xh/st/tn
-]
+// STATUS/HELP/THANKS/GREETING keyword tables were removed with the pure-LLM strip:
+// the model answers all of those itself. detectContactIntent keeps ONLY the STOP_KEYS
+// / HUMAN_KEYS matcher below -- the two irreversible service controls that must fire
+// deterministically in any language even model-down.
 
 // Lowercase, strip diacritics/emoji/punctuation, COLLAPSE any run of '?' to a
 // single '?' token (so "???" is a help signal, not an unmatchable "???" token),
@@ -1325,19 +1288,6 @@ const STATUS_STRINGS = {
 
 function plainStatus(status, lang = 'en') {
   const S = STATUS_STRINGS[lang] || STATUS_STRINGS.en
-  return S[status] || S._
-}
-
-// Short status LABELS for a list context (an enquiry itinerary line), distinct from
-// the verbose plainStatus SENTENCES (which read like a holding reply in a list).
-const STATUS_LABELS = {
-  en: { new: 'new', triaging: 'being looked at', in_progress: 'in progress', waiting: 'waiting', resolved: 'sorted', closed: 'closed', _: 'open' },
-  af: { new: 'nuut', triaging: 'word bekyk', in_progress: 'aan die gang', waiting: 'wag', resolved: 'reggemaak', closed: 'gesluit', _: 'oop' },
-  zu: { new: 'okusha', triaging: 'kuyabhekwa', in_progress: 'kuyaqhubeka', waiting: 'kulindile', resolved: 'kulungisiwe', closed: 'kuvaliwe', _: 'kuvuliwe' },
-  xh: { new: 'entsha', triaging: 'kuyajongwa', in_progress: 'kuyaqhubeka', waiting: 'kulindile', resolved: 'kulungisiwe', closed: 'kuvaliwe', _: 'kuvuliwe' },
-}
-function shortStatus(status, lang = 'en') {
-  const S = STATUS_LABELS[lang] || STATUS_LABELS.en
   return S[status] || S._
 }
 
