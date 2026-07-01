@@ -40,24 +40,39 @@ export function buildCaseToolset(storeOrNull) {
       toolset: 'cases',
       schema: {
         name: 'case_list',
-        description: 'List cases, optionally filtered by status/channel/assignee. Returns most-recently-active first.',
+        description: 'List cases, optionally filtered by status/channel/assignee/location. Use `location` (a town, area, or place a person mentions) to find reports in a place -- this is the place-enquiry tool. Returns most-recently-active first, PII-free.',
         parameters: {
           type: 'object',
           properties: {
             status: str('Filter by workflow status', { enum: ['new', 'triaging', 'in_progress', 'waiting', 'resolved', 'closed'] }),
             channel: str('Filter by channel'),
             assignee: str('Filter by assignee'),
+            location: str('A place name (town/area) to match reports whose location contains it'),
             limit: { type: 'number', default: 25 },
           },
         },
       },
-      handler: async ({ status, channel, assignee, limit = 25 }) => {
+      handler: async ({ status, channel, assignee, location, limit = 25 }) => {
         const where = {}
         if (status) where.status = status
         if (channel) where.channel = channel
         if (assignee) where.assignee = assignee
-        const rows = await store().listCases(where, { limit })
-        return { count: rows.length, cases: rows.map(slimCase) }
+        // A place enquiry: location lives in the free-text report JSON, not a queryable
+        // column, so pull a wider window and JS-filter on the report location substring.
+        const pull = location ? Math.max(limit * 20, 500) : limit
+        let rows = await store().listCases(where, { limit: pull })
+        if (location) {
+          const needle = String(location).toLowerCase()
+          rows = rows.filter(c => {
+            let loc = ''
+            try { loc = (c.report ? JSON.parse(c.report) : {}).location || '' } catch { loc = '' }
+            return String(loc).toLowerCase().includes(needle)
+          }).slice(0, limit)
+        }
+        // A LIST spans cases the asker may not own, so project each row PII-FREE
+        // (enquiryRow: ref/status/species/location only) -- NEVER the full slimCase
+        // report, which carries owner_name/contact_fallback/other-worker contact text.
+        return { count: rows.length, cases: rows.map(enquiryRow) }
       },
     },
     {
@@ -328,6 +343,22 @@ function slimCase(c) {
   let reportObj = null
   try { reportObj = report ? JSON.parse(report) : null } catch { reportObj = null }
   return { id, ref, channel, status, priority, subject, summary, report: reportObj, tags, assignee, autonomy, last_event_at }
+}
+// PII-FREE projection for a LIST row (an enquiry spanning cases the asker may not
+// own). Keeps only ref/status/species/location -- NEVER the full report object, which
+// carries owner_name/contact_fallback/present_person and other contact-supplied free
+// text that must not reach the model context (and thence a reply) for a case the
+// worker does not own. species/location are flattened out of the report so a place/
+// species list still reads naturally without exposing the rest.
+function enquiryRow(c) {
+  if (!c) return null
+  let report = {}
+  try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+  return {
+    id: c.id, ref: c.ref, status: c.status, priority: c.priority,
+    species: report.species || null, location: report.location || null,
+    assignee: c.assignee || null, last_event_at: c.last_event_at,
+  }
 }
 function slimEvent(e) {
   return { kind: e.kind, actor: e.actor, text: e.text, at: e.created_at }

@@ -455,9 +455,18 @@ export function refTail(contactText, caseRow) {
 export function fallbackReply(contactText, caseRow) {
   const lang = guessLang(contactText)
   const base = FALLBACK_BY_LANG[lang] || FALLBACK_REPLY
+  // DRIVE INTAKE on the degraded path: when the report still needs a visit-critical
+  // on-site fact, the fallback must ASK for the single most-important missing one, not
+  // just parrot a holding line. Without this the anti-dead-end net was a no-op -- the
+  // English base is byte-identical to the stock-ack shape isStockAck blanks, so a
+  // degraded/greeting/outage turn re-emitted the exact same no-ask ack (a dead-end).
+  // The trailing ask both makes the reply forward-moving AND breaks the identity so it
+  // is never re-blanked. Reuses the same VISIT_CRITICAL_ASK vocabulary the model sees.
+  const missingFact = caseRow ? mostImportantMissingField(caseRow.report) : null
+  const ask = missingFact ? ' ' + askCarrier(lang, missingFact) : ''
   const ref = caseRow?.ref
-  if (!ref) return base
-  return base + refTail(contactText, caseRow)
+  if (!ref) return base + ask
+  return base + ask + refTail(contactText, caseRow)
 }
 
 // Strip channel mention/markup tokens that a chat platform injects when a

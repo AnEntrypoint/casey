@@ -35,6 +35,10 @@ export function extractFields(text) {
   // doing it here too means a stray id can never become affected_count/dead_count
   // through any caller (e.g. the sim or a future channel).
   const cleaned = (text || '')
+    // Drop an in-report case reference ("2 cows died, see CASE-1001-3vz9t") BEFORE
+    // scanning, so its digits are never read as a count (affected_count) and its
+    // suffix never pollutes location. The ref is a system token, not report content.
+    .replace(/\bCASE-\d+-[a-z0-9]+\b/gi, ' ')
     .replace(/<a?:\w+:\d+>/g, ' ')
     .replace(/<[@#][!&]?\d+>/g, ' ')
   const raw = cleaned.slice(0, MAX_SCAN)

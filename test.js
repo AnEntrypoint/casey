@@ -1589,6 +1589,31 @@ async function main() {
     const r2 = await report.handler({ id: rc.id, species: 'cattle' })
     assert.equal(Object.keys(r2.report).length, 6, 'idempotent re-send keeps the report whole')
   })
+  await test('case_list: PII-free enquiry rows + location filter (no cross-worker report leak)', async () => {
+    const { buildCaseToolset } = await import('./src/case-tools.js')
+    const tools = buildCaseToolset(store)
+    const report = tools.find(t => t.name === 'case_report')
+    const list = tools.find(t => t.name === 'case_list')
+    // Seed a case owned by worker A carrying PII (owner_name/contact_fallback) in a
+    // place, then have the list (an enquiry spanning cases the asker may not own)
+    // return it -- the row must be PII-FREE (no owner_name/contact_fallback/full
+    // report), and a location filter must match on the report location.
+    const stamp = Date.now()
+    const { case: ca } = await store.findOrCreateCase({ channel: 'sim', external_id: 'listpii-' + stamp })
+    await report.handler({ id: ca.id, species: 'cattle', symptoms: 'drooling', location: 'Ermelo', owner_name: 'Farmer Joe', contact_fallback: '0820007777' })
+    // A location enquiry finds it, PII-free.
+    const hit = await list.handler({ location: 'Ermelo' })
+    assert.ok(hit.count >= 1, `location filter matched the Ermelo case: ${hit.count}`)
+    const row = hit.cases.find(c => c.ref === ca.ref)
+    assert.ok(row, 'the Ermelo case is in the location-filtered list')
+    const blob = JSON.stringify(row)
+    assert.ok(!/Farmer Joe|0820007777/.test(blob), `the enquiry row leaks no owner name / phone: ${blob}`)
+    assert.ok(!('report' in row) || row.report == null, 'the enquiry row does not carry the full report object')
+    assert.equal(row.location, 'Ermelo', 'the enquiry row keeps the safe location for the list')
+    // A no-match place returns nothing (not the whole fleet mislabeled).
+    const miss = await list.handler({ location: 'Atlantis-' + stamp })
+    assert.equal(miss.count, 0, `a no-match place returns count 0, not the fleet: ${miss.count}`)
+  })
   await test('case_report: concurrent merges for one case lose no fields (atomic mergeReport)', async () => {
     const { buildCaseToolset } = await import('./src/case-tools.js')
     const { case: rc } = await store.findOrCreateCase({ channel: 'sim', external_id: 'report-race-' + Date.now() })
@@ -2217,6 +2242,12 @@ async function main() {
     // -- a fabricated symptom there would stop intake asking the real sign.
     assert.ok(!extractFields('from the Limpopo area').symptoms, 'Limpopo is not a "limp" symptom')
     assert.equal(extractFields('from the Limpopo area').location, 'Limpopo', 'bare place captured without the "from the" article')
+    // An in-report case reference is a system token, not report content: its digits
+    // must NEVER be read as a count and its suffix never pollute location.
+    const withRef = extractFields('2 cows died, see CASE-1001-3vz9t')
+    assert.equal(withRef.dead_count, '2', `the real count is captured: ${JSON.stringify(withRef)}`)
+    assert.ok(withRef.affected_count == null || withRef.affected_count === '2', `the ref digits (1001) are not read as affected_count: ${JSON.stringify(withRef)}`)
+    assert.ok(!/1001|3vz9t/.test(withRef.location || ''), `the ref does not pollute location: ${JSON.stringify(withRef)}`)
     // A weekday after "from" is a date, not a place -- never stored as a location.
     assert.ok(extractFields('from Monday').location == null, 'a weekday is not a location')
     assert.ok(/monday/i.test(extractFields('from Monday').onset || ''), 'a weekday after "from" is still an onset')
@@ -2256,14 +2287,22 @@ async function main() {
     assert.equal(rep.location, 'Musina', `location from turn 3, nothing lost: ${JSON.stringify(rep)}`)
   })
 
-  await test('the safe fallback is a warm, non-blank, ref-citing holding line', async () => {
-    // PURE-AGENT: the deterministic field-by-field ask ladder is removed. What
-    // survives is the safe fallback used on a degraded turn -- warm, never blank,
-    // cites the ref, and is not the complete-report dead-end.
-    const fb = fallbackReply('ok', { ref: 'CASE-1', report: JSON.stringify({}) })
-    assert.ok(fb && fb.length > 0, 'fallback is never blank')
-    assert.ok(fb.includes('CASE-1'), 'fallback cites the reference')
-    assert.ok(!/full report/i.test(fb), 'fallback is not the complete-report exit')
+  await test('the safe fallback DRIVES intake on an incomplete case, never a dead-end no-op', async () => {
+    const { isStockAck } = await import('./src/gateway-hooks.js')
+    // The degraded/outage fallback must ASK the next needed on-site fact when the
+    // report is incomplete -- not re-emit the bare stock ack (the witnessed no-op:
+    // FALLBACK_REPLY was byte-identical to the stock-ack shape isStockAck blanks, so
+    // a greeting/degraded/outage turn dead-ended with a no-ask holding line).
+    const inc = fallbackReply('hi', { ref: 'CASE-1', report: JSON.stringify({}) })
+    assert.ok(inc && inc.length > 0, 'fallback is never blank')
+    assert.ok(inc.includes('CASE-1'), 'fallback cites the reference')
+    assert.ok(!/full report/i.test(inc), 'fallback is not the complete-report exit')
+    assert.ok(/\?/.test(inc), `an incomplete-case fallback ASKS the next fact (drives intake): ${inc}`)
+    assert.ok(!isStockAck(inc), 'the driving fallback is not the stock ack (so it is never re-blanked into a dead-end)')
+    // A COMPLETE case has nothing to ask -- a warm holding ack is fine (no dead-end
+    // because a complete report is already on record).
+    const comp = fallbackReply('thanks', { ref: 'CASE-2', report: JSON.stringify({ species: 'cattle', symptoms: 'sick', location: 'Musina', how_to_find: 'gate', farmer_available: 'yes', contact_fallback: '082' }) })
+    assert.ok(comp.includes('CASE-2') && comp.length > 0, 'complete-case fallback is a warm ref-citing ack')
   })
 
   await test('a later greeting on an in-progress case still captures content and does not reset', async () => {
