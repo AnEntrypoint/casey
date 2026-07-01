@@ -29,9 +29,6 @@ import { buildGeo } from './geo.js'
 import { buildClusters } from './clusters.js'
 import { buildOverview } from './overview.js'
 import { fmtTimeSAST } from './format.js'
-import { classifyIntentFallback, normalizeIntent } from './intent.js'
-import { advanceConversation } from './conversation-fsm.js'
-import { resolvePlace, placeRegionLabel, containsTerm } from './places.js'
 
 // Report fields casey is allowed to fill deterministically at ingress. Mirrors
 // REPORT_KEYS in case-store.js; extractFields may emit keys outside the report
@@ -52,121 +49,24 @@ const CAPTURE_KEYS = new Set(['species', 'symptoms', 'location', 'affected_count
 // additive: merged fill-if-empty by the caller. Returns {} on any error / model-down
 // so the deterministic path is the byte-identical fallback. Gated by the caller to
 // run only on confirmed intake (never an enquiry/greeting/fixed-intent).
-const LLM_EXTRACT_KEYS = ['species', 'symptoms', 'location', 'how_to_find', 'affected_count',
-  'dead_count', 'onset', 'suspected_disease', 'present_person', 'present_person_relation', 'owner_name']
-const EXTRACT_TOOL = {
-  name: 'record_fields',
-  description: 'Record the animal-report fields the worker LITERALLY stated in their latest message. Only fields actually stated; never guess. A place in any spelling or description (even lowercase, "a small holding near X") IS the location.',
-  parameters: {
-    type: 'object',
-    properties: Object.fromEntries(LLM_EXTRACT_KEYS.map(k => [k, { type: 'string' }])),
-  },
-}
-async function llmExtractFields({ callLLM, text, pendingKey, log }) {
-  if (!callLLM || !text) return {}
-  try {
-    const sys = `You convert ONE field-worker message about sick or dead farm animals into report fields. Record ONLY fields the message literally states; never guess. A place in any casing or description (e.g. "a small holding near amapondos") IS the location.${pendingKey ? ` The worker was just asked for "${pendingKey}" -- if their message answers it, set that field.` : ''} If the message is only a greeting, question, thanks, or "I don't know", call the tool with NO fields.`
-    const res = await callLLM({ messages: [{ role: 'system', content: sys }, { role: 'user', content: String(text).slice(0, 500) }], tools: [EXTRACT_TOOL], tool_choice: 'required', max_tokens: 200 })
-    const call = (res?.tool_calls || []).find(c => c.name === 'record_fields')
-    const args = call ? (typeof call.arguments === 'string' ? JSON.parse(call.arguments) : call.arguments) : null
-    if (!args || typeof args !== 'object') return {}
-    const out = {}
-    for (const k of LLM_EXTRACT_KEYS) {
-      const v = args[k]
-      if (v != null && String(v).trim()) out[k] = String(v).trim().slice(0, 200)
-    }
-    return out
-  } catch (e) { log?.warn?.('[casey] llm-extract failed', { error: e.message }); return {} }
-}
-
-async function captureFieldsFromText(store, caseId, text, log, callLLM = null, pendingKey = null) {
+// EMPTY-CASE FLOOR: deterministic-only field capture (the LLM extraction now lives
+// in the agent turn -- the model calls case_report). This runs as a floor UNDER the
+// agent so a worker's plainly-stated facts are recorded even when the weak model
+// emits prose and no tool call; a case is never an empty shell. Fill-if-empty:
+// never clobbers a model/human value. Returns the keys it newly filled.
+async function captureFieldsFromText(store, caseId, text, log) {
   try {
     const all = extractFields(text)
     const fields = {}
     for (const [k, v] of Object.entries(all)) if (CAPTURE_KEYS.has(k)) fields[k] = v
-    // LLM floor: interpret the natural-language message into the long-tail fields the
-    // regex misses, merged UNDER the deterministic capture (regex wins on its closed
-    // vocabulary; the LLM fills the rest). Off when callLLM is absent/down -> {}.
-    if (callLLM) {
-      const llm = await llmExtractFields({ callLLM, text, pendingKey, log })
-      const added = Object.keys(llm).filter(k => fields[k] == null)
-      for (const k of added) fields[k] = llm[k]
-      // Observability: record what the LLM floor contributed (KEYS only, never raw
-      // text), so production behaviour is visible -- if the model never returns the
-      // record_fields call, this stays empty and the deterministic floor is doing all
-      // the work, which is the signal to broaden the regex (not silently re-ask).
-      log?.info?.('[casey] llm-extract', { added, regex: Object.keys(all) })
-    }
     if (!Object.keys(fields).length) return []
     const res = await store.markReportFieldsIfEmpty(caseId, fields)
     if (res?.filled?.length) {
       // Field KEYS only -- never the raw contact text (PII) in the observation.
       await store.appendEvent(caseId, { kind: 'observation', actor: 'system', text: `fields auto-captured: ${res.filled.join(', ')}` })
     }
-    // Return the keys we actually newly-filled so the reply path can acknowledge
-    // the contact's plainly-stated fact in the very reply that answers it -- the
-    // weak model returns no tool_calls (so it never confirms what it heard), and a
-    // generic ack reads as a dead-end. Deterministic capture drives the reply.
     return res?.filled || []
   } catch (e) { log?.warn?.('[casey] auto-capture failed', { caseId, error: e.message }); return [] }
-}
-
-// Bind a free-text inbound to the field memobot just asked for, when the
-// deterministic extractor has no regex for it (e.g. present_person, owner_contact,
-// how_to_find -- a worker's free-text answer like "boyi son of the owner"). Without
-// this an asked-but-unextractable field is never recorded and intake re-asks the
-// same question forever. Guards: only when there IS a pending ask whose field is
-// still empty; only when nothing real was captured this turn (the inbound was the
-// answer, not a new fact); never a fixed-intent message (help/status/stop/human/
-// thanks/greeting); the value is trimmed and length-capped (PII is stored like any
-// contact text and HTML-escaped at render). Returns the bound key or null.
-async function bindPendingAsk(store, caseId, text, justCaptured, log) {
-  try {
-    if (Array.isArray(justCaptured) && justCaptured.length) return null   // a real fact, not an answer
-    const t = (text || '').trim()
-    if (!t) return null
-    if (detectContactIntent(t)) return null                              // a fixed-intent message
-    const events = await store.listEvents(caseId)
-    const c = await store.getCase(caseId)
-    // Never bind an ENQUIRY or a NEW-CASE statement as a field value: "any cases near
-    // margate" is a query, not the answer to "where are the animals"; a differing
-    // species/location is a new-case signal. detectEnquiryIntent carries the
-    // REPORT_VETO so a genuine report answer is NOT falsely rejected.
-    if (detectEnquiryIntent(t)) return null
-    if (detectNewCaseConflict(t, c?.report).length) return null
-    const key = pendingAskKey(events, c?.report)
-    if (!key) return null
-    const value = t.slice(0, 200)
-    const res = await store.markReportFieldsIfEmpty(caseId, { [key]: value })
-    if (res?.filled?.length) {
-      await store.appendEvent(caseId, { kind: 'observation', actor: 'system', text: `pending-ask answer bound to ${key}` })
-      return key
-    }
-    return null
-  } catch (e) { log?.warn?.('[casey] pending-ask bind failed', { caseId, error: e.message }); return null }
-}
-
-// Escape route for a returning contact who starts a CLEARLY NEW situation on a
-// case that already holds a different report. markReportFieldsIfEmpty is fill-if-
-// empty, so a conflicting species/location is silently dropped and intake would
-// keep urging the OLD case's missing fields forever. This detects the conflict
-// deterministically: a freshly-extracted species OR location that is present in
-// the running report AND differs from it. We do NOT auto-split (a fuzzy signal
-// must not fragment one outbreak); we flag the case for an operator to split,
-// once, via a durable observation + a needs-split tag. Same outbreak continuing
-// (same or unstated species/location) never trips it.
-export function detectNewCaseConflict(inboundText, reportRaw) {
-  const ex = extractFields(inboundText || '')
-  const r = parseReportSafe(reportRaw)
-  const conflicts = []
-  for (const k of ['species', 'location']) {
-    const had = r[k] != null && String(r[k]).trim() !== ''
-    const now = ex[k] != null && String(ex[k]).trim() !== ''
-    if (had && now && String(ex[k]).trim().toLowerCase() !== String(r[k]).trim().toLowerCase()) {
-      conflicts.push(k)
-    }
-  }
-  return conflicts
 }
 
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
@@ -1348,173 +1248,38 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // downstream report-aware decisions see what was just captured.
     let justCaptured = []
     if (inboundText) {
-      // The LLM extraction floor runs ONLY on a genuine intake message -- never an
-      // enquiry ("any cases near margate"), a fixed intent (help/status/stop/human),
-      // or a content-free greeting -- so a query place is never written as a field.
-      // The deterministic regex always runs; callLLM is passed only when the message
-      // is intake-shaped. pendingKey = the field last asked, so the model can bind the
-      // answer to it.
-      const isIntakeShaped = !detectContactIntent(inboundText) && !detectEnquiryIntent(inboundText)
-      const pend = isIntakeShaped ? pendingAskKey(await store.listEvents(fresh.id), fresh.report) : null
-      justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log, isIntakeShaped ? callLLM : null, pend)
-      fresh = await store.getCase(fresh.id)
-      // Bind a free-text answer to the field memobot just asked for, when the
-      // extractor had no regex for it (e.g. "boyi son of the owner" -> present_person).
-      // Without this an asked-but-unextractable field is never recorded and intake
-      // re-asks the same question forever. The bound key counts as captured this turn
-      // so the reply acknowledges it and advances to the next field.
-      const boundKey = await bindPendingAsk(store, fresh.id, inboundText, justCaptured, log)
-      if (boundKey) { justCaptured = [...justCaptured, boundKey]; fresh = await store.getCase(fresh.id) }
-      // Keep the operator-facing subject/summary populated from the captured
-      // fields when the model never set them (additive only -- never clobbers a
-      // model/human value). Same captured-field projection that drives the
-      // contact-facing acknowledgement, so a fully-degraded conversation still
-      // gives an operator a real one-line picture instead of '(none yet)'.
-      if (justCaptured.length) {
-        const wrote = await syncSummaryFromCaptured(store, fresh, log)
-        if (wrote) fresh = await store.getCase(fresh.id)
-      }
-      // A returning worker who states a clearly NEW situation (a species/location that
-      // conflicts with the recorded report). Two cases, by whether the bound case is
-      // already complete:
-      const conflicts = detectNewCaseConflict(inboundText, fresh.report)
-      // FRESH-REPORT BRANCH: the bound case is COMPLETE (nextAsk null), the message is
-      // report-shaped, names a DIFFERENT species/location, and is not a fixed intent or
-      // a ref-status ask -> the worker is STARTING a new report. Open a fresh case on
-      // the same conversation, rebind it active, replay the inbound onto the empty case
-      // so the new facts land there, and drive intake from it -- instead of the
-      // complete-report exit (the witnessed "amapondos near the main road" -> "we have
-      // the full report ... CASE-1089" dead-end). The continuation guard is structural:
-      // detectNewCaseConflict needs a PRESENT-AND-DIFFERENT key, so a same/unstated
-      // follow-up returns [] and never branches; an INCOMPLETE case has nextAsk != null
-      // and takes the needs-split path below, never this branch.
-      // A worker is starting a FRESH report on a complete case when the case is
-      // complete, the message is report-shaped/intent-free, AND it carries report
-      // content that the complete case cannot absorb -- either a DIFFERING key
-      // (conflicts) OR report fields that NO-OP'd because the complete report already
-      // holds them (the witnessed trap: 'close to amapondos'/'2 cows' on a complete
-      // CASE-1089 -- same place/species, no conflict, but the worker is re-reporting
-      // a NEW incident and their facts land nowhere). carriesReportContent: the
-      // deterministic extractor found a report field in this message (so it is intake
-      // content, not a bare greeting/ack) yet nothing was newly captured -> the
-      // complete case swallowed it as a no-op.
-      const extractedNow = extractFields(inboundText || '')
-      const carriesReportContent = Object.keys(extractedNow).some(k => CAPTURE_KEYS.has(k))
-      const completeNoOp = carriesReportContent && justCaptured.length === 0
-      const startsFreshReport = (conflicts.length > 0 || completeNoOp)
-        && nextAsk(fresh.report) === null
-        && REPORT_SHAPED_RE.test(inboundText || '')
-        && detectContactIntent(inboundText) == null
-        && !detectEnquiryIntent(inboundText)
-        && !REF_STATUS_RE.test(inboundText || '')
-      if (startsFreshReport) {
-        try {
-          const oldRef = fresh.ref
-          const branched = await store.branchCase({ channel, external_id, contact_id: fresh.contact_id })
-          await store.setActiveCase(msg.from || external_id, branched.id)
-          const why = conflicts.length ? `different ${conflicts.join(' and ')}` : 'new report facts a complete case could not absorb'
-          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-BRANCHED:${oldRef}->${branched.ref} worker started a fresh report (${why}) on a complete case.` })
-          await store.appendEvent(branched.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-BRANCHED:${oldRef}->${branched.ref} opened for a fresh report.` })
-          try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'branched-from-lineage') }) } catch { /* best effort */ }
-          fresh = branched
-          // Replay the inbound onto the empty new case so the dropped facts (location,
-          // how_to_find, ...) land on the FRESH report, then drive intake from there.
-          justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log)
-          fresh = await store.getCase(fresh.id)
-          const bk = await bindPendingAsk(store, fresh.id, inboundText, justCaptured, log)
-          if (bk) { justCaptured = [...justCaptured, bk]; fresh = await store.getCase(fresh.id) }
-          if (justCaptured.length) { const w = await syncSummaryFromCaptured(store, fresh, log); if (w) fresh = await store.getCase(fresh.id) }
-        } catch (e) { log.warn?.('[casey] fresh-report branch failed', { caseId: fresh.id, error: e.message }) }
-      } else if (conflicts.length && !(fresh.tags || '').split(',').map(s => s.trim()).includes('needs-split')) {
-        // INCOMPLETE conflicting case: flag for an operator to split (the old
-        // behaviour) -- do not auto-branch a half-done report on a fuzzy signal.
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `NEW-CASE-SIGNAL: contact stated a different ${conflicts.join(' and ')} than the recorded report -- may be a new situation; flagged for an operator to split.` })
-        try {
-          await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-split') })
-          if (notifyHandoff) {
-            try { await notifyHandoff({ case: fresh, channel, from: msg.from, reason: 'possible new case' }) }
-            catch (e) { log.warn?.('[casey] new-case notify failed', { caseId: fresh.id, error: e.message }) }
-          }
-        } catch (e) { log.warn?.('[casey] needs-split flag failed', { caseId: fresh.id, error: e.message }) }
+      // EMPTY-CASE FLOOR (retained). The agent drives intake by calling case_report,
+      // but the weak production model can emit prose and no tool call -- so a purely
+      // deterministic capture still runs on every intake message and fills any field
+      // the model missed (fill-if-empty), so the terminal on-site message is never
+      // silently dropped. This is the ONLY text-processing that survives the reshape,
+      // and it is a floor UNDER the agent, never a router: it does not classify or
+      // reply, it only records fields. Skipped for a fixed STOP/HUMAN control (those
+      // carry no report content). callLLM is intentionally NOT passed here -- the
+      // agent turn below is the model's job; this floor is deterministic-only.
+      if (!detectContactIntent(inboundText)) {
+        justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log)
         fresh = await store.getCase(fresh.id)
+        // Keep the operator-facing subject/summary populated from captured fields when
+        // the model never set them (additive only -- never clobbers a model/human
+        // value), so a fully-degraded conversation still gives an operator a real
+        // one-line picture instead of '(none yet)'.
+        if (justCaptured.length) {
+          const wrote = await syncSummaryFromCaptured(store, fresh, log)
+          if (wrote) fresh = await store.getCase(fresh.id)
+        }
       }
     }
 
-    // Deterministic intent shortcuts. For a few universal intents a low-literacy
-    // contact is likely to send, a fixed, correct reply beats a generated one --
-    // so we answer without an LLM turn. This runs only when auto-responding and
-    // not in observe mode (handled above). Empty/media messages normalize to no
-    // intent and fall through to the agent turn unchanged.
-    const isFirstMessage = (await store.listEvents(fresh.id)).filter(e => e.kind === 'inbound').length <= 1
+    // IRREVERSIBLE SERVICE CONTROLS (the only deterministic pre-LLM route left).
+    // STOP (opt-out) and HUMAN (handoff) are legal/service controls that must fire
+    // synchronously in any language even with the model down -- they are never
+    // queued and never left to the agent's discretion. Everything else (status,
+    // help, greeting, enquiry, report, extraction) is now the agent's job via the
+    // case tools in the runTurn loop below. Empty/media messages return null here
+    // and fall through to the agent turn unchanged.
     const optedOut = (fresh.tags || '').split(',').map(s => s.trim()).includes('opted-out')
-    let intent = detectContactIntent(inboundText)
-    // STATUS-BY-REF: a worker naming a case ref ("status of CASE-1089-dgpgd",
-    // "how is CASE-1089 going", bare "CASE-1089?") -- or asking after their own
-    // report with the active-case binding -- gets THAT case's plain status. Gated so a
-    // ref mentioned INSIDE a report ("2 cows died, see CASE-1042") never hijacks
-    // intake: only when the message is not report-shaped (the intent classifier reads
-    // it as a question/enquiry/chitchat, not a report) AND a ref resolves. PII-free:
-    // ref + plain status sentence only, never external_id/phone.
-    {
-      const namesRef = REF_STATUS_RE.test(inboundText || '')
-      // Block only on a GENUINE report (animal/symptom content), not the classifier's
-      // catch-all report default -- "status of CASE-1089" names no animal and must
-      // look up the status, while "CASE-1089 my cow is sick" is intake.
-      const reportShaped = REPORT_SHAPED_RE.test(inboundText || '')
-      if (namesRef && !reportShaped) {
-        const target = await resolveRefForStatus(store, inboundText)
-        if (target) {
-          const text = intentReply('status', target, guessLang(inboundText))
-          await store.appendEvent(target.id, { kind: 'outbound', actor: 'system', channel, text, data: { to: replyTo, intent: 'status-by-ref' } })
-          const reply = { to: replyTo, text, platform, caseId: target.id, intent: 'status-by-ref' }
-          if (adapter?.send) {
-            try { await adapter.send(reply) }
-            catch (e) { log.error?.('[casey] adapter.send failed', { caseId: target.id, platform, error: e.message }); await store.appendEvent(target.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` }) }
-          }
-          return reply
-        }
-        // A ref that does not resolve (unknown/garbled) and no other intent: a warm
-        // non-dead-end line, never another case's status, never the complete exit.
-        if (!intent) {
-          const text = `I could not find that reference. If you can, send the full reference like CASE-1234-ab, or tell me about the animal and I will help.` + refTail(inboundText, fresh)
-          await store.appendEvent(fresh.id, { kind: 'outbound', actor: 'system', channel, text, data: { to: replyTo, intent: 'status-noref' } })
-          const reply = { to: replyTo, text, platform, caseId: fresh.id, intent: 'status-noref' }
-          if (adapter?.send) { try { await adapter.send(reply) } catch (e) { log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message }) } }
-          return reply
-        }
-      }
-    }
-    // On a brand-new contact, greeting/help deserve the agent's warm intro +
-    // reference, not a canned line -- so defer them to the agent on message one.
-    // (status/human/stop/thanks still answered deterministically.)
-    if (['help', 'greeting'].includes(intent) && isFirstMessage) intent = null
-    // ALSO defer a LATER greeting on a still-incomplete case: a canned re-greeting
-    // on every "hi" stalls the intake (the witnessed "blue eyes" -> greeting loop).
-    // While visit-critical facts are still missing, let the agent (and the per-field
-    // fallback) keep advancing rather than re-greeting. Once the report is
-    // visit-ready, a later greeting is answered deterministically again. HELP is
-    // EXCLUDED: the HELP keyword must always short-circuit to its menu instantly
-    // (fixed-keyword invariant) -- only a bare greeting defers.
-    if (intent === 'greeting' && reportMissingVisitCritical(fresh.report)) intent = null
-    // One-shot closing capture: a "thanks" is usually the farmer wrapping up, and
-    // after this they leave the site and are hard to reach. If a visit-critical
-    // on-site fact is still missing AND we have not already made one closing ask,
-    // do NOT take the canned thanks-shortcut -- defer to the agent so it can ask
-    // for the single most important missing fact, once, before they go. Once we
-    // have asked (closing-nudged tag) or the report is visit-ready, thanks is
-    // answered deterministically as before (no nagging, never block a goodbye).
-    if (intent === 'thanks' && !optedOut && isWrapUpThanks(inboundText)) {
-      // "already nudged" is tracked via a durable observation marker, NOT a tag --
-      // the agent's own case_update can rewrite tags mid-turn and would clobber a
-      // tag set here. The observation is append-only, so the once-only guarantee
-      // holds regardless of what the agent does to the case fields.
-      const prior = await store.listEvents(fresh.id)
-      const alreadyNudged = prior.some(e => e.kind === 'observation' && /CLOSING-NUDGE/.test(e.text || ''))
-      if (!alreadyNudged && reportMissingVisitCritical(fresh.report)) {
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'CLOSING-NUDGE: deferred a closing thanks to gather one missing on-site fact (one-shot).' })
-        intent = null   // let the agent turn run the gentle one-shot ask
-      }
-    }
+    const intent = detectContactIntent(inboundText)
     // Respect a prior opt-out: once someone said STOP, do not auto-reply again
     // unless they explicitly ask for help or a human.
     if (optedOut && intent !== 'help' && intent !== 'human') {
@@ -1546,6 +1311,9 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'opted-out') }) }
         catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: fresh.id, error: e.message }) }
       }
+      // A plain, warm deterministic acknowledgement for the irreversible control --
+      // no LLM needed (and it must work with the model down). intentReply still
+      // carries the per-language stop/human confirmation strings.
       const text = intentReply(intent, fresh, guessLang(inboundText))
       await store.appendEvent(fresh.id, {
         kind: 'outbound', actor: 'system', channel,
@@ -1568,89 +1336,14 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       return reply
     }
 
-    // SOFT-STATE intent route. casey no longer hard-routes by keyword lists (the
-    // whack-a-mole that let "whats the nearest case to margate" fall through to the
-    // complete-report exit). Instead the message is INTERPRETED into a structured
-    // intent and the conversation FSM (adaptogen, soft enforcement) decides the route:
-    // an enquiry is answered from the PII-free surface, a general question is answered
-    // (never closed out), and a report/chitchat falls through to the agent turn. The
-    // soft transition means a question or enquiry from a "complete" case moves freely
-    // out of that state -- the dead-end is structurally impossible.
-    //
-    // The interpreter is the in-loop agent model when it declares a case_intent; here
-    // at the pre-turn gate we use the deterministic SOFT fallback (a small shape
-    // classifier, not a phrase maze) so a weak model that declares nothing still
-    // routes. The report-content veto inside the classifier keeps a real report
-    // ("my cattle are sick", "2 cows died today") from ever being read as an enquiry.
-    // Prefer a model DECLARATION (case_intent) recorded since the last inbound was
-    // routed, over the deterministic fallback: a capable model that read the message
-    // wins; a weak model that declared nothing falls back to the shape classifier.
-    // We only consider a declaration newer than the most recent prior outbound (so a
-    // stale declaration from an earlier message is not reused). The declaration is an
-    // append-only observation written by the case_intent handler.
-    const declared = await latestModelIntent(store, fresh.id)
-    const turnIntent = declared || classifyIntentFallback(inboundText)
-    const conv = await advanceConversation(turnIntent, { fsmFromState: reportMissingVisitCritical(fresh.report) ? 'gathering' : 'complete' })
-    // Record the soft decision (intent + FSM trace) as an observation -- observable to
-    // operators, never shown to the contact. This is the guardrail INFORMING, not
-    // interfering.
-    try {
-      await store.appendEvent(fresh.id, {
-        kind: 'observation', actor: 'system',
-        text: `INTENT ${turnIntent.kind}${turnIntent.enquiry_kind ? '/' + turnIntent.enquiry_kind : ''} -> ${conv.route} (fsm ${conv.trace?.from || '?'}->${conv.trace?.to || '?'}${conv.trace?.degraded ? ', no-fsm' : ''}${conv.trace?.soft?.length ? ', soft:' + conv.trace.soft.join(',') : ''})`,
-        data: { intent: turnIntent, route: conv.route, fsm: conv.trace },
-      })
-    } catch (e) { log.warn?.('[casey] intent observation failed', { caseId: fresh.id, error: e.message }) }
-    // STATUS-OF-MINE: the worker asked the progress of THEIR report ("where are we at",
-    // "any update", "did the vet come"). Answer with this case's plain status -- fresh
-    // IS the per-contact active/most-recent case -- via intentReply, so the same
-    // PII-free reply (a plain status sentence + ref, no external_id) the deterministic
-    // STATUS keyword path gives. Never the generic question deflection.
-    if (turnIntent.kind === 'status') {
-      const text = intentReply('status', fresh, guessLang(inboundText))
-      await store.appendEvent(fresh.id, { kind: 'outbound', actor: 'system', channel, text, data: { to: replyTo, intent: 'status', deterministic: true } })
-      const reply = { to: replyTo, text, platform, caseId: fresh.id, intent: 'status' }
-      if (adapter?.send) {
-        try { await adapter.send(reply) }
-        catch (e) { log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message }); await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` }) }
-      }
-      return reply
-    }
-    // Enquiry and question routes answer here and return -- read-only, worker-facing,
-    // safe in every autonomy mode (they do not mutate the case). author is the
-    // per-author identity so a multi-author channel answers FOR the asking worker.
-    // Chit-chat ("hi there") on a case that is NOT brand-new is handled
-    // deterministically too -- otherwise it falls through to the agent turn, which on
-    // a COMPLETE case empties and hits the completeReply dead-end (the witnessed
-    // "hi there" -> "we have the full report ... CASE-1089"). warmConversationalReply
-    // drives intake when visit-critical facts are still missing, and gives the warm
-    // RE-OPENER (never the complete-report exit) when nothing is left to ask. A
-    // first-message greeting on a brand-new empty case is LEFT to the agent turn (its
-    // warm intro + reference is better than a canned line), matching the existing
-    // isFirstMessage deferral -- so we only short-circuit chit-chat once the case has
-    // some history (not the very first turn).
-    const chitchatDeterministic = conv.route === 'chitchat' && !isFirstMessage
-    if (conv.route === 'enquiry' || conv.route === 'answer' || chitchatDeterministic) {
-      const author = msg.from || external_id
-      const text = conv.route === 'enquiry'
-        ? await renderItinerary(store, turnIntent.enquiry_kind || 'today', author, inboundText, Date.now(), turnIntent.place || '', turnIntent.status || '')
-        : conv.route === 'answer'
-          ? answerQuestion(inboundText, fresh)
-          : warmConversationalReply(inboundText, fresh, mostImportantMissingField(fresh.report))
-      await store.appendEvent(fresh.id, {
-        kind: 'outbound', actor: 'system', channel,
-        text, data: { to: replyTo, route: conv.route, intent: turnIntent.kind },
-      })
-      const reply = { to: replyTo, text, platform, caseId: fresh.id, route: conv.route }
-      if (adapter?.send) {
-        try { await adapter.send(reply) }
-        catch (e) {
-          log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message })
-          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` })
-        }
-      }
-      return reply
-    }
+    // Everything else -- status, help, greeting, thanks, enquiry, report, field
+    // extraction, the whole conversation -- is now the AGENT'S job. No deterministic
+    // pre-route: the message goes straight into the runTurn tool loop below, where
+    // the model classifies and acts by calling the case tools (case_report,
+    // case_list, case_get, case_mine/case_today, case_new, case_stop). The old
+    // keyword/shape router + STATUS-BY-REF + enquiry/answer/chitchat short-circuits
+    // are removed; the soft dead-end is structurally impossible because the agent,
+    // not a phrase maze, decides the reply.
 
     const contact = fresh.contact_id ? await store.getContact(fresh.contact_id).catch(() => null) : null
     const events = await store.listEvents(fresh.id)
@@ -1798,145 +1491,26 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // event log, sees the just-written FALLBACK-ASK for field A, asks field B
     // instead, and overwrites the reply -- recording field A as asked-once while
     // its question is never delivered, burning the field forever.
-    let droveIntake = false
-    // The FALLBACK-ASK:<key> marker that records a field as asked-once MUST be
-    // written only after the question is actually delivered. Recording it before
-    // adapter.send means a transient send failure burns the field forever (the
-    // once-per-field guard skips it next turn though the contact never received
-    // it). So the intake branches set this pending key and the marker is appended
-    // only after a confirmed-delivered outbound (and skipped in the send catch and
-    // the assisted/jargon draft-hold early returns).
-    let pendingFallbackAsk = null
+    // PURE-AGENT REPLY. The agent drives the whole conversation -- intake (asking the
+    // next needed fact via case_report + the system prompt), enquiries, status, all of
+    // it. casey no longer composes or overrides the reply deterministically; the ONLY
+    // safety net is: on a degraded turn (error / timeout / empty / prompt-echo /
+    // stock-ack) send a warm fallback so the contact is never dead-ended. The
+    // empty-case field-capture floor (above) still records plainly-stated facts if the
+    // model missed a case_report, but it does NOT compose the reply.
     if (!text) {
       if (!errored && result?.error) {
         log.warn?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent result error: ${result.error}` })
       }
-      // Never a dead-end: when the model fails (error/timeout/empty/prompt-echo)
-      // but the case still needs visit-critical facts, the holding ack is followed
-      // by ONE gentle question -- for the next still-missing fact NOT yet asked via
-      // this degraded path. This advances the intake field-by-field across turns
-      // (where -> which animals -> signs -> ...) instead of asking one thing then
-      // repeating a greeting forever (the witnessed "blue eyes" -> re-greeting loop).
-      // Each asked field is recorded as a durable FALLBACK-ASK:<key> observation
-      // (append-only, so the agent's own case_update cannot clobber the once-per-
-      // field guarantee). Only once every visit-critical field has been asked once
-      // does the degraded reply become the plain holding ack and the operator takes
-      // over -- never a re-greet, never the same question twice.
-      // Content-free turn (a bare greeting / "help" with nothing captured and an
-      // empty report): memobot must still DRIVE collection -- a warm opener PLUS the
-      // first needed fact (which animals / where), never a no-ask pleasantry and
-      // never the "Thank you for letting us know ... reference X" case-ack. The
-      // empty report means warmConversationalReply asks the most-important first
-      // field, starting intake on turn one.
-      if (isContentFreeTurn(justCaptured, fresh.report)) {
-        // Pick the next field to ask, skipping any already asked, and DURABLY record
-        // it (ASKED:<key>) so the next inbound is bound to it by the pending-ask
-        // binder and the same field is never asked twice in a row.
-        const gAsked = askedKeysFromEvents(await store.listEvents(fresh.id))
-        const gNext = nextAsk(fresh.report, gAsked)
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'GREETING-DRIVE: greeting answered with a warm opener + the next needed fact, driving intake (not the case-ack, not a no-ask pleasantry).' })
-        if (gNext) await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `ASKED:${gNext[0]} greeting-drive asked this field (once per field).` })
-        text = warmConversationalReply(inboundText, fresh, gNext ? gNext[1] : null)
-      } else {
-      const askedKeys = askedKeysFromEvents(await store.listEvents(fresh.id))
-      // The next still-missing, not-yet-asked field (visit-critical first, then
-      // value-add). On a genuine wrap-up (closingCapture set), instead ask the single
-      // MOST IMPORTANT still-missing fact -- the one-shot closing ask. Either way the
-      // chosen field is recorded once (FALLBACK-ASK) so it is never re-asked and the
-      // next inbound binds to it.
-      let next = nextAsk(fresh.report, askedKeys)
-      if (closingCapture != null) {
-        const mostKey = VISIT_CRITICAL_ASK.find(([, hint]) => hint === closingCapture)
-        if (mostKey && !askedKeys.has(mostKey[0])) next = mostKey
-      }
-      // Capture-driven: lead with an acknowledgement of what the contact just told
-      // us this turn (so 'I see blue eyes' is heard, not swallowed into a generic
-      // ack), then ask the next still-missing fact. When nothing new was captured and
-      // nothing is left to ask, this is a brief warm confirming line.
-      const advancing = captureDrivenReply(inboundText, fresh, justCaptured, next ? next[1] : null)
-      if (next) pendingFallbackAsk = { key: next[0], via: 'degraded reply' }
-      text = advancing
-      droveIntake = true
-      }
+      // Warm, non-dead-end holding line. It invites the next fact without a canned
+      // ask-ladder -- the agent resumes driving on the next turn once it recovers.
+      text = fallbackReply(inboundText, fresh)
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded turn (empty/error/echo/stock-ack); sent warm fallback.' })
     }
-    // PRECEDENCE GATE (the live fix): while visit-critical intake is INCOMPLETE,
-    // the deterministic capture-driven reply REPLACES the model output -- even when
-    // the model produced non-empty prose. The production model is small: it never
-    // calls case_report (so it captures nothing) and returns plausible chatter that
-    // ignores the contact's plainly-stated facts and carries no reference. That
-    // chatter passes the echo/stock-ack guards above (it is neither), so without
-    // this gate it would be sent raw -- the witnessed dead-end where 'I see blue
-    // eyes' is met with a generic greeting that never acknowledges the symptom,
-    // never asks the next on-site fact, and never quotes the ref. So: until the
-    // case has the facts a visit needs, intake is driven deterministically and the
-    // model output is treated as decorative. Once intake is complete, model prose
-    // is trusted (the guards above still apply). The override is an observable,
-    // audited branch; the once-per-field FALLBACK-ASK guard still prevents repeats.
-    // A content-free conversational turn is exempt: there is no report to drive,
-    // and the warm reply above must not be overridden by a holding ack. The gate
-    // only applies once the contact has actually started a report (a captured
-    // field this turn or an existing report field), which isContentFreeTurn guards.
-    // !droveIntake: when the empty-model branch already produced the deterministic
-    // capture-driven reply this turn, re-driving here would clobber the asked field
-    // (see droveIntake note above). The gate's job is only to override non-empty
-    // MODEL prose during incomplete intake; it has nothing to override when the
-    // degraded branch already drove intake.
-    // closingTurn: a genuine wrap-up where the model was given the closingCapture
-    // directive (warm thanks + the single most-important ask). The gate must NOT
-    // override that warm reply with the holding-ack parrot -- the whole point of
-    // the closing nudge is a kind goodbye plus one gentle ask, which the model
-    // composed. The echo/stock-ack/jargon guards above still blank a genuinely
-    // degraded closing reply and route it to the !text branch, so a closing turn
-    // is never a dead-end.
-    const closingTurn = closingCapture != null
-    if (reportMissingVisitCritical(fresh.report) && !isContentFreeTurn(justCaptured, fresh.report) && !droveIntake && !closingTurn) {
-      const askedKeys = askedKeysFromEvents(await store.listEvents(fresh.id))
-      const next = nextAsk(fresh.report, askedKeys)
-      // Only override the model when the deterministic path has something to add:
-      // a next field to ask OR a freshly-captured fact to acknowledge. Once every
-      // askable field is exhausted (next is null) AND nothing was captured this
-      // turn, the capture-driven reply would just be the bare stock holding-ack --
-      // strictly worse than the model's contextual (already echo/stock-ack/jargon-
-      // guarded) prose, and a repeating content-free dead-end if forced every turn.
-      // Three of the six VISIT_CRITICAL fields are never deterministically
-      // extractable, so reportMissingVisitCritical stays true for the life of a
-      // content-only conversation; without this guard the gate would parrot the
-      // holding ack forever.
-      if (next || justCaptured.length) {
-        const driven = captureDrivenReply(inboundText, fresh, justCaptured, next ? next[1] : null)
-        if (driven && driven !== text) {
-          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'INTAKE-DRIVE: deterministic capture-driven reply used over model output (intake incomplete).' })
-          if (next) pendingFallbackAsk = { key: next[0], via: 'intake-drive' }
-          text = driven
-        }
-      }
-    }
-    // A reply is a (degraded) fallback if it is empty, begins with the holding ack
-    // base, or CONTAINS it -- the capture-driven reply leads with an acknowledgement
-    // clause before the holding ack, so a plain startsWith would miss it. includes()
-    // covers the plain ack, every per-field advancing variant, and the ack-prefixed
-    // capture-driven reply.
     const fallbackBase = fallbackReply(inboundText, fresh)
     const isFallback = !text || text === fallbackBase || text.startsWith(fallbackBase) || text.includes(fallbackBase)
-
-    // TOTAL ASKED-MARKER: when the MODEL's own prose carries the turn (non-fallback,
-    // not overridden by the deterministic intake-drive) and the report still wants a
-    // visit-critical fact, record which field the next turn should expect an answer
-    // for. Without this, a model-prompted "where are the animals?" leaves NO ASKED
-    // marker, so the worker's next free-text answer ("a small holding near amapondos")
-    // has no pending key to bind to and the field is re-asked. The marker names the
-    // deterministic most-wanted field (not necessarily the exact field the prose
-    // asked); a bounded one-field divergence self-corrects next turn. Stamped only
-    // after a confirmed-delivered reply (the existing FALLBACK-ASK writer below), so a
-    // send failure never burns the field. Guarded so the gate/degraded paths (which
-    // already set pendingFallbackAsk) are never double-stamped.
-    if (!pendingFallbackAsk && !isFallback && reportMissingVisitCritical(fresh.report)
-        && !isContentFreeTurn(justCaptured, fresh.report) && !droveIntake && !closingTurn) {
-      const mAsked = askedKeysFromEvents(await store.listEvents(fresh.id))
-      const mNext = nextAsk(fresh.report, mAsked)
-      if (mNext) pendingFallbackAsk = { key: mNext[0], via: 'model-prompted' }
-    }
+    let pendingFallbackAsk = null
 
     // Final guard before the reply leaves (send OR assisted draft): correct any
     // fabricated/stale case reference to this case's real ref. A weak model recites
@@ -2323,27 +1897,18 @@ export function advancingFallbackForHint(contactText, caseRow, hint) {
 // beats a generated one. Matching is forgiving: lowercased, accent-stripped,
 // substring/keyword across several widely-spoken languages.
 //
-// Returns 'help' | 'status' | 'human' | 'stop' | null. Order matters: STOP and
-// HUMAN win over STATUS/HELP when more than one could match.
+// Returns 'human' | 'stop' | null. This is the ONE deterministic safety layer the
+// pure-agent reshape KEEPS: STOP (opt-out) and HUMAN (handoff) are irreversible
+// service controls that must fire synchronously in any language even when the LLM
+// backend is down -- they can never be queued behind a holding ack. Every other
+// classification (status/help/greeting/thanks/enquiry/report) is now the agent's
+// job via the case tools; only these two stay hard-matched. Negation-guarded so
+// "dont stop" / "no human" cannot trip an irreversible action.
 export function detectContactIntent(text) {
   const t = normalizeIntentText(text)
   if (!t) return null
   const words = t.split(' ')
-  const wordSet = new Set(words)
   const padded = ` ${t} `
-
-  // Forgiving match for the READ-ONLY intents (status/help/thanks/greeting):
-  // a whole-word/phrase hit, OR a key that appears as a substring of a token so
-  // inflected forms still match ("ayuda" inside "ayudame", "thank" inside
-  // "thanks"). Safe here because these intents never mutate the case; the
-  // irreversible STOP/HUMAN use the strict negation-guarded matcher below.
-  // Very short keys (<=3 chars: "ty", "yo", "hi", "?") match as whole tokens
-  // only, so they do not fire inside unrelated words ("ty" in "party"). Longer
-  // single-word keys also match as a substring of a token to catch inflections.
-  const hit = (keys) => keys.some(k =>
-    k.includes(' ') ? padded.includes(` ${k} `)
-      : k.length <= 3 ? wordSet.has(k)
-      : (wordSet.has(k) || words.some(w => w.includes(k))))
 
   // A negator immediately before a key blanks that key, so "dont stop",
   // "no human", "not now" cannot trip the irreversible intents.
@@ -2351,12 +1916,9 @@ export function detectContactIntent(text) {
   const guarded = new Set()
   for (let i = 1; i < words.length; i++) if (NEGATORS.has(words[i - 1])) guarded.add(i)
   const liveWords = new Set(words.filter((_, i) => !guarded.has(i)))
-  // A key is "live" when it appears unguarded. Single-word keys: the token is not
-  // negated. Multi-word keys: the phrase occurs as consecutive tokens AND none of
-  // those token POSITIONS is guarded -- so "please dont leave me alone" does not
-  // match "leave me alone" (the negator guards the first phrase word). We scan
-  // positions rather than indexOf so a repeated word cannot be matched at the
-  // wrong (guarded) occurrence.
+  // A key is "live" when it appears unguarded. Multi-word keys must occur as
+  // consecutive UNGUARDED tokens, scanned by position so a repeated word cannot
+  // match at the wrong (guarded) occurrence.
   const phraseLive = (keyWords) => {
     for (let i = 0; i + keyWords.length <= words.length; i++) {
       let ok = true
@@ -2370,32 +1932,12 @@ export function detectContactIntent(text) {
   const live = (keys) => keys.some(k =>
     k.includes(' ') ? phraseLive(k.split(' ')) : liveWords.has(k))
 
-  // STOP / HUMAN drive irreversible actions (opt-out, handoff): each is guarded by
-  // its own exclude list of false-positive phrases -- STOP_EXCLUDE catches negated
-  // forms ("dont stop", "bus stop"); HUMAN_EXCLUDE catches reported speech
-  // ("a person told me", "in person"). We do not suppress a STOP that pairs an
-  // exclude word with a real opt-out: losing a genuine opt-out is worse than an
-  // occasional false one.
+  // STOP / HUMAN, each guarded by its own exclude list of false-positive phrases:
+  // STOP_EXCLUDE catches "dont stop"/"bus stop", HUMAN_EXCLUDE catches "a person
+  // told me"/"in person". A genuine opt-out that also contains an exclude word is
+  // NOT suppressed -- losing a real opt-out is worse than an occasional false one.
   if (live(STOP_KEYS)  && !STOP_EXCLUDE.some(p => padded.includes(` ${p} `)))  return 'stop'
   if (live(HUMAN_KEYS) && !HUMAN_EXCLUDE.some(p => padded.includes(` ${p} `))) return 'human'
-
-  // STATUS is whole-word matched (live), not substring (hit): otherwise "update"
-  // matches "updated" in "nothing updated since the sickness started", firing a
-  // canned status reply on a real report that must reach the agent. STATUS is
-  // read-only so it needs no negation guard, but live() handles both correctly.
-  if (live(STATUS_KEYS)) return 'status'
-  // A run of '?' ("?", "???", "????") from a confused contact is a help signal;
-  // normalize collapses it to a single '?' token (see normalizeIntentText).
-  if (hit(HELP_KEYS)) return 'help'
-
-  // Short, content-free social turns get a warm canned nudge instead of an LLM
-  // turn -- but ONLY greeting and thanks. We deliberately do NOT classify
-  // yes/no or bare numbers: those are almost always answers to a question the
-  // agent just asked, so they must fall through to the agent with full context.
-  if (words.length <= 3) {
-    if (hit(THANKS_KEYS))   return 'thanks'
-    if (hit(GREETING_KEYS)) return 'greeting'
-  }
 
   return null
 }
