@@ -302,7 +302,10 @@ async function main() {
           if (/Updating|Fast-forward/.test(m.out)) console.log(green('[auto-update] pulled new code; the worker will reload.'))
         }
         console.log(`  auto-update: ${green('on')}${dim(`   (fetch + fast-forward every ${Math.round(interval / 1000)}s; the worker reloads on the new code -- opt out: CASEY_AUTO_UPDATE=0)`)}`)
-        pull()
+        // Do NOT pull immediately at boot: a fast-forward would fire a RELOAD_REQUESTED
+        // while the supervisor is still in 'booting' (an illegal-transition warning, and
+        // the reload is dropped anyway). The worker boots on current code; the first
+        // pull runs one interval later, once it is healthy.
         autoUpdateTimer = setInterval(pull, interval)
       }
       let exiting = false
