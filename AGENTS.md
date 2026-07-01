@@ -23,20 +23,27 @@ casey composes three existing projects and owns only the glue:
 | Agent + channels | `freddie` (`file:../freddie`) | Agent harness + Gateway with WhatsApp/Discord adapters, tools, sessions. |
 | System of record | `thatcher` (npm) | Config-driven CRUD + workflow + RBAC + audit. Holds `case` / `event` / `contact` and the lifecycle state machine. |
 | UI | `anentrypoint-design` (`file:../anentrypoint-design`) | webjsx + ripple-ui design system theming the dashboard. |
-| Conversation state | `adaptogen` (`file:../dstate`) | Agent-owned DAG+FSM with soft/hard enforcement -- casey's SOFT conversation machine (intent-driven, guardrails flag not block). Optional: a bare clone degrades to a pure intent->route map. |
+| Conversation | agent-driven | The LLM agent classifies each message and acts via the `case_*` tools in the runTurn tool loop; thatcher is the case system-of-record. There is no separate conversation-state machine or soft-FSM. |
 
 Inbound flow: channel message -> freddie Gateway -> casey case handler (replaces
 `handleInbound`) -> find/create thatcher case (locked, deduped by message id) ->
-agent turn with case context + `case_*` tools -> reply, with a safe fallback when
-the model errors/empties. Every inbound/outbound/observation/action/transition is
-an append-only `event` row. The dashboard reads/edits thatcher over its API.
+one runTurn tool loop where the agent classifies + extracts + routes + answers via
+the `case_*` tools -> reply, with a warm fallback when the model errors/empties.
+Every inbound/outbound/observation/action/transition is an append-only `event` row.
+The dashboard reads/edits thatcher over its API.
 
 **Layering mandate: agentic code -> freddie, CRM code -> thatcher, casey is
 setup + configuration.** The agentic case + worker-enquiry toolset lives in freddie
-(`freddie/src/plugins/case/`): the `case_*` tools plus the enquiry surface
-(`case_mine` / `case_today` / `case_today_open` / `case_near` / `case_select` /
-`case_new`), application-agnostic -- the store, the field/enum/projection vocabulary,
-and the role model arrive via a per-turn `toolCtx` and `plugins.case` config. CRM
+(`freddie/src/plugins/case/`): the agent acts entirely through these tools --
+`case_report` (extract report fields), `case_list` (with a `location` param that
+$ilike-matches a place token -- there is NO province->town gazetteer; place
+understanding is the model reading the token), `case_get` (PII-projected status body:
+worker role gets the PII-free `enquiryRow`, operator/dashboard gets full),
+`case_mine` / `case_today` (worker itinerary), `case_new` (fresh report), and
+`case_stop` / `case_handoff` (the agent acting on opt-out/handoff). freddie threads
+`tool_choice` (e.g. `'required'`) through runTurn -> machine -> the acptoapi bridge.
+This is application-agnostic -- the store, the field/enum/projection vocabulary, and
+the role model arrive via a per-turn `toolCtx` and `plugins.case` config. CRM
 querying lives in thatcher (consumed via npm, published by CI on push): `list()`
 supports operator where-objects (`{field:{$gte,$lte,$in}}`, `$or`), array tie-broken
 sort, and opt-in row-access scoping (`opts.user` + a configurable owner field). casey
@@ -63,17 +70,14 @@ thatcher.config.yml        entities + case workflow (system of record)
 bin/casey.js               CLI: init / doctor / up / dashboard / sim / cases / show / report (per-case-type SLA + per-type/per-channel metrics, --json)
 plugins/case-tools/        freddie plugin registering case_* tools (auto-discovered)
 src/
-  casey.js                 top-level assembly: store + host + gateway + adapters + logger
-  case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation
+  casey.js                 top-level assembly: store + host + gateway + adapters + logger; drainQueuedTurns re-drives LLM-down-queued inbounds through the agent on provider recovery (status-gated, oldest-first serialized, mark-attempted only after a successful drive, bounded retry -> dead-letter)
+  case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error)
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
   case-tools.js            case_* tool defs (get/list/update/observe/transition), autonomy-enforced
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep; detectCoverageGap (rostered team, open breaching cases, zero in-window operator replies) pages a synthetic TEAM-COVERAGE breach
   correlate.js             cross-case correlation helpers
-  places.js                SA province understanding: PROVINCES (every alias kzn/EC/GP/... + major towns), resolvePlace(text)->{regions,terms,strong} for a region enquiry, word-boundary containsTerm (a 2-char alias never hits inside unrelated prose), ambiguous towns span provinces; pure/ASCII/no geocoder, degrades to null in a bare clone
-  intent.js                interpret a message into a structured intent (report|enquiry{today,mine,open,near+place,count,geo,outbreaks,overview,overdue}|question|chitchat|service) by shape; classifyIntentFallback (soft deterministic fallback, region/place via places.js, fleet-aggregate kinds, report+animal veto, species-count guard, clear-enquiry-lead) + normalizeIntent (model case_intent declaration) + extractPlace
-  conversation-fsm.js      the conversation as an adaptogen (../dstate) DAG+FSM with SOFT enforcement (CONVERSATION_SPEC); advanceConversation maps intent->route+soft-transition trace; optional-imports adaptogen (degrades to a pure intent->route map when ../dstate absent)
   attn.js                  worst-first attention ranking (rankAttention, with an SLA clock: waitingOnUs/waitAgeMs/atRiskCount/slaTargetMs) + shared caseHints why/to-do policy; backs the inbox and `casey attention`
   format.js                shared SAST timestamp + +27 phone formatters (CLI and SPA render the same way)
   thresholds.js            pure validate/clamp/merge of operator-tunable health thresholds (allowlist keys + bounds)
@@ -83,13 +87,13 @@ src/
   geo.js                   hotspots-by-area rollup for /api/geo
   report.js                management report rendering (CSV/HTML) for /api/report.csv and /api/report.html; composes buildWorkload into a per-operator by_operator section (aggregate-only, no external_id)
   report-analytics.js      pure management analytics for /api/report.json: buildSLAReport (pass/fail vs the live handoff SLA, answered-late vs never-answered), buildSLAReportByType (the same compliance partitioned by case_type, with an `overall` that reconciles), buildReportComparison (this window vs the prior adjacent window, signed deltas), buildChannelMetrics + buildCaseTypeMetrics (shared rollupByKey: first-response median, opened/closed, closed_pct, reopen_count per channel / per case_type), buildAlertPayload (structured machine-parseable breach payload for an external pager: case_ref/case_type/breach_type/severity_tier/since_ms, NEVER external_id); all aggregate-only, no external_id
-  extract.js               deterministic field capture from plain contact text (species/symptoms/counts/location/onset/name); shared by the live handler and the stub model so a case is never an empty shell even when the model drives no tools
-  gateway-hooks.js         makeCaseHandler: plain-language prompt, INTERPRETED intent routing (intent.js + conversation-fsm.js soft FSM; renderItinerary/answerQuestion answer enquiry/question without the complete-report dead-end), irreversible-intent keywords (stop/human), dedup, media, observe, fallback
+  extract.js               EMPTY-CASE FLOOR: deterministic-only field capture from plain contact text (captureFieldsFromText: species/symptoms/counts/location/onset/name), no LLM; after an inbound it records any plainly-stated fields fill-if-empty so a terminal on-site message is never dropped when the weak model calls no tool -- a floor under the agent, not a router (it never composes the reply or routes)
+  gateway-hooks.js         makeCaseHandler pure-agent flow: an inbound hits the STOP/HUMAN deterministic short-circuit (detectContactIntent, above the queue gate), OR the LLM-down queue gate (record + QUEUED-FOR-AGENT/HOLDING-ACK markers + one warm holding ack), OR one runTurn tool loop where the agent classifies + extracts + routes + answers via the case_* tools; empty-case floor via captureFieldsFromText (extract.js); dedup, media, observe; a degraded turn (empty/error/echo/stock-ack) sends a warm fallbackReply
   discord-receive.js       fallback Discord WS receive for older freddie builds
-  llm.js                   model call wiring; resolveCallLLM (boot precedence: stub/acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row)
+  llm.js                   model call wiring; resolveCallLLM (boot precedence: stub/acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row, and fires an onRecover edge that drives drainQueuedTurns)
   sim/inject.js            MockAdapter + scripted-conversation runner (offline)
   sim/scenarios.js         named low-literacy personas
-  sim/stub-llm.js          deterministic model for sim + tests (never used in production)
+  sim/stub-llm.js          deterministic TEST DOUBLE for sim + tests (never used in production): per message it shape-classifies inline (no intent/places import) and drives via the case_* tools, then composes a reply from the tool result -- so test.js exercises the full agent-driven path offline; carries classification as a test double, not production text processing
   dashboard/server.js      express API + anentrypoint-design SPA (observe/edit/override/reply); GET/POST /report public contact form (no token)
 test.js                    end-to-end suite (real thatcher + freddie, stub model)
 ```
@@ -109,17 +113,16 @@ node test.js                # end-to-end suite (CASEY_STUB_LLM path, stub model)
 
 CI: `.github/workflows/ci.yml` runs `npm run lint` (`scripts/lint.mjs`) on every
 push and PR. It is dependency-free on purpose -- it does NOT need the `file:../`
-siblings, so it stays green in a bare clone. Keep `test.js` as the real-services
-witness; do not move its real-services assertions into the lint gate.
+siblings, so it stays green in a bare clone. It carries a pure-agent grep-gate:
+`gateway-hooks.js` and `casey.js` must NOT import `intent.js` or `places.js`
+(`extract.js` is allowed). Keep `test.js` as the real-services witness; do not move
+its real-services assertions into the lint gate.
 
-Note: `freddie`, `anentrypoint-design`, and `adaptogen` are `file:../` dependencies
-(`../freddie`, `../anentrypoint-design`, `../dstate`). Without those sibling checkouts
-(and `thatcher` from npm) installed, `node test.js` and `casey up` fail with
-`ERR_MODULE_NOT_FOUND`; only static review is possible in a clone that lacks them.
-`adaptogen` is the exception that degrades gracefully: `conversation-fsm.js`
-optional-imports it, so its absence drops the durable soft-FSM trace but the
-intent->route map (and the no-dead-end guarantee) still hold -- the dependency-free
-CI lint and a bare clone stay green. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
+Note: `freddie` and `anentrypoint-design` are `file:../` dependencies (`../freddie`,
+`../anentrypoint-design`). Without those sibling checkouts (and `thatcher` from npm)
+installed, `node test.js` and `casey up` fail with `ERR_MODULE_NOT_FOUND`; only static
+review is possible in a clone that lacks them. The dependency-free CI lint and a bare
+clone stay green. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
 
 ## Environment
 
@@ -184,34 +187,32 @@ the crash-budget stop state); the supervisor is its only I/O.
   jargon (case/triage/workflow/status/priority), mirror the contact's language,
   give a plain-words reference number on first contact.
 - **Never a dead-end reply**: empty, emoji-only, and media-only inbound still get
-  a gentle helpful answer; the agent always sends a safe fallback on model
-  error/timeout/empty and records the failure as an observation, never leaked. A
-  reply that parrots a system-prompt example verbatim is treated as a failed turn
-  (`isPromptEcho`) and replaced by the fallback.
+  a gentle helpful answer; a degraded turn (empty/error/echo/stock-ack) sends a warm
+  `fallbackReply` and records the failure as an observation, never leaked. The
+  outbound scrubs stay: a reply that parrots a system-prompt example verbatim
+  (`isPromptEcho`), a stock acknowledgement (`isStockAck`), internal jargon
+  (`jargonHits`), or a malformed reference (`sanitizeOutboundRef`) is caught before
+  send.
 - **The reporter is usually a field worker relaying a farmer's animals, not the
   owner.** The person messaging is typically a field worker out on a visit,
   reporting livestock they have just come to see -- standing with the farmer, a
   relative, or a herder, out in the bush with limited info -- so they may not own
-  the animals or have seen the problem start. The ask hints (`VISIT_CRITICAL_ASK`,
-  `VALUE_ADD_ASK`) and `caseSystemPrompt` ask only what the worker can SEE ("what
-  can be seen in the animals") or RELAY ("how long the animals have been like this,
-  from what the person says") -- NEVER "when you first noticed it". Worker-observable
+  the animals or have seen the problem start. `caseSystemPrompt` instructs the agent
+  to ask only what the worker can SEE ("what can be seen in the animals") or RELAY
+  ("how long the animals have been like this, from what the person says") -- NEVER
+  "when you first noticed it". Worker-observable
   facts lead; the people-on-site facts (who is there and their link to the owner --
   owner/relative/herder/neighbour -- and the owner's name + a number, recorded as
   `present_person`/`present_person_relation`/`owner_name`/`owner_contact`) and the
   farmer-dependent history come after, framed as the person's account. (REPORT_KEYS
   in case-store.js carries these fields; the report itself is free-form JSON.)
-- **Every ask must be answerable: a free-text answer is bound to the field just
-  asked.** Many fields (the people/owner facts, `how_to_find`) have NO deterministic
-  extractor and the weak production model rarely calls `case_report`, so a worker's
-  free-text answer ("boyi son of the owner") would be dropped and the same question
-  re-asked forever. `nextAsk(report, askedKeys)` is the single source of truth for
-  the next field (visit-critical first, then value-add, skipping any already asked),
-  and every ask path records a durable `ASKED:`/`FALLBACK-ASK:` marker. On the next
-  turn `bindPendingAsk` binds the free-text inbound to that pending field (when no
-  real field was captured this turn and it is not a fixed-intent message). So a
-  field is asked at most once and its answer is always recorded -- the same question
-  is never asked on two consecutive turns.
+- **The empty-case floor guarantees a plainly-stated fact is never dropped.** The
+  agent drives collection by calling `case_report`, but a weak production model may
+  reply without calling any tool. So after every inbound a deterministic-only capture
+  (`captureFieldsFromText`, extract.js, no LLM) records any plainly-stated report
+  fields fill-if-empty. It is a FLOOR under the agent -- it never composes the reply
+  or routes the turn -- so a terminal on-site message ("2 cows died at Bergville") is
+  recorded on the case even when the model calls nothing.
 - **A case is keyed per CONTACT, not per channel; delivery target is separate.**
   `conversationKey` returns `container:author` when a channel/chat carries multiple
   authors (a Discord server channel) and the single id for a 1:1 chat -- so two
@@ -220,28 +221,20 @@ the crash-budget stop state); the supervisor is its only I/O.
   Discord posts to `/channels/{channel}/messages`; an author id 404s), kept separate
   from the per-contact key: the key drives find-or-create, the in-flight lock, and
   dedup, while every `to:` is `replyTo`.
-- **A complete report confirms and EXITS, never a bare acknowledgement.** When every
-  visit-critical and value-add field is captured (`nextAsk` returns null), the reply
-  is `completeReply`: it confirms the full report is on record and the team will
-  follow up, AND invites a fresh report for any other animal or place -- so a
-  finished case is never the "Thank you. Your reference is X" dead-end. A new
-  substantive message then branches a new case (via `detectNewCaseConflict` /
-  find-or-create).
-- **A greeting is the OPENING of a report: every turn DRIVES collection, never the
-  case-ack and never a no-ask pleasantry.** memobot's job is to gather the case
-  while someone is on-site, so even a bare "hi"/"hello"/"help" must reply with a warm
-  opener PLUS the single most-important still-missing fact (on a brand-new case that
-  is "where the animals are"). The two dead-ends to avoid: parroting "Thank you for
-  letting us know ... your reference is X" (treats hello as a report), and a warm
-  pleasantry that asks for nothing (collects nothing). Every intake-driving reply is
-  built by `intakeAdvanceReply` (gateway-hooks.js): a just-captured-fact ack OR a
-  brief warm opener, then the ask, then a short ref tail -- NEVER the holding-ack
-  preamble. `isContentFreeTurn(justCaptured, report)` (nothing captured AND empty
-  report) routes a greeting to `warmConversationalReply`, which now opens warmly and
-  asks the first needed fact (records a `GREETING-DRIVE` observation). Intake keeps
-  asking every still-missing visit-critical fact one per turn, once each, INCLUDING
-  the tool-only how_to_find/farmer_available/contact_fallback, until the report is as
-  complete as can be achieved.
+- **A complete report is not a dead-end.** When the report is complete the agent
+  confirms it is on record and the team will follow up, AND invites a fresh report
+  for any other animal or place -- never the "Thank you. Your reference is X"
+  dead-end. A new substantive message then branches a new case (via `case_new` /
+  find-or-create). Because the agent interprets each message, a question or enquiry
+  from a "complete" case moves freely -- there is no state that traps the
+  conversation.
+- **A greeting is the OPENING of a report, and every turn drives collection.** The
+  agent's job is to gather the case while someone is on-site, so `caseSystemPrompt`
+  directs it to answer even a bare "hi"/"hello"/"help" with a warm opener PLUS the
+  single most-important still-missing fact (on a brand-new case that is "where the
+  animals are"), rather than treating a greeting as a completed report or replying
+  with a pleasantry that asks for nothing. The agent asks one still-missing fact per
+  turn until the report is as complete as can be achieved.
 - **Escape route for a returning contact with a NEW case.** Because find-or-create
   reuses the open case per conversation and `markReportFieldsIfEmpty` is fill-if-
   empty, a contact who returns and states a clearly different situation would be
@@ -264,62 +257,40 @@ the crash-budget stop state); the supervisor is its only I/O.
   literal tokens that must be reproduced exactly (the reference, a link) may
   appear, each with an explicit "write the surrounding sentence yourself"
   instruction; everything else is a structural instruction the model composes.
-- **Fixed keywords short-circuit the LLM**: `HELP` / `STATUS` / `HUMAN` / `STOP`
-  answer instantly in any phrasing/language.
-- **Soft states, soft transitions: the message is INTERPRETED, not keyword-matched,
-  and guardrails inform rather than interfere**: a worker ASKING about their work
-  ("what's on the itinerary today", "my cases", "the nearest case to <place>") or
-  asking a general question is a different act from REPORTING an animal -- but a
-  fixed-phrase detector could never cover the open-ended ways a worker phrases it
-  (the witnessed whack-a-mole: each new phrasing slipped through to the
-  complete-report exit "we have the full report ... your reference is X"). So casey
-  INTERPRETS each message into a structured intent (`intent.js`: report | enquiry
-  {today,mine,open,near+place} | question | chitchat | service) by SHAPE, and the
-  conversation is an `adaptogen` (`../dstate`) DAG+FSM with SOFT enforcement
-  (`conversation-fsm.js`): every transition is allowed and merely FLAGGED, so a
-  question or enquiry from a "complete" case moves freely out of that state -- the
-  complete-report dead-end is structurally impossible. The interpreter is the in-loop
-  agent model when it declares a `case_intent` (recorded as an `INTENT-DECLARED`
-  observation the gateway prefers on the next turn); a deterministic SOFT shape
-  classifier is the fallback when a weak model declares nothing -- it SUGGESTS, the
-  soft FSM never blocks. A report-content veto keeps a real report
-  (sick/dead/drooling, "2 cows died today") from ever being read as an enquiry.
-  Enquiries answer from the PII-free surface (`renderItinerary`, incl.
-  near/region-by-location-text since lat/lon is optional and there's no geocoder).
-  Place/region understanding lives in `places.js`: a worker's "any cases in kzn" /
-  "anything in the eastern cape" resolves the SA province (`resolvePlace`) and lists
-  every case whose hydrated report location falls in it, province-labelled -- so a
-  free-form region ask is answered from the store, not deflected.
-  **The chat reaches GUI parity**: five FLEET-AGGREGATE enquiry kinds (count / geo /
-  outbreaks / overview / overdue) let a worker ask "how many open cases", "which area
-  has the most reports", "where are the outbreaks", "how are we doing", "whats
-  overdue" -- `renderAggregate` (gateway-hooks.js) calls the SAME pure dashboard
-  aggregators the GUI does (`buildGeo` / `buildClusters` / `buildOverview` /
-  `buildSLAReport`, with a capped `hydrateEvents`) and renders a warm reply that is
-  strictly AGGREGATE-ONLY and PII-FREE: counts and place/species tokens only, NEVER a
-  per-case row, ref, external_id, phone, or operator identity (the outbreaks branch
-  never iterates `buildClusters` members -- they carry contact free text). The
-  species-count guard ("how many sick cattle") and the report/animal veto keep a real
-  report from ever being read as an aggregate enquiry. A worker can also ask the
-  STATUS of a specific case by reference ("status of CASE-1089-dgpgd", bare
-  "CASE-1089?"): `resolveRefForStatus` looks it up (`getCaseByRef` exact, or a unique
-  prefix scan for a bare partial) and answers that case's plain status, gated so a ref
-  inside a report never hijacks intake. The fleet aggregates read the store UNSCOPED
-  (no `user:author`): thatcher row-access is `{scope:assigned, field:assignee}` and the
-  chat author is the reporter (never an assignee), so a scoped pull returned ~0 rows
-  and answered reassuring-when-wrong -- the aggregates emit only PII-free scalars, so
-  unscoped is worker-safe, while `user:author` scoping stays on the per-worker "mine"
-  itinerary. Operator-only levers (`buildWorkload`, `rankAttention` items,
-  per-operator/case-type metrics) are NEVER reached from the chat router -- a "who is
-  busy" ask deflects, so no operator identity reaches a field worker. A disease-service
-  animal-veto keeps "any cattle in kzn" a report; a question gets a helpful answer
-  that NAMES the enquiry surface, NEVER the complete exit; report/chitchat fall
-  through to the agent turn. The soft decision (intent + FSM trace) is recorded as an
-  observation -- the guardrail informing, never shown to the contact. adaptogen holds
-  CONVERSATION state; thatcher stays the case system-of-record. Only the IRREVERSIBLE
-  service intents (`stop`/`human`, and `status`/`help`) stay hard-deterministic
-  (`detectContactIntent`) -- a safety layer that must fire in any language without a
-  model.
+- **STOP/HUMAN are deterministic irreversible controls.** Only the two IRREVERSIBLE
+  service acts -- opt-out and human-handoff -- short-circuit deterministically:
+  `detectContactIntent` returns `'stop' | 'human' | null` and fires in any
+  phrasing/language even when the LLM is down, ABOVE the LLM-down queue gate so an
+  opt-out during an outage is never deferred. Everything else (status, help,
+  greeting, thanks, enquiry, report, extraction) is the agent's job.
+- **No deterministic text processing: the agent interprets and acts.** casey does no
+  deterministic classification of a worker's meaning. The LLM agent interprets each
+  message and drives the whole conversation by calling the `case_*` tools -- it
+  distinguishes a worker ASKING about their work ("what's on today", "my cases",
+  "any cases near <place>") from REPORTING an animal, and it answers each by calling
+  the right tool. There is no keyword intent classifier, no intake ask-ladder, no
+  soft-FSM, and no province->town gazetteer: place understanding is the model reading
+  the place token and passing it to `case_list`'s `location` param ($ilike match).
+  The only deterministic layers are the STOP/HUMAN safety short-circuit, the
+  empty-case capture floor (extract.js), and the outbound scrubs; on an LLM outage a
+  message is queued and re-driven on recovery, never classified by a fallback.
+- **Enquiries and status are PII-free.** A worker's enquiry ("my cases", "any cases
+  in kzn") and a status ask ("status of CASE-1089") are answered by the agent via
+  `case_mine` / `case_today` / `case_list` / `case_get` from the PII-free projection:
+  a worker-role `case_get` returns the `enquiryRow` (no `external_id`/`contact_id`),
+  so a phone number, operator identity, or another contact's free text can never
+  surface to a field worker. A complete-report state can never trap an enquiry,
+  because the agent -- not a state machine -- decides the reply each turn.
+- **LLM-down queue + retry, never a fallback classification.** When the backend is
+  down casey does NOT classify the message deterministically. The inbound is
+  recorded, a `QUEUED-FOR-AGENT` marker and a `HOLDING-ACK` observation are appended,
+  ONE warm holding ack is sent, and the message is re-driven through the agent when
+  the provider recovers. `makeResilientCallLLM` fires an `onRecover` edge and
+  `casey.js drainQueuedTurns` drains the queue (status-gated, oldest-first
+  serialized, mark-attempted only after a successful drive, bounded retry ->
+  dead-letter). STOP/HUMAN still fire synchronously via the deterministic
+  short-circuit ABOVE the queue gate, so an opt-out during an outage is never
+  deferred.
 - **Full observability**: every action is an append-only audited `event` row.
 - **Receive-liveness is observable, never a false green**: a real-time channel
   (Discord/WhatsApp) can have a live TCP socket yet a dead gateway and deliver no
