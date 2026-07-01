@@ -26,7 +26,7 @@ const ENQUIRY_MINE = /\b(my cases?|my reports?|what am i working on|what i am wo
 const ENQUIRY_OPEN = /\b(open cases?|open work|anything i can help|what can i help|whats open|what.?s open)\b/i
 const ENQUIRY_NEAR = /\b(near|nearest|closest|close to|around|by)\b/i
 const ENQUIRY_COUNT = /\bhow many\b/i
-const ENQUIRY_GEO = /\b(which area|what area|where are|hotspot|most reports)\b/i
+const ENQUIRY_GEO = /\b(which area|what area|hotspot|most reports|where are the (cases|reports|outbreaks))\b/i
 const ENQUIRY_OUTBREAK = /\boutbreaks?\b/i
 const ENQUIRY_OVERVIEW = /\b(how are we|hows it going|how.?s it going|overview|how are things)\b/i
 const ENQUIRY_OVERDUE = /\b(overdue|whats overdue|what.?s overdue|breaching|at risk)\b/i
@@ -66,10 +66,14 @@ function shapeOf(text) {
   if (ENQUIRY_OVERDUE.test(t)) return { kind: 'enquiry', enquiry_kind: 'overdue' }
   if (ENQUIRY_OVERVIEW.test(t)) return { kind: 'enquiry', enquiry_kind: 'overview' }
   if (ENQUIRY_GEO.test(t)) return { kind: 'enquiry', enquiry_kind: 'geo' }
-  // Place/region + near enquiries -> case_list(location).
+  // Place/region + near enquiries -> case_list(location). A place ALONE is NOT an
+  // enquiry (it is usually an intake location answer, "near Bela-Bela on the farm
+  // road"); an enquiry needs an explicit QUERY lead (any cases / reports / nearest /
+  // closest / show me / which). This keeps a bare-location intake reply out of the
+  // enquiry branch (the report veto above already caught animal+problem messages).
   const place = extractPlaceToken(t)
-  if (ENQUIRY_NEAR.test(t) && place) return { kind: 'enquiry', enquiry_kind: 'near', place }
-  if (place && /\b(any cases?|reports?|anything)\b/i.test(t)) return { kind: 'enquiry', enquiry_kind: 'near', place }
+  const queryLead = /\b(any cases?|any reports?|anything|reports? (in|near|around)|cases? (in|near|around)|nearest|closest|show me|list|which cases?|whats? (in|near|around))\b/i.test(t)
+  if (place && queryLead) return { kind: 'enquiry', enquiry_kind: 'near', place }
   // Worker itinerary enquiries.
   if (ENQUIRY_MINE.test(t)) return { kind: 'enquiry', enquiry_kind: 'mine' }
   if (ENQUIRY_OPEN.test(t)) return { kind: 'enquiry', enquiry_kind: 'open' }
@@ -120,13 +124,14 @@ export function stubLLM() {
     if (shape.kind === 'enquiry') {
       const ek = shape.enquiry_kind
       if ((ek === 'near') && shape.place && toolNames.has('case_list')) {
-        return { content: '', tool_calls: [{ id: 'l1', name: 'case_list', arguments: { location: shape.place, status: 'open' } }] }
+        return { content: '', tool_calls: [{ id: 'l1', name: 'case_list', arguments: { location: shape.place } }] }
       }
       if (ek === 'mine' && toolNames.has('case_mine')) return { content: '', tool_calls: [{ id: 'm1', name: 'case_mine', arguments: {} }] }
       if ((ek === 'today' || ek === 'open') && toolNames.has('case_today')) return { content: '', tool_calls: [{ id: 'd1', name: 'case_today', arguments: {} }] }
-      // Fleet aggregates (count/geo/outbreaks/overview/overdue): the stub lists open
-      // cases and composeFromToolResult renders an aggregate scalar from the count.
-      if (toolNames.has('case_list')) return { content: '', tool_calls: [{ id: 'a1', name: 'case_list', arguments: { status: 'open' }, _aggregate: ek }] }
+      // Fleet aggregates (count/geo/outbreaks/overview/overdue): list the caseload
+      // (no status filter -- the case enum has no literal 'open' state) and
+      // composeFromToolResult renders a PII-free aggregate scalar from the count.
+      if (toolNames.has('case_list')) return { content: '', tool_calls: [{ id: 'a1', name: 'case_list', arguments: {} }] }
     }
 
     // REPORT / chitchat: record any plainly-stated fields via case_report (the agent's
@@ -164,23 +169,36 @@ function composeFromToolResult(payload, ref, userText) {
     const status = plainStatusWord(c.status)
     return `Here is where ${cref} stands: ${status}. The team will keep it moving and update you.`
   }
-  // an enquiry list.
+  // an enquiry list ({count, cases}). Render the right shape from the ask.
   if (typeof payload.count === 'number' && Array.isArray(payload.cases)) {
     const n = payload.count
-    const place = extractPlaceToken(userText)
-    if (/\bhow many\b/i.test(userText)) return `There are ${n} open ${n === 1 ? 'report' : 'reports'} right now.`
+    const u = String(userText || '')
+    const place = extractPlaceToken(u)
+    // Fleet aggregates -- a scalar, PII-free (no per-case row).
+    if (/\bhow many\b/i.test(u)) return `There are ${n} open ${n === 1 ? 'report' : 'reports'} right now.`
+    if (/\boutbreaks?\b/i.test(u)) return `Looking across the reports, there ${n === 1 ? 'is' : 'are'} ${n} open ${n === 1 ? 'report' : 'reports'} that could point to an outbreak.`
+    if (/\b(overdue|breaching|at risk)\b/i.test(u)) return `There ${n === 1 ? 'is' : 'are'} ${n} open ${n === 1 ? 'report' : 'reports'} to keep an eye on.`
+    if (/\b(how are we|hows it going|how.?s it going|overview|how are things)\b/i.test(u)) return `We are doing okay -- ${n} open ${n === 1 ? 'report' : 'reports'} on the go right now.`
+    if (/\b(which area|what area|where are|hotspot|most reports)\b/i.test(u)) return `Across ${n} open ${n === 1 ? 'report' : 'reports'}, the busiest areas are where most reports are coming from.`
+    // Place / region enquiry.
     if (place) return `I found ${n} open ${n === 1 ? 'report' : 'reports'} in that area (${place}).`
-    if (n === 0) return `There is nothing on your list right now. I will let you know as reports come in.`
-    const refs = payload.cases.slice(0, 5).map(c => c.ref).filter(Boolean).join(', ')
-    return `You have ${n} open ${n === 1 ? 'report' : 'reports'}${refs ? `: ${refs}` : ''}.`
+    // The worker's own itinerary (mine / today / open).
+    if (n === 0) return `Nothing is on your list right now. I will let you know as reports come in.`
+    const refs = [...new Set(payload.cases.map(c => c.ref).filter(Boolean))].slice(0, 5).join(', ')
+    return `Here is what is on the go today: ${n} ${n === 1 ? 'report' : 'reports'}${refs ? ` (${refs})` : ''}.`
   }
-  // opt-out / handoff acknowledgements.
-  if (payload.ok === true) return `Done. I have taken care of that for you.`
+  // case_report / case_update results ({ok, report/fieldsRecorded/case}) are NOT a
+  // reply -- intake continues, so fall through to composeReply (which cites the ref
+  // and gives the warm intake line). Only a BARE {ok:true} (case_stop/case_handoff,
+  // no report/case/count) is a control acknowledgement.
+  if (payload.ok === true && !payload.report && !payload.fieldsRecorded && !payload.case && !('count' in payload)) {
+    return `Done -- I have taken care of that for you.`
+  }
   return ''
 }
 
 function plainStatusWord(status) {
-  const map = { new: 'newly logged', triaging: 'being looked at', investigating: 'under investigation', resolved: 'resolved', closed: 'closed' }
+  const map = { new: 'newly logged and still with the team', triaging: 'being looked at', in_progress: 'still being worked on', waiting: 'still waiting on a next step', resolved: 'sorted out', closed: 'closed' }
   return map[status] || (status ? String(status) : 'logged with the team')
 }
 
