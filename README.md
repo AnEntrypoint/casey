@@ -261,3 +261,5 @@ Until the fixed thatcher is on npm, casey runs against the last published versio
 small compatibility shims in `case-store.js` (`_createReload`, a parsed-graph transition
 validator, and a `&system_fields` anchor in the config). These shims are removed once casey
 depends on the fixed release.
+
+<!-- auto-deploy witness 1782927443 -->
