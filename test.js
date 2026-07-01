@@ -2220,58 +2220,28 @@ async function main() {
     assert.ok(html.includes('&lt;script&gt;') || html.includes('&lt;img'), 'XSS payload is HTML-entity-escaped in the output')
   })
 
-  // ---- progression: the weak model is not trusted to drive intake ----------
-  // The live model returns content-only replies (no tool_calls), so the case
-  // would be an empty shell if intake relied on it. Deterministic extractFields
-  // must record what the contact plainly stated on EVERY turn, and the degraded
-  // fallback must advance field-by-field rather than re-greeting. These witness
-  // the originating defect: "it just logs cases from messages, without all the
-  // relevant details ... something without enough details isn't an actionable
-  // case, it should get everything it needs."
-  await test('extractFields captures what the contact plainly stated', async () => {
-    const { extractFields } = await import('./src/extract.js')
-    const f = extractFields('three of my cattle died near Musina since Monday, my name is Thabo')
-    assert.equal(f.species, 'cattle', `species: ${JSON.stringify(f)}`)
-    assert.equal(f.dead_count, '3', `dead_count from "three ... died": ${JSON.stringify(f)}`)
-    assert.equal(f.location, 'Musina', `location after "near": ${JSON.stringify(f)}`)
-    assert.ok(/monday/i.test(f.onset || ''), `onset after "since": ${JSON.stringify(f)}`)
-    assert.equal(f.contact_name, 'Thabo', `name after "my name is": ${JSON.stringify(f)}`)
-    // A bare greeting captures nothing (no false fields off "Hi Casey").
-    assert.equal(Object.keys(extractFields('hi casey')).length, 0, 'greeting yields no fields')
-    // "limp" must not match inside "Limpopo" (the home province of most reporters)
-    // -- a fabricated symptom there would stop intake asking the real sign.
-    assert.ok(!extractFields('from the Limpopo area').symptoms, 'Limpopo is not a "limp" symptom')
-    assert.equal(extractFields('from the Limpopo area').location, 'Limpopo', 'bare place captured without the "from the" article')
-    // An in-report case reference is a system token, not report content: its digits
-    // must NEVER be read as a count and its suffix never pollute location.
-    const withRef = extractFields('2 cows died, see CASE-1001-3vz9t')
-    assert.equal(withRef.dead_count, '2', `the real count is captured: ${JSON.stringify(withRef)}`)
-    assert.ok(withRef.affected_count == null || withRef.affected_count === '2', `the ref digits (1001) are not read as affected_count: ${JSON.stringify(withRef)}`)
-    assert.ok(!/1001|3vz9t/.test(withRef.location || ''), `the ref does not pollute location: ${JSON.stringify(withRef)}`)
-    // A weekday after "from" is a date, not a place -- never stored as a location.
-    assert.ok(extractFields('from Monday').location == null, 'a weekday is not a location')
-    assert.ok(/monday/i.test(extractFields('from Monday').onset || ''), 'a weekday after "from" is still an onset')
-    // isiZulu/isiXhosa agglutinated verbs are captured (documented support).
-    const zu = extractFields('inkomo ziyagula')
-    assert.equal(zu.species, 'inkomo', `singular isiZulu species: ${JSON.stringify(zu)}`)
-    assert.ok(zu.symptoms, `isiZulu "ziyagula" (sick) captured: ${JSON.stringify(zu)}`)
-    assert.ok(extractFields('inkomo yam ifile').dead_count, 'isiZulu "ifile" (died) sets a death')
-    // Controlled-disease signs a reporter commonly states are captured.
-    assert.ok(extractFields('my cattle are aborting').symptoms, 'abortion captured')
-    assert.ok(extractFields('sores on their mouths').symptoms, 'mouth sores captured')
-    assert.ok(extractFields('the cattle are salivating').symptoms, 'salivation captured')
-    // ... but ordinary English/Afrikaans words are NOT mis-read as a death/symptom.
-    assert.ok(!extractFields('the file is here').dead_count, '"file" is not a death')
-    assert.ok(!extractFields('my family is fine').symptoms, '"family" is not a symptom')
-    // A 17-19 digit id (e.g. a Discord snowflake that slipped past mention-stripping)
-    // is never recorded as a livestock count; a real (even large) herd still is.
-    const sf = extractFields('502921403385774090 animals are sick')
-    assert.ok(sf.affected_count == null && sf.dead_count == null, `a snowflake id is not a count: ${JSON.stringify(sf)}`)
-    assert.equal(extractFields('50000 sheep').affected_count, '50000', 'a large but real herd count is captured')
+  // ---- PURE LLM: the model records the report, casey does not extract ----------
+  // There is NO deterministic field extraction any more (extract.js deleted). The
+  // AGENT records what it learns via case_report during its turn. This witnesses the
+  // report path end to end through the real handler (stub model): a plainly-stated
+  // report drives a NON-EMPTY case with the fields the model recorded, no keyword floor.
+  await test('the model records the report via case_report (no deterministic extractor)', async () => {
+    // casey exposes no extractFields -- assert it is truly gone from the handler surface.
+    const gh = await import('./src/gateway-hooks.js')
+    assert.equal(typeof gh.extractFields, 'undefined', 'gateway-hooks exposes no extractFields (the extractor is deleted)')
+    // End-to-end: a report message lands fields on the case via the agent's case_report.
+    const chan = 'model-report-' + Date.now()
+    await runScript(adapter, ['three of my cattle died near Musina'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const c = (await store.listCases({}, { limit: 10000 })).find(x => x.external_id === (chan + ':' + chan) || x.external_id === chan)
+    assert.ok(c, 'the report opened a case')
+    const rep = JSON.parse(c.report || '{}')
+    assert.ok(Object.keys(rep).length >= 1, `the model recorded report fields (case is not an empty shell): ${JSON.stringify(rep)}`)
+    assert.ok((adapter.sent[adapter.sent.length - 1].text || '').includes(c.ref), 'the reply cites the reference')
   })
 
-  await test('multi-turn conversation accumulates every stated field even as the model stays degraded', async () => {
-    // The stub model never calls tools; only deterministic capture fills the report.
+  await test('multi-turn conversation accumulates the report the model records across turns', async () => {
+    // PURE LLM: the model records fields (case_report) across turns; the report
+    // accumulates and nothing earlier is lost. (No deterministic capture floor.)
     const ext = 'progress-' + Date.now()
     await runScript(adapter, ['my cattle are sick'], { from: ext, channel_id: ext, wait: () => casey.drain() })
     await runScript(adapter, ['they are drooling and have blisters'], { from: ext, channel_id: ext, wait: () => casey.drain() })
@@ -2280,57 +2250,87 @@ async function main() {
     assert.ok(c, 'case exists for the conversation')
     const rep = JSON.parse(c.report || '{}')
     assert.equal(rep.species, 'cattle', `species retained from turn 1: ${JSON.stringify(rep)}`)
-    // Turn 1 "sick" fills symptoms; fill-if-empty keeps it (never clobbers) when
-    // turn 2 adds "drooling" -- the point is the field is captured, not empty.
-    assert.ok(rep.symptoms && rep.symptoms.trim().length > 0, `symptoms captured: ${JSON.stringify(rep)}`)
+    assert.ok(rep.symptoms && rep.symptoms.trim().length > 0, `symptoms recorded: ${JSON.stringify(rep)}`)
     assert.equal(rep.affected_count, '6', `count from turn 3: ${JSON.stringify(rep)}`)
-    assert.equal(rep.location, 'Musina', `location from turn 3, nothing lost: ${JSON.stringify(rep)}`)
+    assert.ok(/musina/i.test(rep.location || ''), `location from turn 3, nothing lost: ${JSON.stringify(rep)}`)
   })
 
-  await test('the safe fallback DRIVES intake on an incomplete case, never a dead-end no-op', async () => {
-    const { isStockAck } = await import('./src/gateway-hooks.js')
-    // The degraded/outage fallback must ASK the next needed on-site fact when the
-    // report is incomplete -- not re-emit the bare stock ack (the witnessed no-op:
-    // FALLBACK_REPLY was byte-identical to the stock-ack shape isStockAck blanks, so
-    // a greeting/degraded/outage turn dead-ended with a no-ask holding line).
-    const inc = fallbackReply('hi', { ref: 'CASE-1', report: JSON.stringify({}) })
-    assert.ok(inc && inc.length > 0, 'fallback is never blank')
-    assert.ok(inc.includes('CASE-1'), 'fallback cites the reference')
-    assert.ok(!/full report/i.test(inc), 'fallback is not the complete-report exit')
-    assert.ok(/\?/.test(inc), `an incomplete-case fallback ASKS the next fact (drives intake): ${inc}`)
-    assert.ok(!isStockAck(inc), 'the driving fallback is not the stock ack (so it is never re-blanked into a dead-end)')
-    // A COMPLETE case has nothing to ask -- a warm holding ack is fine (no dead-end
-    // because a complete report is already on record).
-    const comp = fallbackReply('thanks', { ref: 'CASE-2', report: JSON.stringify({ species: 'cattle', symptoms: 'sick', location: 'Musina', how_to_find: 'gate', farmer_available: 'yes', contact_fallback: '082' }) })
-    assert.ok(comp.includes('CASE-2') && comp.length > 0, 'complete-case fallback is a warm ref-citing ack')
+  await test('the safe fallback is a plain warm holding line, never a dead-end (no computed ask)', async () => {
+    // PURE LLM: the fallback does NOT compute a next-question -- it is a warm,
+    // non-blank, ref-citing holding line. The model resumes driving next turn.
+    const fb = fallbackReply('hi', { ref: 'CASE-1', report: JSON.stringify({}) })
+    assert.ok(fb && fb.length > 0, 'fallback is never blank')
+    assert.ok(fb.includes('CASE-1'), 'fallback cites the reference')
+    assert.ok(!/full report/i.test(fb), 'fallback is not the complete-report exit')
+    assert.ok(!/Could you tell me/i.test(fb), 'the fallback does not compute a next-question (the LLM owns that)')
   })
 
-  await test('caseSystemPrompt steers the model to ADVANCE, not repeat, and not fabricate a report on a greeting', async () => {
-    const { caseSystemPrompt, extractFields } = await import('./src/gateway-hooks.js').then(async m => ({ caseSystemPrompt: m.caseSystemPrompt, extractFields: (await import('./src/extract.js')).extractFields }))
-    // The live bug: on a greeting the model thanked them for "sick animals" (empty
-    // report), and after "3 animals with pussy eyes" it re-asked the SAME question.
-    // Root cause was the prompt not surfacing known-fields + next-missing + no-repeat,
-    // and asserting a report on an empty case. Assert the prompt now steers correctly.
-    const emptyPrompt = caseSystemPrompt({ ref: 'CASE-9', id: 'x', status: 'new', report: '{}', autonomy: 'auto', channel: 'discord' }, [{ kind: 'inbound', actor: 'contact', text: 'hey there', created_at: 1 }], null, {})
-    assert.ok(/know NOTHING about any animals yet|do NOT thank them for reporting/i.test(emptyPrompt), 'empty-report prompt tells the model NOT to fabricate a sick-animal report on a greeting')
-    // With facts captured, the prompt names them + tells the model not to repeat.
-    const withFacts = JSON.stringify({ affected_count: '3', symptoms: 'pussy eye' })
-    const advPrompt = caseSystemPrompt({ ref: 'CASE-9', id: 'x', status: 'triaging', report: withFacts, autonomy: 'auto', channel: 'discord' }, [{ kind: 'inbound', actor: 'contact', text: 'x', created_at: 1 }, { kind: 'inbound', actor: 'contact', text: '3 animals with pussy eyes', created_at: 2 }], null, {})
-    assert.ok(/ALREADY know/i.test(advPrompt) && advPrompt.includes('affected_count=3'), 'the prompt surfaces the already-known fields')
-    assert.ok(/do NOT ask the same question you asked last turn|never go in circles|MOVE THE CONVERSATION FORWARD/i.test(advPrompt), 'the prompt forbids repeating a question')
-    assert.ok(/ask about THIS next/i.test(advPrompt), 'the prompt names the single next fact to ask')
-    // The empty-case floor now captures the eye symptom that was silently dropped.
-    const f = extractFields('3 animals with pussy eyes')
-    assert.ok(/eye/i.test(f.symptoms || ''), `eye discharge is captured as a symptom: ${JSON.stringify(f)}`)
-    assert.equal(f.affected_count, '3', `the count is captured: ${JSON.stringify(f)}`)
+  await test('caseSystemPrompt surfaces the RAW report and trusts the model to advance (no computed next-fact)', async () => {
+    const { caseSystemPrompt } = await import('./src/gateway-hooks.js')
+    // PURE LLM: casey does NOT compute the next fact or the ack -- it shows the model
+    // the raw "report so far" + a plain do-not-repeat instruction, and the model
+    // decides. Assert the prompt surfaces the recorded fields and the forward-move
+    // instruction, but does NOT name a casey-chosen 'ask THIS next' fact.
+    const withFacts = JSON.stringify({ affected_count: '3', symptoms: 'eye discharge' })
+    const p = caseSystemPrompt({ ref: 'CASE-9', id: 'x', status: 'triaging', report: withFacts, autonomy: 'auto', channel: 'discord' }, [{ kind: 'inbound', actor: 'contact', text: '3 animals with pussy eyes', created_at: 2 }], null, {})
+    assert.ok(p.includes('affected_count=3') && /report so far/i.test(p), 'the prompt surfaces the raw report-so-far')
+    assert.ok(/never repeat your last question|do not ask for a fact already there|MOVE THE CONVERSATION FORWARD/i.test(p), 'the prompt tells the model not to repeat -- but lets IT decide')
+    assert.ok(!/ask about THIS next/i.test(p), 'casey does NOT compute the single next fact for the model (pure LLM)')
+    // An empty report: the prompt tells the model not to imply a report was made.
+    const empty = caseSystemPrompt({ ref: 'CASE-9', id: 'x', status: 'new', report: '{}', autonomy: 'auto', channel: 'discord' }, [{ kind: 'inbound', actor: 'contact', text: 'hey there', created_at: 1 }], null, {})
+    assert.ok(/do not imply they reported animals|nothing is on record yet/i.test(empty), 'empty-report prompt tells the model not to fabricate a report on a greeting')
   })
 
-  await test('a later greeting on an in-progress case still captures content and does not reset', async () => {
-    // "hi casey, my goats are limping" -- the greeting must not swallow the report.
-    const { extractFields } = await import('./src/extract.js')
-    const f = extractFields('hi casey, my goats are limping')
-    assert.equal(f.species, 'goats', `species captured despite greeting: ${JSON.stringify(f)}`)
-    assert.ok(/limp/.test(f.symptoms || ''), `symptom captured despite greeting: ${JSON.stringify(f)}`)
+  await test('dstate conversation state: the agent-declared phase advances, persists, and orients', async () => {
+    const { orientCase, advanceCase } = await import('./src/conversation-state.js')
+    const { CONVERSATION_PHASES } = await import('./src/conversation-spec.js')
+    assert.ok(CONVERSATION_PHASES.includes('gathering') && CONVERSATION_PHASES.includes('complete'), 'the spec has the arc phases')
+    // A fresh case orients to greeting with legal next moves (gathering/enquiring/...).
+    const caseRow = { id: 'cs1', ref: 'CASE-1', report: '{}' }
+    const o1 = await orientCase(caseRow, { report_complete: false })
+    assert.ok(o1 && o1.state === 'greeting', `fresh case is in greeting: ${JSON.stringify(o1)}`)
+    assert.ok(o1.legalMoves.includes('gathering'), 'greeting can move to gathering')
+    // Advancing to gathering applies and persists the bundle on the row.
+    const store = { setConvState: async (id, blob) => { caseRow.conv_state = blob } }
+    const adv = await advanceCase(store, caseRow, 'gathering', { report_complete: false })
+    assert.ok(adv && adv.applied && adv.to === 'gathering', `advance greeting->gathering applied: ${JSON.stringify(adv)}`)
+    assert.ok(caseRow.conv_state && caseRow.conv_state.length > 0, 'the new state persisted on the row')
+    const o2 = await orientCase(caseRow, { report_complete: false })
+    assert.equal(o2.state, 'gathering', `orient after advance reflects gathering: ${JSON.stringify(o2)}`)
+    // The prompt carries the WHERE-YOU-ARE block when orient is passed.
+    const { caseSystemPrompt } = await import('./src/gateway-hooks.js')
+    const prompt = caseSystemPrompt(caseRow, [{ kind: 'inbound', text: 'x', created_at: 1 }], null, { orient: o2 })
+    assert.ok(/gathering/i.test(prompt) && /WHERE YOU ARE/i.test(prompt), 'the prompt names the current phase')
+  })
+
+  await test('dstate degrade-safe: with adaptogen absent the conversation still works (orient null)', async () => {
+    // The wiring must never break a turn when dstate cannot load. orientCase/advanceCase
+    // swallow all errors to null; a malformed blob rehydrates to a fresh machine.
+    const { orientCase, advanceCase } = await import('./src/conversation-state.js')
+    const torn = { id: 'cs2', ref: 'CASE-2', report: '{}', conv_state: '{not valid json' }
+    const o = await orientCase(torn, {})   // torn blob -> fresh machine (or null if adaptogen absent)
+    assert.ok(o === null || o.state === 'greeting', `a torn blob degrades to fresh/null, never throws: ${JSON.stringify(o)}`)
+    // advance on an enforcement:off edge (handoff) returns applied:false and does NOT
+    // persist a cursor move (a hard-off edge is allowed but does not move).
+    const store = { setConvState: async () => { throw new Error('conv_state field absent') } }
+    const adv = await advanceCase(store, { id: 'cs3', ref: 'CASE-3', report: '{}' }, 'gathering', {})
+    // Even when setConvState throws (unpublished column), advance does not throw.
+    assert.ok(adv === null || typeof adv.applied === 'boolean', 'advance never throws even when the store write fails')
+  })
+
+  await test('degraded fallback is a plain warm holding line (no computed ask), and Nguni handoff fires', async () => {
+    const { fallbackReply, detectContactIntent } = await import('./src/gateway-hooks.js')
+    // PURE LLM: the fallback no longer computes an ack or a next-question -- it is a
+    // simple warm, never-dead-end holding line + the reference. The model resumes
+    // driving next turn.
+    const fb = fallbackReply('3 animals with pussy eyes', { ref: 'CASE-1', report: JSON.stringify({ affected_count: '3' }) })
+    assert.ok(fb && fb.length > 0 && fb.includes('CASE-1'), `fallback is warm, non-blank, cites the ref: ${fb}`)
+    assert.ok(!/Could you tell me|noted/i.test(fb), 'the fallback does not compute an ack or a next-question (the LLM owns that)')
+    assert.ok(!/full report/i.test(fb), 'the fallback is not the complete-report dead-end')
+    // The irreducible safety floor stays: STOP/HUMAN deterministic in any language.
+    // isiZulu handoff via a concord-prefixed whole form fires without a model.
+    assert.equal(detectContactIntent('ngicela ukukhuluma nomuntu'), 'human', 'nomuntu (isiZulu) triggers handoff')
+    assert.equal(detectContactIntent('ngifuna umuntu'), 'human', 'umuntu still triggers handoff')
   })
 
   // ---- runtime supervisor: the PROCESS lifecycle that keeps casey answering ---
@@ -2529,18 +2529,14 @@ async function main() {
     assert.ok(afterReport.text.includes(gc.ref), 'a real report turn cites the reference')
   })
 
-  await test('the empty-case floor records plainly-stated report facts even when the model drives nothing', async () => {
-    // PURE-AGENT: the deterministic pending-ask binder is removed -- the agent drives
-    // intake. What survives as a floor is the deterministic empty-case field capture:
-    // a message with plainly-stated report facts records them (fill-if-empty) so a
-    // terminal on-site message is never silently dropped, and every turn gets a reply.
+  await test('the model records plainly-stated report facts; every turn gets a reply', async () => {
+    // PURE LLM: no capture floor -- the agent records fields via case_report, and a
+    // report message lands them on the case; every turn is a non-dead-end reply.
     const pchan = 'pend-' + Date.now()
     await runScript(adapter, ['cattle with blue eyes at Musina farm, on the R101'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
     const pc = (await store.listCases()).find(c => c.external_id === pchan)
     const rep = pc.report ? JSON.parse(pc.report) : {}
-    assert.equal(rep.species, 'cattle', `the empty-case floor recorded species: ${JSON.stringify(rep)}`)
-    assert.equal(rep.location, 'Musina', `the empty-case floor recorded location: ${JSON.stringify(rep)}`)
-    // A follow-up turn always gets a non-empty reply (never a dead-end).
+    assert.ok(Object.keys(rep).length >= 1, `the model recorded report fields: ${JSON.stringify(rep)}`)
     const b = adapter.sent.length
     await runScript(adapter, ['the owner is here'], { from: pchan, channel_id: pchan, username: pchan, wait: () => casey.drain() })
     assert.ok(adapter.sent.length > b && (adapter.sent[adapter.sent.length - 1].text || '').trim().length > 0, 'the follow-up got a non-empty reply')
@@ -2794,36 +2790,22 @@ async function main() {
     assert.ok(n2 > n, `a fresh case was branched for the new (no-op) report (cases ${n}->${n2})`)
   })
 
-  await test('flexible intake: a natural-language location answer binds and is never re-asked', async () => {
-    const { extractFields } = await import('./src/extract.js')
-    // The witnessed bug: a lowercase descriptive place must be captured as location.
-    assert.equal(extractFields('a small holding near amapondos').location, 'amapondos', 'lowercase descriptive place is captured')
-    // Every natural spatial lead binds (the witnessed 'close to amapondos' re-ask).
-    assert.equal(extractFields('close to amapondos').location, 'amapondos', '"close to X" binds')
-    assert.equal(extractFields('just outside engcobo').location, 'engcobo', '"just outside X" binds')
-    assert.equal(extractFields('right by ngqeleni').location, 'ngqeleni', '"right by X" binds')
-    assert.ok(!extractFields('around the clock').location, '"around the clock" is not a location')
-    assert.ok(!extractFields('close to nothing').location, '"close to nothing" is not a location')
-    assert.equal(extractFields('near tsolo').location, 'tsolo', 'a bare lowercase place after near is captured')
-    // No false location from report prose (allowlist-by-shape rejects known words).
-    assert.ok(!extractFields('the cow is near death').location, '"near death" is not a location')
-    assert.ok(!extractFields('next to nothing left').location, '"next to nothing" is not a location')
-    assert.ok(!extractFields('any cases near margate').location, 'an enquiry place is not a captured location (no report content)')
-    // End-to-end (PURE-AGENT): the empty-case floor captures a natural-language
-    // location answer onto the report, and a later ENQUIRY never overwrites it (a
-    // query place is not a captured field value).
+  await test('flexible intake: the model records a natural-language location and an enquiry does not overwrite it', async () => {
+    // PURE LLM (no extractor): the agent records a location it learns; a later enquiry
+    // about a place is answered without overwriting the report's bound location.
     const iw = 'intakeworker-' + Date.now()
     const say = async (msg) => { await runScript(adapter, [msg], { from: iw, channel_id: iw, username: iw, wait: () => casey.drain() }); return adapter.sent[adapter.sent.length - 1].text || '' }
     await say('hi im on a site here')
-    await say('a small holding near amapondos')
+    await say('my cattle are sick at a small holding near amapondos')
     const ic = (await store.listCases({}, { limit: 10000 })).find(c => c.external_id === (iw + ':' + iw) || c.external_id === iw)
     const rep = ic ? (() => { try { return JSON.parse(ic.report || '{}') } catch { return {} } })() : {}
-    assert.equal(rep.location, 'amapondos', `the natural-language location answer was captured: ${JSON.stringify(rep)}`)
-    // No mis-bind: an enquiry does not overwrite the bound location.
+    assert.ok(/amapondos/i.test(rep.location || ''), `the natural-language location was recorded: ${JSON.stringify(rep)}`)
+    const before = rep.location
+    // An enquiry about a place does not overwrite the report's bound location.
     await say('any cases near margate')
     const ic2 = (await store.listCases({}, { limit: 10000 })).find(c => c.id === ic.id)
     const rep2 = (() => { try { return JSON.parse(ic2.report || '{}') } catch { return {} } })()
-    assert.equal(rep2.location, rep.location, 'an enquiry did not overwrite the bound location')
+    assert.equal(rep2.location, before, 'an enquiry did not overwrite the bound location')
   })
 
   await test('status-of-mine: "where are we at" gets the case status via the agent, never a deflection or PII', async () => {

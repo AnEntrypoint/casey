@@ -97,6 +97,7 @@ entities:
       lat:         { type: number }                  # case location for proximity ("cases near me"); optional
       lon:         { type: number }
       claimed_at:  { type: text }                    # when a worker claimed/assigned themselves (enquiry flow)
+      conv_state:  { type: text }                    # exported dstate conversation-state bundle (the agent-driven soft FSM: greeting/gathering/enquiring/answering/complete/handoff/closed); JSON blob, optional -- absent/unpublished degrades to a fresh greeting machine
     # Row-access scope for worker enquiries: scope=assigned keys on the `assignee`
     # field (thatcher's checkRowAccess reads rowAccess.field), so a worker's 'my
     # cases' returns only cases assigned to them. Enforced when list() is called

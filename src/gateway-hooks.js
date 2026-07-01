@@ -23,51 +23,12 @@ import { runTurn } from 'freddie'
 // enquiry tools use -- external_id/contact_id can never leak into a worker's list.
 import { projectCase, DEFAULT_PROJECTION } from '../../freddie/src/plugins/case/toolset.js'
 import { VISIT_CRITICAL } from './case-health.js'
-import { extractFields } from './extract.js'
 import { buildAlertPayload, buildSLAReport } from './report-analytics.js'
 import { buildGeo } from './geo.js'
 import { buildClusters } from './clusters.js'
 import { buildOverview } from './overview.js'
 import { fmtTimeSAST } from './format.js'
-
-// Report fields casey is allowed to fill deterministically at ingress. Mirrors
-// REPORT_KEYS in case-store.js; extractFields may emit keys outside the report
-// (e.g. contact_name belongs on the contact, not the report) so we filter here.
-const CAPTURE_KEYS = new Set(['species', 'symptoms', 'location', 'affected_count', 'dead_count', 'onset'])
-
-// Deterministic field capture from the inbound text, run on EVERY turn before the
-// reply regardless of which path answers. The production model is small and does
-// not reliably call case_report, so without this a real conversation logs an empty
-// case ("only logs cases from messages, without the relevant details"). Fills only
-// fields still empty (never clobbers the model's or a prior turn's richer value),
-// is observe-guarded + locked inside the store, and records which keys it filled.
-// LLM field-extraction floor: a cheap forced single-tool call that interprets ONE
-// worker message into report fields, so natural-language answers the regex misses
-// ("a small holding near amapondos", "theyre coughing and wont eat", "about 20, three
-// down") are understood. Returns a {key:value} object (only the whitelisted report
-// keys, owner_contact excluded -- a phone must never enter capture/summary). Strictly
-// additive: merged fill-if-empty by the caller. Returns {} on any error / model-down
-// so the deterministic path is the byte-identical fallback. Gated by the caller to
-// run only on confirmed intake (never an enquiry/greeting/fixed-intent).
-// EMPTY-CASE FLOOR: deterministic-only field capture (the LLM extraction now lives
-// in the agent turn -- the model calls case_report). This runs as a floor UNDER the
-// agent so a worker's plainly-stated facts are recorded even when the weak model
-// emits prose and no tool call; a case is never an empty shell. Fill-if-empty:
-// never clobbers a model/human value. Returns the keys it newly filled.
-async function captureFieldsFromText(store, caseId, text, log) {
-  try {
-    const all = extractFields(text)
-    const fields = {}
-    for (const [k, v] of Object.entries(all)) if (CAPTURE_KEYS.has(k)) fields[k] = v
-    if (!Object.keys(fields).length) return []
-    const res = await store.markReportFieldsIfEmpty(caseId, fields)
-    if (res?.filled?.length) {
-      // Field KEYS only -- never the raw contact text (PII) in the observation.
-      await store.appendEvent(caseId, { kind: 'observation', actor: 'system', text: `fields auto-captured: ${res.filled.join(', ')}` })
-    }
-    return res?.filled || []
-  } catch (e) { log?.warn?.('[casey] auto-capture failed', { caseId, error: e.message }); return [] }
-}
+import { orientCase, advanceCase } from './conversation-state.js'
 
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 
@@ -79,7 +40,7 @@ const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 // the contact), and it spells out plain-language REPLY rules -- mirror the
 // contact's language, short warm sentences, one question, no jargon, greet+give
 // the reference on first contact, and reassure when a human is requested.
-export function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = {}) {
+export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {}) {
   const recent = events.slice(-20).map(e =>
     `- [${e.created_at}] ${e.kind}/${e.actor}: ${truncate(e.text, 280)}`).join('\n')
   const firstMessage = events.filter(e => e.kind === 'inbound').length <= 1
@@ -259,34 +220,35 @@ export function caseSystemPrompt(caseRow, events, contact, { closingCapture = nu
     `8. ONE NEXT STEP: if you need something from them, ask for exactly one thing,`,
     `   in the simplest words (for example which animals, the place, or a photo).`,
     ``,
-    // ADVANCE, NEVER REPEAT. The single most common live failure is the model
-    // re-asking a question the person already answered, or asking the SAME generic
-    // question two turns running, or (on a bare greeting) thanking them for a report
-    // they never made. This block is computed from the live report so the model is
-    // told, in plain terms, exactly what is already known and what the ONE next thing
-    // to ask is -- so it acknowledges what it just heard and moves forward.
-    ...( (() => {
-      const nextHint = mostImportantMissingField(caseRow.report)   // the next missing priority fact, or null
-      const known = haveFields.length
-      const lines = [`MOVE THE CONVERSATION FORWARD -- never go in circles:`]
-      if (known) {
-        lines.push(`- You ALREADY know: ${reportLine}. Do NOT ask for any of these again,`,
-          `  and do NOT ask the same question you asked last turn. Briefly show you`,
-          `  heard what they just said (name the thing they told you), then move on.`)
-      } else {
-        lines.push(`- You know NOTHING about any animals yet. Do NOT thank them for reporting`,
-          `  sick or dead animals or imply they told you about animals -- they have not`,
-          `  yet. Open warmly and invite them to tell you what is happening.`)
-      }
-      if (nextHint) {
-        lines.push(`- If you ask one thing, ask about THIS next -- ${nextHint} -- and nothing`,
-          `  they have already given. Phrase it warmly in your own words.`)
-      } else {
-        lines.push(`- The core on-site facts are recorded; ask nothing unless it genuinely`,
-          `  helps, and never repeat an earlier question.`)
-      }
-      return [lines.join('\n'), ``]
-    })() ),
+    // MOVE FORWARD, NEVER REPEAT. casey does NOT compute which fact to ask or which
+    // to acknowledge -- YOU decide from what is already on record. The "report so far"
+    // above is the source of truth for what you already know: do not ask for anything
+    // in it again, do not repeat last turn's question. Acknowledge what they just told
+    // you in your own words, then, if one thing is genuinely still needed, ask for it.
+    // On an empty report, do not thank them for reporting animals -- they have not yet;
+    // just greet warmly and invite them to say what is happening.
+    `MOVE THE CONVERSATION FORWARD (private): read "report so far" above -- that is what`,
+    `you already know. Never ask for a fact already there; never repeat your last`,
+    `question. Show you heard their latest message, then ask at most one still-needed`,
+    `thing (or nothing). If nothing is on record yet, do not imply they reported animals.`,
+    ``,
+    // DURABLE CONVERSATION STATE (from dstate/adaptogen -- null when degraded). Names
+    // the phase you are in and the phases you may move to, so you keep your place
+    // across turns and never re-open a finished line. Declare a phase change with the
+    // case_stage tool. This is the persistent memory the per-turn report snapshot
+    // alone does not give.
+    ...( orient ? [[
+      `WHERE YOU ARE (private): the conversation is in the "${orient.state}" phase.`,
+      orient.legalMoves && orient.legalMoves.length
+        ? `From here you may move to: ${orient.legalMoves.join(', ')}. When the phase`
+        : `Stay in this phase unless something clearly changes.`,
+      orient.legalMoves && orient.legalMoves.length
+        ? `changes (they start a report, ask about their work, the report is complete,`
+        : ``,
+      orient.legalMoves && orient.legalMoves.length
+        ? `they want a person, or they stop), call case_stage to record the new phase.`
+        : ``,
+    ].filter(Boolean).join('\n'), ``] : [] ),
     firstMessage
       ? [`THIS IS THEIR FIRST MESSAGE. In your OWN words (never copy wording from this`,
          `prompt) do these things in a few warm plain lines: (a) greet them warmly and,`,
@@ -309,14 +271,11 @@ export function caseSystemPrompt(caseRow, events, contact, { closingCapture = nu
            : [] )].join('\n')
       : `Continue gently from the earlier messages above. Pick up where things left off.`,
     ``,
-    closingCapture
-      ? [`THEY SEEM TO BE WRAPPING UP, and this is likely your last chance before they`,
-         `leave the animals. One important thing for the team is still missing:`,
-         `${closingCapture}. First warmly acknowledge their thanks, then -- in the same`,
-         `short message -- gently ask for just that one thing, in simple words. Ask`,
-         `only this once; if they do not give it, let them go kindly. Keep it warm and`,
-         `brief, never pushy, and do not list other questions.`].join('\n')
-      : '',
+    `IF THEY SEEM TO BE WRAPPING UP (a "thanks", a goodbye) and an important on-site`,
+    `fact is still missing, this is likely your last chance before they leave the`,
+    `animals -- you MAY warmly acknowledge their thanks and, in the same short message,`,
+    `gently ask once for the single most useful missing thing. Never pushy, never a`,
+    `list; if they do not give it, let them go kindly.`,
     ``,
     `IF THEY ASK FOR A PERSON (in any language or phrasing -- "talk to someone", "I`,
     `want a person", "real human", "is anyone there"): do NOT argue or stall. Warmly`,
@@ -483,21 +442,17 @@ export function refTail(contactText, caseRow) {
   }[lang] || ` Your reference is ${ref}.`
 }
 
+// The safe holding reply for a degraded turn (model error/timeout/empty/echo) or an
+// LLM outage. A plain, warm, language-mirrored holding line + the reference -- never
+// a dead-end. casey does NOT compose a next-question here: the model owns driving the
+// conversation and resumes on the next turn / on recovery. (The deterministic
+// ask-ladder was removed -- the LLM does that job.)
 export function fallbackReply(contactText, caseRow) {
   const lang = guessLang(contactText)
   const base = FALLBACK_BY_LANG[lang] || FALLBACK_REPLY
-  // DRIVE INTAKE on the degraded path: when the report still needs a visit-critical
-  // on-site fact, the fallback must ASK for the single most-important missing one, not
-  // just parrot a holding line. Without this the anti-dead-end net was a no-op -- the
-  // English base is byte-identical to the stock-ack shape isStockAck blanks, so a
-  // degraded/greeting/outage turn re-emitted the exact same no-ask ack (a dead-end).
-  // The trailing ask both makes the reply forward-moving AND breaks the identity so it
-  // is never re-blanked. Reuses the same VISIT_CRITICAL_ASK vocabulary the model sees.
-  const missingFact = caseRow ? mostImportantMissingField(caseRow.report) : null
-  const ask = missingFact ? ' ' + askCarrier(lang, missingFact) : ''
   const ref = caseRow?.ref
-  if (!ref) return base + ask
-  return base + ask + refTail(contactText, caseRow)
+  if (!ref) return base
+  return base + refTail(contactText, caseRow)
 }
 
 // Strip channel mention/markup tokens that a chat platform injects when a
@@ -519,19 +474,6 @@ export function stripChannelMarkup(text) {
     .trim()
 }
 
-// A single gentle "could you tell me <fact>?" carrier per language. The asked-fact
-// phrase itself stays English plain-language (the canonical VISIT_CRITICAL_ASK
-// hints); the carrier sentence mirrors the contact's language. This is the
-// offline/degraded one-shot path -- the live model handles full localisation; here
-// honest degradation beats a dead-end ack.
-function askCarrier(lang, fact) {
-  const c = {
-    af: `Kan u my asseblief vertel ${fact}?`,
-    zu: `Ungangitshela ${fact}?`,
-    xh: `Ungandixelela ${fact}?`,
-  }[lang]
-  return c || `Could you tell me ${fact}?`
-}
 
 export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
   // Per-contact in-flight guard: if a prior agent turn is still running for this
@@ -685,35 +627,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       return { to: replyTo, text: '', platform, caseId: fresh.id, observed: true }
     }
 
-    // Deterministic field capture FIRST -- before any reply path (intent shortcut,
-    // agent turn, or fallback). This guarantees the contact's plainly-stated facts
-    // are recorded even when the model drives nothing, so a case is never an empty
-    // shell. Runs only outside observe mode (returned above). Re-read fresh after so
-    // downstream report-aware decisions see what was just captured.
-    let justCaptured = []
-    if (inboundText) {
-      // EMPTY-CASE FLOOR (retained). The agent drives intake by calling case_report,
-      // but the weak production model can emit prose and no tool call -- so a purely
-      // deterministic capture still runs on every intake message and fills any field
-      // the model missed (fill-if-empty), so the terminal on-site message is never
-      // silently dropped. This is the ONLY text-processing that survives the reshape,
-      // and it is a floor UNDER the agent, never a router: it does not classify or
-      // reply, it only records fields. Skipped for a fixed STOP/HUMAN control (those
-      // carry no report content). callLLM is intentionally NOT passed here -- the
-      // agent turn below is the model's job; this floor is deterministic-only.
-      if (!detectContactIntent(inboundText)) {
-        justCaptured = await captureFieldsFromText(store, fresh.id, inboundText, log)
-        fresh = await store.getCase(fresh.id)
-        // Keep the operator-facing subject/summary populated from captured fields when
-        // the model never set them (additive only -- never clobbers a model/human
-        // value), so a fully-degraded conversation still gives an operator a real
-        // one-line picture instead of '(none yet)'.
-        if (justCaptured.length) {
-          const wrote = await syncSummaryFromCaptured(store, fresh, log)
-          if (wrote) fresh = await store.getCase(fresh.id)
-        }
-      }
-    }
+    // PURE LLM: casey does NOT deterministically extract report fields. The AGENT
+    // records what it learns via case_report during its turn. There is no keyword
+    // capture floor -- the model owns field recording entirely (user directive: get
+    // rid of hard coding so the LLM does its job). The only deterministic pre-LLM
+    // layer left is the irreversible STOP/HUMAN control below.
 
     // IRREVERSIBLE SERVICE CONTROLS (the only deterministic pre-LLM route left).
     // STOP (opt-out) and HUMAN (handoff) are legal/service controls that must fire
@@ -793,14 +711,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const events = await store.listEvents(fresh.id)
     const prompt = inboundText || (media ? `The contact sent ${media} with no text. Acknowledge and ask how you can help.` : 'The contact sent an empty message. Acknowledge politely.')
 
-    // If we deferred a closing "thanks" because an unrecoverable on-site fact is
-    // still missing, hand the agent an explicit one-shot directive so it reliably
-    // makes the single gentle ask (rather than hoping it infers it). We name the
-    // most important missing fact so the ask is concrete.
-    const closingCapture = isWrapUpThanks(inboundText) && reportMissingVisitCritical(fresh.report)
-      ? mostImportantMissingField(fresh.report)
-      : null
-
     // LLM-DOWN QUEUE GATE. With no deterministic fallback classification, a message
     // that arrives while the backend is down cannot be understood now -- so QUEUE it
     // and re-drive when the provider recovers (drainQueuedTurns on the down->up edge).
@@ -857,11 +767,18 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // TURN-DONE marker is needed; the outbound IS the completion witness.
     try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `TURN-START:${msgId}` }) }
     catch (e) { log.warn?.('[casey] turn-start marker failed', { caseId: fresh.id, error: e.message }) }
+    // Durable conversation state (dstate) -- where the AGENT has declared it is in the
+    // report arc. Null when adaptogen is absent/degraded (the prompt then drives from
+    // the raw report alone). casey does NOT compute completion -- the model declares
+    // 'complete' via case_stage, so no report-derived guard vars here.
+    let convOrient = null
+    try { convOrient = await orientCase(fresh, {}) }
+    catch (e) { log.debug?.('[casey] orient failed', { caseId: fresh.id, error: e.message }); convOrient = null }
     let result, errored = false
     try {
       result = await runTurn({
         prompt,
-        messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, { closingCapture }) }],
+        messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, { orient: convOrient }) }],
         sessionKey: `case:${fresh.id}`,
         callLLM,
         enabledToolsets: ['cases', 'core'],
@@ -947,8 +864,8 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         log.warn?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent result error: ${result.error}` })
       }
-      // Warm, non-dead-end holding line. It invites the next fact without a canned
-      // ask-ladder -- the agent resumes driving on the next turn once it recovers.
+      // Warm, non-dead-end holding line (never a computed ask -- the model resumes
+      // driving on the next turn / on recovery).
       text = fallbackReply(inboundText, fresh)
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded turn (empty/error/echo/stock-ack); sent warm fallback.' })
     }
@@ -1086,6 +1003,25 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${pendingFallbackAsk.key} ${pendingFallbackAsk.via} asked the next still-missing on-site fact (once per field).` })
       } catch (e) { log.warn?.('[casey] FALLBACK-ASK marker append failed', { caseId: fresh.id, error: e.message }) }
     }
+    // ADVANCE the durable conversation state -- ONLY on a real, delivered, non-fallback
+    // turn, and ONLY to the phase the AGENT itself DECLARED this turn (the newest
+    // STAGE-DECLARED observation the case_stage tool wrote). casey does NOT derive a
+    // phase from the report -- the model owns that. If the model declared nothing, the
+    // cursor stays where it is (an honest default). Degrade-safe: advanceCase is a
+    // no-op when adaptogen is absent.
+    if (delivered && !isFallback && !errored) {
+      try {
+        let target = null
+        const evs = await store.listEvents(fresh.id)
+        for (let i = evs.length - 1; i >= 0; i--) {
+          const m = typeof evs[i].text === 'string' && evs[i].text.match(/^STAGE-DECLARED (\w+)$/)
+          if (m) { target = m[1]; break }
+          if (evs[i].kind === 'inbound' && evs[i].msg_id === msgId) break   // only THIS turn's declaration
+        }
+        const cur = convOrient?.state || 'greeting'
+        if (target && target !== cur) await advanceCase(store, fresh, target, {})
+      } catch (e) { log.debug?.('[casey] conversation advance skipped', { caseId: fresh.id, error: e.message }) }
+    }
     return reply
   }
 }
@@ -1180,121 +1116,6 @@ export function reportMissingVisitCritical(reportRaw) {
   return VISIT_CRITICAL.some(k => r[k] == null || String(r[k]).trim() === '')
 }
 
-// The single most important still-missing on-site fact, in priority order, with a
-// plain-language hint the agent can ask about. The reporter is usually a field
-// worker relaying a farmer's animals they are standing with, so the hints ask what
-// the worker can SEE or RELAY -- never assuming they own or witnessed the animals.
-// Worker-observable facts lead (where, which animals, the signs, how to find the
-// place); the people facts (who is there, how to reach the owner) follow.
-const VISIT_CRITICAL_ASK = [
-  ['location', 'where the animals are (the farm, nearest town, or area)'],
-  ['species', 'which animals are affected'],
-  ['symptoms', 'what can be seen in the animals'],
-  ['how_to_find', 'how to find the place (a road, landmark, or directions)'],
-  ['farmer_available', 'whether the owner or someone is there at the animals'],
-  ['contact_fallback', 'a number to reach the owner or the person there'],
-]
-function mostImportantMissingField(reportRaw) {
-  const r = parseReportSafe(reportRaw)
-  const hit = VISIT_CRITICAL_ASK.find(([k]) => r[k] == null || String(r[k]).trim() === '')
-  return hit ? hit[1] : null
-}
-
-// Plain contact-facing label for a captured field, used to acknowledge what the
-// contact just told us IN THE REPLY -- never internal jargon, never the raw value
-// (the value is the contact's own words, already on the record; we only name the
-// KIND of thing understood, so a re-render is always HTML-safe and PII-light).
-const CAPTURED_ACK = {
-  species: 'which animals',
-  symptoms: 'what can be seen',
-  location: 'where the animals are',
-  dead_count: 'that some have died',
-  affected_count: 'how many are affected',
-  onset: 'how long it has been',
-  how_to_find: 'how to find the place',
-  suspected_disease: 'what it may be',
-  present_person: 'who is there with the animals',
-  owner_contact: 'how to reach the owner',
-}
-// Build a short warm clause acknowledging the most important field we just
-// captured this turn (priority-ordered so we confirm the most useful fact, not a
-// random one). Returns '' when nothing notable was captured. Deterministic: this
-// is what makes 'I see blue eyes' come back as 'Thank you -- I have noted what you
-// are seeing' instead of vanishing into a generic ack.
-function ackCapturedFields(justFilled) {
-  if (!Array.isArray(justFilled) || !justFilled.length) return ''
-  const order = ['location', 'species', 'symptoms', 'dead_count', 'affected_count', 'onset', 'how_to_find', 'suspected_disease']
-  const pick = order.find(k => justFilled.includes(k)) || justFilled.find(k => CAPTURED_ACK[k])
-  const label = pick && CAPTURED_ACK[pick]
-  return label ? `Thank you -- I have noted ${label}.` : ''
-}
-
-// Operator-facing one-line summary projected from the deterministically-captured
-// report fields. The weak model returns no tool_calls (so it never sets a subject
-// or summary), which left an operator staring at '(none yet)' on a real report --
-// this synthesises a short scannable picture from what the contact plainly stated
-// so the inbox shows the animals, the signs, how many, and where, even on a fully
-// model-degraded conversation. Plain words only (no internal jargon); the captured
-// VALUES are the contact's own text and are HTML-escaped at render like all contact
-// text. Returns '' when nothing useful is captured yet (caller then writes nothing).
-function summaryFromReport(reportRaw) {
-  const r = parseReportSafe(reportRaw)
-  const val = k => (r[k] == null ? '' : String(r[k]).trim())
-  const parts = []
-  const species = val('species')
-  const symptoms = val('symptoms')
-  const dead = val('dead_count')
-  const affected = val('affected_count')
-  const location = val('location')
-  const onset = val('onset')
-  // Lead with the animals + what is wrong: "cattle, blue eye" / "sheep, sick".
-  const head = [species, symptoms].filter(Boolean).join(', ')
-  if (head) parts.push(head)
-  else if (symptoms) parts.push(symptoms)
-  if (dead) parts.push(`${dead} dead`)
-  if (affected && !dead) parts.push(`${affected} affected`)
-  if (location) parts.push(`at ${location}`)
-  if (onset) parts.push(`since ${onset}`)
-  return parts.join(' - ')
-}
-
-// A short subject (title) from the same projection: animals + sign, or the sign
-// alone, capped so the inbox row stays scannable. Returns '' when nothing yet.
-function subjectFromReport(reportRaw) {
-  const r = parseReportSafe(reportRaw)
-  const val = k => (r[k] == null ? '' : String(r[k]).trim())
-  const species = val('species')
-  const symptoms = val('symptoms')
-  const title = [species, symptoms].filter(Boolean).join(' - ') || symptoms || val('location')
-  return title ? truncate(title, 60) : ''
-}
-
-// Keep subject/summary populated from captured fields WITHOUT ever clobbering a
-// model- or human-authored value. A summary set by the agent (case_update) or an
-// operator is real working memory; we only fill the gap when the field is still
-// empty or the default placeholder. Quiet update (does not touch last_event_at):
-// this is a derived projection of facts already recorded this turn, not new
-// contact activity. Returns true when it wrote something.
-async function syncSummaryFromCaptured(store, caseRow, log) {
-  try {
-    const isBlank = v => v == null || String(v).trim() === '' || String(v).trim() === '(none yet)'
-    const patch = {}
-    if (isBlank(caseRow.summary)) {
-      const s = summaryFromReport(caseRow.report)
-      if (s) patch.summary = s
-    }
-    if (isBlank(caseRow.subject)) {
-      const sub = subjectFromReport(caseRow.report)
-      if (sub) patch.subject = sub
-    }
-    if (!Object.keys(patch).length) return false
-    await store.updateCaseQuiet(caseRow.id, patch)
-    // Field KEYS only -- never the raw captured values (contact PII) in the log line.
-    await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', touch: false, text: `summary auto-filled from captured fields: ${Object.keys(patch).join(', ')}` })
-    return true
-  } catch (e) { log?.warn?.('[casey] summary auto-fill failed', { caseId: caseRow.id, error: e.message }); return false }
-}
-
 // Contact intent detection -- low-literacy / multilingual handlers
 //
 // Low-literacy / multilingual contacts often send one word, an emoji, or a
@@ -1348,19 +1169,6 @@ export function detectContactIntent(text) {
   return null
 }
 
-// A genuine wrap-up "thanks" vs an engaged "thanks, what next?". The closing
-// nudge spends a one-shot CLOSING-NUDGE marker for the whole case, so it must
-// only fire when the contact is actually leaving -- a thanks that also carries a
-// forward-looking word ("next", "now", "what") is someone still in the
-// conversation, not someone going. Intent stays 'thanks' (so the warm canned
-// reply still fires, never a dead-end); only the wrap-up deferral is suppressed.
-const WRAPUP_BLOCK = new Set(['next', 'now', 'when', 'what', 'then', 'after', 'how'])
-function isWrapUpThanks(text) {
-  if (detectContactIntent(text) !== 'thanks') return false
-  const t = normalizeIntentText(text)
-  return !t.split(' ').some(w => WRAPUP_BLOCK.has(w))
-}
-
 // Keyword tables. Single-word keys match as whole tokens; multi-word keys as
 // space-bounded phrases. Accent-stripped, lowercase (see normalizeIntentText).
 // Languages: en, es, pt, it, fr, de, zu (Zulu), xh (Xhosa), ar (transliterated),
@@ -1383,8 +1191,11 @@ const HUMAN_KEYS = [
   'representative', 'staff', 'manager', 'speak to', 'talk to', 'call me',
   'real human', 'agent',
   'mens', 'persoon', 'iemand', 'regte persoon',      // af
-  'umuntu', 'umsebenzi',                             // zu
-  'umntu',                                           // xh
+  // Nguni concord-prefixed WHOLE forms (listed literally, not a bare-prefix substring
+  // match) so "ngicela ukukhuluma nomuntu" (I would like to speak with a person) fires
+  // the handoff. Safety-critical: handoff must work in any language without a model.
+  'umuntu', 'umsebenzi', 'nomuntu', 'komuntu', 'abantu',   // zu
+  'umntu', 'nomntu',                                       // xh
 ]
 const HUMAN_EXCLUDE = [
   'a person told me', 'person told me', 'someone told me', 'another person',

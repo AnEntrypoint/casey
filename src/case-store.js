@@ -426,6 +426,17 @@ export class CaseStore {
     return caseId
   }
 
+  // Persist the exported dstate conversation-state bundle on the case row. WRAPPED
+  // in try/catch: until the published thatcher schema carries the conv_state field
+  // (or on any write race), the update throws -- which must NEVER break a live turn.
+  // On failure the conversation simply degrades to a fresh greeting machine next
+  // turn (the report-derived prompt block still drives). Best-effort, never rethrows.
+  async setConvState(caseId, blob) {
+    if (!caseId) return
+    try { await this.t.update('case', caseId, { conv_state: blob || '' }, SYSTEM_USER) }
+    catch (e) { this.log?.debug?.('[casey] setConvState skipped (conv_state field unavailable)', { caseId, error: e.message }) }
+  }
+
   async getActiveCase(author) {
     if (!author) return null
     const [contact] = await this.t.list('contact', { external_id: author }, { limit: 1 })

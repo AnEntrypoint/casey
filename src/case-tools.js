@@ -339,8 +339,11 @@ export function buildCaseToolset(storeOrNull) {
       toolset: 'cases',
       schema: { name: 'case_mine', description: "List the asking worker's OWN open cases (their itinerary). PII-free.", parameters: { type: 'object', properties: { limit: { type: 'number', default: 25 } } } },
       handler: async ({ limit = 25 }, ctx) => {
-        const author = ctx?.author || ctx?.principal?.id
-        const rows = await store().listCases({ status: { $in: ['new', 'triaging', 'in_progress', 'waiting'] } }, { limit, user: ctx?.principal || (author ? { id: author, role: 'worker' } : null) })
+        // Scope by REPORTER, not assignee: a worker's cases are the ones they reported
+        // (the per-contact external_id 'channel:author' or the bare author), never an
+        // operator assignee -- an assignee scope returned nothing for the asking worker.
+        // enquiryRow strips external_id, so filtering on it never leaks it.
+        const rows = await mineRows(store(), ctx, limit)
         return { count: rows.length, cases: rows.map(enquiryRow) }
       },
     },
@@ -349,11 +352,24 @@ export function buildCaseToolset(storeOrNull) {
       toolset: 'cases',
       schema: { name: 'case_today', description: "List cases active today for the asking worker (today's list). PII-free.", parameters: { type: 'object', properties: { limit: { type: 'number', default: 25 } } } },
       handler: async ({ limit = 25 }, ctx) => {
-        const author = ctx?.author || ctx?.principal?.id
-        // Open cases the worker owns, most-recently-active first (the store sorts by
-        // recency); "today" is the practical itinerary of what is live for them.
-        const rows = await store().listCases({ status: { $in: ['new', 'triaging', 'in_progress', 'waiting'] } }, { limit, user: ctx?.principal || (author ? { id: author, role: 'worker' } : null) })
+        // The worker's OWN open cases, most-recently-active first (recency-sorted) --
+        // "today" is the practical itinerary of what is live for them. Reporter-scoped.
+        const rows = await mineRows(store(), ctx, limit)
         return { count: rows.length, cases: rows.map(enquiryRow) }
+      },
+    },
+    {
+      // The agent declares its conversation phase; the gateway reads the STAGE-DECLARED
+      // observation back and applies the durable dstate transition. Append-only, keeps
+      // the state I/O in casey. Mirrors freddie's case_stage.
+      name: 'case_stage',
+      toolset: 'cases',
+      schema: { name: 'case_stage', description: 'Declare which phase the conversation is now in: greeting (a warm opener), gathering (collecting the report), enquiring (the worker asked about their work), answering (a general question), complete (the report is on record), handoff (a person is needed), or closed (they asked to stop). Call this when the phase changes so you keep your place and never repeat a question.', parameters: { type: 'object', properties: { to: str('Conversation phase', { enum: ['greeting', 'gathering', 'enquiring', 'answering', 'complete', 'handoff', 'closed'] }) }, required: ['to'] } },
+      handler: async ({ to }, ctx) => {
+        const id = ctx?.activeCaseId
+        if (!id) return { error: 'no active case' }
+        await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: `STAGE-DECLARED ${to}` })
+        return { ok: true, stage: to }
       },
     },
     {
@@ -428,6 +444,22 @@ function enquiryRow(c) {
 }
 function slimEvent(e) {
   return { kind: e.kind, actor: e.actor, text: e.text, at: e.created_at }
+}
+// The asking worker's OWN open cases: reporter-scoped. The per-contact case
+// external_id is 'container:author' (a multi-author channel) or the bare author
+// (a 1:1 chat), so a worker's own cases are those whose external_id CONTAINS their
+// author id. We pull the open set and JS-filter (external_id is not always a clean
+// equality key across channels), most-recently-active first, capped.
+async function mineRows(store, ctx, limit) {
+  const author = ctx?.author || ctx?.principal?.id
+  const open = await store.listCases({ status: { $in: ['new', 'triaging', 'in_progress', 'waiting'] } }, { limit: Math.max(limit * 10, 200) })
+  if (!author) return open.slice(0, limit)
+  const a = String(author)
+  const mine = open.filter(c => {
+    const ext = String(c.external_id || '')
+    return ext === a || ext.split(':').includes(a) || ext.endsWith(':' + a)
+  })
+  return mine.slice(0, limit)
 }
 function pick(obj, keys) {
   const out = {}

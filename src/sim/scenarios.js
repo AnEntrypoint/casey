@@ -97,7 +97,7 @@ export const SCENARIOS = {
   },
   'numbers-as-words': {
     name: 'numbers-as-words',
-    description: 'Contact writes counts as English words ("three cows died"). Verifies extractFields handles word numerals.',
+    description: 'Contact writes counts as English words ("three cows died"). The model records the count from word numerals.',
     lines: [
       'three of my cattle are very sick',
       'two of them died already',
@@ -165,7 +165,7 @@ export const SCENARIOS = {
   },
   'local-language-species': {
     name: 'local-language-species',
-    description: 'Species stated only in local language: isiZulu "izinkomo" (cattle) and Afrikaans "skape" (sheep). Verifies extractFields handles them.',
+    description: 'Species stated only in local language: isiZulu "izinkomo" (cattle) and Afrikaans "skape" (sheep). The model records the local-language species.',
     lines: [
       'izinkomo ziyagula',
       'skape is ook siek by my buurman',

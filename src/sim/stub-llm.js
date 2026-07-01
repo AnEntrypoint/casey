@@ -11,11 +11,29 @@
 // for a place/region enquiry, case_get for status, case_mine/case_today for the
 // worker's itinerary, case_new for a fresh report on a complete case, case_stop for
 // an opt-out) -- then, on the follow-up turn once the tool RESULT is in the messages,
-// composes a plain reply FROM that result. This is the ONLY message-shape logic that
-// survives, and it is a TEST DOUBLE (a stand-in for the real model), never production
-// text processing. It imports extract.js (the retained empty-case floor) for field
-// extraction but NEVER intent.js/places.js (deleted).
-import { extractFields } from '../extract.js'
+// composes a plain reply FROM that result. This is a TEST DOUBLE (a stand-in for the
+// model) -- it inlines a minimal field parser so the stub can call case_report the
+// way a real model would. This shape logic lives ONLY in the stub (a test fixture),
+// never in production (casey has no deterministic field extraction any more -- the
+// LLM owns it). It imports nothing from the deleted intent.js/places.js/extract.js.
+
+// Minimal field parser for the stub -- ONLY enough to exercise the case_report path
+// offline (species, a count, a location after a spatial lead, a couple of symptoms).
+// Deliberately small: it is a test double, not casey behaviour.
+function stubExtract(text) {
+  const t = String(text || '').toLowerCase()
+  const f = {}
+  const sp = t.match(/\b(cattle|cows?|calf|calves|ox|oxen|sheep|goats?|pigs?|chickens?|izinkomo|skape|beeste)\b/)
+  if (sp) f.species = sp[1]
+  const wordNum = { one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', ten: '10' }
+  const cnt = t.match(/\b(\d{1,4})\b/) || t.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/)
+  if (cnt) { const n = wordNum[cnt[1]] || cnt[1]; if (/\bdied|dead\b/.test(t)) f.dead_count = n; else f.affected_count = n }
+  const loc = t.match(/\b(?:near|close to|just outside|at|in|by)\s+(?:the\s+)?([a-z][a-z' -]{2,30})/)
+  if (loc) { const p = loc[1].trim().replace(/\b(main road|today|please|farm)\b.*$/, '').trim(); if (p) f.location = p }
+  const sym = t.match(/\b(drool\w*|sick|ill|dying|limp\w*|cough\w*|blister\w*|blood|swollen|sores?|not eating|weak)\b/)
+  if (sym) f.symptoms = sym[1]
+  return f
+}
 
 // A minimal, self-contained shape classifier: is this message an enquiry, a status
 // ask, an opt-out/human ask, or a report? Deterministic and inline -- it does NOT
@@ -155,7 +173,7 @@ export function stubLLM() {
     // opening turn). The empty-case floor also records fields; case_report here
     // exercises the model-driven path.
     const isFirstTurn = messages.filter(m => m.role === 'assistant').length === 0
-    const fields = extractFields(lastUser)
+    const fields = stubExtract(lastUser)
     const calls = []
     if (isFirstTurn) {
       calls.push({ id: 'u1', name: 'case_update', arguments: { id: caseId, summary: `Report: ${lastUser.slice(0, 80)}`, priority: 'high' } })

@@ -96,16 +96,17 @@ for (const f of all) {
 }
 
 // Pure-agent invariant: the deterministic text-processing layer was removed. The
-// inbound handler + top-level assembly must NOT re-import intent.js/places.js
-// (deleted); the agent classifies + routes + answers via the case tools. extract.js
-// is ALLOWED -- it is the retained empty-case capture floor. This grep-gate keeps a
-// future edit from quietly reintroducing keyword routing.
-const NO_INTENT_IMPORT = ['src/gateway-hooks.js', 'src/casey.js']
-for (const rel of NO_INTENT_IMPORT) {
+// inbound handler + top-level assembly must NOT re-import intent.js/places.js/
+// extract.js (all deleted); the LLM classifies + routes + answers + RECORDS THE
+// REPORT via the case tools -- casey does no deterministic text processing. This
+// grep-gate keeps a future edit from quietly reintroducing keyword routing or a
+// keyword capture floor.
+const NO_HARDCODE_IMPORT = ['src/gateway-hooks.js', 'src/casey.js']
+for (const rel of NO_HARDCODE_IMPORT) {
   let src = ''
   try { src = readFileSync(join(ROOT, rel), 'utf8') } catch { continue }
-  if (/from\s+['"][^'"]*\b(intent|places)\.js['"]/.test(src) || /import\(\s*['"][^'"]*\b(intent|places)\.js['"]/.test(src)) {
-    note(`pure-agent: ${rel} imports intent.js/places.js -- the deterministic routing layer was removed; the agent classifies + routes via the case tools (extract.js is the allowed empty-case floor)`)
+  if (/from\s+['"][^'"]*\b(intent|places|extract)\.js['"]/.test(src) || /import\(\s*['"][^'"]*\b(intent|places|extract)\.js['"]/.test(src)) {
+    note(`pure-llm: ${rel} imports intent.js/places.js/extract.js -- casey does no deterministic text processing; the LLM classifies, routes, answers, and records the report via the case tools`)
   }
 }
 
