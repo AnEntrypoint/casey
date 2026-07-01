@@ -1189,7 +1189,7 @@ export function advancingFallback(contactText, caseRow) {
   return intakeAdvanceReply(contactText, caseRow, [], fact)
 }
 
-export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
+export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
   // Per-contact in-flight guard: if a prior agent turn is still running for this
   // contact, we drop the new message rather than race two concurrent LLM calls
   // against the same case. The contact's inbound is still recorded (above), so
@@ -1664,6 +1664,44 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
       ? mostImportantMissingField(fresh.report)
       : null
 
+    // LLM-DOWN QUEUE GATE. With no deterministic fallback classification, a message
+    // that arrives while the backend is down cannot be understood now -- so QUEUE it
+    // and re-drive when the provider recovers (drainQueuedTurns on the down->up edge).
+    // The inbound is already recorded above; here we append a durable QUEUED-FOR-AGENT
+    // marker (the queue), send exactly ONE warm holding ack, and return WITHOUT a
+    // TURN-START (so the resume sweep does not also claim it). The ack is recorded as
+    // an OBSERVATION, never an outbound -- an outbound would positionally "complete"
+    // the queued turn and suppress the retry. Guarded once per msgId. STOP/HUMAN are
+    // handled by the deterministic short-circuit ABOVE this gate, so an opt-out during
+    // an outage still fires synchronously and is never queued.
+    if (typeof llmStatus === 'function' && !msg.resume) {
+      let down = false
+      try { const st = await llmStatus(); down = st && st.ok === false } catch { down = false }
+      if (down) {
+        const already = events.some(e => e.kind === 'observation' && typeof e.text === 'string' && e.text === `QUEUED-FOR-AGENT:${msgId}`)
+        if (!already) {
+          try {
+            await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `QUEUED-FOR-AGENT:${msgId}` })
+            const holdText = fallbackReply(inboundText, fresh)
+            await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `HOLDING-ACK-SENT:${msgId}` })
+            const holdReply = { to: replyTo, text: holdText, platform, caseId: fresh.id, queued: true }
+            if (adapter?.send) {
+              try { await adapter.send(holdReply) }
+              catch (e) { log.warn?.('[casey] holding-ack send failed', { caseId: fresh.id, error: e.message }) }
+            }
+            log.info?.('[casey] queued inbound (LLM down)', { caseId: fresh.id, msgId })
+            return holdReply
+          } catch (e) {
+            log.warn?.('[casey] queue-gate append failed; falling through to live turn', { caseId: fresh.id, error: e.message })
+          }
+        } else {
+          // Already queued this msgId (a duplicate delivery during the outage) -- do
+          // not re-ack, just acknowledge receipt without a second holding line.
+          return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true, deduped: true }
+        }
+      }
+    }
+
     // Per-contact concurrency gate: a second message from the same contact while
     // the first turn is still in the LLM is held off until next poll / retry.
     if (inFlight.has(external_id)) {
@@ -1699,9 +1737,14 @@ export function makeCaseHandler(store, { callLLM = null, autoRespond = true, log
         toolCtx: {
           author: msg.from || external_id,
           channel,
-          role: 'operator',
+          // The channel inbound is a WORKER (no login; the operator is the dashboard).
+          // role:'worker' makes the freddie case tools return the PII-free enquiryRow
+          // projection on reads (case_get/case_list) -- a worker asking status can
+          // never be handed a case body carrying external_id/contact_id/phone. Only
+          // the dashboard read path is role:'operator'.
+          role: 'worker',
           store,
-          principal: { id: msg.from || external_id, role: 'operator' },
+          principal: { id: msg.from || external_id, role: 'worker' },
           activeCaseRef: fresh.ref,
           activeCaseId: fresh.id,
           now: Date.now(),

@@ -84,8 +84,24 @@ async function main() {
   // re-resolves lazily (debounced) so a recovered provider resumes real auto-replies
   // with no restart, and its status() is the single live source for the health row.
   const { makeResilientCallLLM } = await import('../src/llm.js')
-  const brain = makeResilientCallLLM({ probe: true })
-  const casey = await createCasey({ channels, callLLM: brain.callLLM })
+  // onRecover fires on the provider's down->up edge to drain messages queued during
+  // the outage. casey is created after brain, so route through a late-bound ref.
+  let caseyRef = null
+  const brain = makeResilientCallLLM({
+    probe: true,
+    onRecover: () => caseyRef?.drainQueuedTurns?.().catch(e => caseyRef?.log?.warn?.('[casey] recovery drain failed', { error: e.message })),
+  })
+  const casey = await createCasey({
+    channels,
+    callLLM: brain.callLLM,
+    // Live backend health for the handler's LLM-down queue gate (drainQueuedTurns
+    // drains on recovery). Stub mode is always healthy.
+    llmStatus: process.env.CASEY_STUB_LLM ? (() => ({ ok: true, source: 'stub' })) : brain.status,
+  })
+  caseyRef = casey
+  // The queue-drain hard status-gate reads the SAME resilient backend the handler and
+  // health row use, so a drain only fires when the provider is genuinely back.
+  casey.resilientStatus = () => (process.env.CASEY_STUB_LLM ? { ok: true, source: 'stub' } : brain.status())
   await casey.start()
 
   const dashPort = Number(flags.port || 4000)

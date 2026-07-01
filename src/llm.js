@@ -69,7 +69,7 @@ export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {
 //
 // This keeps the never-dead-end guarantee (holding message on every miss) AND adds
 // the missing never-stay-degraded half (auto-resume when the provider returns).
-export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, intervalMs = 30000, resolve = resolveCallLLM, now = null, slowMs = 20000, slowWindow = 5 } = {}) {
+export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, intervalMs = 30000, resolve = resolveCallLLM, now = null, slowMs = 20000, slowWindow = 5, onRecover = null } = {}) {
   let backend = null                 // resolved real callLLM, or null while degraded
   let last = { source: 'none', model: null, url: null }
   let inflight = null                // shared promise so concurrent inbounds probe once
@@ -101,9 +101,16 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   const clock = now || (() => Date.now())
 
   async function resolveOnce() {
+    const wasDown = !backend
     const r = await resolve({ probe, model }).catch(() => ({ callLLM: null, source: 'none' }))
     backend = r.callLLM || null
     last = { source: r.source || (backend ? 'acptoapi' : 'none'), model: r.model || null, url: r.url || null }
+    // Rising edge null -> backend: the provider just came back. Fire onRecover once so
+    // the host can drain any messages queued during the outage. Never awaited or
+    // allowed to throw into the resolve path.
+    if (wasDown && backend && typeof onRecover === 'function') {
+      try { Promise.resolve(onRecover()).catch(() => {}) } catch { /* never break resolve */ }
+    }
     return backend
   }
 

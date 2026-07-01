@@ -105,6 +105,11 @@ export class Casey {
     this.gateway = new Gateway({ platforms })
     const handler = makeCaseHandler(this.store, {
       callLLM: this.opts.callLLM || null,
+      // Live backend health so the handler can QUEUE an inbound (instead of a
+      // deterministic fallback) when the LLM provider is down; the down->up edge
+      // drains the queue (drainQueuedTurns). Absent -> the handler treats the
+      // backend as available and lets runTurn's own throw drive the safe fallback.
+      llmStatus: this.opts.llmStatus || null,
       autoRespond: this.opts.autoRespond !== false,
       log: this.log,
       notifyHandoff: this.opts.notifyHandoff || discordHandoffNotifier(undefined, this.log),
@@ -443,6 +448,101 @@ export class Casey {
     }
     if (resumed) this.log?.info?.('[casey] resume sweep complete', { scanned, resumed })
     return { scanned, resumed }
+  }
+
+  // Drain messages QUEUED while the LLM backend was down. A message that arrived
+  // during an outage is recorded as QUEUED-FOR-AGENT:<msgId> (plus one HOLDING-ACK
+  // observation) and NOT driven through the agent -- there is no deterministic
+  // fallback classification, so it waits for the model. This drains that queue when
+  // the provider recovers. It diverges from resumePendingTurns deliberately:
+  //   (a) HARD status()-gate at entry -- if the backend is still down, return early
+  //       (never burn a queued message against a dead provider);
+  //   (b) process ALL queued msgIds per case oldest->newest, serialized (not most-
+  //       recent-only) -- every queued message deserves its turn, in order;
+  //   (c) write queue-drive-attempted:<msgId> only AFTER a successful outbound/draft
+  //       lands, so a re-drive that hits an again-degraded backend does NOT burn the
+  //       attempt (the message stays queued for the next recovery);
+  //   (d) a bounded retry cap -> queue-drive-failed:<msgId> dead-letter that surfaces
+  //       to the inbox, so a permanently-failing message is not retried forever.
+  // Serialized with resumePendingTurns behind one in-flight guard (_draining) across
+  // boot + sweep + the recovery edge to avoid a double-drive.
+  async drainQueuedTurns({ maxCases = 200, maxRedrives = 50, retryCap = 5 } = {}) {
+    if (this._draining) return { scanned: 0, drained: 0, deferred: true }
+    const handle = this.gateway?.handleInbound
+    if (typeof handle !== 'function') return { scanned: 0, drained: 0 }
+    // (a) hard status gate -- only drain when the backend is actually back.
+    try {
+      const st = await this.resilientStatus?.()
+      if (st && st.ok === false) return { scanned: 0, drained: 0, degraded: true }
+    } catch { /* if status is unavailable, fall through and let the turn throw-guard handle it */ }
+    this._draining = true
+    let scanned = 0, drained = 0
+    try {
+      const openStatuses = new Set(this.store.getOpenStatuses?.() || [])
+      const rows = await this.store.listCases({}, { limit: maxCases, offset: 0 })
+      for (const c of rows) {
+        if (drained >= maxRedrives) break
+        if (openStatuses.size && !openStatuses.has(c.status)) continue
+        if (!this.adapters[c.channel]?.send && c.channel !== 'sim') continue
+        let events
+        try { events = await this.store.listEvents(c.id) } catch { continue }
+        // Per msgId: the queued inbound, whether an outbound/draft completed it, the
+        // attempt count, and whether it was dead-lettered.
+        const queued = new Map()        // msgId -> inbound event
+        const completedAfter = new Set()
+        const attempts = new Map()      // msgId -> count
+        const dead = new Set()
+        for (const ev of events) {
+          if (ev.kind === 'inbound' && ev.msg_id) { /* inbound seen; queued only if marked below */ }
+          if (ev.kind === 'observation' && typeof ev.text === 'string') {
+            let m = ev.text.match(/^QUEUED-FOR-AGENT:(.+)$/)
+            if (m) { const inb = events.find(e => e.kind === 'inbound' && e.msg_id === m[1]); if (inb) queued.set(m[1], inb) }
+            m = ev.text.match(/^queue-drive-(?:attempted|retry):(.+)$/)
+            if (m) attempts.set(m[1], (attempts.get(m[1]) || 0) + 1)
+            m = ev.text.match(/^queue-drive-failed:(.+)$/)
+            if (m) dead.add(m[1])
+          }
+          if (ev.kind === 'outbound' || ev.kind === 'draft') {
+            for (const id of queued.keys()) completedAfter.add(id)
+          }
+        }
+        // (b) all still-queued msgIds, oldest-first.
+        const pending = [...queued.entries()]
+          .filter(([id]) => !completedAfter.has(id) && !dead.has(id))
+          .sort((a, b) => a[1].created_at - b[1].created_at)
+        if (!pending.length) continue
+        scanned++
+        for (const [id, ev] of pending) {
+          if (drained >= maxRedrives) break
+          const msg = { from: c.external_id, text: ev.text || '', platform: c.channel, resume: true, raw: { channel_id: c.external_id, id, author: {} } }
+          try {
+            await handle.call(this.gateway, c.channel, msg)
+            // (c) mark attempted only AFTER a successful drive (handle sends/records
+            // the reply). A throw skips the marker so the message stays queued.
+            await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-attempted:${id}` })
+            drained++
+          } catch (e) {
+            const n = (attempts.get(id) || 0) + 1
+            this.log?.warn?.('[casey] queue drive failed', { caseId: c.id, msgId: id, attempt: n, error: e.message })
+            // (d) dead-letter after retryCap so a permanently-failing message stops.
+            if (n >= retryCap) {
+              try { await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-failed:${id}` }) } catch { /* best effort */ }
+            } else {
+              // Record the failed attempt so the count advances toward the cap, but do
+              // NOT mark drive-attempted (that only lands on success).
+              try { await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-retry:${id}` }) } catch { /* best effort */ }
+            }
+            // Stop this case's drain on a throw -- the backend likely went down again;
+            // the next recovery edge re-enters and continues in order.
+            break
+          }
+        }
+      }
+      if (drained) this.log?.info?.('[casey] queue drain complete', { scanned, drained })
+      return { scanned, drained }
+    } finally {
+      this._draining = false
+    }
   }
 
   // Quiet sweep: cases with no intake_mode tag and channel != 'web' get intake_mode:channel.
