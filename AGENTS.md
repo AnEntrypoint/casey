@@ -32,16 +32,22 @@ the `case_*` tools -> reply, with a warm fallback when the model errors/empties.
 Every inbound/outbound/observation/action/transition is an append-only `event` row.
 The dashboard reads/edits thatcher over its API.
 
-**Layering mandate: agentic code -> freddie, CRM code -> thatcher, casey is
-setup + configuration.** The agentic case + worker-enquiry toolset lives in freddie
-(`freddie/src/plugins/case/`): the agent acts entirely through these tools --
-`case_report` (extract report fields), `case_list` (with a `location` param that
-$ilike-matches a place token -- there is NO province->town gazetteer; place
-understanding is the model reading the token), `case_get` (PII-projected status body:
-worker role gets the PII-free `enquiryRow`, operator/dashboard gets full),
-`case_mine` / `case_today` (worker itinerary), `case_new` (fresh report), and
-`case_stop` / `case_handoff` (the agent acting on opt-out/handoff). freddie threads
-`tool_choice` (e.g. `'required'`) through runTurn -> machine -> the acptoapi bridge.
+**Layering mandate: agentic harness -> freddie, CRM code -> thatcher, casey is
+setup + configuration.** freddie owns the agent harness (runTurn tool loop, plugin
+host, the acptoapi bridge, and a reference case toolset at
+`freddie/src/plugins/case/`) and threads `tool_choice` (e.g. `'required'`) through
+runTurn -> machine -> the bridge. casey registers its OWN case toolset
+(`plugins/case-tools/plugin.js` -> `src/case-tools.js`, discovered by
+`bootHost([CASEY_PLUGINS])`) into that host -- keeping one non-colliding set rather
+than double-registering freddie's overlapping tools. The agent acts entirely through
+these tools -- `case_report` (extract report fields), `case_list` (a `location` param
+matching a place token against the report location; there is NO province->town
+gazetteer, so a literal-location match, and the rows are the PII-free `enquiryRow`,
+never the full report), `case_get` (status body, `slimCase`), `case_mine` /
+`case_today` (the worker's OWN open cases, scoped by `ctx.author` via the `row_access`
+owner field, PII-free), `case_new` (open + bind a fresh active case), and `case_stop`
+/ `case_handoff` (the agent acting on opt-out/handoff). Handlers receive the per-turn
+`toolCtx` as the second argument.
 This is application-agnostic -- the store, the field/enum/projection vocabulary, and
 the role model arrive via a per-turn `toolCtx` and `plugins.case` config. CRM
 querying lives in thatcher (consumed via npm, published by CI on push): `list()`
@@ -73,7 +79,7 @@ src/
   casey.js                 top-level assembly: store + host + gateway + adapters + logger; drainQueuedTurns re-drives LLM-down-queued inbounds through the agent on provider recovery (status-gated, oldest-first serialized, mark-attempted only after a successful drive, bounded retry -> dead-letter)
   case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error)
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
-  case-tools.js            case_* tool defs (get/list/update/observe/transition), autonomy-enforced
+  case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx))
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep; detectCoverageGap (rostered team, open breaching cases, zero in-window operator replies) pages a synthetic TEAM-COVERAGE breach
