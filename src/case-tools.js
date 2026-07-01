@@ -331,6 +331,72 @@ export function buildCaseToolset(storeOrNull) {
         return { id, status: c.status, healthy: breaches.length === 0, breaches }
       },
     },
+    // ---- worker-enquiry surface: answer FOR the asking worker (ctx.author), scoped
+    // and PII-free (enquiryRow). ctx carries {author, principal, activeCaseRef} that
+    // casey builds per turn in gateway-hooks; scoping is by the assignee owner field.
+    {
+      name: 'case_mine',
+      toolset: 'cases',
+      schema: { name: 'case_mine', description: "List the asking worker's OWN open cases (their itinerary). PII-free.", parameters: { type: 'object', properties: { limit: { type: 'number', default: 25 } } } },
+      handler: async ({ limit = 25 }, ctx) => {
+        const author = ctx?.author || ctx?.principal?.id
+        const rows = await store().listCases({ status: { $in: ['new', 'triaging', 'in_progress', 'waiting'] } }, { limit, user: ctx?.principal || (author ? { id: author, role: 'worker' } : null) })
+        return { count: rows.length, cases: rows.map(enquiryRow) }
+      },
+    },
+    {
+      name: 'case_today',
+      toolset: 'cases',
+      schema: { name: 'case_today', description: "List cases active today for the asking worker (today's list). PII-free.", parameters: { type: 'object', properties: { limit: { type: 'number', default: 25 } } } },
+      handler: async ({ limit = 25 }, ctx) => {
+        const author = ctx?.author || ctx?.principal?.id
+        // Open cases the worker owns, most-recently-active first (the store sorts by
+        // recency); "today" is the practical itinerary of what is live for them.
+        const rows = await store().listCases({ status: { $in: ['new', 'triaging', 'in_progress', 'waiting'] } }, { limit, user: ctx?.principal || (author ? { id: author, role: 'worker' } : null) })
+        return { count: rows.length, cases: rows.map(enquiryRow) }
+      },
+    },
+    {
+      name: 'case_new',
+      toolset: 'cases',
+      schema: { name: 'case_new', description: 'Open a NEW case for the worker and bind it active. Use ONLY when the worker is clearly starting a fresh report (a different animal/place/incident), never to auto-open one.', parameters: { type: 'object', properties: { subject: str('Optional short subject') } } },
+      handler: async ({ subject }, ctx) => {
+        const author = ctx?.author || ctx?.principal?.id
+        if (!store().createCase) return { error: 'store does not support explicit case creation' }
+        const c = await store().createCase({ subject: subject || '', assignee: author || 'agent', channel: ctx?.channel || 'enquiry' })
+        if (store().setActiveCase && author) await store().setActiveCase(author, c.id)
+        await store().appendEvent(c.id, { kind: 'note', actor: 'system', text: `case explicitly opened for a fresh report by ${author || 'unknown'}` })
+        return { ok: true, activeCase: enquiryRow(c) }
+      },
+    },
+    {
+      name: 'case_stop',
+      toolset: 'cases',
+      schema: { name: 'case_stop', description: 'The person asked to STOP receiving messages (opt out). Records the opt-out. Use ONLY on a clear opt-out.', parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] } },
+      handler: async ({ id }) => {
+        const c = await store().getCase(id)
+        if (!c) return { error: `no case ${id}` }
+        const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
+        if (!tags.includes('opted-out')) tags.push('opted-out')
+        await store().updateCase(id, { tags: tags.join(',') })
+        await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: 'OPT-OUT: the person asked to stop; no more automatic replies.' })
+        return { ok: true }
+      },
+    },
+    {
+      name: 'case_handoff',
+      toolset: 'cases',
+      schema: { name: 'case_handoff', description: 'The person wants a real person / operator to help. Flags the case for a human. Use on a clear ask for a person.', parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] } },
+      handler: async ({ id }) => {
+        const c = await store().getCase(id)
+        if (!c) return { error: `no case ${id}` }
+        const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
+        if (!tags.includes('needs-human')) tags.push('needs-human')
+        await store().updateCase(id, { tags: tags.join(',') })
+        await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: 'HANDOFF REQUESTED: the person asked for a real person.' })
+        return { ok: true }
+      },
+    },
   ]
   return tools
 }

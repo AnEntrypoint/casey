@@ -2569,6 +2569,35 @@ async function main() {
     assert.equal(projected.ref, 'CASE-Z', 'enquiry projection keeps the safe ref')
   })
 
+  await test('the worker-enquiry tools are registered and scope+project per worker', async () => {
+    const { buildCaseToolset } = await import('./src/case-tools.js')
+    const tools = buildCaseToolset(store)
+    const names = new Set(tools.map(t => t.name))
+    // The enquiry surface the AGENTS.md mandate describes must actually be registered
+    // (the witnessed gap: casey registered only case_get/list/report/update, so every
+    // per-worker enquiry collapsed to an unscoped fleet read).
+    for (const n of ['case_mine', 'case_today', 'case_new', 'case_stop', 'case_handoff'])
+      assert.ok(names.has(n), `enquiry tool ${n} is registered`)
+    // case_mine scopes to the asking worker (ctx.author) and returns PII-free rows.
+    const wa = 'mine-a-' + Date.now(); const wb = 'mine-b-' + Date.now()
+    const { case: ca } = await store.findOrCreateCase({ channel: 'sim', external_id: wa + ':' + wa })
+    await store.updateCase(ca.id, { assignee: wa, report: JSON.stringify({ species: 'cattle', location: 'Ermelo', owner_name: 'Joe', contact_fallback: '0820001234' }) })
+    const { case: cb } = await store.findOrCreateCase({ channel: 'sim', external_id: wb + ':' + wb })
+    await store.updateCase(cb.id, { assignee: wb })
+    const mine = tools.find(t => t.name === 'case_mine')
+    const res = await mine.handler({}, { author: wa, principal: { id: wa, role: 'worker' } })
+    assert.ok(res.cases.some(c => c.ref === ca.ref), 'case_mine returns the asking worker own case')
+    assert.ok(!res.cases.some(c => c.ref === cb.ref), 'case_mine does NOT return another worker case (scoped)')
+    const blob = JSON.stringify(res.cases)
+    assert.ok(!/Joe|0820001234/.test(blob), `case_mine rows are PII-free: ${blob}`)
+    // case_new opens + binds a fresh active case for the worker.
+    const cnew = tools.find(t => t.name === 'case_new')
+    const nr = await cnew.handler({ subject: 'fresh' }, { author: wa, principal: { id: wa, role: 'worker' } })
+    assert.ok(nr.ok && nr.activeCase?.ref, 'case_new opens a case')
+    const bound = await store.getActiveCase(wa)
+    assert.equal(bound.ref, nr.activeCase.ref, 'case_new binds the new case active for the worker')
+  })
+
   await test('worker enquiry ("whats on the itinerary today") gets an itinerary answer, never the complete-report exit', async () => {
     // PURE-AGENT: an itinerary enquiry is answered by the agent calling case_today and
     // rendering a PII-free list, never the complete-report exit and never a phone leak.

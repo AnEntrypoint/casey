@@ -235,15 +235,15 @@ the crash-budget stop state); the supervisor is its only I/O.
   animals are"), rather than treating a greeting as a completed report or replying
   with a pleasantry that asks for nothing. The agent asks one still-missing fact per
   turn until the report is as complete as can be achieved.
-- **Escape route for a returning contact with a NEW case.** Because find-or-create
-  reuses the open case per conversation and `markReportFieldsIfEmpty` is fill-if-
-  empty, a contact who returns and states a clearly different situation would be
-  trapped urging the old report's missing fields. `detectNewCaseConflict` flags it:
-  a freshly-extracted species/location present in the report AND different from it
-  is a `NEW-CASE-SIGNAL` (a durable append-only observation -- the agent's own
-  case_update can rewrite tags, so the signal cannot live only in the `needs-split`
-  tag) so an operator can split. Same outbreak continuing (same or unstated
-  species/location) never trips it.
+- **A returning contact with a NEW case is the AGENT's call, via `case_new`.** Because
+  find-or-create reuses the open case per conversation and `markReportFieldsIfEmpty` is
+  fill-if-empty, a contact who returns and states a clearly different situation must not
+  be trapped urging the old report's missing fields. There is no deterministic conflict
+  detector -- the agent interprets the message and opens a fresh case with `case_new`
+  (rebinding it active) when the worker is clearly starting a new report; a genuine
+  continuation of the same incident stays on the bound case. The empty-case floor is
+  fill-if-empty, so it never overwrites the old report's captured fields while the agent
+  decides.
 - **Never stay degraded: the LLM backend self-heals.** `resolveCallLLM` probes the
   provider once, but the gateway must not latch "AI helper offline" for its whole
   life if the provider was merely down at boot. `makeResilientCallLLM` (in

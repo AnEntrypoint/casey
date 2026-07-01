@@ -61,6 +61,12 @@ export class CaseStore {
     // fails fast with a clear message instead of a cryptic runtime error later.
     const cfg = yaml.load(fs.readFileSync(this.configPath, 'utf8'))
     this._wf = this._validateConfig(cfg)
+    // The row-access owner field (row_access.field, e.g. 'assignee'): the column a
+    // per-worker enquiry scopes on. Captured so the operator-where FALLBACK path can
+    // apply the same row-access scoping the published thatcher does when a caller
+    // passes opts.user -- without it a bare/pre-publish install returned the whole
+    // fleet unscoped for a worker's "my cases" (a MISROUTE + over-exposure).
+    this._rowAccessField = cfg.entities?.case?.row_access?.field || null
     // The lifecycle is now a real xstate machine built from the same graph: it,
     // not bespoke array checks, is the authority on whether a transition is legal.
     this._machine = buildCaseMachine(this._wf)
@@ -493,6 +499,15 @@ export class CaseStore {
     }
     let rows = await this.t.list('case', eqWhere, { limit: Math.max(limit + offset, 1000) })
     for (const p of ops) rows = rows.filter(p)
+    // Row-access scoping (parity with the supported push-down path): when a caller
+    // passes opts.user and the config declares an owner field, a scoped worker sees
+    // only rows they own (row[field] === user.id). An operator/admin (or no owner
+    // field, or no user) sees all. Applied here in JS so a bare/pre-publish thatcher
+    // does NOT return the whole fleet for a per-worker "my cases" enquiry.
+    if (user && user.id && this._rowAccessField && user.role !== 'operator' && user.role !== 'admin') {
+      const field = this._rowAccessField
+      rows = rows.filter(r => String(r[field] || '') === String(user.id))
+    }
     rows.sort((a, b) => recencyKey(b) - recencyKey(a))
     return rows.slice(offset, offset + limit)
   }
