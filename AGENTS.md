@@ -148,6 +148,8 @@ clone stay green. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
 | `CASEY_RELOAD=0` | Disable hot-reload (the supervisor still restarts on crash; it just stops watching source). |
 | `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (e.g. `../freddie/src`). `src/` and a sibling `../freddie/src` are watched by default; absent dirs are skipped with a warning. Allowlist only -- never contact input. |
 | `CASEY_RELOAD_DEBOUNCE_MS` | Coalesce a burst of saves into one reload (default 300). |
+| `CASEY_AUTO_UPDATE=0` | Auto-deploy (fetch + `merge --ff-only @{u}` on an interval) is ON by default in `casey up` so a push to origin reloads the live worker with no manual restart; set `0` (or `casey up --no-auto-update`) to disable the origin poll (an offline box, or to pin code). Safe on a dev checkout -- a dirty/divergent tree skips the fast-forward, never clobbered. |
+| `CASEY_AUTO_UPDATE_INTERVAL_MS` | How often the auto-deploy loop fetches origin (default 60000). |
 | `CASEY_DRAIN_DEADLINE_MS` | How long a reloading worker may finish in-flight turns before it is killed (default 15000). |
 | `CASEY_CRASH_WINDOW_MS`, `CASEY_CRASH_LIMIT` | Crash budget: more than `LIMIT` crashes within `WINDOW` ms stops the restart loop instead of thrashing (defaults 60000 / 5). |
 | `CASEY_RESTART_BACKOFF_MS`, `CASEY_RESTART_BACKOFF_CEIL_MS` | Restart backoff base and ceiling (defaults 500 / 10000). |
@@ -170,16 +172,24 @@ the crash-budget stop state); the supervisor is its only I/O.
   committed fix is inert until a watched source file's mtime changes. When
   re-verifying a fix against a live process, confirm the running process started
   AFTER the fix commit, not just that the fix is on disk.
-- Auto-reload on pull (`hooks/` + `npm run install-hooks`): the gap above is closed
-  for `git pull`/`checkout` by tracked git hooks. `scripts/install-hooks.mjs` points
-  `core.hooksPath` at the tracked `hooks/` dir (one command per clone, since
-  `.git/hooks` is not tracked); `hooks/post-merge` and `hooks/post-checkout` then
-  `touch src/casey.js` after a pull/merge/checkout, bumping a watched file's mtime so
-  the supervisor hot-reloads on the freshly-pulled code with no manual restart
-  (`touch` changes only the timestamp, never the bytes). For an unattended host,
-  `scripts/auto-update.mjs` (`npm run auto-update`, opt-in via `CASEY_AUTO_UPDATE=1`)
-  periodically `git pull --ff-only` so a push to origin auto-deploys via the hook;
-  off by default so a dev checkout never auto-pulls.
+- Auto-deploy on push (DEFAULT ON): `casey up` runs an origin-poll loop in the
+  supervisor parent -- `git fetch --quiet origin` + `git merge --ff-only @{u}` every
+  interval (`CASEY_AUTO_UPDATE_INTERVAL_MS`, default 60000). A push to origin lands on
+  the live instance with NO manual restart: the fast-forward rewrites `src/*.js` whose
+  mtime the supervisor watches, so the worker reforks on the new code. (fetch+merge
+  rather than `git pull --ff-only` because a bare pull fails with "Cannot fast-forward
+  to multiple branches" when FETCH_HEAD carries several refs.) SAFE on a dev checkout:
+  `merge --ff-only` REFUSES on a dirty or divergent tree and leaves the working tree
+  untouched -- a dev with uncommitted edits or local commits just gets a quiet skip,
+  never a clobber. Opt out with `casey up --no-auto-update` or `CASEY_AUTO_UPDATE=0`.
+- Auto-reload on pull hooks (`hooks/`, armed automatically by `postinstall` running
+  `scripts/install-hooks.mjs`, which points `core.hooksPath` at the tracked `hooks/`
+  dir): `hooks/post-merge` and `hooks/post-checkout` `touch src/casey.js` after a
+  pull/merge/checkout, a belt-and-braces mtime bump so a manual `git pull` also
+  hot-reloads (`touch` changes only the timestamp, never the bytes). Even without the
+  hooks the auto-deploy fast-forward already rewrites watched source, so the reload
+  does not depend on them. (`scripts/auto-update.mjs` / `npm run auto-update` remains
+  as a standalone poller for a host not running under `casey up`.)
 - Crash restart: a worker that exits non-zero is re-forked with exponential
   backoff, bounded by the crash budget so a boot-loop stops instead of thrashing.
 - The watch list is a fixed allowlist (`src/`, `../freddie/src`, `CASEY_RELOAD_PATHS`),
