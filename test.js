@@ -2305,6 +2305,26 @@ async function main() {
     assert.ok(comp.includes('CASE-2') && comp.length > 0, 'complete-case fallback is a warm ref-citing ack')
   })
 
+  await test('caseSystemPrompt steers the model to ADVANCE, not repeat, and not fabricate a report on a greeting', async () => {
+    const { caseSystemPrompt, extractFields } = await import('./src/gateway-hooks.js').then(async m => ({ caseSystemPrompt: m.caseSystemPrompt, extractFields: (await import('./src/extract.js')).extractFields }))
+    // The live bug: on a greeting the model thanked them for "sick animals" (empty
+    // report), and after "3 animals with pussy eyes" it re-asked the SAME question.
+    // Root cause was the prompt not surfacing known-fields + next-missing + no-repeat,
+    // and asserting a report on an empty case. Assert the prompt now steers correctly.
+    const emptyPrompt = caseSystemPrompt({ ref: 'CASE-9', id: 'x', status: 'new', report: '{}', autonomy: 'auto', channel: 'discord' }, [{ kind: 'inbound', actor: 'contact', text: 'hey there', created_at: 1 }], null, {})
+    assert.ok(/know NOTHING about any animals yet|do NOT thank them for reporting/i.test(emptyPrompt), 'empty-report prompt tells the model NOT to fabricate a sick-animal report on a greeting')
+    // With facts captured, the prompt names them + tells the model not to repeat.
+    const withFacts = JSON.stringify({ affected_count: '3', symptoms: 'pussy eye' })
+    const advPrompt = caseSystemPrompt({ ref: 'CASE-9', id: 'x', status: 'triaging', report: withFacts, autonomy: 'auto', channel: 'discord' }, [{ kind: 'inbound', actor: 'contact', text: 'x', created_at: 1 }, { kind: 'inbound', actor: 'contact', text: '3 animals with pussy eyes', created_at: 2 }], null, {})
+    assert.ok(/ALREADY know/i.test(advPrompt) && advPrompt.includes('affected_count=3'), 'the prompt surfaces the already-known fields')
+    assert.ok(/do NOT ask the same question you asked last turn|never go in circles|MOVE THE CONVERSATION FORWARD/i.test(advPrompt), 'the prompt forbids repeating a question')
+    assert.ok(/ask about THIS next/i.test(advPrompt), 'the prompt names the single next fact to ask')
+    // The empty-case floor now captures the eye symptom that was silently dropped.
+    const f = extractFields('3 animals with pussy eyes')
+    assert.ok(/eye/i.test(f.symptoms || ''), `eye discharge is captured as a symptom: ${JSON.stringify(f)}`)
+    assert.equal(f.affected_count, '3', `the count is captured: ${JSON.stringify(f)}`)
+  })
+
   await test('a later greeting on an in-progress case still captures content and does not reset', async () => {
     // "hi casey, my goats are limping" -- the greeting must not swallow the report.
     const { extractFields } = await import('./src/extract.js')

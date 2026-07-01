@@ -79,7 +79,7 @@ const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 // the contact), and it spells out plain-language REPLY rules -- mirror the
 // contact's language, short warm sentences, one question, no jargon, greet+give
 // the reference on first contact, and reassure when a human is requested.
-function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = {}) {
+export function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = {}) {
   const recent = events.slice(-20).map(e =>
     `- [${e.created_at}] ${e.kind}/${e.actor}: ${truncate(e.text, 280)}`).join('\n')
   const firstMessage = events.filter(e => e.kind === 'inbound').length <= 1
@@ -259,11 +259,42 @@ function caseSystemPrompt(caseRow, events, contact, { closingCapture = null } = 
     `8. ONE NEXT STEP: if you need something from them, ask for exactly one thing,`,
     `   in the simplest words (for example which animals, the place, or a photo).`,
     ``,
+    // ADVANCE, NEVER REPEAT. The single most common live failure is the model
+    // re-asking a question the person already answered, or asking the SAME generic
+    // question two turns running, or (on a bare greeting) thanking them for a report
+    // they never made. This block is computed from the live report so the model is
+    // told, in plain terms, exactly what is already known and what the ONE next thing
+    // to ask is -- so it acknowledges what it just heard and moves forward.
+    ...( (() => {
+      const nextHint = mostImportantMissingField(caseRow.report)   // the next missing priority fact, or null
+      const known = haveFields.length
+      const lines = [`MOVE THE CONVERSATION FORWARD -- never go in circles:`]
+      if (known) {
+        lines.push(`- You ALREADY know: ${reportLine}. Do NOT ask for any of these again,`,
+          `  and do NOT ask the same question you asked last turn. Briefly show you`,
+          `  heard what they just said (name the thing they told you), then move on.`)
+      } else {
+        lines.push(`- You know NOTHING about any animals yet. Do NOT thank them for reporting`,
+          `  sick or dead animals or imply they told you about animals -- they have not`,
+          `  yet. Open warmly and invite them to tell you what is happening.`)
+      }
+      if (nextHint) {
+        lines.push(`- If you ask one thing, ask about THIS next -- ${nextHint} -- and nothing`,
+          `  they have already given. Phrase it warmly in your own words.`)
+      } else {
+        lines.push(`- The core on-site facts are recorded; ask nothing unless it genuinely`,
+          `  helps, and never repeat an earlier question.`)
+      }
+      return [lines.join('\n'), ``]
+    })() ),
     firstMessage
       ? [`THIS IS THEIR FIRST MESSAGE. In your OWN words (never copy wording from this`,
-         `prompt) do three things in a few warm plain lines: (a) thank them for telling`,
-         `you; (b) reassure them the team will look into it; (c) give them their`,
-         `reference so they can remind you later -- the reference is exactly`,
+         `prompt) do these things in a few warm plain lines: (a) greet them warmly and,`,
+         `ONLY IF they actually described animals or a problem, thank them for telling`,
+         `you -- on a bare greeting with nothing reported, just greet and invite them to`,
+         `say what is happening, and do NOT claim they reported sick animals; (b)`,
+         `reassure them the team will look into it; (c) give them their reference so they`,
+         `can remind you later -- the reference is exactly`,
          `${caseRow.ref} (reproduce that code exactly, but write the sentence around it`,
          `yourself). Cap the acknowledgement at two short sentences. Only after that,`,
          `and only if it genuinely helps, MAY you add ONE gentle question about what`,

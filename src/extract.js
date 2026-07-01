@@ -65,6 +65,11 @@ export function extractFields(text) {
   // message ("blue eyes") is captured, not dropped.
   const SYMPTOM_PHRASES = [
     'blue eye', 'blue eyes', 'cloudy eye', 'cloudy eyes', 'red eye', 'watery eye',
+    // Eye discharge in lay terms (pinkeye/IBK and other eye disease): pus/pussy,
+    // weeping/running/matter in the eye. High-precision multi-word so 'pus' never
+    // bleeds into an unrelated word.
+    'pussy eye', 'pussy eyes', 'pus in the eye', 'pus eye', 'weeping eye', 'weeping eyes',
+    'runny eye', 'runny eyes', 'running eye', 'running eyes', 'matter in the eye',
     'eye discharge', 'discharge', 'swollen', 'swelling', 'bleeding', 'foaming',
     'foam at the mouth', 'not eating', 'not drinking', 'eet nie', 'cant walk',
     "can't walk", 'falling over', 'coughing', 'diarrhoea', 'diarrhea', 'fever',
