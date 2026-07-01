@@ -279,20 +279,29 @@ async function main() {
         const interval = Number(process.env.CASEY_AUTO_UPDATE_INTERVAL_MS) || 60_000
         const repoRoot = path.resolve(__dirname, '..')
         let warnedSkip = false
-        const pull = () => execFile('git', ['pull', '--ff-only'], { cwd: repoRoot }, (err, stdout, stderr) => {
-          if (err) {
-            // A dirty/divergent tree makes --ff-only REFUSE (local edits or local
-            // commits present) -- that is EXPECTED on a dev box, not a failure. Note it
-            // once, quietly, and keep retrying; a clean deploy host pulls normally.
-            const skip = /would be overwritten|not possible to fast-forward|Not possible to fast-forward|diverging/i.test(String(stderr || err.message || ''))
-            if (skip) { if (!warnedSkip) { warnedSkip = true; console.log(dim('[auto-update] local changes present; skipping auto-pull until the tree is clean.')) } }
-            else console.error(dim('[auto-update] pull failed (will retry): ' + err.message))
+        const git = (args) => new Promise((resolve) => execFile('git', args, { cwd: repoRoot }, (err, stdout, stderr) =>
+          resolve({ err, out: String(stdout || ''), errText: String(stderr || (err && err.message) || '') })))
+        // fetch + `merge --ff-only @{u}` rather than `git pull --ff-only`: a bare pull
+        // fails with "Cannot fast-forward to multiple branches" when FETCH_HEAD carries
+        // several refs (the origin refspec fetches every branch), which was making the
+        // deploy loop log a failure every interval. fetch-then-merge-the-upstream is
+        // unambiguous. A dirty/divergent/detached tree makes merge --ff-only REFUSE and
+        // leaves the working tree untouched -- EXPECTED on a dev box, so it is a quiet
+        // one-time note + retry, never a clobber and never a scary error.
+        const pull = async () => {
+          const f = await git(['fetch', '--quiet', 'origin'])
+          if (f.err) { if (!warnedSkip) { warnedSkip = true; console.error(dim('[auto-update] fetch failed (will retry): ' + f.errText.split('\n')[0])) } return }
+          const m = await git(['merge', '--ff-only', '@{u}'])
+          if (m.err) {
+            // Any non-fast-forwardable state (local edits, local commits, detached,
+            // no upstream) -- skip quietly and keep the box on its current code.
+            if (!warnedSkip) { warnedSkip = true; console.log(dim('[auto-update] cannot fast-forward (local changes or diverged); staying on current code, will retry when clean.')) }
             return
           }
           warnedSkip = false
-          if (/Updating|Fast-forward/.test(stdout || '')) console.log(green('[auto-update] pulled new code; the worker will reload.'))
-        })
-        console.log(`  auto-update: ${green('on')}${dim(`   (git pull --ff-only every ${Math.round(interval / 1000)}s; the worker reloads on the new code -- opt out: CASEY_AUTO_UPDATE=0)`)}`)
+          if (/Updating|Fast-forward/.test(m.out)) console.log(green('[auto-update] pulled new code; the worker will reload.'))
+        }
+        console.log(`  auto-update: ${green('on')}${dim(`   (fetch + fast-forward every ${Math.round(interval / 1000)}s; the worker reloads on the new code -- opt out: CASEY_AUTO_UPDATE=0)`)}`)
         pull()
         autoUpdateTimer = setInterval(pull, interval)
       }
