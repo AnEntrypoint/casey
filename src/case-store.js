@@ -12,6 +12,7 @@
 
 import { createThatcher } from 'thatcher'
 import path from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { DEFAULT_THRESHOLDS } from './case-health.js'
 import { mergeThresholds } from './thresholds.js'
 import fs from 'node:fs'
@@ -606,6 +607,15 @@ export class CaseStore {
   // the fast DB round-trip is inside the lock -- LLM/network latency stays out.
   // Non-empty incoming values win; a known field is never overwritten with blank.
   // Returns { report } (the merged object) or { error } on guards.
+  // Single chokepoint for the report-JSON safe-parse-with-fallback pattern that
+  // was previously duplicated verbatim at 4 call sites (mergeReport,
+  // markReportFieldsIfEmpty, mergeCases x2) -- any change to fallback/logging
+  // behavior now happens once instead of drifting across copies.
+  _parseReport(raw, caseId) {
+    try { return raw ? JSON.parse(raw) : {} }
+    catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); return {} }
+  }
+
   async mergeReport(caseId, incoming, user = AGENT_USER) {
     const invalid = Object.keys(incoming).filter(k => !REPORT_KEYS.has(k))
     if (invalid.length) return { error: `invalid report fields: ${invalid.join(', ')}` }
@@ -615,8 +625,7 @@ export class CaseStore {
       const c = await this.getCase(caseId)             // re-read INSIDE the lock
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe') return { error: 'observe' }
-      let current = {}
-      try { current = c.report ? JSON.parse(c.report) : {} } catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); current = {} }
+      const current = this._parseReport(c.report, caseId)
       const merged = { ...current }
       for (const [k, v] of Object.entries(incoming)) {
         if (v != null && String(v).trim() !== '') merged[k] = v
@@ -639,8 +648,7 @@ export class CaseStore {
       const c = await this.getCase(caseId)
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe') return { error: 'observe' }
-      let current = {}
-      try { current = c.report ? JSON.parse(c.report) : {} } catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); current = {} }
+      const current = this._parseReport(c.report, caseId)
       const filled = []
       const next = { ...current }
       for (const [k, v] of Object.entries(fields)) {
@@ -781,9 +789,8 @@ export class CaseStore {
       // 1) Re-point every source event onto the target -- lossless.
       for (const ev of srcEvents) await this.updateEvent(ev.id, { case_id: targetId })
       // 2) Fill-if-empty report merge (target value wins -- it is canonical).
-      let srcReport = {}, tgtReport = {}
-      try { srcReport = src.report ? JSON.parse(src.report) : {} } catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId: sourceId, error: e.message }); srcReport = {} }
-      try { tgtReport = tgt.report ? JSON.parse(tgt.report) : {} } catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId: targetId, error: e.message }); tgtReport = {} }
+      const srcReport = this._parseReport(src.report, sourceId)
+      const tgtReport = this._parseReport(tgt.report, targetId)
       const mergedReport = { ...tgtReport }
       for (const [k, v] of Object.entries(srcReport)) {
         if (!REPORT_KEYS.has(k)) continue
@@ -1060,8 +1067,15 @@ function orPredicate(clauses) {
   return (row) => preds.some(p => p(row))
 }
 
+// The ref is the sole "secret" gating the unauthenticated public /report form
+// (see dashboard/server.js) -- a farmer's phone, symptoms, and location are all
+// readable and writable by anyone who can guess it. Math.random() only ever gave
+// ~26 bits here (5 base36 chars); randomBytes gives a cryptographically strong,
+// effectively unguessable suffix instead. base64url output is URL-safe (contains
+// only [A-Za-z0-9_-]) so it drops straight into the existing CASE-<n>-<suffix> ref
+// shape and the ?ref= query param with no further encoding.
 function randomSuffix() {
-  return Math.random().toString(36).slice(2, 7)
+  return randomBytes(8).toString('base64url')
 }
 
 export function createCaseStore(opts) { return new CaseStore(opts) }

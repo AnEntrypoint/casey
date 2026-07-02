@@ -74,7 +74,12 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
   // filter returns recency-sorted; we classify each and skip closed defensively.
   const cases = await store.listCases({}, { limit: 10000 })
   for (const c of cases) {
-    if (c.status === 'closed') continue
+    // The settings/fleet-health/shift singleton pseudo-cases (channel:'system',
+    // created by CaseStore's internal bookkeeping) are not farmer reports -- they
+    // have no report, no real contact, and no operator ever replies to them, so
+    // classifyCaseHealth's staleness/abandonment rules would misfire on them and
+    // notifyBreach would page the on-call team about a case that does not exist.
+    if (c.status === 'closed' || c.channel === 'system') continue
     summary.scanned++
     let breaches
     try { breaches = classifyCaseHealth(c, now, thresholds) }

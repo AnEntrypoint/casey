@@ -321,19 +321,25 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       }
       if (Object.keys(incoming).length) {
         const mergeResult = await store.mergeReport(found.id, incoming, { id: 'contact', role: 'contact' })
-        if (mergeResult.error && mergeResult.error !== 'observe') {
+        // Any error -- including 'observe' (the case is operator-frozen and not
+        // accepting automatic writes) -- must NOT redirect to done=1: a farmer who
+        // submitted the form deserves to know their details were not saved, not a
+        // false success page. 'observe' gets its own plain message rather than the
+        // generic error string, since nothing actually went wrong on casey's side.
+        if (mergeResult.error === 'observe') {
+          return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('This report is not currently accepting updates online. Please contact the team directly.'))
+        }
+        if (mergeResult.error) {
           return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong saving your details. Please try again.'))
         }
-        if (!mergeResult.error) {
-          await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated report via web form: ${Object.keys(incoming).join(', ')}`, data: incoming })
-          // Tag intake source (add public_form if not already present)
-          try {
-            const existingTags = String(found.tags || '').split(',').map(t => t.trim()).filter(Boolean)
-            if (!existingTags.includes('intake_mode:public_form')) {
-              await store.updateCase(found.id, { tags: [...existingTags, 'intake_mode:public_form'].join(',') }, { id: 'contact', role: 'contact' })
-            }
-          } catch { /* best-effort; form still submitted even if tag fails */ }
-        }
+        await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated report via web form: ${Object.keys(incoming).join(', ')}`, data: incoming })
+        // Tag intake source (add public_form if not already present)
+        try {
+          const existingTags = String(found.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+          if (!existingTags.includes('intake_mode:public_form')) {
+            await store.updateCase(found.id, { tags: [...existingTags, 'intake_mode:public_form'].join(',') }, { id: 'contact', role: 'contact' })
+          }
+        } catch { /* best-effort; form still submitted even if tag fails */ }
       }
       const foundRef = found?.ref || ref
       res.redirect('/report?ref=' + encodeURIComponent(foundRef) + '&done=1')

@@ -478,6 +478,21 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
   // nothing is lost -- the next turn will pick up the full conversation including
   // this message. The guard is keyed on external_id (the canonical contact key).
   const inFlight = new Set()
+  // Per-contact rate limit: inFlight only blocks a SIMULTANEOUS second message
+  // while a turn is running -- it does nothing to bound SEQUENTIAL message rate
+  // over time, so one contact could otherwise drive unbounded LLM spend and
+  // store writes. A sliding window of recent turn-start timestamps per contact;
+  // over the cap, the message still gets a warm holding reply (never dead-end)
+  // but skips the LLM turn entirely.
+  const rateWindows = new Map()   // external_id -> number[] (recent turn-start ms)
+  const RATE_LIMIT_MSGS = Number(process.env.CASEY_RATE_LIMIT_MSGS) || 10
+  const RATE_LIMIT_WINDOW_MS = Number(process.env.CASEY_RATE_LIMIT_WINDOW_MS) || 60_000
+  function rateLimited(id, now = Date.now()) {
+    const hits = (rateWindows.get(id) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS)
+    hits.push(now)
+    rateWindows.set(id, hits)
+    return hits.length > RATE_LIMIT_MSGS
+  }
   return async function handleInbound(platform, msg) {
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
     const external_id = conversationKey(msg)   // per-contact case IDENTITY
@@ -562,13 +577,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // here, deterministically, so the operator always sees that a picture exists
     // -- never relying on the agent turn to notice it (it may not, on a media-only
     // message). Fill-if-empty so we never clobber a richer description the agent
-    // records later. Skipped in observe mode (the store guards it) and harmless on
-    // a malformed report. A failure here must never block the reply path.
+    // records later. In observe mode, markReportFieldsIfEmpty refuses the report
+    // WRITE (that guard stays -- observe means no automatic field edits), but the
+    // ARRIVAL of a photo/voice note must still be visible in the timeline (observe
+    // is exactly the mode with no LLM narration to compensate), so a plain
+    // observation event is appended even when the field write was refused. A
+    // failure here must never block the reply path.
     const photoNote = inboundImageNote(msg)
     if (photoNote) {
       try {
         const r = await store.markReportFieldsIfEmpty(caseRow.id, { photos: photoNote })
-        if (r?.filled?.length) {
+        if (r?.filled?.length || r?.error === 'observe') {
           await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `PHOTO RECEIVED: ${photoNote} (recorded for the field team).` })
         }
       } catch (e) { log.warn?.('[casey] photo mark failed', { caseId: caseRow.id, error: e.message }) }
@@ -580,7 +599,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     if (audioNote) {
       try {
         const r = await store.markReportFieldsIfEmpty(caseRow.id, { audio: audioNote })
-        if (r?.filled?.length) {
+        if (r?.filled?.length || r?.error === 'observe') {
           await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `AUDIO RECEIVED: ${audioNote}.` })
         }
       } catch (e) { log.warn?.('[casey] audio mark failed', { caseId: caseRow.id, error: e.message }) }
@@ -604,26 +623,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
 
     let fresh = await store.getCase(caseRow.id)
 
-    // observe-mode: the agent does not act or reply automatically; a human
-    // drives the case. We still recorded the inbound above.
-    if (fresh.autonomy === 'observe') {
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'autonomy=observe: awaiting operator (no auto-reply)' })
-      // Observe mode means a human drives, but the case must still SURFACE for one
-      // -- otherwise an observe-mode contact waits silently with nothing in the
-      // triage inbox. Flag needs-human (the observable handoff signal) and notify
-      // once on first flag, exactly like an explicit human request. Do NOT raise
-      // priority: casey surfaces the request; the operator decides urgency.
-      const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
-      try {
-        await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-human') })
-        if (notifyHandoff && !alreadyFlagged) {
-          try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
-          catch (e) { log.warn?.('[casey] observe handoff notify failed', { caseId: fresh.id, error: e.message }) }
-        }
-      } catch (e) { log.warn?.('[casey] observe needs-human flag failed', { caseId: fresh.id, error: e.message }) }
-      return { to: replyTo, text: '', platform, caseId: fresh.id, observed: true }
-    }
-
     // PURE LLM: casey does NOT deterministically extract report fields. The AGENT
     // records what it learns via case_report during its turn. There is no keyword
     // capture floor -- the model owns field recording entirely (user directive: get
@@ -633,10 +632,14 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // IRREVERSIBLE SERVICE CONTROLS (the only deterministic pre-LLM route left).
     // STOP (opt-out) and HUMAN (handoff) are legal/service controls that must fire
     // synchronously in any language even with the model down -- they are never
-    // queued and never left to the agent's discretion. Everything else (status,
-    // help, greeting, enquiry, report, extraction) is now the agent's job via the
-    // case tools in the runTurn loop below. Empty/media messages return null here
-    // and fall through to the agent turn unchanged.
+    // queued and never left to the agent's discretion, and they must fire
+    // REGARDLESS of autonomy mode: an observe-mode contact can still say STOP or
+    // ask for a person, and that request is irreversible/legal, not something an
+    // operator's autonomy choice can silently swallow. This check therefore runs
+    // BEFORE the observe-mode early-return below. Everything else (status, help,
+    // greeting, enquiry, report, extraction) is now the agent's job via the case
+    // tools in the runTurn loop further down. Empty/media messages return null
+    // here and fall through unchanged.
     const optedOut = (fresh.tags || '').split(',').map(s => s.trim()).includes('opted-out')
     const intent = detectContactIntent(inboundText)
     // HELP-RESUME: an opted-out contact who sends "help" (any supported language)
@@ -718,6 +721,28 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       return reply
     }
 
+    // observe-mode: the agent does not act or reply automatically; a human
+    // drives the case. We still recorded the inbound above, and STOP/HUMAN (the
+    // irreversible controls) already had their chance to fire above this check --
+    // this only gates the ordinary conversational/report turn that follows.
+    if (fresh.autonomy === 'observe') {
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'autonomy=observe: awaiting operator (no auto-reply)' })
+      // Observe mode means a human drives, but the case must still SURFACE for one
+      // -- otherwise an observe-mode contact waits silently with nothing in the
+      // triage inbox. Flag needs-human (the observable handoff signal) and notify
+      // once on first flag, exactly like an explicit human request. Do NOT raise
+      // priority: casey surfaces the request; the operator decides urgency.
+      const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
+      try {
+        await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-human') })
+        if (notifyHandoff && !alreadyFlagged) {
+          try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
+          catch (e) { log.warn?.('[casey] observe handoff notify failed', { caseId: fresh.id, error: e.message }) }
+        }
+      } catch (e) { log.warn?.('[casey] observe needs-human flag failed', { caseId: fresh.id, error: e.message }) }
+      return { to: replyTo, text: '', platform, caseId: fresh.id, observed: true }
+    }
+
     // Everything else -- status, help, greeting, thanks, enquiry, report, field
     // extraction, the whole conversation -- is now the AGENT'S job. No deterministic
     // pre-route: the message goes straight into the runTurn tool loop below, where
@@ -767,6 +792,21 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
           return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true, deduped: true }
         }
       }
+    }
+
+    // Per-contact rate limit: unlike the simultaneous-message inFlight gate below,
+    // this bounds SEQUENTIAL message rate over time. Over the cap, still send the
+    // existing warm holding-ack reply (never dead-end) instead of a full LLM turn.
+    if (rateLimited(external_id)) {
+      log.info?.('[casey] rate limit: skipping LLM turn', { caseId: fresh.id })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `RATE-LIMITED: more than ${RATE_LIMIT_MSGS} messages in ${Math.round(RATE_LIMIT_WINDOW_MS / 1000)}s; holding reply sent, no LLM turn.` })
+      const holdText = fallbackReply(inboundText, fresh)
+      const holdReply = { to: replyTo, text: holdText, platform, caseId: fresh.id, rateLimited: true }
+      if (adapter?.send) {
+        try { await adapter.send(holdReply) }
+        catch (e) { log.warn?.('[casey] rate-limit holding-ack send failed', { caseId: fresh.id, error: e.message }) }
+      }
+      return holdReply
     }
 
     // Per-contact concurrency gate: a second message from the same contact while
@@ -840,7 +880,13 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     } catch (e) {
       errored = true
       log.error?.('[casey] agent turn failed', { caseId: fresh.id, error: e.message })
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent turn error: ${e.message}` })
+      // A failed write here (store down, lock timeout) must not throw OUT of this
+      // catch block -- that would propagate as an unhandled rejection from the
+      // whole handleInbound call, defeating the very error handling this block
+      // exists for. Degrade to a log line; the degraded-turn fallback reply below
+      // still fires regardless.
+      try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent turn error: ${e.message}` }) }
+      catch (e2) { log.error?.('[casey] failed to record agent-turn-error observation', { caseId: fresh.id, error: e2.message }) }
       result = {}
     } finally {
       inFlight.delete(external_id)

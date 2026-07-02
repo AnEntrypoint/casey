@@ -55,6 +55,12 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
     if (retries >= MAX_RETRIES) {
       log.error?.(`[discord] reconnect failed after ${MAX_RETRIES} attempts, retrying in 1 hour`)
       reconnecting = true
+      // Clear the cached gateway URL: adapter.gatewayUrl is set once (freddie's
+      // DiscordAdapter.start() never clears it) and open() only re-fetches it
+      // `if (!adapter.gatewayUrl)`, so every reconnect after the first -- including
+      // this 1-hour last-resort retry -- would otherwise reuse the SAME url
+      // forever, even if a stale/rotated url was the actual cause of the outage.
+      adapter.gatewayUrl = null
       reconnectTimeout = setTimeout(() => {
         reconnecting = false
         retries = 0
@@ -120,7 +126,11 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
       clearInterval(heartbeat)
       scheduleReconnect()
     })
-    ws.on('error', (e) => log.error?.('[discord] ws error', e.message))
+    // 'error' is not guaranteed to be followed by 'close' in every ws failure mode
+    // (e.g. a handshake failure on an already-half-open socket) -- terminate()
+    // forces the close path deterministically so the heartbeat is always cleared
+    // and a reconnect is always scheduled, rather than leaving a zombied socket.
+    ws.on('error', (e) => { log.error?.('[discord] ws error', e.message); try { ws.terminate() } catch { /* already gone */ } })
   }
 
   const onMessageCreate = (m) => {

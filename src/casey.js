@@ -218,6 +218,14 @@ export class Casey {
     this.gateway.handleInbound = (platform, msg) => {
       const p = orig(platform, msg).finally(() => this._inflight.delete(p))
       this._inflight.add(p)
+      // freddie's Gateway fires handleInbound without awaiting it (AGENTS.md), so a
+      // rejection here would otherwise surface only as Node's default
+      // unhandledRejection handler -- which terminates the whole process, killing
+      // every OTHER in-flight conversation over one bad turn. Attach a silent catch
+      // on a SEPARATE promise chain (not the one stored in _inflight or returned to
+      // the caller) purely to mark the rejection handled; the real error is already
+      // logged deep inside makeCaseHandler's own try/catch.
+      p.catch(e => { this.log?.error?.('[casey] handleInbound rejected (unexpected -- should have been caught internally)', { error: e?.message || String(e) }) })
       return p
     }
   }
@@ -255,7 +263,19 @@ export class Casey {
   }
 
   // Await all in-flight inbound turns (used for drain-on-shutdown and test determinism).
-  async drain() { await Promise.all([...this._inflight]) }
+  // Bounded by a timeout: one wedged turn (a hung adapter.send, an unreleased
+  // store lock) must not block shutdown/drain forever -- the timeout branch logs
+  // and lets the caller proceed, rather than hanging the whole process.
+  async drain({ timeoutMs = Number(process.env.CASEY_DRAIN_TURN_TIMEOUT_MS) || 30000 } = {}) {
+    const pending = [...this._inflight]
+    if (!pending.length) return
+    let timedOut = false
+    await Promise.race([
+      Promise.all(pending),
+      new Promise(resolve => setTimeout(() => { timedOut = true; resolve() }, timeoutMs)),
+    ])
+    if (timedOut) this.log?.warn?.('[casey] drain() timed out waiting on in-flight turns', { pending: pending.length, timeoutMs })
+  }
 
   // Run one health-guardrail sweep now. Exposed for tests and manual runs; the
   // scheduler calls the same path. Isolated: a sweep error is the caller's to log.

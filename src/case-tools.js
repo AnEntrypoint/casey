@@ -365,6 +365,10 @@ export function buildCaseToolset(storeOrNull) {
       name: 'case_stop',
       toolset: 'cases',
       schema: { name: 'case_stop', description: 'The person asked to STOP receiving messages (opt out). Records the opt-out. Use ONLY on a clear opt-out.', parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] } },
+      // No autonomy=observe guard here, unlike case_update/case_transition: opt-out
+      // is an irreversible LEGAL control (matching gateway-hooks.js's deterministic
+      // STOP short-circuit), not a content edit -- it must register regardless of
+      // autonomy, so an observe-mode contact's opt-out is never silently dropped.
       handler: async ({ id }) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
@@ -379,6 +383,8 @@ export function buildCaseToolset(storeOrNull) {
       name: 'case_handoff',
       toolset: 'cases',
       schema: { name: 'case_handoff', description: 'The person wants a real person / operator to help. Flags the case for a human. Use on a clear ask for a person.', parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] } },
+      // Same reasoning as case_stop: a handoff request is an irreversible legal
+      // control, not a content edit, so it deliberately bypasses the observe guard.
       handler: async ({ id }) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
