@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createCasey, Casey } from './src/casey.js'
 import { createDashboard } from './src/dashboard/server.js'
-import { intentReply, fallbackReply, jargonHits } from './src/gateway-hooks.js'
+import { intentReply, fallbackReply, jargonHits, isStockAck } from './src/gateway-hooks.js'
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
@@ -423,6 +423,26 @@ async function main() {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
     })
     assert.equal(noTok.status, 401, 'undo requires the dashboard token')
+  })
+
+  await test('fallback reply is never a no-op: neither fallback shape ever equals a stock-ack shape', async () => {
+    // Regression guard for a real live bug: a degraded-turn fallback that is
+    // byte-identical to a string isStockAck() rejects is a silent no-op -- the
+    // guard fires, blanks the reply, then the fallback hands back the exact same
+    // rejected text. Assert both fallback branches (bare greeting / mid-report)
+    // across every offline language always evade isStockAck.
+    const bareRef = { ref: 'CASE-9001-ABCD1234', report: null }
+    const midRef = { ref: 'CASE-9002-EFGH5678', report: JSON.stringify({ species: 'cattle' }) }
+    for (const text of ['hi', 'hi there', 'hello', 'sawubona', 'molo', 'hallo']) {
+      const bare = fallbackReply(text, bareRef)
+      assert.ok(!isStockAck(bare), `bare-greeting fallback must not be a stock-ack no-op: ${bare}`)
+      const mid = fallbackReply(text, midRef)
+      assert.ok(!isStockAck(mid), `mid-report fallback must not be a stock-ack no-op: ${mid}`)
+    }
+    // The bare-greeting fallback must never claim a report was made (AGENTS.md:
+    // never thank a bare greeting for "your message").
+    const greeting = fallbackReply('hi there', bareRef)
+    assert.ok(!/thank you.*your message|thank you for letting us know/i.test(greeting), `bare greeting fallback must not thank for a report never made: ${greeting}`)
   })
 
   await test('pre-send jargon guard: word-boundary scan; a jargon reply is HELD as a draft, never sent', async () => {

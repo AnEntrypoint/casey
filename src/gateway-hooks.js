@@ -286,7 +286,20 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
 // Returns an async (platform, msg) handler suitable to assign to
 // gateway.handleInbound. `store` is a CaseStore; opts.callLLM optional;
 // opts.autoRespond=false to track-only (no agent turn / reply).
-const FALLBACK_REPLY = 'Thank you for letting us know. We have your message and the team will look into it.'
+// Two distinct fallback shapes -- NEITHER may ever equal a STOCK_ACK_SHAPES entry
+// (see the isStockAck comment below and the fallback-vs-stock-ack regression
+// check in test.js): a fallback that round-trips back to the exact string a
+// guard just rejected is a silent no-op, witnessed live (a contact's bare "hi
+// there" greeting got back "Thank you for letting us know. We have your
+// message..." verbatim -- the model's own generic ack was correctly rejected
+// by isStockAck, then replaced by a fallback that was byte-identical to it).
+// FALLBACK_REPLY is for a genuine degraded turn where the contact already said
+// something substantive (mid-report); FALLBACK_GREETING is for a content-free
+// first turn or bare greeting, where thanking them for "your message" would
+// falsely imply they reported something (AGENTS.md: never claim a report was
+// made on a bare greeting).
+const FALLBACK_REPLY = "Thanks for reaching out -- we've noted that and the team will follow up."
+const FALLBACK_GREETING = 'Hello! If you have a sick or dead animal to report, just tell me what you are seeing and where.'
 
 // Guard against the small model parroting the system-prompt examples verbatim.
 // The first-message guidance describes an acknowledgement + reference; a weak
@@ -395,6 +408,13 @@ const FALLBACK_BY_LANG = {
   zu: 'Siyabonga ngokusazisa. Siwutholile umlayezo wakho futhi ithimba lizokubheka lokhu.',
   xh: 'Enkosi ngokusazisa. Siwufumene umyalezo wakho kwaye iqela liza kukujonga oku.',
 }
+// Greeting-shaped fallback (content-free turn: nothing has been reported yet) --
+// never thanks for "your message", since there is no report to thank them for.
+const FALLBACK_GREETING_BY_LANG = {
+  af: 'Hallo! As u siek of dooie diere het om aan te meld, vertel my net wat u sien en waar.',
+  zu: 'Sawubona! Uma unezilwane eziguliseka noma ezifile ozobika, ngitshele nje ukuthi ubonani nokuthi kuphi.',
+  xh: 'Molo! Ukuba unezilwanyana ezigulayo okanye ezifileyo ozibikayo, ndixelele nje into oyibonayo nendawo.',
+}
 
 // Cheap, accent-stripped cue match. A wrong guess that flips a contact's language
 // is worse than defaulting to English (P6: make the wrong outcome hard), so cues
@@ -443,9 +463,19 @@ export function refTail(contactText, caseRow) {
 // a dead-end. casey does NOT compose a next-question here: the model owns driving the
 // conversation and resumes on the next turn / on recovery. (The deterministic
 // ask-ladder was removed -- the LLM does that job.)
+//
+// Branches on whether anything has actually been recorded on the case yet: a
+// content-free/bare-greeting turn gets a plain warm greeting+invite (never a
+// "thank you for your message" that falsely implies a report was made), while a
+// genuine degraded turn mid-report gets the substantive holding line.
 export function fallbackReply(contactText, caseRow) {
   const lang = guessLang(contactText)
-  const base = FALLBACK_BY_LANG[lang] || FALLBACK_REPLY
+  let reportObj = null
+  try { reportObj = caseRow?.report ? JSON.parse(caseRow.report) : null } catch { reportObj = null }
+  const nothingRecorded = !reportObj || !Object.values(reportObj).some(v => v != null)
+  const base = nothingRecorded
+    ? (FALLBACK_GREETING_BY_LANG[lang] || FALLBACK_GREETING)
+    : (FALLBACK_BY_LANG[lang] || FALLBACK_REPLY)
   const ref = caseRow?.ref
   if (!ref) return base
   return base + refTail(contactText, caseRow)

@@ -1069,13 +1069,22 @@ function orPredicate(clauses) {
 
 // The ref is the sole "secret" gating the unauthenticated public /report form
 // (see dashboard/server.js) -- a farmer's phone, symptoms, and location are all
-// readable and writable by anyone who can guess it. Math.random() only ever gave
-// ~26 bits here (5 base36 chars); randomBytes gives a cryptographically strong,
-// effectively unguessable suffix instead. base64url output is URL-safe (contains
-// only [A-Za-z0-9_-]) so it drops straight into the existing CASE-<n>-<suffix> ref
-// shape and the ?ref= query param with no further encoding.
+// readable and writable by anyone who can guess it, AND it is the one code a
+// field worker must read back over a bad phone line or retype by hand. Balance:
+// 8 chars from a 32-symbol unambiguous alphabet (no 0/O/1/I/l confusion, no
+// vowel-adjacent pairs that sound alike read aloud) is ~40 bits of entropy --
+// far stronger than the old Math.random() ~26-bit/5-char suffix, while staying
+// short and speakable, unlike a full-entropy base64url string (dense mixed-case
+// + symbols, hard to read/say/type accurately). crypto.randomBytes is the
+// entropy source; each byte is reduced mod 32 into the alphabet (a benign
+// bias -- this is an unguessability-vs-readability tradeoff, not a keyed secret
+// requiring perfectly uniform output).
+const REF_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'   // 32 symbols, no 0/O/1/I/l
 function randomSuffix() {
-  return randomBytes(8).toString('base64url')
+  const bytes = randomBytes(8)
+  let s = ''
+  for (const b of bytes) s += REF_ALPHABET[b % REF_ALPHABET.length]
+  return s
 }
 
 export function createCaseStore(opts) { return new CaseStore(opts) }
