@@ -56,9 +56,9 @@ owner field, PII-free), `case_new` (open + bind a fresh active case), and `case_
 `toolCtx` as the second argument.
 This is application-agnostic -- the store, the field/enum/projection vocabulary, and
 the role model arrive via a per-turn `toolCtx` and `plugins.case` config. CRM
-querying lives in thatcher (consumed as `file:../thatcher`; org npm publishing is
-blocked until the NPM_TOKEN repo secret is set, so the sibling chain thatcher ->
-file:../busybase is the source of truth): `list()`
+querying lives in thatcher (consumed as `file:../thatcher` for dev; npm
+publishing is restored and thatcher deps `busybase ^1.0.2` from the registry --
+see the sibling-chain section): `list()`
 supports operator where-objects (`{field:{$gte,$lte,$in}}`, `$or`), array tie-broken
 sort, and opt-in row-access scoping (`opts.user` + a configurable owner field). casey
 is the configuration instance: `thatcher.config.yml` declares the entities,
@@ -417,12 +417,15 @@ the crash-budget stop state); the supervisor is its only I/O.
 
 ## thatcher / busybase sibling chain
 
-casey consumes thatcher as `file:../thatcher`, and thatcher consumes busybase as
-`file:../busybase` -- NOT npm. Org npm publishing is broken (the NPM_TOKEN repo
-secret is unset on the AnEntrypoint repos; the publish workflows silently skip
-`npm publish`), so npm carries stale versions (thatcher 1.0.7 equality-only).
-Setting NPM_TOKEN restores publishing; until then the sibling checkouts are the
-source of truth and thatcher's CI clones the busybase sibling before install.
+casey consumes thatcher as `file:../thatcher` (the dev source of truth: a local
+fix reaches the live box without a publish round-trip). npm publishing is
+RESTORED (NPM_TOKEN set 2026-07-02): thatcher publishes from CI on push and
+deps `busybase ^1.0.2` from the registry (1.0.2 is the floor -- the 1.0.1
+tarball was CI-built with a stale --external flag that inlined libsql behind a
+bun-only require shim and crashed under node; busybase publishes on v* tags,
+and its publish workflow now builds via `bun run build`, the single source of
+build flags). An npm consumer can `npm install thatcher` again; casey keeps the
+file: sibling for development.
 With the sibling chain the operator-where push-down is ACTIVE
 (`_thatcherSupportsOperators()` returns true); the equality-only JS fallback shim
 in `case-store.js` stays as npm-lag safety for a consumer still on old npm
