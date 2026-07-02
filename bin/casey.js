@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// casey CLI  --  init / doctor / up / dashboard / sim / cases / show
+// casey CLI  --  init / doctor / up / dashboard / cases / show
 //
 // Friendliness lives here as much as in the dashboard: `casey init` scaffolds a
 // .env so an operator never hand-writes one; `casey doctor` is a preflight that
@@ -98,7 +98,6 @@ CASEY_DASHBOARD_TOKEN=
 #CASEY_PUBLIC_URL=https://your-domain.example.com
 
 # Development overrides:
-#CASEY_STUB_LLM=1    # run fully offline with a deterministic stub model
 #CASEY_LOG=silent    # suppress structured JSON logs (used by tests)
 `
 
@@ -107,9 +106,8 @@ const HELP = `${bold('casey')} ${dim('v' + pkgVersion())}  --  agentic case trac
 ${bold('usage:')}
   casey init                                    scaffold a .env you can fill in
   casey doctor                                  preflight: what's ready, what's missing
-  casey up [--channels sim,discord,whatsapp] [--port 4000]   start gateway + dashboard
+  casey up [--channels discord,whatsapp] [--port 4000]   start gateway + dashboard
   casey dashboard [--port 4000]                 start only the observe/edit dashboard
-  casey sim ["message" ...] [--scenario <name>] run a simulated conversation (or a built-in persona)
   casey cases [--status <stage>]                list cases
   casey show <ref|id>                           show a case + timeline
   casey attention [--limit N --offset N --json] worst-first inbox: who needs a person now, and why
@@ -169,7 +167,7 @@ async function main() {
       console.log(bad('WHATSAPP_APP_SECRET is required to enable WhatsApp (verify inbound webhook signatures)'))
       problems++
     }
-    if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected - only the offline sim will run'))
+    if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected - casey cannot start without at least one of discord/whatsapp configured'))
     // thatcher config
     const cfgFile = path.join(ROOT, 'thatcher.config.yml')
     console.log(existsSync(cfgFile) ? ok('thatcher.config.yml present') : bad('thatcher.config.yml missing - casey will fail to start (see README Layout section)'))
@@ -216,8 +214,8 @@ async function main() {
   }
 
   if (cmd === 'up') {
-    if (flags.help) { console.log('casey up [--channels sim,discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise] [--no-auto-update]\n  Start the gateway (all configured channels) and the dashboard.\n  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,\n  reopening the same case store so nothing is lost. AUTO-UPDATE is on by default -- it pulls\n  from origin on an interval (git pull --ff-only, safe: it never clobbers local edits) so a\n  pushed fix deploys with no manual restart. --no-reload disables the file watcher; --no-auto-update\n  (or CASEY_AUTO_UPDATE=0) disables the origin pull; --no-supervise runs the legacy single-process\n  path for debugging.'); return }
-    const requested = (flags.channels || 'sim,discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
+    if (flags.help) { console.log('casey up [--channels discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise] [--no-auto-update]\n  Start the gateway (all configured channels) and the dashboard.\n  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,\n  reopening the same case store so nothing is lost. AUTO-UPDATE is on by default -- it pulls\n  from origin on an interval (git pull --ff-only, safe: it never clobbers local edits) so a\n  pushed fix deploys with no manual restart. --no-reload disables the file watcher; --no-auto-update\n  (or CASEY_AUTO_UPDATE=0) disables the origin pull; --no-supervise runs the legacy single-process\n  path for debugging.'); return }
+    const requested = (flags.channels || 'discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
     // Security invariant (AGENTS.md): WhatsApp must NOT serve without
     // WHATSAPP_APP_SECRET -- without it freddie cannot HMAC-verify inbound
     // webhooks, so anyone reaching the webhook can forge farmer messages. doctor
@@ -233,9 +231,9 @@ async function main() {
       }
       if (idx !== -1) { requested.splice(idx, 1); console.log(warn('WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')) }
     }
-    const channels = requested.filter(ch => ch === 'sim' || hasCreds(ch))
-    const skipped = requested.filter(ch => ch !== 'sim' && !hasCreds(ch))
-    if (!channels.length) { console.log(bad('no channels available - set credentials or include sim in --channels')); process.exit(1) }
+    const channels = requested.filter(ch => hasCreds(ch))
+    const skipped = requested.filter(ch => !hasCreds(ch))
+    if (!channels.length) { console.log(bad('no channels available - set discord/whatsapp credentials')); process.exit(1) }
 
     // Supervised path (default): a parent supervisor forks the serving worker
     // (bin/worker.js = gateway + dashboard + store), watches src/ for changes, and
@@ -335,10 +333,9 @@ async function main() {
       return a?.send ? a.send({ to: caseRow.external_id, text }) : Promise.resolve()
     }
     // Health pill re-resolves live so an operator sees acptoapi going up/down
-    // without restarting casey. Stub stays reported as stub (it never probes).
+    // without restarting casey.
     const { resolveCallLLM: _rc } = await import('../src/llm.js')
     const llmStatus = async () => {
-      if (process.env.CASEY_STUB_LLM) return { source: 'stub' }
       const b = await _rc({ probe: true }).catch(() => ({ source: 'none' }))
       return { source: b.source, model: b.model, url: b.url }
     }
@@ -352,9 +349,7 @@ async function main() {
     console.log(bold('casey up') + dim(`  v${pkgVersion()}`))
     console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(`   (skipped, no creds: ${skipped.join(', ')} - run casey doctor)`) : ''))
     if (brain.source === 'acptoapi') console.log(`  AI helper: ${green('online')}${dim(`   (${brain.model} via ${brain.url})`)}`)
-    else if (brain.source === 'stub') console.log(`  AI helper: ${yellow('test stub')}${dim('   (offline fake replies - for testing only)')}`)
     else console.log(`  AI helper: ${yellow('offline')}${dim('   (auto-replies paused; contacts get a holding message and wait for a person. Start acptoapi to enable AI.)')}`)
-    if (channels.length === 1 && channels[0] === 'sim') console.log(warn('only the offline sim is active - no real messages will arrive. Connect a channel in .env.'))
     const tokenNote = process.env.CASEY_DASHBOARD_TOKEN ? ` ${dim('(token required)')}` : ` ${yellow('(open - set CASEY_DASHBOARD_TOKEN)')}`
     console.log(`  dashboard: ${cyan(`http://localhost:${dash.port}`)}${tokenNote}`)
     console.log(`  data: ${dim(path.join(process.cwd(), 'data'))}`)
@@ -398,109 +393,6 @@ async function main() {
     return
   }
 
-  if (cmd === 'sim') {
-    const { runScript } = await import('../src/sim/inject.js')
-    const { stubLLM } = await import('../src/sim/stub-llm.js')
-    const { getScenario, scenarioNames } = await import('../src/sim/scenarios.js')
-    if (flags.help) {
-      console.log('casey sim ["message" ...] [--scenario <name>] [--intake]')
-      console.log('  Run an offline simulated conversation against the stub model.')
-      console.log('  --intake  exercises the non-AI manual intake flow (dashboard API POST /api/cases)')
-      console.log('  --scenario replays a built-in low-literacy persona. Available:')
-      for (const n of scenarioNames()) console.log(`    ${cyan(n)}`)
-      return
-    }
-
-    // --intake: exercise the non-AI manual-intake flow via the dashboard API.
-    // Starts a minimal casey instance + dashboard on a temporary port, posts a
-    // case and report fields, prints the result, then shuts down.
-    if (flags.intake) {
-      const { createDashboard } = await import('../src/dashboard/server.js')
-      const store = createCaseStore()
-      await store.init()
-      const dash = await createDashboard(store, { port: 0, token: '' }).catch(e => { console.log(bad('dashboard failed: ' + e.message)); process.exit(1) })
-      const base = `http://localhost:${dash.server.address().port}`
-      console.log(dim(`dashboard on ${base} (ephemeral)`))
-      // POST /api/cases: create the case. 409 = already exists, use that id.
-      const name = rest.filter(a => !a.startsWith('--'))[0] || 'Sim Farmer'
-      const phone = rest.filter(a => !a.startsWith('--'))[1] || '0821234567'
-      const caseR = await fetch(`${base}/api/cases`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, phone, subject: 'Sim intake test' }) })
-      const cj = await caseR.json().catch(() => ({}))
-      if (caseR.status === 409) {
-        console.log(dim(`case already exists for ${phone}: ${cj.existing_ref} -- using it`))
-        cj.id = cj.existing_id; cj.ref = cj.existing_ref
-      } else if (!caseR.ok) { console.log(bad('POST /api/cases failed: ' + (cj.error || caseR.status))); await dash.close(); process.exit(1) }
-      const c = cj
-      console.log(green(`created: ${c.ref}  id=${c.id}  tags=${c.tags||'(existing)'}`))
-      // POST /api/cases/:id/intake: fill report fields
-      const intakeR = await fetch(`${base}/api/cases/${c.id}/intake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ species: 'cattle', symptoms: 'drooling, limping', location: 'near Musina', how_to_find: 'farm gate on R572', affected_count: '6', farmer_available: 'yes' }) })
-      if (!intakeR.ok) { const e = await intakeR.json().catch(() => ({})); console.log(bad('POST /intake failed: ' + (e.error || intakeR.status))); await dash.close(); process.exit(1) }
-      const ij = await intakeR.json()
-      console.log(green(`intake saved  fill=${ij.report_fill_rate?.filled}/${ij.report_fill_rate?.total_fields}  visit-critical=${ij.report_fill_rate?.visit_critical_filled}/${ij.report_fill_rate?.visit_critical_total}`))
-      console.log(dim('--- report ---'))
-      for (const [k, v] of Object.entries(ij.report || {})) if (v != null && v !== '') console.log(`  ${dim(k.padEnd(20))} ${v}`)
-      await dash.close()
-      await store.close()
-      process.exit(0)
-    }
-    // Decide the script: --scenario <name> wins; else positional messages; else
-    // the default order-is-late demo. Positional args keep working unchanged.
-    let script
-    if (flags.scenario) {
-      const picked = getScenario(flags.scenario === true ? '' : flags.scenario)
-      if (!picked) {
-        console.log(red(`unknown scenario: ${flags.scenario}`))
-        console.log(dim('  available: ') + scenarioNames().map(cyan).join(', '))
-        process.exit(1)
-      }
-      console.log(bold(`scenario: ${picked.name}`) + dim(` -- ${picked.description}`))
-      script = picked.lines
-    } else {
-      const lines = rest.filter(a => !a.startsWith('--'))
-      script = lines.length ? lines : [
-        'Hi, my cattle are sick, some are drooling and not eating',
-        'There are about 10 of them near Bela-Bela',
-        'Thanks for helping',
-      ]
-    }
-    // Default sim runs offline on the deterministic stub (cheap, repeatable).
-    // --real routes the same scenario through the live acptoapi bridge so devs
-    // and operators can validate real-model behaviour. Honest fallback: if --real
-    // is asked but the bridge is unreachable, say so and stay on the stub.
-    let simCallLLM = stubLLM()
-    if (flags.real) {
-      const { resolveCallLLM } = await import('../src/llm.js')
-      const brain = await resolveCallLLM({ probe: true })
-      if (brain.source === 'acptoapi') { simCallLLM = brain.callLLM; console.log(green(`(real) ${brain.model} via ${brain.url}`)) }
-      else console.log(yellow('--real asked but acptoapi is offline; running on the test stub instead. Start acptoapi on :4800.'))
-    }
-    const casey = await createCasey({ channels: ['sim'], callLLM: simCallLLM })
-    await casey.start()
-    const adapter = casey.adapters.sim
-    const transcript = await runScript(adapter, script, { wait: () => casey.drain() })
-    for (const t of transcript) console.log(`${t.role === 'contact' ? cyan('USER: ') : green('BOT:  ')} ${t.text}`)
-    // Print THIS run's case, identified by the caseId the replies carried, not
-    // listCases()[0] (arbitrary across accumulated sim runs -- thatcher ignores
-    // orderBy). Fall back to listCases only if no reply carried a caseId.
-    const runCaseId = [...transcript].reverse().find(t => t.caseId)?.caseId
-    const caseRow = runCaseId ? await casey.store.getCase(runCaseId) : (await casey.store.listCases())[0]
-    if (caseRow) {
-      console.log(`\n${bold(caseRow.ref)}  status=${caseRow.status}  priority=${caseRow.priority}  tags=${caseRow.tags || '-'}\n   summary: ${caseRow.summary || dim('(none)')}`)
-      try {
-        const report = caseRow.report ? JSON.parse(caseRow.report) : {}
-        const filled = Object.entries(report).filter(([, v]) => v != null && v !== '')
-        if (filled.length) {
-          console.log(dim('   report:'))
-          for (const [k, v] of filled) console.log(`     ${dim(k.padEnd(20))} ${v}`)
-        } else {
-          console.log(dim('   report: (empty)'))
-        }
-      } catch { /* malformed report JSON: skip */ }
-    }
-    await casey.stop()
-    process.exit(0)
-  }
-
   if (cmd === 'cases') {
     const store = createCaseStore()
     await store.init()
@@ -511,7 +403,7 @@ async function main() {
       where.status = flags.status
     }
     if (flags.channel) {
-      const valid = ['sim', 'discord', 'whatsapp']
+      const valid = ['discord', 'whatsapp']
       if (!valid.includes(flags.channel)) { console.log(bad(`invalid channel: ${flags.channel}, allowed: ${valid.join(', ')}`)); process.exit(1) }
       where.channel = flags.channel
     }
@@ -519,7 +411,7 @@ async function main() {
     if (!cases.length) {
       const desc = [flags.status && `stage "${flags.status}"`, flags.channel && `channel "${flags.channel}"`].filter(Boolean).join(', ')
       console.log(desc ? `no cases matching ${desc}.` : 'no cases yet.')
-      console.log(dim(`  create one with ${cyan('casey sim "my order is late"')}, or connect a channel and run ${cyan('casey up')}.`))
+      console.log(dim(`  connect a channel in .env and run ${cyan('casey up')} to create one.`))
       process.exit(0)
     }
     for (const cr of cases) {

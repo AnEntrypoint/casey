@@ -81,7 +81,7 @@ caveat the thatcher shim section documents.
 
 ```
 thatcher.config.yml        entities + case workflow (system of record)
-bin/casey.js               CLI: init / doctor / up / dashboard / sim / cases / show / report (per-case-type SLA + per-type/per-channel metrics, --json)
+bin/casey.js               CLI: init / doctor / up / dashboard / cases / show / report (per-case-type SLA + per-type/per-channel metrics, --json)
 plugins/case-tools/        freddie plugin registering case_* tools (auto-discovered)
 src/
   casey.js                 top-level assembly: store + host + gateway + adapters + logger; drainQueuedTurns re-drives LLM-down-queued inbounds through the agent on provider recovery (status-gated, oldest-first serialized, mark-attempted only after a successful drive, bounded retry -> dead-letter)
@@ -105,12 +105,9 @@ src/
   conversation-state.js    per-case dstate wrapper: optional-imports adaptogen (degrades to no-op), rehydrates/creates a per-case DState from the conv_state blob (export/importState), advanceCase(to) applies a transition + persists, orientCase() returns {state, legalMoves} for the prompt; advance only on a completed turn, only to the phase the AGENT declared
   gateway-hooks.js         makeCaseHandler PURE-LLM flow: an inbound hits the STOP/HUMAN deterministic short-circuit (detectContactIntent, above the queue gate), OR the LLM-down queue gate (record + QUEUED-FOR-AGENT/HOLDING-ACK markers + one warm holding ack), OR one runTurn tool loop where the agent classifies + routes + answers + RECORDS THE REPORT (case_report) + declares its phase (case_stage) via the case_* tools. casey does NO deterministic text processing -- no field extraction, no computed next-question. The prompt surfaces the raw report-so-far + the dstate phase (orient) and TRUSTS the model to acknowledge + not repeat + ask the next thing. A degraded turn (empty/error/echo/stock-ack) sends a plain warm fallbackReply (never a computed ask). dedup, media, observe
   discord-receive.js       fallback Discord WS receive for older freddie builds
-  llm.js                   model call wiring; resolveCallLLM (boot precedence: stub/acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row, and fires an onRecover edge that drives drainQueuedTurns)
-  sim/inject.js            MockAdapter + scripted-conversation runner (offline)
-  sim/scenarios.js         named low-literacy personas
-  sim/stub-llm.js          deterministic TEST DOUBLE for sim + tests (never used in production): per message it shape-classifies inline (no intent/places import) and drives via the case_* tools, then composes a reply from the tool result -- so test.js exercises the full agent-driven path offline; carries classification as a test double, not production text processing
+  llm.js                   model call wiring; resolveCallLLM (boot precedence: acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row, and fires an onRecover edge that drives drainQueuedTurns)
   dashboard/server.js      express API + anentrypoint-design SPA (observe/edit/override/reply); GET/POST /report public contact form (no token)
-test.js                    end-to-end suite (real thatcher + freddie, stub model)
+test.js                    end-to-end suite (real thatcher + freddie + a real reachable LLM provider -- no stub, no mock)
 ```
 
 ## Dev workflow
@@ -120,10 +117,8 @@ npm install                 # requires sibling ../freddie and ../anentrypoint-de
 node bin/casey.js init      # scaffold a .env (channel tokens, dashboard secret)
 node bin/casey.js doctor    # green/red preflight: deps, channels, port, token
 node bin/casey.js up        # gateway + dashboard (default http://localhost:4000)
-node bin/casey.js sim "my cattle are sick"        # offline conversation, stub model
-node bin/casey.js sim --scenario <name>           # replay a low-literacy persona
 npm run lint                # dependency-free preflight (syntax+config+package+ascii); the CI gate
-node test.js                # end-to-end suite (CASEY_STUB_LLM path, stub model)
+node test.js                # end-to-end suite (real services + a live acptoapi bridge required)
 ```
 
 CI: `.github/workflows/ci.yml` runs `npm run lint` (`scripts/lint.mjs`) on every
@@ -131,14 +126,19 @@ push and PR. It is dependency-free on purpose -- it does NOT need the `file:../`
 siblings, so it stays green in a bare clone. It carries a pure-llm grep-gate:
 `gateway-hooks.js` and `casey.js` must NOT import `intent.js`, `places.js`, or
 `extract.js` (all deleted -- casey does no deterministic text processing; the LLM
-records the report via `case_report`). Keep `test.js` as the real-services witness;
-do not move its real-services assertions into the lint gate.
+records the report via `case_report`), and a no-stub-mock grep-gate (`src/`, `bin/`,
+`plugins/` must never reference `MockAdapter`, `stubLLM`, `CASEY_STUB_LLM`, or the
+deleted `sim/*` modules). Keep `test.js` as the real-services witness; do not move
+its real-services assertions into the lint gate.
 
 Note: `freddie` and `anentrypoint-design` are `file:../` dependencies (`../freddie`,
 `../anentrypoint-design`). Without those sibling checkouts (and `thatcher` from npm)
 installed, `node test.js` and `casey up` fail with `ERR_MODULE_NOT_FOUND`; only static
 review is possible in a clone that lacks them. The dependency-free CI lint and a bare
-clone stay green. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
+clone stay green. `test.js` now REQUIRES the sibling checkouts (`../freddie`,
+`../thatcher`) AND a live acptoapi bridge / real LLM provider reachable at test time
+(default `:4800`) -- it can no longer run in a bare clone or offline; there is no
+stub/mock fallback.
 
 ## Environment
 
@@ -154,7 +154,6 @@ clone stay green. Set `CASEY_STUB_LLM=1` to run `up` fully offline.
 | `CASEY_ALERT_WEBHOOK` | When set, a high-severity health breach (unanswered handoff, and the escalated tier) POSTs a plain JSON alert to this URL so a team is paged off-dashboard. Each newly-entered breach pages once; an already-flagged case is not re-paged. |
 | `CASEY_OPERATORS` | Cooperative operator roster (comma-separated `id:Name` pairs), fixed at boot. `GET /api/operators` lists it and `X-Casey-Operator` selects a known id to attribute an action; this is attribution, not authentication -- an unknown/absent value falls back to the default actor and can never inject a new identity. |
 | `CASEY_LOG=silent` | Silence structured JSON logs (used by tests). |
-| `CASEY_STUB_LLM=1` | Run `casey up` with the offline stub model. |
 | `CASEY_RELOAD=0` | Disable hot-reload (the supervisor still restarts on crash; it just stops watching source). |
 | `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (e.g. `../freddie/src`). `src/` and a sibling `../freddie/src` are watched by default; absent dirs are skipped with a warning. Allowlist only -- never contact input. |
 | `CASEY_RELOAD_DEBOUNCE_MS` | Coalesce a burst of saves into one reload (default 300). |

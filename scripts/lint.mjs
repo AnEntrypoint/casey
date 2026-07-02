@@ -110,8 +110,29 @@ for (const rel of NO_HARDCODE_IMPORT) {
   }
 }
 
+// No-stub/mock invariant: MockAdapter, stubLLM, CASEY_STUB_LLM, and the sim/*
+// test-double modules were removed entirely (real freddie + real thatcher +
+// a real LLM provider is the only supported test/dev path now). This grep-gate
+// is a permanent regression guard so a future edit can never quietly
+// reintroduce a fake channel adapter or a hand-rolled deterministic model.
+const NO_STUB_MOCK_PATTERNS = ['MockAdapter', 'stubLLM', 'CASEY_STUB_LLM', 'sim/inject', 'sim/stub-llm', 'sim/scenarios']
+const STUB_MOCK_SCAN_DIRS = ['src', 'bin', 'plugins']
+for (const dir of STUB_MOCK_SCAN_DIRS) {
+  let files = []
+  try { files = walk(join(ROOT, dir)).filter((p) => ['.js', '.mjs'].includes(extname(p))) } catch { continue }
+  for (const f of files) {
+    let src = ''
+    try { src = readFileSync(f, 'utf8') } catch { continue }
+    for (const pattern of NO_STUB_MOCK_PATTERNS) {
+      if (src.includes(pattern)) {
+        note(`no-stub-mock: ${f.replace(ROOT, '')} references "${pattern}" -- all stubs/mocks (MockAdapter, stubLLM, CASEY_STUB_LLM, sim/*) were removed; casey runs only against real freddie/thatcher/LLM`)
+      }
+    }
+  }
+}
+
 if (fails.length) {
   console.error('lint FAIL:\n' + fails.map((m) => '  - ' + m).join('\n'))
   process.exit(1)
 }
-console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii + pure-agent clean`)
+console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii + pure-agent + no-stub-mock clean`)

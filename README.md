@@ -89,29 +89,6 @@ well, and may not speak English as a first language. So casey:
   note** ("Good news. Someone is working on your request now.") so they are kept informed without
   having to ask. Internal stages stay silent, and a person who opted out is never messaged.
 
-### Try the personas
-
-`casey sim --scenario <name>` replays a built-in low-literacy persona offline so you can see
-how casey handles each one:
-
-```sh
-node bin/casey.js sim --scenario fmd-cattle              # foot-and-mouth signs in cattle
-node bin/casey.js sim --scenario sudden-deaths           # animals dying suddenly
-node bin/casey.js sim --scenario afrikaans-farmer        # reports in Afrikaans
-node bin/casey.js sim --scenario isizulu-farmer          # reports in isiZulu
-node bin/casey.js sim --scenario confused-elderly        # vague, one-word, polite
-node bin/casey.js sim --scenario asks-for-human          # wants a real person
-node bin/casey.js sim --scenario photo-only              # sends a photo, few words
-node bin/casey.js sim --scenario location-logistics      # far in the bush, hard to reach
-node bin/casey.js sim --scenario full-lifecycle          # intake -> status -> asks for a human
-node bin/casey.js sim --scenario false-positive-guard    # reports that look like keywords
-node bin/casey.js sim --scenario afrikaans-farmer        # run live: add --real
-node bin/casey.js sim --help                             # list every persona
-```
-
-The same personas run in the test suite, asserting every reply stays non-blank, short,
-jargon-free, cites the reference, and offers a person exactly when one is asked for.
-
 ## Quickstart (operator)
 
 You do not need to be a developer to run casey day-to-day:
@@ -126,8 +103,8 @@ node bin/casey.js up         # starts the gateway + dashboard, prints the dashbo
 Then open the dashboard URL it printed (default `http://localhost:4000`). `casey init` and
 `casey doctor` exist so the first run tells you exactly what is and isn't ready before you start;
 `doctor` flags partial WhatsApp credentials and an unset dashboard token instead of failing silently.
-No channel connected yet? `node bin/casey.js sim "my cattle are sick and some died"` runs a full conversation offline
-so you can see the flow and a case appear.
+casey needs at least one real channel (Discord or WhatsApp) configured in `.env` before `casey up`
+will start -- there is no offline demo mode.
 
 ### The dashboard
 
@@ -177,15 +154,13 @@ The dashboard is the whole operator surface -- one page, no build step:
 ```sh
 node bin/casey.js init          # scaffold a .env
 node bin/casey.js doctor        # preflight: what's ready, what's missing
-node bin/casey.js up            # gateway (sim + any channel with creds) + dashboard on :4000
-node bin/casey.js sim "msg" ... # offline simulated conversation (stub model, no creds)
-node bin/casey.js sim --scenario <name>  # replay a built-in low-literacy persona
+node bin/casey.js up            # gateway (any channel with creds) + dashboard on :4000
 node bin/casey.js dashboard     # observe/edit dashboard only, on :4000
 node bin/casey.js cases         # list cases (empty -> hint on how to make one)
 node bin/casey.js show <ref|id> # show a case + full timeline
 node bin/casey.js --version     # print the version  (also --help / -h on any command)
 npm run lint                    # dependency-free preflight: JS syntax + config + package + ascii
-node test.js                    # end-to-end suite (real thatcher + freddie, stub model)
+node test.js                    # end-to-end suite (real thatcher + freddie + a real reachable LLM provider)
 ```
 
 `npm run lint` (`node scripts/lint.mjs`) runs every check that works from a bare
@@ -194,12 +169,13 @@ clone -- `node --check` on all JS, a YAML parse of `thatcher.config.yml`,
 checkouts, so it is the gate the GitHub Actions `ci` workflow
 (`.github/workflows/ci.yml`) runs on every push and pull request. `node test.js`
 remains the full real-services witness and runs only where the `file:../` siblings
-(`freddie`, `anentrypoint-design`) and a fixed `thatcher` are installed.
+(`freddie`, `anentrypoint-design`) and a fixed `thatcher` are installed, AND a live
+acptoapi bridge / real LLM provider is reachable -- there is no stub/mock fallback.
 
 `casey up` runs the real model via freddie's provider resolver (configure `~/.freddie`
-+ a provider key). Set `CASEY_STUB_LLM=1` to run `up` fully offline with the deterministic
-stub. The agent always sends a safe fallback reply if the model errors, times out, or
-returns nothing, and records the failure as an observation rather than leaking it to the contact.
++ a provider key). The agent always sends a safe fallback reply if the model errors,
+times out, or returns nothing, and records the failure as an observation rather than
+leaking it to the contact.
 
 `casey up` runs the gateway+dashboard under a supervisor that forks them in a child
 worker and recycles it on crash or on a source edit, so a code change reloads
@@ -220,7 +196,6 @@ AGENTS.md "Supervised runtime" for the full env-var set.
 | `WHATSAPP_WEBHOOK_PORT`, `WHATSAPP_WEBHOOK_PATH` | Fixed webhook port/path (Meta needs a stable public URL; use a tunnel in dev). |
 | `CASEY_DASHBOARD_TOKEN` | When set, the dashboard API and page require this token (`Authorization: Bearer <token>` or `X-Casey-Token` header). For the initial page load, pass `?token=` in the URL; the browser strips it from the address bar and switches to the header for all API calls. |
 | `CASEY_LOG=silent` | Silence casey's structured JSON logs (used by tests). |
-| `CASEY_STUB_LLM=1` | Run `casey up` with the offline stub model. |
 | `CASEY_RELOAD=0` | Disable hot-reload (crash-restart stays on). |
 | `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (default `src/` + `../freddie/src`). |
 | `CASEY_RECEIVE_SILENCE_MS` | Restart a channel that went silent this long (zombie-receive self-heal; default 0 = off). |
@@ -230,20 +205,17 @@ AGENTS.md "Supervised runtime" for the full env-var set.
 ```
 casey/
   thatcher.config.yml        entities (case/event/contact) + case workflow (system of record)
-  bin/casey.js               CLI: init / doctor / up / dashboard / sim / cases / show (colorized, --help/--version)
+  bin/casey.js               CLI: init / doctor / up / dashboard / cases / show (colorized, --help/--version)
   plugins/case-tools/        freddie plugin registering case_* tools (auto-discovered at boot)
   src/
     casey.js                 top-level assembly: store + host + gateway + adapters + logger
     case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation
     case-runtime.js          process singleton so the plugin reaches the live CaseStore
     case-tools.js            case_* tool definitions (get/list/update/observe/transition), autonomy-enforced
-    gateway-hooks.js         makeCaseHandler: case-aware inbound (plain-language prompt, intent keywords, dedup, media, observe, fallback)
+    gateway-hooks.js         makeCaseHandler: case-aware inbound (agent-driven, no deterministic text processing), dedup, media, observe, fallback
     discord-receive.js       fallback Discord WS receive for older freddie builds
-    sim/inject.js            MockAdapter + scripted-conversation runner (offline)
-    sim/scenarios.js         named low-literacy personas for `casey sim --scenario` and tests
-    sim/stub-llm.js          deterministic model for sim + tests (plain/Spanish/human-aware; never used in production)
     dashboard/server.js      express API + anentrypoint-design-styled SPA (observe + edit + override + reply, plain-language mode + help overlay)
-  test.js                    end-to-end suite (29 assertions, all green)
+  test.js                    end-to-end suite (real thatcher + freddie + a real reachable LLM provider -- no stub, no mock)
 ```
 
 ## thatcher

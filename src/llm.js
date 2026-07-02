@@ -3,13 +3,11 @@
 // casey's callLLM contract is freddie's: ({messages, tools}) => {content, tool_calls}.
 // freddie already ships the acptoapi bridge (src/agent/acptoapi-bridge.js) that
 // speaks exactly that contract over the local multi-provider bridge on :4800.
-// Before this module casey only ever ran on the deterministic stub or null, so
-// the real brain was never connected. resolveCallLLM picks the backend by an
-// explicit, honest precedence and never claims a capability it can't deliver:
+// resolveCallLLM picks the backend by an explicit, honest precedence and never
+// claims a capability it can't deliver:
 //
-//   1. CASEY_STUB_LLM set: deterministic stub (offline, cheap, tests/sim)
-//   2. acptoapi reachable: real model via the freddie bridge
-//   3. neither: null  (gateway falls back to canned replies)
+//   1. acptoapi reachable: real model via the freddie bridge
+//   2. otherwise: null  (gateway falls back to canned replies)
 //
 // The null fall-through is the worst-case path (P9/P10): if the bridge is down,
 // casey does NOT pretend to have an AI - it returns null and the gateway answers
@@ -28,15 +26,11 @@ function bridgeBackend(bridge, model) {
   return (req) => bridge.callLLM({ ...req, model })
 }
 
-// Resolve the backend. `probe` (default true) decides whether an unset stub flag
-// triggers a live reachability check; tests pass probe:false to stay offline.
-// Returns { callLLM, source } so callers can report which brain is active in
-// plain words (the dashboard health row, the CLI banner).
+// Resolve the backend. `probe` (default true) decides whether a live reachability
+// check is performed; callers pass probe:false to stay offline. Returns
+// { callLLM, source } so callers can report which brain is active in plain
+// words (the dashboard health row, the CLI banner).
 export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {}) {
-  if (process.env.CASEY_STUB_LLM) {
-    const { stubLLM } = await import('./sim/stub-llm.js')
-    return { callLLM: stubLLM(), source: 'stub' }
-  }
   if (!probe) return { callLLM: null, source: 'none' }
   let freddie
   try {

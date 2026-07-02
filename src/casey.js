@@ -5,7 +5,6 @@
 // Channels:
 //   whatsapp  --  freddie's Meta Graph webhook adapter (real)
 //   discord  --  freddie's adapter + our WS receive (real simulation)
-//   sim  --  MockAdapter (offline, no credentials)
 
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -16,7 +15,6 @@ import { setCaseStore, resetCaseStore } from './case-runtime.js'
 import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier, breachNotifier } from './gateway-hooks.js'
 import { sweepCases } from './case-sweep.js'
 import { ALL_HEALTH_TAGS } from './case-health.js'
-import { MockAdapter } from './sim/inject.js'
 
 const CASE_HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
@@ -50,11 +48,11 @@ const ESCALATION_BREACHES = new Set(['unanswered_handoff_escalated'])
 export class Casey {
   constructor(opts = {}) {
     this.opts = opts
-    this.channels = opts.channels || ['sim']
+    this.channels = opts.channels || []
     this.store = null
     this.gateway = null
     this.adapters = {}
-    this._inflight = new Set()      // track inbound turns for deterministic sim
+    this._inflight = new Set()      // track in-flight inbound turns for drain-tracking
     this._disconnects = []
     this._sweepTimer = null         // periodic health-guardrail interval handle
     this._roster = rosterFromEnv()  // people expected to cover (for the coverage-gap check)
@@ -97,7 +95,7 @@ export class Casey {
 
     // 4) gateway. casey REPLACES handleInbound with its case-aware handler
     //    (see gateway-hooks.js) rather than layering hooks around freddie's
-    //    context-free turn. We then wrap it to track in-flight turns so the sim
+    //    context-free turn. We then wrap it to track in-flight turns so a caller
     //    can await them (freddie fires inbound handling without awaiting).
     // casey replaces gateway.handleInbound entirely, so the gateway never uses a
     // callLLM of its own -- the case handler owns the LLM decision (P4: one layer,
@@ -137,7 +135,6 @@ export class Casey {
   }
 
   async _makeAdapter(ch) {
-    if (ch === 'sim') return new MockAdapter('sim')
     // whatsapp / discord come from freddie's platform plugins, registered on the
     // host's pi.platforms registry. We instantiate their adapter classes directly
     // for gateway use.
@@ -234,8 +231,8 @@ export class Casey {
   }
 
   // Receive-liveness snapshot for the real-time channels (currently discord),
-  // so the health surface can distinguish "online" from "deaf". `sim`/`web` are
-  // request-driven and have no socket to go zombie, so they are omitted. A channel
+  // so the health surface can distinguish "online" from "deaf". `web` is
+  // request-driven and has no socket to go zombie, so it is omitted. A channel
   // is `ok` once it has connected; `quiet` is informational only (a real channel
   // can legitimately receive nothing for long stretches), so quietness alone never
   // flips the pill -- only "configured but never connected since start" does, which
@@ -245,7 +242,7 @@ export class Casey {
     const channels = {}
     let worst = 'ok'
     for (const ch of this.channels) {
-      if (ch === 'sim' || ch === 'web') continue   // no real-time receive socket
+      if (ch === 'web') continue   // no real-time receive socket
       const r = this.receiveHealth[ch] || {}
       const connected = r.connectedAt != null
       const sinceInboundMs = r.lastInboundAt != null ? now - r.lastInboundAt : null
@@ -257,7 +254,7 @@ export class Casey {
     return { state: Object.keys(channels).length ? worst : 'none', channels }
   }
 
-  // Await all in-flight inbound turns (used by sim for determinism).
+  // Await all in-flight inbound turns (used for drain-on-shutdown and test determinism).
   async drain() { await Promise.all([...this._inflight]) }
 
   // Run one health-guardrail sweep now. Exposed for tests and manual runs; the
@@ -392,8 +389,8 @@ export class Casey {
       if (resumed >= maxRedrives) break
       // Only re-drive cases still open (a closed/won case wants no further reply).
       if (openStatuses.size && !openStatuses.has(c.status)) continue
-      // Skip channels with no live adapter to send on (e.g. a sim-only boot).
-      if (!this.adapters[c.channel]?.send && c.channel !== 'sim') continue
+      // Skip channels with no live adapter to send on.
+      if (!this.adapters[c.channel]?.send) continue
       let events
       try { events = await this.store.listEvents(c.id) } catch { continue }
       scanned++
@@ -488,7 +485,7 @@ export class Casey {
       for (const c of rows) {
         if (drained >= maxRedrives) break
         if (openStatuses.size && !openStatuses.has(c.status)) continue
-        if (!this.adapters[c.channel]?.send && c.channel !== 'sim') continue
+        if (!this.adapters[c.channel]?.send) continue
         let events
         try { events = await this.store.listEvents(c.id) } catch { continue }
         // Per msgId: the queued inbound, whether an outbound/draft completed it, the
@@ -604,7 +601,7 @@ export async function createCasey(opts) {
   const c = new Casey(opts)
   await c.init()
   // Wire the drain gate's status source when the caller gave one, so an embedded
-  // Casey (tests, sim) gets the same hard status()-gate as the worker shell, which
+  // Casey (tests) gets the same hard status()-gate as the worker shell, which
   // overwrites this with the resilient backend's status.
   if (!c.resilientStatus && opts?.llmStatus) c.resilientStatus = opts.llmStatus
   return c
