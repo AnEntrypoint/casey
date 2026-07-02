@@ -489,11 +489,17 @@ export function fallbackReply(contactText, caseRow) {
     // Real words came in but nothing was recorded (a failed/parroting turn) --
     // acknowledge what they said in a short, safe, generic way instead of the
     // bare greeting, so a second message never reads as a total non-sequitur.
+    // ONE open, non-presumptive follow-up -- never a fixed compound question
+    // ("which animals, AND where") that risks re-asking something the contact
+    // JUST said (witnessed live: a contact who just gave a place got asked
+    // "where are they" again). casey does no deterministic field extraction
+    // (project-wide invariant), so this fallback cannot know what was already
+    // said -- it stays deliberately open-ended instead of presuming a gap.
     const heard = truncate(trimmed, 60)
-    base = lang === 'af' ? `Ek het dit gekry: "${heard}". Vertel my meer -- watter diere, en waar is hulle?`
-      : lang === 'zu' ? `Ngikutholile lokho: "${heard}". Ngitshele kabanzi -- yiziphi izilwane, futhi zikuphi?`
-      : lang === 'xh' ? `Ndikufumene oko: "${heard}". Ndixelele ngokwengeziweyo -- ziziphi izilwanyana, kwaye zikuphi?`
-      : `I got that: "${heard}". Tell me a bit more -- which animals, and where are they?`
+    base = lang === 'af' ? `Ek het dit gekry: "${heard}". Vertel my net 'n bietjie meer oor wat aangaan.`
+      : lang === 'zu' ? `Ngikutholile lokho: "${heard}". Ngitshele nje kabanzi ngokwenzekayo.`
+      : lang === 'xh' ? `Ndikufumene oko: "${heard}". Ndixelele nje ngokwengeziweyo ngokwenzekayo.`
+      : `I got that: "${heard}". Tell me a bit more about what's going on.`
   } else {
     base = FALLBACK_BY_LANG[lang] || FALLBACK_REPLY
   }
