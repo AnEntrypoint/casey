@@ -106,8 +106,11 @@ src/
   discord-receive.js       fallback Discord WS receive for older freddie builds
   llm.js                   model call wiring; resolveCallLLM (boot precedence: acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row, and fires an onRecover edge that drives drainQueuedTurns)
   dashboard/server.js      express API + anentrypoint-design SPA (observe/edit/override/reply); GET/POST /report public contact form (no token)
-test.js                    end-to-end suite (real thatcher + freddie + a real reachable LLM provider -- no stub, no mock)
 ```
+
+There is no automated test suite. Verification is manual/live: run `casey up`
+against real freddie/thatcher/a real LLM provider and exercise the actual
+conversation over Discord/WhatsApp or the dashboard.
 
 ## Dev workflow
 
@@ -117,7 +120,6 @@ node bin/casey.js init      # scaffold a .env (channel tokens, dashboard secret)
 node bin/casey.js doctor    # green/red preflight: deps, channels, port, token
 node bin/casey.js up        # gateway + dashboard (default http://localhost:4000)
 npm run lint                # dependency-free preflight (syntax+config+package+ascii); the CI gate
-node test.js                # end-to-end suite (real services + a live acptoapi bridge required)
 ```
 
 CI: `.github/workflows/ci.yml` runs `npm run lint` (`scripts/lint.mjs`) on every
@@ -127,8 +129,7 @@ pure-llm grep-gate: `gateway-hooks.js` and `casey.js` must NOT import `intent.js
 `places.js`, or `extract.js` (all deleted -- casey does no deterministic text
 processing; the LLM records the report via `case_report`), and a no-stub-mock
 grep-gate (`src/`, `bin/`, `plugins/` must never reference `MockAdapter`, `stubLLM`,
-`CASEY_STUB_LLM`, or the deleted `sim/*` modules). Keep `test.js` as the
-real-services witness; do not move its real-services assertions into the lint gate.
+`CASEY_STUB_LLM`, or the deleted `sim/*` modules).
 
 Note: `freddie` and `thatcher` are npm `latest` dependencies (ALWAYS the newest
 published version, never pinned and never a local `file:../` sibling) -- a local
@@ -136,11 +137,9 @@ fix to either now requires a push to its own repo's `master` (both auto-publish
 on push) before `npm install` in casey picks it up; there is no more instant
 local-edit-to-live-box loop. `anentrypoint-design` remains a `file:../` sibling
 (dashboard UI, unaffected). Without the `../anentrypoint-design` checkout
-installed, `node test.js` and `casey up` fail with `ERR_MODULE_NOT_FOUND`; only
-static review is possible in a clone that lacks it. The dependency-free CI lint
-and a bare clone stay green regardless. `test.js` REQUIRES a live acptoapi bridge
-/ real LLM provider reachable at test time (default `:4800`) -- it can no longer
-run offline; there is no stub/mock fallback.
+installed, `casey up` fails with `ERR_MODULE_NOT_FOUND`; only static review is
+possible in a clone that lacks it. The dependency-free CI lint and a bare clone
+stay green regardless.
 
 ## Environment
 
@@ -449,11 +448,10 @@ timestamps with the digit-string-aware helpers (attn.js tsMs / case-health.js ms
 - ASCII only in source and docs -- no arrow/box/bullet/check glyphs or emoji
   (use `->`, `-`, `[x]`/`[ ]`, words). Code operators are exempt.
 - ES modules (`"type": "module"`), Node >= 22.
-- The single end-to-end `test.js` against real services is the test surface;
-  do not add a parallel mock-heavy unit suite.
+- No automated test suite (removed by explicit user directive); verification
+  is manual/live against a real running `casey up` instance. Do not add a
+  test file or mock-heavy unit suite back in without explicit direction.
 - thatcher's sqlite handle is cwd-bound (primes `getDatabase()` from `<cwd>/data/app.db`
-  at init; re-importing the accessor forks a second handle). Relocate only via process
-  cwd: `test.js` copies the config to a temp dir and `chdir`s there so a run never wipes
-  a live `casey up` store, with freddie `file:../` imports anchored to `REPO_ROOT`.
+  at init; re-importing the accessor forks a second handle).
 
 @.gm/next-step.md

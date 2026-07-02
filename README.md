@@ -160,17 +160,15 @@ node bin/casey.js cases         # list cases (empty -> hint on how to make one)
 node bin/casey.js show <ref|id> # show a case + full timeline
 node bin/casey.js --version     # print the version  (also --help / -h on any command)
 npm run lint                    # dependency-free preflight: JS syntax + config + package + ascii
-node test.js                    # end-to-end suite (real thatcher + freddie + a real reachable LLM provider)
 ```
 
 `npm run lint` (`node scripts/lint.mjs`) runs every check that works from a bare
 clone -- `node --check` on all JS, a YAML parse of `thatcher.config.yml`,
 `package.json` sanity, and the ASCII-only source convention. It needs no sibling
 checkouts, so it is the gate the GitHub Actions `ci` workflow
-(`.github/workflows/ci.yml`) runs on every push and pull request. `node test.js`
-remains the full real-services witness and runs only where the `file:../` siblings
-(`freddie`, `anentrypoint-design`) and a fixed `thatcher` are installed, AND a live
-acptoapi bridge / real LLM provider is reachable -- there is no stub/mock fallback.
+(`.github/workflows/ci.yml`) runs on every push and pull request. There is no
+automated test suite; verification is manual/live against a real running
+`casey up` instance.
 
 `casey up` runs the real model via freddie's provider resolver (configure `~/.freddie`
 + a provider key). The agent always sends a safe fallback reply if the model errors,
@@ -215,7 +213,6 @@ casey/
     gateway-hooks.js         makeCaseHandler: case-aware inbound (agent-driven, no deterministic text processing), dedup, media, observe, fallback
     discord-receive.js       fallback Discord WS receive for older freddie builds
     dashboard/server.js      express API + anentrypoint-design-styled SPA (observe + edit + override + reply, plain-language mode + help overlay)
-  test.js                    end-to-end suite (real thatcher + freddie + a real reachable LLM provider -- no stub, no mock)
 ```
 
 ## thatcher

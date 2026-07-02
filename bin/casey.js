@@ -204,7 +204,7 @@ async function main() {
     const dataDir = path.join(process.cwd(), 'data')
     const dbFile = path.join(dataDir, 'app.db')
     console.log(existsSync(dbFile)
-      ? ok(`case data at ${dbFile} (test.js isolates to a temp cwd, so it will not wipe this)`)
+      ? ok(`case data at ${dbFile}`)
       : dim(`  no case data yet (will be created at ${dbFile})`))
     // port
     const port = Number(flags.port || 4000)

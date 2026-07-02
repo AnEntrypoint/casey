@@ -38,11 +38,10 @@ for (const f of jsFiles) {
   }
 }
 
-// 2. package.json parses and declares the casey bin + test script.
+// 2. package.json parses and declares the casey bin.
 try {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
   if (pkg.type !== 'module') note('package.json: expected "type":"module"')
-  if (!pkg.scripts || !pkg.scripts.test) note('package.json: missing scripts.test')
   if (!pkg.bin || !pkg.bin.casey) note('package.json: missing bin.casey')
 } catch (e) {
   note(`package.json: ${String(e.message || e)}`)
