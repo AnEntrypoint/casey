@@ -20,8 +20,8 @@ casey composes three existing projects and owns only the glue:
 
 | Layer | Project | Role |
 |-------|---------|------|
-| Agent + channels | `freddie` (`file:../freddie`) | Agent harness + Gateway with WhatsApp/Discord adapters, tools, sessions. |
-| System of record | `thatcher` (`file:../thatcher`, which deps `busybase` as `file:../busybase`) | Config-driven CRUD + workflow + RBAC + audit. Holds `case` / `event` / `contact` and the lifecycle state machine. |
+| Agent + channels | `freddie` (npm `latest`) | Agent harness + Gateway with WhatsApp/Discord adapters, tools, sessions. |
+| System of record | `thatcher` (npm `latest`, which deps `busybase` from the registry) | Config-driven CRUD + workflow + RBAC + audit. Holds `case` / `event` / `contact` and the lifecycle state machine. |
 | UI | `anentrypoint-design` (`file:../anentrypoint-design`) | webjsx + ripple-ui design system theming the dashboard. |
 | Conversation state | `adaptogen` (`file:../dstate`) | An AGENT-OWNED soft FSM (greeting/gathering/enquiring/answering/complete/handoff/closed). The LLM DECLARES its phase via `case_stage`; casey applies the dstate `transition()` and feeds `orient()` (current phase + legal next moves) into the prompt so the model keeps its place across turns. Durable per-case (the `conv_state` blob on the case row). Degrades to no-op when absent -- the raw report in the prompt still drives. |
 
@@ -56,9 +56,8 @@ owner field, PII-free), `case_new` (open + bind a fresh active case), and `case_
 `toolCtx` as the second argument.
 This is application-agnostic -- the store, the field/enum/projection vocabulary, and
 the role model arrive via a per-turn `toolCtx` and `plugins.case` config. CRM
-querying lives in thatcher (consumed as `file:../thatcher` for dev; npm
-publishing is restored and thatcher deps `busybase ^1.0.2` from the registry --
-see the sibling-chain section): `list()`
+querying lives in thatcher (consumed via npm `latest`; thatcher deps
+`busybase ^1.0.2` from the registry -- see the sibling-chain section): `list()`
 supports operator where-objects (`{field:{$gte,$lte,$in}}`, `$or`), array tie-broken
 sort, and opt-in row-access scoping (`opts.user` + a configurable owner field). casey
 is the configuration instance: `thatcher.config.yml` declares the entities,
@@ -113,7 +112,7 @@ test.js                    end-to-end suite (real thatcher + freddie + a real re
 ## Dev workflow
 
 ```sh
-npm install                 # requires sibling ../freddie and ../anentrypoint-design checkouts
+npm install                 # freddie/thatcher resolve from npm (latest); requires sibling ../anentrypoint-design checkout
 node bin/casey.js init      # scaffold a .env (channel tokens, dashboard secret)
 node bin/casey.js doctor    # green/red preflight: deps, channels, port, token
 node bin/casey.js up        # gateway + dashboard (default http://localhost:4000)
@@ -122,23 +121,26 @@ node test.js                # end-to-end suite (real services + a live acptoapi 
 ```
 
 CI: `.github/workflows/ci.yml` runs `npm run lint` (`scripts/lint.mjs`) on every
-push and PR. It is dependency-free on purpose -- it does NOT need the `file:../`
-siblings, so it stays green in a bare clone. It carries a pure-llm grep-gate:
-`gateway-hooks.js` and `casey.js` must NOT import `intent.js`, `places.js`, or
-`extract.js` (all deleted -- casey does no deterministic text processing; the LLM
-records the report via `case_report`), and a no-stub-mock grep-gate (`src/`, `bin/`,
-`plugins/` must never reference `MockAdapter`, `stubLLM`, `CASEY_STUB_LLM`, or the
-deleted `sim/*` modules). Keep `test.js` as the real-services witness; do not move
-its real-services assertions into the lint gate.
+push and PR. It is dependency-free on purpose -- it does NOT need the
+`anentrypoint-design` sibling, so it stays green in a bare clone. It carries a
+pure-llm grep-gate: `gateway-hooks.js` and `casey.js` must NOT import `intent.js`,
+`places.js`, or `extract.js` (all deleted -- casey does no deterministic text
+processing; the LLM records the report via `case_report`), and a no-stub-mock
+grep-gate (`src/`, `bin/`, `plugins/` must never reference `MockAdapter`, `stubLLM`,
+`CASEY_STUB_LLM`, or the deleted `sim/*` modules). Keep `test.js` as the
+real-services witness; do not move its real-services assertions into the lint gate.
 
-Note: `freddie` and `anentrypoint-design` are `file:../` dependencies (`../freddie`,
-`../anentrypoint-design`). Without those sibling checkouts (and `thatcher` from npm)
-installed, `node test.js` and `casey up` fail with `ERR_MODULE_NOT_FOUND`; only static
-review is possible in a clone that lacks them. The dependency-free CI lint and a bare
-clone stay green. `test.js` now REQUIRES the sibling checkouts (`../freddie`,
-`../thatcher`) AND a live acptoapi bridge / real LLM provider reachable at test time
-(default `:4800`) -- it can no longer run in a bare clone or offline; there is no
-stub/mock fallback.
+Note: `freddie` and `thatcher` are npm `latest` dependencies (ALWAYS the newest
+published version, never pinned and never a local `file:../` sibling) -- a local
+fix to either now requires a push to its own repo's `master` (both auto-publish
+on push) before `npm install` in casey picks it up; there is no more instant
+local-edit-to-live-box loop. `anentrypoint-design` remains a `file:../` sibling
+(dashboard UI, unaffected). Without the `../anentrypoint-design` checkout
+installed, `node test.js` and `casey up` fail with `ERR_MODULE_NOT_FOUND`; only
+static review is possible in a clone that lacks it. The dependency-free CI lint
+and a bare clone stay green regardless. `test.js` REQUIRES a live acptoapi bridge
+/ real LLM provider reachable at test time (default `:4800`) -- it can no longer
+run offline; there is no stub/mock fallback.
 
 ## Environment
 
@@ -414,22 +416,29 @@ the crash-budget stop state); the supervisor is its only I/O.
 - All contact-supplied text is HTML-escaped before render.
 - Token comparison uses `crypto.timingSafeEqual` to prevent timing oracles.
 
-## thatcher / busybase sibling chain
+## thatcher / busybase chain
 
-casey consumes thatcher as `file:../thatcher` (the dev source of truth: a local
-fix reaches the live box without a publish round-trip). npm publishing is
-RESTORED (NPM_TOKEN set 2026-07-02): thatcher publishes from CI on push and
-deps `busybase ^1.0.2` from the registry (1.0.2 is the floor -- the 1.0.1
-tarball was CI-built with a stale --external flag that inlined libsql behind a
-bun-only require shim and crashed under node; busybase publishes on v* tags,
-and its publish workflow now builds via `bun run build`, the single source of
-build flags). An npm consumer can `npm install thatcher` again; casey keeps the
-file: sibling for development.
-With the sibling chain the operator-where push-down is ACTIVE
-(`_thatcherSupportsOperators()` returns true); the equality-only JS fallback shim
-in `case-store.js` stays as npm-lag safety for a consumer still on old npm
-thatcher. busybase's `src/*.js` are gitignored bun-build outputs -- fixes go in
-the `.ts` sources and are rebuilt (`npm run build` in ../busybase). Timestamps
+casey consumes thatcher via npm `latest` (never a `file:../` sibling, per the
+user directive to always run freddie/thatcher off the registry) -- a local
+thatcher fix requires a push to thatcher's `master` (CI publishes automatically)
+before a fresh `npm install` in casey picks it up. npm publishing is RESTORED
+(NPM_TOKEN set 2026-07-02): thatcher publishes from CI on push and deps
+`busybase ^1.0.2` from the registry (1.0.2 is the floor -- the 1.0.1 tarball was
+CI-built with a stale --external flag that inlined libsql behind a bun-only
+require shim and crashed under node; busybase publishes on v* tags, and its
+publish workflow now builds via `bun run build`, the single source of build
+flags).
+Because casey is now ALWAYS effectively "a bare npm install" relative to
+thatcher's published version (never ahead of it via a local checkout), the
+operator-where FEATURE-DETECT shim (`_thatcherSupportsOperators()` in
+case-store.js, which probes the live thatcher instance at runtime rather than
+assuming a version) is the permanent code path, not a fallback edge case --
+it must stay correct against whatever thatcher `latest` currently ships, and
+the equality-only JS fallback remains live safety for the (now impossible in
+casey's own install, but still real for any consumer) case where a published
+thatcher predates operator-where support. busybase's `src/*.js` are gitignored
+bun-build outputs -- fixes go in the `.ts` sources and are rebuilt
+(`npm run build` in the busybase repo, not a casey sibling). Timestamps
 read back from busybase may be numeric-seconds STRINGS ("1782977388"): parse row
 timestamps with the digit-string-aware helpers (attn.js tsMs / case-health.js ms
 / format.js toDate), never bare Date.parse.

@@ -19,9 +19,9 @@
     "adaptogen": "file:../dstate",
     "anentrypoint-design": "file:../anentrypoint-design",
     "express": "^4.19.2",
-    "freddie": "file:../freddie",
+    "freddie": "latest",
     "js-yaml": "^4.1.0",
-    "thatcher": "file:../thatcher",
+    "thatcher": "latest",
     "ws": "^8.18.0",
     "xstate": "^5.32.0"
   }

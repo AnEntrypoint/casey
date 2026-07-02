@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// casey lint: dependency-free preflight that runs WITHOUT the sibling file:
-// deps (freddie, anentrypoint-design). Validates what can be checked from a
-// bare clone -- JS syntax, YAML config, package.json, and the ASCII-only
-// source convention from AGENTS.md. Exits nonzero on any failure so CI and
-// humans share one gate. Run: node scripts/lint.mjs (or npm run lint).
+// casey lint: dependency-free preflight that runs WITHOUT any install at all
+// (freddie/thatcher are npm `latest`; anentrypoint-design is still a `file:../`
+// sibling). Validates what can be checked from a bare clone -- JS syntax, YAML
+// config, package.json, and the ASCII-only source convention from AGENTS.md.
+// Exits nonzero on any failure so CI and humans share one gate. Run:
+// node scripts/lint.mjs (or npm run lint).
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, extname } from 'node:path'
