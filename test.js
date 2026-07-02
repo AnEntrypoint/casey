@@ -11,7 +11,7 @@ import { createCasey, Casey } from './src/casey.js'
 import { createDashboard } from './src/dashboard/server.js'
 import { runScript, MockAdapter } from './src/sim/inject.js'
 import { stubLLM } from './src/sim/stub-llm.js'
-import { intentReply, fallbackReply, reportMissingVisitCritical, jargonHits } from './src/gateway-hooks.js'
+import { intentReply, fallbackReply, jargonHits } from './src/gateway-hooks.js'
 import { fmtTimeSAST, fmtPhone27, toDate } from './src/format.js'
 import { rankAttention, attnReason, todoHint, caseHints } from './src/attn.js'
 import { buildOverview } from './src/overview.js'
@@ -1385,7 +1385,8 @@ async function main() {
       // return null here and fall through to the agent turn.
       const { detectContactIntent } = await import('./src/gateway-hooks.js')
       const stopHuman = [
-        ['STOP', 'stop'], ['hou op', 'stop'], ['yeka', 'stop'], ['genoeg', 'stop'],
+        ['STOP', 'stop'], ['hou op', 'stop'], ['yeka', 'stop'], ['genoeg boodskappe', 'stop'],
+        ['yeka imilayezo', 'stop'], ['no more messages', 'stop'],
         ['i want to talk to a human', 'human'], ['umuntu', 'human'], ['regte persoon', 'human'],
         ['call me please', 'human'],
         ['stop i need a human', 'stop'], ['help me reach a person', 'human'],
@@ -1393,8 +1394,55 @@ async function main() {
       for (const [inp, exp] of stopHuman)
         assert.equal(detectContactIntent(inp), exp, `"${inp}" -> ${detectContactIntent(inp)} expected ${exp}`)
       // No longer deterministic -- the agent handles these now.
-      for (const inp of ['any news?', 'enige nuus', '???', 'usizo', 'hulp', 'thank you', 'ngiyabonga', 'dankie', 'hi', 'sawubona', 'goeie more'])
+      for (const inp of ['any news?', 'enige nuus', '???', 'thank you', 'ngiyabonga', 'dankie', 'hi', 'sawubona', 'goeie more'])
         assert.equal(detectContactIntent(inp), null, `"${inp}" is now the agent's job, not a deterministic shortcut`)
+      // HELP-RESUME: the small multilingual help set returns 'help' (checked AFTER
+      // stop/human) so an opted-out contact can opt back in even model-down. For a
+      // live contact the handler ignores 'help' and the agent still answers.
+      for (const inp of ['help', 'hlp', 'help me', 'start', 'resume', 'hulp', 'usizo', 'nceda', 'uncedo', 'thusa'])
+        assert.equal(detectContactIntent(inp), 'help', `"${inp}" is the resume signal`)
+      assert.equal(detectContactIntent('help me reach a person'), 'human', 'human outranks help')
+      assert.equal(detectContactIntent('stop, help is not needed'), 'stop', 'stop outranks help')
+    })
+
+    await test('STOP_KEYS narrowing: in-conversation phrases with ambiguous words never opt out', async () => {
+      const { detectContactIntent } = await import('./src/gateway-hooks.js')
+      // The over-broad bare tokens (enough/cancel/genoeg/ngeke/yima/hambani) are gone:
+      // each of these live sentences used to falsely opt the worker out mid-report.
+      const falsePositives = [
+        'is that enough information',
+        'how do i cancel the vet visit',
+        'genoeg gras vir die beeste',
+        'ngeke ngikwazi ukufika namuhla',
+        'yima kancane ngisabheka izinkomo',
+        'hambani kahle bafowethu',
+      ]
+      for (const inp of falsePositives)
+        assert.notEqual(detectContactIntent(inp), 'stop', `"${inp}" must NOT opt the contact out`)
+      // The real opt-outs still fire.
+      assert.equal(detectContactIntent('stop'), 'stop', 'bare stop still opts out')
+      assert.equal(detectContactIntent('yeka imilayezo'), 'stop', 'yeka imilayezo still opts out')
+    })
+
+    await test('HELP-RESUME: an opted-out contact who sends help is opted back in and the agent resumes', async () => {
+      const chan = 'resume-optout'
+      await runScript(adapter, ['stop'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      let c = (await store.listCases()).find(x => x.external_id === chan)
+      assert.ok((c.tags || '').split(',').map(s => s.trim()).includes('opted-out'), 'STOP opted the contact out')
+      const before = adapter.sent.length
+      await runScript(adapter, ['help'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      c = await store.getCase(c.id)
+      assert.ok(!(c.tags || '').split(',').map(s => s.trim()).includes('opted-out'), 'help cleared the opted-out tag')
+      assert.ok(adapter.sent.length > before, 'help got a reply')
+      assert.ok((adapter.sent[adapter.sent.length - 1].text || '').trim().length > 0, 'the resume ack is non-empty')
+      const obs = (await store.listEvents(c.id)).filter(e => e.kind === 'observation').map(e => e.text)
+      assert.ok(obs.some(t => /OPT-BACK-IN/i.test(t)), 'the opt-back-in is recorded')
+      // A following report gets a normal agent turn (an agent outbound, not silence).
+      const before2 = adapter.sent.length
+      await runScript(adapter, ['my goats are limping near Tzaneen'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+      assert.ok(adapter.sent.length > before2, 'a report after the resume gets a normal agent reply')
+      const lastOut = (await store.listEvents(c.id)).filter(e => e.kind === 'outbound').pop()
+      assert.equal(lastOut.actor, 'agent', 'the post-resume report was handled by the agent')
     })
 
     await test('STATUS on a later message is answered by the agent (the case status, PII-free)', async () => {
@@ -1545,21 +1593,24 @@ async function main() {
   // offline (en/af/zu/xh + Sotho/Tswana fallbacks). A farmer who writes in
   // Afrikaans must not get an English canned reply. Pure functions, asserted
   // directly. (The live model handles any other language.)
-  await test('localized intentReply: thanks mirrors the contact language (SA)', async () => {
+  await test('localized intentReply: only the reachable deterministic branches (stop/human/resume), per language', async () => {
     const c = { ref: 'CASE-9-x', status: 'new' }
-    assert.match(intentReply('thanks', c, 'af'), /Plesier|Dankie/, 'Afrikaans thanks')
-    assert.match(intentReply('thanks', c, 'af'), /U verwysing is CASE-9-x/, 'Afrikaans ref tail')
-    assert.match(intentReply('thanks', c, 'zu'), /Wamukelekile|Siyabonga/, 'isiZulu thanks')
-    assert.match(intentReply('thanks', c, 'xh'), /Wamkelekile|Enkosi/, 'isiXhosa thanks')
-    assert.match(intentReply('thanks', c, 'en'), /welcome|reporting/i, 'English default')
-    assert.match(intentReply('thanks', c, 'zz'), /welcome|reporting/i, 'unknown lang falls back to English')
-  })
-  await test('localized intentReply: status reply stays in one language (SA)', async () => {
-    const c = { ref: 'CASE-9-y', status: 'in_progress' }
-    const af = intentReply('status', c, 'af')
-    assert.match(af, /span|werk/i, 'Afrikaans status body')
-    assert.match(af, /MENS/, 'Afrikaans status tail keyword')
-    assert.ok(!/Reply HUMAN/.test(af), 'no English tail leaking into Afrikaans status')
+    // STOP ack mirrors the contact language and cites the ref.
+    assert.match(intentReply('stop', c, 'af'), /Goed, ons sal u nie weer boodskap nie/, 'Afrikaans stop ack')
+    assert.match(intentReply('stop', c, 'af'), /U verwysing is CASE-9-x/, 'Afrikaans ref tail')
+    assert.match(intentReply('stop', c, 'zu'), /Kulungile/, 'isiZulu stop ack')
+    assert.match(intentReply('stop', c, 'en'), /HELP/, 'the stop ack promises HELP resumes messages')
+    // HUMAN ack.
+    assert.match(intentReply('human', c, 'xh'), /Sicela umntu/, 'isiXhosa human ack')
+    assert.match(intentReply('human', c, 'en'), /person from the team/, 'English human ack')
+    // RESUME (help after stop) ack.
+    assert.match(intentReply('resume', c, 'en'), /Welcome back/, 'English resume ack')
+    assert.match(intentReply('resume', c, 'af'), /Welkom terug/, 'Afrikaans resume ack')
+    assert.ok(intentReply('resume', c, 'zu').length > 0 && intentReply('resume', c, 'xh').length > 0, 'zu/xh resume acks exist')
+    // Unknown language falls back to English; unreachable intents return ''.
+    assert.match(intentReply('stop', c, 'zz'), /Okay, we will not message you again/, 'unknown lang falls back to English')
+    for (const dead of ['status', 'thanks', 'greeting', 'help'])
+      assert.equal(intentReply(dead, c, 'en'), '', `"${dead}" has no deterministic reply any more (the agent owns it)`)
   })
   await test('localized fallbackReply: holding message mirrors language + cites ref (SA)', async () => {
     const c = { ref: 'CASE-9-z' }
@@ -2004,15 +2055,8 @@ async function main() {
     assert.ok(Object.keys(rep).length >= 1, `offline intake recorded report fields: ${JSON.stringify(rep)}`)
   })
 
-  // One-shot capture: the worker leaves the site after the first conversation, so
-  // a closing "thanks" with a critical on-site fact still missing must NOT take the
-  // canned shortcut -- it defers to the agent for one gentle ask, exactly once.
-  await test('reportMissingVisitCritical flags incomplete reports, clears when ready', async () => {
-    assert.equal(reportMissingVisitCritical(null), true, 'no report -> missing')
-    assert.equal(reportMissingVisitCritical(JSON.stringify({ species: 'cattle' })), true, 'partial -> missing')
-    const full = { species: 'cattle', symptoms: 'drooling', location: 'Musina', how_to_find: 'past baobab', farmer_available: 'yes', contact_fallback: '0721234567' }
-    assert.equal(reportMissingVisitCritical(JSON.stringify(full)), false, 'all visit-critical present -> ready')
-  })
+  // (reportMissingVisitCritical was deleted with the dead-code strip: nothing in the
+  // handler read it any more -- VISIT_CRITICAL completeness is case-health's job.)
   await test('closing "thanks" always gets a reply, never silence (the agent handles the close)', async () => {
     // PURE-AGENT: the deterministic one-shot CLOSING-NUDGE is removed -- the agent
     // handles a closing "thanks". The surviving contract is that a thanks is never a
@@ -2310,12 +2354,131 @@ async function main() {
     const torn = { id: 'cs2', ref: 'CASE-2', report: '{}', conv_state: '{not valid json' }
     const o = await orientCase(torn, {})   // torn blob -> fresh machine (or null if adaptogen absent)
     assert.ok(o === null || o.state === 'greeting', `a torn blob degrades to fresh/null, never throws: ${JSON.stringify(o)}`)
-    // advance on an enforcement:off edge (handoff) returns applied:false and does NOT
-    // persist a cursor move (a hard-off edge is allowed but does not move).
     const store = { setConvState: async () => { throw new Error('conv_state field absent') } }
     const adv = await advanceCase(store, { id: 'cs3', ref: 'CASE-3', report: '{}' }, 'gathering', {})
     // Even when setConvState throws (unpublished column), advance does not throw.
     assert.ok(adv === null || typeof adv.applied === 'boolean', 'advance never throws even when the store write fails')
+  })
+
+  await test('dstate: handoff/closed are short-circuited (never applied/persisted) and a trapped blob can recover', async () => {
+    const { orientCase, advanceCase } = await import('./src/conversation-state.js')
+    // advanceCase to handoff/closed must return applied:false WITHOUT moving or
+    // persisting the cursor: a real adaptogen enforcement:'off' edge DOES apply, and
+    // a cursor at handoff/closed would be trapped forever (no outgoing intake edges).
+    const caseRow = { id: 'sink1', ref: 'CASE-S1', report: '{}' }
+    let wrote = false
+    const store = { setConvState: async (id, blob) => { wrote = true; caseRow.conv_state = blob } }
+    for (const sink of ['handoff', 'closed']) {
+      const adv = await advanceCase(store, caseRow, sink, {})
+      assert.ok(adv && adv.applied === false && adv.to === sink, `${sink} returns applied:false: ${JSON.stringify(adv)}`)
+    }
+    assert.ok(!wrote && caseRow.conv_state === undefined, 'conv_state unchanged by a handoff/closed declaration')
+    const o = await orientCase(caseRow, {})
+    assert.ok(o === null || o.state === 'greeting', 'the cursor never moved into the sink')
+    // Belt and braces: a PRE-EXISTING blob already persisted at handoff (from before
+    // the short-circuit) must orient with recovery moves, not legalMoves:[] forever.
+    const seeded = { id: 'sink2', ref: 'CASE-S2', report: '{}' }
+    const st2 = { setConvState: async (id, blob) => { seeded.conv_state = blob } }
+    // Build a blob at handoff by transitioning the machine directly through the spec
+    // (bypassing advanceCase's short-circuit) via a raw adaptogen import when present.
+    let atHandoff = null
+    try {
+      const m = await import('adaptogen')
+      const A = m.Adaptogen || m.DState
+      const { CONVERSATION_SPEC } = await import('./src/conversation-spec.js')
+      const ds = A.open(':memory:', { seed: false, lock: false })
+      ds.plan(CONVERSATION_SPEC)
+      ds.transition('handoff', {})
+      atHandoff = JSON.stringify(ds.export())
+    } catch { atHandoff = null }
+    if (atHandoff) {
+      seeded.conv_state = atHandoff
+      const oh = await orientCase(seeded, {})
+      assert.ok(oh && oh.state === 'handoff', `the seeded blob rehydrates at handoff: ${JSON.stringify(oh)}`)
+      assert.ok(oh.legalMoves.length > 0, `a handoff cursor is not a dead-end (recovery edges exist): ${JSON.stringify(oh.legalMoves)}`)
+      const back = await advanceCase(st2, seeded, 'gathering', {})
+      assert.ok(back && back.applied, 'a trapped blob moves back to gathering')
+    }
+  })
+
+  await test('enquiry routing: the prompt names the REAL data tools and case_intent is gone', async () => {
+    const { caseSystemPrompt } = await import('./src/gateway-hooks.js')
+    const p = caseSystemPrompt({ ref: 'CASE-9', id: 'x', status: 'new', report: '{}', autonomy: 'auto', channel: 'discord' }, [], null, {})
+    for (const tool of ['case_today', 'case_mine', 'case_list', 'case_get'])
+      assert.ok(p.includes(tool), `the enquiry paragraph names ${tool}`)
+    assert.ok(!p.includes('case_intent'), 'the prompt no longer routes enquiries via the deleted case_intent')
+    // The tool itself is deleted from the toolset (record-only stub nothing read);
+    // case_stage stays because the dstate loop DOES read STAGE-DECLARED.
+    const { buildCaseToolset } = await import('./src/case-tools.js')
+    const names = buildCaseToolset(store).map(t => t.name)
+    assert.ok(!names.includes('case_intent'), 'case_intent tool deleted')
+    assert.ok(names.includes('case_stage'), 'case_stage tool kept')
+  })
+
+  await test('offline dstate loop: a two-turn report intake persists conv_state and orients at gathering', async () => {
+    // The stub now declares case_stage alongside case_report, so the FULL agent-
+    // declared loop (STAGE-DECLARED -> advanceCase -> conv_state blob -> orientCase)
+    // is witnessed offline through the real handler.
+    const chan = 'dstate-intake'
+    await runScript(adapter, ['my cattle are drooling near Musina'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    await runScript(adapter, ['about five of them are sick'], { from: chan, channel_id: chan, username: chan, wait: () => casey.drain() })
+    const c = (await store.listCases()).find(x => x.external_id === chan)
+    const row = await store.getCase(c.id)
+    // The AGENT half of the loop is always witnessed: the stub declared its phase.
+    const evs = await store.listEvents(c.id)
+    assert.ok(evs.some(e => /^STAGE-DECLARED gathering$/.test(e.text || '')), 'the stub declared the gathering phase via case_stage')
+    // The PERSISTENCE half needs both adaptogen (sibling checkout) and a thatcher
+    // with the conv_state column (npm-publish-lag caveat); degrade-safe otherwise.
+    if (row.conv_state && String(row.conv_state).length > 0) {
+      const { orientCase } = await import('./src/conversation-state.js')
+      const o = await orientCase(row, {})
+      if (o !== null) assert.equal(o.state, 'gathering', `the agent-declared phase rehydrates to gathering: ${JSON.stringify(o)}`)
+    }
+  })
+
+  await test('LLM-down queue: a degraded re-drive never burns the queued message; recovery drains it', async () => {
+    // (a) queue while down; (b) drainQueuedTurns while the provider STILL throws ->
+    // the fallback is recorded as an observation (not an outbound), the msgId stays
+    // queued and a queue-drive-retry lands; (c) after recovery, one real agent
+    // outbound + queue-drive-attempted.
+    const real = stubLLM()
+    let statusOk = false, providerUp = false
+    const callLLM = async (args) => { if (!providerUp) throw new Error('provider down'); return real(args) }
+    const qc = await createCasey({ channels: ['sim'], callLLM, llmStatus: async () => ({ ok: statusOk }), sweepIntervalMs: 0, notifyHandoff: async () => {} })
+    await qc.start()
+    try {
+      const qa = qc.adapters.sim
+      const chan = 'queue-noburn'
+      // An ENQUIRY message: the recovered stub answers it with a data-tool-composed
+      // reply (never the stock-ack shape the outbound scrub would zap to fallback),
+      // so the recovery drive is witnessed as a real non-degraded agent turn.
+      qa.inject({ from: chan, channel_id: chan, username: chan, text: 'how many cases are open', id: 'qnb-1' })
+      await qc.drain()
+      const c = (await qc.store.listCases()).find(x => x.external_id === chan)
+      let evs = await qc.store.listEvents(c.id)
+      assert.ok(evs.some(e => e.text === 'QUEUED-FOR-AGENT:qnb-1'), 'the inbound was queued while the LLM was down')
+      assert.equal(evs.filter(e => e.kind === 'outbound').length, 0, 'the holding ack is an observation, never an outbound')
+      // The status source flips green (a recovery edge fired) but the provider still
+      // throws mid-turn: the re-drive must NOT burn the message.
+      statusOk = true
+      const r1 = await qc.drainQueuedTurns()
+      evs = await qc.store.listEvents(c.id)
+      assert.ok(evs.some(e => typeof e.text === 'string' && e.text.startsWith('queue-drive-retry:qnb-1')), 'a degraded re-drive counts as a retry')
+      assert.ok(!evs.some(e => typeof e.text === 'string' && e.text.startsWith('queue-drive-attempted:qnb-1')), 'no attempted marker on a degraded re-drive')
+      assert.equal(evs.filter(e => e.kind === 'outbound').length, 0, 'no new outbound on a degraded re-drive (message not burned)')
+      assert.equal(r1.drained, 0, 'nothing counted as drained while degraded')
+      // Real recovery: the provider answers -> one real agent outbound + attempted.
+      providerUp = true
+      const r2 = await qc.drainQueuedTurns()
+      evs = await qc.store.listEvents(c.id)
+      assert.ok(evs.some(e => typeof e.text === 'string' && e.text.startsWith('queue-drive-attempted:qnb-1')), 'the recovered drive marks attempted')
+      const outs = evs.filter(e => e.kind === 'outbound')
+      assert.ok(outs.length >= 1 && outs.some(o2 => o2.actor === 'agent'), 'a real agent outbound landed on recovery')
+      assert.equal(r2.drained, 1, 'the queued message drained exactly once')
+    } finally {
+      // Deliberately NOT closed (mirrors the jargon-guard casey above): close()
+      // resets the process-wide case-store singleton the shared suite still uses.
+    }
   })
 
   await test('degraded fallback is a plain warm holding line (no computed ask), and Nguni handoff fires', async () => {
@@ -2777,8 +2940,11 @@ async function main() {
     const { case: seed } = await store.findOrCreateCase({ channel: 'sim', external_id: ext, contact: { display_name: nw, handle: nw } })
     await store.mergeReport(seed.id, { species: 'cattle', symptoms: 'sick', location: 'Musina', how_to_find: 'blue gate', farmer_available: 'yes', contact_fallback: '082' })
     const seeded = await store.getCase(seed.id)
-    const { reportMissingVisitCritical } = await import('./src/gateway-hooks.js')
-    assert.ok(!reportMissingVisitCritical(seeded.report), 'the seeded case is visit-complete')
+    {
+      const { VISIT_CRITICAL } = await import('./src/case-health.js')
+      const rep = JSON.parse(seeded.report || '{}')
+      assert.ok(VISIT_CRITICAL.every(k => rep[k] != null && String(rep[k]).trim() !== ''), 'the seeded case is visit-complete')
+    }
     const n = (await store.listCases({}, { limit: 10000 })).length
     const before = adapter.sent.length
     // Re-report with the same species/location the complete case already holds.

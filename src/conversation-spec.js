@@ -23,7 +23,12 @@
 // Enforcement is SOFT for the intake/enquiry arc (every move is allowed and merely
 // FLAGGED, never blocked -- a weak model that declares an out-of-arc phase still
 // moves, the flag is just observable), and OFF for the irreversible service edges
-// (handoff/closed) which the deterministic STOP/HUMAN short-circuit owns anyway.
+// (handoff/closed). NOTE: an enforcement:'off' edge still APPLIES and moves the
+// cursor in real adaptogen -- which is why advanceCase (conversation-state.js)
+// short-circuits handoff/closed and never applies them: the deterministic
+// STOP/HUMAN layer owns those states. The soft recovery edges OUT of handoff/
+// closed below are belt-and-braces for any pre-existing persisted blob whose
+// cursor already landed there.
 // The `intake` zone (greeting/gathering/complete) has intra/boundary:off so an
 // excursion into enquiring/answering is never counted a zone violation.
 export const CONVERSATION_SPEC = {
@@ -59,6 +64,11 @@ export const CONVERSATION_SPEC = {
     ['enquiring', 'closed', { enforcement: 'off', label: 'contact stopped' }],
     ['answering', 'closed', { enforcement: 'off', label: 'contact stopped' }],
     ['complete', 'closed', { enforcement: 'off', label: 'contact stopped' }],
+    // Recovery edges: a blob persisted at handoff/closed (from before advanceCase
+    // short-circuited those states) must not be trapped with legalMoves:[] forever.
+    ['handoff', 'gathering', { enforcement: 'soft', label: 'back from handoff' }],
+    ['handoff', 'enquiring', { enforcement: 'soft', label: 'enquiry after handoff' }],
+    ['closed', 'gathering', { enforcement: 'soft', label: 'opted back in' }],
   ],
   zones: [
     { name: 'intake', members: ['greeting', 'gathering', 'complete'], intra: 'off', boundary: 'off' },

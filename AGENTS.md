@@ -21,7 +21,7 @@ casey composes three existing projects and owns only the glue:
 | Layer | Project | Role |
 |-------|---------|------|
 | Agent + channels | `freddie` (`file:../freddie`) | Agent harness + Gateway with WhatsApp/Discord adapters, tools, sessions. |
-| System of record | `thatcher` (npm) | Config-driven CRUD + workflow + RBAC + audit. Holds `case` / `event` / `contact` and the lifecycle state machine. |
+| System of record | `thatcher` (`file:../thatcher`, which deps `busybase` as `file:../busybase`) | Config-driven CRUD + workflow + RBAC + audit. Holds `case` / `event` / `contact` and the lifecycle state machine. |
 | UI | `anentrypoint-design` (`file:../anentrypoint-design`) | webjsx + ripple-ui design system theming the dashboard. |
 | Conversation state | `adaptogen` (`file:../dstate`) | An AGENT-OWNED soft FSM (greeting/gathering/enquiring/answering/complete/handoff/closed). The LLM DECLARES its phase via `case_stage`; casey applies the dstate `transition()` and feeds `orient()` (current phase + legal next moves) into the prompt so the model keeps its place across turns. Durable per-case (the `conv_state` blob on the case row). Degrades to no-op when absent -- the raw report in the prompt still drives. |
 
@@ -36,7 +36,13 @@ The dashboard reads/edits thatcher over its API.
 setup + configuration.** freddie owns the agent harness (runTurn tool loop, plugin
 host, the acptoapi bridge, and a reference case toolset at
 `freddie/src/plugins/case/`) and threads `tool_choice` (e.g. `'required'`) through
-runTurn -> machine -> the bridge. casey registers its OWN case toolset
+runTurn -> machine -> the bridge -- a plain value applies on ITERATION 0 ONLY
+(then model choice) so a forced first tool call can never make loop termination
+unreachable; casey's handler passes `tool_choice: 'required'` to nudge a weak
+model into its first classify/record call, and casey's llm.js wrappers pass the
+request through whole (never destructure-and-drop params). The bridge's
+coder-agent cwd note ("use Bash/Read/Write") is OPT-IN via an explicit `cwd`
+param -- it must never leak into a contact-facing agent's prompt. casey registers its OWN case toolset
 (`plugins/case-tools/plugin.js` -> `src/case-tools.js`, discovered by
 `bootHost([CASEY_PLUGINS])`) into that host -- keeping one non-colliding set rather
 than double-registering freddie's overlapping tools. The agent acts entirely through
@@ -50,7 +56,9 @@ owner field, PII-free), `case_new` (open + bind a fresh active case), and `case_
 `toolCtx` as the second argument.
 This is application-agnostic -- the store, the field/enum/projection vocabulary, and
 the role model arrive via a per-turn `toolCtx` and `plugins.case` config. CRM
-querying lives in thatcher (consumed via npm, published by CI on push): `list()`
+querying lives in thatcher (consumed as `file:../thatcher`; org npm publishing is
+blocked until the NPM_TOKEN repo secret is set, so the sibling chain thatcher ->
+file:../busybase is the source of truth): `list()`
 supports operator where-objects (`{field:{$gte,$lte,$in}}`, `$or`), array tie-broken
 sort, and opt-in row-access scoping (`opts.user` + a configurable owner field). casey
 is the configuration instance: `thatcher.config.yml` declares the entities,
@@ -194,6 +202,10 @@ the crash-budget stop state); the supervisor is its only I/O.
   as a standalone poller for a host not running under `casey up`.)
 - Crash restart: a worker that exits non-zero is re-forked with exponential
   backoff, bounded by the crash budget so a boot-loop stops instead of thrashing.
+  EXCEPTION: exit code 44 (dashboard port EADDRINUSE) is config-fatal -- retrying
+  the same held port can never succeed, so the supervisor fails loud once
+  ("port is already in use (another casey running?)") and degrades immediately,
+  never a 5x re-fork storm.
 - The watch list is a fixed allowlist (`src/`, `../freddie/src`, `CASEY_RELOAD_PATHS`),
   never derived from contact input; the fork takes an argv array, never an
   interpolated shell string. Run `casey up --no-reload` to watch nothing and
@@ -275,9 +287,15 @@ the crash-budget stop state); the supervisor is its only I/O.
   instruction; everything else is a structural instruction the model composes.
 - **STOP/HUMAN are deterministic irreversible controls.** Only the two IRREVERSIBLE
   service acts -- opt-out and human-handoff -- short-circuit deterministically:
-  `detectContactIntent` returns `'stop' | 'human' | null` and fires in any
+  `detectContactIntent` returns `'stop' | 'human' | 'help' | null` and fires in any
   phrasing/language even when the LLM is down, ABOVE the LLM-down queue gate so an
-  opt-out during an outage is never deferred. Everything else (status, help,
+  opt-out during an outage is never deferred. `'help'` exists ONLY as the opt-out
+  ESCAPE HATCH: an opted-out contact who sends help/start/resume (multi-language)
+  is opted back in deterministically (tag cleared, localized resume ack) -- the
+  promised "reply HELP to resume" must work even with the model down. STOP_KEYS
+  are narrow: bare ambiguous tokens (enough/cancel/genoeg...) were removed; only
+  unambiguous opt-out words and explicit messaging-object phrases ("cancel
+  messages", "yeka imilayezo") opt a contact out. Everything else (status,
   greeting, thanks, enquiry, report, extraction) is the agent's job.
 - **No deterministic text processing: the agent interprets and acts.** casey does no
   deterministic classification of a worker's meaning. The LLM agent interprets each
@@ -305,7 +323,9 @@ the crash-budget stop state); the supervisor is its only I/O.
   ONE warm holding ack is sent, and the message is re-driven through the agent when
   the provider recovers. `makeResilientCallLLM` fires an `onRecover` edge and
   `casey.js drainQueuedTurns` drains the queue (status-gated, oldest-first
-  serialized, mark-attempted only after a successful drive, bounded retry ->
+  serialized, mark-attempted only after a successful NON-DEGRADED drive -- a
+  re-drive that ends in the fallback path stays queued (queue-drive-retry, no
+  duplicate outbound; the contact already got one holding ack), bounded retry ->
   dead-letter). STOP/HUMAN still fire synchronously via the deterministic
   short-circuit ABOVE the queue gate, so an opt-out during an outage is never
   deferred.
@@ -395,13 +415,22 @@ the crash-budget stop state); the supervisor is its only I/O.
 - All contact-supplied text is HTML-escaped before render.
 - Token comparison uses `crypto.timingSafeEqual` to prevent timing oracles.
 
-## thatcher shim caveat
+## thatcher / busybase sibling chain
 
-casey depends on the published thatcher npm package. Four upstream correctness
-bugs were fixed in the thatcher fork; until that fixed release is on npm, casey
-keeps small compatibility shims in `case-store.js` (`_createReload`, a parsed-graph
-transition validator, and a `&system_fields` config anchor). Remove the shims once
-casey depends on the fixed thatcher release. See README "thatcher" section.
+casey consumes thatcher as `file:../thatcher`, and thatcher consumes busybase as
+`file:../busybase` -- NOT npm. Org npm publishing is broken (the NPM_TOKEN repo
+secret is unset on the AnEntrypoint repos; the publish workflows silently skip
+`npm publish`), so npm carries stale versions (thatcher 1.0.7 equality-only).
+Setting NPM_TOKEN restores publishing; until then the sibling checkouts are the
+source of truth and thatcher's CI clones the busybase sibling before install.
+With the sibling chain the operator-where push-down is ACTIVE
+(`_thatcherSupportsOperators()` returns true); the equality-only JS fallback shim
+in `case-store.js` stays as npm-lag safety for a consumer still on old npm
+thatcher. busybase's `src/*.js` are gitignored bun-build outputs -- fixes go in
+the `.ts` sources and are rebuilt (`npm run build` in ../busybase). Timestamps
+read back from busybase may be numeric-seconds STRINGS ("1782977388"): parse row
+timestamps with the digit-string-aware helpers (attn.js tsMs / case-health.js ms
+/ format.js toDate), never bare Date.parse.
 
 ## Conventions
 

@@ -22,7 +22,10 @@ const DEFAULT_MODEL = process.env.CASEY_LLM_MODEL || 'claude/haiku'
 // same brain. The bridge reads FREDDIE_LLM_URL / FREDDIE_LLM_MODEL itself, but we
 // pass model explicitly so CASEY_LLM_MODEL is the single casey-facing knob.
 function bridgeBackend(bridge, model) {
-  return ({ messages, tools }) => bridge.callLLM({ messages, tools, model })
+  // Pass EVERYTHING through (tool_choice, future params) -- destructuring only
+  // {messages, tools} silently stripped tool_choice, severing the forced-first-call
+  // nudge the whole way down.
+  return (req) => bridge.callLLM({ ...req, model })
 }
 
 // Resolve the backend. `probe` (default true) decides whether an unset stub flag
@@ -126,15 +129,16 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
     return inflight
   }
 
-  const callLLM = async ({ messages, tools }) => {
+  const callLLM = async (req) => {
     const b = await ensure()
     if (!b) throw new Error('AI helper offline (provider unreachable); using holding reply')
     // Time the real turn so the health row sees completion-path latency. A throw
     // (timeout/error) records an unhealthy turn too, so a hanging provider that
     // never returns ok still flips the window to degraded on the next read.
+    // Full pass-through: tool_choice (and future params) must survive the wrapper.
     const t0 = clock()
     try {
-      const r = await b({ messages, tools })
+      const r = await b(req)
       recordTurn(clock() - t0, true)
       return r
     } catch (e) {

@@ -20,7 +20,11 @@ function tagList(c) {
 // string and returns NaN). Mirrors case-health.js ms() so the two surfaces agree.
 function tsMs(raw) {
   if (raw == null || raw === '') return NaN
-  if (typeof raw === 'number') return raw < 1e12 ? raw * 1000 : raw   // seconds -> ms
+  // The store may hand back a numeric timestamp as a STRING ("1782977388" --
+  // busybase binds values as text); Date.parse on a bare digit string is NaN,
+  // so coerce all-digit strings to a number first (matches format.js toDate).
+  const n = typeof raw === 'number' ? raw : (/^\d+$/.test(String(raw)) ? Number(raw) : NaN)
+  if (!Number.isNaN(n)) return n < 1e12 ? n * 1000 : n   // seconds -> ms
   const t = Date.parse(raw)
   return Number.isNaN(t) ? NaN : t
 }

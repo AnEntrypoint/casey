@@ -470,9 +470,14 @@ export class Casey {
     if (this._draining) return { scanned: 0, drained: 0, deferred: true }
     const handle = this.gateway?.handleInbound
     if (typeof handle !== 'function') return { scanned: 0, drained: 0 }
-    // (a) hard status gate -- only drain when the backend is actually back.
+    // (a) hard status gate -- only drain when the backend is actually back. Falls
+    // back to opts.llmStatus / callLLM.status when resilientStatus was not wired
+    // (e.g. an embedded/test Casey built via createCasey without a worker shell).
     try {
-      const st = await this.resilientStatus?.()
+      const statusFn = this.resilientStatus
+        || this.opts.llmStatus
+        || (typeof this.opts.callLLM?.status === 'function' ? this.opts.callLLM.status.bind(this.opts.callLLM) : null)
+      const st = statusFn ? await statusFn() : null
       if (st && st.ok === false) return { scanned: 0, drained: 0, degraded: true }
     } catch { /* if status is unavailable, fall through and let the turn throw-guard handle it */ }
     this._draining = true
@@ -514,9 +519,26 @@ export class Casey {
         scanned++
         for (const [id, ev] of pending) {
           if (drained >= maxRedrives) break
-          const msg = { from: c.external_id, text: ev.text || '', platform: c.channel, resume: true, raw: { channel_id: c.external_id, id, author: {} } }
+          // queuedRedrive marks this as a QUEUE re-drive (vs a boot resume): a
+          // degraded turn then records an observation instead of an outbound so
+          // the queued msgId is never positionally burned.
+          const msg = { from: c.external_id, text: ev.text || '', platform: c.channel, resume: true, queuedRedrive: true, raw: { channel_id: c.external_id, id, author: {} } }
           try {
-            await handle.call(this.gateway, c.channel, msg)
+            const res = await handle.call(this.gateway, c.channel, msg)
+            // A DEGRADED re-drive (the turn ended in the fallback path -- the agent
+            // never actually understood the message) is a FAILED attempt, not a
+            // completion: count it toward the retry cap and keep the msg queued.
+            if (res && res.degraded) {
+              const n = (attempts.get(id) || 0) + 1
+              this.log?.warn?.('[casey] queue drive degraded', { caseId: c.id, msgId: id, attempt: n })
+              if (n >= retryCap) {
+                try { await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-failed:${id}` }) } catch { /* best effort */ }
+              } else {
+                try { await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-retry:${id}` }) } catch { /* best effort */ }
+              }
+              // The backend is evidently still shaky -- stop this case's drain.
+              break
+            }
             // (c) mark attempted only AFTER a successful drive (handle sends/records
             // the reply). A throw skips the marker so the message stays queued.
             await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-attempted:${id}` })
@@ -581,6 +603,10 @@ export class Casey {
 export async function createCasey(opts) {
   const c = new Casey(opts)
   await c.init()
+  // Wire the drain gate's status source when the caller gave one, so an embedded
+  // Casey (tests, sim) gets the same hard status()-gate as the worker shell, which
+  // overwrites this with the resilient backend's status.
+  if (!c.resilientStatus && opts?.llmStatus) c.resilientStatus = opts.llmStatus
   return c
 }
 

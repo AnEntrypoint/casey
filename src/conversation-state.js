@@ -71,12 +71,20 @@ export async function orientCase(caseRow, vars = {}) {
 }
 
 // Apply an agent-declared phase move and persist the new bundle on the case row.
-// Only persists when the transition ACTUALLY applied (an enforcement:off handoff/
-// closed edge returns applied:false -- it is allowed but does not move the cursor,
-// so nothing to persist). Degrades to a no-op when adaptogen is absent or any step
-// throws (setConvState is itself try/catch-guarded in the store). Returns
-// { applied, softWarned, from, to } or null when degraded.
+// handoff/closed are SHORT-CIRCUITED here and never applied or persisted: an
+// enforcement:'off' edge in real adaptogen DOES apply and moves the cursor, and a
+// cursor at handoff/closed would be trapped (no outgoing intake edges -> orient
+// shows done forever). The deterministic STOP/HUMAN layer owns those states; the
+// conversation FSM keeps tracking the recoverable intake/enquiry arc. Degrades to
+// a no-op when adaptogen is absent or any step throws (setConvState is itself
+// try/catch-guarded in the store). Returns { applied, softWarned, from, to } or
+// null when degraded.
 export async function advanceCase(store, caseRow, to, vars = {}) {
+  if (to === 'handoff' || to === 'closed') {
+    let from = null
+    try { from = (await orientCase(caseRow, vars))?.state ?? null } catch { from = null }
+    return { applied: false, softWarned: false, from, to }
+  }
   try {
     const ds = await machine(caseRow?.conv_state)
     if (!ds) return null

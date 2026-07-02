@@ -175,35 +175,11 @@ export function buildCaseToolset(storeOrNull) {
         return { ok: true }
       },
     },
-    {
-      name: 'case_intent',
-      toolset: 'cases',
-      schema: {
-        name: 'case_intent',
-        description: 'Declare what the person\'s latest message IS, so casey routes it correctly. Call this when the message is NOT a fresh animal report -- e.g. they are asking about existing cases ("what is on today", "my cases", "any reports in <a town or province like Margate or KZN>"), asking how many reports are open ("how many open cases"), where the hotspots are ("which area has the most reports"), which outbreaks are suspected ("where are the outbreaks"), an overall picture ("how are we doing"), or what is overdue for a reply ("whats running late") -- as well as a general question or a greeting. casey lists the reports / answers the question itself; you do not need to. Leave report intake to your normal tools.',
-        parameters: {
-          type: 'object',
-          properties: {
-            id: str('Case id'),
-            kind: str('What the message is', { enum: ['report', 'enquiry', 'question', 'chitchat', 'status', 'help', 'human', 'stop'] }),
-            enquiry_kind: str('For an enquiry: which view', { enum: ['today', 'mine', 'open', 'near', 'count', 'geo', 'outbreaks', 'overview', 'overdue'] }),
-            place: str('For a place enquiry: the town or province named (e.g. "Margate" or "kzn" / "Eastern Cape")'),
-          },
-          required: ['id', 'kind'],
-        },
-      },
-      // The declaration is recorded as a durable, append-only observation. The gateway
-      // reads the most recent INTENT-DECLARED marker for the current message and lets
-      // it OVERRIDE the deterministic soft fallback -- so a capable model's reading of
-      // an ambiguous message wins, while a weak model that says nothing still routes
-      // via the fallback. Recording-only here keeps the tool side-effect-light and the
-      // routing decision in one place (the gateway).
-      handler: async ({ id, kind, enquiry_kind, place }) => {
-        const payload = { kind, ...(enquiry_kind ? { enquiry_kind } : {}), ...(place ? { place } : {}) }
-        await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: `INTENT-DECLARED ${JSON.stringify(payload)}`, data: payload })
-        return { ok: true, intent: payload }
-      },
-    },
+    // (case_intent was deleted: it was a record-only stub whose INTENT-DECLARED
+    // marker nothing read after the pure-LLM strip -- an enquiry declared through it
+    // produced NOTHING. The prompt now directs the model straight to the real data
+    // tools: case_today / case_mine / case_list / case_get. case_stage stays -- the
+    // dstate loop DOES read its STAGE-DECLARED marker.)
     {
       name: 'case_transition',
       toolset: 'cases',

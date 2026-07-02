@@ -228,6 +228,15 @@ export function createSupervisor(opts = {}) {
       // crash -- inflating the restart count, burning a backoff, and wrongly eating
       // the crash budget on rapid reloads. The child-local flag stays true.
       if (child._expectedExit || draining) return
+      // Exit code 44 = config-fatal (the worker's dashboard port is already held by
+      // another process). Retrying the same port can never succeed, so fail loud
+      // ONCE with the actionable message and degrade immediately -- never a 5x
+      // re-fork storm that ends in a budget message pointing nowhere.
+      if (code === 44) {
+        fire('BUDGET_EXCEEDED', now, ctx.lastCrashReason || 'dashboard port in use')
+        log.error?.('[supervisor] worker port is already in use (another casey running?) -- not restarting. Stop the other instance or pass a different --port.', { code })
+        return
+      }
       // Unexpected exit == crash. Record, count against the budget, restart-or-degrade.
       ctx.crashes.push(now)
       ctx.lastCrashReason = ctx.lastCrashReason || `worker exited code=${code} signal=${signal || ''}`

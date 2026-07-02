@@ -22,7 +22,7 @@
     "express": "^4.19.2",
     "freddie": "file:../freddie",
     "js-yaml": "^4.1.0",
-    "thatcher": "^1.0.7",
+    "thatcher": "file:../thatcher",
     "ws": "^8.18.0",
     "xstate": "^5.32.0"
   }

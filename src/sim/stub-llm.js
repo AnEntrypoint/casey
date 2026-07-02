@@ -154,15 +154,20 @@ export function stubLLM() {
     }
     if (shape.kind === 'enquiry') {
       const ek = shape.enquiry_kind
+      // Like a real model, the stub also DECLARES its phase (case_stage) alongside the
+      // data call, so the dstate loop (STAGE-DECLARED -> advanceCase) is exercised
+      // offline. case_stage results render '' in composeFromToolResult, so the reply
+      // still comes from the data tool's rows.
+      const stage = toolNames.has('case_stage') ? [{ id: 'sg1', name: 'case_stage', arguments: { to: 'enquiring' } }] : []
       if ((ek === 'near') && shape.place && toolNames.has('case_list')) {
-        return { content: '', tool_calls: [{ id: 'l1', name: 'case_list', arguments: { location: shape.place } }] }
+        return { content: '', tool_calls: [...stage, { id: 'l1', name: 'case_list', arguments: { location: shape.place } }] }
       }
-      if (ek === 'mine' && toolNames.has('case_mine')) return { content: '', tool_calls: [{ id: 'm1', name: 'case_mine', arguments: {} }] }
-      if ((ek === 'today' || ek === 'open') && toolNames.has('case_today')) return { content: '', tool_calls: [{ id: 'd1', name: 'case_today', arguments: {} }] }
+      if (ek === 'mine' && toolNames.has('case_mine')) return { content: '', tool_calls: [...stage, { id: 'm1', name: 'case_mine', arguments: {} }] }
+      if ((ek === 'today' || ek === 'open') && toolNames.has('case_today')) return { content: '', tool_calls: [...stage, { id: 'd1', name: 'case_today', arguments: {} }] }
       // Fleet aggregates (count/geo/outbreaks/overview/overdue): list the caseload
       // (no status filter -- the case enum has no literal 'open' state) and
       // composeFromToolResult renders a PII-free aggregate scalar from the count.
-      if (toolNames.has('case_list')) return { content: '', tool_calls: [{ id: 'a1', name: 'case_list', arguments: {} }] }
+      if (toolNames.has('case_list')) return { content: '', tool_calls: [...stage, { id: 'a1', name: 'case_list', arguments: {} }] }
     }
 
     // REPORT / chitchat: the agent logs the case for the team. On the FIRST turn it
@@ -181,6 +186,16 @@ export function stubLLM() {
     }
     if (Object.keys(fields).length && toolNames.has('case_report')) {
       calls.push({ id: 'r1', name: 'case_report', arguments: { id: caseId, ...fields } })
+      // Declare the intake phase like a real model would, so the offline path
+      // exercises the STAGE-DECLARED -> dstate advance loop.
+      if (toolNames.has('case_stage')) calls.push({ id: 'sg2', name: 'case_stage', arguments: { to: 'gathering' } })
+    }
+    // A wrap-up ("thanks", a goodbye) once report fields already exist -> the report
+    // is on record: declare 'complete' (the recoverable dstate phase, never a sink).
+    const wrapUp = /\b(thanks|thank you|dankie|ngiyabonga|enkosi|bye|goodbye|cheers)\b/i.test(lastUser)
+    const haveRecorded = !/\(nothing recorded yet\)/.test(sys)
+    if (!calls.length && wrapUp && haveRecorded && toolNames.has('case_stage')) {
+      calls.push({ id: 'sg3', name: 'case_stage', arguments: { to: 'complete' } })
     }
     if (calls.length) return { content: '', tool_calls: calls }
     // Nothing to record (a later greeting/chitchat): a warm reply. The agent composes

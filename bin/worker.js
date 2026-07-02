@@ -170,7 +170,11 @@ async function main() {
   } catch (e) {
     if (forked) ipcSend(process, WORKER_MSG.FATAL, { reason: `dashboard bind failed: ${e.message}` })
     console.error(`[worker] dashboard failed to bind port ${dashPort}: ${e.message}`)
-    process.exit(1)
+    // A held port can never succeed by retrying the same port: exit with the
+    // distinct config-fatal code so the supervisor stops instead of crash-looping
+    // into the budget (witnessed: 5x EADDRINUSE re-forks -> degraded with no clear
+    // message when a stale worker held the port).
+    process.exit(/EADDRINUSE/.test(String(e && e.message)) ? 44 : 1)
   }
 
   // Graceful drain shared by SIGINT (standalone) and PARENT_MSG.DRAIN (forked):

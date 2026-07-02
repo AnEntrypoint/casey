@@ -22,7 +22,6 @@ import { runTurn } from 'freddie'
 // deterministic itinerary answer is scrubbed by the SAME whitelist the agent's
 // enquiry tools use -- external_id/contact_id can never leak into a worker's list.
 import { projectCase, DEFAULT_PROJECTION } from '../../freddie/src/plugins/case/toolset.js'
-import { VISIT_CRITICAL } from './case-health.js'
 import { buildAlertPayload, buildSLAReport } from './report-analytics.js'
 import { buildGeo } from './geo.js'
 import { buildClusters } from './clusters.js'
@@ -47,8 +46,7 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
   let reportObj = null
   try { reportObj = caseRow.report ? JSON.parse(caseRow.report) : null } catch { reportObj = null }
   // != null (not falsy) so a recorded 0 -- e.g. affected_count: 0, "no animals
-  // affected" -- is shown to the agent as known, matching reportMissingVisitCritical
-  // and mostImportantMissingField, which both use the null check.
+  // affected" -- is shown to the agent as known.
   const haveFields = reportObj ? Object.keys(reportObj).filter(k => reportObj[k] != null) : []
   const reportLine = haveFields.length ? haveFields.map(k => `${k}=${truncate(String(reportObj[k]), 80)}`).join('; ') : '(nothing recorded yet)'
   return [
@@ -75,19 +73,21 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
     ` - observe -- do not change records; only reply and note what you observe.`,
     ``,
     // Tell the model the ENQUIRY path exists -- a structural instruction, no copyable
-    // sample reply (prompt-echo invariant). This is the first place case_intent is
-    // named; it turns the model's only enquiry hook from discover-it-yourself into an
-    // instruction, so "any cases in kzn" gets listed instead of deflected.
+    // sample reply (prompt-echo invariant). The enquiry answer comes from the REAL
+    // data tools (case_today / case_mine / case_list / case_get) -- the model CALLS
+    // the tool and composes its reply from the returned rows. There is no declare-
+    // and-wait hook: nothing reads a declared intent, so "any cases in kzn" must be
+    // answered by an actual case_list call, never from memory.
     `Sometimes the worker is not reporting a new animal but ASKING about existing`,
     `reports -- what is on today, their own reports, open work they could help with,`,
     `any reports in a place (a town or a province such as KwaZulu-Natal/kzn), how many`,
-    `reports are open, where the busiest areas or suspected outbreaks are, an overall`,
-    `picture of how things are going, or what is overdue for a reply. When the latest`,
-    `message is such an ask, call case_intent with kind "enquiry" and the matching`,
-    `enquiry_kind (today / mine / open / near / count / geo / outbreaks / overview /`,
-    `overdue), putting any town or province in place; casey works out the numbers and`,
-    `lists the reports for you, so do not answer from memory. Leave a fresh animal`,
-    `report to your normal tools.`,
+    `reports are open, or how things are going overall. When the latest message is`,
+    `such an ask, CALL the matching data tool and compose your answer from what it`,
+    `returns -- never from memory: case_today for what is on today, case_mine for`,
+    `their own reports, case_list (pass the town or province in the location`,
+    `parameter) for reports in a place or an overall count, and case_get for the`,
+    `standing of one specific report. The rows these tools return are already safe to`,
+    `share with the worker. Leave a fresh animal report to your normal tools.`,
     ``,
     // The "CURRENT CASE <ref> (id=<id>)" token is parsed by tooling/tests; keep it.
     `CURRENT CASE ${caseRow.ref} (id=${caseRow.id})  [private -- do not mention to the person]`,
@@ -118,10 +118,6 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
     `recent movement (auctions, new animals, shared grazing); how to identify the`,
     `animals. Record present_person, present_person_relation, owner_name, and`,
     `owner_contact as their own fields when you learn them, distinct from the worker.`,
-    `Also record the language: as soon as you can tell which language the person is`,
-    `writing in, record language_detected as a plain English name (e.g. 'English',`,
-    `'Afrikaans', 'isiZulu', 'isiXhosa', 'Sesotho', 'Setswana'). One word, once,`,
-    `on the first turn -- do not update it again unless it is clearly wrong.`,
     `Also record the language: as soon as you can tell which language the person is`,
     `writing in, record language_detected as a plain English name (e.g. 'English',`,
     `'Afrikaans', 'isiZulu', 'isiXhosa', 'Sesotho', 'Setswana'). One word, once,`,
@@ -642,13 +638,36 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // and fall through to the agent turn unchanged.
     const optedOut = (fresh.tags || '').split(',').map(s => s.trim()).includes('opted-out')
     const intent = detectContactIntent(inboundText)
+    // HELP-RESUME: an opted-out contact who sends "help" (any supported language)
+    // OPTS BACK IN -- the opted-out tag is cleared, the opt-back-in is recorded, and
+    // a short warm resume ack goes out. Subsequent messages reach the agent normally.
+    // Without this, a STOP was a permanent dead-end (nothing ever cleared the tag).
+    if (optedOut && intent === 'help') {
+      try { await store.updateCase(fresh.id, { tags: dropTag(fresh.tags, 'opted-out') }) }
+      catch (e) { log.warn?.('[casey] opt-back-in untag failed', { caseId: fresh.id, error: e.message }) }
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'OPT-BACK-IN: contact asked for help after opting out; messages resumed.' })
+      const text = intentReply('resume', fresh, guessLang(inboundText))
+      await store.appendEvent(fresh.id, {
+        kind: 'outbound', actor: 'system', channel,
+        text, data: { to: replyTo, intent: 'resume', deterministic: true },
+      })
+      const reply = { to: replyTo, text, platform, caseId: fresh.id, intent: 'resume' }
+      if (adapter?.send) {
+        try { await adapter.send(reply) }
+        catch (e) {
+          log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message })
+          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` })
+        }
+      }
+      return reply
+    }
     // Respect a prior opt-out: once someone said STOP, do not auto-reply again
-    // unless they explicitly ask for help or a human.
-    if (optedOut && intent !== 'help' && intent !== 'human') {
+    // unless they explicitly ask for help (handled above) or a human.
+    if (optedOut && intent !== 'human') {
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'contact previously opted out; no auto-reply' })
       return { to: replyTo, text: '', platform, caseId: fresh.id, optedOut: true }
     }
-    if (intent) {
+    if (intent === 'stop' || intent === 'human') {
       if (intent === 'human') {
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'HANDOFF REQUESTED: contact asked for a human. Needs an operator.' })
         // detectContactIntent returns 'human' for EVERY message with a human
@@ -781,6 +800,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, { orient: convOrient }) }],
         sessionKey: `case:${fresh.id}`,
         callLLM,
+        // Nudge the weak model into its first classify/record tool call. freddie
+        // applies tool_choice on ITERATION 0 ONLY (later iterations are model
+        // choice), so this cannot break loop termination -- the model is still free
+        // to end the turn with plain text once its first tool result is in. The
+        // offline stub ignores tool_choice, which is fine.
+        tool_choice: 'required',
         enabledToolsets: ['cases', 'core'],
         // Identity for the case/enquiry tools: WHO is asking (the message author),
         // the live store, the role for row-scoped enquiries, and the active case.
@@ -846,12 +871,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model recited stock ack (no case-specific content); replaced with advancing fallback' })
       text = ''
     }
-    // Set when the empty-model degraded branch has ALREADY produced the
-    // deterministic capture-driven reply (and recorded its FALLBACK-ASK). The
-    // precedence gate below must then NOT re-drive: a second drive re-reads the
-    // event log, sees the just-written FALLBACK-ASK for field A, asks field B
-    // instead, and overwrites the reply -- recording field A as asked-once while
-    // its question is never delivered, burning the field forever.
     // PURE-AGENT REPLY. The agent drives the whole conversation -- intake (asking the
     // next needed fact via case_report + the system prompt), enquiries, status, all of
     // it. casey no longer composes or overrides the reply deterministically; the ONLY
@@ -871,7 +890,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     }
     const fallbackBase = fallbackReply(inboundText, fresh)
     const isFallback = !text || text === fallbackBase || text.startsWith(fallbackBase) || text.includes(fallbackBase)
-    let pendingFallbackAsk = null
+    // A turn that ended in the fallback path (model error OR empty/echo/stock-ack)
+    // is DEGRADED: the agent never actually understood this message. Surfaced on
+    // the reply object so drainQueuedTurns can treat a degraded re-drive as a
+    // failed attempt instead of burning the queued message.
+    const degraded = errored || isFallback
 
     // Final guard before the reply leaves (send OR assisted draft): correct any
     // fabricated/stale case reference to this case's real ref. A weak model recites
@@ -974,6 +997,19 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       catch (e) { log.warn?.('[casey] ai-offline clear failed', { caseId: fresh.id, error: e.message }) }
     }
 
+    // A QUEUED message re-driven (msg.queuedRedrive, set only by drainQueuedTurns)
+    // while the backend is STILL degraded must NOT be burned: an outbound here
+    // would positionally complete the queued msgId in drainQueuedTurns, so the
+    // agent would never see the message. Record the failure as an OBSERVATION
+    // (which completes nothing) and send nothing -- the contact already got
+    // exactly one holding ack at queue time. A BOOT resume (resumePendingTurns)
+    // deliberately still sends the fallback: it marked attempted up-front, so
+    // suppressing there would leave the contact with no reply at all.
+    if (msg.queuedRedrive && degraded) {
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded re-drive; keeping queued (fallback not re-sent)' })
+      return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
+    }
+
     await store.appendEvent(fresh.id, {
       kind: 'outbound', actor: 'agent', channel,
       text, data: { to: replyTo, fallback: isFallback },
@@ -984,7 +1020,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // /channels/{to}/messages, so `to` must be the channel id; on WhatsApp,
     // conversationKey falls back to the phone number. msg.from (author id) silently
     // 404s on Discord and the contact never sees the reply.
-    const reply = { to: replyTo, text, platform, caseId: fresh.id }
+    const reply = { to: replyTo, text, platform, caseId: fresh.id, ...(degraded ? { degraded: true } : {}) }
     let delivered = true
     if (adapter?.send) {
       try { await adapter.send(reply) }
@@ -993,15 +1029,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message })
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` })
       }
-    }
-    // Record the once-per-field marker ONLY now that the question was actually
-    // delivered. A transient send failure leaves the field unmarked so it is
-    // re-asked next turn rather than silently burned. Best-effort: a marker append
-    // failure must never mask the reply that already went out.
-    if (delivered && pendingFallbackAsk) {
-      try {
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `FALLBACK-ASK:${pendingFallbackAsk.key} ${pendingFallbackAsk.via} asked the next still-missing on-site fact (once per field).` })
-      } catch (e) { log.warn?.('[casey] FALLBACK-ASK marker append failed', { caseId: fresh.id, error: e.message }) }
     }
     // ADVANCE the durable conversation state -- ONLY on a real, delivered, non-fallback
     // turn, and ONLY to the phase the AGENT itself DECLARED this turn (the newest
@@ -1103,19 +1130,6 @@ function inboundAudioNote(msg) {
 
 function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '...' : s }
 
-// Returns true when at least one visit-critical fact is still absent -- the
-// signal to let the agent make a single gentle closing ask instead of taking
-// the canned thanks-shortcut. Tolerates a missing/malformed report.
-// VISIT_CRITICAL is imported from case-health.js (canonical source).
-function parseReportSafe(raw) {
-  try { return raw ? JSON.parse(raw) : {} } catch { return {} }
-}
-
-export function reportMissingVisitCritical(reportRaw) {
-  const r = parseReportSafe(reportRaw)
-  return VISIT_CRITICAL.some(k => r[k] == null || String(r[k]).trim() === '')
-}
-
 // Contact intent detection -- low-literacy / multilingual handlers
 //
 // Low-literacy / multilingual contacts often send one word, an emoji, or a
@@ -1124,13 +1138,15 @@ export function reportMissingVisitCritical(reportRaw) {
 // beats a generated one. Matching is forgiving: lowercased, accent-stripped,
 // substring/keyword across several widely-spoken languages.
 //
-// Returns 'human' | 'stop' | null. This is the ONE deterministic safety layer the
-// pure-agent reshape KEEPS: STOP (opt-out) and HUMAN (handoff) are irreversible
-// service controls that must fire synchronously in any language even when the LLM
-// backend is down -- they can never be queued behind a holding ack. Every other
-// classification (status/help/greeting/thanks/enquiry/report) is now the agent's
-// job via the case tools; only these two stay hard-matched. Negation-guarded so
-// "dont stop" / "no human" cannot trip an irreversible action.
+// Returns 'human' | 'stop' | 'help' | null. This is the ONE deterministic safety
+// layer the pure-agent reshape KEEPS: STOP (opt-out) and HUMAN (handoff) are
+// irreversible service controls that must fire synchronously in any language even
+// when the LLM backend is down -- they can never be queued behind a holding ack.
+// 'help' (checked AFTER stop/human) exists ONLY so an opted-out contact can opt
+// back in ("Reply HELP any time"); for a live contact it falls through to the
+// agent turn like any other message. Every other classification (status/greeting/
+// thanks/enquiry/report) is the agent's job via the case tools. Negation-guarded
+// so "dont stop" / "no human" cannot trip an irreversible action.
 export function detectContactIntent(text) {
   const t = normalizeIntentText(text)
   if (!t) return null
@@ -1144,13 +1160,14 @@ export function detectContactIntent(text) {
   for (let i = 1; i < words.length; i++) if (NEGATORS.has(words[i - 1])) guarded.add(i)
   const liveWords = new Set(words.filter((_, i) => !guarded.has(i)))
   // A key is "live" when it appears unguarded. Multi-word keys must occur as
-  // consecutive UNGUARDED tokens, scanned by position so a repeated word cannot
-  // match at the wrong (guarded) occurrence.
+  // consecutive tokens; only a negator OUTSIDE the phrase (immediately before its
+  // first word) guards it -- a guard raised by a word INSIDE the phrase (e.g. the
+  // 'no' in "no more messages" guarding 'more') must not blank the phrase itself.
   const phraseLive = (keyWords) => {
     for (let i = 0; i + keyWords.length <= words.length; i++) {
       let ok = true
       for (let j = 0; j < keyWords.length; j++) {
-        if (words[i + j] !== keyWords[j] || guarded.has(i + j)) { ok = false; break }
+        if (words[i + j] !== keyWords[j] || (j === 0 && guarded.has(i))) { ok = false; break }
       }
       if (ok) return true
     }
@@ -1165,6 +1182,10 @@ export function detectContactIntent(text) {
   // NOT suppressed -- losing a real opt-out is worse than an occasional false one.
   if (live(STOP_KEYS)  && !STOP_EXCLUDE.some(p => padded.includes(` ${p} `)))  return 'stop'
   if (live(HUMAN_KEYS) && !HUMAN_EXCLUDE.some(p => padded.includes(` ${p} `))) return 'human'
+  // RESUME after opt-out: checked AFTER stop/human so "stop helping me" and "help
+  // me reach a person" keep their stronger meanings. Only the opted-out gate acts
+  // on 'help'; a live conversation lets it fall through to the agent.
+  if (live(HELP_KEYS)) return 'help'
 
   return null
 }
@@ -1173,13 +1194,20 @@ export function detectContactIntent(text) {
 // space-bounded phrases. Accent-stripped, lowercase (see normalizeIntentText).
 // Languages: en, es, pt, it, fr, de, zu (Zulu), xh (Xhosa), ar (transliterated),
 // hi (transliterated).
+// The bare over-broad tokens ('enough', 'cancel', 'genoeg', 'ngeke', 'yima',
+// 'hambani') were removed: each falsely opted a contact out mid-conversation
+// ("is that enough information", "how do i cancel the vet visit", Nguni
+// pleasantries). Ambiguous words now require an explicit messaging OBJECT
+// ("cancel messages", "genoeg boodskappe"); the unambiguous singles stay.
 const STOP_KEYS = [
-  'stop', 'unsubscribe', 'cancel', 'quit', 'leave me alone', 'go away',
-  'no more', 'remove me', 'opt out', 'optout', 'enough',
+  'stop', 'unsubscribe', 'quit', 'leave me alone', 'go away',
+  'remove me', 'opt out', 'optout',
   'stop msgs', 'stop sending', 'stop pls', 'i want stop',
-  'hou op', 'los my', 'genoeg',                      // af
-  'yeka', 'hambani', 'ngeke', 'yima', 'misa',        // zu
-  'yeka oku', 'hamba',                               // xh
+  'cancel messages', 'stop messages', 'no more messages',
+  'hou op', 'los my',                                          // af
+  'genoeg boodskappe', 'hou op met boodskappe',                // af (messaging object)
+  'yeka', 'misa imilayezo', 'yeka imilayezo',                  // zu
+  'yeka oku', 'hamba',                                         // xh
 ]
 const STOP_EXCLUDE = [
   'no stop', 'dont stop', 'do not stop', 'please dont stop', 'never stop',
@@ -1203,10 +1231,21 @@ const HUMAN_EXCLUDE = [
   'someone come', 'someone came', 'anyone coming', 'did someone',
 ]
 
-// STATUS/HELP/THANKS/GREETING keyword tables were removed with the pure-LLM strip:
-// the model answers all of those itself. detectContactIntent keeps ONLY the STOP_KEYS
-// / HUMAN_KEYS matcher below -- the two irreversible service controls that must fire
-// deterministically in any language even model-down.
+// RESUME set: the small multi-language "help" vocabulary that opts a STOPPED
+// contact back in. The opt-out ack promises "Reply HELP any time" -- this is the
+// matcher that honours it, so it must work model-down. For a live (not opted-out)
+// contact a 'help' hit falls through to the agent turn.
+const HELP_KEYS = [
+  'help', 'hlp', 'help me', 'start', 'resume',
+  'hulp',                    // af
+  'usizo', 'thusa',          // zu / sotho-tswana
+  'nceda', 'uncedo',         // xh
+]
+
+// STATUS/THANKS/GREETING keyword tables were removed with the pure-LLM strip: the
+// model answers all of those itself. detectContactIntent keeps ONLY STOP_KEYS /
+// HUMAN_KEYS (the two irreversible service controls that must fire
+// deterministically in any language even model-down) plus the HELP_KEYS resume set.
 
 // Lowercase, strip diacritics/emoji/punctuation, COLLAPSE any run of '?' to a
 // single '?' token (so "???" is a help signal, not an unmatchable "???" token),
@@ -1247,49 +1286,8 @@ export function canAgentAct(caseRow, action = 'reply') {
   return 'send'
 }
 
-// Plain-language, contact-safe description of where a request stands. Never
-// exposes the internal stage name.
-// Plain-language status, framed for a disease report: the team/field worker is
-// looking into it, not "your order". en + the SA languages guessLang can return.
-const STATUS_STRINGS = {
-  en: {
-    new: 'We have your report and the team will look at it very soon.', triaging: 'The team is looking at your report now.',
-    in_progress: 'Someone from the team is working on this now.',
-    waiting: 'The team has started and is waiting on one step. We will keep you posted.',
-    resolved: 'This has been dealt with. If anything is still wrong with the animals, just tell us.',
-    closed: 'This report is closed. Message any time if you see something new.',
-    _: 'The team is looking into your report.',
-  },
-  af: {
-    new: 'Ons het u verslag en die span sal baie gou daarna kyk.', triaging: 'Die span kyk nou na u verslag.',
-    in_progress: 'Iemand van die span werk nou hieraan.',
-    waiting: 'Die span het begin en wag op een stap. Ons sal u op hoogte hou.',
-    resolved: 'Dit is hanteer. As iets nog steeds fout is met die diere, se net vir ons.',
-    closed: 'Hierdie verslag is gesluit. Stuur enige tyd n boodskap as u iets nuuts sien.',
-    _: 'Die span kyk na u verslag.',
-  },
-  zu: {
-    new: 'Siwutholile umbiko wakho futhi ithimba lizowubheka maduzane.', triaging: 'Ithimba libheka umbiko wakho manje.',
-    in_progress: 'Othile ethimbeni usebenza kulokhu manje.',
-    waiting: 'Ithimba seliqalile futhi lilinde isinyathelo esisodwa. Sizokwazisa.',
-    resolved: 'Lokhu sekulungisiwe. Uma kukhona okusako ngezilwane, sitshele nje.',
-    closed: 'Lo mbiko uvaliwe. Thumela umlayezo noma nini uma ubona okuthile okusha.',
-    _: 'Ithimba libheka umbiko wakho.',
-  },
-  xh: {
-    new: 'Siwufumene umbiko wakho kwaye iqela liza kuwujonga kungekudala.', triaging: 'Iqela lijonga umbiko wakho ngoku.',
-    in_progress: 'Umntu weqela usebenza koku ngoku.',
-    waiting: 'Iqela seliqalile kwaye lilinde inyathelo elinye. Siza kukwazisa.',
-    resolved: 'Oku kulungisiwe. Ukuba kukho into engalunganga ngezilwanyana, sixelele nje.',
-    closed: 'Lo mbiko uvaliwe. Thumela umyalezo nanini na ukuba ubona into entsha.',
-    _: 'Iqela lijonga umbiko wakho.',
-  },
-}
-
-function plainStatus(status, lang = 'en') {
-  const S = STATUS_STRINGS[lang] || STATUS_STRINGS.en
-  return S[status] || S._
-}
+// (The STATUS_STRINGS/plainStatus tables were removed: detectContactIntent never
+// returns 'status' -- a status ask is the agent's job via case_get.)
 
 // Proactive, contact-safe note sent when a request MOVES to a new stage on an
 // OPERATOR's action. Warm, no jargon, no dashes-as-punctuation (reads as a bot).
@@ -1349,45 +1347,39 @@ export function makeTransitionNotifier(store, sendReply, { log = console } = {})
 // Localised to the SA languages guessLang can return; `lang` comes from
 // guessLang(inboundText) at the call site and falls through to English. Framed
 // for a disease report (a team will look into it), no order/ticket language.
+// Only the REACHABLE deterministic branches remain: stop (opt-out ack), human
+// (handoff ack), and resume (the help-after-stop opt-back-in ack). Everything else
+// (status/thanks/greeting) is the agent's job and its strings were removed.
 const INTENT_STRINGS = {
   en: {
-    help: 'We are here to help. Reply STATUS to check on your report, HUMAN to talk to a person, or STOP to end messages. Or just tell us what you are seeing with the animals.',
     stop: 'Okay, we will not message you again. Reply HELP any time if you change your mind.',
     human: 'Of course. We are asking a person from the team to help you now. They will reply right here as soon as they can.',
-    thanks: "You're welcome. Thank you for reporting it.",
-    greeting: 'Hello! Good to hear from you. Tell us what you are seeing with the animals.',
-    statusTail: ' Reply HUMAN any time to talk to a person.', refLabel: (r) => ` Your reference is ${r}.`,
+    resume: 'Welcome back. We are here to help again. Just tell us what you are seeing with the animals.',
+    refLabel: (r) => ` Your reference is ${r}.`,
   },
   af: {
-    help: 'Ons is hier om te help. Antwoord STATUS om u verslag na te gaan, MENS om met n persoon te praat, of STOP om nie meer boodskappe te kry nie. Of se net vir ons wat u by die diere sien.',
     stop: 'Goed, ons sal u nie weer boodskap nie. Antwoord HELP enige tyd as u van plan verander.',
     human: 'Natuurlik. Ons vra nou iemand van die span om u te help. Hulle sal hier antwoord sodra hulle kan.',
-    thanks: 'Plesier. Dankie dat u dit aangemeld het.',
-    greeting: 'Hallo! Lekker om van u te hoor. Vertel ons wat u by die diere sien.',
-    statusTail: ' Antwoord MENS enige tyd om met n persoon te praat.', refLabel: (r) => ` U verwysing is ${r}.`,
+    resume: 'Welkom terug. Ons is weer hier om te help. Se net vir ons wat u by die diere sien.',
+    refLabel: (r) => ` U verwysing is ${r}.`,
   },
   zu: {
-    help: 'Silapha ukukusiza. Phendula u-STATUS ukuze ubheke umbiko wakho, u-HUMAN ukuze ukhulume nomuntu, noma u-STOP ukuze umise imilayezo. Noma usitshele nje ukuthi ubonani ezilwaneni.',
     stop: 'Kulungile, ngeke siphinde sikuthumelele. Phendula u-HELP noma nini uma ushintsha umqondo.',
     human: 'Impela. Sicela umuntu wethimba ukuthi akusize manje. Uzophendula lapha ngokushesha angakwazi.',
-    thanks: 'Wamukelekile. Siyabonga ngokukubika.',
-    greeting: 'Sawubona! Kuhle ukuzwa kuwe. Sitshele ukuthi ubonani ezilwaneni.',
-    statusTail: ' Phendula u-HUMAN noma nini ukuze ukhulume nomuntu.', refLabel: (r) => ` Inombolo yakho yereferensi ngu-${r}.`,
+    resume: 'Siyakwamukela futhi. Silapha ukukusiza futhi. Sitshele nje ukuthi ubonani ezilwaneni.',
+    refLabel: (r) => ` Inombolo yakho yereferensi ngu-${r}.`,
   },
   xh: {
-    help: 'Silapha ukukunceda. Phendula u-STATUS ukujonga umbiko wakho, u-HUMAN ukuthetha nomntu, okanye u-STOP ukuyeka imiyalezo. Okanye sixelele nje ukuba ubona ntoni kwizilwanyana.',
     stop: 'Kulungile, asisayi kuphinda sikuthumelele. Phendula u-HELP nanini na ukuba uyaguqula ingqondo.',
     human: 'Ewe kakhulu. Sicela umntu weqela ukuba akuncede ngoku. Uya kuphendula apha kamsinya.',
-    thanks: 'Wamkelekile. Enkosi ngokuyixela.',
-    greeting: 'Molo! Kuhle ukuva kuwe. Sixelele ukuba ubona ntoni kwizilwanyana.',
-    statusTail: ' Phendula u-HUMAN nanini na ukuthetha nomntu.', refLabel: (r) => ` Inombolo yakho yesalathiso ngu-${r}.`,
+    resume: 'Wamkelekile kwakhona. Silapha ukukunceda kwakhona. Sixelele nje ukuba ubona ntoni kwizilwanyana.',
+    refLabel: (r) => ` Inombolo yakho yesalathiso ngu-${r}.`,
   },
 }
 
 export function intentReply(intent, caseRow, lang = 'en') {
   const L = INTENT_STRINGS[lang] || INTENT_STRINGS.en
   const ref = caseRow?.ref ? L.refLabel(caseRow.ref) : ''
-  if (intent === 'status') return `${plainStatus(caseRow.status, lang)}${L.statusTail}${ref}`
   const body = L[intent]
   return body ? `${body}${ref}` : ''
 }
