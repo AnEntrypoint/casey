@@ -468,14 +468,35 @@ export function refTail(contactText, caseRow) {
 // content-free/bare-greeting turn gets a plain warm greeting+invite (never a
 // "thank you for your message" that falsely implies a report was made), while a
 // genuine degraded turn mid-report gets the substantive holding line.
+//
+// A repeatedly-degraded case (a weak model that keeps failing to call case_report
+// or keeps parroting its own last reply -- witnessed live) would otherwise send the
+// EXACT SAME static line forever, since nothingRecorded never changes on its own.
+// Once contactText carries real words (not a bare greeting), fold a short
+// paraphrase of it into the line so the reply visibly varies turn to turn and at
+// least LOOKS like it heard the person, even on a turn the model itself failed.
 export function fallbackReply(contactText, caseRow) {
   const lang = guessLang(contactText)
   let reportObj = null
   try { reportObj = caseRow?.report ? JSON.parse(caseRow.report) : null } catch { reportObj = null }
   const nothingRecorded = !reportObj || !Object.values(reportObj).some(v => v != null)
-  const base = nothingRecorded
-    ? (FALLBACK_GREETING_BY_LANG[lang] || FALLBACK_GREETING)
-    : (FALLBACK_BY_LANG[lang] || FALLBACK_REPLY)
+  const trimmed = String(contactText || '').trim()
+  const isBareGreeting = /^(hi|hello|hey|sup|yo|howzit|molo|sawubona|hallo|dumela)\b[!.?]*$/i.test(trimmed) || !trimmed
+  let base
+  if (nothingRecorded && isBareGreeting) {
+    base = FALLBACK_GREETING_BY_LANG[lang] || FALLBACK_GREETING
+  } else if (nothingRecorded) {
+    // Real words came in but nothing was recorded (a failed/parroting turn) --
+    // acknowledge what they said in a short, safe, generic way instead of the
+    // bare greeting, so a second message never reads as a total non-sequitur.
+    const heard = truncate(trimmed, 60)
+    base = lang === 'af' ? `Ek het dit gekry: "${heard}". Vertel my meer -- watter diere, en waar is hulle?`
+      : lang === 'zu' ? `Ngikutholile lokho: "${heard}". Ngitshele kabanzi -- yiziphi izilwane, futhi zikuphi?`
+      : lang === 'xh' ? `Ndikufumene oko: "${heard}". Ndixelele ngokwengeziweyo -- ziziphi izilwanyana, kwaye zikuphi?`
+      : `I got that: "${heard}". Tell me a bit more -- which animals, and where are they?`
+  } else {
+    base = FALLBACK_BY_LANG[lang] || FALLBACK_REPLY
+  }
   const ref = caseRow?.ref
   if (!ref) return base
   return base + refTail(contactText, caseRow)
@@ -947,6 +968,28 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     if (text && isStockAck(text)) {
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model recited stock ack (no case-specific content); replaced with advancing fallback' })
       text = ''
+    }
+    // GENERAL repeat-of-last-outbound guard. isPromptEcho/isStockAck are
+    // finite string lists -- they only ever catch the SPECIFIC phrasings
+    // someone already witnessed and hardcoded, so any new canned/fallback
+    // string (including this file's OWN fallbackReply()/FALLBACK_GREETING
+    // text) is invisible to them the moment it changes. Witnessed live: a
+    // small model (RECENT TIMELINE shows its own prior outbound in-context)
+    // parroted the exact previous reply verbatim on the next real, distinct
+    // message ("3 dead cows") with no error/timeout at all -- a clean turn
+    // that just echoed. Compare against the case's actual last outbound
+    // event directly instead of maintaining an ever-growing blocklist: any
+    // reply that is ref-stripped-identical to the last thing this case sent
+    // is a parrot, regardless of what the string happens to say.
+    if (text) {
+      const lastOutbound = [...events].reverse().find(e => e.kind === 'outbound')
+      if (lastOutbound?.text) {
+        const strip = (s) => String(s).toLowerCase().replace(/CASE-\d+-[a-z0-9]+/gi, '').replace(/\s+/g, ' ').trim()
+        if (strip(text) === strip(lastOutbound.text)) {
+          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model repeated its own last outbound verbatim; replaced with advancing fallback' })
+          text = ''
+        }
+      }
     }
     // PURE-AGENT REPLY. The agent drives the whole conversation -- intake (asking the
     // next needed fact via case_report + the system prompt), enquiries, status, all of
