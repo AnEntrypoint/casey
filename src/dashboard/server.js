@@ -409,8 +409,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       s = s || { source: 'unknown' }
       const map = {
         acptoapi: { ok: true, label: 'AI helper: online', detail: 'Auto-replies are on. Contacts get an instant answer.' },
-        stub: { ok: false, label: 'AI helper: test mode', detail: 'Fake replies for testing only. Not for real contacts.' },
-        none: { ok: false, label: 'AI helper: offline', detail: 'Auto-replies are paused. Contacts get a holding message and wait for a person.' },
+        none: { ok: false, label: 'AI helper: offline', detail: 'Auto-replies are paused. No message is sent; messages queue and re-drive once the provider recovers.' },
         unknown: { ok: false, label: 'AI helper: unknown', detail: 'Cannot tell if the AI helper is connected.' },
       }
       let view = map[s.source] || map.unknown

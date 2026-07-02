@@ -326,16 +326,16 @@ the crash-budget stop state); the supervisor is its only I/O.
   surface to a field worker. A complete-report state can never trap an enquiry,
   because the agent -- not a state machine -- decides the reply each turn.
 - **LLM-down queue + retry, never a fallback classification.** When the backend is
-  down casey does NOT classify the message deterministically. The inbound is
-  recorded, a `QUEUED-FOR-AGENT` marker and a `HOLDING-ACK` observation are appended,
-  ONE warm holding ack is sent, and the message is re-driven through the agent when
-  the provider recovers. `makeResilientCallLLM` fires an `onRecover` edge and
-  `casey.js drainQueuedTurns` drains the queue (status-gated, oldest-first
-  serialized, mark-attempted only after a successful NON-DEGRADED drive -- a
-  re-drive that ends in the fallback path stays queued (queue-drive-retry, no
-  duplicate outbound; the contact already got one holding ack), bounded retry ->
-  dead-letter). STOP/HUMAN still fire synchronously via the deterministic
-  short-circuit ABOVE the queue gate, so an opt-out during an outage is never
+  down casey does NOT classify the message deterministically and does NOT send
+  anything to the contact (no mocks/fallbacks/stubs invariant). The inbound is
+  recorded, a `QUEUED-FOR-AGENT` marker is appended and the failure is logged loud,
+  and the message is re-driven through the agent when the provider recovers.
+  `makeResilientCallLLM` fires an `onRecover` edge and `casey.js drainQueuedTurns`
+  drains the queue (status-gated, oldest-first serialized, mark-attempted only
+  after a successful NON-DEGRADED drive -- a re-drive that is still degraded stays
+  queued (queue-drive-retry, no duplicate outbound), bounded retry -> dead-letter).
+  STOP/HUMAN still fire synchronously via the deterministic short-circuit ABOVE the
+  queue gate, so an opt-out during an outage is never
   deferred.
 - **Full observability**: every action is an append-only audited `event` row.
 - **Receive-liveness is observable, never a false green**: a real-time channel

@@ -25,14 +25,25 @@ export function buildCaseToolset(storeOrNull) {
         description: 'Fetch a case by id, including its recent timeline events. Use to refresh your view before acting.',
         parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
       },
-      handler: async ({ id }) => {
+      handler: async ({ id }, ctx) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
-        const events = await store().listEvents(id, { limit: 30 })
-        // slimCase parses the report into structured fields so the agent sees
-        // what it already has and never re-asks the farmer (matches case_list /
-        // case_update, which both slim; case_get must not be the odd one out).
-        return { case: slimCase(c), events: events.map(slimEvent) }
+        // case_get's `id` param is agent-chosen -- the model can ask about ANY
+        // case, not just the asking worker's own (a status ask like "how is
+        // CASE-1234 going" names a ref the model resolves to some id). Ownership
+        // scoping (same check as mineRows) decides which projection is safe: the
+        // worker's OWN case gets the full slimCase (report incl. owner_name/
+        // owner_contact -- their own case, their own data), a case belonging to
+        // SOMEONE ELSE gets the PII-free enquiryRow, same as case_list/case_mine.
+        // Without this, any worker asking about any case ref (even by typo/
+        // overheard) got another contact's phone number and free-text account.
+        const author = ctx?.author || ctx?.principal?.id
+        const ext = String(c.external_id || '')
+        // Fail CLOSED: no author on ctx means we cannot prove ownership, so treat
+        // as not-owned (PII-free) rather than defaulting to full access.
+        const owns = !!author && (ext === String(author) || ext.split(':').includes(String(author)) || ext.endsWith(':' + author))
+        const events = owns ? await store().listEvents(id, { limit: 30 }) : []
+        return { case: owns ? slimCase(c) : enquiryRow(c), events: events.map(slimEvent) }
       },
     },
     {

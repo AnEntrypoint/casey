@@ -33,7 +33,8 @@ casey is a thin orchestrator that composes three existing projects:
         |  reply {to, text}             |  each action = an audited event row
         +<------------------------------+  append event(outbound)
         v
-  back to channel  (graceful fallback if the model errors or returns empty)
+  back to channel  (nothing is sent if the model errors, times out, or returns empty --
+                    the failure is logged loud and recorded, never a scripted reply)
 
   thatcher data  <-  dashboard API (/api/cases ...)  <-  operator dashboard
                      observe timeline, edit fields, override transitions, reply on-channel
@@ -171,9 +172,9 @@ automated test suite; verification is manual/live against a real running
 `casey up` instance.
 
 `casey up` runs the real model via freddie's provider resolver (configure `~/.freddie`
-+ a provider key). The agent always sends a safe fallback reply if the model errors,
-times out, or returns nothing, and records the failure as an observation rather than
-leaking it to the contact.
++ a provider key). If the model errors, times out, or returns nothing, casey sends
+NOTHING to the contact -- no scripted apology -- and records the failure loudly as an
+observation for an operator to see.
 
 `casey up` runs the gateway+dashboard under a supervisor that forks them in a child
 worker and recycles it on crash or on a source edit, so a code change reloads
@@ -210,7 +211,7 @@ casey/
     case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation
     case-runtime.js          process singleton so the plugin reaches the live CaseStore
     case-tools.js            case_* tool definitions (get/list/update/observe/transition), autonomy-enforced
-    gateway-hooks.js         makeCaseHandler: case-aware inbound (agent-driven, no deterministic text processing), dedup, media, observe, fallback
+    gateway-hooks.js         makeCaseHandler: case-aware inbound (agent-driven, no deterministic text processing), dedup, media, observe
     discord-receive.js       fallback Discord WS receive for older freddie builds
     dashboard/server.js      express API + anentrypoint-design-styled SPA (observe + edit + override + reply, plain-language mode + help overlay)
 ```

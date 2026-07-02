@@ -349,7 +349,7 @@ async function main() {
     console.log(bold('casey up') + dim(`  v${pkgVersion()}`))
     console.log(`  channels: ${green(channels.join(', '))}` + (skipped.length ? dim(`   (skipped, no creds: ${skipped.join(', ')} - run casey doctor)`) : ''))
     if (brain.source === 'acptoapi') console.log(`  AI helper: ${green('online')}${dim(`   (${brain.model} via ${brain.url})`)}`)
-    else console.log(`  AI helper: ${yellow('offline')}${dim('   (auto-replies paused; contacts get a holding message and wait for a person. Start acptoapi to enable AI.)')}`)
+    else console.log(`  AI helper: ${yellow('offline')}${dim('   (auto-replies paused; no message is sent, messages queue and re-drive once the provider recovers.)')}`)
     const tokenNote = process.env.CASEY_DASHBOARD_TOKEN ? ` ${dim('(token required)')}` : ` ${yellow('(open - set CASEY_DASHBOARD_TOKEN)')}`
     console.log(`  dashboard: ${cyan(`http://localhost:${dash.port}`)}${tokenNote}`)
     console.log(`  data: ${dim(path.join(process.cwd(), 'data'))}`)

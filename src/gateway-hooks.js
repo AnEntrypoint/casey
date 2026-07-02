@@ -456,7 +456,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
   // while a turn is running -- it does nothing to bound SEQUENTIAL message rate
   // over time, so one contact could otherwise drive unbounded LLM spend and
   // store writes. A sliding window of recent turn-start timestamps per contact;
-  // over the cap, the message still gets a warm holding reply (never dead-end)
+  // over the cap, the message is dropped (no reply, no LLM turn) and logged/recorded
   // but skips the LLM turn entirely.
   const rateWindows = new Map()   // external_id -> number[] (recent turn-start ms)
   const RATE_LIMIT_MSGS = Number(process.env.CASEY_RATE_LIMIT_MSGS) || 10
@@ -831,8 +831,8 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       // A failed write here (store down, lock timeout) must not throw OUT of this
       // catch block -- that would propagate as an unhandled rejection from the
       // whole handleInbound call, defeating the very error handling this block
-      // exists for. Degrade to a log line; the degraded-turn fallback reply below
-      // still fires regardless.
+      // exists for. Degrade to a log line; the degraded-turn no-reply path below
+      // still records the failure regardless.
       try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent turn error: ${e.message}` }) }
       catch (e2) { log.error?.('[casey] failed to record agent-turn-error observation', { caseId: fresh.id, error: e2.message }) }
       result = {}
@@ -991,20 +991,21 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       }
     }
 
-    // AI-offline queue: when the agent turn ITSELF failed (model error/timeout, or
-    // the store/host threw) the contact still got a safe degraded reply above, but a
-    // human should verify it was adequate -- the model could not reason about this
-    // case. Tag the case 'ai-offline' so it surfaces in the operator's offline queue
-    // (GET /api/unreplied) and on the case list. The next operator reply clears it
-    // (claim-on-reply untags it), and a later successful agent turn does too. The tag
-    // is set only on a genuine turn failure, never on a normal fallback (an empty/
-    // media-only social turn is not a model outage). Best-effort: a tag failure must
-    // never block the reply.
-    if (errored) {
+    // AI-offline queue: when a turn is DEGRADED -- the agent turn itself failed
+    // (model error/timeout), or it "succeeded" but produced unusable text
+    // (prompt-echo/stock-ack/repeat-of-last-outbound/empty) -- the contact now gets
+    // NOTHING sent (no fallback text, per the no-mocks-fallbacks-stubs invariant),
+    // so a human needs a way to notice this silently-unanswered message. Tag the
+    // case 'ai-offline' so it surfaces in the operator's offline queue (GET
+    // /api/unreplied) and on the case list, on EITHER a genuine turn failure OR a
+    // degraded/blanked reply -- both leave the contact unanswered. The next
+    // operator reply clears it (claim-on-reply untags it), and a later successful
+    // agent turn does too. Best-effort: a tag failure must never block the reply.
+    if (degraded) {
       try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'ai-offline') }) }
       catch (e) { log.warn?.('[casey] ai-offline tag failed', { caseId: fresh.id, error: e.message }) }
     } else if ((fresh.tags || '').split(',').map(s => s.trim()).includes('ai-offline')) {
-      // A successful turn clears a stale offline flag from a prior failed turn.
+      // A successful, delivered turn clears a stale offline flag from a prior failure.
       try { await store.updateCase(fresh.id, { tags: dropTag(fresh.tags, 'ai-offline') }) }
       catch (e) { log.warn?.('[casey] ai-offline clear failed', { caseId: fresh.id, error: e.message }) }
     }
