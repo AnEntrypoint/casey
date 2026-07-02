@@ -50,7 +50,7 @@ async function main() {
   const flags = parseFlags(process.argv.slice(2))
   const forked = typeof process.send === 'function'
 
-  const requested = (flags.channels || 'sim,discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
+  const requested = (flags.channels || 'discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
   // Security invariant (AGENTS.md): WhatsApp must NOT serve without
   // WHATSAPP_APP_SECRET -- without it freddie cannot HMAC-verify inbound webhooks,
   // so anyone reaching the webhook can forge farmer messages. Enforce it here in
@@ -69,13 +69,13 @@ async function main() {
     if (idx !== -1) requested.splice(idx, 1)
     console.error('[worker] WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')
   }
-  const channels = requested.filter(ch => ch === 'sim' || (ch === 'whatsapp' ? (hasCreds(ch) && !!process.env.WHATSAPP_APP_SECRET) : hasCreds(ch)))
+  const channels = requested.filter(ch => (ch === 'whatsapp' ? (hasCreds(ch) && !!process.env.WHATSAPP_APP_SECRET) : hasCreds(ch)))
   if (!channels.length) {
     // No serving surface: fatal, not a silent idle. The supervisor treats a FATAL
     // boot as a crash for budget purposes, so a permanently-misconfigured worker
     // trips the crash-loop guard into 'degraded' instead of respawning forever.
     if (forked) ipcSend(process, WORKER_MSG.FATAL, { reason: 'no channels available' })
-    console.error('[worker] no channels available - set credentials or include sim')
+    console.error('[worker] no channels available - set discord/whatsapp credentials')
     process.exit(1)
   }
 
@@ -95,13 +95,13 @@ async function main() {
     channels,
     callLLM: brain.callLLM,
     // Live backend health for the handler's LLM-down queue gate (drainQueuedTurns
-    // drains on recovery). Stub mode is always healthy.
-    llmStatus: process.env.CASEY_STUB_LLM ? (() => ({ ok: true, source: 'stub' })) : brain.status,
+    // drains on recovery).
+    llmStatus: brain.status,
   })
   caseyRef = casey
   // The queue-drain hard status-gate reads the SAME resilient backend the handler and
   // health row use, so a drain only fires when the provider is genuinely back.
-  casey.resilientStatus = () => (process.env.CASEY_STUB_LLM ? { ok: true, source: 'stub' } : brain.status())
+  casey.resilientStatus = brain.status
   await casey.start()
 
   const dashPort = Number(flags.port || 4000)
@@ -111,10 +111,7 @@ async function main() {
   }
   // Health reads the SAME backend the handler uses, so the dashboard shows recovery
   // the instant the provider comes back -- no separate probe to drift from reality.
-  const llmStatus = async () => {
-    if (process.env.CASEY_STUB_LLM) return { source: 'stub' }
-    return brain.status()
-  }
+  const llmStatus = brain.status
 
   // Runtime snapshot the parent pushes down (PARENT_MSG.STATE). Held in a mutable
   // closure so /api/runtime reflects the latest without rebuilding the dashboard.
