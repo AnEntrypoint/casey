@@ -26,7 +26,7 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
   // ceiling and give up after MAX_RETRIES, then stop loudly. A successful
   // connection (HELLO) resets the counter so transient drops recover instantly.
   const BASE_MS = 3000, MAX_MS = 30000, MAX_RETRIES = 8
-  let retries = 0, reconnecting = false, reconnectTimeout = null
+  let retries = 0, reconnecting = false, reconnectTimeout = null, invalidSessionTimeout = null
 
   const identify = () => ws.send(JSON.stringify({
     op: OP.IDENTIFY,
@@ -103,7 +103,8 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
         case OP.INVALID_SESSION:
           // Session is not resumable; clear it and re-identify after a brief delay.
           sessionId = null; resumeUrl = null; seq = null
-          setTimeout(() => { if (!closed) identify() }, p.d ? 1000 : 5000)
+          clearTimeout(invalidSessionTimeout)
+          invalidSessionTimeout = setTimeout(() => { if (!closed) identify() }, p.d ? 1000 : 5000)
           break
         case OP.DISPATCH:
           if (p.t === 'READY') {
@@ -137,5 +138,5 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
   // every inbound Discord message (P9 -- no silent catastrophe).
   open().catch((e) => { log.error?.('[discord] connect failed', e.message); scheduleReconnect() })
 
-  return () => { closed = true; clearInterval(heartbeat); clearTimeout(reconnectTimeout); try { ws?.close() } catch {} }
+  return () => { closed = true; clearInterval(heartbeat); clearTimeout(reconnectTimeout); clearTimeout(invalidSessionTimeout); try { ws?.close() } catch {} }
 }

@@ -499,9 +499,12 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     return { total_fields: REPORT_KEY_LIST.length, filled, visit_critical_filled: vcFilled, visit_critical_total: VISIT_CRITICAL_SET.size }
   }
 
-  // Escape a cell value for CSV: wrap in quotes if it contains comma, newline, or quote.
+  // Escape a cell value for CSV: neutralize a leading formula-trigger character
+  // (=, +, -, @) so a contact-supplied value never auto-executes as a formula in
+  // Excel/Sheets (CWE-1236), then wrap in quotes if it contains comma, newline, or quote.
   function csvCell(v) {
-    const s = v == null ? '' : String(v)
+    let s = v == null ? '' : String(v)
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s
     if (s.includes(',') || s.includes('\n') || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"'
     return s
   }

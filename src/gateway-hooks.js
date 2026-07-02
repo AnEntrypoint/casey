@@ -497,6 +497,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       return { to: replyTo, text: warmText, platform, error: 'store_not_ready' }
     }
     const msgId = messageId(msg)
+    if (!msgId) log?.warn?.('[casey] inbound message missing id; dedup guarantee not applied', { channel, external_id })
 
     let caseRow, created
     try {
@@ -1214,21 +1215,31 @@ const STOP_EXCLUDE = [
   'bus stop',
 ]
 
+// Bare single-word tokens like 'someone'/'staff'/'manager'/'operator'/'agent' were
+// removed: casey's own system prompt asks who is on-site with the animals, and
+// ordinary answers ("someone from the family is here", "the manager said to call
+// this number") were misclassified as a handoff request. 'person' stays (explicit
+// "speak to a person" contract) but is guarded by the wider HUMAN_EXCLUDE below.
 const HUMAN_KEYS = [
-  'human', 'person', 'someone', 'somebody', 'real person', 'operator',
-  'representative', 'staff', 'manager', 'speak to', 'talk to', 'call me',
-  'real human', 'agent',
-  'mens', 'persoon', 'iemand', 'regte persoon',      // af
+  'human', 'person', 'real person',
+  'representative', 'speak to', 'talk to', 'call me',
+  'real human',
+  'mens', 'persoon', 'regte persoon',      // af
   // Nguni concord-prefixed WHOLE forms (listed literally, not a bare-prefix substring
   // match) so "ngicela ukukhuluma nomuntu" (I would like to speak with a person) fires
   // the handoff. Safety-critical: handoff must work in any language without a model.
-  'umuntu', 'umsebenzi', 'nomuntu', 'komuntu', 'abantu',   // zu
-  'umntu', 'nomntu',                                       // xh
+  'umuntu', 'nomuntu', 'komuntu', 'abantu',   // zu
+  'umntu', 'nomntu',                          // xh
 ]
 const HUMAN_EXCLUDE = [
   'a person told me', 'person told me', 'someone told me', 'another person',
   'in person', 'no person', 'wrong person',
   'someone come', 'someone came', 'anyone coming', 'did someone',
+  'a person is here', 'a person is looking after', 'there is a person',
+  'the person looking after', 'person looking after the animals',
+  'someone from the family', 'someone is here', 'someone is looking after',
+  'the manager said', 'manager said to call', 'staff said',
+  'operator said', 'operator here', 'operator on site',
 ]
 
 // RESUME set: the small multi-language "help" vocabulary that opts a STOPPED

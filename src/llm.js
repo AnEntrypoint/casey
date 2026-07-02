@@ -153,7 +153,8 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // degraded -- the operator can tell "online" from "online but answering nobody".
   const status = async () => {
     if (!backend && clock() - lastAttempt >= intervalMs) await ensure()
-    return { ...last, ...completionHealth() }
+    const health = completionHealth()
+    return { ...last, ...health, ok: !!backend && health.degraded !== true }
   }
 
   return { callLLM, status, _ensure: ensure }

@@ -590,7 +590,9 @@ export class CaseStore {
   // to other messages on this conversation -- two identical messages in the same
   // tick cannot both pass hasInboundMessage before either appends, making the
   // duplicate structurally unrepresentable. Returns the appended event, or null
-  // if it was a duplicate already recorded.
+  // if it was a duplicate already recorded. Guarantee holds only when the adapter
+  // supplies a non-empty msg_id -- an empty msg_id (an adapter/raw payload with no
+  // id) skips the dedup check entirely; the caller logs a warning in that case.
   async recordInbound(caseRow, { actor = 'contact', channel, text = '', data = null, msg_id = '' }) {
     return this._withLock(`${caseRow.channel}|${caseRow.external_id}`, async () => {
       if (msg_id && await this.hasInboundMessage(caseRow.id, msg_id)) return null
@@ -754,6 +756,7 @@ export class CaseStore {
     if (!src0) return { error: `no case ${sourceId}` }
     if (!tgt0) return { error: `no case ${targetId}` }
     if (tgt0.autonomy === 'observe') return { error: 'observe' }
+    if (src0.autonomy === 'observe') return { error: 'observe' }
     // Lock the TARGET conversation: merge mutates the target's report/tags and
     // re-homes events onto it, so it must serialize against target-side writes.
     const srcKey = `${src0.channel}|${src0.external_id}`
@@ -763,6 +766,7 @@ export class CaseStore {
       const tgt = await this.getCase(targetId)
       if (!src || !tgt) return { error: 'case vanished during merge' }
       if (tgt.autonomy === 'observe') return { error: 'observe' }
+      if (src.autonomy === 'observe') return { error: 'observe' }
       const srcTags = new Set((src.tags || '').split(',').map(s => s.trim()).filter(Boolean))
       // Idempotency: a source already folded in is tagged 'merged'. Retrying the
       // merge (e.g. after a crash between steps) must not move its redirect note
@@ -782,6 +786,7 @@ export class CaseStore {
       try { tgtReport = tgt.report ? JSON.parse(tgt.report) : {} } catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId: targetId, error: e.message }); tgtReport = {} }
       const mergedReport = { ...tgtReport }
       for (const [k, v] of Object.entries(srcReport)) {
+        if (!REPORT_KEYS.has(k)) continue
         const have = tgtReport[k] != null && String(tgtReport[k]).trim() !== ''
         if (!have && v != null && String(v).trim() !== '') mergedReport[k] = v
       }
