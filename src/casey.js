@@ -468,9 +468,9 @@ export class Casey {
   }
 
   // Drain messages QUEUED while the LLM backend was down. A message that arrived
-  // during an outage is recorded as QUEUED-FOR-AGENT:<msgId> (plus one HOLDING-ACK
-  // observation) and NOT driven through the agent -- there is no deterministic
-  // fallback classification, so it waits for the model. This drains that queue when
+  // during an outage is recorded as QUEUED-FOR-AGENT:<msgId> and NOT driven
+  // through the agent (no fallback text is sent -- see the no-fallback directive
+  // in gateway-hooks.js) -- it waits for the model. This drains that queue when
   // the provider recovers. It diverges from resumePendingTurns deliberately:
   //   (a) HARD status()-gate at entry -- if the backend is still down, return early
   //       (never burn a queued message against a dead provider);

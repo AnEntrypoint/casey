@@ -1,18 +1,23 @@
 // llm.js  --  resolve casey's callLLM backend.
 //
 // casey's callLLM contract is freddie's: ({messages, tools}) => {content, tool_calls}.
-// freddie already ships the acptoapi bridge (src/agent/acptoapi-bridge.js) that
-// speaks exactly that contract over the local multi-provider bridge on :4800.
+// freddie's acptoapi bridge (src/agent/acptoapi-bridge.js) calls the acptoapi
+// library IN-PROCESS (no HTTP hop, no separate listening port) -- it used to
+// fetch() a standalone acptoapi.js daemon on :4800, but that process crashed on
+// an uncaught ACP-timeout exception (witnessed live, taking the whole LLM path
+// down until manually restarted), so freddie now imports acptoapi directly.
 // resolveCallLLM picks the backend by an explicit, honest precedence and never
 // claims a capability it can't deliver:
 //
-//   1. acptoapi reachable: real model via the freddie bridge
-//   2. otherwise: null  (gateway falls back to canned replies)
+//   1. acptoapi reachable (a real in-process probe call succeeds): real model
+//      via the freddie bridge
+//   2. otherwise: null
 //
-// The null fall-through is the worst-case path (P9/P10): if the bridge is down,
-// casey does NOT pretend to have an AI - it returns null and the gateway answers
-// with the deterministic "a person will help you" reply rather than dropping the
-// contact or crashing the case.
+// USER DIRECTIVE: no mocks/fallbacks/stubs, only singular working mechanisms and
+// loud errors. The null fall-through is NOT a "canned reply" path any more -- the
+// gateway logs loud and sends nothing on a genuinely unreachable backend. The
+// reliability fix is the in-process bridge itself: the LLM should always work,
+// not fall back to a scripted apology when it doesn't.
 
 // Sonnet by default: casey's turn is a multi-step extraction + tool-orchestration +
 // tone-sensitive task (never alarm, mirror the contact's language, never repeat a
@@ -46,7 +51,7 @@ export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {
     return { callLLM: null, source: 'none' }
   }
   // freddie publicly re-exports the acptoapi bridge as acptoapi*; older builds
-  // without the re-export degrade honestly to canned replies.
+  // without the re-export honestly report no backend (source: 'none').
   if (typeof freddie.acptoapiReachable !== 'function' || typeof freddie.acptoapiCallLLM !== 'function') {
     return { callLLM: null, source: 'none' }
   }
@@ -59,20 +64,21 @@ export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {
 // A long-lived gateway must not latch "AI helper offline" for its whole life just
 // because the provider was down at boot. resolveCallLLM probes ONCE; the handler
 // then closes over a static callLLM, so a provider that recovers minutes later is
-// never picked up without a restart -- contacts keep getting the holding message
-// forever. makeResilientCallLLM wraps resolveCallLLM in a self-healing backend:
+// never picked up without a restart -- contacts get nothing sent (per the
+// no-fallback directive) turn after turn. makeResilientCallLLM wraps
+// resolveCallLLM in a self-healing backend:
 //
 //   - status() always reflects the CURRENT resolution, so the dashboard health row
 //     shows recovery live (no separate re-probe to drift from the real backend).
 //   - the returned callLLM is ALWAYS a function. While no real backend is resolved,
 //     each call triggers a debounced re-resolve (single in-flight probe, at most one
 //     attempt per intervalMs) and, if still unreachable, THROWS -- the case handler
-//     already catches a failing callLLM and sends its safe fallback, so a contact
-//     still gets a reply and the next inbound re-probes. Once resolved, calls delegate
-//     to the real backend with no probe overhead.
+//     already catches a failing callLLM, logs loud, and sends nothing (no fallback
+//     text); the next inbound re-probes. Once resolved, calls delegate to the real
+//     backend with no probe overhead.
 //
-// This keeps the never-dead-end guarantee (holding message on every miss) AND adds
-// the missing never-stay-degraded half (auto-resume when the provider returns).
+// This is the never-stay-degraded half (auto-resume when the provider returns) --
+// the missing "never send anything but never stay silently broken either" half.
 export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, intervalMs = 30000, resolve = resolveCallLLM, now = null, slowMs = 20000, slowWindow = 5, onRecover = null } = {}) {
   let backend = null                 // resolved real callLLM, or null while degraded
   let last = { source: 'none', model: null, url: null }
@@ -132,7 +138,7 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
 
   const callLLM = async (req) => {
     const b = await ensure()
-    if (!b) throw new Error('AI helper offline (provider unreachable); using holding reply')
+    if (!b) throw new Error('AI helper offline (provider unreachable); no reply sent')
     // Time the real turn so the health row sees completion-path latency. A throw
     // (timeout/error) records an unhealthy turn too, so a hanging provider that
     // never returns ok still flips the window to degraded on the next read.

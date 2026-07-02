@@ -102,7 +102,7 @@ src/
   report-analytics.js      pure management analytics for /api/report.json: buildSLAReport (pass/fail vs the live handoff SLA, answered-late vs never-answered), buildSLAReportByType (the same compliance partitioned by case_type, with an `overall` that reconciles), buildReportComparison (this window vs the prior adjacent window, signed deltas), buildChannelMetrics + buildCaseTypeMetrics (shared rollupByKey: first-response median, opened/closed, closed_pct, reopen_count per channel / per case_type), buildAlertPayload (structured machine-parseable breach payload for an external pager: case_ref/case_type/breach_type/severity_tier/since_ms, NEVER external_id); all aggregate-only, no external_id
   conversation-spec.js     the agent-driven dstate conversation machine as a plan() spec (soft-FSM nodes greeting/gathering/enquiring/answering/complete/handoff/closed; soft intake edges, enforcement:off for the irreversible handoff/closed; an intake zone)
   conversation-state.js    per-case dstate wrapper: optional-imports adaptogen (degrades to no-op), rehydrates/creates a per-case DState from the conv_state blob (export/importState), advanceCase(to) applies a transition + persists, orientCase() returns {state, legalMoves} for the prompt; advance only on a completed turn, only to the phase the AGENT declared
-  gateway-hooks.js         makeCaseHandler PURE-LLM flow: an inbound hits the STOP/HUMAN deterministic short-circuit (detectContactIntent, above the queue gate), OR the LLM-down queue gate (record + QUEUED-FOR-AGENT/HOLDING-ACK markers + one warm holding ack), OR one runTurn tool loop where the agent classifies + routes + answers + RECORDS THE REPORT (case_report) + declares its phase (case_stage) via the case_* tools. casey does NO deterministic text processing -- no field extraction, no computed next-question. The prompt surfaces the raw report-so-far + the dstate phase (orient) and TRUSTS the model to acknowledge + not repeat + ask the next thing. A degraded turn (empty/error/echo/stock-ack) sends a plain warm fallbackReply (never a computed ask). dedup, media, observe
+  gateway-hooks.js         makeCaseHandler PURE-LLM flow: an inbound hits the STOP/HUMAN deterministic short-circuit (detectContactIntent, above the queue gate), OR the LLM-down queue gate (record a QUEUED-FOR-AGENT marker, send nothing, log loud), OR one runTurn tool loop where the agent classifies + routes + answers + RECORDS THE REPORT (case_report) + declares its phase (case_stage) via the case_* tools. casey does NO deterministic text processing -- no field extraction, no computed next-question. The prompt surfaces the raw report-so-far + the dstate phase (orient) and TRUSTS the model to acknowledge + not repeat + ask the next thing. A degraded turn (empty/error/echo/stock-ack/repeat) sends NOTHING and logs loud (no fallback text -- see the no-mocks-fallbacks-stubs invariant). dedup, media, observe
   discord-receive.js       fallback Discord WS receive for older freddie builds
   llm.js                   model call wiring; resolveCallLLM (boot precedence: acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row, and fires an onRecover edge that drives drainQueuedTurns)
   dashboard/server.js      express API + anentrypoint-design SPA (observe/edit/override/reply); GET/POST /report public contact form (no token)
@@ -217,13 +217,20 @@ the crash-budget stop state); the supervisor is its only I/O.
 - **Plain, warm language** to the contact: one idea per sentence, no internal
   jargon (case/triage/workflow/status/priority), mirror the contact's language,
   give a plain-words reference number on first contact.
-- **Never a dead-end reply**: empty, emoji-only, and media-only inbound still get
-  a gentle helpful answer; a degraded turn (empty/error/echo/stock-ack) sends a warm
-  `fallbackReply` and records the failure as an observation, never leaked. The
-  outbound scrubs stay: a reply that parrots a system-prompt example verbatim
-  (`isPromptEcho`), a stock acknowledgement (`isStockAck`), internal jargon
-  (`jargonHits`), or a malformed reference (`sanitizeOutboundRef`) is caught before
-  send.
+- **No mocks, fallbacks, or stubs -- only singular working mechanisms and loud
+  errors.** A degraded turn (empty/error/echo/stock-ack/repeat-of-last-outbound)
+  sends NOTHING to the contact -- there is no scripted holding reply
+  (`fallbackReply` was removed by explicit user directive). The failure is
+  logged loud (`log.error`) and recorded as an observation for operator
+  visibility, never silently papered over. The reliability fix lives upstream:
+  freddie's acptoapi bridge calls acptoapi in-process (no HTTP hop, no separate
+  listening port, no crash-on-timeout failure mode) so the LLM call itself is
+  the thing that must actually work, not a downstream apology for when it
+  doesn't. The outbound scrubs still stay: a reply that parrots a system-prompt
+  example verbatim (`isPromptEcho`), a stock acknowledgement (`isStockAck`),
+  internal jargon (`jargonHits`), or a malformed reference
+  (`sanitizeOutboundRef`) is caught before send -- caught means blanked/held,
+  never replaced with fallback text.
 - **The reporter is usually a field worker relaying a farmer's animals, not the
   owner.** The person messaging is typically a field worker out on a visit,
   reporting livestock they have just come to see -- standing with the farmer, a

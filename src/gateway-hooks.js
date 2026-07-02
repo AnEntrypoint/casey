@@ -286,20 +286,6 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
 // Returns an async (platform, msg) handler suitable to assign to
 // gateway.handleInbound. `store` is a CaseStore; opts.callLLM optional;
 // opts.autoRespond=false to track-only (no agent turn / reply).
-// Two distinct fallback shapes -- NEITHER may ever equal a STOCK_ACK_SHAPES entry
-// (see the isStockAck comment below and the fallback-vs-stock-ack regression
-// check in test.js): a fallback that round-trips back to the exact string a
-// guard just rejected is a silent no-op, witnessed live (a contact's bare "hi
-// there" greeting got back "Thank you for letting us know. We have your
-// message..." verbatim -- the model's own generic ack was correctly rejected
-// by isStockAck, then replaced by a fallback that was byte-identical to it).
-// FALLBACK_REPLY is for a genuine degraded turn where the contact already said
-// something substantive (mid-report); FALLBACK_GREETING is for a content-free
-// first turn or bare greeting, where thanking them for "your message" would
-// falsely imply they reported something (AGENTS.md: never claim a report was
-// made on a bare greeting).
-const FALLBACK_REPLY = "Thanks for reaching out -- we've noted that and the team will follow up."
-const FALLBACK_GREETING = 'Hello! If you have a sick or dead animal to report, just tell me what you are seeing and where.'
 
 // Guard against the small model parroting the system-prompt examples verbatim.
 // The first-message guidance describes an acknowledgement + reference; a weak
@@ -387,34 +373,6 @@ export function jargonHits(text) {
   return [...found]
 }
 
-// Holding message in the contact's own language, for the worst-case path: the
-// LLM turn errored, timed out, or returned nothing. A low-literacy contact who
-// wrote in Spanish must NOT get an English wall of text back (P9 worst-case +
-// P12 human value) -- the degraded reply mirrors their language too. Keyed by a
-// lightweight cue detector over the languages casey already claims to support;
-// when no cue matches we keep the plain-English default. `ref` is appended when
-// known so even the fallback hands the contact their reference number.
-// Holding messages in the languages common to rural South Africa. The live model
-// handles any language; these are only the offline/degraded path, so we cover the
-// SA languages a farmer is likely to write in -- not Latin-American Spanish. Tone
-// fits a disease report: "we have your message, the team will look into it".
-// Offline holding messages cover en + af/zu/xh consistently (every one of these
-// languages also has full INTENT/STATUS tables below). Sesotho/Setswana and any
-// other SA language are handled by the live model, not hand-translated tables --
-// keeping the offline set to languages we cover end-to-end avoids the half-built
-// state where guessLang returns a language the status/intent replies cannot speak.
-const FALLBACK_BY_LANG = {
-  af: 'Dankie dat u laat weet het. Ons het u boodskap en die span sal hierna kyk.',
-  zu: 'Siyabonga ngokusazisa. Siwutholile umlayezo wakho futhi ithimba lizokubheka lokhu.',
-  xh: 'Enkosi ngokusazisa. Siwufumene umyalezo wakho kwaye iqela liza kukujonga oku.',
-}
-// Greeting-shaped fallback (content-free turn: nothing has been reported yet) --
-// never thanks for "your message", since there is no report to thank them for.
-const FALLBACK_GREETING_BY_LANG = {
-  af: 'Hallo! As u siek of dooie diere het om aan te meld, vertel my net wat u sien en waar.',
-  zu: 'Sawubona! Uma unezilwane eziguliseka noma ezifile ozobika, ngitshele nje ukuthi ubonani nokuthi kuphi.',
-  xh: 'Molo! Ukuba unezilwanyana ezigulayo okanye ezifileyo ozibikayo, ndixelele nje into oyibonayo nendawo.',
-}
 
 // Cheap, accent-stripped cue match. A wrong guess that flips a contact's language
 // is worse than defaulting to English (P6: make the wrong outcome hard), so cues
@@ -458,55 +416,14 @@ export function refTail(contactText, caseRow) {
   }[lang] || ` Your reference is ${ref}.`
 }
 
-// The safe holding reply for a degraded turn (model error/timeout/empty/echo) or an
-// LLM outage. A plain, warm, language-mirrored holding line + the reference -- never
-// a dead-end. casey does NOT compose a next-question here: the model owns driving the
-// conversation and resumes on the next turn / on recovery. (The deterministic
-// ask-ladder was removed -- the LLM does that job.)
-//
-// Branches on whether anything has actually been recorded on the case yet: a
-// content-free/bare-greeting turn gets a plain warm greeting+invite (never a
-// "thank you for your message" that falsely implies a report was made), while a
-// genuine degraded turn mid-report gets the substantive holding line.
-//
-// A repeatedly-degraded case (a weak model that keeps failing to call case_report
-// or keeps parroting its own last reply -- witnessed live) would otherwise send the
-// EXACT SAME static line forever, since nothingRecorded never changes on its own.
-// Once contactText carries real words (not a bare greeting), fold a short
-// paraphrase of it into the line so the reply visibly varies turn to turn and at
-// least LOOKS like it heard the person, even on a turn the model itself failed.
-export function fallbackReply(contactText, caseRow) {
-  const lang = guessLang(contactText)
-  let reportObj = null
-  try { reportObj = caseRow?.report ? JSON.parse(caseRow.report) : null } catch { reportObj = null }
-  const nothingRecorded = !reportObj || !Object.values(reportObj).some(v => v != null)
-  const trimmed = String(contactText || '').trim()
-  const isBareGreeting = /^(hi|hello|hey|sup|yo|howzit|molo|sawubona|hallo|dumela)\b[!.?]*$/i.test(trimmed) || !trimmed
-  let base
-  if (nothingRecorded && isBareGreeting) {
-    base = FALLBACK_GREETING_BY_LANG[lang] || FALLBACK_GREETING
-  } else if (nothingRecorded) {
-    // Real words came in but nothing was recorded (a failed/parroting turn) --
-    // acknowledge what they said in a short, safe, generic way instead of the
-    // bare greeting, so a second message never reads as a total non-sequitur.
-    // ONE open, non-presumptive follow-up -- never a fixed compound question
-    // ("which animals, AND where") that risks re-asking something the contact
-    // JUST said (witnessed live: a contact who just gave a place got asked
-    // "where are they" again). casey does no deterministic field extraction
-    // (project-wide invariant), so this fallback cannot know what was already
-    // said -- it stays deliberately open-ended instead of presuming a gap.
-    const heard = truncate(trimmed, 60)
-    base = lang === 'af' ? `Ek het dit gekry: "${heard}". Vertel my net 'n bietjie meer oor wat aangaan.`
-      : lang === 'zu' ? `Ngikutholile lokho: "${heard}". Ngitshele nje kabanzi ngokwenzekayo.`
-      : lang === 'xh' ? `Ndikufumene oko: "${heard}". Ndixelele nje ngokwengeziweyo ngokwenzekayo.`
-      : `I got that: "${heard}". Tell me a bit more about what's going on.`
-  } else {
-    base = FALLBACK_BY_LANG[lang] || FALLBACK_REPLY
-  }
-  const ref = caseRow?.ref
-  if (!ref) return base
-  return base + refTail(contactText, caseRow)
-}
+// USER DIRECTIVE: no mocks/fallbacks/stubs -- only singular working mechanisms
+// and loud errors. A degraded turn (model error/timeout/empty/echo/stock-ack/
+// repeat) no longer composes a warm holding reply -- fallbackReply() is
+// deliberately gone. The caller sends NOTHING to the contact on a degraded
+// turn and logs/records the failure loudly instead (see the degraded-turn
+// branch in makeCaseHandler). The reliability fix is upstream: the in-process
+// acptoapi bridge (freddie) is the mechanism that must actually work, not a
+// scripted apology for when it doesn't.
 
 // Strip channel mention/markup tokens that a chat platform injects when a
 // contact addresses the bot. On Discord, "@memobot hello" arrives as msg.content
@@ -556,17 +473,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const replyTo = replyTarget(msg)           // channel/chat DELIVERY target
     const adapter = this?.platforms?.get?.(platform)
     if (!store) {
-      log?.error?.('[casey] store not initialized')
-      const warmText = FALLBACK_REPLY + ' We are experiencing a brief interruption. Please try again shortly.'
-      // The gateway discards this handler's return value (freddie run.js calls
-      // handleInbound only for its side effects), so a warm holding reply reaches
-      // the contact ONLY if we send it ourselves. Target external_id (channel id
-      // on Discord, phone on WhatsApp) -- msg.from is the author id and would 404.
-      if (adapter?.send) {
-        try { await adapter.send({ to: replyTo, text: warmText, platform }) }
-        catch (e) { log?.error?.('[casey] store-not-ready holding send failed', { channel, error: e.message }) }
-      }
-      return { to: replyTo, text: warmText, platform, error: 'store_not_ready' }
+      // USER DIRECTIVE: no mocks/fallbacks/stubs, only singular working mechanisms
+      // and loud errors. The store is a hard dependency -- if it is not
+      // initialized, that is a real infrastructure failure, not something a
+      // scripted apology should paper over. Log loud, send nothing.
+      log?.error?.('[casey] store not initialized; dropping inbound')
+      return { to: replyTo, text: '', platform, error: 'store_not_ready' }
     }
     const msgId = messageId(msg)
     if (!msgId) log?.warn?.('[casey] inbound message missing id; dedup guarantee not applied', { channel, external_id })
@@ -580,17 +492,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     } catch (e) {
       // Do NOT log external_id -- it is the contact's phone number (PII). Channel
       // plus the error is enough to diagnose without writing PII to the log sink.
-      log.error?.('[casey] findOrCreateCase failed', { channel, error: e.message })
-      // Send a warm holding message rather than empty text so the contact knows
-      // their message arrived and the team will follow up. The gateway ignores
-      // this return value, so deliver it ourselves to external_id (the channel id
-      // on Discord, the phone on WhatsApp); msg.from is the author id and 404s.
-      const storeDownText = fallbackReply(msg.text || '', null)
-      if (adapter?.send) {
-        try { await adapter.send({ to: replyTo, text: storeDownText, platform }) }
-        catch (sendErr) { log.error?.('[casey] store-down holding send failed', { channel, error: sendErr.message }) }
-      }
-      return { to: replyTo, text: storeDownText, platform, error: e.message }
+      // USER DIRECTIVE: no fallback text -- a store failure is a real
+      // infrastructure error, logged loud, nothing sent.
+      log.error?.('[casey] findOrCreateCase failed; dropping inbound', { channel, error: e.message })
+      return { to: replyTo, text: '', platform, error: e.message }
     }
 
     // Dedup: a redelivered platform message (webhook retry, gateway replay, or
@@ -813,16 +718,16 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const events = await store.listEvents(fresh.id)
     const prompt = inboundText || (media ? `The contact sent ${media} with no text. Acknowledge and ask how you can help.` : 'The contact sent an empty message. Acknowledge politely.')
 
-    // LLM-DOWN QUEUE GATE. With no deterministic fallback classification, a message
-    // that arrives while the backend is down cannot be understood now -- so QUEUE it
-    // and re-drive when the provider recovers (drainQueuedTurns on the down->up edge).
-    // The inbound is already recorded above; here we append a durable QUEUED-FOR-AGENT
-    // marker (the queue), send exactly ONE warm holding ack, and return WITHOUT a
-    // TURN-START (so the resume sweep does not also claim it). The ack is recorded as
-    // an OBSERVATION, never an outbound -- an outbound would positionally "complete"
-    // the queued turn and suppress the retry. Guarded once per msgId. STOP/HUMAN are
-    // handled by the deterministic short-circuit ABOVE this gate, so an opt-out during
-    // an outage still fires synchronously and is never queued.
+    // LLM-DOWN QUEUE GATE. A message that arrives while the backend is down cannot
+    // be understood now -- so QUEUE it and re-drive when the provider recovers
+    // (drainQueuedTurns on the down->up edge). The inbound is already recorded
+    // above; here we append a durable QUEUED-FOR-AGENT marker and return WITHOUT a
+    // TURN-START (so the resume sweep does not also claim it). USER DIRECTIVE: no
+    // fallback text -- log loud, send nothing, rely on the queue to re-drive once
+    // the provider (the in-process acptoapi bridge) is actually reachable. Guarded
+    // once per msgId. STOP/HUMAN are handled by the deterministic short-circuit
+    // ABOVE this gate, so an opt-out during an outage still fires synchronously
+    // and is never queued.
     if (typeof llmStatus === 'function' && !msg.resume) {
       let down = false
       try { const st = await llmStatus(); down = st && st.ok === false } catch { down = false }
@@ -831,39 +736,25 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         if (!already) {
           try {
             await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `QUEUED-FOR-AGENT:${msgId}` })
-            const holdText = fallbackReply(inboundText, fresh)
-            await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `HOLDING-ACK-SENT:${msgId}` })
-            const holdReply = { to: replyTo, text: holdText, platform, caseId: fresh.id, queued: true }
-            if (adapter?.send) {
-              try { await adapter.send(holdReply) }
-              catch (e) { log.warn?.('[casey] holding-ack send failed', { caseId: fresh.id, error: e.message }) }
-            }
-            log.info?.('[casey] queued inbound (LLM down)', { caseId: fresh.id, msgId })
-            return holdReply
+            log.error?.('[casey] LLM backend down; queued inbound, no reply sent', { caseId: fresh.id, msgId })
+            return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true }
           } catch (e) {
             log.warn?.('[casey] queue-gate append failed; falling through to live turn', { caseId: fresh.id, error: e.message })
           }
         } else {
-          // Already queued this msgId (a duplicate delivery during the outage) -- do
-          // not re-ack, just acknowledge receipt without a second holding line.
+          // Already queued this msgId (a duplicate delivery during the outage).
           return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true, deduped: true }
         }
       }
     }
 
     // Per-contact rate limit: unlike the simultaneous-message inFlight gate below,
-    // this bounds SEQUENTIAL message rate over time. Over the cap, still send the
-    // existing warm holding-ack reply (never dead-end) instead of a full LLM turn.
+    // this bounds SEQUENTIAL message rate over time. USER DIRECTIVE: no fallback
+    // text -- log loud, send nothing, skip the LLM turn.
     if (rateLimited(external_id)) {
-      log.info?.('[casey] rate limit: skipping LLM turn', { caseId: fresh.id })
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `RATE-LIMITED: more than ${RATE_LIMIT_MSGS} messages in ${Math.round(RATE_LIMIT_WINDOW_MS / 1000)}s; holding reply sent, no LLM turn.` })
-      const holdText = fallbackReply(inboundText, fresh)
-      const holdReply = { to: replyTo, text: holdText, platform, caseId: fresh.id, rateLimited: true }
-      if (adapter?.send) {
-        try { await adapter.send(holdReply) }
-        catch (e) { log.warn?.('[casey] rate-limit holding-ack send failed', { caseId: fresh.id, error: e.message }) }
-      }
-      return holdReply
+      log.error?.('[casey] rate limit: skipping LLM turn, no reply sent', { caseId: fresh.id })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `RATE-LIMITED: more than ${RATE_LIMIT_MSGS} messages in ${Math.round(RATE_LIMIT_WINDOW_MS / 1000)}s; no reply sent, no LLM turn.` })
+      return { to: replyTo, text: '', platform, caseId: fresh.id, rateLimited: true }
     }
 
     // Per-contact concurrency gate: a second message from the same contact while
@@ -956,68 +847,63 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // question, and a now-complete case never lets trusted model prose through.
     fresh = await store.getCase(fresh.id).catch(() => fresh)
 
-    // Never send a raw error string or an empty message to the contact. On
-    // error/empty, send a safe fallback and keep the case recoverable.
+    // Never send a raw error string to the contact. USER DIRECTIVE: no fallback
+    // text -- a degraded turn (below) sends nothing and logs loud instead.
     let text = (result?.result || '').toString().trim()
     // Reject a reply that parrots the system-prompt example verbatim: record it
-    // as a failed turn and fall through to the safe fallback rather than leak a
-    // canned, robotic message to the contact.
+    // as a failed turn rather than leak a canned, robotic message to the contact.
     if (text && isPromptEcho(text)) {
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model echoed prompt example; replaced with fallback' })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model echoed prompt example; blanked' })
       text = ''
     }
     // The weak model recites the bare stock ack on later turns too (not just the
     // first-contact exemplar isPromptEcho catches). A reply that is substantively
     // only "thank you ... your reference is X" advances nothing -- treat it as a
-    // failed turn so the degraded path below asks the one most-important missing
-    // on-site fact instead of parroting an ack a third time.
+    // failed turn.
     if (text && isStockAck(text)) {
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model recited stock ack (no case-specific content); replaced with advancing fallback' })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model recited stock ack (no case-specific content); blanked' })
       text = ''
     }
-    // GENERAL repeat-of-last-outbound guard. isPromptEcho/isStockAck are
-    // finite string lists -- they only ever catch the SPECIFIC phrasings
-    // someone already witnessed and hardcoded, so any new canned/fallback
-    // string (including this file's OWN fallbackReply()/FALLBACK_GREETING
-    // text) is invisible to them the moment it changes. Witnessed live: a
-    // small model (RECENT TIMELINE shows its own prior outbound in-context)
-    // parroted the exact previous reply verbatim on the next real, distinct
-    // message ("3 dead cows") with no error/timeout at all -- a clean turn
-    // that just echoed. Compare against the case's actual last outbound
-    // event directly instead of maintaining an ever-growing blocklist: any
-    // reply that is ref-stripped-identical to the last thing this case sent
-    // is a parrot, regardless of what the string happens to say.
+    // GENERAL repeat-of-last-outbound guard. isPromptEcho/isStockAck are finite
+    // string lists -- they only ever catch the SPECIFIC phrasings someone already
+    // witnessed and hardcoded. Witnessed live: a small model (RECENT TIMELINE
+    // shows its own prior outbound in-context) parroted the exact previous reply
+    // verbatim on the next real, distinct message ("3 dead cows") with no error/
+    // timeout at all -- a clean turn that just echoed. Compare against the case's
+    // actual last outbound event directly instead of maintaining an ever-growing
+    // blocklist: any reply that is ref-stripped-identical to the last thing this
+    // case sent is a parrot, regardless of what the string happens to say.
     if (text) {
       const lastOutbound = [...events].reverse().find(e => e.kind === 'outbound')
       if (lastOutbound?.text) {
         const strip = (s) => String(s).toLowerCase().replace(/CASE-\d+-[a-z0-9]+/gi, '').replace(/\s+/g, ' ').trim()
         if (strip(text) === strip(lastOutbound.text)) {
-          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model repeated its own last outbound verbatim; replaced with advancing fallback' })
+          await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model repeated its own last outbound verbatim; blanked' })
           text = ''
         }
       }
     }
     // PURE-AGENT REPLY. The agent drives the whole conversation -- intake (asking the
     // next needed fact via case_report + the system prompt), enquiries, status, all of
-    // it. casey no longer composes or overrides the reply deterministically; the ONLY
-    // safety net is: on a degraded turn (error / timeout / empty / prompt-echo /
-    // stock-ack) send a warm fallback so the contact is never dead-ended. The
-    // empty-case field-capture floor (above) still records plainly-stated facts if the
-    // model missed a case_report, but it does NOT compose the reply.
-    if (!text) {
+    // it. casey no longer composes or overrides the reply deterministically. USER
+    // DIRECTIVE: no mocks/fallbacks/stubs, only singular working mechanisms and loud
+    // errors -- a degraded turn (error / timeout / empty / prompt-echo / stock-ack /
+    // repeat) sends NOTHING to the contact and logs loudly instead of a scripted
+    // holding reply. The empty-case field-capture floor (above) still records
+    // plainly-stated facts if the model missed a case_report, but it does NOT
+    // compose the reply. The reliability fix is upstream (the in-process acptoapi
+    // bridge), not a downstream apology.
+    const isFallback = !text
+    if (isFallback) {
       if (!errored && result?.error) {
-        log.warn?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
+        log.error?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent result error: ${result.error}` })
       }
-      // Warm, non-dead-end holding line (never a computed ask -- the model resumes
-      // driving on the next turn / on recovery).
-      text = fallbackReply(inboundText, fresh)
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded turn (empty/error/echo/stock-ack); sent warm fallback.' })
+      log.error?.('[casey] degraded turn produced no reply', { caseId: fresh.id })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded turn (empty/error/echo/stock-ack/repeat); no reply sent.' })
     }
-    const fallbackBase = fallbackReply(inboundText, fresh)
-    const isFallback = !text || text === fallbackBase || text.startsWith(fallbackBase) || text.includes(fallbackBase)
-    // A turn that ended in the fallback path (model error OR empty/echo/stock-ack)
-    // is DEGRADED: the agent never actually understood this message. Surfaced on
+    // A turn that ended empty (model error OR empty/echo/stock-ack/repeat) is
+    // DEGRADED: the agent never actually understood this message. Surfaced on
     // the reply object so drainQueuedTurns can treat a degraded re-drive as a
     // failed attempt instead of burning the queued message.
     const degraded = errored || isFallback
@@ -1127,12 +1013,16 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // while the backend is STILL degraded must NOT be burned: an outbound here
     // would positionally complete the queued msgId in drainQueuedTurns, so the
     // agent would never see the message. Record the failure as an OBSERVATION
-    // (which completes nothing) and send nothing -- the contact already got
-    // exactly one holding ack at queue time. A BOOT resume (resumePendingTurns)
-    // deliberately still sends the fallback: it marked attempted up-front, so
-    // suppressing there would leave the contact with no reply at all.
+    // (which completes nothing) and send nothing.
     if (msg.queuedRedrive && degraded) {
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded re-drive; keeping queued (fallback not re-sent)' })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded re-drive; still degraded, nothing sent' })
+      return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
+    }
+
+    // No fallback text: a degraded turn (isFallback) has nothing to send. The
+    // failure was already recorded loudly above; return here rather than
+    // recording an empty outbound event and calling adapter.send with blank text.
+    if (isFallback) {
       return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
     }
 
