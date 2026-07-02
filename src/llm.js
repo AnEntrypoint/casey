@@ -14,7 +14,14 @@
 // with the deterministic "a person will help you" reply rather than dropping the
 // contact or crashing the case.
 
-const DEFAULT_MODEL = process.env.CASEY_LLM_MODEL || 'claude/haiku'
+// Sonnet by default: casey's turn is a multi-step extraction + tool-orchestration +
+// tone-sensitive task (never alarm, mirror the contact's language, never repeat a
+// question, decide when to call case_split/case_merge/case_stage) that a cheaper
+// model has repeatedly been observed to get wrong (dropped tool calls, repeated
+// questions, fabricated context on empty turns -- see AGENTS.md prompt-steering
+// notes). CASEY_LLM_MODEL overrides this in either direction, including back down
+// to a cheaper tier for cost-sensitive deployments.
+const DEFAULT_MODEL = process.env.CASEY_LLM_MODEL || 'claude/sonnet'
 
 // Bind freddie's bridge callLLM to a fixed model so every casey turn requests the
 // same brain. The bridge reads FREDDIE_LLM_URL / FREDDIE_LLM_MODEL itself, but we

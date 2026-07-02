@@ -156,6 +156,7 @@ run offline; there is no stub/mock fallback.
 | `CASEY_ALERT_WEBHOOK` | When set, a high-severity health breach (unanswered handoff, and the escalated tier) POSTs a plain JSON alert to this URL so a team is paged off-dashboard. Each newly-entered breach pages once; an already-flagged case is not re-paged. |
 | `CASEY_OPERATORS` | Cooperative operator roster (comma-separated `id:Name` pairs), fixed at boot. `GET /api/operators` lists it and `X-Casey-Operator` selects a known id to attribute an action; this is attribution, not authentication -- an unknown/absent value falls back to the default actor and can never inject a new identity. |
 | `CASEY_LOG=silent` | Silence structured JSON logs (used by tests). |
+| `CASEY_LLM_MODEL` | Override the model requested from the acptoapi bridge (default `claude/sonnet` -- chosen over a cheaper tier because casey's turn is multi-step extraction + tool orchestration + tone-sensitive reply composition, where a weaker model has repeatedly dropped tool calls or repeated questions). Set to a cheaper tier for cost-sensitive deployments. |
 | `CASEY_RELOAD=0` | Disable hot-reload (the supervisor still restarts on crash; it just stops watching source). |
 | `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (e.g. `../freddie/src`). `src/` and a sibling `../freddie/src` are watched by default; absent dirs are skipped with a warning. Allowlist only -- never contact input. |
 | `CASEY_RELOAD_DEBOUNCE_MS` | Coalesce a burst of saves into one reload (default 300). |
