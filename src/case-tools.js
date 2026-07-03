@@ -10,6 +10,8 @@ import { getCaseStore } from './case-runtime.js'
 import { AGENT_USER, REPORT_KEYS } from './case-store.js'
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra })
+const CASE_TYPE_VALUES = new Set(['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'])
+const PRIORITY_VALUES = new Set(['low', 'normal', 'high', 'urgent'])
 
 // Build the array of tool objects bound to an explicit store (used by tests and
 // by anywhere that wants the tools without the runtime singleton).
@@ -91,7 +93,7 @@ export function buildCaseToolset(storeOrNull) {
       toolset: 'cases',
       schema: {
         name: 'case_update',
-        description: 'Update editable case fields (subject, summary, priority, tags, assignee, autonomy). Keep `summary` current -- it is your working memory of the case.',
+        description: 'Update editable case fields (subject, summary, priority, tags, assignee, autonomy, case_type). Keep `summary` current -- it is your working memory of the case. Set `case_type` as soon as the report makes the category clear -- this drives the organisers\' map, SLA targets, and workload views, so it must not sit unset waiting for a human to classify it by hand: outbreak (multiple animals, fast onset, or a suspected notifiable disease), follow_up (a routine check-in on an already-known situation), lab_sample (mainly about a sample/test result), import_alert (tied to recently moved/imported animals). Leave it unset only when nothing yet points to a category.',
         parameters: {
           type: 'object',
           properties: {
@@ -101,13 +103,26 @@ export function buildCaseToolset(storeOrNull) {
             priority: str('Priority', { enum: ['low', 'normal', 'high', 'urgent'] }),
             tags: str('Comma-separated tags'),
             assignee: str('Operator handle, or "agent"'),
+            case_type: str('Category, set as soon as the report makes it clear', { enum: ['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'] }),
           },
           required: ['id'],
         },
       },
       handler: async ({ id, ...patch }) => {
-        const clean = pick(patch, ['subject', 'summary', 'priority', 'tags', 'assignee'])
+        const clean = pick(patch, ['subject', 'summary', 'priority', 'tags', 'assignee', 'case_type'])
         if (!Object.keys(clean).length) return { error: 'no editable fields supplied' }
+        // thatcher's config-declared enum type is NOT enforced server-side on
+        // write (an out-of-enum value is silently stored), so a tool-schema enum
+        // alone is not enough defense -- validate here too, or a model that
+        // ignores its own schema silently corrupts every case_type/priority-keyed
+        // observability view (map filters, SLA-by-type, workload) with a value no
+        // downstream aggregate recognizes.
+        if ('case_type' in clean && !CASE_TYPE_VALUES.has(clean.case_type)) {
+          return { error: `invalid case_type: ${clean.case_type}`, allowed: [...CASE_TYPE_VALUES] }
+        }
+        if ('priority' in clean && !PRIORITY_VALUES.has(clean.priority)) {
+          return { error: `invalid priority: ${clean.priority}`, allowed: [...PRIORITY_VALUES] }
+        }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         // Autonomy is operator control: it is set only from the dashboard, never by
@@ -117,8 +132,22 @@ export function buildCaseToolset(storeOrNull) {
         if (c.autonomy === 'observe') {
           return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
         }
+        const caseTypeChanged = 'case_type' in clean && (c.case_type || 'unset') !== clean.case_type
         const updated = await store().updateCase(id, clean, AGENT_USER)
-        await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `updated ${Object.keys(clean).join(', ')}`, data: clean })
+        // Audited as its own from/to action, matching the dashboard's own
+        // reclassification event shape, so /api/report.json's per-type analytics
+        // can trace an agent-driven reclassification the same way as an operator one.
+        if (caseTypeChanged) {
+          await store().appendEvent(id, {
+            kind: 'action', actor: 'agent',
+            text: `case_type ${c.case_type || 'unset'} -> ${clean.case_type}`,
+            data: { from: c.case_type || 'unset', to: clean.case_type, field: 'case_type' },
+          })
+        }
+        const otherKeys = Object.keys(clean).filter(k => k !== 'case_type')
+        if (otherKeys.length) {
+          await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `updated ${otherKeys.join(', ')}`, data: Object.fromEntries(otherKeys.map(k => [k, clean[k]])) })
+        }
         return { ok: true, case: slimCase(updated) }
       },
     },
@@ -152,22 +181,38 @@ export function buildCaseToolset(storeOrNull) {
             present_person_relation: str('How the present person is linked to the owner: owner, relative, herder, or neighbour'),
             owner_name: str("The animals' owner's name, if the worker learns it and the owner is not present"),
             owner_contact: str("A number to reach the owner, if the worker learns it and the owner is not present"),
+            lat: { type: 'number', description: 'Latitude, ONLY if the worker reads out real GPS coordinates directly (e.g. from a phone) -- never estimate or infer this yourself. Placing the case on the organisers\' map from an exact point is far better than the approximate area the map falls back to otherwise.' },
+            lon: { type: 'number', description: 'Longitude, ONLY alongside lat, only from real GPS coordinates the worker actually reads out -- never estimate.' },
           },
           required: ['id'],
         },
       },
-      handler: async ({ id, ...fields }) => {
+      handler: async ({ id, lat, lon, ...fields }) => {
         const incoming = pick(fields, [...REPORT_KEYS])
-        if (!Object.keys(incoming).length) return { error: 'no report fields supplied' }
-        // Atomic read-merge-write in the store, under the per-conversation lock, so
-        // two concurrent agent turns for the same case cannot read the same stale
-        // report and clobber each other's fields. Later messages refine earlier
-        // ones; a field already given is never lost.
-        const res = await store().mergeReport(id, incoming, AGENT_USER)
-        if (res.error === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
-        if (res.error) return { error: res.error }
-        await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `recorded report fields: ${Object.keys(incoming).join(', ')}`, data: incoming })
-        return { ok: true, report: res.report, fieldsRecorded: Object.keys(incoming) }
+        const hasGps = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+        if (!Object.keys(incoming).length && !hasGps) return { error: 'no report fields supplied' }
+        let res = { report: null }
+        if (Object.keys(incoming).length) {
+          // Atomic read-merge-write in the store, under the per-conversation lock, so
+          // two concurrent agent turns for the same case cannot read the same stale
+          // report and clobber each other's fields. Later messages refine earlier
+          // ones; a field already given is never lost.
+          res = await store().mergeReport(id, incoming, AGENT_USER)
+          if (res.error === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
+          if (res.error) return { error: res.error }
+        }
+        // lat/lon are real case columns, not report JSON -- explicit worker GPS
+        // always overrides any prior gazetteer approximation (case-store.js
+        // mergeReport only fills lat/lon when unset; here the worker gave the
+        // real thing, so it wins unconditionally).
+        if (hasGps) {
+          const c = await store().getCase(id)
+          if (c?.autonomy === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
+          await store().updateCase(id, { lat, lon }, AGENT_USER)
+        }
+        const fieldsRecorded = [...Object.keys(incoming), ...(hasGps ? ['lat', 'lon'] : [])]
+        await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `recorded report fields: ${fieldsRecorded.join(', ')}`, data: { ...incoming, ...(hasGps ? { lat, lon } : {}) } })
+        return { ok: true, report: res.report, fieldsRecorded }
       },
     },
     {

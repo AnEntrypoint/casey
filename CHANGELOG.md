@@ -16,8 +16,18 @@
   outbreak-cluster link overlay (reusing `clusters.js`), operator-coverage
   overlay, species/case_type/status/date filters, click-through to the existing
   case detail panel. Aggregate/PII-free like every other dashboard rollup.
+- Agent-driven observability prep: `case_update` gained an agent-settable
+  `case_type` (the map/SLA-by-type/workload views no longer wait on a human to
+  classify every case by hand), `case_report` gained `lat`/`lon` (recorded only
+  from real worker-read-out GPS, always overriding the map's gazetteer
+  approximation). `caseSystemPrompt` instructs the agent to set both quietly, on
+  its own judgment, as the report makes the picture clear.
 
 ### Fixed
+- `case_update`'s `case_type`/`priority` are now validated against their enum
+  before write -- thatcher's config-declared enum type was not enforced
+  server-side, so an out-of-enum value from a tool call would have silently
+  corrupted every case_type/priority-keyed observability view.
 - Discord handoff webhook no longer interpolates the reporter's raw phone number
   into plaintext message content -- the case ref is enough for an operator to open
   the case; PII stayed out of Discord's own logs/exports.

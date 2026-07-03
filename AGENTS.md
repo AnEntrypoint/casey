@@ -87,7 +87,7 @@ src/
   case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error); mergeReport backfills case.lat/lon from the gazetteer when a location is written and no explicit GPS exists; learnOperatorActivity/listOperatorIdentities maintain the operator_identity entity (durable per-operator working-area history, dashboard-attributed actions only, best-effort/never throws into the caller)
   gazetteer.js             MAP-ONLY static SA town/province -> approximate [lat,lon] lookup (geocodeApprox), used solely to place a map pin from a case's free-text report location when no explicit GPS exists; distinct from the forbidden chat-routing gazetteer -- never feeds the agent's prompt or a tool response the contact sees, a miss buckets into the map's "unresolved" group rather than guessing
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
-  case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx))
+  case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx)). case_update carries case_type (agent-settable classification, validated against CASE_TYPE_VALUES -- thatcher's own config-declared enum is NOT enforced server-side on write, so the tool validates before every write, matching the dashboard's own check) and priority (same PRIORITY_VALUES guard). case_report carries lat/lon (only from real worker-read-out GPS, validated finite/in-range, written straight to the case columns, always overriding any prior gazetteer approximation)
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep; detectCoverageGap (rostered team, open breaching cases, zero in-window operator replies) pages a synthetic TEAM-COVERAGE breach
@@ -430,6 +430,18 @@ the crash-budget stop state); the supervisor is its only I/O.
   correlation engine rather than a second grouping heuristic. Aggregate/PII-free
   like every other dashboard rollup -- no `external_id`, no owner/contact fields on
   a pin, only what an area-level map needs.
+- **The agent prepares observability data itself; a human classifies nothing the
+  system could already infer.** Every field a read-only view (the map, SLA-by-type,
+  workload-by-type) needs is agent-settable through the normal case_* tool flow --
+  `case_type` (`case_update`) and `lat`/`lon` (`case_report`, only from real
+  worker-read-out GPS) are set autonomously as the agent gathers the report, never
+  left for an operator to classify by hand afterward. This is judgment via a tool
+  call (AGENT decides case_type from the report's own content, per
+  `caseSystemPrompt`), never a casey-side deterministic classifier -- the
+  no-deterministic-text-processing invariant applies to observability prep exactly
+  as it applies to the conversation. Fields that ARE genuinely operator-only stay
+  that way (`autonomy` -- flipping it back to `auto` would let the agent escape
+  the very mode a human used to stop it).
 
 ## Security invariants (do not regress)
 
