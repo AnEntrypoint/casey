@@ -40,6 +40,9 @@ export const DEFAULT_THRESHOLDS = {
 // and the dashboard can import the canonical list instead of maintaining copies.
 export const VISIT_CRITICAL = ['species', 'symptoms', 'location', 'how_to_find', 'farmer_available', 'contact_fallback']
 
+// Fallback only -- classifyCaseHealth prefers the live thresholds.openStatuses
+// (case-sweep.js passes store.getOpenStatuses()) so a workflow-config change is
+// picked up with no code edit here.
 const OPEN = new Set(['new', 'triaging', 'in_progress', 'waiting', 'resolved'])
 
 function ms(v) {
@@ -74,7 +77,8 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   // A closed case is finished: it cannot be stale, stuck, or abandoned. This is
   // the structural guard against flagging done work (P6 -- the wrong state is
   // unrepresentable, not merely filtered).
-  if (status === 'closed' || !OPEN.has(status)) return out
+  const openStatuses = thresholds?.openStatuses instanceof Set ? thresholds.openStatuses : OPEN
+  if (status === 'closed' || !openStatuses.has(status)) return out
 
   const touched = lastTouch(caseRow)
   if (!Number.isFinite(touched)) {

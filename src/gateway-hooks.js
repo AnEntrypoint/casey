@@ -17,15 +17,7 @@
 // an operator can override case state at any time.
 
 import { runTurn } from 'freddie'
-// The PII-free enquiry projection vocabulary is owned by freddie (the layering
-// mandate: agentic + enquiry code lives in freddie). casey reuses projectCase so a
-// deterministic itinerary answer is scrubbed by the SAME whitelist the agent's
-// enquiry tools use -- external_id/contact_id can never leak into a worker's list.
-import { projectCase, DEFAULT_PROJECTION } from '../../freddie/src/plugins/case/toolset.js'
-import { buildAlertPayload, buildSLAReport } from './report-analytics.js'
-import { buildGeo } from './geo.js'
-import { buildClusters } from './clusters.js'
-import { buildOverview } from './overview.js'
+import { buildAlertPayload } from './report-analytics.js'
 import { fmtTimeSAST } from './format.js'
 import { orientCase, advanceCase } from './conversation-state.js'
 
@@ -1456,7 +1448,10 @@ export function intentReply(intent, caseRow, lang = 'en') {
 export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WEBHOOK, log = null) {
   if (!webhookUrl) return null
   return async ({ case: c, channel, from }) => {
-    const content = `A person is needed - case ${c.ref} on ${channel} (${from})`
+    // Never put a contact's raw phone/handle into a plaintext Discord message --
+    // the same PII discipline the rest of this file holds for external_id. The
+    // case ref is enough for an operator to open the case in the dashboard.
+    const content = `A person is needed - case ${c.ref} on ${channel}`
       + (c.subject ? ` - ${c.subject}` : '')
     // A flaky webhook must never break the handoff itself: the case is already
     // flagged needs-human in the store, so the dashboard surfaces it regardless.

@@ -70,6 +70,11 @@ function detectCoverageGap(cases, eventsByCaseId, roster = [], now = Date.now(),
 // injected. Returns a summary { scanned, flagged, cleared, breaches:{type:count} }.
 export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_THRESHOLDS, { log = null, notifyBreach = null } = {}) {
   const summary = { scanned: 0, flagged: 0, cleared: 0, breaches: {}, errors: [] }
+  // Prefer the live workflow's open-stage set over case-health.js's literal
+  // fallback, so a stage added/renamed in thatcher.config.yml is picked up with
+  // no code edit here.
+  const openStatuses = typeof store.getOpenStatuses === 'function' ? new Set(store.getOpenStatuses()) : null
+  const effThresholds = openStatuses ? { ...thresholds, openStatuses } : thresholds
   // Only open cases can be unhealthy; a closed case is finished. listCases with no
   // filter returns recency-sorted; we classify each and skip closed defensively.
   const cases = await store.listCases({}, { limit: 10000 })
@@ -82,7 +87,7 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
     if (c.status === 'closed' || c.channel === 'system') continue
     summary.scanned++
     let breaches
-    try { breaches = classifyCaseHealth(c, now, thresholds) }
+    try { breaches = classifyCaseHealth(c, now, effThresholds) }
     catch (e) { log?.warn?.('[sweep] classify failed', { caseId: c.id, error: e.message }); summary.errors.push({ caseId: c.id, error: e.message, phase: 'classify' }); continue }
     if (summary.errors.length > 100) {
       log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: 'too many errors, sweep halted for safety' })

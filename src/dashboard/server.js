@@ -16,6 +16,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { VISIT_CRITICAL } from '../case-health.js'
+import { REPORT_KEY_ORDER } from '../case-store.js'
 import { rankAttention } from '../attn.js'
 import { fmtTimeSAST } from '../format.js'
 
@@ -278,7 +279,34 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
 </body></html>`
   }
 
-  app.get('/report', async (req, res) => {
+  // The public /report form has no auth (the ref is the shared secret), so it
+  // needs its own throttle: the 8-char ref and the SA phone-number space are
+  // both brute-forceable in unlimited requests. Scoped to these two routes only
+  // -- never touches the authed() /api surface. Sweeps stale buckets so the map
+  // cannot grow unbounded under sustained traffic.
+  const REPORT_RATE_LIMIT = 10
+  const REPORT_RATE_WINDOW_MS = 60000
+  const reportRateBuckets = new Map()
+  setInterval(() => {
+    const now = Date.now()
+    for (const [ip, b] of reportRateBuckets) {
+      if (now - b.windowStart > REPORT_RATE_WINDOW_MS) reportRateBuckets.delete(ip)
+    }
+  }, REPORT_RATE_WINDOW_MS).unref?.()
+  function reportRateLimited(req, res, next) {
+    const ip = req.ip || req.socket?.remoteAddress || 'unknown'
+    const now = Date.now()
+    let b = reportRateBuckets.get(ip)
+    if (!b || now - b.windowStart > REPORT_RATE_WINDOW_MS) {
+      b = { count: 0, windowStart: now }
+      reportRateBuckets.set(ip, b)
+    }
+    b.count++
+    if (b.count > REPORT_RATE_LIMIT) return res.status(429).type('html').send(publicFormHtml({ err: 'Too many requests. Please wait a moment and try again.' }))
+    next()
+  }
+
+  app.get('/report', reportRateLimited, async (req, res) => {
     const ref = String(req.query.ref || '').slice(0, 50).trim()
     const done = req.query.done === '1'
     const err = String(req.query.err || '').slice(0, 200)
@@ -290,7 +318,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).type('html').send(publicFormHtml({ ref, err: 'Something went wrong. Please try again in a moment.' })) }
   })
 
-  app.post('/report', async (req, res) => {
+  app.post('/report', reportRateLimited, async (req, res) => {
     const ref = String(req.body.ref || '').slice(0, 50).trim()
     const phoneRaw = String(req.body.phone || '').replace(/[\s\-()]/g, '').slice(0, 30)
     if (!ref && !phoneRaw) return res.redirect('/report?err=' + encodeURIComponent('Please enter your reference number or phone number.'))
@@ -501,11 +529,9 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
-  // Keys used by the report fields -- kept in sync with REPORT_KEYS in case-store.js.
-  // Ordered for display: observation fields first, then logistics, then contacts/media.
-  const REPORT_KEY_LIST = ['species', 'symptoms', 'affected_count', 'dead_count', 'onset',
-    'suspected_disease', 'recent_movement', 'location', 'how_to_find', 'access_notes',
-    'farmer_available', 'contact_fallback', 'identifying_traits', 'photos', 'audio', 'notes', 'language_detected']
+  // Keys used by the report fields -- REPORT_KEY_ORDER is case-store.js's REPORT_KEYS,
+  // ordered for display (observation fields first, then logistics, then contacts/media).
+  const REPORT_KEY_LIST = REPORT_KEY_ORDER
   const REPORT_KEY_SET = new Set(REPORT_KEY_LIST)
   const VISIT_CRITICAL_SET = new Set(VISIT_CRITICAL)
 
@@ -2390,6 +2416,8 @@ const REPORT_FIELDS=[
   ['access_notes','Access / travel'],['farmer_available','Farmer available?'],
   ['contact_fallback','Other contact'],['identifying_traits','Identifying the animals'],
   ['photos','Photos'],['audio','Voice notes'],['notes','Other notes'],
+  ['present_person','Who is with the animals'],['present_person_relation','Their link to the owner'],
+  ['owner_name','Owner name'],['owner_contact','Owner contact'],
   ['language_detected','Language detected'],
 ]
 // Fields a field visit genuinely needs that CANNOT be recovered once the worker

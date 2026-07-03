@@ -28,7 +28,13 @@ export const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_f
   // link to the owner, plus the owner's identity/contact -- so an absent owner with
   // a relative present is still captured. Reported by the worker, model- or
   // pending-ask-captured (no deterministic extractor).
-  'present_person', 'present_person_relation', 'owner_name', 'owner_contact'])
+  'present_person', 'present_person_relation', 'owner_name', 'owner_contact', 'language_detected'])
+
+// Same fields, ordered for stable display/fill-rate rendering (dashboard).
+export const REPORT_KEY_ORDER = ['species', 'symptoms', 'affected_count', 'dead_count', 'onset',
+  'suspected_disease', 'recent_movement', 'location', 'how_to_find', 'access_notes',
+  'farmer_available', 'contact_fallback', 'identifying_traits', 'photos', 'audio', 'notes',
+  'present_person', 'present_person_relation', 'owner_name', 'owner_contact', 'language_detected']
 
 export class CaseStore {
   constructor(opts = {}) {
@@ -448,7 +454,7 @@ export class CaseStore {
   // Explicitly create a new case (the worker asked to start one). Distinct from
   // findOrCreateCase, which is the per-conversation auto path -- this one always
   // creates and is bound active by the caller.
-  async createCase({ subject = '', assignee = AGENT_USER, channel = 'enquiry', external_id = null } = {}) {
+  async createCase({ subject = '', assignee = AGENT_USER.id, channel = 'enquiry', external_id = null } = {}) {
     const ref = await this._nextRef()
     const ext = external_id || `worker:${assignee}:${ref}`
     return this._createReload('case', {
