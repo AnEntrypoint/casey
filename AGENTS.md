@@ -481,34 +481,14 @@ the crash-budget stop state); the supervisor is its only I/O.
   heuristic. Aggregate/PII-free like every other dashboard rollup -- no
   `external_id`, no owner/contact fields on a pin, only what an area-level map
   needs.
-- **No hand-curated interpretation stand-ins: the model's own judgment/knowledge
-  is the resolver.** Where casey once carried a hand-curated lookup table as a
-  stand-in for something the agent could interpret itself (a static SA-town
-  gazetteer for the map), the table is gone and the prompt instead explicitly
-  trusts and instructs the model to use its own knowledge/judgment (see the map
-  bullet above). This does NOT apply to the two protected classes of
-  deterministic layer that stay regardless: (1) the STOP/HUMAN opt-out/handoff
-  safety keyword layer, which must work even with the LLM down and is the one
-  deterministic conversational-understanding layer AGENTS.md protects -- it
-  backstops, but does not replace, the agent's own `case_stop`/`case_handoff`
-  tools for its own judgment call; (2) storage-integrity enum validation
-  (`case_type`/`priority`) that guards AFTER the model has already exercised
-  judgment via its tool call, catching a malformed value before it corrupts an
-  observability view, not standing in for interpretation. Every other list/table
-  in the codebase (field-name schemas, UI display config) was audited and is
-  neither -- see git history for the full classification.
-- **The agent prepares observability data itself; a human classifies nothing the
-  system could already infer.** Every field a read-only view (the map, SLA-by-type,
-  workload-by-type) needs is agent-settable through the normal case_* tool flow --
-  `case_type` (`case_update`) and `lat`/`lon` (`case_report`, only from real
-  worker-read-out GPS) are set autonomously as the agent gathers the report, never
-  left for an operator to classify by hand afterward. This is judgment via a tool
-  call (AGENT decides case_type from the report's own content, per
-  `caseSystemPrompt`), never a casey-side deterministic classifier -- the
-  no-deterministic-text-processing invariant applies to observability prep exactly
-  as it applies to the conversation. Fields that ARE genuinely operator-only stay
-  that way (`autonomy` -- flipping it back to `auto` would let the agent escape
-  the very mode a human used to stop it).
+- **No hand-curated interpretation stand-ins; the agent prepares its own
+  observability data.** `case_type` and `lat`/`lon` are agent-set via the normal
+  case_* tool flow (no lookup table, no deterministic classifier), never left for
+  an operator to fill in by hand. Only two deterministic layers are protected and
+  are NOT stand-ins: the STOP/HUMAN safety keyword layer (must work with the LLM
+  down) and case_type/priority storage-enum validation (post-judgment integrity
+  guard). Full reasoning and the audited classification of every other list/table
+  in `recall`.
 
 ## Security invariants (do not regress)
 
