@@ -265,6 +265,20 @@ the crash-budget stop state); the supervisor is its only I/O.
   find-or-create). Because the agent interprets each message, a question or enquiry
   from a "complete" case moves freely -- there is no state that traps the
   conversation.
+- **Strike while the iron is hot: the on-site window is the only chance.** Once
+  the worker leaves the animals, nothing more can be captured until someone
+  manages to revisit the site -- so `caseSystemPrompt`'s single LAST-CHANCE PUSH
+  instruction fires on any farewell-shaped cue (a thanks, a goodbye, in whatever
+  language they wrote in) and explicitly names the VISIT_CRITICAL fields
+  (`case-health.js`) so the agent's in-the-moment push and the health guardrail's
+  hours-later `abandoned_intake` alert are aimed at the same target. The
+  instruction explicitly fires BEFORE the agent declares `case_stage: complete`,
+  not after, so the report is never closed out with an unexploited last chance
+  still sitting there. Still never a list, never pushy -- one gentle ask, then let
+  them go kindly if they do not give it. The guardrail thresholds themselves
+  (hours-scale) stay unchanged: they exist as a post-hoc operator alert, not
+  in-conversation urgency, and shrinking them would misfire on a legitimately
+  slow-but-still-active conversation.
 - **A greeting is the OPENING of a report, and every turn drives collection.** The
   agent's job is to gather the case while someone is on-site, so `caseSystemPrompt`
   directs it to answer even a bare "hi"/"hello"/"help" with a warm opener PLUS the

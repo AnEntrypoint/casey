@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+- Merged two overlapping wrap-up nudges in `caseSystemPrompt` into one clear
+  LAST-CHANCE PUSH instruction: fires on any farewell-shaped cue in whatever
+  language the worker is writing in, explicitly names the VISIT_CRITICAL fields
+  so the agent's push targets the same facts the health guardrail alerts on
+  hours later, and now explicitly fires before the agent declares
+  `case_stage: complete` -- the on-site window is the only chance to capture
+  those facts, so the report is never closed out with an unexploited last
+  chance still sitting there.
+
 ### Added
 - Operator identity learning: `learnOperatorActivity` builds a durable
   per-operator working-area profile from dashboard-attributed case actions
