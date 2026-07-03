@@ -1204,11 +1204,12 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
-  // Map view: every open + recently-closed case with a resolvable point (explicit
-  // case.lat/lon when a worker gave GPS, else a gazetteer approximation from the
-  // free-text location -- src/gazetteer.js, map-only, never fed back into the
-  // agent). Aggregate/PII-free like every other dashboard rollup: no external_id,
-  // no owner_name/contact_fallback/present_person -- only what a map pin needs
+  // Map view: every open + recently-closed case with a resolvable point. lat/lon
+  // come ONLY from the agent's own case_report call -- its own best-effort
+  // estimate from the location the worker described, using the model's own world
+  // knowledge (see caseSystemPrompt); casey never looks anything up server-side.
+  // Aggregate/PII-free like every other dashboard rollup: no external_id, no
+  // owner_name/contact_fallback/present_person -- only what a map pin needs
   // (species, case_type, status, assignee, cluster membership). Capped like every
   // other list endpoint (PAGE_MAX-scale window) so clustering never chokes on an
   // unbounded pull; excluded-count is reported, never silently dropped.
@@ -1222,7 +1223,6 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const truncated = all.length > MAP_CASE_CAP
       const pool = truncated ? all.slice(0, MAP_CASE_CAP) : all
       const { buildClusters } = await import('../clusters.js')
-      const { geocodeApprox } = await import('../gazetteer.js')
       const clusters = buildClusters(pool.filter(c => c.status !== 'closed' && c.status !== 'resolved'))
       const clusterByRef = new Map()
       clusters.forEach((cl, i) => { for (const m of cl.members) clusterByRef.set(m.ref, i) })
@@ -1231,13 +1231,8 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       for (const c of pool) {
         let report = {}
         try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
-        let lat = c.lat != null && c.lat !== '' ? Number(c.lat) : null
-        let lon = c.lon != null && c.lon !== '' ? Number(c.lon) : null
-        let approx = false
-        if ((lat == null || !Number.isFinite(lat) || lon == null || !Number.isFinite(lon)) && report.location) {
-          const g = geocodeApprox(report.location)
-          if (g) { [lat, lon] = g; approx = true }
-        }
+        const lat = c.lat != null && c.lat !== '' ? Number(c.lat) : null
+        const lon = c.lon != null && c.lon !== '' ? Number(c.lon) : null
         const row = {
           id: c.id, ref: c.ref, status: c.status, case_type: c.case_type || 'unset',
           species: report.species || null, location: report.location || null,
@@ -1246,7 +1241,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
           last_event_at: c.last_event_at,
         }
         if (lat != null && Number.isFinite(lat) && lon != null && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
-          pins.push({ ...row, lat, lon, approx })
+          pins.push({ ...row, lat, lon })
         } else {
           unresolved.push(row)
         }
@@ -3977,7 +3972,6 @@ function mapPopupHtml(p){
     +(p.case_type&&p.case_type!=='unset'?esc(p.case_type)+'<br>':'')
     +(p.location?esc(p.location)+'<br>':'')
     +(p.assignee&&p.assignee!=='agent'?'assigned: '+esc(p.assignee)+'<br>':'')
-    +(p.approx?'<span style="color:var(--muted)">approximate location</span><br>':'')
     +'<a href="#" data-open-ref="'+esc(p.id)+'">Open case</a></div>'
 }
 function applyMapFilters(pins){

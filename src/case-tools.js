@@ -181,16 +181,16 @@ export function buildCaseToolset(storeOrNull) {
             present_person_relation: str('How the present person is linked to the owner: owner, relative, herder, or neighbour'),
             owner_name: str("The animals' owner's name, if the worker learns it and the owner is not present"),
             owner_contact: str("A number to reach the owner, if the worker learns it and the owner is not present"),
-            lat: { type: 'number', description: 'Latitude, ONLY if the worker reads out real GPS coordinates directly (e.g. from a phone) -- never estimate or infer this yourself. Placing the case on the organisers\' map from an exact point is far better than the approximate area the map falls back to otherwise.' },
-            lon: { type: 'number', description: 'Longitude, ONLY alongside lat, only from real GPS coordinates the worker actually reads out -- never estimate.' },
+            lat: { type: 'number', description: 'Latitude for the organisers\' map. If the worker reads out real GPS coordinates, use those exactly. Otherwise, use your OWN knowledge to give your best estimate for the place described (a named town, farm, or landmark you can place) -- this is how the case gets a map point at all, so estimate confidently when the description is identifiable; leave both lat and lon out only when the place genuinely cannot be placed from what was said.' },
+            lon: { type: 'number', description: 'Longitude, alongside lat -- your own best-effort estimate when no exact GPS was given, using your own knowledge of the place described.' },
           },
           required: ['id'],
         },
       },
       handler: async ({ id, lat, lon, ...fields }) => {
         const incoming = pick(fields, [...REPORT_KEYS])
-        const hasGps = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
-        if (!Object.keys(incoming).length && !hasGps) return { error: 'no report fields supplied' }
+        const hasLatLon = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+        if (!Object.keys(incoming).length && !hasLatLon) return { error: 'no report fields supplied' }
         // Snapshot the PRIOR value of every field this call touches, before the
         // merge, so a correction (a field already non-null being overwritten) is
         // distinguishable in the timeline from a first-time fill -- mirrors
@@ -211,23 +211,23 @@ export function buildCaseToolset(storeOrNull) {
           if (res.error === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
           if (res.error) return { error: res.error }
         }
-        // lat/lon are real case columns, not report JSON -- explicit worker GPS
-        // always overrides any prior gazetteer approximation (case-store.js
-        // mergeReport only fills lat/lon when unset; here the worker gave the
-        // real thing, so it wins unconditionally).
-        if (hasGps) {
+        // lat/lon are real case columns, not report JSON, and the model's own
+        // estimate (or the worker's exact GPS) is the ONLY source -- casey does
+        // no server-side lookup. A later, more specific case_report call simply
+        // overwrites the coordinate with the model's improved estimate.
+        if (hasLatLon) {
           const c = await store().getCase(id)
           if (c?.autonomy === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
           await store().updateCase(id, { lat, lon }, AGENT_USER)
         }
-        const fieldsRecorded = [...Object.keys(incoming), ...(hasGps ? ['lat', 'lon'] : [])]
+        const fieldsRecorded = [...Object.keys(incoming), ...(hasLatLon ? ['lat', 'lon'] : [])]
         const corrections = Object.keys(incoming)
           .filter(k => priorReport[k] != null && String(priorReport[k]).trim() !== '' && String(priorReport[k]) !== String(incoming[k]))
           .map(k => `${k} ${priorReport[k]} -> ${incoming[k]}`)
         const text = corrections.length
           ? `recorded report fields: ${fieldsRecorded.join(', ')}; changed: ${corrections.join(', ')}`
           : `recorded report fields: ${fieldsRecorded.join(', ')}`
-        await store().appendEvent(id, { kind: 'action', actor: 'agent', text, data: { ...incoming, ...(hasGps ? { lat, lon } : {}), ...(corrections.length ? { corrections } : {}) } })
+        await store().appendEvent(id, { kind: 'action', actor: 'agent', text, data: { ...incoming, ...(hasLatLon ? { lat, lon } : {}), ...(corrections.length ? { corrections } : {}) } })
         return { ok: true, report: res.report, fieldsRecorded }
       },
     },

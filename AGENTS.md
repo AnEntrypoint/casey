@@ -84,10 +84,9 @@ bin/casey.js               CLI: init / doctor / up / dashboard / cases / show / 
 plugins/case-tools/        freddie plugin registering case_* tools (auto-discovered)
 src/
   casey.js                 top-level assembly: store + host + gateway + adapters + logger; drainQueuedTurns re-drives LLM-down-queued inbounds through the agent on provider recovery (status-gated, oldest-first serialized, mark-attempted only after a successful drive, bounded retry -> dead-letter)
-  case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error); mergeReport backfills case.lat/lon from the gazetteer when a location is written and no explicit GPS exists; learnOperatorActivity/listOperatorIdentities maintain the operator_identity entity (durable per-operator working-area history, dashboard-attributed actions only, best-effort/never throws into the caller)
-  gazetteer.js             MAP-ONLY static SA town/province -> approximate [lat,lon] lookup (geocodeApprox), used solely to place a map pin from a case's free-text report location when no explicit GPS exists; distinct from the forbidden chat-routing gazetteer -- never feeds the agent's prompt or a tool response the contact sees, a miss buckets into the map's "unresolved" group rather than guessing. Carries hand-curated aliases (abbreviations JHB/PE/CT/PMB/BFN, colloquial names, common typos, metro-region names) sharing the SAME coordinate array as their canonical entry, so a worker verbalising a place colloquially still resolves
+  case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error); learnOperatorActivity/listOperatorIdentities maintain the operator_identity entity (durable per-operator working-area history, dashboard-attributed actions only, best-effort/never throws into the caller). No server-side geocoding of any kind -- case.lat/lon are written ONLY by the agent's own case_report call
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
-  case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx)). case_update carries case_type (agent-settable classification, validated against CASE_TYPE_VALUES -- thatcher's own config-declared enum is NOT enforced server-side on write, so the tool validates before every write, matching the dashboard's own check) and priority (same PRIORITY_VALUES guard). case_report carries lat/lon (only from real worker-read-out GPS, validated finite/in-range, written straight to the case columns, always overriding any prior gazetteer approximation)
+  case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx)). case_update carries case_type (agent-settable classification, validated against CASE_TYPE_VALUES -- thatcher's own config-declared enum is NOT enforced server-side on write, so the tool validates before every write, matching the dashboard's own check) and priority (same PRIORITY_VALUES guard). case_report carries lat/lon: the AGENT's own estimate (its own world knowledge for a described place, or the worker's exact GPS when given), validated finite/in-range only -- no lookup table, no server-side geocoding of any kind
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep; detectCoverageGap (rostered team, open breaching cases, zero in-window operator replies) pages a synthetic TEAM-COVERAGE breach
@@ -457,14 +456,33 @@ the crash-budget stop state); the supervisor is its only I/O.
   operator-coverage overlay), never an auto-assignment: casey suggests visually,
   a human still claims.
 - **The map is a visual rollup of data casey already stores, not a new source of
-  truth.** `/api/map/cases` pins every case by explicit GPS (`case.lat`/`lon`) or a
-  map-only gazetteer approximation from the free-text report location
-  (`gazetteer.js` -- distinct from, and never feeding, the chat-routing path); a
-  case with no resolvable location is never dropped, it lands in an `unresolved`
-  bucket the UI surfaces. Outbreak-cluster links reuse `clusters.js`'s existing
-  correlation engine rather than a second grouping heuristic. Aggregate/PII-free
-  like every other dashboard rollup -- no `external_id`, no owner/contact fields on
-  a pin, only what an area-level map needs.
+  truth.** `/api/map/cases` pins every case by `case.lat`/`lon` alone -- no lookup
+  table, no server-side geocoding of any kind. The coordinate is entirely the
+  AGENT's own: exact when the worker read out real GPS, otherwise the model's own
+  best-effort estimate from its own world knowledge of the place described (see
+  `caseSystemPrompt`) -- casey never hand-curates or looks anything up on the
+  model's behalf. A case with no agent-provided coordinate is never dropped, it
+  lands in an `unresolved` bucket the UI surfaces. Outbreak-cluster links reuse
+  `clusters.js`'s existing correlation engine rather than a second grouping
+  heuristic. Aggregate/PII-free like every other dashboard rollup -- no
+  `external_id`, no owner/contact fields on a pin, only what an area-level map
+  needs.
+- **No hand-curated interpretation stand-ins: the model's own judgment/knowledge
+  is the resolver.** Where casey once carried a hand-curated lookup table as a
+  stand-in for something the agent could interpret itself (a static SA-town
+  gazetteer for the map), the table is gone and the prompt instead explicitly
+  trusts and instructs the model to use its own knowledge/judgment (see the map
+  bullet above). This does NOT apply to the two protected classes of
+  deterministic layer that stay regardless: (1) the STOP/HUMAN opt-out/handoff
+  safety keyword layer, which must work even with the LLM down and is the one
+  deterministic conversational-understanding layer AGENTS.md protects -- it
+  backstops, but does not replace, the agent's own `case_stop`/`case_handoff`
+  tools for its own judgment call; (2) storage-integrity enum validation
+  (`case_type`/`priority`) that guards AFTER the model has already exercised
+  judgment via its tool call, catching a malformed value before it corrupts an
+  observability view, not standing in for interpretation. Every other list/table
+  in the codebase (field-name schemas, UI display config) was audited and is
+  neither -- see git history for the full classification.
 - **The agent prepares observability data itself; a human classifies nothing the
   system could already infer.** Every field a read-only view (the map, SLA-by-type,
   workload-by-type) needs is agent-settable through the normal case_* tool flow --

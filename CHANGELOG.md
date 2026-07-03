@@ -10,22 +10,16 @@
   operator-coverage overlay -- a visual coverage signal for the team, never an
   auto-assignment.
 - Case observability map: a Leaflet + OpenStreetMap view in the dashboard
-  (`GET /api/map/cases`) pinning every case by explicit GPS or a new map-only
-  gazetteer approximation from the free-text report location (`src/gazetteer.js`).
-  Status-colored markers, clustering (leaflet.markercluster) for dense areas,
+  (`GET /api/map/cases`) pinning every case by the agent's own lat/lon (see
+  below). Status-colored markers, clustering (leaflet.markercluster) for dense areas,
   outbreak-cluster link overlay (reusing `clusters.js`), operator-coverage
   overlay, species/case_type/status/date filters, click-through to the existing
   case detail panel. Aggregate/PII-free like every other dashboard rollup.
 - Agent-driven observability prep: `case_update` gained an agent-settable
   `case_type` (the map/SLA-by-type/workload views no longer wait on a human to
-  classify every case by hand), `case_report` gained `lat`/`lon` (recorded only
-  from real worker-read-out GPS, always overriding the map's gazetteer
-  approximation). `caseSystemPrompt` instructs the agent to set both quietly, on
-  its own judgment, as the report makes the picture clear.
-- Location aliases: `gazetteer.js` gained ~25 hand-curated abbreviations,
-  colloquial names, and common typos (JHB, PE, Jozi, Bloem, pretoia, durbn,
-  vaal...), sharing the canonical entry's coordinates, so a worker verbalising a
-  place colloquially resolves on the map instead of landing in "unresolved".
+  classify every case by hand), `case_report` gained `lat`/`lon`. `caseSystemPrompt`
+  instructs the agent to set both quietly, on its own judgment, as the report
+  makes the picture clear.
 - Conversational robustness: a 57-agent audit (enumerate real phrasings per
   dimension -> classify against the real code -> adversarially verify) confirmed
   8 real gaps, all fixed within the pure-LLM architecture (prompt content or a
@@ -37,6 +31,21 @@
   `caseSystemPrompt` gained a data-not-instructions guard, an off-topic scope
   boundary, and garbled-transcript clarify-before-recording guidance; a report
   field correction now shows an old-to-new diff in its audit event.
+
+### Removed
+- `src/gazetteer.js`, the hand-curated ~95-town + ~25-alias SA location lookup
+  used to approximate a map pin from free-text location. Removed entirely, no
+  replacement lookup added -- the map's `lat`/`lon` now come ONLY from the
+  agent's own `case_report` call. `case_report`'s lat/lon params and
+  `caseSystemPrompt` were widened to explicitly trust and instruct the model to
+  use its OWN world knowledge to estimate a described place's coordinates
+  (exact GPS still preferred when the worker gives real numbers) -- no lookup
+  table, no server-side geocoding of any kind. A case the agent could not place
+  simply has no map pin, surfaced honestly in the map's "unresolved" bucket.
+  This does not touch the two protected deterministic layers (STOP/HUMAN
+  opt-out/handoff keyword safety net, and `case_type`/`priority` storage-enum
+  validation) -- both stay, audited and confirmed as genuinely
+  safety/integrity-necessary, not interpretation stand-ins.
 
 ### Fixed
 - `case_update`'s `case_type`/`priority` are now validated against their enum

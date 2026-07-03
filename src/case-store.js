@@ -18,7 +18,6 @@ import { mergeThresholds } from './thresholds.js'
 import fs from 'node:fs'
 import yaml from 'js-yaml'
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
-import { geocodeApprox } from './gazetteer.js'
 import { tokens } from './correlate.js'
 
 // Principals casey acts as. role:agent satisfies normal requires_role gates.
@@ -651,16 +650,11 @@ export class CaseStore {
         if (v != null && String(v).trim() !== '') merged[k] = v
       }
       const patch = { report: JSON.stringify(merged) }
-      // A location was just written (or updated) and the case has no explicit
-      // lat/lon yet: approximate a map point from the gazetteer so the map view
-      // has something to pin without the agent ever seeing/using this coordinate
-      // (it never enters the prompt or a tool response -- map-only, see
-      // gazetteer.js header). Explicit worker-given GPS in case_report always
-      // wins; this only fills the gap when lat/lon are still unset.
-      if (incoming.location && (c.lat == null || c.lat === '')) {
-        const approx = geocodeApprox(merged.location)
-        if (approx) { patch.lat = approx[0]; patch.lon = approx[1] }
-      }
+      // No server-side geocoding: the map's lat/lon comes ONLY from the agent's
+      // own case_report call (its own best-effort estimate from the location the
+      // worker described, using the model's own world knowledge -- see
+      // caseSystemPrompt). A case with no agent-provided lat/lon simply has no
+      // map pin; casey never looks anything up on the model's behalf.
       await this.updateCase(caseId, patch, user)
       return { report: merged }
     })
