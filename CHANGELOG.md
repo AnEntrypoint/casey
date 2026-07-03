@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Fixed
+- Discord handoff webhook no longer interpolates the reporter's raw phone number
+  into plaintext message content -- the case ref is enough for an operator to open
+  the case; PII stayed out of Discord's own logs/exports.
+- Public `/report` contact form (unauthenticated by design -- the ref is the shared
+  secret) now rate-limits per IP, closing a brute-force path against the 8-char ref
+  and the SA phone-number space.
+- Dashboard's report-completeness fill-rate and field list had drifted from
+  case-store.js's REPORT_KEYS in both directions: `language_detected` was being
+  written by the agent but rejected by the write-path allowlist, while
+  `present_person`/`present_person_relation`/`owner_name`/`owner_contact` were
+  collected but never counted or shown. Both now read the single source of truth.
+- `case-health.js`'s open-stage set was a hardcoded literal independent of the
+  workflow config; it now takes a live override from `store.getOpenStatuses()`
+  (wired through `case-sweep.js`), so a stage added in `thatcher.config.yml` is
+  picked up with no code change.
+- `createCase()`'s default `assignee` was the AGENT_USER object rather than its
+  string id, which would have broken row-access scoping had the default ever
+  been hit (currently latent -- the sole caller always passes assignee).
+
+### Removed
+- Six unused imports from `gateway-hooks.js`, including a fragile, undocumented
+  relative-path import into freddie's internals that the file never called.
+- Dead exports `waitingOnUs`/`snoozedUntil` from `attn.js` (no external callers).
+
 ### Added
 - Worker enquiry + active-case re-architecture (layered across casey/freddie/
   thatcher). A field worker can negotiate/select a case before an excursion and
