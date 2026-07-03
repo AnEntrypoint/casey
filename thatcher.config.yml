@@ -128,6 +128,20 @@ entities:
       data:     { type: textarea }                   # JSON blob: raw payload / tool args
       msg_id:   { type: text }                       # platform message id, for inbound dedup
 
+  operator_identity:
+    label: Operator identity
+    label_plural: Operator identities
+    permission_template: case_perms
+    fields:
+      <<: *system_fields
+      operator_id:      { type: text, required: true }  # CASEY_OPERATORS roster id (self-attested via X-Casey-Operator)
+      channel_ids:       { type: textarea }              # JSON array of {channel, external_id} seen for this operator (dashboard-attributed actions only -- see AGENTS.md)
+      areas:             { type: textarea }              # JSON array of location tokens (from case.report.location) this operator has acted on, most-recent-weighted
+      last_seen_at:      { type: text }                  # ISO timestamp of the most recent attributed action
+      case_count:        { type: number, default: 0 }    # running count of attributed case actions, for a lightweight "how active" signal
+    # One row per operator id -- upsert on every learn, never a growing history table.
+    row_access: { scope: none }
+
 workflows:
   # Stage shape per thatcher workflow-engine: each stage is an object with
   # `forward`/`backward` allow-lists and optional `requires_role`. A transition

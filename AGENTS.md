@@ -84,7 +84,8 @@ bin/casey.js               CLI: init / doctor / up / dashboard / cases / show / 
 plugins/case-tools/        freddie plugin registering case_* tools (auto-discovered)
 src/
   casey.js                 top-level assembly: store + host + gateway + adapters + logger; drainQueuedTurns re-drives LLM-down-queued inbounds through the agent on provider recovery (status-gated, oldest-first serialized, mark-attempted only after a successful drive, bounded retry -> dead-letter)
-  case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error)
+  case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error); mergeReport backfills case.lat/lon from the gazetteer when a location is written and no explicit GPS exists; learnOperatorActivity/listOperatorIdentities maintain the operator_identity entity (durable per-operator working-area history, dashboard-attributed actions only, best-effort/never throws into the caller)
+  gazetteer.js             MAP-ONLY static SA town/province -> approximate [lat,lon] lookup (geocodeApprox), used solely to place a map pin from a case's free-text report location when no explicit GPS exists; distinct from the forbidden chat-routing gazetteer -- never feeds the agent's prompt or a tool response the contact sees, a miss buckets into the map's "unresolved" group rather than guessing
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
   case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx))
   case-machine.js          xstate case lifecycle machine
@@ -105,7 +106,7 @@ src/
   gateway-hooks.js         makeCaseHandler PURE-LLM flow: an inbound hits the STOP/HUMAN deterministic short-circuit (detectContactIntent, above the queue gate), OR the LLM-down queue gate (record a QUEUED-FOR-AGENT marker, send nothing, log loud), OR one runTurn tool loop where the agent classifies + routes + answers + RECORDS THE REPORT (case_report) + declares its phase (case_stage) via the case_* tools. casey does NO deterministic text processing -- no field extraction, no computed next-question. The prompt surfaces the raw report-so-far + the dstate phase (orient) and TRUSTS the model to acknowledge + not repeat + ask the next thing. A degraded turn (empty/error/echo/stock-ack/repeat) sends NOTHING and logs loud (no fallback text -- see the no-mocks-fallbacks-stubs invariant). dedup, media, observe
   discord-receive.js       fallback Discord WS receive for older freddie builds
   llm.js                   model call wiring; resolveCallLLM (boot precedence: acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row, and fires an onRecover edge that drives drainQueuedTurns)
-  dashboard/server.js      express API + anentrypoint-design SPA (observe/edit/override/reply); GET/POST /report public contact form (no token)
+  dashboard/server.js      express API + anentrypoint-design SPA (observe/edit/override/reply); GET/POST /report public contact form (no token); GET /api/map/cases (PII-free pins with resolved lat/lon, cluster membership, unresolved bucket, capped+truncation-reported) and GET /api/operators/identities (learned per-operator working-area coverage) back the dashboard's Leaflet+OSM map view (status-colored markers, marker clustering via leaflet.markercluster, outbreak-cluster link overlay, operator-coverage overlay, species/type/status/date filters, click-through to case detail) -- both routes token-gated like every other /api route; /vendor/leaflet and /vendor/leaflet.markercluster serve the map's static JS/CSS, exempted from the auth gate the same way /design already is (static UI assets, no case data)
 ```
 
 There is no automated test suite. Verification is manual/live: run `casey up`
@@ -410,6 +411,25 @@ the crash-budget stop state); the supervisor is its only I/O.
   periodic health sweep both classify against `store.resolveThresholds()`, so a
   team that retunes a window via `PUT /api/thresholds` changes detection
   immediately, with no restart and no drift from the shipped defaults.
+- **Operator identity is learned, never asserted.** Operators act ONLY through the
+  dashboard (self-attested via `X-Casey-Operator`, cooperative attribution, never
+  authentication) -- there is no path where a channel message is treated as an
+  operator speaking as themselves. `learnOperatorActivity` builds a durable
+  per-operator working-area profile (frequency-ranked location tokens from the
+  cases they claim/transition/reply to/edit) from these dashboard-attributed
+  actions, best-effort and fire-and-forget so learning can never slow or fail the
+  real action it rides on. This is a coverage signal for the team (the map's
+  operator-coverage overlay), never an auto-assignment: casey suggests visually,
+  a human still claims.
+- **The map is a visual rollup of data casey already stores, not a new source of
+  truth.** `/api/map/cases` pins every case by explicit GPS (`case.lat`/`lon`) or a
+  map-only gazetteer approximation from the free-text report location
+  (`gazetteer.js` -- distinct from, and never feeding, the chat-routing path); a
+  case with no resolvable location is never dropped, it lands in an `unresolved`
+  bucket the UI surfaces. Outbreak-cluster links reuse `clusters.js`'s existing
+  correlation engine rather than a second grouping heuristic. Aggregate/PII-free
+  like every other dashboard rollup -- no `external_id`, no owner/contact fields on
+  a pin, only what an area-level map needs.
 
 ## Security invariants (do not regress)
 

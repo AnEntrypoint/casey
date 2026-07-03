@@ -22,6 +22,8 @@ import { fmtTimeSAST } from '../format.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DESIGN_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'anentrypoint-design')
+const LEAFLET_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'leaflet', 'dist')
+const MARKERCLUSTER_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'leaflet.markercluster', 'dist')
 
 const OPERATOR = { id: 'dashboard-operator', role: 'operator' }
 const PAGE_MAX = 200
@@ -75,6 +77,11 @@ function parseOperators(raw = process.env.CASEY_OPERATORS) {
 // API boundary before sending -- a parsed object passes through, a string is parsed,
 // anything malformed becomes {} (never throws). Returns a new array of shallow-cloned
 // rows so the store's cached rows are not mutated.
+function parseJsonArraySafe(raw) {
+  try { const v = JSON.parse(raw || '[]'); return Array.isArray(v) ? v : [] }
+  catch { return [] }
+}
+
 function parseEventData(events) {
   return (events || []).map(e => {
     if (e && typeof e.data === 'string') {
@@ -408,12 +415,14 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   })
 
   app.use((req, res, next) => {
-    if (req.path.startsWith('/design')) return next()
+    if (req.path.startsWith('/design') || req.path.startsWith('/vendor')) return next()
     if (authed(req)) return next()
     res.status(401).json({ error: 'unauthorized' })
   })
 
   app.use('/design', express.static(DESIGN_DIR))
+  app.use('/vendor/leaflet', express.static(LEAFLET_DIR))
+  app.use('/vendor/leaflet.markercluster', express.static(MARKERCLUSTER_DIR))
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
   const clampLimit = (v, d) => Math.min(PAGE_MAX, Math.max(1, parseInt(v, 10) || d))
@@ -671,7 +680,32 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const events = parseEventData(await store.listEventsPage(c.id, { limit, offset: 0 }))
       const transitions = store.availableTransitions(c, OPERATOR)
       const report_fill_rate = computeFillRate(c.report)
-      res.json({ case: c, events, events_total, transitions, report_fill_rate })
+      // A suggested (never forced) assignee for an unclaimed case: the learned
+      // operator whose working-area history most overlaps this case's report
+      // location. Purely advisory -- the operator still clicks Claim; casey never
+      // auto-assigns. null when the case is already claimed or no operator's
+      // learned areas overlap.
+      let suggested_assignee = null
+      const unclaimed = !c.assignee || c.assignee === 'agent'
+      if (unclaimed) {
+        let report = {}
+        try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+        if (report.location) {
+          const loc = String(report.location).toLowerCase()
+          const identities = await store.listOperatorIdentities()
+          let best = null
+          for (const row of identities) {
+            const areas = parseJsonArraySafe(row.areas)
+            const hit = areas.find(a => loc.includes(a.token))
+            if (hit && (!best || hit.count > best.count)) best = { operator_id: row.operator_id, token: hit.token, count: hit.count }
+          }
+          if (best) {
+            const op = rosterById.get(best.operator_id)
+            suggested_assignee = { id: best.operator_id, name: op?.name || best.operator_id, matched_area: best.token }
+          }
+        }
+      }
+      res.json({ case: c, events, events_total, transitions, report_fill_rate, suggested_assignee })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -731,6 +765,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const op = actingOperator(req)
       const updated = await store.updateCase(req.params.id, patch, op)
       if (!updated) return res.status(404).json({ error: 'not found' })
+      // Best-effort operator-identity learning: an edit is a real working-area
+      // signal. Not awaited on the response path -- learning must never slow or
+      // fail an operator's actual edit.
+      if (op.id && op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, updated).catch(() => {})
       // An autonomy change is a first-class audited event carrying {from,to,by,reason}
       // so the timeline can render it as a distinct chip (like a transition), not a
       // generic edit that drops the prior value. Other field edits keep the action row.
@@ -774,8 +812,11 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       if (to !== c.status && !legal.includes(to)) {
         return res.status(400).json({ error: `cannot transition to '${to}'`, allowed: legal })
       }
-      await store.transition(req.params.id, to, { user: actingOperator(req), reason: reason || 'operator override' })
-      res.json(await store.getCase(req.params.id))
+      const op = actingOperator(req)
+      await store.transition(req.params.id, to, { user: op, reason: reason || 'operator override' })
+      const after = await store.getCase(req.params.id)
+      if (op.id && op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, after).catch(() => {})
+      res.json(after)
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -814,12 +855,14 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
           const c = await store.getCase(id)
           if (!c) { results.push({ id, ok: false, error: 'not found' }); continue }
           if (action === 'claim') {
-            await store.updateCase(id, { assignee: op.id }, op)
+            const claimed = await store.updateCase(id, { assignee: op.id }, op)
             await store.appendEvent(id, { kind: 'action', actor: 'operator', text: `Claimed by ${op.name || op.id}`, data: { claimed_by: op.id, bulk: true } })
+            if (op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, claimed || c).catch(() => {})
           } else if (action === 'transition') {
             const legal = store.availableTransitions(c, OPERATOR)
             if (to !== c.status && !legal.includes(to)) { results.push({ id, ok: false, error: `cannot transition to '${to}'` }); continue }
             await store.transition(id, to, { user: op, reason: 'operator bulk action' })
+            if (op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, c).catch(() => {})
           } else if (action === 'tag') {
             const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
             if (!tags.includes(tag)) await store.updateCase(id, { tags: [...tags, tag].join(',') }, op)
@@ -1137,6 +1180,83 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   // not auth -- the picked id is informational; the token is the only gate.
   app.get('/api/operators', (req, res) => {
     res.json({ operators: roster, current: actingOperator(req).id, attributed: roster.length > 0 })
+  })
+
+  // Learned operator identities -- the roster enriched with each operator's
+  // working-area history (case-store.js learnOperatorActivity), for the map's
+  // operator-coverage overlay and a "who covers where" panel. Internal-team data
+  // (not contact PII), still gated by the same dashboard token as every other
+  // /api route -- never exposed on the unauthenticated /report surface.
+  app.get('/api/operators/identities', async (req, res) => {
+    try {
+      const rows = await store.listOperatorIdentities()
+      const byId = new Map(rows.map(r => [r.operator_id, r]))
+      const identities = roster.map(o => {
+        const r = byId.get(o.id)
+        return {
+          id: o.id, name: o.name,
+          areas: r ? parseJsonArraySafe(r.areas) : [],
+          last_seen_at: r?.last_seen_at || null,
+          case_count: r?.case_count || 0,
+        }
+      })
+      res.json({ identities })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Map view: every open + recently-closed case with a resolvable point (explicit
+  // case.lat/lon when a worker gave GPS, else a gazetteer approximation from the
+  // free-text location -- src/gazetteer.js, map-only, never fed back into the
+  // agent). Aggregate/PII-free like every other dashboard rollup: no external_id,
+  // no owner_name/contact_fallback/present_person -- only what a map pin needs
+  // (species, case_type, status, assignee, cluster membership). Capped like every
+  // other list endpoint (PAGE_MAX-scale window) so clustering never chokes on an
+  // unbounded pull; excluded-count is reported, never silently dropped.
+  const MAP_CASE_CAP = 2000
+  app.get('/api/map/cases', async (req, res) => {
+    try {
+      const days = Math.min(Math.max(parseInt(req.query.days, 10) || 0, 0), 365)
+      const where = {}
+      if (days > 0) where.created_at = { $gte: Math.floor(Date.now() / 1000) - days * 86400 }
+      const all = await store.listCases(where, { limit: MAP_CASE_CAP + 1, offset: 0 })
+      const truncated = all.length > MAP_CASE_CAP
+      const pool = truncated ? all.slice(0, MAP_CASE_CAP) : all
+      const { buildClusters } = await import('../clusters.js')
+      const { geocodeApprox } = await import('../gazetteer.js')
+      const clusters = buildClusters(pool.filter(c => c.status !== 'closed' && c.status !== 'resolved'))
+      const clusterByRef = new Map()
+      clusters.forEach((cl, i) => { for (const m of cl.members) clusterByRef.set(m.ref, i) })
+
+      const pins = [], unresolved = []
+      for (const c of pool) {
+        let report = {}
+        try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+        let lat = c.lat != null && c.lat !== '' ? Number(c.lat) : null
+        let lon = c.lon != null && c.lon !== '' ? Number(c.lon) : null
+        let approx = false
+        if ((lat == null || !Number.isFinite(lat) || lon == null || !Number.isFinite(lon)) && report.location) {
+          const g = geocodeApprox(report.location)
+          if (g) { [lat, lon] = g; approx = true }
+        }
+        const row = {
+          id: c.id, ref: c.ref, status: c.status, case_type: c.case_type || 'unset',
+          species: report.species || null, location: report.location || null,
+          assignee: c.assignee || null, priority: c.priority,
+          cluster: clusterByRef.has(c.ref) ? clusterByRef.get(c.ref) : null,
+          last_event_at: c.last_event_at,
+        }
+        if (lat != null && Number.isFinite(lat) && lon != null && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+          pins.push({ ...row, lat, lon, approx })
+        } else {
+          unresolved.push(row)
+        }
+      }
+      res.json({
+        pins, unresolved, unresolved_count: unresolved.length,
+        clusters: clusters.map((cl, i) => ({ index: i, count: cl.count, severity: cl.severity, location: cl.location, species: cl.species, disease: cl.disease })),
+        truncated, cap: MAP_CASE_CAP, total_considered: all.length,
+      })
+    } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
   // Management KPIs over the live case+event history: time-to-first-reply
@@ -1553,6 +1673,8 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         }
       }
       await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id } })
+      // A personal reply is the strongest working-area signal casey has.
+      if (op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, c).catch(() => {})
       // The operator personally answered, so the "wants a human" flag is satisfied
       // -- but only once the message actually reached the contact. Clear it then,
       // or the triage inbox keeps this case pinned at the top forever.
@@ -1753,6 +1875,9 @@ const PAGE = /* html */ `<!doctype html>
 <link rel="stylesheet" href="/design/colors_and_type.css">
 <link rel="stylesheet" href="/design/app-shell.css">
 <link rel="stylesheet" href="/design/editor-primitives.css">
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/vendor/leaflet.markercluster/MarkerCluster.css">
+<link rel="stylesheet" href="/vendor/leaflet.markercluster/MarkerCluster.Default.css">
 <style>
   :root{--bg:#0f1115;--fg:#e6e6e6;--panel:#11141a;--border:#262a33;--border-soft:#20242c;
  --muted:#9aa6b2;--faint:#6b7685;--accent:#3b6ea5;--accent-soft:#1b2430;--hover:#171a21;--danger:#5a2230}
@@ -2011,8 +2136,15 @@ const PAGE = /* html */ `<!doctype html>
   .team-stat{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--muted)}
   .team-stat .n{font-weight:700;color:var(--fg,inherit)}
   .team-stat.team-warn .n{color:var(--danger,#c0392b)}
+  .map-wrap{height:min(70vh,640px);border-radius:8px;overflow:hidden;border:1px solid var(--border)}
+  .map-legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin:6px 0}
+  .map-legend .sw{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px;vertical-align:middle}
+  .map-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+  .leaflet-popup-content{font-size:12px}
 </style></head>
 <body>
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script src="/vendor/leaflet.markercluster/leaflet.markercluster.js"></script>
 <div id="conn" class="conn">Connection lost - retrying...</div>
 <div id="handoff" class="handoff" title="Click to open the person who needs help">
   <span id="handoff-msg"></span>
@@ -2034,6 +2166,7 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="metrics-btn" title="Response times, backlog and trend">Metrics</button>
         <button class="icon-btn" id="clusters-btn" title="Cases that look like one outbreak">Outbreaks</button>
         <button class="icon-btn" id="geo-btn" title="Where reports are concentrating">Hotspots</button>
+        <button class="icon-btn" id="map-btn" title="Every case pinned on a map: status, type, species, outbreak links, operator coverage">Map</button>
         <button class="icon-btn" id="activity-btn" title="Everything that has happened, newest first">Activity</button>
         <button class="icon-btn" id="handover-btn" title="Start-of-shift digest: what needs you, open handoffs, unsent drafts, what changed">Shift</button>
         <button class="icon-btn" id="offline-btn" title="Cases that came in while casey could not answer -- waiting for a person">AI offline</button>
@@ -2077,6 +2210,22 @@ const PAGE = /* html */ `<!doctype html>
     <div class="stats-panel" id="geo-panel">
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Hotspots by area</div>
       <div id="geo-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="map-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:6px">
+        <div style="font-size:12px;font-weight:700;color:var(--muted)">Case map</div>
+        <div class="map-filters">
+          <select id="map-species"><option value="">all species</option></select>
+          <select id="map-type"><option value="">all types</option></select>
+          <select id="map-status"><option value="">all stages</option></select>
+          <select id="map-days"><option value="0">all time</option><option value="90">last 90 days</option><option value="30">last 30 days</option><option value="7">last 7 days</option></select>
+          <button class="icon-btn" id="map-coverage-btn" title="Toggle operator working-area coverage overlay">Coverage</button>
+          <button class="icon-btn" id="map-clusters-btn" title="Toggle outbreak-cluster links">Outbreak links</button>
+        </div>
+      </div>
+      <div class="map-legend" id="map-legend"></div>
+      <div class="map-wrap" id="map-canvas"><div class="empty" style="padding:8px 0">Loading...</div></div>
+      <div id="map-unresolved" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
     </div>
     <div class="stats-panel" id="activity-panel">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
@@ -2702,7 +2851,7 @@ async function openCase(id){
   let data
   try{ data = await api('/api/cases/'+encodeURIComponent(id)).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json() }) }
   catch(e){ $('#detail').innerHTML='<p class="empty">Could not load this case.</p>'; return }
-  const {case:c, events, transitions, events_total, report_fill_rate:rfr} = data
+  const {case:c, events, transitions, events_total, report_fill_rate:rfr, suggested_assignee:sugg} = data
   const more = events_total!=null && events.length<events_total
   $('#detail').innerHTML = \`
     <button class="icon-btn back" id="back">&lt;- cases</button>
@@ -2714,7 +2863,8 @@ async function openCase(id){
       <button id="share-form-btn" class="icon-btn" style="margin-left:4px" title="Get a link to share with the contact so they can fill in their own details">Share form</button>
       \${(c.assignee&&c.assignee!=='agent')
         ? '<span class="owner-chip'+(c.assignee===selectedOperator?' mine':'')+'" style="margin-left:4px" title="Who is handling this">'+(c.assignee===selectedOperator?'yours':esc(c.assignee))+'</span>'
-        : '<button id="claim-btn" class="icon-btn" style="margin-left:4px" title="Take this case as yours (recorded against you)">Claim</button>'}</h2>
+        : '<button id="claim-btn" class="icon-btn" style="margin-left:4px" title="Take this case as yours (recorded against you)">Claim</button>'}
+      \${(sugg && (!c.assignee||c.assignee==='agent')) ? '<span class="hint" style="margin-left:6px" title="Based on '+esc(sugg.name)+'\\'s past work near '+esc(sugg.matched_area)+' -- a suggestion only, never automatic">suggested: '+esc(sugg.name)+'</span>' : ''}</h2>
     <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
     \${healthBadges(c.tags)}\${intakeModeBadge(c.tags)}
     <div style="color:var(--muted);margin-bottom:12px">\${esc(c.channel)}/\${esc(fmtPhone(c.external_id))}
@@ -3812,6 +3962,133 @@ function panelToggle(btnId,panelId,loader){
 panelToggle('#metrics-btn','#metrics-panel',loadMetrics)
 panelToggle('#clusters-btn','#clusters-panel',loadClusters)
 panelToggle('#geo-btn','#geo-panel',loadGeo)
+panelToggle('#map-btn','#map-panel',loadMap)
+
+// --- Case map (Leaflet + OSM tiles, no API key) ---
+const STATUS_COLOR={new:'#3b6ea5',triaging:'#a5843b',in_progress:'#3ba55d',waiting:'#9a6bd1',resolved:'#6b7685',closed:'#3d4148'}
+const TYPE_SHAPE={outbreak:'circle',import_alert:'circle',lab_sample:'circle',follow_up:'circle',unset:'circle'}
+let mapState=null   // { map, markerLayer, clusterLines, coverageLayer, pins, clusters, showCoverage, showClusters }
+function mapMarkerIcon(color){
+  return window.L.divIcon({className:'',html:'<div style="width:14px;height:14px;border-radius:50%;background:'+color+';border:2px solid rgba(255,255,255,.8);box-shadow:0 0 2px rgba(0,0,0,.5)"></div>',iconSize:[14,14]})
+}
+function mapPopupHtml(p){
+  return '<div><b>'+esc(p.ref)+'</b> <span style="color:var(--muted)">'+esc(p.status)+'</span><br>'
+    +(p.species?esc(p.species)+'<br>':'')
+    +(p.case_type&&p.case_type!=='unset'?esc(p.case_type)+'<br>':'')
+    +(p.location?esc(p.location)+'<br>':'')
+    +(p.assignee&&p.assignee!=='agent'?'assigned: '+esc(p.assignee)+'<br>':'')
+    +(p.approx?'<span style="color:var(--muted)">approximate location</span><br>':'')
+    +'<a href="#" data-open-ref="'+esc(p.id)+'">Open case</a></div>'
+}
+function applyMapFilters(pins){
+  const sp=$('#map-species')?.value||'', ty=$('#map-type')?.value||'', st=$('#map-status')?.value||''
+  return pins.filter(p=>
+    (!sp||String(p.species||'').toLowerCase().includes(sp.toLowerCase()))
+    && (!ty||p.case_type===ty)
+    && (!st||p.status===st))
+}
+function renderMapMarkers(){
+  if(!mapState) return
+  const {map}=mapState
+  if(mapState.markerLayer) map.removeLayer(mapState.markerLayer)
+  if(mapState.clusterLines) map.removeLayer(mapState.clusterLines)
+  const filtered=applyMapFilters(mapState.pins)
+  const layer=window.L.markerClusterGroup({maxClusterRadius:40})
+  for(const p of filtered){
+    const m=window.L.marker([p.lat,p.lon],{icon:mapMarkerIcon(STATUS_COLOR[p.status]||'#6b7685')})
+    m.bindPopup(mapPopupHtml(p))
+    m.on('popupopen',()=>{
+      const el=document.querySelector('[data-open-ref="'+p.id+'"]')
+      if(el) el.onclick=(e)=>{e.preventDefault(); openCase(p.id)}
+    })
+    layer.addLayer(m)
+  }
+  map.addLayer(layer)
+  mapState.markerLayer=layer
+  if(mapState.showClusters){
+    const lines=window.L.layerGroup()
+    const byIdx=new Map()
+    for(const p of filtered){ if(p.cluster==null) continue; if(!byIdx.has(p.cluster)) byIdx.set(p.cluster,[]); byIdx.get(p.cluster).push(p) }
+    for(const [,members] of byIdx){
+      if(members.length<2) continue
+      for(let i=1;i<members.length;i++){
+        window.L.polyline([[members[0].lat,members[0].lon],[members[i].lat,members[i].lon]],{color:'#c0392b',weight:1,opacity:.5,dashArray:'4,4'}).addTo(lines)
+      }
+    }
+    lines.addTo(map)
+    mapState.clusterLines=lines
+  }
+}
+async function loadMap(){
+  const canvas=$('#map-canvas'); if(!canvas) return
+  try{
+    const days=$('#map-days')?.value||'0'
+    const j=await api('/api/map/cases?days='+encodeURIComponent(days)).then(r=>r.ok?r.json():null)
+    if(!j){ canvas.innerHTML='<div class="empty">Could not load the map.</div>'; return }
+    if(!mapState){
+      canvas.innerHTML=''
+      const map=window.L.map(canvas,{center:[-28.5,25],zoom:5})
+      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'(c) OpenStreetMap contributors'}).addTo(map)
+      mapState={map,markerLayer:null,clusterLines:null,coverageLayer:null,pins:[],clusters:[],showCoverage:false,showClusters:false}
+      $('#map-species').onchange=renderMapMarkers
+      $('#map-type').onchange=renderMapMarkers
+      $('#map-status').onchange=renderMapMarkers
+      $('#map-days').onchange=loadMap
+      $('#map-clusters-btn').onclick=()=>{ mapState.showClusters=!mapState.showClusters; $('#map-clusters-btn').classList.toggle('active',mapState.showClusters); renderMapMarkers() }
+      $('#map-coverage-btn').onclick=async()=>{ mapState.showCoverage=!mapState.showCoverage; $('#map-coverage-btn').classList.toggle('active',mapState.showCoverage); await renderMapCoverage() }
+    }
+    mapState.pins=j.pins||[]
+    mapState.clusters=j.clusters||[]
+    // Populate species/type/status filter options from the actual data, once.
+    const spSel=$('#map-species'), tySel=$('#map-type'), stSel=$('#map-status')
+    if(spSel && spSel.options.length<=1){
+      const species=[...new Set(mapState.pins.map(p=>p.species).filter(Boolean))].sort()
+      for(const s of species){ const o=document.createElement('option'); o.value=s; o.textContent=s; spSel.appendChild(o) }
+    }
+    if(tySel && tySel.options.length<=1){
+      const types=[...new Set(mapState.pins.map(p=>p.case_type).filter(t=>t&&t!=='unset'))].sort()
+      for(const t of types){ const o=document.createElement('option'); o.value=t; o.textContent=t; tySel.appendChild(o) }
+    }
+    if(stSel && stSel.options.length<=1){
+      const statuses=[...new Set(mapState.pins.map(p=>p.status))].sort()
+      for(const s of statuses){ const o=document.createElement('option'); o.value=s; o.textContent=s; stSel.appendChild(o) }
+    }
+    $('#map-legend').innerHTML=Object.entries(STATUS_COLOR).map(([k,c])=>
+      '<span><span class="sw" style="background:'+c+'"></span>'+esc(k)+'</span>').join('')
+    renderMapMarkers()
+    const u=j.unresolved_count||0
+    $('#map-unresolved').textContent = u
+      ? u+' case(s) have no placeable location yet (no GPS, and location text did not match a known area) -- not shown on the map.'
+      + (j.truncated ? ' Showing the most recent '+j.cap+' of '+j.total_considered+' considered.' : '')
+      : (j.truncated ? 'Showing the most recent '+j.cap+' of '+j.total_considered+' considered.' : '')
+  }catch(e){ canvas.innerHTML='<div class="empty">Map error: '+esc(e.message)+'</div>' }
+}
+async function renderMapCoverage(){
+  if(!mapState) return
+  const {map}=mapState
+  if(mapState.coverageLayer){ map.removeLayer(mapState.coverageLayer); mapState.coverageLayer=null }
+  if(!mapState.showCoverage) return
+  try{
+    const j=await api('/api/operators/identities').then(r=>r.ok?r.json():null)
+    if(!j) return
+    const layer=window.L.layerGroup()
+    // Approximate an operator's coverage centroid from the town-level tokens they
+    // have acted on (matched back against the current map pins by location text) --
+    // a soft circle per operator, radius scaled by how many distinct areas they cover.
+    for(const idOp of (j.identities||[])){
+      if(!idOp.areas || !idOp.areas.length) continue
+      const matched=mapState.pins.filter(p=>p.location && idOp.areas.some(a=>String(p.location).toLowerCase().includes(a.token)))
+      if(!matched.length) continue
+      const lat=matched.reduce((s,p)=>s+p.lat,0)/matched.length
+      const lon=matched.reduce((s,p)=>s+p.lon,0)/matched.length
+      window.L.circle([lat,lon],{radius:25000,color:'#3b6ea5',weight:1,fillOpacity:.06})
+        .bindTooltip(esc(idOp.name)+' -- '+idOp.case_count+' case action(s)')
+        .addTo(layer)
+    }
+    layer.addTo(map)
+    mapState.coverageLayer=layer
+  }catch(e){ /* coverage overlay is a soft add-on -- a failure here must not break the map */ }
+}
 // --- Activity / audit stream ---
 const ACT_KIND_LABEL={inbound:'Inbound',outbound:'Reply',transition:'Stage change',note:'Note',observation:'Note',action:'Action',autonomy_change:'Autonomy'}
 const ACT_ACTOR_LABEL={agent:'casey',operator:'Operator',contact:'Contact',system:'System'}
@@ -4076,7 +4353,7 @@ function setMineOnly(on){
 }
 const _mineBtn = $('#mine-btn'); if(_mineBtn) _mineBtn.onclick = () => setMineOnly(!mineOnly)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, teamHtml, loadTeam, fieldNotes, fieldSources, isMine, setMineOnly, get mineOnly(){return mineOnly}, undoToast, replyUndoToast, toggleSelect, clearSelection, syncBulkBar, bulkAction, get selectedIds(){return selectedIds}, applyInboxMode, setInboxMode, get inboxMode(){return inboxMode}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
+window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, loadMap, get mapState(){return mapState}, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, teamHtml, loadTeam, fieldNotes, fieldSources, isMine, setMineOnly, get mineOnly(){return mineOnly}, undoToast, replyUndoToast, toggleSelect, clearSelection, syncBulkBar, bulkAction, get selectedIds(){return selectedIds}, applyInboxMode, setInboxMode, get inboxMode(){return inboxMode}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},

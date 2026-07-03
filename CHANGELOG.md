@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+- Operator identity learning: `learnOperatorActivity` builds a durable
+  per-operator working-area profile from dashboard-attributed case actions
+  (claim/transition/reply/edit), backed by a new `operator_identity` thatcher
+  entity. Surfaced via `GET /api/operators/identities`, feeding the map's
+  operator-coverage overlay -- a visual coverage signal for the team, never an
+  auto-assignment.
+- Case observability map: a Leaflet + OpenStreetMap view in the dashboard
+  (`GET /api/map/cases`) pinning every case by explicit GPS or a new map-only
+  gazetteer approximation from the free-text report location (`src/gazetteer.js`).
+  Status-colored markers, clustering (leaflet.markercluster) for dense areas,
+  outbreak-cluster link overlay (reusing `clusters.js`), operator-coverage
+  overlay, species/case_type/status/date filters, click-through to the existing
+  case detail panel. Aggregate/PII-free like every other dashboard rollup.
+
 ### Fixed
 - Discord handoff webhook no longer interpolates the reporter's raw phone number
   into plaintext message content -- the case ref is enough for an operator to open

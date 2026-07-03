@@ -18,6 +18,8 @@ import { mergeThresholds } from './thresholds.js'
 import fs from 'node:fs'
 import yaml from 'js-yaml'
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
+import { geocodeApprox } from './gazetteer.js'
+import { tokens } from './correlate.js'
 
 // Principals casey acts as. role:agent satisfies normal requires_role gates.
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
@@ -648,7 +650,18 @@ export class CaseStore {
       for (const [k, v] of Object.entries(incoming)) {
         if (v != null && String(v).trim() !== '') merged[k] = v
       }
-      await this.updateCase(caseId, { report: JSON.stringify(merged) }, user)
+      const patch = { report: JSON.stringify(merged) }
+      // A location was just written (or updated) and the case has no explicit
+      // lat/lon yet: approximate a map point from the gazetteer so the map view
+      // has something to pin without the agent ever seeing/using this coordinate
+      // (it never enters the prompt or a tool response -- map-only, see
+      // gazetteer.js header). Explicit worker-given GPS in case_report always
+      // wins; this only fills the gap when lat/lon are still unset.
+      if (incoming.location && (c.lat == null || c.lat === '')) {
+        const approx = geocodeApprox(merged.location)
+        if (approx) { patch.lat = approx[0]; patch.lon = approx[1] }
+      }
+      await this.updateCase(caseId, patch, user)
       return { report: merged }
     })
   }
@@ -677,6 +690,68 @@ export class CaseStore {
       await this.updateCase(caseId, { report: JSON.stringify(next) }, user)
       return { report: next, filled }
     })
+  }
+
+  // OPERATOR IDENTITY LEARNING -- a durable per-operator record layered on top of
+  // the static CASEY_OPERATORS roster. Operators only ever act through the
+  // dashboard (never a direct Discord/WhatsApp reply -- confirmed: every
+  // actor:'operator' event is dashboard-attributed via X-Casey-Operator), so this
+  // learns from dashboard-attributed actions only: which case a known operator id
+  // acted on, and that case's report location -- building a working-area history
+  // per operator over time. One row per operator id (upsert), never a growing
+  // history table (row_access: none in thatcher.config.yml -- internal-team data,
+  // gated by the dashboard's own token auth, never exposed on the public /report
+  // surface).
+  async _operatorIdentityRow(operatorId) {
+    const [row] = await this.t.list('operator_identity', { operator_id: operatorId }, { limit: 1 })
+    return row || null
+  }
+
+  _parseJsonArray(raw) {
+    try { const v = JSON.parse(raw || '[]'); return Array.isArray(v) ? v : [] }
+    catch { return [] }
+  }
+
+  // Record that `operatorId` (a CASEY_OPERATORS roster id) acted on `caseRow` --
+  // called from the dashboard on every attributed claim/reply/transition/edit.
+  // Learns the case's channel identity (channel + external_id -- the contact's
+  // channel, which tells us NOTHING about the operator's own channel id, so this
+  // does not claim to learn a Discord/WhatsApp handle for the operator; it learns
+  // WORKING AREA from the case's report location) and bumps case_count/last_seen.
+  // Best-effort: a failure here must never break the dashboard action it rides on.
+  async learnOperatorActivity(operatorId, caseRow) {
+    if (!operatorId || !caseRow) return null
+    try {
+      const existing = await this._operatorIdentityRow(operatorId)
+      const areas = existing ? this._parseJsonArray(existing.areas) : []
+      const report = this._parseReport(caseRow.report, caseRow.id)
+      const locToks = [...tokens(report.location)]
+      for (const t of locToks) {
+        const i = areas.findIndex(a => a.token === t)
+        if (i >= 0) areas[i].count = (areas[i].count || 0) + 1
+        else areas.push({ token: t, count: 1 })
+      }
+      // Cap the area list so a long-lived operator's record does not grow
+      // unbounded -- keep the most-frequent areas, a bounded working-area
+      // profile rather than a full history.
+      areas.sort((a, b) => (b.count || 0) - (a.count || 0))
+      const boundedAreas = areas.slice(0, 40)
+      const patch = {
+        operator_id: operatorId,
+        areas: JSON.stringify(boundedAreas),
+        last_seen_at: nowIso(),
+        case_count: (existing?.case_count || 0) + 1,
+      }
+      if (existing) await this.t.update('operator_identity', existing.id, patch, SYSTEM_USER)
+      else await this.t.create('operator_identity', { ...patch, channel_ids: '[]' }, SYSTEM_USER)
+      return patch
+    } catch { return null }   // learning is best-effort, never blocks the caller's real action
+  }
+
+  // Every learned operator-identity row, for the dashboard's coverage view.
+  async listOperatorIdentities() {
+    try { return await this.t.list('operator_identity', {}, { limit: 500 }) }
+    catch { return [] }
   }
 
   async _findOrCreateCaseUnsafe({ channel, external_id, contact, subject }) {
