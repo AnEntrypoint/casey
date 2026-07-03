@@ -89,6 +89,48 @@ const TOWNS = {
   potchefstroom: [-26.7145, 27.0980],
 }
 
+// Common abbreviations / colloquial names / everyday misspellings a worker
+// might actually say or type, mapped onto the SAME coordinate array as their
+// canonical entry above (shared reference, never a duplicated literal, so a
+// future coordinate correction only needs one edit). Deliberately small and
+// hand-curated like TOWNS itself -- add as real reports surface a miss, never
+// auto-scraped or auto-fuzzy-matched (a silent near-match risks pinning the
+// wrong town; every alias here is a specific, verified name a person uses).
+const ALIASES = {
+  jhb: TOWNS.johannesburg,
+  joburg: TOWNS.johannesburg,
+  jozi: TOWNS.johannesburg,
+  egoli: TOWNS.johannesburg,
+  pta: TOWNS.pretoria,
+  pretoia: TOWNS.pretoria,          // common typo
+  ct: TOWNS.capetown,
+  capetow: TOWNS.capetown,          // common typo/truncation
+  pe: TOWNS.portelizabeth,          // Port Elizabeth's old name, still widely used verbally
+  portelisabeth: TOWNS.portelizabeth,  // common misspelling
+  dbn: TOWNS.durban,
+  durbn: TOWNS.durban,              // common typo
+  pmb: TOWNS.pietermaritzburg,
+  maritzburg: TOWNS.pietermaritzburg,
+  bloem: TOWNS.bloemfontein,
+  bfn: TOWNS.bloemfontein,
+  nelspruitt: TOWNS.nelspruit,      // common typo (double t)
+  mbombella: TOWNS.mbombela,        // common typo
+  trichardt: TOWNS.louistrichardt,  // a worker often drops "Louis" and says just the surname
+  polokwan: TOWNS.polokwane,        // common typo/truncation
+  giyan: TOWNS.giyani,              // common truncation
+  thoyandou: TOWNS.thohoyandou,     // common misspelling (dropped h)
+  vendaland: TOWNS.thohoyandou,     // colloquial regional name centered on Thohoyandou
+  zululand: TOWNS.ulundi,           // colloquial regional name centered on Ulundi
+  westrand: TOWNS.johannesburg,     // Johannesburg metro region, approximate to the metro centroid
+  eastrand: TOWNS.johannesburg,
+  vaal: TOWNS.johannesburg,         // Vaal Triangle, approximate to the nearest major metro centroid
+  midrand: TOWNS.johannesburg,
+  sandton: TOWNS.johannesburg,
+  soshanguve: TOWNS.pretoria,
+  mankweng: TOWNS.polokwane,
+}
+Object.assign(TOWNS, ALIASES)
+
 // Resolve a free-text location string to an approximate [lat, lon], or null if
 // no token matches. tokens() splits on whitespace, so a two-word town name
 // ("Louis Trichardt") never appears as a single token -- try every adjacent

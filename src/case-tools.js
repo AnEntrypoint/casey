@@ -191,6 +191,16 @@ export function buildCaseToolset(storeOrNull) {
         const incoming = pick(fields, [...REPORT_KEYS])
         const hasGps = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
         if (!Object.keys(incoming).length && !hasGps) return { error: 'no report fields supplied' }
+        // Snapshot the PRIOR value of every field this call touches, before the
+        // merge, so a correction (a field already non-null being overwritten) is
+        // distinguishable in the timeline from a first-time fill -- mirrors
+        // case_update's existing case_type a->b change-tracking pattern. Read
+        // once, best-effort: a read failure here must never block the actual
+        // write below (audit-trail richness, not the write itself, is at stake).
+        let priorReport = {}
+        if (Object.keys(incoming).length) {
+          try { const c0 = await store().getCase(id); priorReport = c0?.report ? JSON.parse(c0.report) : {} } catch { priorReport = {} }
+        }
         let res = { report: null }
         if (Object.keys(incoming).length) {
           // Atomic read-merge-write in the store, under the per-conversation lock, so
@@ -211,7 +221,13 @@ export function buildCaseToolset(storeOrNull) {
           await store().updateCase(id, { lat, lon }, AGENT_USER)
         }
         const fieldsRecorded = [...Object.keys(incoming), ...(hasGps ? ['lat', 'lon'] : [])]
-        await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `recorded report fields: ${fieldsRecorded.join(', ')}`, data: { ...incoming, ...(hasGps ? { lat, lon } : {}) } })
+        const corrections = Object.keys(incoming)
+          .filter(k => priorReport[k] != null && String(priorReport[k]).trim() !== '' && String(priorReport[k]) !== String(incoming[k]))
+          .map(k => `${k} ${priorReport[k]} -> ${incoming[k]}`)
+        const text = corrections.length
+          ? `recorded report fields: ${fieldsRecorded.join(', ')}; changed: ${corrections.join(', ')}`
+          : `recorded report fields: ${fieldsRecorded.join(', ')}`
+        await store().appendEvent(id, { kind: 'action', actor: 'agent', text, data: { ...incoming, ...(hasGps ? { lat, lon } : {}), ...(corrections.length ? { corrections } : {}) } })
         return { ok: true, report: res.report, fieldsRecorded }
       },
     },

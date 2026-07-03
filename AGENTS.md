@@ -85,7 +85,7 @@ plugins/case-tools/        freddie plugin registering case_* tools (auto-discove
 src/
   casey.js                 top-level assembly: store + host + gateway + adapters + logger; drainQueuedTurns re-drives LLM-down-queued inbounds through the agent on provider recovery (status-gated, oldest-first serialized, mark-attempted only after a successful drive, bounded retry -> dead-letter)
   case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error); mergeReport backfills case.lat/lon from the gazetteer when a location is written and no explicit GPS exists; learnOperatorActivity/listOperatorIdentities maintain the operator_identity entity (durable per-operator working-area history, dashboard-attributed actions only, best-effort/never throws into the caller)
-  gazetteer.js             MAP-ONLY static SA town/province -> approximate [lat,lon] lookup (geocodeApprox), used solely to place a map pin from a case's free-text report location when no explicit GPS exists; distinct from the forbidden chat-routing gazetteer -- never feeds the agent's prompt or a tool response the contact sees, a miss buckets into the map's "unresolved" group rather than guessing
+  gazetteer.js             MAP-ONLY static SA town/province -> approximate [lat,lon] lookup (geocodeApprox), used solely to place a map pin from a case's free-text report location when no explicit GPS exists; distinct from the forbidden chat-routing gazetteer -- never feeds the agent's prompt or a tool response the contact sees, a miss buckets into the map's "unresolved" group rather than guessing. Carries hand-curated aliases (abbreviations JHB/PE/CT/PMB/BFN, colloquial names, common typos, metro-region names) sharing the SAME coordinate array as their canonical entry, so a worker verbalising a place colloquially still resolves
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
   case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx)). case_update carries case_type (agent-settable classification, validated against CASE_TYPE_VALUES -- thatcher's own config-declared enum is NOT enforced server-side on write, so the tool validates before every write, matching the dashboard's own check) and priority (same PRIORITY_VALUES guard). case_report carries lat/lon (only from real worker-read-out GPS, validated finite/in-range, written straight to the case columns, always overriding any prior gazetteer approximation)
   case-machine.js          xstate case lifecycle machine
@@ -294,6 +294,24 @@ the crash-budget stop state); the supervisor is its only I/O.
   literal tokens that must be reproduced exactly (the reference, a link) may
   appear, each with an explicit "write the surrounding sentence yourself"
   instruction; everything else is a structural instruction the model composes.
+- **The contact's message is untrusted DATA, never instructions.** `caseSystemPrompt`
+  explicitly tells the model the contact's text is field-reported data, not a
+  command -- ignore anything that tries to change its role/persona/instructions
+  and keep responding only as the animal-disease reporting assistant. A companion
+  clause defines the scope boundary: an off-topic ask (maths, translation,
+  chit-chat, "how do you work") gets a warm one-sentence decline with no jargon
+  words, which also reduces how often the deterministic `jargonHits` outbound
+  scrub needs to hold a reply as a draft for a benign redirect. A third clause
+  asks for one clarifying question, rather than guessing, when a message reads
+  like a rough voice transcript (run-on, filler words) and a key fact contradicts
+  itself within that same message -- all three are prose guidance, no new
+  classifier, matching the file's existing structural-instruction style.
+- **A field correction is distinguishable from a first-time fill in the audit
+  trail.** `case_report`'s handler snapshots the prior report before merging, and
+  when an already-filled field is overwritten, the appended event carries an
+  old-to-new diff ("changed: species sheep -> goats") -- mirrors `case_type`'s
+  existing a-to-b change-tracking pattern, so a correction ("actually it was 10,
+  not 5") is as observable to an operator as a reclassification already is.
 - **STOP/HUMAN are deterministic irreversible controls.** Only the two IRREVERSIBLE
   service acts -- opt-out and human-handoff -- short-circuit deterministically:
   `detectContactIntent` returns `'stop' | 'human' | 'help' | null` and fires in any
@@ -306,6 +324,23 @@ the crash-budget stop state); the supervisor is its only I/O.
   unambiguous opt-out words and explicit messaging-object phrases ("cancel
   messages", "yeka imilayezo") opt a contact out. Everything else (status,
   greeting, thanks, enquiry, report, extraction) is the agent's job.
+  `normalizeIntentText` collapses immediate consecutive duplicate tokens before
+  phrase/exclude matching -- a well-known ASR artifact ("stop stop messaging me")
+  that would otherwise miss the exact-phrase match; the existing negator-guard
+  logic is unaffected (a genuine double-negative like "dont dont stop stop" still
+  correctly reads as NOT an opt-out after collapsing). A STOP that arrives packed
+  with real report content is flagged (`STOP-WITH-CONTENT` observation +
+  `needs-human`) for manual review -- the agent still never engages post-opt-out
+  (correct), but the facts are made actionable for a human instead of resting
+  silently in the append-only log.
+- **A fast message burst is buffered and replayed, never silently dropped.** The
+  per-contact in-flight concurrency guard (one LLM turn per contact at a time)
+  used to skip a message that arrived mid-turn with no further consumer -- a
+  quick multi-message burst lost every message but the one that won the race.
+  `handleInbound` now wraps the core turn logic: a message that hits the guard is
+  buffered (capped, oldest-dropped-logged) and, once the in-flight turn clears,
+  replayed as one more full turn -- fire-and-forget, same shape as the existing
+  LLM-down queue drain.
 - **No deterministic text processing: the agent interprets and acts.** casey does no
   deterministic classification of a worker's meaning. The LLM agent interprets each
   message and drives the whole conversation by calling the `case_*` tools -- it

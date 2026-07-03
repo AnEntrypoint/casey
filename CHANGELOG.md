@@ -22,6 +22,21 @@
   from real worker-read-out GPS, always overriding the map's gazetteer
   approximation). `caseSystemPrompt` instructs the agent to set both quietly, on
   its own judgment, as the report makes the picture clear.
+- Location aliases: `gazetteer.js` gained ~25 hand-curated abbreviations,
+  colloquial names, and common typos (JHB, PE, Jozi, Bloem, pretoia, durbn,
+  vaal...), sharing the canonical entry's coordinates, so a worker verbalising a
+  place colloquially resolves on the map instead of landing in "unresolved".
+- Conversational robustness: a 57-agent audit (enumerate real phrasings per
+  dimension -> classify against the real code -> adversarially verify) confirmed
+  8 real gaps, all fixed within the pure-LLM architecture (prompt content or a
+  narrowly-scoped deterministic guard matching the existing STOP/HUMAN pattern):
+  a burst of quick messages is now buffered and replayed instead of silently
+  dropped by the in-flight guard; a STOP that arrives packed with report content
+  is flagged for manual review instead of the content resting unseen; the STOP/
+  HUMAN detector now collapses duplicated ASR-artifact tokens before matching;
+  `caseSystemPrompt` gained a data-not-instructions guard, an off-topic scope
+  boundary, and garbled-transcript clarify-before-recording guidance; a report
+  field correction now shows an old-to-new diff in its audit event.
 
 ### Fixed
 - `case_update`'s `case_type`/`priority` are now validated against their enum
