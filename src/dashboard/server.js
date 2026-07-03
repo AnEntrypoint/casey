@@ -175,7 +175,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       : err ? `<div class="banner err">${escq(err)}</div>` : ''
     const caseInfo = caseRow
       ? `<div class="case-info"><strong>Reference: ${escq(caseRow.ref)}</strong> &ndash; ${escq(caseRow.subject || 'Field report')}
-         <button type="button" class="copy-link-btn" onclick="const u=location.href.split('?')[0]+'?ref='+encodeURIComponent('${escq(caseRow.ref)}');navigator.clipboard?.writeText(u).then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Share link',2000)}).catch(()=>prompt('Copy this link:',u))">Share link</button></div>`
+         <button type="button" class="copy-link-btn" data-ref="${escq(caseRow.ref)}">Share link</button></div>`
       : ''
     const refBlock = caseRow ? `<input type="hidden" name="ref" value="${escq(ref)}">` : `
       <div class="field"><label>Your reference number</label>
@@ -237,6 +237,19 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
 </div>
 <script>
   const btn = document.querySelector('button[type=submit]')
+  // Share-link copy button: reads the ref from a data attribute (plain HTML
+  // escaping, no JS-string-literal splicing) rather than an inline onclick
+  // that mixed HTML-entity escaping with JS-string context -- a quote in the
+  // ref would have broken out of the JS string (latent, not currently
+  // exploitable since ref is always server-generated, but fragile).
+  const copyBtn = document.querySelector('.copy-link-btn')
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      const u = location.href.split('?')[0] + '?ref=' + encodeURIComponent(copyBtn.dataset.ref)
+      const done = () => { copyBtn.textContent = 'Copied!'; setTimeout(() => { copyBtn.textContent = 'Share link' }, 2000) }
+      navigator.clipboard?.writeText(u).then(done).catch(() => prompt('Copy this link:', u))
+    })
+  }
   // Phone field normalization and inline validation
   const phoneEl = document.querySelector('input[name=phone]')
   if (phoneEl) {

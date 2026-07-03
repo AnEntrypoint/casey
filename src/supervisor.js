@@ -346,6 +346,17 @@ export function createSupervisor(opts = {}) {
           reloadTimer = setTimeout(() => { reloadTimer = null; requestReload(Date.now()) }, RELOAD_DEBOUNCE_MS)
           reloadTimer.unref?.()
         })
+        // An FSWatcher can emit 'error' ASYNCHRONOUSLY after a successful fs.watch()
+        // call (dir deleted, permission change mid-run -- common on Windows recursive
+        // watches) -- the try/catch below only guards the synchronous fs.watch() call
+        // itself. An unhandled 'error' event throws inside the SUPERVISOR process, the
+        // one process whose job is to keep the worker alive and restart on crash, with
+        // no restart-with-backoff for this failure -- just total supervisor death.
+        // Disable reload for this one path and keep the supervisor running.
+        w.on('error', (e) => {
+          log.warn?.('[supervisor] watch error, disabling live reload for this path', { dir, error: e.message })
+          try { w.close() } catch { /* already closing */ }
+        })
         watchers.push(w)
         log.info?.('[supervisor] watching for live reload', { dir })
       } catch (e) {

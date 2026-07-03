@@ -140,22 +140,27 @@ export class Casey {
     // for gateway use.
     if (ch === 'discord') {
       const { DiscordAdapter } = await import(freddieFile('plugins/platform-discord/handler.js'))
-      const a = new DiscordAdapter()
-      // freddie's DiscordAdapter now opens the gateway WebSocket itself (it
-      // emits a 'message' event after IDENTIFY/RESUME). Older freddie builds
-      // only did the gateway lookup, so if the adapter has no native receive we
-      // attach casey's connectDiscordReceive as a fallback.
-      const hasNativeReceive = typeof a._connect === 'function' || a.receive !== undefined
-      if (!hasNativeReceive) {
-        const { connectDiscordReceive } = await import('./discord-receive.js')
-        const orig = a.start.bind(a)
-        a.start = async () => {
-          // A failed Discord start (bad token, gateway unreachable) must surface,
-          // not leave the channel half-initialised with no receive and no log.
-          try { await orig() }
-          catch (e) { this.log?.error?.('[casey] discord adapter.start failed', { error: e.message }); throw e }
-          this._disconnects.push(connectDiscordReceive(a))
-        }
+      // ALWAYS receive:false: freddie's DiscordAdapter opens its OWN gateway
+      // WebSocket by default (this.receive = opts.receive !== false, then
+      // start() calls this._connect() when this.receive), with a flat, uncapped
+      // ~2500ms reconnect loop and no zombie-heartbeat detection. casey's own
+      // connectDiscordReceive (below) is the intended, more resilient receive
+      // path: backoff ceiling, MAX_RETRIES, resume_gateway_url handling, and
+      // zombie-heartbeat termination. The previous feature-detect
+      // (`typeof a._connect === 'function' || a.receive !== undefined`) was
+      // ALWAYS true against every installed freddie build -- both are always
+      // defined on DiscordAdapter -- so casey's resilient wrapper never actually
+      // ran; it silently degraded to freddie's weaker loop on every deployment.
+      // Force receive:false unconditionally and always use casey's own path.
+      const a = new DiscordAdapter({ receive: false })
+      const { connectDiscordReceive } = await import('./discord-receive.js')
+      const orig = a.start.bind(a)
+      a.start = async () => {
+        // A failed Discord start (bad token, gateway unreachable) must surface,
+        // not leave the channel half-initialised with no receive and no log.
+        try { await orig() }
+        catch (e) { this.log?.error?.('[casey] discord adapter.start failed', { error: e.message }); throw e }
+        this._disconnects.push(connectDiscordReceive(a))
       }
       // Filter guild channel messages to only DMs (guild_id absent) or @mentions of
       // the bot. Without this, every message in any guild channel creates a case --
@@ -331,8 +336,12 @@ export class Casey {
       this._coverageGapActive = false
       return
     }
+    // detectCoverageGap only reads events for cases whose tags intersect the
+    // health-tag set (breaching) -- fetching events for every open case here
+    // was O(open) work for an O(breaching) need, a cost that grows with total
+    // case count rather than the actually-relevant subset.
     const eventsByCaseId = new Map()
-    for (const c of open) eventsByCaseId.set(c.id, await this.store.listEvents(c.id).catch(() => []))
+    for (const c of breaching) eventsByCaseId.set(c.id, await this.store.listEvents(c.id).catch(() => []))
     const { detectCoverageGap } = await import('./case-sweep.js')
     const verdict = detectCoverageGap(open, eventsByCaseId, roster, now)
     if (verdict.gap && !this._coverageGapActive) {
@@ -402,69 +411,79 @@ export class Casey {
     if (this.opts.resumeOnBoot === false) return { scanned: 0, resumed: 0 }
     const handle = this.gateway?.handleInbound
     if (typeof handle !== 'function') return { scanned: 0, resumed: 0 }
+    // Share the SAME _draining guard drainQueuedTurns uses. start() fires this
+    // unawaited during boot, and an LLM recovery edge can fire drainQueuedTurns
+    // around the same window -- without this guard the two race on
+    // appendEvent/case locks for the same msgId, exactly the double-drive the
+    // (until now, only aspirational) comment on drainQueuedTurns claims is
+    // prevented.
+    if (this._draining) return { scanned: 0, resumed: 0, deferred: true }
+    this._draining = true
     let scanned = 0, resumed = 0
-    const openStatuses = new Set(this.store.getOpenStatuses?.() || [])
-    const rows = await this.store.listCases({}, { limit: maxCases, offset: 0 })
-    for (const c of rows) {
-      if (resumed >= maxRedrives) break
-      // Only re-drive cases still open (a closed/won case wants no further reply).
-      if (openStatuses.size && !openStatuses.has(c.status)) continue
-      // Skip channels with no live adapter to send on.
-      if (!this.adapters[c.channel]?.send) continue
-      let events
-      try { events = await this.store.listEvents(c.id) } catch { continue }
-      scanned++
-      // Walk chronologically. Track, per msgId, whether its turn started, whether a
-      // completion (outbound/draft) followed, and whether a resume was already
-      // attempted. A completion or a later inbound for the SAME msgId is positional.
-      const started = new Map()       // msgId -> inbound event
-      const completedAfter = new Set()
-      const attempted = new Set()
-      for (const ev of events) {
-        if (ev.kind === 'inbound' && ev.msg_id) started.set(ev.msg_id, ev)
-        else if (ev.kind === 'observation' && typeof ev.text === 'string') {
-          const m = ev.text.match(/^resume-attempted:(.+)$/)
-          if (m) attempted.add(m[1])
+    try {
+      const openStatuses = new Set(this.store.getOpenStatuses?.() || [])
+      const rows = await this.store.listCases({}, { limit: maxCases, offset: 0 })
+      for (const c of rows) {
+        if (resumed >= maxRedrives) break
+        // Only re-drive cases still open (a closed/won case wants no further reply).
+        if (openStatuses.size && !openStatuses.has(c.status)) continue
+        // Skip channels with no live adapter to send on.
+        if (!this.adapters[c.channel]?.send) continue
+        let events
+        try { events = await this.store.listEvents(c.id) } catch { continue }
+        scanned++
+        // Walk chronologically. Track, per msgId, whether its turn started, whether a
+        // completion (outbound/draft) followed, and whether a resume was already
+        // attempted. A completion or a later inbound for the SAME msgId is positional.
+        const started = new Map()       // msgId -> inbound event
+        const completedAfter = new Set()
+        const attempted = new Set()
+        for (const ev of events) {
+          if (ev.kind === 'inbound' && ev.msg_id) started.set(ev.msg_id, ev)
+          else if (ev.kind === 'observation' && typeof ev.text === 'string') {
+            const m = ev.text.match(/^resume-attempted:(.+)$/)
+            if (m) attempted.add(m[1])
+          }
+          // Any outbound/draft completes EVERY turn started before it: a reply on the
+          // conversation answers the latest inbound, so an earlier unanswered inbound
+          // is no longer pending (the contact got a response on this thread).
+          if (ev.kind === 'outbound' || ev.kind === 'draft') {
+            for (const id of started.keys()) completedAfter.add(id)
+          }
         }
-        // Any outbound/draft completes EVERY turn started before it: a reply on the
-        // conversation answers the latest inbound, so an earlier unanswered inbound
-        // is no longer pending (the contact got a response on this thread).
-        if (ev.kind === 'outbound' || ev.kind === 'draft') {
-          for (const id of started.keys()) completedAfter.add(id)
+        // The pending msgId: started, not completed, not already attempted. Take the
+        // most recent such inbound only -- one re-drive answers the live thread.
+        let pending = null
+        for (const [id, ev] of started) {
+          if (completedAfter.has(id) || attempted.has(id)) continue
+          if (!pending || ev.created_at >= pending.ev.created_at) pending = { id, ev }
+        }
+        if (!pending) continue
+        // Mark BEFORE re-drive -- at-most-once. A crash now leaves attempted-not-done,
+        // and the next boot skips this msgId rather than re-driving (miss over double).
+        try {
+          await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-attempted:${pending.id}` })
+        } catch (e) { this.log?.warn?.('[casey] resume marker failed', { caseId: c.id, error: e.message }); continue }
+        const platform = c.channel
+        const msg = {
+          from: c.external_id,
+          text: pending.ev.text || '',
+          platform,
+          resume: true,
+          raw: { channel_id: c.external_id, id: pending.id, author: {} },
+        }
+        try {
+          await handle.call(this.gateway, platform, msg)
+          resumed++
+          this.log?.info?.('[casey] resumed pending turn', { caseId: c.id, channel: c.channel })
+        } catch (e) {
+          // Already marked attempted, so it will not be retried -- log and move on.
+          this.log?.warn?.('[casey] resume re-drive failed', { caseId: c.id, error: e.message })
         }
       }
-      // The pending msgId: started, not completed, not already attempted. Take the
-      // most recent such inbound only -- one re-drive answers the live thread.
-      let pending = null
-      for (const [id, ev] of started) {
-        if (completedAfter.has(id) || attempted.has(id)) continue
-        if (!pending || ev.created_at >= pending.ev.created_at) pending = { id, ev }
-      }
-      if (!pending) continue
-      // Mark BEFORE re-drive -- at-most-once. A crash now leaves attempted-not-done,
-      // and the next boot skips this msgId rather than re-driving (miss over double).
-      try {
-        await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-attempted:${pending.id}` })
-      } catch (e) { this.log?.warn?.('[casey] resume marker failed', { caseId: c.id, error: e.message }); continue }
-      const platform = c.channel
-      const msg = {
-        from: c.external_id,
-        text: pending.ev.text || '',
-        platform,
-        resume: true,
-        raw: { channel_id: c.external_id, id: pending.id, author: {} },
-      }
-      try {
-        await handle.call(this.gateway, platform, msg)
-        resumed++
-        this.log?.info?.('[casey] resumed pending turn', { caseId: c.id, channel: c.channel })
-      } catch (e) {
-        // Already marked attempted, so it will not be retried -- log and move on.
-        this.log?.warn?.('[casey] resume re-drive failed', { caseId: c.id, error: e.message })
-      }
-    }
-    if (resumed) this.log?.info?.('[casey] resume sweep complete', { scanned, resumed })
-    return { scanned, resumed }
+      if (resumed) this.log?.info?.('[casey] resume sweep complete', { scanned, resumed })
+      return { scanned, resumed }
+    } finally { this._draining = false }
   }
 
   // Drain messages QUEUED while the LLM backend was down. A message that arrived

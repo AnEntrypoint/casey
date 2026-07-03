@@ -334,9 +334,8 @@ async function main() {
     }
     // Health pill re-resolves live so an operator sees acptoapi going up/down
     // without restarting casey.
-    const { resolveCallLLM: _rc } = await import('../src/llm.js')
     const llmStatus = async () => {
-      const b = await _rc({ probe: true }).catch(() => ({ source: 'none' }))
+      const b = await resolveCallLLM({ probe: true }).catch(() => ({ source: 'none' }))
       return { source: b.source, model: b.model, url: b.url }
     }
     let dash

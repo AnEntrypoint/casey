@@ -7,7 +7,7 @@
 // loader can import this without the store existing yet).
 
 import { getCaseStore } from './case-runtime.js'
-import { AGENT_USER } from './case-store.js'
+import { AGENT_USER, REPORT_KEYS } from './case-store.js'
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra })
 
@@ -148,15 +148,16 @@ export function buildCaseToolset(storeOrNull) {
             photos: str('Note that the farmer sent a photo (set to a short description)'),
             audio: str('Note that the farmer sent a voice note (set to a short description or transcription)'),
             notes: str('Anything else worth recording for the organisers'),
+            present_person: str('Who is with the animals right now, if not the owner (e.g. a relative, herder, neighbour)'),
+            present_person_relation: str('How the present person is linked to the owner: owner, relative, herder, or neighbour'),
+            owner_name: str("The animals' owner's name, if the worker learns it and the owner is not present"),
+            owner_contact: str("A number to reach the owner, if the worker learns it and the owner is not present"),
           },
           required: ['id'],
         },
       },
       handler: async ({ id, ...fields }) => {
-        const REPORT_KEYS = ['species', 'symptoms', 'location', 'how_to_find', 'affected_count',
-          'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits',
-          'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'audio', 'notes']
-        const incoming = pick(fields, REPORT_KEYS)
+        const incoming = pick(fields, [...REPORT_KEYS])
         if (!Object.keys(incoming).length) return { error: 'no report fields supplied' }
         // Atomic read-merge-write in the store, under the per-conversation lock, so
         // two concurrent agent turns for the same case cannot read the same stale

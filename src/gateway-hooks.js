@@ -467,6 +467,23 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     rateWindows.set(id, hits)
     return hits.length > RATE_LIMIT_MSGS
   }
+  // GLOBAL rate limit: the per-contact window above bounds each external_id
+  // independently, so many DISTINCT senders (a distributed source, or simply
+  // many legitimate contacts at once) have no aggregate ceiling -- each gets
+  // its own fresh RATE_LIMIT_MSGS/WINDOW allowance, so total case creation and
+  // LLM spend across all contacts is unbounded. A second sliding window, same
+  // shape, keyed by a fixed sentinel instead of external_id, caps AGGREGATE
+  // volume regardless of how many distinct ids are sending.
+  const globalRateWindow = []   // number[] (recent turn-start ms, all contacts)
+  const GLOBAL_RATE_LIMIT_MSGS = Number(process.env.CASEY_GLOBAL_RATE_LIMIT_MSGS) || 200
+  const GLOBAL_RATE_LIMIT_WINDOW_MS = Number(process.env.CASEY_GLOBAL_RATE_LIMIT_WINDOW_MS) || 60_000
+  function globallyRateLimited(now = Date.now()) {
+    let i = 0
+    while (i < globalRateWindow.length && now - globalRateWindow[i] >= GLOBAL_RATE_LIMIT_WINDOW_MS) i++
+    if (i) globalRateWindow.splice(0, i)
+    globalRateWindow.push(now)
+    return globalRateWindow.length > GLOBAL_RATE_LIMIT_MSGS
+  }
   return async function handleInbound(platform, msg) {
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
     const external_id = conversationKey(msg)   // per-contact case IDENTITY
@@ -754,6 +771,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     if (rateLimited(external_id)) {
       log.error?.('[casey] rate limit: skipping LLM turn, no reply sent', { caseId: fresh.id })
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `RATE-LIMITED: more than ${RATE_LIMIT_MSGS} messages in ${Math.round(RATE_LIMIT_WINDOW_MS / 1000)}s; no reply sent, no LLM turn.` })
+      return { to: replyTo, text: '', platform, caseId: fresh.id, rateLimited: true }
+    }
+    // Global (aggregate, across ALL contacts) rate limit: many distinct sender
+    // ids each stay under their own per-contact cap while collectively driving
+    // unbounded case creation/LLM spend, since the per-contact window above has
+    // no ceiling on the number of distinct ids. Checked after the per-contact
+    // gate so a single noisy contact is still attributed to their own limit
+    // first; this catches the aggregate case specifically.
+    if (globallyRateLimited()) {
+      log.error?.('[casey] global rate limit: skipping LLM turn, no reply sent', { caseId: fresh.id })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `GLOBAL-RATE-LIMITED: more than ${GLOBAL_RATE_LIMIT_MSGS} messages across all contacts in ${Math.round(GLOBAL_RATE_LIMIT_WINDOW_MS / 1000)}s; no reply sent, no LLM turn.` })
       return { to: replyTo, text: '', platform, caseId: fresh.id, rateLimited: true }
     }
 
@@ -1057,10 +1085,21 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       try {
         let target = null
         const evs = await store.listEvents(fresh.id)
+        // Bound the backward scan on THIS turn's own inbound event id, not msg_id:
+        // when the adapter omits an id, msgId is '' (messageId() returns '' when
+        // both msg.raw?.id and msg.id are absent -- a known, already-logged
+        // condition), and matching on msg_id==='' would stop at the WRONG prior
+        // inbound event (also empty msg_id) instead of this turn's own, letting
+        // the scan advance the FSM to a phase declared on an earlier turn. Prefer
+        // the real event id: inboundEvent.id on a fresh turn, or the matching row
+        // found by msg_id on a resume-redrive (inboundEvent is null there by
+        // design). Only fall back to a bare msg_id compare if neither resolves.
+        const turnInboundId = inboundEvent?.id
+          ?? (msgId ? evs.find(e => e.kind === 'inbound' && e.msg_id === msgId)?.id : null)
         for (let i = evs.length - 1; i >= 0; i--) {
           const m = typeof evs[i].text === 'string' && evs[i].text.match(/^STAGE-DECLARED (\w+)$/)
           if (m) { target = m[1]; break }
-          if (evs[i].kind === 'inbound' && evs[i].msg_id === msgId) break   // only THIS turn's declaration
+          if (turnInboundId != null ? evs[i].id === turnInboundId : (evs[i].kind === 'inbound' && evs[i].msg_id === msgId)) break
         }
         const cur = convOrient?.state || 'greeting'
         if (target && target !== cur) await advanceCase(store, fresh, target, {})

@@ -23,7 +23,7 @@ import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
 export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
 
-const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_find', 'affected_count', 'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits', 'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'audio', 'notes',
+export const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_find', 'affected_count', 'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits', 'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'audio', 'notes',
   // People on site for a field-worker report: who the worker spoke to and their
   // link to the owner, plus the owner's identity/contact -- so an absent owner with
   // a relative present is still captured. Reported by the worker, model- or
@@ -489,8 +489,20 @@ export class CaseStore {
   // recency sort in JS here (today's behaviour, just generalized). A bare clone and
   // a pre-publish install both stay green; once the new thatcher is installed the
   // operators + user scope push down to the store with no code change.
+  // Three singleton `channel:'system'` cases (settings:thresholds, settings:
+  // fleet-health, settings:shift) are created via findOrCreateCase, default to
+  // status 'new', and never close -- they are audit-log carriers for operator-
+  // tunable settings, never a real farmer report. Every internal reader of
+  // settings state goes through _settingsCaseId()/findOrCreateCase + listEvents
+  // directly, never listCases (confirmed: no call site filters or relies on a
+  // system row appearing here) -- so excluding them by default is safe and
+  // fixes every KPI/report/geo/workload/cluster consumer (which all call
+  // listCases({}, ...) with no channel filter) at one chokepoint instead of
+  // patching each one. includeSystem:true is the explicit opt-in escape hatch
+  // for a caller that genuinely needs to see them (none exist today).
   async listCases(where = {}, opts = {}) {
-    const { limit = 50, offset = 0, user = null, sort = null } = opts
+    const { limit = 50, offset = 0, user = null, sort = null, includeSystem = false } = opts
+    if (!includeSystem && where.channel === undefined) where = { ...where, channel: { $ne: 'system' } }
     const supported = await this._thatcherSupportsOperators()
     if (supported) {
       const rows = await this.t.list('case', where, {
