@@ -2562,7 +2562,7 @@ const REPORT_FIELDS=[
   ['photos','Photos'],['audio','Voice notes'],['notes','Other notes'],
   ['present_person','Who is with the animals'],['present_person_relation','Their link to the owner'],
   ['owner_name','Owner name'],['owner_contact','Owner contact'],
-  ['language_detected','Language detected'],
+  ['language_detected','Language detected'],['sites','Other sites in this visit'],
 ]
 // Fields a field visit genuinely needs that CANNOT be recovered once the worker
 // leaves the site -- this is the one-shot reality. The readiness line tells the

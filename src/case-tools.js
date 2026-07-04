@@ -174,8 +174,8 @@ export function buildCaseToolset(storeOrNull) {
             access_notes: str('Access/travel notes: gate, road condition, 4x4 needed, permission'),
             farmer_available: str('Will the farmer be there on arrival? When are they reachable?'),
             contact_fallback: str('Who else to contact / another number if the farmer is unreachable'),
-            photos: str('Note that the farmer sent a photo (set to a short description)'),
-            audio: str('Note that the farmer sent a voice note (set to a short description or transcription)'),
+            photos: str('Note that the farmer sent a photo (set to a short description). Each call ADDS a new photo note -- if more than one photo arrives, call again with a description of the new one; earlier descriptions are kept, never overwritten.'),
+            audio: str('Note that the farmer sent a voice note (set to a short description or transcription). Each call ADDS a new note -- if more than one voice note arrives, call again; earlier notes are kept, never overwritten.'),
             notes: str('Anything else worth recording for the organisers'),
             present_person: str('Who is with the animals right now, if not the owner (e.g. a relative, herder, neighbour)'),
             present_person_relation: str('How the present person is linked to the owner: owner, relative, herder, or neighbour'),
@@ -183,6 +183,7 @@ export function buildCaseToolset(storeOrNull) {
             owner_contact: str("A number to reach the owner, if the worker learns it and the owner is not present"),
             lat: { type: 'number', description: 'Latitude for the organisers\' map. If the worker reads out real GPS coordinates, use those exactly. Otherwise, use your OWN knowledge to give your best estimate for the place described (a named town, farm, or landmark you can place) -- this is how the case gets a map point at all, so estimate confidently when the description is identifiable; leave both lat and lon out only when the place genuinely cannot be placed from what was said.' },
             lon: { type: 'number', description: 'Longitude, alongside lat -- your own best-effort estimate when no exact GPS was given, using your own knowledge of the place described.' },
+            sites: str('ONLY when the worker describes a SECOND distinct place/herd within the SAME visit (not a separate outbreak elsewhere -- use case_new for that): a short plain-text note of the second site, e.g. "5 goats down the road at the old kraal, also drooling". The main species/location fields above stay the first/primary site; this adds the second one alongside it without losing it. Each call with this set ADDS one more site note.'),
           },
           required: ['id'],
         },
@@ -221,7 +222,12 @@ export function buildCaseToolset(storeOrNull) {
           await store().updateCase(id, { lat, lon }, AGENT_USER)
         }
         const fieldsRecorded = [...Object.keys(incoming), ...(hasLatLon ? ['lat', 'lon'] : [])]
+        // photos/audio append rather than overwrite (see mergeReport), so a
+        // changed prior-vs-new value there is an ADDITION, not a correction --
+        // exclude them from the correction diff, which is only meaningful for
+        // fields that genuinely replace their prior value.
         const corrections = Object.keys(incoming)
+          .filter(k => k !== 'photos' && k !== 'audio' && k !== 'sites')
           .filter(k => priorReport[k] != null && String(priorReport[k]).trim() !== '' && String(priorReport[k]) !== String(incoming[k]))
           .map(k => `${k} ${priorReport[k]} -> ${incoming[k]}`)
         const text = corrections.length

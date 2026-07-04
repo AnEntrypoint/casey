@@ -290,14 +290,14 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
     `animals, nothing more can be captured until someone manages to revisit the`,
     `site -- so a sign they are wrapping up (a "thanks", a goodbye, in WHATEVER`,
     `language they are writing in) is your last real chance to close a gap. If`,
-    `species, symptoms, location, how to find the place, whether the farmer will`,
-    `be there, or another number to reach someone is still missing, warmly`,
+    `any item from the PRIORITY ORDER list above is still missing -- including WHO`,
+    `is present and the owner's own number, not only where/which/what/how -- warmly`,
     `acknowledge their thanks and, in the SAME short message, gently ask once for`,
-    `the single most useful one of those still missing -- never a list, never`,
+    `the single HIGHEST-RANKED one of those still missing -- never a list, never`,
     `pushy; if they do not give it, let them go kindly. Do this BEFORE you declare`,
     `the report complete (case_stage), not after -- once you call it complete this`,
-    `chance is gone. If none of those are missing, there is nothing to push for;`,
-    `just let them go warmly.`,
+    `chance is gone. If nothing from that list is missing, there is nothing to push`,
+    `for; just let them go warmly.`,
     ``,
     `IF THEY ASK FOR A PERSON (in any language or phrasing -- "talk to someone", "I`,
     `want a person", "real human", "is anyone there"): do NOT argue or stall. Warmly`,
@@ -589,30 +589,33 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // One-shot: a received animal photo is recorded as explicit case state right
     // here, deterministically, so the operator always sees that a picture exists
     // -- never relying on the agent turn to notice it (it may not, on a media-only
-    // message). Fill-if-empty so we never clobber a richer description the agent
-    // records later. In observe mode, markReportFieldsIfEmpty refuses the report
-    // WRITE (that guard stays -- observe means no automatic field edits), but the
-    // ARRIVAL of a photo/voice note must still be visible in the timeline (observe
-    // is exactly the mode with no LLM narration to compensate), so a plain
+    // message). APPEND-only (appendReportField), never fill-if-empty: a worker
+    // routinely sends more than one photo/voice note across a conversation, and
+    // fill-if-empty silently discarded every arrival after the first with no
+    // field update and no observation event -- the exact silent-loss bug this
+    // fixes. In observe mode appendReportField refuses the report WRITE (that
+    // guard stays -- observe means no automatic field edits), but the ARRIVAL of
+    // a photo/voice note must still be visible in the timeline (observe is
+    // exactly the mode with no LLM narration to compensate), so a plain
     // observation event is appended even when the field write was refused. A
     // failure here must never block the reply path.
     const photoNote = inboundImageNote(msg)
     if (photoNote) {
       try {
-        const r = await store.markReportFieldsIfEmpty(caseRow.id, { photos: photoNote })
-        if (r?.filled?.length || r?.error === 'observe') {
+        const r = await store.appendReportField(caseRow.id, 'photos', photoNote)
+        if (r?.appended || r?.error === 'observe') {
           await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `PHOTO RECEIVED: ${photoNote} (recorded for the field team).` })
         }
       } catch (e) { log.warn?.('[casey] photo mark failed', { caseId: caseRow.id, error: e.message }) }
     }
-    // Same one-shot discipline for a voice note: record it as explicit state so an
-    // operator always sees a voice message arrived, even on an audio-only message
-    // the agent turn might not narrate. Fill-if-empty; never blocks the reply.
+    // Same discipline for a voice note: record it as explicit state so an
+    // operator always sees EVERY voice message arrive, even on an audio-only
+    // message the agent turn might not narrate. Append-only; never blocks the reply.
     const audioNote = inboundAudioNote(msg)
     if (audioNote) {
       try {
-        const r = await store.markReportFieldsIfEmpty(caseRow.id, { audio: audioNote })
-        if (r?.filled?.length || r?.error === 'observe') {
+        const r = await store.appendReportField(caseRow.id, 'audio', audioNote)
+        if (r?.appended || r?.error === 'observe') {
           await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `AUDIO RECEIVED: ${audioNote}.` })
         }
       } catch (e) { log.warn?.('[casey] audio mark failed', { caseId: caseRow.id, error: e.message }) }

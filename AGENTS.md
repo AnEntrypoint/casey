@@ -84,7 +84,7 @@ bin/casey.js               CLI: init / doctor / up / dashboard / cases / show / 
 plugins/case-tools/        freddie plugin registering case_* tools (auto-discovered)
 src/
   casey.js                 top-level assembly: store + host + gateway + adapters + logger; drainQueuedTurns re-drives LLM-down-queued inbounds through the agent on provider recovery (status-gated, oldest-first serialized, mark-attempted only after a successful drive, bounded retry -> dead-letter)
-  case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error); learnOperatorActivity/listOperatorIdentities maintain the operator_identity entity (durable per-operator working-area history, dashboard-attributed actions only, best-effort/never throws into the caller). No server-side geocoding of any kind -- case.lat/lon are written ONLY by the agent's own case_report call
+  case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation; a SQLITE_BUSY retry proxy on the `t` getter (list/get/create/update/remove retry with bounded linear backoff so a concurrent agent read against a live write never surfaces a "database is locked" turn error); learnOperatorActivity/listOperatorIdentities maintain the operator_identity entity (durable per-operator working-area history, dashboard-attributed actions only, best-effort/never throws into the caller). No server-side geocoding of any kind -- case.lat/lon are written ONLY by the agent's own case_report call. mergeReport uses thatcher's optimistic-lock guard (c._version + updateCase's opts.expectedVersion) to detect a dashboard-PATCH racing an agent-turn report merge on the same case -- a genuine conflict retries the merge once against the freshly re-read row (both sides' edits survive) rather than either silently losing its write. appendReportField (photos/audio/sites) appends rather than overwrites -- a worker sending more than one photo/voice note/site note across a conversation must never have the second silently discarded
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
   case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx)). case_update carries case_type (agent-settable classification, validated against CASE_TYPE_VALUES -- thatcher's own config-declared enum is NOT enforced server-side on write, so the tool validates before every write, matching the dashboard's own check) and priority (same PRIORITY_VALUES guard). case_report carries lat/lon: the AGENT's own estimate (its own world knowledge for a described place, or the worker's exact GPS when given), validated finite/in-range only -- no lookup table, no server-side geocoding of any kind
   case-machine.js          xstate case lifecycle machine
@@ -279,6 +279,16 @@ the crash-budget stop state); the supervisor is its only I/O.
   (hours-scale) stay unchanged: they exist as a post-hoc operator alert, not
   in-conversation urgency, and shrinking them would misfire on a legitimately
   slow-but-still-active conversation.
+- **No worker-volunteered fact is ever silently discarded by casey's own storage
+  layer.** `case_report`'s `photos`/`audio`/`sites` fields append rather than
+  overwrite (`appendReportField` for the deterministic media-arrival path,
+  `mergeReport`'s field-merge rules for the agent-driven path) -- a worker
+  sending a second photo, voice note, or describing a second site within the
+  same visit must never have it vanish with zero trace, which is exactly what
+  fill-if-empty semantics did before this fix. Concurrency is guarded too:
+  `mergeReport` detects (via thatcher's `_version` optimistic lock) a dashboard
+  operator's PATCH racing the same case and retries the merge against the fresh
+  row rather than either side's write silently losing to the other.
 - **A greeting is the OPENING of a report, and every turn drives collection.** The
   agent's job is to gather the case while someone is on-site, so `caseSystemPrompt`
   directs it to answer even a bare "hi"/"hello"/"help" with a warm opener PLUS the

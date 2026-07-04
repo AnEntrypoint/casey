@@ -29,13 +29,16 @@ export const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_f
   // link to the owner, plus the owner's identity/contact -- so an absent owner with
   // a relative present is still captured. Reported by the worker, model- or
   // pending-ask-captured (no deterministic extractor).
-  'present_person', 'present_person_relation', 'owner_name', 'owner_contact', 'language_detected'])
+  'present_person', 'present_person_relation', 'owner_name', 'owner_contact', 'language_detected',
+  // A SECOND distinct site/herd within the same visit (species/location/count
+  // fields above stay the primary site) -- append-only, see mergeReport.
+  'sites'])
 
 // Same fields, ordered for stable display/fill-rate rendering (dashboard).
 export const REPORT_KEY_ORDER = ['species', 'symptoms', 'affected_count', 'dead_count', 'onset',
   'suspected_disease', 'recent_movement', 'location', 'how_to_find', 'access_notes',
   'farmer_available', 'contact_fallback', 'identifying_traits', 'photos', 'audio', 'notes',
-  'present_person', 'present_person_relation', 'owner_name', 'owner_contact', 'language_detected']
+  'present_person', 'present_person_relation', 'owner_name', 'owner_contact', 'language_detected', 'sites']
 
 export class CaseStore {
   constructor(opts = {}) {
@@ -635,6 +638,29 @@ export class CaseStore {
     catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); return {} }
   }
 
+  // Builds the merged report object from current+incoming; extracted so
+  // mergeReport can retry the merge against a freshly re-read row on a
+  // version conflict without duplicating the field-merge rules.
+  _mergeReportFields(current, incoming) {
+    const merged = { ...current }
+    for (const [k, v] of Object.entries(incoming)) {
+      if (v == null || String(v).trim() === '') continue
+      // photos/audio/sites: a worker can give MULTIPLE across one
+      // conversation (more than one photo, more than one distinct site
+      // within the same visit) -- overwrite would silently discard every
+      // one after the first (the same class of bug the deterministic
+      // media-arrival path had, fixed via appendReportField). Every other
+      // field is a single fact that genuinely replaces/refines its prior
+      // value, so overwrite stays correct there.
+      if ((k === 'photos' || k === 'audio' || k === 'sites') && merged[k] != null && String(merged[k]).trim() !== '' && String(merged[k]) !== String(v)) {
+        merged[k] = `${merged[k]}; ${v}`
+      } else {
+        merged[k] = v
+      }
+    }
+    return merged
+  }
+
   async mergeReport(caseId, incoming, user = AGENT_USER) {
     const invalid = Object.keys(incoming).filter(k => !REPORT_KEYS.has(k))
     if (invalid.length) return { error: `invalid report fields: ${invalid.join(', ')}` }
@@ -644,19 +670,40 @@ export class CaseStore {
       const c = await this.getCase(caseId)             // re-read INSIDE the lock
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe') return { error: 'observe' }
-      const current = this._parseReport(c.report, caseId)
-      const merged = { ...current }
-      for (const [k, v] of Object.entries(incoming)) {
-        if (v != null && String(v).trim() !== '') merged[k] = v
-      }
+      const merged = this._mergeReportFields(this._parseReport(c.report, caseId), incoming)
       const patch = { report: JSON.stringify(merged) }
       // No server-side geocoding: the map's lat/lon comes ONLY from the agent's
       // own case_report call (its own best-effort estimate from the location the
       // worker described, using the model's own world knowledge -- see
       // caseSystemPrompt). A case with no agent-provided lat/lon simply has no
       // map pin; casey never looks anything up on the model's behalf.
-      await this.updateCase(caseId, patch, user)
-      return { report: merged }
+      //
+      // The per-conversation lock (_withLock, keyed on channel|external_id)
+      // only serializes THIS contact's own sequential agent turns -- it does
+      // NOT cover a dashboard operator's PATCH on the same case id landing
+      // concurrently (a genuinely different lock key, no lock at all today).
+      // c._version (present when the installed thatcher supports the
+      // optimistic-lock guard -- thatcher's npm `latest` always does; a
+      // feature-detect-free direct read since casey never pins thatcher
+      // behind latest) lets us detect that race instead of silently losing
+      // whichever side wrote second. On a genuine conflict, re-read once and
+      // re-merge against the FRESH row (the operator's edit is preserved,
+      // the agent's newly-learned fields are re-applied on top) rather than
+      // either side's turn simply vanishing. A second conflict in a row is
+      // vanishingly rare (would need a third concurrent writer in the same
+      // instant) -- fall through to an unconditional write rather than ever
+      // blocking the reply path on a retry loop.
+      try {
+        await this.updateCase(caseId, patch, user, c._version != null ? { expectedVersion: c._version } : {})
+        return { report: merged }
+      } catch (e) {
+        if (e.code !== 'conflict') throw e
+        const fresh = await this.getCase(caseId)
+        if (!fresh) return { error: `no case ${caseId}` }
+        const remerged = this._mergeReportFields(this._parseReport(fresh.report, caseId), incoming)
+        await this.updateCase(caseId, { report: JSON.stringify(remerged) }, user)
+        return { report: remerged }
+      }
     })
   }
 
@@ -683,6 +730,32 @@ export class CaseStore {
       if (!filled.length) return { report: current, filled: [] }
       await this.updateCase(caseId, { report: JSON.stringify(next) }, user)
       return { report: next, filled }
+    })
+  }
+
+  // Append-only variant for a media field (photos/audio) whose deterministic
+  // ingress note must NEVER be silently dropped just because an earlier note
+  // already occupies the field. Unlike markReportFieldsIfEmpty (correct for
+  // facts that should only ever be recorded once), a worker routinely sends
+  // MULTIPLE photos/voice notes across one conversation -- fill-if-empty would
+  // silently discard every arrival after the first, with no field update AND no
+  // operator-facing observation event (the exact bug this method fixes). Joins
+  // with '; ' so every existing single-string reader (dashboard display, the
+  // photo-nudge `!= null` check) keeps working unchanged -- no array, no schema
+  // change downstream. Returns { report, appended:bool } or { error }.
+  async appendReportField(caseId, field, note, user = AGENT_USER) {
+    if (note == null || String(note).trim() === '') return { error: 'empty note' }
+    const c0 = await this.getCase(caseId)
+    if (!c0) return { error: `no case ${caseId}` }
+    return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
+      const c = await this.getCase(caseId)
+      if (!c) return { error: `no case ${caseId}` }
+      if (c.autonomy === 'observe') return { error: 'observe' }
+      const current = this._parseReport(c.report, caseId)
+      const have = current[field] != null && String(current[field]).trim() !== ''
+      const next = { ...current, [field]: have ? `${current[field]}; ${note}` : String(note) }
+      await this.updateCase(caseId, { report: JSON.stringify(next) }, user)
+      return { report: next, appended: true }
     })
   }
 
@@ -790,8 +863,14 @@ export class CaseStore {
     return `CASE-${seq + 1}-${randomSuffix()}`
   }
 
-  async updateCase(id, patch, user = AGENT_USER) {
-    await this.t.update('case', id, { ...patch, last_event_at: nowIso() }, user)
+  // opts.expectedVersion: forwarded to thatcher's optimistic-concurrency guard
+  // (feature-detected -- see _thatcherSupportsVersionGuard below; a published
+  // thatcher predating this support ignores the extra arg harmlessly since it
+  // is the 5th positional param, so a bare npm install always stays green).
+  // On a version mismatch thatcher throws {code:'conflict'}; this rethrows for
+  // the caller to handle (mergeReport retries once, see below).
+  async updateCase(id, patch, user = AGENT_USER, opts = {}) {
+    await this.t.update('case', id, { ...patch, last_event_at: nowIso() }, user, opts)
     return this.getCase(id)
   }
 

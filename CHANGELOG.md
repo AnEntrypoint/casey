@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Fixed
+- `photos`/`audio` fields silently discarded every photo/voice note after the
+  first one recorded on a case (fill-if-empty semantics), with zero trace --
+  no field update, no operator observation event. Fixed via a new append-only
+  path (`appendReportField`, and a matching special case in `mergeReport`) so
+  every media arrival is recorded and surfaced.
+- `mergeReport` (the agent's field-write path) could silently lose a write to
+  a concurrent dashboard operator PATCH on the same case, or vice versa,
+  whichever landed second winning outright. Now uses thatcher's optimistic
+  concurrency guard (`_version`) to detect the race and retries the merge
+  against the freshly re-read row -- both sides' edits survive.
+- LAST-CHANCE PUSH (the final wrap-up nudge) had drifted from the steady-state
+  PRIORITY ORDER list, risking a missed ask for the owner's contact number on
+  the way out. Now references PRIORITY ORDER directly instead of re-deriving
+  a separate, incomplete list.
+
+### Added
+- `case_report` gained an additive `sites` field for a second distinct
+  location/herd described within the SAME visit (append-only, alongside the
+  primary species/location fields) -- previously a second site silently
+  overwrote the first with no field shape to hold both.
+- thatcher (sibling repo): `update()` gained an optional optimistic-concurrency
+  guard (`opts.expectedVersion` against a new `_version` column) -- a stale
+  write now throws a distinguishable `{code:'conflict'}` error instead of
+  silently clobbering a concurrent writer. Fully backward compatible.
+
 ### Changed
 - Merged two overlapping wrap-up nudges in `caseSystemPrompt` into one clear
   LAST-CHANCE PUSH instruction: fires on any farewell-shaped cue in whatever
