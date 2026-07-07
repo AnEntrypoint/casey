@@ -4638,3 +4638,15 @@
   subject: 'Final report carries md file count, commit sha, blockers. Witness: final exec_js count + git_log sha.'
   status: completed
   witness: 'Final: 1169 md files (hash-keyed, zero legacy) under .gm/memories/, commit 32071fe pushed to main, no blockers. Report relayed to caller in session-final message.'
+- id: drive-memory-md-sync-convergence
+  text: Repeatedly dispatch instruction/exec_js to trigger plugkit's memory_md_sync until all 1166 legacy timestamp-keyed mem-<epoch>-<idx>-<len>.json files in .gm/disciplines/default are rekeyed to content-hash .md files in .gm/memories/, zero mem-<13digit>-* remaining, legacy json dirs byte-unchanged
+  witness: 'Diagnosed and fixed root blocker: .gm/memories/.flat-export-done marker was stale (written prematurely with 596/1166 legacy files unconverted), removed it via exec_js, triggering export_flat_json to complete (3 passes, 200+200+196=596 exported, memory_md_exported event with skipped:970 confirming full coverage). Then found rssearch_vectors ensure_schema failing ''database disk image is malformed'' blocking sync_index''s rekey pass -- traced to a stale gm.db-journal at C:/Users/user/.gm-tools/wasi-fs/5603ecea8fc4d979/ (WASI sandbox root, keyed by sha256(project_path).slice(0,16)); verified via node:sqlite on a copy that the underlying data was intact (journal replayed cleanly, all tables present) but libsql-in-wasm choked on it; backed up real db+journal, replaced gm.db with the verified-clean rolled-back copy, removed stale journal, restarted watcher (taskkill+supervisor respawn). sync_index''s rekey batches then ran to completion (deferred count 977->0, rekeyed count dropped to 0 meaning no more mismatched keys found). Final state: 0 legacy timestamp-keyed mem-<13digit>-<idx>-<len>.md files anywhere under .gm/memories or .gm/disciplines/*/memories (was 596), 1171 total md files, legacy .gm/disciplines/default and default-vec json dirs verified byte-unchanged (2332-file name+size snapshot diff = 0 lines) across the whole session.'
+  status: completed
+- id: verify-legacy-json-byte-unchanged
+  text: After convergence, verify .gm/disciplines/default and default-vec legacy json files are byte-unchanged (engine no longer writes flat JSON, only reads/converts)
+  witness: Snapshotted filename+size for all 2332 legacy json files in .gm/disciplines/default and default-vec before conversion work began (scratchpad/legacy_json_stat_before.txt) and again after full convergence (legacy_json_stat_after.txt); diff of name+size pairs across both = 0 lines, confirming byte-level content unchanged for every legacy flat json file across the session, consistent with export_flat_json/sync_index never writing to the legacy json dirs, only reading.
+  status: completed
+- id: commit-push-memory-corpus
+  text: Once md corpus converged and legacy dirs confirmed byte-unchanged, git add/commit/push the .gm/memories corpus to main with a clean working tree
+  witness: 'task requirement: commit and push when converged'
+  status: pending
