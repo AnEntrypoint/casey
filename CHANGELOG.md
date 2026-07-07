@@ -3,6 +3,45 @@
 ## Unreleased
 
 ### Fixed
+- STOP/HUMAN keyword detection false-positived on ordinary sentences ("the
+  disease will stop spreading", "is there a person who can look at my goats")
+  and discarded real report content before the agent ever ran. Extended the
+  existing exclude-phrase pattern with the confirmed failure shapes.
+- The outbound jargon gate matched "case" inside the idiom "in case", holding
+  an otherwise clean reply as an operator draft in every autonomy mode
+  including `auto`.
+- `enquiring->complete` and `answering->complete` conversation-phase
+  transitions were missing from the dstate spec, so a plausible agent-declared
+  completion silently failed with no trace. `advanceCase` now logs a loud
+  observation on a genuine no-edge transition failure.
+- The deterministic acknowledgement layer had no Sesotho/Setswana cues despite
+  the system prompt promising to match them -- added distinctive cue lists and
+  translated stop/human/resume strings for both.
+- The inbox "why" line could contradict its own sort weight: a case tagged
+  both an escalated handoff and a pending draft displayed the draft reason
+  instead of the higher-weighted escalated-wait reason. Reordered to match.
+- The team at-risk count and the per-operator stale-claims count both ignored
+  the snooze exemption the inbox scorer already applies, so the header/panel
+  disagreed with what an operator actually sees in the list.
+- `case_mine`/`case_today` hardcoded the open-status list instead of reading
+  the live config-declared set, silently hiding a worker's own cases on a
+  customized workflow.
+- `classifyCaseHealth`'s timestamp-corrupt early-return skipped every other
+  breach check, so a corrupt-timestamp case went dark on missing-critical-facts
+  detection until an operator happened to fix the timestamp.
+
+### Removed
+- `_thatcherSupportsOperators` runtime feature-detect probe and its
+  equality-only JS-side operator/sort/row-access fallback in `case-store.js`:
+  confirmed permanently dead code now that thatcher's operator-where has
+  shipped since v1.0.30 and casey consumes thatcher exclusively via npm
+  `latest` (installed 1.0.37). ~110 lines removed including orphaned helpers.
+
+### Added
+- Bulk draft-release (`draft_approve`/`draft_discard`) added to the existing
+  bulk-action toolbar, matching its established pattern -- a failed send still
+  leaves `draft-pending` intact, same fail-safe as the single-case endpoint.
+
 - `photos`/`audio` fields silently discarded every photo/voice note after the
   first one recorded on a case (fill-if-empty semantics), with zero trace --
   no field update, no operator observation event. Fixed via a new append-only

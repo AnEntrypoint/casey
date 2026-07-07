@@ -197,14 +197,9 @@ the crash-budget stop state); the supervisor is its only I/O.
   `merge --ff-only` REFUSES on a dirty or divergent tree and leaves the working tree
   untouched -- a dev with uncommitted edits or local commits just gets a quiet skip,
   never a clobber. Opt out with `casey up --no-auto-update` or `CASEY_AUTO_UPDATE=0`.
-- Auto-reload on pull hooks (`hooks/`, armed automatically by `postinstall` running
-  `scripts/install-hooks.mjs`, which points `core.hooksPath` at the tracked `hooks/`
-  dir): `hooks/post-merge` and `hooks/post-checkout` `touch src/casey.js` after a
-  pull/merge/checkout, a belt-and-braces mtime bump so a manual `git pull` also
-  hot-reloads (`touch` changes only the timestamp, never the bytes). Even without the
-  hooks the auto-deploy fast-forward already rewrites watched source, so the reload
-  does not depend on them. (`scripts/auto-update.mjs` / `npm run auto-update` remains
-  as a standalone poller for a host not running under `casey up`.)
+- Auto-reload on pull hooks (`hooks/`, armed via `postinstall`) also bumps
+  `src/casey.js`'s mtime after a manual `git pull`/merge/checkout, belt-and-braces
+  alongside the auto-deploy fast-forward -- see recall for the exact mechanics.
 - Crash restart: a worker that exits non-zero is re-forked with exponential
   backoff, bounded by the crash budget so a boot-loop stops instead of thrashing.
   EXCEPTION: exit code 44 (dashboard port EADDRINUSE) is config-fatal -- retrying
@@ -523,11 +518,7 @@ user directive to always run freddie/thatcher off the registry) -- a local
 thatcher fix requires a push to thatcher's `master` (CI publishes automatically)
 before a fresh `npm install` in casey picks it up. npm publishing is RESTORED
 (NPM_TOKEN set 2026-07-02): thatcher publishes from CI on push and deps
-`busybase ^1.0.2` from the registry (1.0.2 is the floor -- the 1.0.1 tarball was
-CI-built with a stale --external flag that inlined libsql behind a bun-only
-require shim and crashed under node; busybase publishes on v* tags, and its
-publish workflow now builds via `bun run build`, the single source of build
-flags).
+`busybase ^1.0.2` from the registry (1.0.2 is the floor; see recall for why).
 Because casey is now ALWAYS effectively "a bare npm install" relative to
 thatcher's published version (never ahead of it via a local checkout, never
 behind v1.0.30 either since `latest` only moves forward), `case-store.js`
