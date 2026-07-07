@@ -4648,5 +4648,5 @@
   status: completed
 - id: commit-push-memory-corpus
   text: Once md corpus converged and legacy dirs confirmed byte-unchanged, git add/commit/push the .gm/memories corpus to main with a clean working tree
-  witness: 'task requirement: commit and push when converged'
-  status: pending
+  witness: 'git_finalize committed sha 64b296e on branch main and pushed successfully (steps: commit 64b296e, push to main). Removed test-pollution canary memory file (mem-d7fbd673538e5b26-141.md) before commit so only real witness memos (mut-rssearch-vectors-db-malformed, mut-1783455469177 resolutions) and the converged md corpus were included.'
+  status: completed
