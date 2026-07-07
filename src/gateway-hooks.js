@@ -386,13 +386,17 @@ export function isStockAck(text) {
 // Returns the list of banned words found (empty = clean). ASCII only.
 const JARGON_WORDS = ['case', 'triage', 'workflow', 'status', 'priority']
 const JARGON_RE = new RegExp('\\b(' + JARGON_WORDS.join('|') + ')\\b', 'gi')
+// The ordinary conjunction "in case" (and "in case of", "just in case") uses
+// "case" as a connector, not the internal-process noun this gate exists to
+// catch -- strip it before scanning so a clean, correct reply is never held.
+const IDIOM_IN_CASE_RE = /\bin case(?: of)?\b/gi
 export function jargonHits(text) {
   if (!text) return []
   // Strip the case-reference token first: a real ref is "CASE-1073-iyniv", whose
   // "CASE" prefix would otherwise trip \bcase\b on EVERY reply that quotes the
   // reference (the contact-facing ref is required, not jargon). The ref is the one
   // legitimate place "CASE" appears in an outbound; scan the rest.
-  const scrubbed = String(text).replace(CASE_REF_RE, ' ')
+  const scrubbed = String(text).replace(CASE_REF_RE, ' ').replace(IDIOM_IN_CASE_RE, ' ')
   const found = new Set()
   const m = scrubbed.match(JARGON_RE)
   if (m) for (const w of m) found.add(w.toLowerCase())
@@ -410,6 +414,12 @@ const LANG_CUES = {
   af: [' dankie ', ' asseblief ', ' hallo ', ' goeie ', ' siek ', ' beeste ', ' het nie ', ' gekom ', ' ek ', ' vrek ', ' diere ', ' hou op ', ' los my ', ' genoeg ', ' mens '],
   zu: [' sawubona ', ' ngiyabonga ', ' usizo ', ' siza ', ' yami ', ' ngicela ', ' izinkomo ', ' iyagula ', ' ngi ', ' yeka ', ' hambani ', ' umuntu '],
   xh: [' molo ', ' enkosi ', ' nceda ', ' yam ', ' iinkomo ', ' iyagula ', ' ndi ', ' kwaye ', ' umntu ', ' hamba '],
+  // Sesotho and Setswana: the system prompt already promises to match these two
+  // (line ~219) but the deterministic pre-LLM ack layer (STOP/HUMAN/resume, the
+  // one layer meant to work correctly with the model down) had no cues for
+  // either -- distinctive tokens chosen the same way as af/zu/xh above.
+  st: [' dumela ', ' kea leboha ', ' ntate ', ' mme ', ' kgomo ', ' dikgomo ', ' lea kula ', ' ke kopa ', ' tjhelete ', ' thusa '],
+  tn: [' dumela ', ' ke a leboga ', ' rra ', ' mma ', ' kgomo ', ' dikgomo ', ' a lwala ', ' ke kopa ', ' thusa '],
 }
 
 export function guessLang(text) {
@@ -1371,6 +1381,12 @@ const STOP_KEYS = [
 const STOP_EXCLUDE = [
   'no stop', 'dont stop', 'do not stop', 'please dont stop', 'never stop',
   'bus stop',
+  // 'stop' as an ordinary verb describing the animals'/disease's own state, not
+  // an opt-out instruction: "will stop spreading", "stop this", "cant stop",
+  // "stop the truck" all use 'stop' with a following object/continuation, the
+  // opposite shape of a genuine "stop messaging me" imperative.
+  'will stop', 'to stop', 'cant stop', 'cannot stop', 'could not stop',
+  'stop this', 'stop that', 'stop it', 'stop spreading', 'stop the',
 ]
 
 // Bare single-word tokens like 'someone'/'staff'/'manager'/'operator'/'agent' were
@@ -1398,6 +1414,11 @@ const HUMAN_EXCLUDE = [
   'someone from the family', 'someone is here', 'someone is looking after',
   'the manager said', 'manager said to call', 'staff said',
   'operator said', 'operator here', 'operator on site',
+  // "is there a person who" / "can i speak to a vet" describe a THIRD PARTY
+  // the worker is asking about (the farmer, a vet), not a handoff request
+  // directed at casey -- the opposite shape of "let me speak to a human".
+  'a person who', 'is there a person', 'speak to a vet', 'talk to a vet',
+  'speak to the vet', 'talk to the vet',
 ]
 
 // RESUME set: the small multi-language "help" vocabulary that opts a STOPPED
@@ -1551,6 +1572,18 @@ const INTENT_STRINGS = {
     human: 'Ewe kakhulu. Sicela umntu weqela ukuba akuncede ngoku. Uya kuphendula apha kamsinya.',
     resume: 'Wamkelekile kwakhona. Silapha ukukunceda kwakhona. Sixelele nje ukuba ubona ntoni kwizilwanyana.',
     refLabel: (r) => ` Inombolo yakho yesalathiso ngu-${r}.`,
+  },
+  st: {
+    stop: 'Ho lokile, re ke ke ra boela ra u romella melaetsa. Araba HELP neng kapa neng ha u fetola maikutlo.',
+    human: 'Ho lokile. Re kopa motho wa sehlopha ho u thusa hona joale. O tla araba mona ha a khona.',
+    resume: 'Rea u amohela hape. Re teng ho thusa hape. Re bolelle feela seo u se bonang liphoofolong.',
+    refLabel: (r) => ` Nomoro ya hao ya tshupiso ke ${r}.`,
+  },
+  tn: {
+    stop: 'Go siame, ga re kitla re tsweletsa go go romela melaetsa. Araba HELP nako nngwe le nngwe fa o fetotse maikutlo.',
+    human: 'Go siame. Re kopa motho wa setlhopha go go thusa jaanong. O tla araba fano fa a kgona.',
+    resume: 'Re a go amogela gape. Re fano go go thusa gape. Re bolelele fela se o se bonang mo diphologolong.',
+    refLabel: (r) => ` Nomoro ya gago ya tshupetso ke ${r}.`,
   },
 }
 

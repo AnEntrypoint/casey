@@ -72,12 +72,6 @@ export class CaseStore {
     // fails fast with a clear message instead of a cryptic runtime error later.
     const cfg = yaml.load(fs.readFileSync(this.configPath, 'utf8'))
     this._wf = this._validateConfig(cfg)
-    // The row-access owner field (row_access.field, e.g. 'assignee'): the column a
-    // per-worker enquiry scopes on. Captured so the operator-where FALLBACK path can
-    // apply the same row-access scoping the published thatcher does when a caller
-    // passes opts.user -- without it a bare/pre-publish install returned the whole
-    // fleet unscoped for a worker's "my cases" (a MISROUTE + over-exposure).
-    this._rowAccessField = cfg.entities?.case?.row_access?.field || null
     // The lifecycle is now a real xstate machine built from the same graph: it,
     // not bespoke array checks, is the authority on whether a transition is legal.
     this._machine = buildCaseMachine(this._wf)
@@ -513,55 +507,17 @@ export class CaseStore {
   async listCases(where = {}, opts = {}) {
     const { limit = 50, offset = 0, user = null, sort = null, includeSystem = false } = opts
     if (!includeSystem && where.channel === undefined) where = { ...where, channel: { $ne: 'system' } }
-    const supported = await this._thatcherSupportsOperators()
-    if (supported) {
-      const rows = await this.t.list('case', where, {
-        limit: Math.max(limit + offset, 1000),
-        ...(user ? { user } : {}),
-        sort: sort || [{ field: 'last_event_at', dir: 'DESC' }, { field: 'created_at', dir: 'DESC' }],
-      })
-      return rows.slice(offset, offset + limit)
-    }
-    // Fallback: equality-only to thatcher, operators + sort applied in JS.
-    const eqWhere = {}
-    const ops = []
-    for (const [k, v] of Object.entries(where)) {
-      if (k === '$or') { ops.push(orPredicate(v)); continue }
-      if (v && typeof v === 'object' && !Array.isArray(v)) { ops.push(opPredicate(k, v)); continue }
-      if (Array.isArray(v)) { ops.push(r => v.includes(r[k])); continue }
-      eqWhere[k] = v
-    }
-    let rows = await this.t.list('case', eqWhere, { limit: Math.max(limit + offset, 1000) })
-    for (const p of ops) rows = rows.filter(p)
-    // Row-access scoping (parity with the supported push-down path): when a caller
-    // passes opts.user and the config declares an owner field, a scoped worker sees
-    // only rows they own (row[field] === user.id). An operator/admin (or no owner
-    // field, or no user) sees all. Applied here in JS so a bare/pre-publish thatcher
-    // does NOT return the whole fleet for a per-worker "my cases" enquiry.
-    if (user && user.id && this._rowAccessField && user.role !== 'operator' && user.role !== 'admin') {
-      const field = this._rowAccessField
-      rows = rows.filter(r => String(r[field] || '') === String(user.id))
-    }
-    rows.sort((a, b) => recencyKey(b) - recencyKey(a))
+    // thatcher's operator-where compiler ($gte/$lte/$in/$or) has been in every
+    // published version since 1.0.30; casey consumes thatcher exclusively via npm
+    // `latest`, so the installed version can never be older than what casey was
+    // built against (see package.json's thatcher floor). Call operator-where
+    // directly -- no runtime feature-detect, no JS-side equality-only fallback.
+    const rows = await this.t.list('case', where, {
+      limit: Math.max(limit + offset, 1000),
+      ...(user ? { user } : {}),
+      sort: sort || [{ field: 'last_event_at', dir: 'DESC' }, { field: 'created_at', dir: 'DESC' }],
+    })
     return rows.slice(offset, offset + limit)
-  }
-
-  // Probe (once, cached) whether the installed thatcher list() honours operator
-  // where-objects. A supporting thatcher returns rows for a never-true range filter
-  // as 0; an old thatcher .eq()'s the object and also returns 0 -- so we instead
-  // detect by a TRUE-for-all operator that an old thatcher cannot satisfy: a
-  // `{ $gte: '' }` on a string field matches every row on a new thatcher and zero on
-  // an old one (it builds gte.field= which the equality store drops). We compare the
-  // operator result to the unfiltered count; equal => supported.
-  async _thatcherSupportsOperators() {
-    if (this._opSupport !== undefined) return this._opSupport
-    try {
-      const all = await this.t.list('case', {}, { limit: 5 })
-      if (!all.length) { this._opSupport = false; return false }   // cannot probe; safe fallback
-      const probe = await this.t.list('case', { created_at: { $gte: 0 } }, { limit: 5 })
-      this._opSupport = probe.length === all.length
-    } catch { this._opSupport = false }
-    return this._opSupport
   }
 
   // Returns the count of cases, capped at 50,000 for performance. If the true count
@@ -1214,44 +1170,6 @@ function sortByCreatedStable(rows, dir) {
 }
 function byCreatedAscList(rows) { return sortByCreatedStable(rows, 1) }
 function byCreatedDescList(rows) { return sortByCreatedStable(rows, -1) }
-// Case recency: last activity if known, else creation time. last_event_at is an
-// ISO string (or null); coerce to a comparable number.
-function recencyKey(c) {
-  const le = c?.last_event_at ? Date.parse(c.last_event_at) : NaN
-  return Number.isNaN(le) ? ca(c) * 1000 : le
-}
-
-// JS predicates mirroring the thatcher operator-where compiler, used by the
-// feature-detect fallback when the installed thatcher is the pre-publish version
-// that cannot push operators down. Same operator vocabulary as
-// busybase-store.js applyWhere, evaluated client-side.
-function opPredicate(field, opObj) {
-  const tests = Object.entries(opObj).map(([op, val]) => {
-    switch (op) {
-      case '$eq': return (x) => x === val
-      case '$ne': return (x) => x !== val
-      case '$gt': return (x) => x > val
-      case '$gte': return (x) => x >= val
-      case '$lt': return (x) => x < val
-      case '$lte': return (x) => x <= val
-      case '$in': return (x) => (Array.isArray(val) ? val : [val]).includes(x)
-      case '$like': case '$ilike': {
-        const re = new RegExp(String(val).replace(/%/g, '.*'), op === '$ilike' ? 'i' : '')
-        return (x) => re.test(String(x ?? ''))
-      }
-      default: return () => true
-    }
-  })
-  return (row) => tests.every(t => t(row[field]))
-}
-function orPredicate(clauses) {
-  const preds = (clauses || []).map(sub => {
-    const ps = Object.entries(sub).map(([k, v]) =>
-      (v && typeof v === 'object' && !Array.isArray(v)) ? opPredicate(k, v) : (row) => row[k] === v)
-    return (row) => ps.every(p => p(row))
-  })
-  return (row) => preds.some(p => p(row))
-}
 
 // The ref is the sole "secret" gating the unauthenticated public /report form
 // (see dashboard/server.js) -- a farmer's phone, symptoms, and location are all

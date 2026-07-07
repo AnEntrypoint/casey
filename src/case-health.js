@@ -83,6 +83,21 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   const touched = lastTouch(caseRow)
   if (!Number.isFinite(touched)) {
     out.push({ breach: 'timestamp_corrupt', since_ms: 0, detail: 'case timestamps missing or corrupted; unable to assess staleness' })
+    // Every check below this point is gated on a valid `idle` duration (now -
+    // touched), which is unavailable here -- but MISSING_CRITICAL is a pure
+    // report-shape check with no duration dependency, so it must still run: a
+    // corrupt-timestamp case must not also go dark on the sweep's only
+    // duration-independent breach class until an operator happens to fix the
+    // timestamp. Not a real-time breach (no idle to compare against a window),
+    // so it fires once, unconditionally, whenever the fact is genuinely missing.
+    const rep = parseReport(caseRow)
+    const missingCritical = VISIT_CRITICAL.some(k => rep[k] == null || String(rep[k]).trim() === '')
+    const activeWorkStages = new Set(['in_progress', 'waiting'])
+    if (missingCritical && activeWorkStages.has(status)) {
+      out.push({ breach: 'incomplete_critical', since_ms: 0, detail: `in ${status} with visit-critical facts still missing (timestamps corrupt, age unknown)` })
+    } else if (missingCritical) {
+      out.push({ breach: 'abandoned_intake', since_ms: 0, detail: 'on-site facts still missing (timestamps corrupt, age unknown)' })
+    }
     return out
   }
   const idle = now - touched

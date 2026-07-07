@@ -513,7 +513,14 @@ function slimEvent(e) {
 // equality key across channels), most-recently-active first, capped.
 async function mineRows(store, ctx, limit) {
   const author = ctx?.author || ctx?.principal?.id
-  const open = await store.listCases({ status: { $in: ['new', 'triaging', 'in_progress', 'waiting'] } }, { limit: Math.max(limit * 10, 200) })
+  // Read the live config-declared open-stage set (case-sweep.js's own pattern)
+  // rather than a hardcoded literal list, so a custom/renamed workflow stage in
+  // thatcher.config.yml is picked up with no code edit -- a hardcoded list here
+  // silently hides a worker's own claimed case from "my cases" on such a deployment.
+  const openStatuses = typeof store.getOpenStatuses === 'function'
+    ? store.getOpenStatuses()
+    : ['new', 'triaging', 'in_progress', 'waiting']
+  const open = await store.listCases({ status: { $in: openStatuses } }, { limit: Math.max(limit * 10, 200) })
   if (!author) return open.slice(0, limit)
   const a = String(author)
   const mine = open.filter(c => {

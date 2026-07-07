@@ -91,6 +91,13 @@ function waitAgeMs(c, now = Date.now()) {
 function atRiskCount(cases, now = Date.now(), targetMs = 30 * 60 * 1000) {
   let n = 0
   for (const c of cases || []) {
+    // A snoozed case is invisible in the inbox list (attnScore hides it below);
+    // the at-risk header count must apply the same exemption or it reports a
+    // number the operator cannot actually act on -- needs-human is never
+    // snooze-exempted (a person was explicitly asked for), matching attnScore.
+    const tags = tagList(c)
+    const snooze = snoozedUntil(c)
+    if (snooze && Number.isFinite(now) && now < snooze && !tags.includes('needs-human')) continue
     const w = waitAgeMs(c, now)
     if (w != null && w >= targetMs) n++
   }
@@ -151,9 +158,9 @@ function caseHints(c, now = Date.now()) {
   if (c.status === 'closed') return { reason: 'This one is finished.', todo: 'This one is finished. Nothing to do.' }
   // Inbox states, in attnScore weight order so why-line and sort agree.
   if (tags.includes('needs-human')) return { reason: 'This person asked to talk to a real person.', todo: 'This person asked for a real person. Reply to them below.' }
-  if (tags.includes('draft-pending') || tags.includes('unsent_draft') || tags.includes('health:unsent_draft')) return { reason: 'casey drafted a reply. Review it, then send or change it.', todo: 'casey prepared a reply but waits for a person. Check it, then send.' }
   if (tags.includes('health:unanswered_handoff_escalated')) return { reason: 'A person was asked for a long time ago and still no one has replied. Please step in.', todo: 'A person was asked for a long time ago and still no one has replied. Step in below.' }
   if (tags.includes('health:unanswered_handoff')) return { reason: 'A person was asked for and no one has replied yet.', todo: 'A person was asked for and no one has replied. Reply below to take this one on.' }
+  if (tags.includes('draft-pending') || tags.includes('unsent_draft') || tags.includes('health:unsent_draft')) return { reason: 'casey drafted a reply. Review it, then send or change it.', todo: 'casey prepared a reply but waits for a person. Check it, then send.' }
   if (tags.includes('health:incomplete_critical')) return { reason: 'Active case but the visit-critical facts are still missing. Reach the farmer now.', todo: 'The visit-critical facts are still missing and the case is active. Try to reach the farmer now -- once they leave the site some facts cannot be recovered.' }
   if (tags.includes('health:abandoned_intake')) return { reason: 'The farmer may have left. On-site facts are still missing.', todo: 'On-site facts are still missing and the farmer may be gone. Check if they are still reachable and ask for the most important detail (location or how to find the place).' }
   if (c.status === 'waiting' && ageHours(c, now) >= 24) return { reason: 'No answer for over a day. A check-in may help.', todo: 'No answer for over a day. A check-in may help -- reply below.' }
@@ -191,4 +198,4 @@ function rankAttention(cases, now = Date.now(), { limit = 0, offset = 0, slaTarg
   return { total, items: sliced, atRisk, slaTargetMs }
 }
 
-export { attnScore, attnReason, todoHint, caseHints, rankAttention, tagList, ageHours, touchMs, waitAgeMs, atRiskCount }
+export { attnScore, attnReason, todoHint, caseHints, rankAttention, tagList, ageHours, touchMs, waitAgeMs, atRiskCount, snoozedUntil }

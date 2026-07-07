@@ -14,6 +14,7 @@
 //   - the `agent`/empty assignee is the unclaimed pseudo-owner, never a person.
 
 import { median, firstResponseMs, evData } from './overview.js'
+import { tagList, snoozedUntil } from './attn.js'
 
 const SEC = 1000
 
@@ -88,7 +89,13 @@ export function buildWorkload(cases, eventsByCaseId, roster = [], now = Date.now
       k.open_assigned++
       const last = lastActivityMs(c, events)
       const waited = last != null ? now - last : null
-      if (waited != null && waited >= staleMs) k.stale_claims++
+      // A deliberately snoozed case (an operator who can't finish it yet, not a
+      // dropped one) must not count as a stale claim -- same exemption attn.js's
+      // attnScore already applies, needs-human never exempted (a person was
+      // explicitly asked for).
+      const snooze = snoozedUntil(c)
+      const isSnoozed = snooze && Number.isFinite(now) && now < snooze && !tagList(c).includes('needs-human')
+      if (waited != null && waited >= staleMs && !isSnoozed) k.stale_claims++
       // Oldest still-open case this person holds, by time since last activity.
       if (waited != null && (k.oldest_waiting_ms == null || waited > k.oldest_waiting_ms)) {
         k.oldest_waiting_ms = waited

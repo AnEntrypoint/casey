@@ -89,7 +89,22 @@ export async function advanceCase(store, caseRow, to, vars = {}) {
     const ds = await machine(caseRow?.conv_state)
     if (!ds) return null
     const r = ds.transition(to, vars)   // Result: { ok, value:{ applied, soft_warned, from, to } }
-    if (!r || r.ok === false || !r.value) return null
+    if (!r || r.ok === false || !r.value) {
+      // ds is live (adaptogen present, machine built) but the transition graph has
+      // no edge at all to `to` -- distinct from the degrade-to-null path above,
+      // which never reaches a live ds. A genuine no-edge gap must be OBSERVABLE
+      // (not silently swallowed) so a missing CONVERSATION_SPEC edge surfaces
+      // instead of leaving the durable phase stuck stale with no trace.
+      try {
+        if (store?.appendEvent) {
+          await store.appendEvent(caseRow.id, {
+            kind: 'observation', actor: 'system',
+            text: `dstate: agent declared phase "${to}" but no transition edge exists from the current cursor -- phase stayed stale`,
+          })
+        }
+      } catch { /* observation is best-effort, never breaks the turn */ }
+      return null
+    }
     const v = r.value
     if (v.applied) {
       try {

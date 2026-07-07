@@ -841,7 +841,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       if (!ids || !ids.length) return res.status(400).json({ error: 'ids must be a non-empty array' })
       if (ids.length > 500) return res.status(413).json({ error: 'too many ids (max 500 per bulk request)' })
       const action = String(req.body?.action || '')
-      const ACTIONS = new Set(['claim', 'transition', 'tag', 'untag', 'note'])
+      const ACTIONS = new Set(['claim', 'transition', 'tag', 'untag', 'note', 'draft_approve', 'draft_discard'])
       if (!ACTIONS.has(action)) return res.status(400).json({ error: `unknown action '${action}'`, allowed: [...ACTIONS] })
       const op = actingOperator(req)
       // Validate action-specific args ONCE up front so a malformed request fails fast
@@ -876,6 +876,33 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
             if (tags.includes(tag)) await store.updateCase(id, { tags: tags.filter(t => t !== tag).join(',') }, op)
           } else if (action === 'note') {
             await store.appendEvent(id, { kind: 'note', actor: 'operator', text: noteText, data: { by: op.id, bulk: true } })
+          } else if (action === 'draft_approve') {
+            // Bulk release sends each draft's ORIGINAL text verbatim -- per-case
+            // editing before send is a single-case-only affordance (the operator
+            // opened that one case to read and adjust it); a bulk release is for
+            // drafts an operator has already judged fine to go out as composed.
+            const draft = await pendingDraft(c)
+            if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
+            const text = draft.text || ''
+            if (!text) { results.push({ id, ok: false, error: 'empty draft' }); continue }
+            let delivered = false
+            if (sendReply) {
+              try { await sendReply(c, text); delivered = true }
+              catch (e) { await store.appendEvent(id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
+            }
+            await store.appendEvent(id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id, bulk: true } })
+            if (delivered) {
+              const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+              await store.updateCase(id, { tags: tags.filter(t => t !== 'draft-pending' && t !== 'needs-human').join(',') }, op)
+            } else {
+              results.push({ id, ok: false, error: 'send failed' }); continue
+            }
+          } else if (action === 'draft_discard') {
+            const draft = await pendingDraft(c)
+            if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
+            const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+            await store.updateCase(id, { tags: tags.filter(t => t !== 'draft-pending').join(',') }, op)
+            await store.appendEvent(id, { kind: 'observation', actor: 'operator', text: 'DRAFT DISCARDED: operator bulk discard.', data: { by: op.id, bulk: true } })
           }
           results.push({ id, ok: true })
         } catch (e) { results.push({ id, ok: false, error: String(e.message || e).slice(0, 200) }) }
@@ -2274,6 +2301,8 @@ const PAGE = /* html */ `<!doctype html>
       <button class="icon-btn" id="bulk-tag">Tag</button>
       <button class="icon-btn" id="bulk-untag">Untag</button>
       <button class="icon-btn" id="bulk-note">Note</button>
+      <button class="icon-btn" id="bulk-draft-approve" title="Send each selected case's pending draft as composed">Send drafts</button>
+      <button class="icon-btn" id="bulk-draft-discard" title="Discard each selected case's pending draft">Discard drafts</button>
       <button class="icon-btn" id="bulk-clear" title="Clear selection">Clear</button>
     </div>
     <div class="caselist" id="cases"><div class="empty">Loading cases...</div></div>
@@ -3450,7 +3479,7 @@ async function bulkAction(action,extra){
     const r=await api('/api/cases/bulk',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(Object.assign({ids,action},extra||{}))})
     if(!r.ok){ toast(await failMsg(r,'bulk action failed'),'err'); return }
     const j=await r.json().catch(()=>({}))
-    const verb={claim:'claimed',transition:'moved',tag:'tagged',untag:'untagged',note:'noted'}[action]||action
+    const verb={claim:'claimed',transition:'moved',tag:'tagged',untag:'untagged',note:'noted',draft_approve:'sent',draft_discard:'discarded'}[action]||action
     toast(verb+' '+(j.ok||0)+(j.failed?(', '+j.failed+' could not be '+verb):''), j.failed?'warn':'ok')
     clearSelection(); lastCasesJson=''; await loadCases(); refreshAttention()
   }catch(e){ toast('Bulk error: '+e.message,'err') }
@@ -4247,6 +4276,8 @@ panelToggle('#team-btn','#team-panel',loadTeam)
   const tag=$('#bulk-tag'); if(tag) tag.onclick=async()=>{ const dlg=await showDialog({title:'Tag selected cases',inputLabel:'Tag to add',inputPlaceholder:'e.g. follow-up',confirmLabel:'Add tag'}); if(dlg&&dlg.value.trim()) bulkAction('tag',{tag:dlg.value.trim()}) }
   const untag=$('#bulk-untag'); if(untag) untag.onclick=async()=>{ const dlg=await showDialog({title:'Untag selected cases',inputLabel:'Tag to remove',inputPlaceholder:'e.g. follow-up',confirmLabel:'Remove tag'}); if(dlg&&dlg.value.trim()) bulkAction('untag',{tag:dlg.value.trim()}) }
   const note=$('#bulk-note'); if(note) note.onclick=async()=>{ const dlg=await showDialog({title:'Add a note to selected cases',inputLabel:'Note',inputPlaceholder:'Visible on each timeline',confirmLabel:'Add note'}); if(dlg&&dlg.value.trim()) bulkAction('note',{text:dlg.value.trim()}) }
+  const draftApprove=$('#bulk-draft-approve'); if(draftApprove) draftApprove.onclick=async()=>{ const dlg=await showDialog({title:'Send selected drafts?',message:'Each selected case with a pending draft sends it to the contact exactly as composed. A case with no pending draft is skipped.',confirmLabel:'Send drafts',danger:true}); if(dlg) bulkAction('draft_approve') }
+  const draftDiscard=$('#bulk-draft-discard'); if(draftDiscard) draftDiscard.onclick=async()=>{ const dlg=await showDialog({title:'Discard selected drafts?',message:'Each selected case with a pending draft has it discarded, unsent. A case with no pending draft is skipped.',confirmLabel:'Discard drafts',danger:true}); if(dlg) bulkAction('draft_discard') }
   const clr=$('#bulk-clear'); if(clr) clr.onclick=clearSelection
 })()
 // --- operator picker (cooperative attribution) ---

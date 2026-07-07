@@ -40,3 +40,61 @@ adapters (plugins/platform-whatsapp, plugins/platform-discord) previously gave
 the appearance of full media capture via text notes alone -- when auditing any
 "is X actually captured" claim in this codebase, trace the ACTUAL bytes, not just
 the observation/log line that says they arrived.
+
+## 2026-07-07 -- third ruthless-optimize round: goal fork resolved to all-three
+Goal (G): after two prior same-day ruthless-optimize passes (worker-fact
+discarding fix, media-bytes + honest-presentation fix), a THIRD undirected
+"ruthlessly optimize our goal" prompt arrived with the same no-concrete-target
+shape.
+What drifted / what went wrong: nothing yet -- caught before drift. PLAN-orient
+recall confirmed the two prior rounds already covered capture-completeness and
+honest-presentation; a third blind multi-repo audit risked either duplicating
+those findings or manufacturing marginal churn to justify the dispatch.
+Fix / resolution: applied the G-anchor discipline pre-emptively -- asked the
+user which concrete axis this round targets (operator triage speed,
+conversation robustness, cross-repo architecture debt, or something else)
+instead of guessing. Answer: all three, explicitly, in one pass.
+Generalizes to: a same-session repeat of an undirected "optimize the goal"
+prompt is a strong signal the user has a NEW concrete target in mind each time,
+not a request to re-run the same audit shape -- always ask which axis before
+the 3rd+ occurrence, even if the first occurrence's answer felt obvious.
+
+## 2026-07-07 -- third ruthless-optimize round: all-three-axes fixes landed
+Goal (G): confirmed via user goal-fork answer -- optimize operator triage speed,
+conversation robustness, AND cross-repo architecture debt in one pass across
+casey/freddie/thatcher.
+What drifted / what went wrong: nothing structural -- three parallel gm-driving
+audit subagents (one per axis) returned 12 confirmed findings with zero overlap.
+One near-miss during VERIFY: a synthetic test string for the Sesotho/Setswana
+tie-break accidentally included a real Setswana-distinctive marker ("a lwala"),
+making an intended "ambiguous tie" test case actually resolve correctly to 'tn'
+-- initially read as a bug before re-deriving the per-language cue-hit counts by
+hand and confirming the code was right and the test string was wrong.
+Fix / resolution: applied all 12 fixes with real-execution live witnesses (no
+test files, per this project's standing no-synthetic-tests rule) against the
+actual live database (data/app.db) wherever a store-level change was involved --
+including a full end-to-end replication of the new bulk draft-release logic
+against real seeded cases (approve success, discard success, no-pending-draft,
+and failed-send-leaves-tag-intact, all 4 confirmed). Deleted ~110 lines of
+confirmed-dead code (_thatcherSupportsOperators probe + JS-side operator/sort/
+row-access fallback + orphaned opPredicate/orPredicate/recencyKey/_rowAccessField)
+once thatcher's installed version (1.0.37) was confirmed 7 releases past when
+operator-where landed (1.0.30) -- casey's own npm 'latest' dependency policy
+means this can never regress. Corrected 3 AGENTS.md passages whose "non-colliding
+toolset" framing implied an active design decision when the real state (freddie's
+src/plugins/case/ has no plugin.js, is outside freddie's own discovery root, and
+is never loaded) was simply unwired reference code. Closed 11 synthetic test
+cases created during live-witnessing (status:closed, test-artifact-cleanup tag)
+since CaseStore has no delete API by design (append-only).
+Generalizes to: (1) when a live-witness test string accidentally satisfies a
+DIFFERENT code path than intended, re-derive the actual per-branch scoring by
+hand before concluding the code is wrong -- the test's premise can be the bug.
+(2) A subagent's audit finding citing "Portuguese" or another language not
+actually promised anywhere in the target codebase's own system prompt is a cue
+to verify the finding's scope against the codebase's real stated commitments
+before implementing past what was asked (Portuguese was dropped from the
+lang-cues fix for exactly this reason -- only Sesotho/Setswana were actually
+promised). (3) A dependency's "never pinned, always latest" policy recorded in
+AGENTS.md should be preserved even when fixing a shim that depended on version
+uncertainty -- deleting the runtime probe was correct, but adding a package.json
+semver floor would have been an unrequested policy reversal.

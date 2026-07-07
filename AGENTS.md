@@ -44,8 +44,12 @@ request through whole (never destructure-and-drop params). The bridge's
 coder-agent cwd note ("use Bash/Read/Write") is OPT-IN via an explicit `cwd`
 param -- it must never leak into a contact-facing agent's prompt. casey registers its OWN case toolset
 (`plugins/case-tools/plugin.js` -> `src/case-tools.js`, discovered by
-`bootHost([CASEY_PLUGINS])`) into that host -- keeping one non-colliding set rather
-than double-registering freddie's overlapping tools. The agent acts entirely through
+`bootHost([CASEY_PLUGINS])`) into that host. freddie ships a separate reference
+case toolset at `src/plugins/case/` with several overlapping tool names, but it
+has no `plugin.js` and sits outside freddie's own `plugins/` discovery root, so
+it is never loaded by any boot path -- casey's is the only toolset that actually
+runs. Watch for real collision risk if freddie's copy is ever wired into a
+discovered plugin root. The agent acts entirely through
 these tools -- `case_report` (extract report fields), `case_list` (a `location` param
 matching a place token against the report location; there is NO province->town
 gazetteer, so a literal-location match, and the rows are the PII-free `enquiryRow`,
@@ -71,10 +75,10 @@ binds active (`contact.active_case_id`); their field updates append to THAT case
 a new case is opened only on an explicit `case_new`. Role-scoped enquiries return only
 what the worker may see and are PII-free: every per-case enquiry row is projected to a
 whitelist that EXCLUDES `external_id`/`contact_id`, so a list can never surface a phone
-number. casey's `case-store.js` carries an operator-where FEATURE-DETECT shim (probe
-the published thatcher; fall back to equality-only + JS operator predicates + recency
-sort) so a bare clone and a pre-publish install stay green -- the same npm-publish-lag
-caveat the thatcher shim section documents.
+number. casey's `case-store.js listCases` calls thatcher's operator-where
+(`$gte`/`$lte`/`$in`/`$or`) directly, with no runtime feature-detect -- casey
+consumes thatcher exclusively via npm `latest`, which has carried operator-where
+since v1.0.30, so a pre-support thatcher can never be installed.
 
 ## Source map
 
@@ -525,14 +529,12 @@ require shim and crashed under node; busybase publishes on v* tags, and its
 publish workflow now builds via `bun run build`, the single source of build
 flags).
 Because casey is now ALWAYS effectively "a bare npm install" relative to
-thatcher's published version (never ahead of it via a local checkout), the
-operator-where FEATURE-DETECT shim (`_thatcherSupportsOperators()` in
-case-store.js, which probes the live thatcher instance at runtime rather than
-assuming a version) is the permanent code path, not a fallback edge case --
-it must stay correct against whatever thatcher `latest` currently ships, and
-the equality-only JS fallback remains live safety for the (now impossible in
-casey's own install, but still real for any consumer) case where a published
-thatcher predates operator-where support. busybase's `src/*.js` are gitignored
+thatcher's published version (never ahead of it via a local checkout, never
+behind v1.0.30 either since `latest` only moves forward), `case-store.js`
+calls thatcher's operator-where directly with no runtime probe and no
+equality-only JS fallback -- both were deleted once confirmed permanently
+dead code against any install casey's own dependency policy can produce.
+busybase's `src/*.js` are gitignored
 bun-build outputs -- fixes go in the `.ts` sources and are rebuilt
 (`npm run build` in the busybase repo, not a casey sibling). Timestamps
 read back from busybase may be numeric-seconds STRINGS ("1782977388"): parse row
