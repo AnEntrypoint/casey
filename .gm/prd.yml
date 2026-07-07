@@ -4628,10 +4628,13 @@
   witness: 'Every porcelain entry triaged: src/gateway-hooks.js committed (witnessed exec_js 9034); .gm debris (server.err, witness-*.txt, *.mjs, logs) gitignored per-entry; corpus+prd.yml+mutables.yml+.gitignore+AGENTS.md staged (git_status 9117: untracked-left=[], staged=1175).'
 - id: commit-corpus-main
   subject: 'Commit md corpus + .gm state to main and push via git_finalize (porcelain-gated). Witness: git_finalize response ok + commit sha.'
-  status: pending
+  status: completed
+  witness: 'git_finalize 9122: committed=true pushed=true branch=main sha=32071fe, 1175-file staged set (1169 md + .flat-export-done + prd.yml + mutables.yml + .gitignore + AGENTS.md + gateway-hooks.js).'
 - id: verify-clean-tree-pushed
   subject: 'Post-push: porcelain empty, remote main reflects HEAD (ahead=0). Witness: git_status + branch status.'
-  status: pending
+  status: completed
+  witness: 'git_status 9123 post-push: dirty=false, staged/modified/untracked/deleted all empty; git_finalize pushed=true to main.'
 - id: report-counts-sha
   subject: 'Final report carries md file count, commit sha, blockers. Witness: final exec_js count + git_log sha.'
-  status: pending
+  status: completed
+  witness: 'Final: 1169 md files (hash-keyed, zero legacy) under .gm/memories/, commit 32071fe pushed to main, no blockers. Report relayed to caller in session-final message.'
