@@ -1,0 +1,9 @@
+---
+key: mem-e9bdc5b07cd2e7a0-141
+ns: default
+created: 1781097746167
+updated: 1781097746167
+---
+
+Q: my order is late
+A: Thank you for letting us know. We have your message and the team will look into it. Your reference is CASE-1029-5yghp.

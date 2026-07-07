@@ -15,11 +15,67 @@ data/
 .claude/*
 !.claude/workflows/
 
-# gm-plugkit runtime working state (machine-local tooling, not casey source)
-.gm/
+# gm-plugkit runtime working state is ignored per-entry below; the shared
+# memory corpus (.gm/memories/) and plan state (.gm/prd.yml, .gm/mutables.yml)
+# are tracked source of record.
+# >>> plugkit managed
+.gm/exec-spool/
+.gm/gm-fired-*
+.gm/needs-gm
+.gm/lastskill
+.gm/turn-state.json
+.gm/turn-state.json.corrupted-*
+.gm/residual-check-fired
+.gm/bootstrap-status.json
+.gm/bootstrap-error.json
+.gm/rslearn-counter.json
+.gm/trajectory-drafts/
+.gm/ingest-drafts/
+.gm/prd-state.json
+.gm/subagent-*.json
+.gm/browser-profile/
+.gm/browser-profile-*/
+.gm/browser-state/
+.gm/build-tool-ignores.md
+.gm/last-prompt.txt
+.gm/hooks/
+.gm/no-memorize-this-turn
+.gm/prd.paused.yml
+.gm/rs-learn.db
+.gm/rs-learn.db-shm
+.gm/rs-learn.db-wal
+.gm/learning-state.md
+.gm/git-block-counter.json
+.gm/next-step.md
+.gm/constraints.md
+.gm/instructions/
+.gm/last-instruction-ts
+.gm/last-dispatch-ts
+.gm/boot*.err
+.gm/boot*.out
+.gm/diag-*.out
+.gm/audit-iter-*.md
+.gm/silent-abort-forensics.json
+.gm/*.png
+.gm/witness/
+.gm/long-gap-retry-state
+.gm/exec-spool/.gm-plugkit-stale.json
+.gm/disciplines/codeinsight/
+.gm/disciplines/codeinsight-vec/
+.gm/disciplines/codeinsight-manifest/
+.gm/disciplines/AGENTS.md/
+.gm/disciplines/AGENTS.md-vec/
+.gm/disciplines/default/
+.gm/disciplines/default-vec/
+.gm/disciplines/rs-learn_graph_edges/
+.gm/disciplines/rs-learn_graph_edges_by_dst/
+.gm/disciplines/rs-learn_graph_edges_by_src/
+.gm/disciplines/rs-learn_router/
+# <<< plugkit managed
+.gm/pw-sock-*/
+.gm/*.mjs
+.gm/*.err
+.gm/witness-*.txt
 
 # this repo has no lockfile committed yet; ignore stray npm lock
 package-lock.json
-.gm/pw-sock-*/
-.gm/browser-profile/
-.gm/browser-profile-*/

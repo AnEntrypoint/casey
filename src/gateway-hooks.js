@@ -1342,8 +1342,23 @@ export function detectContactIntent(text) {
     }
     return false
   }
-  const live = (keys) => keys.some(k =>
-    k.includes(' ') ? phraseLive(k.split(' ')) : liveWords.has(k))
+  // Ambiguous stop-words ('stop', 'quit', 'hamba', 'go away', ...) occur
+  // constantly inside ordinary report sentences and relayed speech -- "she said
+  // stop bringing new animals in", "the sores wont go away", "the farmer quit
+  // giving the medicine", "uthe hamba uye edamini" (he said go to the dam) --
+  // and an exclude list can never enumerate that open-ended space. A GENUINE
+  // bare opt-out is a short imperative ("STOP", "stop please", "go away"), so
+  // an ambiguous key fires only when the WHOLE normalized message is at most
+  // AMBIGUOUS_MAX_WORDS tokens. Unambiguous messaging-object keys
+  // (unsubscribe, cancel messages, stop sending, ...) keep firing at any
+  // length, so a long explicit opt-out still short-circuits deterministically;
+  // a long ambiguous sentence flows to the agent, which reads it and can act
+  // via case_stop when it really is an opt-out.
+  const shortMsg = words.length <= AMBIGUOUS_MAX_WORDS
+  const live = (keys) => keys.some(k => {
+    if (!shortMsg && AMBIGUOUS_STOP_KEYS.has(k)) return false
+    return k.includes(' ') ? phraseLive(k.split(' ')) : liveWords.has(k)
+  })
 
   // STOP / HUMAN, each guarded by its own exclude list of false-positive phrases:
   // STOP_EXCLUDE catches "dont stop"/"bus stop", HUMAN_EXCLUDE catches "a person
@@ -1387,7 +1402,19 @@ const STOP_EXCLUDE = [
   // opposite shape of a genuine "stop messaging me" imperative.
   'will stop', 'to stop', 'cant stop', 'cannot stop', 'could not stop',
   'stop this', 'stop that', 'stop it', 'stop spreading', 'stop the',
+  // Nguni farewell pleasantry ("go well") -- 'hamba kahle' is a goodbye, never
+  // an opt-out, and at two words it passes the short-message ambiguity gate.
+  'hamba kahle',
 ]
+
+// STOP keys that double as ordinary verbs/farewells in report language. Each
+// fires only when the whole normalized message is at most AMBIGUOUS_MAX_WORDS
+// tokens (see detectContactIntent) -- a genuine bare opt-out is a short
+// imperative, while these words inside a longer sentence are almost always the
+// animals'/farmer's story, not an instruction to casey. Unambiguous keys
+// (unsubscribe, messaging-object phrases) are deliberately NOT in this set.
+const AMBIGUOUS_STOP_KEYS = new Set(['stop', 'quit', 'yeka', 'hamba', 'go away', 'hou op', 'los my'])
+const AMBIGUOUS_MAX_WORDS = 3
 
 // Bare single-word tokens like 'someone'/'staff'/'manager'/'operator'/'agent' were
 // removed: casey's own system prompt asks who is on-site with the animals, and
@@ -1419,6 +1446,11 @@ const HUMAN_EXCLUDE = [
   // directed at casey -- the opposite shape of "let me speak to a human".
   'a person who', 'is there a person', 'speak to a vet', 'talk to a vet',
   'speak to the vet', 'talk to the vet',
+  // Relayed speech: "the owner said call me when the vet comes" is the worker
+  // reporting what someone on site said, not asking casey for a person. A
+  // direct "please call me back" (no relay marker) still fires.
+  'said call me', 'said to call', 'told me to call', 'said i must call',
+  'said i should call',
 ]
 
 // RESUME set: the small multi-language "help" vocabulary that opts a STOPPED
