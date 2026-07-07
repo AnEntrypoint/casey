@@ -58,9 +58,16 @@ export function clusterSeverity(cluster) {
 
 // Build the outbreak clusters. `cases` is the open/non-merged pool. Returns the
 // connected components of size >= 2, each with member refs, dominant shared
-// location/species/disease tokens, the count, a severity score, and the
+// location/species/symptom tokens, the count, a severity score, and the
 // report-date span (SAST rendering is the caller's job; here it is raw
 // unix-seconds min/max).
+//
+// `symptoms` is drawn from what was actually SEEN/described in the animals --
+// the real, confirmed-observed field. `suspected_disease` is a name the worker
+// is relaying from the farmer/owner's own guess (never a lab result), so it is
+// exposed separately as `reported_disease_names` -- never as a bare `disease`
+// field a panel could render as if it were a diagnosis. A view may choose to
+// show reported_disease_names, but only labeled as reported/unconfirmed.
 export function buildClusters(cases, threshold = SUGGEST_THRESHOLD) {
   const pool = (cases || []).filter(Boolean)
   const n = pool.length
@@ -88,7 +95,8 @@ export function buildClusters(cases, threshold = SUGGEST_THRESHOLD) {
       members: members.map(c => ({ id: c.id, ref: c.ref, status: c.status, subject: c.subject || '', case_type: c.case_type || 'unset' })),
       location: dominantTokens(members, 'location'),
       species: dominantTokens(members, 'species'),
-      disease: dominantTokens(members, 'suspected_disease'),
+      symptoms: dominantTokens(members, 'symptoms'),
+      reported_disease_names: dominantTokens(members, 'suspected_disease'),
       span: { from: created.length ? Math.min(...created) : null, to: created.length ? Math.max(...created) : null },
     }
     cluster.severity = clusterSeverity(cluster)

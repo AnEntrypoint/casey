@@ -423,6 +423,11 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   app.use('/design', express.static(DESIGN_DIR))
   app.use('/vendor/leaflet', express.static(LEAFLET_DIR))
   app.use('/vendor/leaflet.markercluster', express.static(MARKERCLUSTER_DIR))
+  // Downloaded photo/voice-note bytes (case-store.js saveMedia), gated like every
+  // other case-data route -- unlike /design and /vendor (static UI assets with no
+  // case content) this serves real field-worker media, so it stays behind the
+  // token middleware above (mounted after it, no exemption added).
+  app.use('/media', express.static(path.join(store.dataDir, 'media')))
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
   const clampLimit = (v, d) => Math.min(PAGE_MAX, Math.max(1, parseInt(v, 10) || d))
@@ -1236,6 +1241,9 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         const row = {
           id: c.id, ref: c.ref, status: c.status, case_type: c.case_type || 'unset',
           species: report.species || null, location: report.location || null,
+          symptoms: report.symptoms || null,
+          affected_count: report.affected_count ?? null, dead_count: report.dead_count ?? null,
+          onset: report.onset || null,
           assignee: c.assignee || null, priority: c.priority,
           cluster: clusterByRef.has(c.ref) ? clusterByRef.get(c.ref) : null,
           last_event_at: c.last_event_at,
@@ -1248,7 +1256,10 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       }
       res.json({
         pins, unresolved, unresolved_count: unresolved.length,
-        clusters: clusters.map((cl, i) => ({ index: i, count: cl.count, severity: cl.severity, location: cl.location, species: cl.species, disease: cl.disease })),
+        clusters: clusters.map((cl, i) => ({
+          index: i, count: cl.count, severity: cl.severity, location: cl.location,
+          species: cl.species, symptoms: cl.symptoms, reported_disease_names: cl.reported_disease_names,
+        })),
         truncated, cap: MAP_CASE_CAP, total_considered: all.length,
       })
     } catch (e) { res.status(500).json({ error: e.message }) }
@@ -1761,6 +1772,11 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         access_notes: 'Getting there', farmer_available: 'Farmer available?',
         contact_fallback: 'Other contact', identifying_traits: 'Identifying the animals',
         photos: 'Photos', audio: 'Voice notes', notes: 'Other notes' }
+      // A saved media path looks like "...(saved: media/<caseId>/<file>)" (see
+      // case-store.js saveMedia / gateway-hooks.js) -- surface it as a real link
+      // to /media/<path> so a field-team briefing can actually open the photo/
+      // voice note, not just read that one arrived.
+      const mediaLinkRe = /\(saved: (media\/[^)]+)\)/g
       const rows = REPORT_KEY_LIST.map(k => {
         let val = '<em>not recorded</em>'
         if (r[k] != null && String(r[k]).trim()) {
@@ -1768,6 +1784,8 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
           if (k === 'location') {
             const mapHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(raw)}`
             val = `${esc(raw)} <a href="${esc(mapHref)}" target="_blank" rel="noopener" style="font-size:12px">[map]</a>`
+          } else if (k === 'photos' || k === 'audio') {
+            val = esc(raw).replace(mediaLinkRe, (_m, p) => `(<a href="/${esc(p)}" target="_blank" rel="noopener">open</a>)`)
           } else {
             val = esc(raw)
           }
@@ -1939,6 +1957,7 @@ const PAGE = /* html */ `<!doctype html>
   .metric-trend b{color:var(--fg)}
   .cl-row{padding:8px 0;border-bottom:1px solid var(--border)}
   .cl-head{font-size:13px;margin-bottom:5px}
+  .cl-sub{font-size:12px;color:var(--muted);margin-bottom:4px}
   .cl-chips{display:flex;flex-wrap:wrap;gap:4px}
   .cl-sev{display:inline-block;background:var(--danger,#b4432e);color:#fff;font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;margin-right:6px}
   .ref-chip{background:#2a3340;font-size:12px;padding:2px 8px}
@@ -2221,6 +2240,7 @@ const PAGE = /* html */ `<!doctype html>
       <div class="map-legend" id="map-legend"></div>
       <div class="map-wrap" id="map-canvas"><div class="empty" style="padding:8px 0">Loading...</div></div>
       <div id="map-unresolved" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
+      <div id="map-unresolved-list" style="font-size:12px;margin-top:4px"></div>
     </div>
     <div class="stats-panel" id="activity-panel">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
@@ -3917,11 +3937,18 @@ function clustersHtml(j){
   const cl=j.clusters||[]
   if(!cl.length) return '<div class="empty" style="padding:8px 0">No related-looking groups right now.</div>'
   return cl.map(c=>{
-    const loc=(c.location||[]).join(', '), sp=(c.species||[]).join(', ')
+    const loc=(c.location||[]).join(', '), sp=(c.species||[]).join(', '), sym=(c.symptoms||[]).join(', ')
+    const reported=(c.reported_disease_names||[]).join(', ')
     const chips=(c.members||[]).map(m=>'<button class="ref-chip" data-id="'+esc(m.id)+'" title="'+esc((m.case_type&&m.case_type!=='unset'?m.case_type+': ':'')+(m.subject||''))+'">'+esc(m.ref)+'</button>').join(' ')
     const sev=(c.severity!=null)?'<span class="cl-sev" title="Suspected-outbreak severity: member count scaled by case_type mix (outbreak>import_alert>lab_sample>follow_up)">severity '+esc(c.severity)+'</span> ':''
+    // symptoms is what was actually seen/reported -- shown plainly. reported_disease_names
+    // is only ever the farmer/worker's own unverified guess, so it is always qualified
+    // "as reported" and never rendered as if it were a determined diagnosis.
     return '<div class="cl-row"><div class="cl-head">'+sev+'<b>'+c.count+' cases</b>'
-      +(loc?' near '+esc(loc):'')+(sp?' -- '+esc(sp):'')+'</div><div class="cl-chips">'+chips+'</div></div>'
+      +(loc?' near '+esc(loc):'')+(sp?' -- '+esc(sp):'')+'</div>'
+      +(sym?'<div class="cl-sub">symptoms: '+esc(sym)+'</div>':'')
+      +(reported?'<div class="cl-sub" title="Named by the worker/farmer, not a lab result">as reported: '+esc(reported)+'</div>':'')
+      +'<div class="cl-chips">'+chips+'</div></div>'
   }).join('')
 }
 async function loadClusters(){
@@ -3967,10 +3994,14 @@ function mapMarkerIcon(color){
   return window.L.divIcon({className:'',html:'<div style="width:14px;height:14px;border-radius:50%;background:'+color+';border:2px solid rgba(255,255,255,.8);box-shadow:0 0 2px rgba(0,0,0,.5)"></div>',iconSize:[14,14]})
 }
 function mapPopupHtml(p){
+  const counts=[p.affected_count!=null?p.affected_count+' affected':'',p.dead_count!=null?p.dead_count+' dead':''].filter(Boolean).join(', ')
   return '<div><b>'+esc(p.ref)+'</b> <span style="color:var(--muted)">'+esc(p.status)+'</span><br>'
     +(p.species?esc(p.species)+'<br>':'')
     +(p.case_type&&p.case_type!=='unset'?esc(p.case_type)+'<br>':'')
     +(p.location?esc(p.location)+'<br>':'')
+    +(p.symptoms?'<span title="As reported/observed">symptoms: '+esc(p.symptoms)+'</span><br>':'')
+    +(counts?esc(counts)+'<br>':'')
+    +(p.onset?'onset: '+esc(p.onset)+'<br>':'')
     +(p.assignee&&p.assignee!=='agent'?'assigned: '+esc(p.assignee)+'<br>':'')
     +'<a href="#" data-open-ref="'+esc(p.id)+'">Open case</a></div>'
 }
@@ -4055,6 +4086,22 @@ async function loadMap(){
       ? u+' case(s) have no placeable location yet (no GPS, and location text did not match a known area) -- not shown on the map.'
       + (j.truncated ? ' Showing the most recent '+j.cap+' of '+j.total_considered+' considered.' : '')
       : (j.truncated ? 'Showing the most recent '+j.cap+' of '+j.total_considered+' considered.' : '')
+    // The unresolved rows carry real report content (species/symptoms/location text)
+    // even without a coordinate -- surface them as a list, not just a count, so an
+    // operator can see WHAT each un-mapped report says rather than only how many exist.
+    const listEl=$('#map-unresolved-list')
+    if(listEl){
+      listEl.innerHTML = (j.unresolved||[]).map(p=>
+        '<div style="padding:3px 0;border-bottom:1px solid var(--border)">'
+        +'<a href="#" data-open-ref="'+esc(p.id)+'"><b>'+esc(p.ref)+'</b></a> '
+        +'<span style="color:var(--muted)">'+esc(p.status)+'</span>'
+        +(p.species?' -- '+esc(p.species):'')
+        +(p.location?' ('+esc(p.location)+')':'')
+        +(p.symptoms?' -- '+esc(p.symptoms):'')
+        +'</div>'
+      ).join('')
+      listEl.querySelectorAll('[data-open-ref]').forEach(a=>a.onclick=(e)=>{e.preventDefault(); openCase(a.dataset.openRef)})
+    }
   }catch(e){ canvas.innerHTML='<div class="empty">Map error: '+esc(e.message)+'</div>' }
 }
 async function renderMapCoverage(){

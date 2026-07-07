@@ -599,12 +599,23 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // exactly the mode with no LLM narration to compensate), so a plain
     // observation event is appended even when the field write was refused. A
     // failure here must never block the reply path.
+    // When the channel adapter actually downloaded the media bytes (msg.media),
+    // save them to disk and fold the saved path into the note -- otherwise the
+    // note is text-only ("farmer sent a photo") with nothing behind it, which is
+    // exactly the "looks captured but isn't" gap this closes. A download failure
+    // (msg.media.error set, buffer null) still yields the plain text note, same
+    // as before freddie could fetch media at all -- never a harder failure.
     const photoNote = inboundImageNote(msg)
     if (photoNote) {
       try {
-        const r = await store.appendReportField(caseRow.id, 'photos', photoNote)
+        let note = photoNote
+        if (msg.media?.buffer && msg.media.type !== 'audio') {
+          const savedPath = store.saveMedia(caseRow.id, msg.media.buffer, { mimeType: msg.media.mimeType, kind: 'photo' })
+          note = `${photoNote} (saved: ${savedPath})`
+        }
+        const r = await store.appendReportField(caseRow.id, 'photos', note)
         if (r?.appended || r?.error === 'observe') {
-          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `PHOTO RECEIVED: ${photoNote} (recorded for the field team).` })
+          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `PHOTO RECEIVED: ${note} (recorded for the field team).` })
         }
       } catch (e) { log.warn?.('[casey] photo mark failed', { caseId: caseRow.id, error: e.message }) }
     }
@@ -614,9 +625,14 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const audioNote = inboundAudioNote(msg)
     if (audioNote) {
       try {
-        const r = await store.appendReportField(caseRow.id, 'audio', audioNote)
+        let note = audioNote
+        if (msg.media?.buffer && msg.media.type === 'audio') {
+          const savedPath = store.saveMedia(caseRow.id, msg.media.buffer, { mimeType: msg.media.mimeType, kind: 'audio' })
+          note = `${audioNote} (saved: ${savedPath})`
+        }
+        const r = await store.appendReportField(caseRow.id, 'audio', note)
         if (r?.appended || r?.error === 'observe') {
-          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `AUDIO RECEIVED: ${audioNote}.` })
+          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `AUDIO RECEIVED: ${note}.` })
         }
       } catch (e) { log.warn?.('[casey] audio mark failed', { caseId: caseRow.id, error: e.message }) }
     }
