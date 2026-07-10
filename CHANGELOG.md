@@ -3,6 +3,53 @@
 ## Unreleased
 
 ### Fixed
+- HUMAN keyword detection had no short-message ambiguity gate (unlike STOP),
+  so a report sentence like "the human gave it water" false-positived a
+  handoff escalation; added the same gate STOP already used.
+- Exclude-phrase matching for STOP/HUMAN was scoped to the whole message
+  instead of the specific matched key's own occurrence, so a genuine handoff
+  request could be suppressed by an unrelated excluded phrase elsewhere in a
+  longer message.
+- `guessLang` scored a shared "dumela" cue for both Sesotho and Setswana, so a
+  bare greeting tied 1-1 and fell back to English despite the system prompt
+  promising to match both languages.
+- `rateWindows`/`globallyRateLimited` in-memory maps grew unboundedly over a
+  long-running process's lifetime; added a periodic sweep evicting stale
+  per-contact entries.
+- `mergeReport`'s optimistic-lock retry fell back to an unconditional write on
+  a second conflict, silently able to clobber a third concurrent writer;
+  retries now carry the same version guard, bounded, surfacing (not
+  overwriting) after repeated contention.
+- `case_get`'s ownership check and `case_mine`'s filter independently
+  reimplemented the same logic; extracted to one shared helper so a future fix
+  can't diverge between the two and reopen the PII leak both guarded against.
+- `case_new` returned `ok:true` even when binding the case active silently
+  no-opped (no author on the turn); now reports `boundActive` and a warning.
+- The health sweep could re-page a persistently-failing case every interval
+  indefinitely instead of once, when its tag write kept failing; added a
+  bounded retry gate.
+- The supervisor's runtime state could get stuck at `restarting` forever if a
+  race made the `BOOTED` transition illegal right after a confirmed worker
+  READY; it now force-resyncs to `healthy` since the worker being up is
+  ground truth.
+- The resilient LLM wrapper never re-probed a backend that resolved once but
+  then went consistently degraded (every recent real turn failing), reporting
+  offline forever with no self-heal path.
+- Dashboard clusters/geo/map/inbox/handover endpoints inconsistently treated
+  `resolved` cases as still-open (only excluding `closed`), while the
+  management report excluded both -- a resolved outbreak kept showing as an
+  active map pin days later. Unified under one `isOpenCase` helper.
+- `overview.js`'s `closed_by_day` undercounted `totals.closed` when a case's
+  status was set without a transition event (e.g. a bulk import), so the
+  report page showed two disagreeing closed-case numbers.
+- `workload.js` created a phantom card for any operator id found in reply
+  events, including ids no longer on the current roster, leaking a former
+  operator's id into the aggregate-only workload endpoint indefinitely.
+- `case_update` silently no-opped an explicit empty-string `case_type`/
+  `priority` instead of rejecting it the way a bogus value already was.
+- `case_report` silently dropped an out-of-range lat/lon (e.g. swapped
+  coordinates) with no error, indistinguishable from never having supplied
+  one; now returns an explicit rejection.
 - STOP/HUMAN keyword detection false-positived on ordinary sentences ("the
   disease will stop spreading", "is there a person who can look at my goats")
   and discarded real report content before the agent ever ran. Extended the
