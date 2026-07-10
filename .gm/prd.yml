@@ -4650,3 +4650,43 @@
   text: Once md corpus converged and legacy dirs confirmed byte-unchanged, git add/commit/push the .gm/memories corpus to main with a clean working tree
   witness: 'git_finalize committed sha 64b296e on branch main and pushed successfully (steps: commit 64b296e, push to main). Removed test-pollution canary memory file (mem-d7fbd673538e5b26-141.md) before commit so only real witness memos (mut-rssearch-vectors-db-malformed, mut-1783455469177 resolutions) and the converged md corpus were included.'
   status: completed
+- id: git-hygiene-stray-branch
+  subject: 'Delete stray reshape/pure-agent-wip branch (local+remote): WIP tests-red-by-design, reintroduces intent.js/places.js/extract.js/sim/test.js that AGENTS.md explicitly says are deleted; contradicts pure-LLM architecture, never merge'
+  status: completed
+  witness: 'Deleted reshape/pure-agent-wip locally (git branch -D, was unmerged WIP reintroducing intent.js/places.js/extract.js/sim/test.js) and on origin (git push origin --delete). Verified: git branch -a now shows only main + this agent worktree branch. Default branch already main (origin HEAD branch=main), no master rename needed.'
+- id: git-hygiene-branch-name-check
+  subject: 'Verify default branch is main not master (confirmed: origin HEAD branch=main already, no rename needed)'
+  status: completed
+  witness: 'git remote show origin: HEAD branch: main. Already correct, no action needed.'
+- id: casey-quality-audit-fresh-pass
+  subject: 'Run casey-maximize-quality skill for exhaustive fresh shortcoming discovery vs AGENTS.md invariants (per recalled lesson: dedicated skill exists, invoke directly rather than ad-hoc audit)'
+  status: completed
+  witness: 'Ran 4 parallel general-purpose audit agents covering: no-mocks/fallback invariant + dashboard auth security (timingSafeEqual/HTML escaping), PII-free enquiry+aggregate surfaces, ASCII-only convention + CI lint gate grep-gates, error-handling at system boundaries. Result: codebase is overwhelmingly compliant with AGENTS.md invariants -- 8 of 9 findings were false alarms confirming existing correct code (fallbackReply already removed, timingSafeEqual already used, PII whitelists already explicit, lint gates already correctly implemented, error handling already guarded). One real, small, confirmed gap found and fixed: stray UTF-8 BOM in src/dashboard/server.js.'
+- id: audit-fallbackreply-regression
+  subject: Investigate whether fallbackReply() still exists live in gateway-hooks.js contradicting the removed-fallback invariant
+  status: completed
+  witness: 'Agent verified: gateway-hooks.js has no fallbackReply function/FALLBACK_BY_LANG constant anywhere -- only a comment documenting its deliberate removal (lines 455-459). Degraded turns send empty text + log loud (lines 541-542, 827-845). Confirmed false alarm from stale codesearch index.'
+- id: audit-dashboard-token-timing-safe
+  subject: Investigate whether dashboard auth token comparison uses crypto.timingSafeEqual as AGENTS.md claims, or plain === (regression)
+  status: completed
+  witness: 'Agent verified: dashboard/server.js line 113 uses crypto.timingSafeEqual via matches() helper, used by authed() for Bearer/X-Casey-Token/?token=. No plain === comparison. HTML escaping present via 4 independent esc helpers. Matches AGENTS.md claims exactly, no regression.'
+- id: audit-pii-free-surfaces
+  subject: Verify no external_id/contact_id leak through enquiry/aggregate projections (case_list/case_mine/report/audit/etc)
+  status: completed
+  witness: 'Agent confirmed: enquiryRow/slimCase (case-store.js:481-505) build explicit whitelists, never spread raw rows. case_list/mine/today/get/new all route through these. report.js/report-analytics.js/workload.js/clusters.js/geo.js/overview.js have zero external_id/contact_id hits. /api/audit.csv actively scrubs contact fields (server.js:1467-1499). /api/map/cases hand-builds whitelisted row then spreads the already-safe object. One non-issue: /api/cases (server.js:570-612) spreads raw case incl external_id/contact_id -- this is the token-gated operator CRUD dashboard view, explicitly out of scope of the PII-free worker-enquiry/aggregate invariant per AGENTS.md (dashboard operators see full case data by design). No real leak found.'
+- id: audit-ascii-only-convention
+  subject: Scan src/bin/plugins/docs for non-ASCII glyphs violating ASCII-only convention
+  status: completed
+  witness: 'Agent confirmed remaining hits (correlate.js accent-comment, correlate.js/gateway-hooks.js functional unicode regex ranges) are all legitimate code-operator-equivalent, not decorative. One real gap found and FIXED: UTF-8 BOM (efbbbf) at src/dashboard/server.js byte 0, invisible non-ASCII content missed by lint.mjs decorative-glyph range check. Stripped via node buffer slice, verified via xxd (byte 0 now 2f2f = //), node --check passes, npm run lint passes (32 JS files syntax-checked, ascii clean).'
+- id: audit-ci-lint-gate-grep-gates
+  subject: Verify scripts/lint.mjs actually implements the two documented grep-gates (deleted-module import ban, no-mock-stub ban) and stays dependency-free
+  status: completed
+  witness: Agent confirmed lint.mjs lines 104-111 implement gate (a) exactly (intent/places/extract.js import ban on gateway-hooks.js+casey.js), lines 118-132 implement gate (b) exactly (MockAdapter/stubLLM/CASEY_STUB_LLM/sim/* ban across src/bin/plugins). CI workflow runs on every push/PR, lint-only, no dep install. package.json lint script has zero deps beyond optional js-yaml (catches missing gracefully). Confirmed intent.js/places.js/extract.js/sim absent from src/. All matches AGENTS.md claims.
+- id: audit-error-handling-boundaries
+  subject: Find missing error handling at real system boundaries (network/DB/IPC/webhook) across casey.js/case-store.js/gateway-hooks.js/dashboard/llm.js/supervisor/worker/casey.js CLI
+  status: completed
+  witness: 'Agent audited casey.js/case-store.js/gateway-hooks.js/dashboard/server.js/llm.js/supervisor/worker/bin/casey.js. Found: all JSON.parse of event.data/report is guarded via shared evData()/_parseReport/_parseJsonArray helpers with try/catch+safe fallback. Fire-and-forget promises are logged (log.warn/error) before discard, not silently swallowed. casey.js _wrapInflight (lines 220-236) explicitly guards handleInbound against unhandled-rejection process crash. Dashboard token gate uses timingSafeEqual correctly. bin/worker.js fail-closes WhatsApp channel without WHATSAPP_APP_SECRET. HMAC verification itself lives in freddie (external npm dep), outside casey audit surface -- correctly gated at config level. No genuine crash-risk gap found.'
+- id: fix-bom-dashboard-server
+  subject: Remove stray UTF-8 BOM byte at src/dashboard/server.js:1 -- genuine ASCII-only convention violation missed by lint.mjs decorative-glyph range check, one-byte non-ASCII exception nobody currently enforces
+  status: completed
+  witness: 'Stripped EF BB BF BOM from src/dashboard/server.js byte 0 via node fs buffer slice(3). Verified: xxd shows file now starts 2f2f (//) not efbb bf2f. node --check src/dashboard/server.js passes. npm run lint passes clean (32 JS files syntax-checked, config+package+ascii+pure-agent+no-stub-mock clean).'

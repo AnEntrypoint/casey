@@ -1,4 +1,4 @@
-﻿// dashboard/server.js -- casey's observe + manual-edit UI.
+// dashboard/server.js -- casey's observe + manual-edit UI.
 //
 // Serves a small single-page app styled with anentrypoint-design's CSS, backed
 // by a JSON API over the CaseStore. This is the human surface of casey:
