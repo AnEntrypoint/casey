@@ -418,8 +418,11 @@ const LANG_CUES = {
   // (line ~219) but the deterministic pre-LLM ack layer (STOP/HUMAN/resume, the
   // one layer meant to work correctly with the model down) had no cues for
   // either -- distinctive tokens chosen the same way as af/zu/xh above.
+  // 'dumela' is a shared st/tn greeting -- kept only on st so a bare-greeting
+  // message doesn't tie 1-1 and fall back to English; tn is distinguished by
+  // its own unique cues (rra/mma/a lwala) instead.
   st: [' dumela ', ' kea leboha ', ' ntate ', ' mme ', ' kgomo ', ' dikgomo ', ' lea kula ', ' ke kopa ', ' tjhelete ', ' thusa '],
-  tn: [' dumela ', ' ke a leboga ', ' rra ', ' mma ', ' kgomo ', ' dikgomo ', ' a lwala ', ' ke kopa ', ' thusa '],
+  tn: [' ke a leboga ', ' rra ', ' mma ', ' kgomo ', ' dikgomo ', ' a lwala ', ' ke kopa ', ' thusa '],
 }
 
 export function guessLang(text) {
@@ -506,10 +509,25 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
   const RATE_LIMIT_MSGS = Number(process.env.CASEY_RATE_LIMIT_MSGS) || 10
   const RATE_LIMIT_WINDOW_MS = Number(process.env.CASEY_RATE_LIMIT_WINDOW_MS) || 60_000
   function rateLimited(id, now = Date.now()) {
+    sweepRateWindows(now)
     const hits = (rateWindows.get(id) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS)
     hits.push(now)
     rateWindows.set(id, hits)
     return hits.length > RATE_LIMIT_MSGS
+  }
+  // rateWindows never removes a key on its own (a contact that goes quiet after
+  // its window empties out still leaves an entry), so a long-running process
+  // with many one-time senders grows the Map unboundedly. A periodic sweep
+  // (piggybacked on the natural rate-check cadence, not its own timer) evicts
+  // any contact with no hits inside the current window.
+  const RATE_SWEEP_INTERVAL_MS = 10 * 60_000
+  let lastRateSweep = 0
+  function sweepRateWindows(now = Date.now()) {
+    if (now - lastRateSweep < RATE_SWEEP_INTERVAL_MS) return
+    lastRateSweep = now
+    for (const [id, hits] of rateWindows) {
+      if (!hits.some(t => now - t < RATE_LIMIT_WINDOW_MS)) rateWindows.delete(id)
+    }
   }
   // GLOBAL rate limit: the per-contact window above bounds each external_id
   // independently, so many DISTINCT senders (a distributed source, or simply
@@ -1355,8 +1373,40 @@ export function detectContactIntent(text) {
   // a long ambiguous sentence flows to the agent, which reads it and can act
   // via case_stop when it really is an opt-out.
   const shortMsg = words.length <= AMBIGUOUS_MAX_WORDS
+  // Every start index where keyWords occurs live (unguarded), for exclude-window
+  // scoping below. Single-word keys are just keyWords=[k].
+  const liveOccurrences = (keyWords) => {
+    const out = []
+    for (let i = 0; i + keyWords.length <= words.length; i++) {
+      let ok = true
+      for (let j = 0; j < keyWords.length; j++) {
+        if (words[i + j] !== keyWords[j] || (j === 0 && guarded.has(i))) { ok = false; break }
+      }
+      if (ok) out.push(i)
+    }
+    return out
+  }
+  // Exclude matching is scoped to a window AROUND the specific occurrence of the
+  // matched key, not the whole message -- an excluded phrase elsewhere in a long
+  // message (e.g. "can i speak to a vet, and also i really need a real human on
+  // the phone") must not suppress a genuine, distinct handoff request ("real
+  // human") that occurs outside that phrase's own token span.
+  const EXCLUDE_WINDOW = 4
+  const excludedAt = (excludeList, idx, len) => {
+    const lo = Math.max(0, idx - EXCLUDE_WINDOW)
+    const hi = Math.min(words.length, idx + len + EXCLUDE_WINDOW)
+    const windowText = ` ${words.slice(lo, hi).join(' ')} `
+    return excludeList.some(p => windowText.includes(` ${p} `))
+  }
+  // Fires when at least one live, non-ambiguous-at-this-length occurrence of any
+  // key survives its own nearby exclude check.
+  const fires = (keys, excludeList) => keys.some(k => {
+    if (!shortMsg && (AMBIGUOUS_STOP_KEYS.has(k) || AMBIGUOUS_HUMAN_KEYS.has(k))) return false
+    const keyWords = k.includes(' ') ? k.split(' ') : [k]
+    return liveOccurrences(keyWords).some(idx => !excludedAt(excludeList, idx, keyWords.length))
+  })
   const live = (keys) => keys.some(k => {
-    if (!shortMsg && AMBIGUOUS_STOP_KEYS.has(k)) return false
+    if (!shortMsg && (AMBIGUOUS_STOP_KEYS.has(k) || AMBIGUOUS_HUMAN_KEYS.has(k))) return false
     return k.includes(' ') ? phraseLive(k.split(' ')) : liveWords.has(k)
   })
 
@@ -1364,8 +1414,8 @@ export function detectContactIntent(text) {
   // STOP_EXCLUDE catches "dont stop"/"bus stop", HUMAN_EXCLUDE catches "a person
   // told me"/"in person". A genuine opt-out that also contains an exclude word is
   // NOT suppressed -- losing a real opt-out is worse than an occasional false one.
-  if (live(STOP_KEYS)  && !STOP_EXCLUDE.some(p => padded.includes(` ${p} `)))  return 'stop'
-  if (live(HUMAN_KEYS) && !HUMAN_EXCLUDE.some(p => padded.includes(` ${p} `))) return 'human'
+  if (fires(STOP_KEYS, STOP_EXCLUDE))   return 'stop'
+  if (fires(HUMAN_KEYS, HUMAN_EXCLUDE)) return 'human'
   // RESUME after opt-out: checked AFTER stop/human so "stop helping me" and "help
   // me reach a person" keep their stronger meanings. Only the opted-out gate acts
   // on 'help'; a live conversation lets it fall through to the agent.
@@ -1415,6 +1465,14 @@ const STOP_EXCLUDE = [
 // (unsubscribe, messaging-object phrases) are deliberately NOT in this set.
 const AMBIGUOUS_STOP_KEYS = new Set(['stop', 'quit', 'yeka', 'hamba', 'go away', 'hou op', 'los my'])
 const AMBIGUOUS_MAX_WORDS = 3
+
+// HUMAN keys that double as ordinary report vocabulary ("the human gave it
+// water", relaying who did what to the animal) -- 'human' alone is not a
+// handoff request unless the whole message is short, same discipline as
+// AMBIGUOUS_STOP_KEYS above. Multi-word/unambiguous keys (speak to, real
+// person, umuntu, ...) are deliberately NOT in this set and keep firing at
+// any length.
+const AMBIGUOUS_HUMAN_KEYS = new Set(['human'])
 
 // Bare single-word tokens like 'someone'/'staff'/'manager'/'operator'/'agent' were
 // removed: casey's own system prompt asks who is on-site with the animals, and

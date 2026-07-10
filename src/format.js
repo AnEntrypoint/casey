@@ -8,6 +8,16 @@
 // (UTC+2, no DST); an operator anywhere reads the same wall-clock the team does.
 export const SAST_TZ = 'Africa/Johannesburg'
 
+// A case is "open" when it is neither resolved nor closed. Several dashboard
+// endpoints (clusters, geo, map) previously filtered on status!=='closed' alone,
+// which counts a resolved case as still-open -- a resolved outbreak kept
+// showing as an active cluster/hotspot pin on the map long after report.js's
+// own "open" totals (which exclude resolved too) stopped counting it. Single
+// source of truth so every open/active view agrees.
+export function isOpenCase(c) {
+  return c && c.status !== 'resolved' && c.status !== 'closed'
+}
+
 // Parse a stored timestamp into a Date, or null if absent/corrupt. thatcher
 // event created_at is unix SECONDS (integer); case created_at likewise. A bare
 // all-digit value is therefore seconds and is multiplied to ms; anything else is

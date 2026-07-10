@@ -64,6 +64,7 @@ export function buildWorkload(cases, eventsByCaseId, roster = [], now = Date.now
     return cards.get(id)
   }
   for (const r of roster || []) card(r.id, r.name)
+  const rosterIds = new Set((roster || []).map(r => r.id))
 
   const replyWindowStart = now - 24 * 3600 * SEC
 
@@ -73,11 +74,15 @@ export function buildWorkload(cases, eventsByCaseId, roster = [], now = Date.now
 
     // Replies sent in the last 24h, attributed to the operator who sent them.
     // Read from events regardless of who currently owns the case, so a person
-    // gets credit for answering even a case later reassigned.
+    // gets credit for answering even a case later reassigned. Skip an id not on
+    // the CURRENT roster (a former operator, or a raw id from an old deploy) --
+    // otherwise card() creates a phantom ad-hoc card that leaks that id into
+    // this aggregate-only endpoint indefinitely, even though the roster (the
+    // caller's seed list) never asked for it.
     for (const e of events) {
       if (e.kind === 'outbound' && e.actor === 'operator') {
         const by = String(evData(e).by || '').trim()
-        if (!by) continue
+        if (!by || !rosterIds.has(by)) continue
         const m = evMs(e)
         if (m != null && m >= replyWindowStart) card(by).replies_24h++
       }

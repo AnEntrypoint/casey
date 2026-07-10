@@ -642,23 +642,32 @@ export class CaseStore {
       // optimistic-lock guard -- thatcher's npm `latest` always does; a
       // feature-detect-free direct read since casey never pins thatcher
       // behind latest) lets us detect that race instead of silently losing
-      // whichever side wrote second. On a genuine conflict, re-read once and
+      // whichever side wrote second. On a genuine conflict, re-read and
       // re-merge against the FRESH row (the operator's edit is preserved,
-      // the agent's newly-learned fields are re-applied on top) rather than
-      // either side's turn simply vanishing. A second conflict in a row is
-      // vanishingly rare (would need a third concurrent writer in the same
-      // instant) -- fall through to an unconditional write rather than ever
-      // blocking the reply path on a retry loop.
-      try {
-        await this.updateCase(caseId, patch, user, c._version != null ? { expectedVersion: c._version } : {})
-        return { report: merged }
-      } catch (e) {
-        if (e.code !== 'conflict') throw e
-        const fresh = await this.getCase(caseId)
-        if (!fresh) return { error: `no case ${caseId}` }
-        const remerged = this._mergeReportFields(this._parseReport(fresh.report, caseId), incoming)
-        await this.updateCase(caseId, { report: JSON.stringify(remerged) }, user)
-        return { report: remerged }
+      // the agent's newly-learned fields are re-applied on top), retrying
+      // with the same expectedVersion guard each time -- a THIRD writer
+      // landing between re-read and re-write must re-trigger the same
+      // conflict path rather than being silently clobbered by an
+      // unconditional write. Bounded retries; surface (never silently
+      // overwrite) if contention is somehow still live after that.
+      const MERGE_RETRY_LIMIT = 3
+      let attemptCase = c
+      let attemptMerged = merged
+      for (let attempt = 0; attempt <= MERGE_RETRY_LIMIT; attempt++) {
+        try {
+          await this.updateCase(caseId, { report: JSON.stringify(attemptMerged) }, user,
+            attemptCase._version != null ? { expectedVersion: attemptCase._version } : {})
+          return { report: attemptMerged }
+        } catch (e) {
+          if (e.code !== 'conflict') throw e
+          if (attempt === MERGE_RETRY_LIMIT) {
+            return { error: `report merge conflict on case ${caseId} after ${MERGE_RETRY_LIMIT} retries -- concurrent writers still contending, not applied` }
+          }
+          const fresh = await this.getCase(caseId)
+          if (!fresh) return { error: `no case ${caseId}` }
+          attemptCase = fresh
+          attemptMerged = this._mergeReportFields(this._parseReport(fresh.report, caseId), incoming)
+        }
       }
     })
   }

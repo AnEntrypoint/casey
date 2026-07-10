@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { VISIT_CRITICAL } from '../case-health.js'
 import { REPORT_KEY_ORDER } from '../case-store.js'
 import { rankAttention } from '../attn.js'
-import { fmtTimeSAST } from '../format.js'
+import { fmtTimeSAST, isOpenCase } from '../format.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DESIGN_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'anentrypoint-design')
@@ -1062,7 +1062,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       // to render (src/attn.js), so a high-urgency case outside the page window
       // the client fetched still reaches the inbox -- the ranking is no longer
       // capped by loadCases' 200-row limit.
-      const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
+      const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
       const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500)
       const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
       const { total, items, atRisk, slaTargetMs } = rankAttention(open, now, { limit, offset })
@@ -1093,7 +1093,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       const now = Date.now()
       const thresholds = await store.resolveThresholds()
       const slaTargetMs = Number.isFinite(thresholds?.handoffMs) ? thresholds.handoffMs : 30 * 60 * 1000
-      const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
+      const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
       const byType = {}
       const groups = new Map()
       for (const c of open) {
@@ -1338,7 +1338,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     try {
       const { buildClusters } = await import('../clusters.js')
       const pool = (await store.listCases({}, { limit: 500 }))
-        .filter(c => c.status !== 'closed'
+        .filter(c => isOpenCase(c)
           && !String(c.tags || '').split(',').map(s => s.trim()).includes('merged'))
       const clusters = buildClusters(pool)
       res.json({ pool: pool.length, count: clusters.length, clusters })
@@ -1351,7 +1351,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   app.get('/api/geo', async (req, res) => {
     try {
       const { buildGeo } = await import('../geo.js')
-      const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
+      const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
       res.json({ open: open.length, places: buildGeo(open) })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -1540,7 +1540,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     const now = Date.now()
     const marker = await store.getShiftMarker()
     const since = marker?.ts || 0
-    const open = (await store.listCases({}, { limit: 10000 })).filter(c => c.status !== 'closed')
+    const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
     const tagsOf = (c) => String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
     // Cases still needing attention, ranked by the same scorer the inbox uses.
     const { items } = rankAttention(open, now, { limit: 50, offset: 0 })
@@ -1615,7 +1615,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
   app.get('/api/unreplied', async (req, res) => {
     try {
       const open = (await store.listCases({}, { limit: 10000, offset: 0 }))
-        .filter(c => c.status !== 'closed'
+        .filter(c => isOpenCase(c)
           && String(c.tags || '').split(',').map(t => t.trim()).includes('ai-offline'))
       open.sort((a, b) => (b.last_event_at || b.updated_at || 0) - (a.last_event_at || a.updated_at || 0))
       const items = open.map(c => ({
@@ -1636,7 +1636,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       if (!c) return res.status(404).json({ error: 'not found' })
       const { suggestLinks } = await import('../correlate.js')
       const pool = (await store.listCases({}, { limit: 200 }))
-        .filter(o => o.id !== c.id && o.status !== 'closed'
+        .filter(o => o.id !== c.id && isOpenCase(o)
           && !String(o.tags || '').split(',').map(s => s.trim()).includes('merged'))
       const byId = new Map(pool.map(o => [o.id, o]))
       const suggestions = suggestLinks(c, pool).slice(0, 5)

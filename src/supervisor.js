@@ -201,7 +201,18 @@ export function createSupervisor(opts = {}) {
         // booting|restarting -> healthy. (restarting sends RESTART_DONE->booting
         // first; we collapse the common case by firing BOOTED from either.)
         if (state === 'restarting') fire('RESTART_DONE', Date.now())
-        fire('BOOTED', Date.now())
+        const bootedOk = fire('BOOTED', Date.now())
+        // A confirmed-live worker (we just got its READY message) whose BOOTED
+        // fire was still illegal means the machine diverged from reality via a
+        // race (e.g. onHealth fired HEALTH_DEGRADED between RESTART_DONE and
+        // BOOTED above) -- without a resync, state stays stuck at whatever it
+        // was forever, since nothing else re-fires BOOTED later. Force a resync
+        // to healthy directly: the worker being up is ground truth here.
+        if (!bootedOk && state !== 'healthy') {
+          log.warn?.('[supervisor] resyncing stuck state to healthy after confirmed worker READY', { stuckState: state })
+          state = 'healthy'
+          ctx.since = Date.now()
+        }
         pushStateToWorker()   // hand the fresh worker the current snapshot immediately
         flushRuntimeEvents()  // persist any lifecycle bounce buffered while no worker was up (e.g. the crash that killed the prior one)
         log.info?.('[supervisor] worker ready', { pid: child.pid, port: m.payload?.port })

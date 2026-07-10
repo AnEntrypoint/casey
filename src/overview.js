@@ -101,9 +101,15 @@ export function buildOverview(cases, eventsByCaseId, now = Date.now(), windowMs 
     const createdMs = evMs({ created_at: c.created_at })
     if (createdMs != null && createdMs >= since) openedByDay[dayKey(createdMs)] = (openedByDay[dayKey(createdMs)] || 0) + 1
     if (isClosed) {
-      // closed time approximated by the last transition INTO a terminal stage
+      // closed time approximated by the last transition INTO a terminal stage.
+      // A case whose status was set directly (bulk import, migration bypassing
+      // appendEvent) has no such transition event -- fall back to the case's
+      // own updated_at so it still lands in closed_by_day, keeping this in sync
+      // with `closed` above (which counts from case.status directly regardless
+      // of event history). Without the fallback, report.js's closed_by_day sum
+      // silently undercounts totals.closed with no indication why.
       const lastClose = [...events].filter(e => e.kind === 'transition' && (evData(e).to === 'resolved' || evData(e).to === 'closed') && evMs(e) != null).sort((a, b) => evMs(a) - evMs(b)).pop()
-      const cm = lastClose ? evMs(lastClose) : null
+      const cm = lastClose ? evMs(lastClose) : evMs({ created_at: c.updated_at })
       if (cm != null && cm >= since) closedByDay[dayKey(cm)] = (closedByDay[dayKey(cm)] || 0) + 1
     }
   }

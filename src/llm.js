@@ -161,6 +161,16 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   const status = async () => {
     if (!backend && clock() - lastAttempt >= intervalMs) await ensure()
     const health = completionHealth()
+    // A resolved backend that has gone consistently degraded (every recent real
+    // turn failed/slow) never re-resolves on its own: `ensure()` only probes
+    // when `backend` is null, so a stale/broken client object sits forever
+    // reporting ok:false with no self-heal path. Drop it so the NEXT status()/
+    // callLLM naturally re-resolves via the existing debounced ensure() path --
+    // this does not force a probe here (keeps status() cheap), it just clears
+    // the block that was preventing one.
+    if (backend && health.degraded && clock() - lastAttempt >= intervalMs) {
+      backend = null
+    }
     return { ...last, ...health, ok: !!backend && health.degraded !== true }
   }
 

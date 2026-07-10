@@ -13,6 +13,18 @@ const str = (description, extra = {}) => ({ type: 'string', description, ...extr
 const CASE_TYPE_VALUES = new Set(['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'])
 const PRIORITY_VALUES = new Set(['low', 'normal', 'high', 'urgent'])
 
+// external_id is 'container:author' (a multi-author channel) or the bare author
+// (a 1:1 chat) -- a case is "owned" by an author when their id appears as one
+// of the colon-separated parts. Single source of truth for case_get's ownership
+// gate and mineRows' "my cases" filter so a fix to one (case-insensitive ids, a
+// different separator) can never diverge from the other and reopen a PII leak.
+function ownsCase(externalId, author) {
+  if (!author) return false
+  const ext = String(externalId || '')
+  const a = String(author)
+  return ext === a || ext.split(':').includes(a) || ext.endsWith(':' + a)
+}
+
 // Build the array of tool objects bound to an explicit store (used by tests and
 // by anywhere that wants the tools without the runtime singleton).
 export function buildCaseToolset(storeOrNull) {
@@ -40,10 +52,9 @@ export function buildCaseToolset(storeOrNull) {
         // Without this, any worker asking about any case ref (even by typo/
         // overheard) got another contact's phone number and free-text account.
         const author = ctx?.author || ctx?.principal?.id
-        const ext = String(c.external_id || '')
         // Fail CLOSED: no author on ctx means we cannot prove ownership, so treat
         // as not-owned (PII-free) rather than defaulting to full access.
-        const owns = !!author && (ext === String(author) || ext.split(':').includes(String(author)) || ext.endsWith(':' + author))
+        const owns = ownsCase(c.external_id, author)
         const events = owns ? await store().listEvents(id, { limit: 30 }) : []
         return { case: owns ? slimCase(c) : enquiryRow(c), events: events.map(slimEvent) }
       },
@@ -109,20 +120,19 @@ export function buildCaseToolset(storeOrNull) {
         },
       },
       handler: async ({ id, ...patch }) => {
+        // Validate case_type/priority BEFORE pick()'s empty-string filtering: an
+        // explicit case_type:"" must be rejected the same way a bogus value is,
+        // not silently dropped as if the field were never supplied -- pick()
+        // would otherwise treat an empty-string write as a no-op, which looks
+        // like the update succeeded to a caller who doesn't check fieldsRecorded.
+        if ('case_type' in patch && !CASE_TYPE_VALUES.has(patch.case_type)) {
+          return { error: `invalid case_type: ${patch.case_type}`, allowed: [...CASE_TYPE_VALUES] }
+        }
+        if ('priority' in patch && !PRIORITY_VALUES.has(patch.priority)) {
+          return { error: `invalid priority: ${patch.priority}`, allowed: [...PRIORITY_VALUES] }
+        }
         const clean = pick(patch, ['subject', 'summary', 'priority', 'tags', 'assignee', 'case_type'])
         if (!Object.keys(clean).length) return { error: 'no editable fields supplied' }
-        // thatcher's config-declared enum type is NOT enforced server-side on
-        // write (an out-of-enum value is silently stored), so a tool-schema enum
-        // alone is not enough defense -- validate here too, or a model that
-        // ignores its own schema silently corrupts every case_type/priority-keyed
-        // observability view (map filters, SLA-by-type, workload) with a value no
-        // downstream aggregate recognizes.
-        if ('case_type' in clean && !CASE_TYPE_VALUES.has(clean.case_type)) {
-          return { error: `invalid case_type: ${clean.case_type}`, allowed: [...CASE_TYPE_VALUES] }
-        }
-        if ('priority' in clean && !PRIORITY_VALUES.has(clean.priority)) {
-          return { error: `invalid priority: ${clean.priority}`, allowed: [...PRIORITY_VALUES] }
-        }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         // Autonomy is operator control: it is set only from the dashboard, never by
@@ -190,7 +200,15 @@ export function buildCaseToolset(storeOrNull) {
       },
       handler: async ({ id, lat, lon, ...fields }) => {
         const incoming = pick(fields, [...REPORT_KEYS])
-        const hasLatLon = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+        const latLonSupplied = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon)
+        const hasLatLon = latLonSupplied && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
+        // A supplied-but-out-of-range coordinate (e.g. swapped lat/lon) must not
+        // be silently dropped indistinguishably from "never supplied" -- surface
+        // it so the caller/agent can correct it instead of the map pin quietly
+        // never appearing with no explanation.
+        if (latLonSupplied && !hasLatLon) {
+          return { error: `lat/lon out of range: lat=${lat}, lon=${lon} (expected |lat|<=90, |lon|<=180)` }
+        }
         if (!Object.keys(incoming).length && !hasLatLon) return { error: 'no report fields supplied' }
         // Snapshot the PRIOR value of every field this call touches, before the
         // merge, so a correction (a field already non-null being overwritten) is
@@ -435,9 +453,15 @@ export function buildCaseToolset(storeOrNull) {
         const author = ctx?.author || ctx?.principal?.id
         if (!store().createCase) return { error: 'store does not support explicit case creation' }
         const c = await store().createCase({ subject: subject || '', assignee: author || 'agent', channel: ctx?.channel || 'enquiry' })
-        if (store().setActiveCase && author) await store().setActiveCase(author, c.id)
+        // Binding active can silently no-op (no author on ctx, or store lacks
+        // setActiveCase) while the case was still created -- surface that half-
+        // success explicitly rather than returning ok:true as if fully bound, so
+        // the caller knows subsequent turns may still be talking to the OLD
+        // active case rather than this new one.
+        let boundActive = false
+        if (store().setActiveCase && author) { await store().setActiveCase(author, c.id); boundActive = true }
         await store().appendEvent(c.id, { kind: 'note', actor: 'system', text: `case explicitly opened for a fresh report by ${author || 'unknown'}` })
-        return { ok: true, activeCase: enquiryRow(c) }
+        return { ok: true, activeCase: enquiryRow(c), boundActive, ...(boundActive ? {} : { warning: 'case created but not bound active (no author on this turn) -- it will not automatically receive the next message' }) }
       },
     },
     {
@@ -522,11 +546,7 @@ async function mineRows(store, ctx, limit) {
     : ['new', 'triaging', 'in_progress', 'waiting']
   const open = await store.listCases({ status: { $in: openStatuses } }, { limit: Math.max(limit * 10, 200) })
   if (!author) return open.slice(0, limit)
-  const a = String(author)
-  const mine = open.filter(c => {
-    const ext = String(c.external_id || '')
-    return ext === a || ext.split(':').includes(a) || ext.endsWith(':' + a)
-  })
+  const mine = open.filter(c => ownsCase(c.external_id, author))
   return mine.slice(0, limit)
 }
 function pick(obj, keys) {

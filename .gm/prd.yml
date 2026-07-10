@@ -4694,3 +4694,63 @@
   subject: 'Re-investigate: thatcher npm is now v1.0.37 (past the v1.0.13 fix floor); confirmed create() in installed node_modules/thatcher/src/lib/busybase-store.js:254 already returns the locally-constructed record with real genId, not rowid. case-store.js _createReload (lines 176-189) says this bug is still present -- stale comment/workaround. Live-verify against real embedded store before removing: create a row via t.create() directly, confirm returned record.id matches the id thatcher actually stored (list() lookup by that id succeeds). If confirmed fixed, simplify findOrCreateContact/findOrCreateCase to trust t.create() return directly, removing the list-reload roundtrip -- but ONLY after live proof, this is the case-creation critical path.'
   status: completed
   witness: 'Live-verified via direct t.create()+t.get() round trip against fresh embedded store: thatcher v1.0.37 create() returns record.id as the correct genId string (mreqzw9h-sklv9jcf), get() by that id succeeds and matches. Confirmed the busybase-store.js create() source (node_modules/thatcher/src/lib/busybase-store.js:254) always returns the locally-constructed record. Simplified case-store.js _createReload (lines 176-189) to trust t.create() return directly instead of the list-and-pick-newest reload workaround; uniqueWhere param kept unused so all 5 existing call sites (findOrCreateContact, findOrCreateCase x2, x2 more) stay unchanged. End-to-end verified via store.findOrCreateCase: case created with correct id/ref, re-fetch by id works, second findOrCreateCase call correctly dedupes to the same case (created:false). node --check passes, npm run lint passes clean.'
+- title: HUMAN keyword false-positive on report sentences containing 'human'
+  witness: 'src/gateway-hooks.js: added AMBIGUOUS_HUMAN_KEYS set + gated ''human'' in the live()/fires() closures the same way AMBIGUOUS_STOP_KEYS gates ''stop''; also rewrote exclude matching to be scoped to a token window around each specific key occurrence (excludedAt/EXCLUDE_WINDOW) instead of whole-message. Live-verified via node import: detectContactIntent(''the human gave it water'')===null (was ''human''); detectContactIntent(''i need a real human please'')===''human'' (correct, still fires); detectContactIntent(''can i speak to a vet, and also i really need a real human on the phone'')===''human'' (was suppressed, now correctly fires); detectContactIntent(''stop'')===''stop'' and detectContactIntent(''she said stop bringing new animals in'')===null (regression check, both still correct).'
+  id: human-keyword-false-positive-on-report-sentences-containing-huma
+  status: completed
+- title: 'guessLang: dumela shared cue causes Sesotho/Setswana tie -> wrong English fallback'
+  witness: 'src/gateway-hooks.js LANG_CUES: removed ''dumela'' from the tn cue list, kept only on st, so a bare/short st/tn greeting using dumela no longer ties 1-1 and falls back to English. Live-verified: guessLang(''dumela'')===''st'' (was ''en''); guessLang(''dumela kgomo ea kula'')===''st''. Note: a message mixing dumela with a tn-unique cue (e.g. ''dumela rra'') can still tie since both languages now score 1 from different cues -- this is a genuinely ambiguous mixed-language input, out of scope for the specific bare-greeting bug reported.'
+  id: guesslang-dumela-shared-cue-causes-sesotho-setswana-tie-wrong-en
+  status: completed
+- title: 'mergeReport: unconditional retry write can silently clobber a third writer''s change'
+  witness: 'src/case-store.js mergeReport: replaced the single re-read+unconditional-write retry with a bounded loop (MERGE_RETRY_LIMIT=3) that passes expectedVersion on every retry attempt, re-reading and re-merging against the fresh row on each conflict. After the retry limit, returns an explicit error rather than silently overwriting. Syntax-checked via npm run lint (32 files clean).'
+  id: mergereport-unconditional-retry-write-can-silently-clobber-a-thi
+  status: completed
+- title: detectContactIntent exclude-phrase matching is message-wide, not scoped to the matched key occurrence
+  witness: 'Same fix as human-keyword-false-positive row (single combined change in src/gateway-hooks.js''s detectContactIntent): exclude matching is now scoped to a token window (EXCLUDE_WINDOW=4) around each specific live key occurrence via excludedAt(), replacing the whole-message padded.includes check. Live-verified: ''can i speak to a vet, and also i really need a real human on the phone'' now correctly returns ''human'' (previously suppressed message-wide by the unrelated ''speak to a vet'' exclude phrase).'
+  id: detectcontactintent-exclude-phrase-matching-is-message-wide-not
+  status: completed
+- title: rateWindows/globallyRateLimited maps grow unbounded, never evicted
+  witness: 'src/gateway-hooks.js: added sweepRateWindows() (10-min interval, piggybacked on rateLimited()''s own call cadence rather than a new timer) that deletes any rateWindows Map entry with no hits inside the current window. Called at the top of rateLimited() before the per-contact check. Syntax-checked via npm run lint clean.'
+  id: ratewindows-globallyratelimited-maps-grow-unbounded-never-evicte
+  status: completed
+- title: case_new returns ok:true even when setActiveCase silently skipped (falsy author)
+  witness: 'src/case-tools.js case_new handler: tracks boundActive (true only when setActiveCase actually ran) and returns it in the tool result, plus an explicit warning field when binding was skipped (no author on ctx), so the caller/agent can tell a half-success (case created, not bound active) from a full success instead of a bare ok:true in both cases.'
+  id: case-new-returns-ok-true-even-when-setactivecase-silently-skippe
+  status: completed
+- title: Ownership-check logic duplicated and could diverge between case_get and case_mine/case_today
+  witness: 'src/case-tools.js: extracted shared ownsCase(externalId, author) helper (module-level, above buildCaseToolset) and switched both case_get''s owns check and mineRows'' mine filter to call it, removing the two independent reimplementations of the same external_id containment logic. Syntax-checked via npm run lint clean.'
+  id: ownership-check-logic-duplicated-and-could-diverge-between-case
+  status: completed
+- title: case-sweep partial-failure duplicate breach notification is unbounded, not one-shot
+  witness: 'src/case-sweep.js: added writeFailureRetryAt Map (caseId -> next-retry-ms) with a 15-min WRITE_FAILURE_RETRY_MS gate checked before the append/notify block; set on updateCaseQuiet failure (catch branch), cleared on success. A persistently-failing case row now re-attempts/re-pages at most once per 15 minutes instead of every sweep interval indefinitely. Syntax-checked via npm run lint clean.'
+  id: case-sweep-partial-failure-duplicate-breach-notification-is-unbo
+  status: completed
+- title: supervisor state machine can desync when RESTART_DONE fire fails but BOOTED still fires
+  witness: 'src/supervisor.js worker READY handler: captures fire(''BOOTED'', ...) return value (bootedOk); if false and state isn''t already ''healthy'', force-resyncs state to ''healthy'' directly (the worker being confirmed live via READY is ground truth) with a loud warn log, rather than leaving the machine stuck at a stale state forever. Syntax-checked via npm run lint clean.'
+  id: supervisor-state-machine-can-desync-when-restart-done-fire-fails
+  status: completed
+- title: llm.js status() never re-probes a degraded-but-non-null backend
+  witness: 'src/llm.js status(): when backend is non-null but completionHealth().degraded is true (all recent real turns failed/slow) and the debounce interval has elapsed, backend is reset to null so the NEXT ensure()/callLLM call naturally re-resolves via the existing debounced path -- closing the gap where a stale-but-non-null backend reported ok:false forever with no self-heal trigger. Syntax-checked via npm run lint clean.'
+  id: llm-js-status-never-re-probes-a-degraded-but-non-null-backend
+  status: completed
+- title: clusters/geo/map endpoints treat 'resolved' cases as open, inconsistent with report.js
+  witness: 'Added shared isOpenCase(c) helper to src/format.js (status !== ''resolved'' && status !== ''closed''). Replaced every bare ''status !== closed''-only filter in src/dashboard/server.js (attention/sla-at-risk/clusters/geo/handover/unreplied/suggestions routes, 8 call sites) and src/report.js''s own local open filter with isOpenCase, so resolved cases are now consistently excluded from every ''open'' view across the dashboard, matching report.js''s original stricter behavior everywhere instead of only at the one site that already had it right. Live-verified via node import: isOpenCase({status:''resolved''})===false, isOpenCase({status:''closed''})===false, isOpenCase({status:''new''})===true.'
+  id: clusters-geo-map-endpoints-treat-resolved-cases-as-open-inconsis
+  status: completed
+- title: overview.js closedByDay undercounts vs totals.closed when a case closes without a transition event
+  witness: 'src/overview.js buildOverview: when no transition event with data.to in resolved/closed exists for a closed case, closedByDay now falls back to the case''s own updated_at (evMs({created_at: c.updated_at})) instead of leaving lastClose null and silently dropping the closure from closed_by_day -- keeps it reconciled with totals.closed (which counts from case.status directly). Syntax-checked via npm run lint clean.'
+  id: overview-js-closedbyday-undercounts-vs-totals-closed-when-a-case
+  status: completed
+- title: workload.js leaks phantom ex-operator cards for ids no longer in the current roster
+  witness: 'src/workload.js buildWorkload: added rosterIds Set from the passed-in roster; the reply-attribution loop now skips creating a card for any data.by id not present in rosterIds, so a former/unrostered operator''s raw id no longer leaks a phantom ad-hoc card into /api/operators/workload. open_assigned/stale_claims (a genuinely load-bearing signal that a case is still assigned to a departed operator) intentionally left as-is -- only the reply-attribution phantom-card path was in scope. Syntax-checked via npm run lint clean.'
+  id: workload-js-leaks-phantom-ex-operator-cards-for-ids-no-longer-in
+  status: completed
+- title: case_update silently no-ops empty-string case_type/priority instead of validating consistently
+  witness: 'src/case-tools.js case_update handler: moved case_type/priority enum validation to run on the raw `patch` object BEFORE pick() strips empty-string values, so an explicit case_type:'''' is now rejected the same way a bogus value is instead of silently no-opping. Live-verified via node import: case_update handler({id:''x'', case_type:''''}) now returns {error:''invalid case_type: '', allowed:[...]} (previously silently dropped the field and proceeded); case_type:''bogus'' still correctly rejected.'
+  id: case-update-silently-no-ops-empty-string-case-type-priority-inst
+  status: completed
+- title: hasLatLon silently drops out-of-range coordinates with no error or event
+  witness: 'src/case-tools.js case_report handler: split hasLatLon into latLonSupplied (type/finite check only) and hasLatLon (adds the range check); when lat/lon are supplied but out of range, the handler now returns an explicit error naming the values instead of silently dropping them with no signal, distinguishing ''rejected out-of-range coordinate'' from ''never supplied'' in the tool result. Syntax-checked via npm run lint clean.'
+  id: haslatlon-silently-drops-out-of-range-coordinates-with-no-error
+  status: completed

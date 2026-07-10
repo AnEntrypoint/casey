@@ -11,6 +11,7 @@
 import { buildOverview } from './overview.js'
 import { buildGeo } from './geo.js'
 import { buildWorkload } from './workload.js'
+import { isOpenCase } from './format.js'
 
 // breachRows: array of {breach} objects (classifyCaseHealth output) flattened
 // across the open pool; counted here into a breach -> count map.
@@ -20,7 +21,7 @@ import { buildWorkload } from './workload.js'
 // Team panel shows, composed here instead of fetched separately.
 export function buildReport(cases, eventsByCaseId, breachRows, now = Date.now(), days = 14, roster = [], staleMs = 24 * 3600 * 1000) {
   const overview = buildOverview(cases, eventsByCaseId, now, days * 24 * 3600 * 1000)
-  const open = (cases || []).filter(c => c.status !== 'resolved' && c.status !== 'closed')
+  const open = (cases || []).filter(isOpenCase)
   const geo = buildGeo(open)
   const workload = buildWorkload(cases, eventsByCaseId, roster, now, staleMs)
 

@@ -16,6 +16,16 @@ import { classifyCaseHealth, healthTag, ALL_HEALTH_TAGS, DEFAULT_THRESHOLDS } fr
 
 const HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
+// caseId -> last-attempted-ms, for breaches whose updateCaseQuiet write keeps
+// failing (a persistently locked/broken row). Without this, the observation +
+// notifyBreach page above re-fires every sweep interval indefinitely while the
+// write never succeeds (currentHealth is only ever updated on a SUCCESSFUL
+// write, so "added" never shrinks) -- an unbounded duplicate/page storm rather
+// than the intended "at worst one visible duplicate on retry". Gate re-attempts
+// to once per this interval regardless of sweep cadence.
+const writeFailureRetryAt = new Map()
+const WRITE_FAILURE_RETRY_MS = 15 * 60_000
+
 // Normalize a thatcher/ISO timestamp to epoch ms (thatcher persists unix-seconds as
 // a number; events/ISO strings parse directly). Mirrors attn.js tsMs/case-health.js
 // ms so every surface reads the same epoch. NaN when unknown.
@@ -106,6 +116,13 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
     const removed = [...currentHealth].filter(t => !desired.has(t))
     if (!added.length && !removed.length) continue   // nothing changed for this case
 
+    // A prior pass already tried (and failed) to persist this exact change
+    // recently -- skip re-appending/re-paging until the retry interval elapses,
+    // so a persistently failing write degrades to bounded periodic retries
+    // instead of an unbounded per-sweep-interval spam.
+    const retryAt = writeFailureRetryAt.get(c.id)
+    if (retryAt && now < retryAt) continue
+
     try {
       // Append the observation(s) BEFORE writing the health tags. The tag is the
       // dedup key ("one observation per newly-entered breach"), so if the tag
@@ -130,11 +147,13 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
       // Quiet update: setting health tags must NOT touch last_event_at, or the
       // sweep would make every stale case it flags look freshly active.
       await store.updateCaseQuiet(c.id, { tags: nextTags.join(',') })
+      writeFailureRetryAt.delete(c.id)
       summary.flagged += added.length
       summary.cleared += removed.length
     } catch (e) {
       log?.warn?.('[sweep] reconcile failed', { caseId: c.id, error: e.message })
       summary.errors.push({ caseId: c.id, error: e.message })
+      writeFailureRetryAt.set(c.id, now + WRITE_FAILURE_RETRY_MS)
     }
   }
   log?.info?.('[sweep] pass complete', summary)
