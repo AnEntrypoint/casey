@@ -195,7 +195,7 @@
   status: completed
 - id: thatcher-casey-dep-localpath
   subject: Switch casey dependency from thatcher npm to file:../thatcher and reinstall
-  witness: 'blockedBy external: npm has only thatcher 1.0.7; fixes are in GitHub tag v1.0.13 but npm publish needs the user''s NPM_TOKEN secret (CI run 27102472071 skipped publish). Local fork build blocked by bcrypt+LanceDB native-build friction. casey stays on npm 1.0.7 + workarounds (test.js green) until npm has v1.0.13+. See thatcher-npm-token-blocked.'
+  witness: 'Resolved by time: thatcher npm now at 1.0.37, past the v1.0.13 floor this row was waiting on. casey package.json already depends on thatcher: latest (npm registry), not a local path -- matches the current architecture.'
   detail: After cloning+fixing, point casey at the local thatcher fork so fixes take effect, then remove casey-side workarounds that the fixes make unnecessary.
   status: completed
 - id: thatcher-publish-on-push
@@ -205,7 +205,7 @@
   status: completed
 - id: thatcher-remove-casey-workarounds
   subject: After thatcher fixes land, remove now-obsolete casey workarounds (_createReload, parsed-graph transition, &system_fields if auto-injected, databasePath cwd note)
-  witness: 'blockedBy external on thatcher-casey-dep-localpath: workarounds (_createReload, _validateTransition, &system_fields) stay until casey runs against fixed thatcher (npm v1.0.13+). Removing them now against npm v1.0.7 would break casey (bugs still present there). Tracked for when NPM_TOKEN is set.'
+  witness: Re-investigated against current thatcher 1.0.37. _createReload was the one real create-id-bug workaround this row referenced -- confirmed fixed upstream and simplified in reopen-thatcher-createreload-workaround (this session). _validateTransition (case-store.js:135) is NOT a thatcher-bug workaround -- it is casey own permanent xstate workflow-authority check (by design, unrelated to any thatcher defect); this row conflated the two. system_fields auto-injection is thatcher own generateEntitySpec behavior (per completed row thatcher-auto-system-fields), already handled upstream, no casey-side workaround exists to remove.
   detail: Each workaround removed only after its corresponding thatcher fix is verified working from the local fork; keep tests green at each removal.
   status: completed
 - id: thatcher-v1011-resurvey
@@ -215,7 +215,7 @@
   status: completed
 - id: thatcher-npm-token-blocked
   subject: npm publish of thatcher is blocked on the NPM_TOKEN GitHub secret (only the repo owner can set it); GitHub tag v1.0.13 has the fixes but npm is still 1.0.7
-  witness: 'blockedBy external: only the AnEntrypoint org owner can add the NPM_TOKEN GitHub Actions secret to publish thatcher to npm. Fixes are shipped to GitHub (tag v1.0.13, CI green); npm publish auto-runs once the secret exists. Not reachable from this session.'
+  witness: 'Resolved by time: npm view thatcher version now returns 1.0.37 (npm publishing confirmed restored per AGENTS.md, NPM_TOKEN set 2026-07-02). The org-owner-only blocker this row was waiting on has cleared.'
   detail: 'blockedBy external: user must add NPM_TOKEN to AnEntrypoint/thatcher repo secrets. Once npm has v1.0.13+, switch casey dep and remove workarounds (thatcher-casey-dep-localpath, thatcher-remove-casey-workarounds).'
   status: completed
 - id: casey-mockadapter-inject-id-passthrough
@@ -4690,3 +4690,7 @@
   subject: Remove stray UTF-8 BOM byte at src/dashboard/server.js:1 -- genuine ASCII-only convention violation missed by lint.mjs decorative-glyph range check, one-byte non-ASCII exception nobody currently enforces
   status: completed
   witness: 'Stripped EF BB BF BOM from src/dashboard/server.js byte 0 via node fs buffer slice(3). Verified: xxd shows file now starts 2f2f (//) not efbb bf2f. node --check src/dashboard/server.js passes. npm run lint passes clean (32 JS files syntax-checked, config+package+ascii+pure-agent+no-stub-mock clean).'
+- id: reopen-thatcher-createreload-workaround
+  subject: 'Re-investigate: thatcher npm is now v1.0.37 (past the v1.0.13 fix floor); confirmed create() in installed node_modules/thatcher/src/lib/busybase-store.js:254 already returns the locally-constructed record with real genId, not rowid. case-store.js _createReload (lines 176-189) says this bug is still present -- stale comment/workaround. Live-verify against real embedded store before removing: create a row via t.create() directly, confirm returned record.id matches the id thatcher actually stored (list() lookup by that id succeeds). If confirmed fixed, simplify findOrCreateContact/findOrCreateCase to trust t.create() return directly, removing the list-reload roundtrip -- but ONLY after live proof, this is the case-creation critical path.'
+  status: completed
+  witness: 'Live-verified via direct t.create()+t.get() round trip against fresh embedded store: thatcher v1.0.37 create() returns record.id as the correct genId string (mreqzw9h-sklv9jcf), get() by that id succeeds and matches. Confirmed the busybase-store.js create() source (node_modules/thatcher/src/lib/busybase-store.js:254) always returns the locally-constructed record. Simplified case-store.js _createReload (lines 176-189) to trust t.create() return directly instead of the list-and-pick-newest reload workaround; uniqueWhere param kept unused so all 5 existing call sites (findOrCreateContact, findOrCreateCase x2, x2 more) stay unchanged. End-to-end verified via store.findOrCreateCase: case created with correct id/ref, re-fetch by id works, second findOrCreateCase call correctly dedupes to the same case (created:false). node --check passes, npm run lint passes clean.'

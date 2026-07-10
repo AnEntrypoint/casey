@@ -173,19 +173,19 @@ export class CaseStore {
     return this._tProxy
   }
 
-  // thatcher's create() returns a record whose `id` is the integer rowid alias
-  // (lastInsertRowid), NOT the genId it actually stored in the TEXT id column.
-  // So we never trust the returned id: we create, then reload the canonical row
-  // by a unique filter to recover the real id.
-  async _createReload(entity, data, user, uniqueWhere) {
-    await this.t.create(entity, data, user)
-    // thatcher ignores orderBy, so a limit:1 fetch could return the wrong row if
-    // uniqueWhere ever matches more than one. Pull the matches and pick the newest
-    // (the row we just created) in JS -- the reload is then order-independent.
-    const rows = await this.t.list(entity, uniqueWhere, { limit: 50 })
-    const row = rows.reduce((best, r) => (!best || (r.created_at || 0) > (best.created_at || 0) ? r : best), null)
-    if (!row) throw new Error(`created ${entity} but could not reload by ${JSON.stringify(uniqueWhere)}`)
-    return row
+  // thatcher (npm latest, currently >=1.0.37, well past the v1.0.13 fix floor)
+  // create() now returns the locally-constructed record carrying the real genId
+  // it stored in the TEXT id column -- confirmed live against the installed
+  // node_modules/thatcher/src/lib/busybase-store.js create() (returns `record`
+  // with `id: data.id || genId()`, never a rowid), and re-verified end-to-end
+  // via a direct t.create()+t.get()-by-returned-id round trip against a fresh
+  // embedded store. The uniqueWhere-list-and-pick-newest reload this function
+  // used to need (because an older thatcher returned a rowid alias instead) is
+  // dead weight now; trust the create() return directly. uniqueWhere is kept as
+  // a parameter (unused) so every existing call site stays unchanged -- this is
+  // a pure internal simplification, not a signature change.
+  async _createReload(entity, data, user, _uniqueWhere) {
+    return this.t.create(entity, data, user)
   }
 
   // ---- contacts -----------------------------------------------------------
