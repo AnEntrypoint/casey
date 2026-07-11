@@ -27,14 +27,22 @@ const SCALAR_BOUNDS = {
   neverClosedMs: [HOUR, 60 * DAY],
   incompleteCriticalMs: [HOUR, 30 * DAY],
   unsentDraftMs: [ONE_MIN, 7 * DAY],
+  workerLocationStaleMs: [ONE_MIN, 7 * DAY],
 }
-// Per-stage dwell ceilings (the nested stageMaxDwellMs map). Only these stages
-// are tunable; an unknown stage key is dropped.
-const STAGE_KEYS = ['new', 'triaging', 'in_progress', 'waiting']
+// Per-stage dwell ceilings (the nested stageMaxDwellMs map). A stage key is
+// accepted whenever it is a non-empty string -- NOT restricted to the shipped
+// default's 4 stage names, so a deployment that renames/adds a workflow stage
+// in thatcher.config.yml can tune its dwell ceiling with no code change here.
+// (Previously a fixed 4-item allowlist silently dropped any other stage name.)
 const STAGE_BOUNDS = [HOUR, 60 * DAY]
+const MAX_STAGE_KEY_LEN = 64
+
+// Fields whose values are on-site-critical report keys (see case-health.js
+// VISIT_CRITICAL) -- an array of short field-name strings, not a duration.
+const LIST_KEYS = { visitCritical: { maxItems: 32, maxItemLen: 64 } }
 
 export const SCALAR_KEYS = Object.keys(SCALAR_BOUNDS)
-export const THRESHOLD_KEYS = [...SCALAR_KEYS, 'stageMaxDwellMs']
+export const THRESHOLD_KEYS = [...SCALAR_KEYS, 'stageMaxDwellMs', ...Object.keys(LIST_KEYS)]
 
 function clampInt(v, [min, max]) {
   const n = Number(v)
@@ -58,16 +66,24 @@ export function mergeThresholds(patch, base = DEFAULT_THRESHOLDS) {
     if (key === 'stageMaxDwellMs') {
       const stages = src.stageMaxDwellMs
       if (!stages || typeof stages !== 'object') { rejected.push(key); continue }
-      let any = false
       for (const sk of Object.keys(stages)) {
-        if (!STAGE_KEYS.includes(sk)) { rejected.push(`stageMaxDwellMs.${sk}`); continue }
+        if (typeof sk !== 'string' || !sk || sk.length > MAX_STAGE_KEY_LEN) { rejected.push(`stageMaxDwellMs.${sk}`); continue }
         const c = clampInt(stages[sk], STAGE_BOUNDS)
         if (c === null) { rejected.push(`stageMaxDwellMs.${sk}`); continue }
         out.stageMaxDwellMs[sk] = c
         applied.push(`stageMaxDwellMs.${sk}`)
-        any = true
       }
-      if (!any && !applied.includes('stageMaxDwellMs')) { /* nothing applied for the map */ }
+      continue
+    }
+    if (key in LIST_KEYS) {
+      const { maxItems, maxItemLen } = LIST_KEYS[key]
+      const list = src[key]
+      if (!Array.isArray(list) || !list.length || list.length > maxItems
+        || !list.every(v => typeof v === 'string' && v.length > 0 && v.length <= maxItemLen)) {
+        rejected.push(key); continue
+      }
+      out[key] = [...list]
+      applied.push(key)
       continue
     }
     if (!(key in SCALAR_BOUNDS)) { rejected.push(key); continue }

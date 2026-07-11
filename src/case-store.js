@@ -61,6 +61,7 @@ export class CaseStore {
     this.onTransition = opts.onTransition || null
     this.thatcher = null
     this._wf = null            // parsed workflow stage graph
+    this._fieldEnums = null    // entity.field -> options[] (case_type/priority/etc), from the same config
     this._machine = null       // xstate machine built from _wf (transition authority)
     this._locks = new Map()    // per-conversation find-or-create serialization
   }
@@ -72,6 +73,7 @@ export class CaseStore {
     // fails fast with a clear message instead of a cryptic runtime error later.
     const cfg = yaml.load(fs.readFileSync(this.configPath, 'utf8'))
     this._wf = this._validateConfig(cfg)
+    this._fieldEnums = this._parseFieldEnums(cfg)
     // The lifecycle is now a real xstate machine built from the same graph: it,
     // not bespoke array checks, is the authority on whether a transition is legal.
     this._machine = buildCaseMachine(this._wf)
@@ -121,6 +123,32 @@ export class CaseStore {
       for (const n of names) if (!statusOpts.includes(n)) throw new Error(`casey config: case.status enum is missing stage "${n}"`)
     }
     return graph
+  }
+
+  // Read every entity.field { type: enum, options: [...] } declaration off the
+  // same parsed config, so a deployment that adds/renames a case_type or
+  // priority value in thatcher.config.yml is picked up everywhere that used to
+  // carry its own hardcoded copy of the list (case-tools.js validation guards,
+  // case_list/case_update tool-schema enums) with no code change. Shape:
+  // { "<entity>.<field>": string[] }. Non-enum fields and entities with no
+  // fields are simply absent -- callers fall back to their own default.
+  _parseFieldEnums(cfg) {
+    const out = {}
+    for (const [entName, ent] of Object.entries(cfg?.entities || {})) {
+      for (const [fieldName, def] of Object.entries(ent?.fields || {})) {
+        if (def && def.type === 'enum' && Array.isArray(def.options)) {
+          out[`${entName}.${fieldName}`] = [...def.options]
+        }
+      }
+    }
+    return out
+  }
+
+  // Config-declared enum options for entity.field (e.g. 'case.case_type',
+  // 'case.priority'), or `fallback` when the config has no such enum (a
+  // pre-init store, or a config that left the field free-text).
+  getFieldEnum(entityDotField, fallback = []) {
+    return this._fieldEnums?.[entityDotField] || fallback
   }
 
   // Close the underlying store cleanly (flush WAL, release handles).
@@ -241,6 +269,25 @@ export class CaseStore {
   async getCase(id) { return this.t.get('case', id) }
 
   async getContact(id) { return id ? this.t.get('contact', id) : null }
+
+  // Every contact, most-recently-created first in JS (thatcher's list() does not
+  // order -- same discipline as findOpenCase above), for the dashboard's
+  // Contacts/Reporters panel. Internal-team-only surface (operator/admin), never
+  // exposed on the public /report form.
+  async listContacts({ limit = 500 } = {}) {
+    const rows = await this.t.list('contact', {}, { limit })
+    return [...rows].sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
+  }
+
+  // Operator-assigned access-tier change (reporter <-> field_worker). NEVER
+  // called from the agent/tool-call path (case-tools.js has no tool that can
+  // reach this) -- only the dashboard's admin-gated /api/contacts/:id/tier
+  // route and the CLI's break-glass path call this, matching the "operator-
+  // assignable, never contact-self-service or LLM-settable" design.
+  async setContactTier(contactId, tier, user = SYSTEM_USER) {
+    if (tier !== 'reporter' && tier !== 'field_worker') throw new Error(`invalid tier: ${tier}`)
+    return this.t.update('contact', contactId, { tier }, user)
+  }
 
   // Operator-tunable health thresholds, persisted as an append-only audited
   // observation on a singleton `system` settings case (the same pattern the

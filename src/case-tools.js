@@ -10,8 +10,21 @@ import { getCaseStore } from './case-runtime.js'
 import { AGENT_USER, REPORT_KEYS } from './case-store.js'
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra })
-const CASE_TYPE_VALUES = new Set(['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'])
-const PRIORITY_VALUES = new Set(['low', 'normal', 'high', 'urgent'])
+// Shipped defaults -- used for the tool-schema `enum` hint shown to the model
+// (built once at plugin-load time, before a store necessarily exists, so it
+// cannot read live config) AND as the fallback when a config has no case_type/
+// priority enum declared. The actual WRITE-TIME validation below reads the
+// live config-declared enum via store().getFieldEnum(), so a deployment that
+// adds/renames a case_type or priority value in thatcher.config.yml is
+// enforced correctly even though the schema hint still shows the shipped list.
+const DEFAULT_CASE_TYPE_VALUES = ['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert']
+const DEFAULT_PRIORITY_VALUES = ['low', 'normal', 'high', 'urgent']
+// Same schema-hint-vs-enforcement split as case_type/priority above: the
+// workflow's real stage graph (thatcher.config.yml workflows.case_lifecycle)
+// is the actual authority (CaseStore._machine / getValidStatuses()), enforced
+// wherever a transition is attempted. This default only seeds the tool-schema
+// `enum` hint shown to the model before a store necessarily exists.
+const DEFAULT_STAGE_VALUES = ['new', 'triaging', 'in_progress', 'waiting', 'resolved', 'closed']
 
 // external_id is 'container:author' (a multi-author channel) or the bare author
 // (a 1:1 chat) -- a case is "owned" by an author when their id appears as one
@@ -64,19 +77,28 @@ export function buildCaseToolset(storeOrNull) {
       toolset: 'cases',
       schema: {
         name: 'case_list',
-        description: 'List cases, optionally filtered by status/channel/assignee/location. Use `location` (a town, area, or place a person mentions) to find reports in a place -- this is the place-enquiry tool. Returns most-recently-active first, PII-free.',
+        description: 'List cases, optionally filtered by status/channel/assignee/location. Use `location` (a town, area, or place a person mentions) to find reports in a place -- this is the place-enquiry tool. Use `near` (your own best-estimate lat/lon for the place the worker said they are at) to find the NEAREST reports -- this is the "closest case" / "cases near me" tool; it returns rows sorted by distance with a distance_km on each, so you can answer "the nearest on record is CASE-xxxx at <place>, about N km away" from the real result, never from memory. Returns most-recently-active first (or nearest-first when `near` is given), PII-free.',
         parameters: {
           type: 'object',
           properties: {
-            status: str('Filter by workflow status', { enum: ['new', 'triaging', 'in_progress', 'waiting', 'resolved', 'closed'] }),
+            status: str('Filter by workflow status', { enum: DEFAULT_STAGE_VALUES }),
             channel: str('Filter by channel'),
             assignee: str('Filter by assignee'),
             location: str('A place name (town/area) to match reports whose location contains it'),
+            near: {
+              type: 'object',
+              description: 'Your own best-estimate latitude/longitude for the place the worker said they are at (a named town/farm/landmark you can place). Returns cases nearest that point, sorted by distance, each with distance_km. Coordinates are model-estimated, so this is a best-effort "nearest we have on record", not a surveyed exact distance. Leave cases with no recorded coordinate out of the ranking.',
+              properties: {
+                lat: { type: 'number', description: 'Latitude of the place the worker described' },
+                lon: { type: 'number', description: 'Longitude of the place the worker described' },
+                radius_km: { type: 'number', description: 'Optional cap: only return cases within this many km (e.g. 100). Omit to rank all coordinate-bearing cases by distance.' },
+              },
+            },
             limit: { type: 'number', default: 25 },
           },
         },
       },
-      handler: async ({ status, channel, assignee, location, limit = 25 }) => {
+      handler: async ({ status, channel, assignee, location, near, limit = 25 }) => {
         const where = {}
         if (status) where.status = status
         if (channel) where.channel = channel
@@ -92,6 +114,27 @@ export function buildCaseToolset(storeOrNull) {
             try { loc = (c.report ? JSON.parse(c.report) : {}).location || '' } catch { loc = '' }
             return String(loc).toLowerCase().includes(needle)
           }).slice(0, limit)
+        }
+        // A proximity enquiry ("closest case" / "cases near me"): rank by great-circle
+        // distance from the worker's stated place (the model's own best estimate). Only
+        // cases that carry an agent-estimated lat/lon can be ranked; cases without a
+        // coordinate are excluded from the near result (they cannot be placed). This is
+        // best-effort because coordinates are model-estimated, not surveyed -- the
+        // prompt frames the answer as "nearest we have on record".
+        if (near && typeof near.lat === 'number' && typeof near.lon === 'number') {
+          const origLat = near.lat, origLon = near.lon
+          const radius = typeof near.radius_km === 'number' && Number.isFinite(near.radius_km) ? near.radius_km : null
+          const withDist = []
+          for (const c of rows) {
+            const clat = Number(c.lat), clon = Number(c.lon)
+            if (!Number.isFinite(clat) || !Number.isFinite(clon)) continue
+            const d = haversineKm(origLat, origLon, clat, clon)
+            if (radius != null && d > radius) continue
+            withDist.push({ c, distance_km: Math.round(d * 10) / 10 })
+          }
+          withDist.sort((a, b) => a.distance_km - b.distance_km)
+          const top = withDist.slice(0, limit)
+          return { count: top.length, cases: top.map(({ c, distance_km }) => enquiryRow(c, distance_km)) }
         }
         // A LIST spans cases the asker may not own, so project each row PII-FREE
         // (enquiryRow: ref/status/species/location only) -- NEVER the full slimCase
@@ -111,10 +154,10 @@ export function buildCaseToolset(storeOrNull) {
             id: str('Case id'),
             subject: str('Short human title'),
             summary: str('One-paragraph rolling summary of the case state'),
-            priority: str('Priority', { enum: ['low', 'normal', 'high', 'urgent'] }),
+            priority: str('Priority', { enum: DEFAULT_PRIORITY_VALUES }),
             tags: str('Comma-separated tags'),
             assignee: str('Operator handle, or "agent"'),
-            case_type: str('Category, set as soon as the report makes it clear', { enum: ['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'] }),
+            case_type: str('Category, set as soon as the report makes it clear', { enum: DEFAULT_CASE_TYPE_VALUES }),
           },
           required: ['id'],
         },
@@ -125,11 +168,17 @@ export function buildCaseToolset(storeOrNull) {
         // not silently dropped as if the field were never supplied -- pick()
         // would otherwise treat an empty-string write as a no-op, which looks
         // like the update succeeded to a caller who doesn't check fieldsRecorded.
-        if ('case_type' in patch && !CASE_TYPE_VALUES.has(patch.case_type)) {
-          return { error: `invalid case_type: ${patch.case_type}`, allowed: [...CASE_TYPE_VALUES] }
+        // Live config-declared enum (falls back to the shipped default when the
+        // config leaves case_type/priority undeclared), so a deployment's own
+        // thatcher.config.yml options are the ones actually enforced, not a
+        // second hardcoded copy of the list.
+        const caseTypeValues = new Set(store().getFieldEnum('case.case_type', DEFAULT_CASE_TYPE_VALUES))
+        const priorityValues = new Set(store().getFieldEnum('case.priority', DEFAULT_PRIORITY_VALUES))
+        if ('case_type' in patch && !caseTypeValues.has(patch.case_type)) {
+          return { error: `invalid case_type: ${patch.case_type}`, allowed: [...caseTypeValues] }
         }
-        if ('priority' in patch && !PRIORITY_VALUES.has(patch.priority)) {
-          return { error: `invalid priority: ${patch.priority}`, allowed: [...PRIORITY_VALUES] }
+        if ('priority' in patch && !priorityValues.has(patch.priority)) {
+          return { error: `invalid priority: ${patch.priority}`, allowed: [...priorityValues] }
         }
         const clean = pick(patch, ['subject', 'summary', 'priority', 'tags', 'assignee', 'case_type'])
         if (!Object.keys(clean).length) return { error: 'no editable fields supplied' }
@@ -287,7 +336,7 @@ export function buildCaseToolset(storeOrNull) {
           type: 'object',
           properties: {
             id: str('Case id'),
-            to: str('Target stage', { enum: ['new', 'triaging', 'in_progress', 'waiting', 'resolved', 'closed'] }),
+            to: str('Target stage', { enum: DEFAULT_STAGE_VALUES }),
             reason: str('Why you are transitioning (recorded on the timeline)'),
           },
           required: ['id', 'to'],
@@ -432,6 +481,46 @@ export function buildCaseToolset(storeOrNull) {
       },
     },
     {
+      // Casual, self-reported location check-in for a field worker -- DISTINCT from
+      // a CASE's lat/lon (an animal-report location, see case_report). This is the
+      // WORKER's own current position, a live coverage/dispatch signal: it shows
+      // them on the operator map (dashboard-worker-location-map-layer) so a team
+      // can direct/dispatch them, and lets a later "anything near me" enquiry use
+      // it as the near-lookup origin (near-me-lookup-for-field-workers) without
+      // re-describing their location every time. field_worker-tier only (gated by
+      // gateByTier below like every other non-report tool) -- a casual public
+      // reporter has no reason to broadcast standing location.
+      name: 'case_checkin',
+      toolset: 'cases',
+      schema: {
+        name: 'case_checkin',
+        description: "Record the FIELD WORKER's own current location (not an animal report's location) -- call this when they say where they are now, e.g. 'I'm at the clinic', 'just arrived at the Bela-Bela farm', or share GPS. Shows them on the team's map and lets a later 'anything near me' question use this as the starting point.",
+        parameters: {
+          type: 'object',
+          properties: {
+            lat: { type: 'number', description: 'Latitude of where the worker is now (their own best estimate for a described place, or exact if they shared GPS)' },
+            lon: { type: 'number', description: 'Longitude of where the worker is now' },
+          },
+          required: ['lat', 'lon'],
+        },
+      },
+      handler: async ({ lat, lon }, ctx) => {
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+          return { error: 'lat/lon must be finite numbers in range (lat -90..90, lon -180..180)' }
+        }
+        const author = ctx?.author || ctx?.principal?.id
+        if (!author) return { error: 'no author on this turn -- cannot attribute a check-in' }
+        const contact = ctx?.store?.findOrCreateContact
+          ? await ctx.store.findOrCreateContact({ channel: ctx.channel || 'other', external_id: author })
+          : null
+        if (!contact?.id) return { error: 'could not resolve the contact record for this check-in' }
+        await store().t.update('contact', contact.id, {
+          last_location_lat: lat, last_location_lon: lon, last_location_at: new Date().toISOString(),
+        }, { id: 'casey-agent', role: 'agent' })
+        return { ok: true }
+      },
+    },
+    {
       // The agent declares its conversation phase; the gateway reads the STAGE-DECLARED
       // observation back and applies the durable dstate transition. Append-only, keeps
       // the state I/O in casey. Mirrors freddie's case_stage.
@@ -499,7 +588,48 @@ export function buildCaseToolset(storeOrNull) {
       },
     },
   ]
-  return tools
+  return tools.map(gateByTier)
+}
+
+// Tier gate: a 'reporter'-tier contact (casual/public, report-only per the
+// operator-assignable access-tier design) can report an incident and use the
+// two irreversible safety controls, but cannot agentically QUERY the case
+// database -- case_list with a location filter, for instance, would let an
+// anonymous public contact enumerate other reporters' case locations even
+// through the PII-free projection. Only 'field_worker'-tier contacts (and the
+// dashboard/CLI, which never go through this per-turn toolCtx path at all)
+// reach the query/mutation tools. REPORT_ONLY_TOOLS are available at every
+// tier: case_report (the whole point of a reporter existing), case_stage
+// (internal dstate bookkeeping, not a data-access concern), case_stop/
+// case_handoff (opt-out/human-escalation, service controls not data access).
+const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stage', 'case_stop', 'case_handoff'])
+function gateByTier(tool) {
+  if (REPORT_ONLY_TOOLS.has(tool.name)) return tool
+  const handler = tool.handler
+  return {
+    ...tool,
+    handler: async (args, ctx) => {
+      if (ctx?.tier && ctx.tier !== 'field_worker') {
+        return { error: `${tool.name} requires field-worker access -- ask an operator to grant it` }
+      }
+      return handler(args, ctx)
+    },
+  }
+}
+
+// Great-circle distance in km between two lat/lon points (haversine). Used by the
+// proximity enquiry (case_list `near`) so "closest case" can be answered from the
+// real tool result. Coordinates are model-estimated (the agent's own best guess
+// for a described place), so the distance is best-effort, not surveyed exact.
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371
+  const toRad = (d) => (d * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
 function slimCase(c) {
@@ -517,7 +647,7 @@ function slimCase(c) {
 // text that must not reach the model context (and thence a reply) for a case the
 // worker does not own. species/location are flattened out of the report so a place/
 // species list still reads naturally without exposing the rest.
-function enquiryRow(c) {
+function enquiryRow(c, distanceKm) {
   if (!c) return null
   let report = {}
   try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
@@ -525,6 +655,7 @@ function enquiryRow(c) {
     id: c.id, ref: c.ref, status: c.status, priority: c.priority,
     species: report.species || null, location: report.location || null,
     assignee: c.assignee || null, last_event_at: c.last_event_at,
+    ...(typeof distanceKm === 'number' ? { distance_km: distanceKm } : {}),
   }
 }
 function slimEvent(e) {

@@ -55,7 +55,6 @@ export class Casey {
     this._inflight = new Set()      // track in-flight inbound turns for drain-tracking
     this._disconnects = []
     this._sweepTimer = null         // periodic health-guardrail interval handle
-    this._roster = rosterFromEnv()  // people expected to cover (for the coverage-gap check)
     this._coverageGapActive = false // rising-edge dedup so a persistent gap pages once
     // Per-channel receive liveness. A gateway WebSocket can go zombie (TCP still
     // ESTABLISHED, gateway-dead) and silently stop delivering inbound while the
@@ -134,11 +133,44 @@ export class Casey {
     return this
   }
 
+  // Channel registry: channel name -> async factory returning a ready adapter
+  // instance. Adding a new channel (SMS, Telegram, Signal) means adding ONE
+  // entry here (a new `_makeXAdapter` method plus a registry line) instead of
+  // editing an if/else control-flow chain -- the registry is the single place
+  // that answers "what channels does casey support" and "how do I add one".
+  // A channel still needs its own thatcher.config.yml enum edit (contact.
+  // channel/case.channel/event.channel) since the channel name is also a
+  // stored data value, not just a code branch -- that part is inherent to
+  // channel being a config-declared enum (see case-type-enum-config-driven /
+  // priority-levels-config-driven for the same enum-vs-code-literal split) and
+  // is not solved by this registry, only the ADAPTER WIRING side is.
+  _channelRegistry() {
+    return {
+      discord: () => this._makeDiscordAdapter(),
+      whatsapp: () => this._makeWhatsappAdapter(),
+    }
+  }
+
   async _makeAdapter(ch) {
-    // whatsapp / discord come from freddie's platform plugins, registered on the
-    // host's pi.platforms registry. We instantiate their adapter classes directly
-    // for gateway use.
-    if (ch === 'discord') {
+    const registry = this._channelRegistry()
+    const factory = registry[ch]
+    if (!factory) throw new Error(`unknown channel "${ch}"`)
+    return factory()
+  }
+
+  // whatsapp / discord come from freddie's platform plugins, registered on the
+  // host's pi.platforms registry. We instantiate their adapter classes directly
+  // for gateway use.
+  //
+  // Discord needs real resilience wrapping (freddie's own receive loop has no
+  // backoff ceiling and no zombie-heartbeat detection) -- a new realtime-socket
+  // channel will likely need the same shape: force the library adapter's own
+  // receive loop off, wrap start() with casey's own resilient reconnect path,
+  // filter inbound events to what should actually open a case, and verify
+  // outbound delivery status rather than trusting a library send() that
+  // swallows a non-2xx response. Follow this method as the template.
+  async _makeDiscordAdapter() {
+    {
       const { DiscordAdapter } = await import(freddieFile('plugins/platform-discord/handler.js'))
       // ALWAYS receive:false: freddie's DiscordAdapter opens its OWN gateway
       // WebSocket by default (this.receive = opts.receive !== false, then
@@ -210,11 +242,16 @@ export class Casey {
       }
       return a
     }
-    if (ch === 'whatsapp') {
-      const { WhatsappAdapter } = await import(freddieFile('plugins/platform-whatsapp/handler.js'))
-      return new WhatsappAdapter({ port: this.opts.whatsappPort || 0 })
-    }
-    throw new Error(`unknown channel "${ch}"`)
+  }
+
+  // WhatsApp needs no receive-resilience wrapper: freddie's WhatsappAdapter is
+  // webhook-driven (Meta posts to us), not a persistent socket casey must
+  // reconnect -- a genuinely simpler channel than Discord's realtime gateway.
+  // A future webhook-driven channel (e.g. SMS via a carrier webhook) likely
+  // fits this simpler shape rather than Discord's.
+  async _makeWhatsappAdapter() {
+    const { WhatsappAdapter } = await import(freddieFile('plugins/platform-whatsapp/handler.js'))
+    return new WhatsappAdapter({ port: this.opts.whatsappPort || 0 })
   }
 
   // Wrap gateway.handleInbound so every invocation is tracked + awaitable.
@@ -327,7 +364,11 @@ export class Casey {
   // no gap regardless of replies), so a healthy quiet hour costs one cheap case scan.
   async _checkCoverageGap(now = Date.now()) {
     if (!this._notifyBreach) return                 // no alert channel configured
-    const roster = this._roster || []
+    // Re-read CASEY_OPERATORS on every sweep pass (this only runs on the
+    // periodic health interval, not a hot path) rather than a boot-frozen
+    // snapshot, so a roster edit takes effect on the next sweep with no
+    // worker restart -- same fix as dashboard/server.js's getRoster().
+    const roster = rosterFromEnv()
     if (!roster.length) return                      // no one expected to cover
     const open = (await this.store.listCases({}, { limit: 10000 }))
       .filter(c => c.status !== 'closed' && c.status !== 'resolved')

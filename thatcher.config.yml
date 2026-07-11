@@ -65,6 +65,17 @@ entities:
       notes:        { type: textarea }
       active_case_id: { type: text }                 # the case a worker has bound active (enquiry/excursion flow);
                                                      # their field updates append to THIS case until they switch or clear it
+      tier:         { type: enum, options: [reporter, field_worker], default: reporter }
+                                                     # reporter = casual/public report-only, no agentic case-query access.
+                                                     # field_worker = elevated tier: agentic case_list/case_mine/case_today
+                                                     # queries alongside reporting, plus casual location check-ins so they
+                                                     # show up on the operator map for dispatch. OPERATOR-ASSIGNED ONLY via
+                                                     # the dashboard/CLI -- never contact-self-service, never LLM-settable.
+                                                     # Default MUST stay reporter (fail-closed): an unpromoted contact
+                                                     # (or one from before this field existed) gets the lower tier.
+      last_location_lat:  { type: number }            # field_worker casual location check-in (see case_checkin tool);
+      last_location_lon:  { type: number }            # distinct from case.lat/lon (a CASE's location, not a person's)
+      last_location_at:   { type: text }              # ISO timestamp of the check-in, for map staleness fade-out
 
   case:
     label: Case
@@ -142,6 +153,23 @@ entities:
     # One row per operator id -- upsert on every learn, never a growing history table.
     row_access: { scope: none }
 
+  operator_account:
+    label: Operator account
+    label_plural: Operator accounts
+    permission_template: case_perms
+    fields:
+      <<: *system_fields
+      username:       { type: text, required: true }    # login id, slugged lowercase [a-z0-9_-]
+      password_hash:  { type: text, required: true }     # scrypt hash, hex
+      password_salt:  { type: text, required: true }     # scrypt salt, hex (per-account, random)
+      display_name:   { type: text }                     # human name shown in the dashboard, attribution
+      role:           { type: enum, options: [admin, operator], default: operator }
+      disabled:       { type: text, default: "0" }        # "1" disables login without deleting the account/history
+      last_login_at:  { type: text }
+    # Real, actual credentials -- never PII-free-projected, never returned in a
+    # list response (password_hash/password_salt must never leave the server).
+    row_access: { scope: none }
+
 workflows:
   # Stage shape per thatcher workflow-engine: each stage is an object with
   # `forward`/`backward` allow-lists and optional `requires_role`. A transition
@@ -167,8 +195,18 @@ workflows:
         requires_role: [operator, admin]
         backward: [resolved]           # reopen a closed case (operator/admin only)
 
-thresholds:
-  system:
-    pagination:
-      default_page_size: 25
-      max_page_size: 200
+# NOTE: thatcher's config schema expects pagination at the TOP-LEVEL `system`
+# key (see node_modules/thatcher/src/config/config-loader.js
+# getConfigWithDefaults), not nested under a `thresholds` key -- that name
+# collides with thatcher's own unrelated `thresholds.timing/ui/polling`
+# defaults, which casey never uses (casey's OWN health/SLA thresholds are a
+# separate JS-side runtime concept in src/case-health.js and src/thresholds.js,
+# entirely unrelated to this yaml block). The previous `thresholds.system.
+# pagination` nesting here was silently ignored by thatcher, which fell back to
+# its own defaults (default_page_size 50, max_page_size 500) instead of the
+# 25/200 this file declared -- confirmed by reading thatcher's crud-handlers.js,
+# which reads `config.system?.pagination` directly.
+system:
+  pagination:
+    default_page_size: 25
+    max_page_size: 200

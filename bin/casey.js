@@ -115,13 +115,22 @@ ${bold('usage:')}
   casey health                                  read-only guardrail summary (no changes written)
   casey sweep                                   run the health-guardrail sweep once now (writes tags/observations)
   casey transition <ref|id> <stage> [--reason]  move a case to a stage (legality-checked)
+  casey operators add <username> [--password ...] [--name ...] [--role admin|operator]
+                                                 create a dashboard login account (break-glass/scripted provisioning)
+  casey operators list                          list dashboard login accounts (never prints password hashes)
+  casey operators disable <username>            disable a login without deleting its history
+  casey operators enable <username>             re-enable a disabled login
 
 ${bold('flags:')} --help / -h on any command, --version / -v
 
 ${bold('channels (set in .env or the environment):')}
   DISCORD_BOT_TOKEN                             enable discord
   WHATSAPP_API_TOKEN, WHATSAPP_PHONE_NUMBER_ID  enable whatsapp
-  CASEY_DASHBOARD_TOKEN                          require a token to open the dashboard
+
+${bold('dashboard login:')} the dashboard now uses per-operator username/password
+  login (not a shared token) -- a fresh deployment auto-creates a bootstrap
+  admin account on first ${cyan('casey up')} / ${cyan('casey dashboard')} and prints its password once.
+  Use ${cyan('casey operators')} for break-glass recovery if that is lost.
 
 ${dim('new here? run')} ${cyan('casey init')} ${dim('then')} ${cyan('casey doctor')} ${dim('then')} ${cyan('casey up')}`
 
@@ -373,6 +382,9 @@ async function main() {
   if (cmd === 'dashboard') {
     if (flags.help) { console.log('casey dashboard [--port 4000]\n  Start only the observe/edit dashboard against the existing store.'); return }
     const store = createCaseStore(); await store.init()
+    const { ensureBootstrapAdmin } = await import('../src/dashboard/auth.js')
+    const boot = await ensureBootstrapAdmin(store, console)
+    if (boot) console.log(green(`bootstrap admin account created -- username: ${bold(boot.username)}  password: ${bold(boot.password)}`) + dim('  (log in once and create named accounts for your team)'))
     let dash
     try {
       dash = await createDashboard(store, { port: Number(flags.port || 4000) })
@@ -610,6 +622,48 @@ async function main() {
     const after = await store.getCase(caseRow.id)
     console.log(green(`${after.ref}: ${caseRow.status} -> ${after.status}`) + dim(`  (${reason})`))
     process.exit(0)
+  }
+
+  // Break-glass account management: talks to the SAME dashboard/auth.js the
+  // dashboard's own login/user-management panel uses, so the CLI is a real
+  // recovery path (lost admin password, scripted provisioning) rather than a
+  // parallel mechanism that could drift from it.
+  if (cmd === 'operators') {
+    const { createAccount, listAccounts, findAccountByUsername, setAccountDisabled } = await import('../src/dashboard/auth.js')
+    const store = createCaseStore(); await store.init()
+    const sub = rest[0]
+    const positional = rest.slice(1).filter(a => !a.startsWith('--'))
+    if (sub === 'add') {
+      const username = positional[0]
+      if (!username) { console.log('usage: casey operators add <username> [--password ...] [--name ...] [--role admin|operator]'); process.exit(1) }
+      const password = typeof flags.password === 'string' ? flags.password : Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6)
+      try {
+        const acct = await createAccount(store, { username, password, displayName: flags.name, role: flags.role === 'admin' ? 'admin' : 'operator' })
+        console.log(green(`created account "${acct.username}" (role: ${acct.role})`))
+        if (!flags.password) console.log(dim('  generated password: ') + bold(password) + dim('  -- record this now, it is not shown again'))
+        process.exit(0)
+      } catch (e) { console.log(bad(e.message)); process.exit(1) }
+    }
+    if (sub === 'list') {
+      const accounts = await listAccounts(store)
+      if (!accounts.length) { console.log('no operator accounts yet.'); console.log(dim('  run ' + cyan('casey operators add <username>') + ' to create one.')); process.exit(0) }
+      for (const a of accounts) {
+        const status = a.disabled === '1' ? red('disabled') : green('active')
+        console.log(`${bold(a.username)}\t${a.role}\t${status}\t${a.display_name || ''}\t${dim(a.last_login_at || 'never logged in')}`)
+      }
+      process.exit(0)
+    }
+    if (sub === 'disable' || sub === 'enable') {
+      const username = positional[0]
+      if (!username) { console.log(`usage: casey operators ${sub} <username>`); process.exit(1) }
+      const acct = await findAccountByUsername(store, username)
+      if (!acct) { console.log(bad(`no account "${username}"`)); process.exit(1) }
+      await setAccountDisabled(store, acct.id, sub === 'disable')
+      console.log(green(`account "${acct.username}" ${sub === 'disable' ? 'disabled' : 'enabled'}`))
+      process.exit(0)
+    }
+    console.log('usage: casey operators <add|list|disable|enable> ...')
+    process.exit(1)
   }
 
   console.log(HELP)

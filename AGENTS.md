@@ -7,11 +7,18 @@ and the source.
 ## What casey is
 
 casey is a thin orchestrator for **animal-disease surveillance in rural South
-Africa**. Field workers report sick or dead livestock over WhatsApp/Discord in
-their own language; casey gathers a structured report warmly and without
-interrogation, and gives the organising team one observable, editable view per
-report. Times are shown in SAST and phone numbers in +27 format. casey amplifies
-the team's workflow -- it does not impose disease rules or escalation; priority
+Africa**. Anyone messaging over WhatsApp/Discord is a **reporter**; a reporter
+reports sick or dead livestock in their own language and casey gathers a
+structured report warmly and without interrogation, giving the organising team
+one observable, editable view per report. A reporter defaults to the
+**reporter tier** (casual, public, report-only). An operator may promote a
+trusted reporter to the **field_worker tier**, which additionally unlocks
+agentic case-query access (their own open cases, "near me" lookups, place
+enquiries) and casual location check-ins so they show up on the operator map
+for direction/dispatch -- see `contact.tier` under Design principles. Times are
+shown in SAST and phone numbers in +27 format (both configurable via
+`CASEY_TZ`/`CASEY_COUNTRY_CODE` for a non-SA deployment). casey amplifies the
+team's workflow -- it does not impose disease rules or escalation; priority
 stays with people.
 
 ## Architecture
@@ -90,7 +97,8 @@ src/
   casey.js                 top-level assembly: store + host + gateway + adapters + logger; drainQueuedTurns re-drives LLM-down-queued inbounds through the agent on provider recovery (status-gated, oldest-first serialized, mark-attempted only after a successful drive, bounded retry -> dead-letter)
   case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation, SQLITE_BUSY retry proxy, operator_identity learning, optimistic-lock report merge, append-only media fields, no server-side geocoding (full caveat detail: recall "case-store.js caveats")
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
-  case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx)). case_update carries case_type (agent-settable classification, validated against CASE_TYPE_VALUES -- thatcher's own config-declared enum is NOT enforced server-side on write, so the tool validates before every write, matching the dashboard's own check) and priority (same PRIORITY_VALUES guard). case_report carries lat/lon: the AGENT's own estimate (its own world knowledge for a described place, or the worker's exact GPS when given), validated finite/in-range only -- no lookup table, no server-side geocoding of any kind
+  case-tools.js            case_* tool defs registered into the host: get/list(PII-free enquiryRow + location filter)/update/report/observe/transition + the worker-enquiry surface case_mine/case_today (own open cases, scoped by ctx.author via the row_access owner field, PII-free) / case_new (open+bind a fresh active case) / case_checkin (field-worker casual own-location self-report, distinct from a case's lat/lon) / case_stop / case_handoff; autonomy-enforced. Handlers read the per-turn toolCtx as the 2nd arg (freddie invokes handler(args, ctx)). Every tool except case_report/case_stage/case_stop/case_handoff is wrapped by gateByTier, refusing a ctx.tier !== 'field_worker' caller -- casey's own reporter-vs-field_worker access-tier enforcement point. case_update carries case_type (agent-settable classification, validated against the live config-declared enum via store().getFieldEnum('case.case_type', ...) -- thatcher's own config-declared enum is NOT enforced server-side on write, so the tool validates before every write, matching the dashboard's own check) and priority (same getFieldEnum('case.priority', ...) guard). case_report carries lat/lon: the AGENT's own estimate (its own world knowledge for a described place, or the worker's exact GPS when given), validated finite/in-range only -- no lookup table, no server-side geocoding of any kind
+  dashboard/auth.js        per-operator login: scrypt password hashing, stateless HMAC-signed session cookies (no server-side session table), operator_account CRUD (createAccount/listAccounts/setAccountDisabled/deleteAccount), ensureBootstrapAdmin (auto-creates a single admin account with a random printed password on a fresh deployment with zero accounts)
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep; detectCoverageGap (rostered team, open breaching cases, zero in-window operator replies) pages a synthetic TEAM-COVERAGE breach
@@ -109,7 +117,7 @@ src/
   gateway-hooks.js         makeCaseHandler PURE-LLM flow: an inbound hits the STOP/HUMAN deterministic short-circuit (detectContactIntent, above the queue gate), OR the LLM-down queue gate (record a QUEUED-FOR-AGENT marker, send nothing, log loud), OR one runTurn tool loop where the agent classifies + routes + answers + RECORDS THE REPORT (case_report) + declares its phase (case_stage) via the case_* tools. casey does NO deterministic text processing -- no field extraction, no computed next-question. The prompt surfaces the raw report-so-far + the dstate phase (orient) and TRUSTS the model to acknowledge + not repeat + ask the next thing. A degraded turn (empty/error/echo/stock-ack/repeat) sends NOTHING and logs loud (no fallback text -- see the no-mocks-fallbacks-stubs invariant). dedup, media, observe
   discord-receive.js       fallback Discord WS receive for older freddie builds
   llm.js                   model call wiring; resolveCallLLM (boot precedence: acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row, and fires an onRecover edge that drives drainQueuedTurns)
-  dashboard/server.js      express API + anentrypoint-design SPA (observe/edit/override/reply); GET/POST /report public contact form (no token); GET /api/map/cases (PII-free pins with resolved lat/lon, cluster membership, unresolved bucket, capped+truncation-reported) and GET /api/operators/identities (learned per-operator working-area coverage) back the dashboard's Leaflet+OSM map view (status-colored markers, marker clustering via leaflet.markercluster, outbreak-cluster link overlay, operator-coverage overlay, species/type/status/date filters, click-through to case detail) -- both routes token-gated like every other /api route; /vendor/leaflet and /vendor/leaflet.markercluster serve the map's static JS/CSS, exempted from the auth gate the same way /design already is (static UI assets, no case data)
+  dashboard/server.js      express API + anentrypoint-design SPA (observe/edit/override/reply); GET/POST /report public contact form (no login); GET /api/map/cases (PII-free pins with resolved lat/lon, cluster membership, unresolved bucket, capped+truncation-reported), GET /api/operators/identities (learned per-operator working-area coverage), and GET /api/map/workers (field_worker-tier contacts' case_checkin self-reports, staleness-flagged) back the dashboard's Leaflet+OSM map view (status-colored markers, marker clustering via leaflet.markercluster, outbreak-cluster link overlay, operator-coverage overlay, field-worker location overlay, species/type/status/date filters, click-through to case detail) -- all session-gated like every other /api route; /vendor/leaflet and /vendor/leaflet.markercluster serve the map's static JS/CSS, exempted from the auth gate the same way /design already is (static UI assets, no case data). GET/POST /api/contacts(/:id/tier) and the Reporters panel are the operator-facing surface for the reporter/field_worker access-tier system (see AGENTS.md's contact.tier design principle); GET/POST/DELETE /api/accounts (admin-only) manage operator login accounts. Auth is per-operator username/password login (dashboard/auth.js), not a shared bearer token.
 ```
 
 There is no automated test suite. Verification is manual/live: run `casey up`
@@ -154,12 +162,17 @@ stay green regardless.
 | `WHATSAPP_VERIFY_TOKEN` | Webhook verification handshake token. |
 | `WHATSAPP_APP_SECRET` | When set, inbound webhooks are HMAC-SHA256 verified; forged posts rejected. |
 | `WHATSAPP_WEBHOOK_PORT`, `WHATSAPP_WEBHOOK_PATH` | Fixed webhook port/path for a stable public URL. |
-| `CASEY_DASHBOARD_TOKEN` | When set, dashboard API + page require this token (`Authorization: Bearer <token>` or `X-Casey-Token` header). For the initial page load only, `?token=` in the URL is also accepted; the client strips it from the address bar and switches to header for all API calls. |
+| `CASEY_SESSION_SECRET` | HMAC key for signing dashboard session cookies (`dashboard/auth.js`). Random per process start when unset, so a restart invalidates every session (an operator simply logs in again) -- set explicitly for sessions to survive a restart. |
+| `CASEY_COOKIE_SECURE=0` | Drop the `Secure` flag on the session cookie (`dashboard/auth.js`), for a plain-HTTP dev/LAN deployment with no TLS. `Secure` is ON by default. |
 | `CASEY_PUBLIC_URL` | When set, the agent includes a `{CASEY_PUBLIC_URL}/report?ref={ref}` link in the first contact message. The `/report` page is a public (no-token) contact-facing form where contacts can fill in case details directly. |
 | `CASEY_ALERT_WEBHOOK` | When set, a high-severity health breach (unanswered handoff, and the escalated tier) POSTs a plain JSON alert to this URL so a team is paged off-dashboard. Each newly-entered breach pages once; an already-flagged case is not re-paged. |
+| `CASEY_ESCALATE_WEBHOOK` | Distinct endpoint for the `unanswered_handoff_escalated` breach tier only (casey.js `ESCALATION_BREACHES`) -- lets a deployment route "still no reply after the escalation window" to a different on-call channel (e.g. a supervisor) than routine breaches. Falls back to `CASEY_ALERT_WEBHOOK` when unset, so escalation is never silently dropped. Routing is by breach TIER only, not by `case_type`/severity_tier -- `buildAlertPayload`'s `case_type`/`severity_tier` fields are in every payload sent to whichever URL is picked, so a deployment wanting outbreak-vs-follow_up routing can branch on those fields downstream (or extend `ESCALATION_BREACHES`-style routing with a `case_type`-keyed webhook map, following the same pattern). |
 | `CASEY_OPERATORS` | Cooperative operator roster (comma-separated `id:Name` pairs), fixed at boot. `GET /api/operators` lists it and `X-Casey-Operator` selects a known id to attribute an action; this is attribution, not authentication -- an unknown/absent value falls back to the default actor and can never inject a new identity. |
 | `CASEY_LOG=silent` | Silence structured JSON logs (used by tests). |
 | `CASEY_LLM_MODEL` | Override the model requested from the acptoapi bridge (default `claude/sonnet` -- chosen over a cheaper tier because casey's turn is multi-step extraction + tool orchestration + tone-sensitive reply composition, where a weaker model has repeatedly dropped tool calls or repeated questions). Set to a cheaper tier for cost-sensitive deployments. |
+| `CASEY_TZ` | IANA timezone name (e.g. `Africa/Lagos`) casey displays absolute times in (CLI and dashboard both, via `format.js`/`GET /api/config`). Default `Africa/Johannesburg` (SAST) -- casey's shipped design is a South African deployment, but this lets the same architecture serve a deployment elsewhere. |
+| `CASEY_TZ_LABEL` | Suffix appended after a formatted time (default `SAST`; blank when `CASEY_TZ` is set without an explicit label, so a non-SA deployment doesn't show a misleading "SAST"). |
+| `CASEY_COUNTRY_CODE` | Country calling code (digits only, e.g. `234`) casey's phone-number formatter matches/displays. Default `27` (South Africa). Digit-grouping stays SA-shaped (2-3-4) regardless of the code -- a fully correct international formatter needs a per-country grouping table, out of scope. |
 | `CASEY_RELOAD=0` | Disable hot-reload (the supervisor still restarts on crash; it just stops watching source). |
 | `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (e.g. `../freddie/src`). `src/` and a sibling `../freddie/src` are watched by default; absent dirs are skipped with a warning. Allowlist only -- never contact input. |
 | `CASEY_RELOAD_DEBOUNCE_MS` | Coalesce a burst of saves into one reload (default 300). |
@@ -383,6 +396,32 @@ the crash-budget stop state); the supervisor is its only I/O.
   so a phone number, operator identity, or another contact's free text can never
   surface to a field worker. A complete-report state can never trap an enquiry,
   because the agent -- not a state machine -- decides the reply each turn.
+- **A reporter's access tier is operator-assigned, never self-service or
+  LLM-settable, and fails closed.** `contact.tier` (`reporter` default,
+  `field_worker` elevated) is set ONLY via the dashboard's Reporters panel
+  (`POST /api/contacts/:id/tier`, any authed operator) or the CLI break-glass
+  path (`casey operators` group, `dashboard/auth.js`) -- there is no
+  `case_*` tool that touches it, so the agent can never promote a contact from
+  inside a conversation no matter what the person says. `gateway-hooks.js`
+  derives `toolCtx.tier` fresh from the contact's stored value every turn (no
+  cross-turn caching), so a promotion/demotion takes effect on the NEXT
+  message, never retroactively mid-turn. Any falsy/missing/unrecognised value
+  (a pre-migration contact row, a corrupt value) resolves to the LOWER-
+  privilege `reporter` tier -- the same fail-closed discipline `ownsCase`
+  already uses for PII scoping. `case-tools.js`'s `gateByTier` wrapper gates
+  every query/mutation tool (`case_list`, `case_get`, `case_mine`, `case_today`,
+  `case_new`, `case_checkin`, `case_update`, `case_transition`, `case_merge`,
+  `case_split`, `case_health`, `case_observe`, `case_link_suggestions`,
+  `case_transitions_available`) behind `field_worker` tier; `case_report`,
+  `case_stage`, `case_stop`, and `case_handoff` stay reachable at every tier
+  (reporting and the two irreversible safety controls are not data access).
+  `case_checkin` (lat/lon) records a field worker's own CURRENT location --
+  distinct from `case.lat/lon`, a CASE's location -- surfaced on the
+  dashboard's map as a live/stale-faded pin (`GET /api/map/workers`, staleness
+  window `workerLocationStaleMs`, tunable like every other threshold) so a team
+  can direct/dispatch them, and fed back into `caseSystemPrompt` as the default
+  origin for a bare "anything near me" ask so a field worker is not asked to
+  repeat where they are every time.
 - **LLM-down queue + retry, never a fallback classification.** When the backend is
   down casey does NOT classify the message deterministically and does NOT send
   anything to the contact (no mocks/fallbacks/stubs invariant). The inbound is
@@ -504,12 +543,17 @@ the crash-budget stop state); the supervisor is its only I/O.
 - WhatsApp inbound is HMAC-SHA256 verified when `WHATSAPP_APP_SECRET` is set.
   `WHATSAPP_APP_SECRET` is required when WhatsApp credentials are configured;
   `casey up` and `casey doctor` both hard-fail without it.
-- Dashboard API + page gate on `CASEY_DASHBOARD_TOKEN` when set. Token accepted
-  via `Authorization: Bearer` header or `X-Casey-Token` header. Query param
-  `?token=` is allowed ONLY on the initial page-load GET / (the client strips it
-  immediately and switches to header for all subsequent API calls).
+- Dashboard API + page gate on a logged-in session (`dashboard/auth.js` --
+  username/password per operator_account, scrypt-hashed, stateless HMAC-signed
+  session cookie). No route accepts a bearer token or a `?token=` query param
+  any more; the only ungated routes are `/design`, `/vendor/*` (static UI
+  assets, no case data), `/api/login`, `/api/logout`, `/api/whoami`, and the
+  public `/report` contact form (gated by knowledge of a case ref, not auth).
+  Admin-only routes (`/api/accounts*`) additionally require `role: 'admin'`.
 - All contact-supplied text is HTML-escaped before render.
-- Token comparison uses `crypto.timingSafeEqual` to prevent timing oracles.
+- Session-cookie and password comparisons use `crypto.timingSafeEqual` to
+  prevent timing oracles (`dashboard/auth.js` `verifySession`/`verifyPassword`
+  wrap `scrypt`, matching the discipline the old bearer-token gate used).
 
 ## thatcher / busybase chain
 

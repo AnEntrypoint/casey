@@ -1,12 +1,20 @@
 // Shared display formatters for the CLI (and any node-side consumer): absolute
-// time in South African Standard Time and phone numbers in +27 form, matching
-// the dashboard SPA's inlined fmtTime/fmtPhone (server.js fmtTime/fmtPhone) byte
-// for byte so the terminal and the web view never disagree. Display only -- the
-// raw stored value (event created_at, case external_id) stays the key.
+// time in the deployment's local timezone (South Africa/SAST by default) and
+// phone numbers in the deployment's country-code form (+27 by default),
+// matching the dashboard SPA's inlined fmtTime/fmtPhone (server.js
+// fmtTime/fmtPhone) byte for byte so the terminal and the web view never
+// disagree. Display only -- the raw stored value (event created_at, case
+// external_id) stays the key.
 
-// The one timezone casey shows absolute times in. Field teams work in SAST
-// (UTC+2, no DST); an operator anywhere reads the same wall-clock the team does.
-export const SAST_TZ = 'Africa/Johannesburg'
+// The timezone casey shows absolute times in. Defaults to SAST (UTC+2, no
+// DST) -- casey's shipped design is a South African deployment -- but is
+// overridable via CASEY_TZ (any IANA zone name, e.g. "Africa/Lagos",
+// "Asia/Karachi") for a deployment of casey's same architecture elsewhere.
+// TZ_LABEL is the short suffix shown after a formatted time (e.g. "SAST");
+// override with CASEY_TZ_LABEL when CASEY_TZ is set to a non-SAST zone, or
+// the display would carry a misleading "SAST" suffix on a foreign timezone.
+export const SAST_TZ = process.env.CASEY_TZ || 'Africa/Johannesburg'
+const TZ_LABEL = process.env.CASEY_TZ_LABEL || (process.env.CASEY_TZ ? '' : 'SAST')
 
 // A case is "open" when it is neither resolved nor closed. Several dashboard
 // endpoints (clusters, geo, map) previously filtered on status!=='closed' alone,
@@ -29,24 +37,38 @@ export function toDate(v) {
   return isNaN(d.getTime()) ? null : d
 }
 
-// Absolute time in SAST with an explicit 'SAST' suffix. Returns '' for a
-// missing/corrupt timestamp (never throws) so a timeline row with a bad
-// created_at still renders. Mirrors server.js fmtTime.
+// Absolute time in the deployment's timezone, with an explicit suffix (SAST
+// by default, blank/custom when CASEY_TZ overrides the zone -- see TZ_LABEL
+// above). Returns '' for a missing/corrupt timestamp (never throws) so a
+// timeline row with a bad created_at still renders. Mirrors server.js fmtTime.
 export function fmtTimeSAST(v) {
   const d = toDate(v)
   if (!d) return ''
-  try { return d.toLocaleString('en-ZA', { timeZone: SAST_TZ }) + ' SAST' }
-  catch { return d.toLocaleString() + ' SAST' }
+  const suffix = TZ_LABEL ? ' ' + TZ_LABEL : ''
+  try { return d.toLocaleString('en-ZA', { timeZone: SAST_TZ }) + suffix }
+  catch { return d.toLocaleString() + suffix }
 }
 
-// Show a SA phone number the way an operator expects: a WhatsApp MSISDN like
+// The country calling code casey formats phone numbers for. Defaults to South
+// Africa (27) -- casey's shipped design -- but overridable via
+// CASEY_COUNTRY_CODE (digits only, e.g. "234" for Nigeria) for a deployment
+// elsewhere. Digit-grouping below stays SA-shaped (2-3-4) even under an
+// override: a truly correct international formatter needs a per-country
+// grouping table, which is out of scope here -- an overridden deployment gets
+// a consistently-grouped, if not idiomatic, display rather than the SA-coded
+// prefix on someone else's numbers.
+const COUNTRY_CODE = (process.env.CASEY_COUNTRY_CODE || '27').replace(/\D/g, '') || '27'
+
+// Show a phone number the way an operator expects: a WhatsApp MSISDN like
 // 27821234567 becomes +27 82 123 4567; a local 0821234567 stays 082 123 4567.
 // Non-phone external_ids (discord/sim ids) pass through unchanged. Mirrors
 // server.js fmtPhone.
 export function fmtPhone27(v) {
   const s = String(v || '')
   const digits = s.replace(/[^0-9]/g, '')
-  if (/^27[0-9]{9}$/.test(digits)) { const n = digits.slice(2); return '+27 ' + n.slice(0, 2) + ' ' + n.slice(2, 5) + ' ' + n.slice(5) }
+  const cc = COUNTRY_CODE
+  const ccRe = new RegExp('^' + cc + '[0-9]{9}$')
+  if (ccRe.test(digits)) { const n = digits.slice(cc.length); return '+' + cc + ' ' + n.slice(0, 2) + ' ' + n.slice(2, 5) + ' ' + n.slice(5) }
   if (/^0[0-9]{9}$/.test(digits)) { return digits.slice(0, 3) + ' ' + digits.slice(3, 6) + ' ' + digits.slice(6) }
   return s
 }

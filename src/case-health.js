@@ -27,6 +27,12 @@ export const DEFAULT_THRESHOLDS = {
   // An assisted-mode draft reply composed but not yet approved/sent. The contact
   // is waiting on a human to release it, so a stale draft is a silent delay.
   unsentDraftMs: 1 * 3600e3,
+  // How long a field worker's self-reported location (case_checkin) stays
+  // "current" on the operator map before fading/dropping as stale -- a worker
+  // moves on, so an hours-old ping is a poor dispatch signal. Not itself a
+  // health-breach classifier (no case is unhealthy because of this), just a
+  // display/dispatch-relevance cutoff the map layer reads.
+  workerLocationStaleMs: 3 * 3600e3,
   // Per-stage maximum dwell. A case sitting in one stage past this is "stuck".
   stageMaxDwellMs: {
     new: 12 * 3600e3,              // un-triaged for half a day
@@ -38,12 +44,25 @@ export const DEFAULT_THRESHOLDS = {
 
 // On-site facts a field visit cannot proceed without. Exported so gateway-hooks
 // and the dashboard can import the canonical list instead of maintaining copies.
+// Default only -- classifyCaseHealth prefers thresholds.visitCritical (an array)
+// when present, so a deployment with a different report schema (e.g. a
+// case_type whose on-site-critical fields differ) can retune it via
+// mergeThresholds/PUT /api/thresholds with no code change.
 export const VISIT_CRITICAL = ['species', 'symptoms', 'location', 'how_to_find', 'farmer_available', 'contact_fallback']
 
 // Fallback only -- classifyCaseHealth prefers the live thresholds.openStatuses
 // (case-sweep.js passes store.getOpenStatuses()) so a workflow-config change is
 // picked up with no code edit here.
 const OPEN = new Set(['new', 'triaging', 'in_progress', 'waiting', 'resolved'])
+
+// Default "active work" stages -- past triaging, visit not yet dispatched.
+// Fallback only -- classifyCaseHealth prefers thresholds.activeWorkStatuses (a
+// Set) when present, matching the openStatuses override pattern above, so a
+// deployment that renames/restructures workflow stages does not need a code
+// change here either. Single shared constant (was two independently-defined
+// literal Sets at both call sites, a silent-drift risk if one were edited
+// without the other).
+const ACTIVE_WORK_STAGES = new Set(['in_progress', 'waiting'])
 
 function ms(v) {
   // last_event_at is an ISO string (nowIso); created_at can be unix-seconds
@@ -91,8 +110,9 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
     // timestamp. Not a real-time breach (no idle to compare against a window),
     // so it fires once, unconditionally, whenever the fact is genuinely missing.
     const rep = parseReport(caseRow)
-    const missingCritical = VISIT_CRITICAL.some(k => rep[k] == null || String(rep[k]).trim() === '')
-    const activeWorkStages = new Set(['in_progress', 'waiting'])
+    const visitCritical = Array.isArray(thresholds?.visitCritical) ? thresholds.visitCritical : VISIT_CRITICAL
+    const missingCritical = visitCritical.some(k => rep[k] == null || String(rep[k]).trim() === '')
+    const activeWorkStages = thresholds?.activeWorkStatuses instanceof Set ? thresholds.activeWorkStatuses : ACTIVE_WORK_STAGES
     if (missingCritical && activeWorkStages.has(status)) {
       out.push({ breach: 'incomplete_critical', since_ms: 0, detail: `in ${status} with visit-critical facts still missing (timestamps corrupt, age unknown)` })
     } else if (missingCritical) {
@@ -152,7 +172,8 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   // missing -- the worst over-time failure, because the farmer has left and the
   // facts are now unrecoverable.
   const rep = parseReport(caseRow)
-  const missingCritical = VISIT_CRITICAL.some(k => rep[k] == null || String(rep[k]).trim() === '')
+  const visitCritical = Array.isArray(thresholds?.visitCritical) ? thresholds.visitCritical : VISIT_CRITICAL
+  const missingCritical = visitCritical.some(k => rep[k] == null || String(rep[k]).trim() === '')
   if (missingCritical && Number.isFinite(touched) && idle >= thresholds.abandonMs) {
     out.push({ breach: 'abandoned_intake', since_ms: idle, detail: `on-site facts still missing after ${hours(idle)}` })
   }
@@ -160,7 +181,7 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   // INCOMPLETE_CRITICAL: case has moved beyond triaging (active work in progress)
   // but still lacks critical visit facts. The farmer may still be reachable, but
   // the window is closing and the team cannot dispatch without this information.
-  const activeWorkStages = new Set(['in_progress', 'waiting'])
+  const activeWorkStages = thresholds?.activeWorkStatuses instanceof Set ? thresholds.activeWorkStatuses : ACTIVE_WORK_STAGES
   const icThreshold = thresholds.incompleteCriticalMs ?? (8 * 3600e3)
   if (missingCritical && activeWorkStages.has(status) && Number.isFinite(touched) && idle >= icThreshold) {
     out.push({ breach: 'incomplete_critical', since_ms: idle, detail: `in ${status} for ${hours(idle)} but visit-critical facts still missing` })

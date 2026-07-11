@@ -28,14 +28,27 @@
 // to a cheaper tier for cost-sensitive deployments.
 const DEFAULT_MODEL = process.env.CASEY_LLM_MODEL || 'claude/sonnet'
 
-// Bind freddie's bridge callLLM to a fixed model so every casey turn requests the
-// same brain. The bridge reads FREDDIE_LLM_URL / FREDDIE_LLM_MODEL itself, but we
-// pass model explicitly so CASEY_LLM_MODEL is the single casey-facing knob.
+// Bind freddie's bridge callLLM to a default model so every casey turn
+// requests the same brain by default. The bridge reads FREDDIE_LLM_URL /
+// FREDDIE_LLM_MODEL itself, but we pass model explicitly so CASEY_LLM_MODEL is
+// the single casey-facing knob.
+//
+// Per-call override: req.model, when present, wins over the bound default.
+// This is NOT currently exercised by casey's own case handler -- freddie's
+// runTurn is a single undifferentiated tool loop where the agent itself
+// decides mid-turn whether to classify/extract/route/answer (AGENTS.md), so
+// casey has no ahead-of-time "this call is cheap classification vs. expensive
+// extraction" signal to route on; splitting that would mean redesigning the
+// turn shape, not this file. The override exists so a FUTURE caller with a
+// genuine per-call reason (a background/batch task outside the live
+// conversational turn, e.g. a lower-cost summarization pass) can request a
+// different model without a second resolveCallLLM/makeResilientCallLLM
+// instance -- one bridge, per-call choice, rather than a second bound backend.
 function bridgeBackend(bridge, model) {
   // Pass EVERYTHING through (tool_choice, future params) -- destructuring only
   // {messages, tools} silently stripped tool_choice, severing the forced-first-call
   // nudge the whole way down.
-  return (req) => bridge.callLLM({ ...req, model })
+  return (req) => bridge.callLLM({ ...req, model: req.model || model })
 }
 
 // Resolve the backend. `probe` (default true) decides whether a live reachability

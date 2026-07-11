@@ -82,14 +82,26 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
     // answered by an actual case_list call, never from memory.
     `Sometimes the worker is not reporting a new animal but ASKING about existing`,
     `reports -- what is on today, their own reports, open work they could help with,`,
-    `any reports in a place (a town or a province such as KwaZulu-Natal/kzn), how many`,
+    `any reports in a place (a town or a province such as KwaZulu-Natal/kzn), the`,
+    `NEAREST report to where they are ("closest case", "cases near me"), how many`,
     `reports are open, or how things are going overall. When the latest message is`,
-    `such an ask, CALL the matching data tool and compose your answer from what it`,
-    `returns -- never from memory: case_today for what is on today, case_mine for`,
-    `their own reports, case_list (pass the town or province in the location`,
-    `parameter) for reports in a place or an overall count, and case_get for the`,
-    `standing of one specific report. The rows these tools return are already safe to`,
-    `share with the worker. Leave a fresh animal report to your normal tools.`,
+    `such an ask -- INCLUDING when it is their VERY FIRST message -- CALL the matching`,
+    `data tool and compose your answer from what it returns -- never from memory:`,
+    `case_today for what is on today, case_mine for their own reports, case_list for`,
+    `reports in a place (pass the town or province in the location parameter) or the`,
+    `nearest reports (pass your own best-estimate lat/lon for the place they named in`,
+    `the near parameter -- it ranks by distance and returns each with a distance_km),`,
+    `or an overall count, and case_get for the standing of one specific report. The`,
+    `rows these tools return are already safe to share with the worker. If a first`,
+    `message is clearly this kind of ask, answer it from the tool -- do NOT force a`,
+    `report-gathering greeting instead. Leave a fresh animal report to your normal`,
+    `tools.`,
+    ...(contact?.last_location_lat != null && contact?.last_location_lon != null ? [
+      `This worker last checked in their own location at lat ${contact.last_location_lat},`,
+      `lon ${contact.last_location_lon}. If they ask "anything near me" or similar without`,
+      `naming a new place, use THIS as the near parameter for case_list instead of asking`,
+      `them to repeat where they are. If they name a DIFFERENT place, use that instead.`,
+    ] : []),
     ``,
     // The "CURRENT CASE <ref> (id=<id>)" token is parsed by tooling/tests; keep it.
     `CURRENT CASE ${caseRow.ref} (id=${caseRow.id})  [private -- do not mention to the person]`,
@@ -265,13 +277,19 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
         : ``,
     ].filter(Boolean).join('\n'), ``] : [] ),
     firstMessage
-      ? [`THIS IS THEIR FIRST MESSAGE. In your OWN words (never copy wording from this`,
-         `prompt) do these things in a few warm plain lines: (a) greet them warmly and,`,
-         `ONLY IF they actually described animals or a problem, thank them for telling`,
-         `you -- on a bare greeting with nothing reported, just greet and invite them to`,
-         `say what is happening, and do NOT claim they reported sick animals; (b)`,
-         `reassure them the team will look into it; (c) give them their reference so they`,
-         `can remind you later -- the reference is exactly`,
+      ? [`THIS IS THEIR FIRST MESSAGE. First decide what kind of message this is -- if it`,
+         `is clearly an ASK about existing reports (their own cases, what is on today,`,
+         `reports in or near a place, or the nearest case), ANSWER it from the matching`,
+         `data tool (case_mine / case_today / case_list with location or near) as above,`,
+         `in your own warm words, and do NOT force a report-gathering greeting. Only if`,
+         `the message is a greeting or a report of animals (or nothing yet said) do the`,
+         `steps below. When you DO greet and gather: in your OWN words (never copy`,
+         `wording from this prompt) do these things in a few warm plain lines: (a) greet`,
+         `them warmly and, ONLY IF they actually described animals or a problem, thank`,
+         `them for telling you -- on a bare greeting with nothing reported, just greet`,
+         `and invite them to say what is happening, and do NOT claim they reported sick`,
+         `animals; (b) reassure them the team will look into it; (c) give them their`,
+         `reference so they can remind you later -- the reference is exactly`,
          `${caseRow.ref} (reproduce that code exactly, but write the sentence around it`,
          `yourself). Cap the acknowledgement at two short sentences. Only after that,`,
          `and only if it genuinely helps, MAY you add ONE gentle question about what`,
@@ -945,8 +963,20 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
           // role:'worker' makes the freddie case tools return the PII-free enquiryRow
           // projection on reads (case_get/case_list) -- a worker asking status can
           // never be handed a case body carrying external_id/contact_id/phone. Only
-          // the dashboard read path is role:'operator'.
+          // the dashboard read path is role:'operator'. This is a SEPARATE axis from
+          // `tier` below -- role controls PII projection shape, tier controls which
+          // case_* tools are reachable at all.
           role: 'worker',
+          // Access tier: 'reporter' (casual/public, report-only) or 'field_worker'
+          // (elevated -- agentic case_list/case_mine/case_today queries + location
+          // check-ins). Read from the contact's own stored tier, operator-assigned
+          // via the dashboard/CLI, NEVER contact-self-service or LLM-settable. Fails
+          // CLOSED to 'reporter' on any falsy/missing/unrecognised value -- a brand
+          // new contact, a pre-migration row with no tier populated yet, or a
+          // corrupt value all get the LOWER-privilege tier, never silently elevated.
+          // Same discipline as ownsCase's "no author on ctx -> not owned" fail-closed
+          // guard a few lines up in case-tools.js.
+          tier: contact?.tier === 'field_worker' ? 'field_worker' : 'reporter',
           store,
           principal: { id: msg.from || external_id, role: 'worker' },
           activeCaseRef: fresh.ref,
@@ -1342,7 +1372,7 @@ export function detectContactIntent(text) {
 
   // A negator immediately before a key blanks that key, so "dont stop",
   // "no human", "not now" cannot trip the irreversible intents.
-  const NEGATORS = new Set(['no', 'not', 'dont', 'never', 'nao', 'nicht', 'pas', 'cha'])
+  const NEGATORS = new Set(['no', 'not', 'dont', 'never', 'nao', 'nicht', 'pas', 'cha', 'aikona', 'hayi'])
   const guarded = new Set()
   for (let i = 1; i < words.length; i++) if (NEGATORS.has(words[i - 1])) guarded.add(i)
   const liveWords = new Set(words.filter((_, i) => !guarded.has(i)))
@@ -1426,8 +1456,12 @@ export function detectContactIntent(text) {
 
 // Keyword tables. Single-word keys match as whole tokens; multi-word keys as
 // space-bounded phrases. Accent-stripped, lowercase (see normalizeIntentText).
-// Languages: en, es, pt, it, fr, de, zu (Zulu), xh (Xhosa), ar (transliterated),
-// hi (transliterated).
+// Languages: en, es, pt, it, fr, de, af (Afrikaans), zu (Zulu), xh (Xhosa),
+// st (Sesotho), tn (Setswana), ts (Xitsonga), ve (Tshivenda), ss (siSwati),
+// nr (isiNdebele), ar (transliterated), hi (transliterated) -- all 11 SA
+// official languages plus a few widely-spoken others are covered so the ONE
+// deterministic safety layer (STOP/HUMAN, must work with the LLM down) fires
+// correctly in whichever language a field worker writes in.
 // The bare over-broad tokens ('enough', 'cancel', 'genoeg', 'ngeke', 'yima',
 // 'hambani') were removed: each falsely opted a contact out mid-conversation
 // ("is that enough information", "how do i cancel the vet visit", Nguni
@@ -1438,10 +1472,21 @@ const STOP_KEYS = [
   'remove me', 'opt out', 'optout',
   'stop msgs', 'stop sending', 'stop pls', 'i want stop',
   'cancel messages', 'stop messages', 'no more messages',
+  // Unambiguous at any length (same class as 'stop messages' above): a
+  // messaging-object phrase, not a bare 'stop' -- 'please stop messaging me'
+  // was previously missed because 'stop' alone is ambiguous-gated to short
+  // messages and no literal phrase covered the polite 4-word form.
+  'stop messaging me', 'stop texting me', 'stop contacting me',
   'hou op', 'los my',                                          // af
   'genoeg boodskappe', 'hou op met boodskappe',                // af (messaging object)
   'yeka', 'misa imilayezo', 'yeka imilayezo',                  // zu
   'yeka oku', 'hamba',                                         // xh
+  'khaotsa', 'khaotsa melaetsa', 'tigela melaetsa',            // st (Sesotho): stop / stop messages
+  'emisa', 'emisa melaetsa',                                   // tn (Setswana): stop / stop messages
+  'yima', 'yima ku rhumela',                                   // ts (Xitsonga): stop / stop sending
+  'ima', 'litsha u vhona',                                     // ve (Tshivenda): stop
+  'yekela', 'yekela imiyalezo',                                // ss (siSwati): stop / stop messages
+  'yekela', 'yekela imilayezo',                                // nr (isiNdebele): stop / stop messages
 ]
 const STOP_EXCLUDE = [
   'no stop', 'dont stop', 'do not stop', 'please dont stop', 'never stop',
@@ -1463,7 +1508,8 @@ const STOP_EXCLUDE = [
 // imperative, while these words inside a longer sentence are almost always the
 // animals'/farmer's story, not an instruction to casey. Unambiguous keys
 // (unsubscribe, messaging-object phrases) are deliberately NOT in this set.
-const AMBIGUOUS_STOP_KEYS = new Set(['stop', 'quit', 'yeka', 'hamba', 'go away', 'hou op', 'los my'])
+const AMBIGUOUS_STOP_KEYS = new Set(['stop', 'quit', 'yeka', 'hamba', 'go away', 'hou op', 'los my',
+  'khaotsa', 'emisa', 'yima', 'ima', 'yekela'])
 const AMBIGUOUS_MAX_WORDS = 3
 
 // HUMAN keys that double as ordinary report vocabulary ("the human gave it
@@ -1489,6 +1535,15 @@ const HUMAN_KEYS = [
   // the handoff. Safety-critical: handoff must work in any language without a model.
   'umuntu', 'nomuntu', 'komuntu', 'abantu',   // zu
   'umntu', 'nomntu',                          // xh
+  // siSwati/isiNdebele share the Nguni 'umuntu' (person) root with Zulu/Xhosa;
+  // listed explicitly (not a substring match) for the same safety-critical reason.
+  'umuntfu', 'nomuntfu',                      // ss
+  // Sotho-Tswana group: 'motho' (person)
+  'motho', 'le motho',                        // st
+  'motho', 'le motho', 'mongwe',              // tn
+  // Xitsonga/Tshivenda: 'munhu'/'muthu' (person)
+  'munhu', 'na munhu',                        // ts
+  'muthu', 'na muthu',                        // ve
 ]
 const HUMAN_EXCLUDE = [
   'a person told me', 'person told me', 'someone told me', 'another person',
@@ -1520,6 +1575,12 @@ const HELP_KEYS = [
   'hulp',                    // af
   'usizo', 'thusa',          // zu / sotho-tswana
   'nceda', 'uncedo',         // xh
+  'thusa', 'ntlhokomele',    // st (Sesotho): help
+  'thusa', 'nthuse',         // tn (Setswana): help
+  'ndzi pfune', 'pfuneka',   // ts (Xitsonga): help me / help
+  'nthuse', 'thusa',         // ve (Tshivenda): help
+  'ngisita', 'sita',         // ss (siSwati): help
+  'ngisiza', 'siza',         // nr (isiNdebele): help
 ]
 
 // STATUS/THANKS/GREETING keyword tables were removed with the pure-LLM strip: the

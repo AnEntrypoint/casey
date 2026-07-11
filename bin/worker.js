@@ -156,6 +156,15 @@ async function main() {
     } catch (e) { console.error('[worker] runtime-event record failed:', e.message) }
   }
 
+  // A fresh deployment (zero operator_account rows) gets a single bootstrap
+  // admin so there is always a way to log in -- printed once to the log, never
+  // persisted in plaintext, never re-created once any account exists.
+  try {
+    const { ensureBootstrapAdmin } = await import('../src/dashboard/auth.js')
+    const boot = await ensureBootstrapAdmin(casey.store, console)
+    if (boot) console.log(`[worker] bootstrap admin account created -- username: ${boot.username}  password: ${boot.password}  (log in once and create named accounts for your team)`)
+  } catch (e) { console.error('[worker] bootstrap admin check failed:', e.message) }
+
   let dash
   try {
     dash = await createDashboard(casey.store, {

@@ -85,6 +85,10 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
   // no code edit here.
   const openStatuses = typeof store.getOpenStatuses === 'function' ? new Set(store.getOpenStatuses()) : null
   const effThresholds = openStatuses ? { ...thresholds, openStatuses } : thresholds
+  // activeWorkStatuses/visitCritical, when present on `thresholds` (see
+  // thresholds.js mergeThresholds), ride straight through -- classifyCaseHealth
+  // reads them off effThresholds with its own literal fallback, same pattern as
+  // openStatuses above.
   // Only open cases can be unhealthy; a closed case is finished. listCases with no
   // filter returns recency-sorted; we classify each and skip closed defensively.
   const cases = await store.listCases({}, { limit: 10000 })

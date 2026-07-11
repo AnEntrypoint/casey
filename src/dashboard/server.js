@@ -9,7 +9,19 @@
 //
 // Everything written here goes through the same CaseStore the agent uses, so
 // agent and operator share one timeline. The API is the operator-override
-// surface, so an optional bearer token (CASEY_DASHBOARD_TOKEN) gates it.
+// surface, gated by a per-operator login (see dashboard/auth.js).
+//
+// AUTH MODEL: username/password per operator, a real (if simple) login screen
+// familiar to a not-necessarily-tech-literate field-organisation team -- no
+// bearer token to copy/paste or lose. A fresh deployment auto-creates a single
+// bootstrap admin account (printed once to the server log) so there is always
+// a way in; that admin creates named accounts for the rest of the team from
+// the dashboard's user-management panel (admin-only), or via `casey.js
+// operators` on the CLI for break-glass recovery (lost admin password,
+// scripted provisioning). Sessions are stateless HMAC-signed cookies (no
+// server-side session table to keep in sync across the hot-reload supervisor's
+// worker restarts -- AGENTS.md). X-Casey-Operator is retired: the logged-in
+// session IS the acting operator now, not a self-attested header.
 
 import express from 'express'
 import path from 'node:path'
@@ -18,7 +30,13 @@ import { fileURLToPath } from 'node:url'
 import { VISIT_CRITICAL } from '../case-health.js'
 import { REPORT_KEY_ORDER } from '../case-store.js'
 import { rankAttention } from '../attn.js'
-import { fmtTimeSAST, isOpenCase } from '../format.js'
+import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27 } from '../format.js'
+import {
+  COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
+  issueSession, verifySession, findAccountByUsername, verifyPassword, markLogin,
+  getAccount, listAccounts, createAccount, setAccountDisabled, deleteAccount,
+  ensureBootstrapAdmin, slugUsername,
+} from './auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DESIGN_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'anentrypoint-design')
@@ -27,50 +45,6 @@ const MARKERCLUSTER_DIR = path.resolve(__dirname, '..', '..', 'node_modules', 'l
 
 const OPERATOR = { id: 'dashboard-operator', role: 'operator' }
 const PAGE_MAX = 200
-
-// Operator roster (CASEY_OPERATORS). Lets the team self-attest WHO is acting so
-// every audited event records a real name instead of the generic
-// "dashboard-operator". This is COOPERATIVE ATTRIBUTION, not authentication: any
-// token holder can claim any roster id, so it answers "who, among us, did this"
-// for a trusting team -- never "prove you are X". Per-worker counts are COVERAGE
-// (is everyone reachable getting picked up), never a productivity scoreboard.
-//
-// Format: JSON array [{id,name}], OR a comma list of "id:Display Name" or bare
-// "id" entries. Ids are slugged (lowercase, [a-z0-9_-]) so a roster id is always
-// a safe, log-stable, enum-like token; the human-facing name keeps its spaces.
-function slugOperatorId(raw) {
-  return String(raw || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40)
-}
-function parseOperators(raw = process.env.CASEY_OPERATORS) {
-  const out = []
-  const seen = new Set()
-  const push = (id, name) => {
-    const sid = slugOperatorId(id)
-    if (!sid || seen.has(sid)) return
-    seen.add(sid)
-    out.push({ id: sid, name: String(name || id).trim().slice(0, 80) || sid })
-  }
-  const s = String(raw || '').trim()
-  if (!s) return out
-  if (s.startsWith('[')) {
-    try {
-      const arr = JSON.parse(s)
-      if (Array.isArray(arr)) for (const e of arr) {
-        if (e && typeof e === 'object') push(e.id ?? e.name, e.name ?? e.id)
-        else push(e, e)
-      }
-    } catch { /* fall through: a malformed roster is no roster, never a crash */ }
-    return out
-  }
-  for (const part of s.split(',')) {
-    const t = part.trim()
-    if (!t) continue
-    const i = t.indexOf(':')
-    if (i >= 0) push(t.slice(0, i), t.slice(i + 1))
-    else push(t, t)
-  }
-  return out
-}
 
 // thatcher persists event.data as a JSON string and store.list* returns it unparsed.
 // The SPA reads e.data.field/.by etc. as objects, so parse `data` to an object at the
@@ -93,44 +67,50 @@ function parseEventData(events) {
   })
 }
 
-// opts.token   shared secret; when set, /api and / require ?token= or Bearer header.
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
-export function createDashboard(store, { port = 4000, token = process.env.CASEY_DASHBOARD_TOKEN, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null } = {}) {
+export function createDashboard(store, { port = 4000, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null } = {}) {
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
 
-  // Token gate (only when a token is configured). Accepts Authorization: Bearer
-  // <token>, X-Casey-Token header, or ?token= query (for the page load).
-  // Constant-time compare so the gate does not leak the token one character at a
-  // time through response timing (P6: the worst case is a patient attacker).
-  const tokenBuf = token ? Buffer.from(token) : null
-  const matches = (candidate) => {
-    if (!candidate) return false
-    if (tokenBuf == null) return false   // no token configured: matches() never authorises (the !token short-circuit in authed handles the open case)
-    const buf = Buffer.from(String(candidate))
-    return buf.length === tokenBuf.length && crypto.timingSafeEqual(buf, tokenBuf)
-  }
-  const authed = (req) => {
-    if (!token) return true
-    const bearer = (req.get('authorization') || '').replace(/^Bearer\s+/i, '')
-    // req.query.token is accepted for the page-load GET / only (the client JS
-    // immediately strips it from the address bar and switches to X-Casey-Token
-    // header for all subsequent API calls, so it never appears in access logs).
-    return matches(bearer) || matches(req.get('x-casey-token')) || matches(req.query.token)
-  }
-  // The roster is fixed at boot from env (never contact/operator input), so an
-  // X-Casey-Operator header can only SELECT a known roster id, never inject a new
-  // actor. An unknown/absent header falls back to the generic operator, so the
-  // attribution is best-effort and never blocks a mutation.
-  const roster = parseOperators()
-  const rosterById = new Map(roster.map(o => [o.id, o]))
+  // Session gate: a valid casey_session cookie (see dashboard/auth.js) resolves
+  // to a real operator_account row. Middleware runs on every request BEFORE
+  // route handlers so actingOperator(req) below can stay a SYNCHRONOUS reader
+  // of the pre-resolved req.caseyAccount -- every existing call site
+  // (actingOperator(req) sprinkled through dozens of route handlers) keeps
+  // working unchanged rather than needing an await added at each site.
+  app.use(async (req, res, next) => {
+    req.caseyAccount = null
+    try {
+      const cookies = parseCookies(req.get('cookie'))
+      const accountId = verifySession(cookies[COOKIE_NAME])
+      if (accountId) {
+        const acct = await getAccount(store, accountId)
+        if (acct && acct.disabled !== '1') req.caseyAccount = acct
+      }
+    } catch { /* a broken/tampered cookie just means not-logged-in, never a crash */ }
+    next()
+  })
+  // /api/login, /api/logout, and the public /report contact form are the only
+  // routes reachable with no session -- every other /api route and the SPA
+  // page itself require authed(req). isAdmin(req) additionally gates
+  // account-management routes to the 'admin' role.
+  const authed = (req) => !!req.caseyAccount
+  const isAdmin = (req) => req.caseyAccount?.role === 'admin'
   const actingOperator = (req) => {
-    const sid = slugOperatorId(req.get('x-casey-operator') || '')
-    const picked = sid && rosterById.get(sid)
-    if (picked) return { id: picked.id, name: picked.name, role: 'operator' }
-    return OPERATOR
+    const acct = req.caseyAccount
+    if (!acct) return OPERATOR
+    return { id: acct.username, name: acct.display_name || acct.username, role: 'operator' }
+  }
+  // Same {id, name} shape the old CASEY_OPERATORS roster returned, sourced
+  // from real operator_account rows instead of an env var -- every existing
+  // consumer (workload/report/identities/suggested-assignee) keeps working
+  // unchanged. Excludes disabled accounts (a disabled operator is no longer
+  // "on the team" for coverage/workload purposes, though their history stays).
+  const getRoster = async () => {
+    const accounts = await listAccounts(store)
+    return accounts.filter(a => a.disabled !== '1').map(a => ({ id: a.username, name: a.display_name || a.username }))
   }
   // Public contact-facing report form -- no token required.
   // The ref acts as the shared secret: contacts only know their own ref,
@@ -414,8 +394,45 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     }
   })
 
+  // Login: username + password against a real operator_account row (see
+  // dashboard/auth.js). On success, sets an HttpOnly session cookie and
+  // returns the operator's display info -- never the password hash/salt.
+  // Rate-limiting/lockout is intentionally NOT added here: this is a
+  // low-stakes field-team login (see the AUTH MODEL note at the top of this
+  // file), and a lockout mechanism is itself a denial-of-service surface
+  // against a teammate's account. scrypt's own cost already makes brute-force
+  // impractical at any real request rate.
+  app.post('/api/login', async (req, res) => {
+    try {
+      const { username, password } = req.body || {}
+      const acct = await findAccountByUsername(store, username)
+      if (!acct || acct.disabled === '1' || !verifyPassword(password, acct.password_salt, acct.password_hash)) {
+        return res.status(401).json({ error: 'invalid username or password' })
+      }
+      const token = issueSession(acct.id)
+      res.set('Set-Cookie', sessionCookieHeader(token))
+      markLogin(store, acct.id).catch(() => {}) // best-effort, never blocks login
+      res.json({ ok: true, username: acct.username, display_name: acct.display_name, role: acct.role })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  app.post('/api/logout', (req, res) => {
+    res.set('Set-Cookie', clearCookieHeader())
+    res.json({ ok: true })
+  })
+  // Who the current session belongs to, for the SPA to render "logged in as
+  // X" / redirect to the login screen when there is no valid session. Safe to
+  // leave ungated (it just echoes back req.caseyAccount, already resolved
+  // from the cookie by the middleware above) -- no lookup happens for an
+  // absent/invalid cookie.
+  app.get('/api/whoami', (req, res) => {
+    if (!req.caseyAccount) return res.json({ authed: false })
+    const a = req.caseyAccount
+    res.json({ authed: true, username: a.username, display_name: a.display_name, role: a.role })
+  })
+
   app.use((req, res, next) => {
     if (req.path.startsWith('/design') || req.path.startsWith('/vendor')) return next()
+    if (req.path === '/api/login' || req.path === '/api/logout' || req.path === '/api/whoami') return next()
     if (authed(req)) return next()
     res.status(401).json({ error: 'unauthorized' })
   })
@@ -539,6 +556,33 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
         lastReloadAt: s.lastReloadAt != null ? Number(s.lastReloadAt) : null,
         lastCrashReason: s.lastCrashReason ? String(s.lastCrashReason).slice(0, 300) : null,
         since: s.since != null ? Number(s.since) : null,
+      })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Config-driven client bootstrap: the workflow stage list and the case_type/
+  // priority enums are declared once in thatcher.config.yml (via CaseStore) --
+  // this exposes them so the SPA can build its stage-select options, status
+  // labels, and "notified on move" set from the LIVE config instead of a
+  // hardcoded literal duplicated in several places in the client script. A
+  // deployment that adds/renames a workflow stage or case_type value is
+  // reflected in the dashboard with no client code change. PII-free (labels
+  // and enum names only).
+  app.get('/api/config', (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      res.json({
+        stages: store.getValidStatuses(),
+        open_stages: typeof store.getOpenStatuses === 'function' ? store.getOpenStatuses() : [],
+        case_type: typeof store.getFieldEnum === 'function' ? store.getFieldEnum('case.case_type', []) : [],
+        priority: typeof store.getFieldEnum === 'function' ? store.getFieldEnum('case.priority', []) : [],
+        // Display-only locale knobs (CASEY_TZ/CASEY_TZ_LABEL/CASEY_COUNTRY_CODE,
+        // see format.js) so the client's inlined fmtTime/fmtPhone track the same
+        // deployment-configured timezone/country code as the CLI/server side,
+        // instead of a hardcoded 'Africa/Johannesburg'/'27' baked into the SPA.
+        tz: SAST_TZ,
+        tz_label: process.env.CASEY_TZ_LABEL || (process.env.CASEY_TZ ? '' : 'SAST'),
+        country_code: (process.env.CASEY_COUNTRY_CODE || '27').replace(/\D/g, '') || '27',
       })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -705,7 +749,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
             if (hit && (!best || hit.count > best.count)) best = { operator_id: row.operator_id, token: hit.token, count: hit.count }
           }
           if (best) {
-            const op = rosterById.get(best.operator_id)
+            const op = (await getRoster()).find(o => o.id === best.operator_id)
             suggested_assignee = { id: best.operator_id, name: op?.name || best.operator_id, matched_area: best.token }
           }
         }
@@ -1206,24 +1250,101 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
-  // The operator roster + who the server resolved THIS request to, so the SPA can
-  // render a "Who is this? [picker]" affordance and label every action with a real
-  // name. Token-gated by the global middleware above. Self-attested attribution,
-  // not auth -- the picked id is informational; the token is the only gate.
-  app.get('/api/operators', (req, res) => {
+  // The operator roster + who the server resolved THIS request to (from the
+  // logged-in session), so the SPA can label every action with a real name.
+  app.get('/api/operators', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const roster = await getRoster()
     res.json({ operators: roster, current: actingOperator(req).id, attributed: roster.length > 0 })
+  })
+
+  // Account management -- admin-only. Never returns password_hash/password_salt.
+  // Adding/disabling/deleting a teammate's ability to log in is exactly the
+  // "administration handles it" lever the AUTH MODEL note above describes for
+  // a lost/compromised device: an admin disables that one account, everyone
+  // else's login is untouched (unlike the old shared-token model where a
+  // compromised token meant rotating one secret for the whole team).
+  const publicAccount = (a) => ({ id: a.id, username: a.username, display_name: a.display_name, role: a.role, disabled: a.disabled === '1', last_login_at: a.last_login_at || null })
+  app.get('/api/accounts', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    try { res.json({ accounts: (await listAccounts(store)).map(publicAccount) }) }
+    catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  app.post('/api/accounts', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    try {
+      const { username, password, display_name, role } = req.body || {}
+      const acct = await createAccount(store, { username, password, displayName: display_name, role })
+      res.status(201).json({ account: publicAccount(acct) })
+    } catch (e) { res.status(400).json({ error: e.message }) }
+  })
+  app.post('/api/accounts/:id/disable', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    // An admin locking out their OWN only-admin account would be a self-lockout
+    // with no CLI recovery expectation set for the operator -- allowed (the CLI
+    // `casey operators` command is the documented break-glass path), but never
+    // silently -- the client shows a confirm on this action.
+    try { await setAccountDisabled(store, req.params.id, true); res.json({ ok: true }) }
+    catch (e) { res.status(400).json({ error: e.message }) }
+  })
+  app.post('/api/accounts/:id/enable', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    try { await setAccountDisabled(store, req.params.id, false); res.json({ ok: true }) }
+    catch (e) { res.status(400).json({ error: e.message }) }
+  })
+  app.delete('/api/accounts/:id', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    try { await deleteAccount(store, req.params.id); res.json({ ok: true }) }
+    catch (e) { res.status(400).json({ error: e.message }) }
+  })
+
+  // Contacts/Reporters panel -- the browse surface for the operator-assignable
+  // access-tier design (see thatcher.config.yml contact.tier, gateway-hooks.js
+  // toolCtx.tier). Internal-team-only (never on the public /report form): shows
+  // who has reported, their current tier, and lets any authed operator promote/
+  // demote (not admin-only -- unlike account management, tier assignment is an
+  // everyday triage action, matching the low-friction field-team auth model
+  // documented at the top of this file, not a security-sensitive one).
+  const publicContact = (c) => ({
+    id: c.id, channel: c.channel, external_id_masked: fmtPhone27(c.external_id),
+    display_name: c.display_name || null, tier: c.tier === 'field_worker' ? 'field_worker' : 'reporter',
+    last_location_lat: c.last_location_lat ?? null, last_location_lon: c.last_location_lon ?? null,
+    last_location_at: c.last_location_at || null, created_at: c.created_at,
+  })
+  app.get('/api/contacts', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      const contacts = await store.listContacts({ limit: 1000 })
+      res.json({ contacts: contacts.map(publicContact) })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  app.post('/api/contacts/:id/tier', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      const { tier } = req.body || {}
+      if (tier !== 'reporter' && tier !== 'field_worker') return res.status(400).json({ error: 'tier must be "reporter" or "field_worker"' })
+      await store.setContactTier(req.params.id, tier, { id: actingOperator(req).id, role: 'operator' })
+      const updated = await store.getContact(req.params.id)
+      res.json({ contact: publicContact(updated) })
+    } catch (e) { res.status(400).json({ error: e.message }) }
   })
 
   // Learned operator identities -- the roster enriched with each operator's
   // working-area history (case-store.js learnOperatorActivity), for the map's
   // operator-coverage overlay and a "who covers where" panel. Internal-team data
-  // (not contact PII), still gated by the same dashboard token as every other
-  // /api route -- never exposed on the unauthenticated /report surface.
+  // (not contact PII), still gated by login like every other /api route --
+  // never exposed on the unauthenticated /report surface.
   app.get('/api/operators/identities', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     try {
       const rows = await store.listOperatorIdentities()
       const byId = new Map(rows.map(r => [r.operator_id, r]))
-      const identities = roster.map(o => {
+      const identities = (await getRoster()).map(o => {
         const r = byId.get(o.id)
         return {
           id: o.id, name: o.name,
@@ -1292,6 +1413,37 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // Field-worker location layer: recent case_checkin self-reports, for the map's
+  // dispatch/direction overlay. Distinct from /api/map/cases (case pins) and from
+  // /api/operators/identities (a dashboard-operator's LEARNED historical coverage
+  // area) -- this is a field_worker CONTACT's own LIVE self-reported position.
+  // Staleness-filtered by the tunable workerLocationStaleMs threshold (default 3h)
+  // so an hours-old ping does not read as "here right now". Internal-team-only,
+  // same gate as every other dashboard route -- never on the public /report form.
+  app.get('/api/map/workers', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      const th = (store.resolveThresholds ? await store.resolveThresholds() : null) || {}
+      const staleMs = Number.isFinite(th.workerLocationStaleMs) ? th.workerLocationStaleMs : 3 * 3600e3
+      const now = Date.now()
+      const contacts = await store.listContacts({ limit: 1000 })
+      const workers = contacts
+        .filter(c => c.tier === 'field_worker' && c.last_location_lat != null && c.last_location_lon != null && c.last_location_at)
+        .map(c => {
+          const at = Date.parse(c.last_location_at)
+          const ageMs = Number.isFinite(at) ? now - at : null
+          return {
+            id: c.id, display_name: c.display_name || null,
+            lat: Number(c.last_location_lat), lon: Number(c.last_location_lon),
+            last_location_at: c.last_location_at, age_ms: ageMs,
+            stale: ageMs == null || ageMs > staleMs,
+          }
+        })
+        .filter(w => Number.isFinite(w.lat) && Number.isFinite(w.lon) && Math.abs(w.lat) <= 90 && Math.abs(w.lon) <= 180)
+      res.json({ workers, stale_ms: staleMs })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Management KPIs over the live case+event history: time-to-first-reply
   // (median/p90), median dwell per stage from transition events, opened-vs-closed
   // per day, open backlog by stage. Aggregate-only -- no per-contact rows or
@@ -1324,7 +1476,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       for (const c of cases) eventsByCaseId.set(c.id, await store.listEvents(c.id).catch(() => []))
       const th = (store.resolveThresholds ? await store.resolveThresholds() : null) || {}
       const staleMs = Number.isFinite(th.staleMs) ? th.staleMs : 24 * 3600 * 1000
-      const out = buildWorkload(cases, eventsByCaseId, roster, Date.now(), staleMs)
+      const out = buildWorkload(cases, eventsByCaseId, await getRoster(), Date.now(), staleMs)
       res.json(out)
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
@@ -1394,7 +1546,7 @@ export function createDashboard(store, { port = 4000, token = process.env.CASEY_
       .flatMap(c => classifyCaseHealth(c, now, thresholds))
     const staleMs = Number.isFinite(thresholds?.staleMs) ? thresholds.staleMs : 24 * 3600 * 1000
     const { buildReport } = await import('../report.js')
-    return buildReport(cases, eventsByCaseId, breachRows, now, days, roster, staleMs)
+    return buildReport(cases, eventsByCaseId, breachRows, now, days, await getRoster(), staleMs)
   }
   const reportDays = (req) => Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
   const msToHrs = (ms) => ms == null ? '' : Math.round(ms / 3600000 * 10) / 10
@@ -2212,6 +2364,7 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="handover-btn" title="Start-of-shift digest: what needs you, open handoffs, unsent drafts, what changed">Shift</button>
         <button class="icon-btn" id="offline-btn" title="Cases that came in while casey could not answer -- waiting for a person">AI offline</button>
         <button class="icon-btn" id="team-btn" title="Who is holding what: open cases per person, stale claims, replies today, response speed">Team</button>
+        <button class="icon-btn" id="contacts-btn" title="Everyone who has reported: their access tier, and a promote/demote control">Reporters</button>
         <select id="op-picker" title="Who you are -- attributed on your actions" style="display:none"></select>
         <button class="icon-btn" id="focus-btn" title="Focus mode: show only the ranked Needs-you-now list, lighten background polling (good on a phone)">Focus</button>
         <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
@@ -2262,6 +2415,7 @@ const PAGE = /* html */ `<!doctype html>
           <select id="map-days"><option value="0">all time</option><option value="90">last 90 days</option><option value="30">last 30 days</option><option value="7">last 7 days</option></select>
           <button class="icon-btn" id="map-coverage-btn" title="Toggle operator working-area coverage overlay">Coverage</button>
           <button class="icon-btn" id="map-clusters-btn" title="Toggle outbreak-cluster links">Outbreak links</button>
+          <button class="icon-btn" id="map-workers-btn" title="Toggle field-worker live location check-ins (for direction/dispatch)">Field workers</button>
         </div>
       </div>
       <div class="map-legend" id="map-legend"></div>
@@ -2292,6 +2446,10 @@ const PAGE = /* html */ `<!doctype html>
     <div class="stats-panel" id="team-panel">
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Who is holding what (worst first)</div>
       <div id="team-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="contacts-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Everyone who has reported -- promote a field worker to give them agentic case access and let them check in with their location</div>
+      <div id="contacts-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
     </div>
     <div class="triage" id="triage"></div>
     <div class="bulk-bar" id="bulk-bar" style="display:none">
@@ -2478,28 +2636,74 @@ function clearHandoff(id){ handoffQueue=handoffQueue.filter(q=>q.id!==id); rende
 let simple = false
 const STAGE_LABEL = { new:'New', triaging:'Looking into it', in_progress:'Working on it',
   waiting:'Waiting', resolved:'Done', closed:'Closed' }
-// stageLabel(s): friendly label in simple mode, raw stage name otherwise.
+// stageLabel(s): friendly label in simple mode, raw stage name otherwise. A
+// stage with no entry in STAGE_LABEL (e.g. a deployment-added workflow stage
+// not in the shipped default set) degrades to its raw config name -- never
+// hidden, just unlabeled.
 function stageLabel(s){ return simple ? (STAGE_LABEL[s] || s) : s }
-// Read the token from the page-load query ONCE, then immediately scrub it from
-// the address bar (history.replaceState) so the secret does not linger in browser
-// history, bookmarks, or a shared screenshot. API calls then send it as the
-// X-Casey-Token HEADER (which the server already accepts) instead of in the URL,
-// so it never appears in server access logs or Referer headers either.
-const TOKEN = new URLSearchParams(location.search).get('token')
-if(TOKEN){ try{ const u=new URL(location.href); u.searchParams.delete('token'); history.replaceState(null,'',u.pathname+u.search+u.hash) }catch{} }
-// The operator picker persists a chosen roster id; every fetch carries it as
-// X-Casey-Operator for cooperative attribution (the server can only SELECT a
-// known roster id, never inject a new actor, so this is safe to always send).
-let selectedOperator = ''
-try{ selectedOperator = localStorage.getItem('casey-operator')||'' }catch{}
-const api = (url,opts={})=>{
-  const extra = {}
-  if(TOKEN) extra['X-Casey-Token']=TOKEN
-  if(selectedOperator) extra['X-Casey-Operator']=selectedOperator
-  if(!TOKEN && !selectedOperator) return fetch(url,opts)
-  const headers = Object.assign({}, opts.headers||{}, extra)
-  return fetch(url, Object.assign({}, opts, { headers }))
+// Live workflow config, fetched once at boot from /api/config (see
+// dashboard/server.js). Falls back to the shipped 6-stage default if the
+// fetch fails (offline-first render) so the UI is never blank while waiting.
+// This is what makes the bulk-move stage list and the "contact was notified"
+// set track a deployment's actual thatcher.config.yml stages instead of a
+// hardcoded literal that silently excludes an added/renamed stage.
+let CASEY_STAGES = ['new','triaging','in_progress','waiting','resolved','closed']
+let CASEY_NOTIFIED_STAGES = ['in_progress','waiting','resolved']
+// Locale defaults (South Africa) -- overridden from /api/config when the
+// deployment sets CASEY_TZ/CASEY_TZ_LABEL/CASEY_COUNTRY_CODE server-side, so
+// the SPA's own fmtTime/fmtPhone below track the same knobs as format.js
+// instead of a second hardcoded 'Africa/Johannesburg'/'27'.
+let CASEY_TZ = 'Africa/Johannesburg'
+let CASEY_TZ_LABEL = 'SAST'
+let CASEY_COUNTRY_CODE = '27'
+async function loadCaseyConfig(){
+  try{
+    const r = await api('/api/config')
+    if(!r.ok) return
+    const j = await r.json()
+    if(Array.isArray(j.stages) && j.stages.length) CASEY_STAGES = j.stages
+    // Notified-on-move stays a UI convention (which moves are "worth telling the
+    // contact about"), not itself config-declared -- keep the current default
+    // set but intersected with the live stages so a removed/renamed stage name
+    // can never linger in it.
+    CASEY_NOTIFIED_STAGES = CASEY_NOTIFIED_STAGES.filter(s => CASEY_STAGES.includes(s))
+    if(j.tz) CASEY_TZ = j.tz
+    CASEY_TZ_LABEL = j.tz_label || ''
+    if(j.country_code) CASEY_COUNTRY_CODE = j.country_code
+  }catch{}
 }
+loadCaseyConfig()
+// Auth is a session cookie now (HttpOnly, set by POST /api/login -- see
+// dashboard/auth.js), not a bearer token in the URL/header. credentials:
+// 'include' makes every fetch send it explicitly regardless of browser
+// same-origin cookie defaults. currentUser is populated by checkSession()
+// below and read by the login-gate at the bottom of this script.
+let currentUser = null
+const api = (url,opts={})=> fetch(url, Object.assign({ credentials: 'include' }, opts))
+async function checkSession(){
+  try{
+    const r = await api('/api/whoami')
+    const j = await r.json()
+    currentUser = j.authed ? j : null
+  }catch{ currentUser = null }
+  return currentUser
+}
+async function doLogin(username, password){
+  const r = await api('/api/login', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ username, password }) })
+  if(!r.ok){ const j = await r.json().catch(()=>({})); throw new Error(j.error || 'login failed') }
+  return checkSession()
+}
+async function doLogout(){
+  try{ await api('/api/logout', { method:'POST' }) }catch{}
+  currentUser = null
+  location.reload()
+}
+// Back-compat shim: every "who am I" check below (claim/mine/skills-key/owner-
+// chip highlighting) was written against a self-picked selectedOperator
+// variable from the old cooperative-attribution picker. It is now simply
+// derived from the real logged-in session -- same read shape everywhere else
+// in this script, zero call sites needed to change.
+Object.defineProperty(window, 'selectedOperator', { get: () => currentUser ? currentUser.username : '' })
 // --- toasts (replace alert): ok auto-dismisses, err persists until clicked ---
 function toast(msg,kind='ok'){
   const el=document.createElement('div'); el.className='toast '+kind; el.textContent=msg
@@ -2582,19 +2786,24 @@ function waitFmt(ms){ const s=Math.max(0,Math.round(ms/1000)); const m=Math.floo
   if(m<60) return m+'m'
   const h=Math.floor(m/60), rm=m%60; if(h<24) return rm? h+'h '+rm+'m' : h+'h'
   const d=Math.floor(h/24), rh=h%24; return rh? d+'d '+rh+'h' : d+'d' }
-// Absolute time is always shown in South African Standard Time (SAST, UTC+2, no
-// DST) so an operator anywhere reads the same local time the field team works in,
-// regardless of the browser's own timezone. 'SAST' is appended so it is explicit.
+// Absolute time is shown in the deployment's configured timezone (South
+// African Standard Time, UTC+2, no DST, by default) so an operator anywhere
+// reads the same local time the field team works in, regardless of the
+// browser's own timezone. CASEY_TZ/CASEY_TZ_LABEL (loaded from /api/config,
+// see loadCaseyConfig above) override the zone/suffix for a non-SA deployment.
 function fmtTime(v){ const d=toDate(v); if(!d)return ''
-  try{ return d.toLocaleString('en-ZA',{timeZone:'Africa/Johannesburg'})+' SAST' }
-  catch{ return d.toLocaleString()+' SAST' } }
+  const suffix = CASEY_TZ_LABEL ? ' '+CASEY_TZ_LABEL : ''
+  try{ return d.toLocaleString('en-ZA',{timeZone:CASEY_TZ})+suffix }
+  catch{ return d.toLocaleString()+suffix } }
 
-// Show a SA phone number the way an operator expects: a WhatsApp MSISDN like
+// Show a phone number the way an operator expects: a WhatsApp MSISDN like
 // 27821234567 becomes +27 82 123 4567; a local 0821234567 stays 082 123 4567.
 // Non-phone external_ids (discord/sim ids) pass through unchanged. Display only --
-// the raw external_id stays the key.
+// the raw external_id stays the key. CASEY_COUNTRY_CODE (default '27', South
+// Africa) overrides the country prefix matched/shown for a non-SA deployment.
 function fmtPhone(v){ const s=String(v||''); const digits=s.replace(/[^0-9]/g,'')
-  if(/^27[0-9]{9}$/.test(digits)){ const n=digits.slice(2); return '+27 '+n.slice(0,2)+' '+n.slice(2,5)+' '+n.slice(5) }
+  const cc=CASEY_COUNTRY_CODE
+  if(new RegExp('^'+cc+'[0-9]{9}$').test(digits)){ const n=digits.slice(cc.length); return '+'+cc+' '+n.slice(0,2)+' '+n.slice(2,5)+' '+n.slice(5) }
   if(/^0[0-9]{9}$/.test(digits)){ return digits.slice(0,3)+' '+digits.slice(3,6)+' '+digits.slice(6) }
   return s }
 
@@ -3116,8 +3325,7 @@ async function openCase(id){
     const r = await api('/api/cases/'+encodeURIComponent(id)+'/transition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({to:b.dataset.to,reason:reason||undefined})})
     if(!r.ok){ toast(await failMsg(r,'transition failed'),'err'); return }
     const updated = await r.json().catch(()=>({}))
-    const NOTIFIED=['in_progress','waiting','resolved']
-    undoToast(id,NOTIFIED.includes(updated.status)?'Moved to '+toLabel+'. A short note was queued to the contact.':'Moved to '+toLabel+'. The contact was not told.')
+    undoToast(id,CASEY_NOTIFIED_STAGES.includes(updated.status)?'Moved to '+toLabel+'. A short note was queued to the contact.':'Moved to '+toLabel+'. The contact was not told.')
     lastCasesJson=''; await loadCases(); await openCase(id)
   })
   renderListFull(); renderTriage()              // reflect the new active row in both lists
@@ -4083,13 +4291,15 @@ async function loadMap(){
       canvas.innerHTML=''
       const map=window.L.map(canvas,{center:[-28.5,25],zoom:5})
       window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'(c) OpenStreetMap contributors'}).addTo(map)
-      mapState={map,markerLayer:null,clusterLines:null,coverageLayer:null,pins:[],clusters:[],showCoverage:false,showClusters:false}
+      mapState={map,markerLayer:null,clusterLines:null,coverageLayer:null,workersLayer:null,pins:[],clusters:[],showCoverage:false,showClusters:false,showWorkers:false}
       $('#map-species').onchange=renderMapMarkers
       $('#map-type').onchange=renderMapMarkers
       $('#map-status').onchange=renderMapMarkers
       $('#map-days').onchange=loadMap
       $('#map-clusters-btn').onclick=()=>{ mapState.showClusters=!mapState.showClusters; $('#map-clusters-btn').classList.toggle('active',mapState.showClusters); renderMapMarkers() }
       $('#map-coverage-btn').onclick=async()=>{ mapState.showCoverage=!mapState.showCoverage; $('#map-coverage-btn').classList.toggle('active',mapState.showCoverage); await renderMapCoverage() }
+      const workersBtn=$('#map-workers-btn')
+      if(workersBtn) workersBtn.onclick=async()=>{ mapState.showWorkers=!mapState.showWorkers; workersBtn.classList.toggle('active',mapState.showWorkers); await renderMapWorkers() }
     }
     mapState.pins=j.pins||[]
     mapState.clusters=j.clusters||[]
@@ -4158,6 +4368,30 @@ async function renderMapCoverage(){
     layer.addTo(map)
     mapState.coverageLayer=layer
   }catch(e){ /* coverage overlay is a soft add-on -- a failure here must not break the map */ }
+}
+// Field-worker live-location layer (case_checkin self-reports, GET /api/map/workers).
+// A fresh check-in renders solid; a stale one (past the tunable
+// workerLocationStaleMs window) renders faded, so an operator can tell "here now"
+// from "was here a while ago" at a glance rather than dispatching someone who has
+// long since moved on.
+async function renderMapWorkers(){
+  if(!mapState) return
+  const {map}=mapState
+  if(mapState.workersLayer){ map.removeLayer(mapState.workersLayer); mapState.workersLayer=null }
+  if(!mapState.showWorkers) return
+  try{
+    const j=await api('/api/map/workers').then(r=>r.ok?r.json():null)
+    if(!j) return
+    const layer=window.L.layerGroup()
+    for(const w of (j.workers||[])){
+      const label=esc(w.display_name||'field worker')+(w.stale?' (last seen '+esc(fmtTime(w.last_location_at))+')':' (here now)')
+      window.L.circleMarker([w.lat,w.lon],{
+        radius:8, color:'#e0a83b', weight:2, fillColor:'#e0a83b', fillOpacity:w.stale?0.15:0.7,
+      }).bindTooltip(label).addTo(layer)
+    }
+    layer.addTo(map)
+    mapState.workersLayer=layer
+  }catch(e){ /* worker-location overlay is a soft add-on -- a failure here must not break the map */ }
 }
 // --- Activity / audit stream ---
 const ACT_KIND_LABEL={inbound:'Inbound',outbound:'Reply',transition:'Stage change',note:'Note',observation:'Note',action:'Action',autonomy_change:'Autonomy'}
@@ -4265,10 +4499,49 @@ async function loadTeam(){
   }catch(e){ body.innerHTML='<div class="empty">Team-view error: '+esc(e.message)+'</div>' }
 }
 panelToggle('#team-btn','#team-panel',loadTeam)
+// --- Contacts/Reporters panel: promote/demote the operator-assignable access tier ---
+function contactsHtml(j){
+  const contacts=(j&&j.contacts)||[]
+  if(!contacts.length) return '<div class="empty" style="padding:8px 0">No one has reported yet.</div>'
+  return '<table class="contacts-table" style="width:100%;font-size:13px"><thead><tr>'
+    +'<th style="text-align:left">Who</th><th style="text-align:left">Channel</th><th style="text-align:left">Tier</th><th style="text-align:left">Last check-in</th><th></th>'
+    +'</tr></thead><tbody>'+contacts.map(c=>{
+      const isField=c.tier==='field_worker'
+      const checkin=c.last_location_at?fmtTime(c.last_location_at):'never'
+      return '<tr data-id="'+esc(c.id)+'">'
+        +'<td>'+esc(c.display_name||c.external_id_masked)+'</td>'
+        +'<td>'+esc(c.channel||'')+'</td>'
+        +'<td>'+(isField?'<span class="owner-chip mine">field worker</span>':'<span class="owner-chip">reporter</span>')+'</td>'
+        +'<td>'+esc(checkin)+'</td>'
+        +'<td><button class="icon-btn contact-tier-toggle" data-id="'+esc(c.id)+'" data-to="'+(isField?'reporter':'field_worker')+'">'+(isField?'Demote':'Promote')+'</button></td>'
+        +'</tr>'
+    }).join('')+'</tbody></table>'
+}
+async function loadContacts(){
+  const body=$('#contacts-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  try{
+    const j=await api('/api/contacts').then(r=>r.ok?r.json():null)
+    body.innerHTML=j?contactsHtml(j):'<div class="empty">Could not load reporters.</div>'
+    body.querySelectorAll('.contact-tier-toggle').forEach(btn=>{
+      btn.onclick=async()=>{
+        const id=btn.dataset.id, to=btn.dataset.to
+        btn.disabled=true
+        try{
+          const r=await api('/api/contacts/'+encodeURIComponent(id)+'/tier',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tier:to})})
+          if(!r.ok){ const err=await r.json().catch(()=>({})); toast(err.error||'Could not change tier','err'); btn.disabled=false; return }
+          toast(to==='field_worker'?'Promoted to field worker':'Demoted to reporter','ok')
+          loadContacts()
+        }catch(e){ toast('Could not change tier: '+e.message,'err'); btn.disabled=false }
+      }
+    })
+  }catch(e){ body.innerHTML='<div class="empty">Reporters error: '+esc(e.message)+'</div>' }
+}
+panelToggle('#contacts-btn','#contacts-panel',loadContacts)
 // --- bulk toolbar wiring ---
 ;(function wireBulk(){
   const stageSel=$('#bulk-stage')
-  if(stageSel){ stageSel.innerHTML='<option value="">Move to...</option>'+['new','triaging','in_progress','waiting','resolved','closed'].map(s=>'<option value="'+s+'">'+esc(STAGE_LABEL[s]||s)+'</option>').join('') }
+  if(stageSel){ stageSel.innerHTML='<option value="">Move to...</option>'+CASEY_STAGES.map(s=>'<option value="'+s+'">'+esc(STAGE_LABEL[s]||s)+'</option>').join('') }
   const all=$('#bulk-all')
   if(all) all.onclick=()=>{ const shown=allCases.filter(matchesFull); if(all.checked) shown.forEach(c=>selectedIds.add(c.id)); else shown.forEach(c=>selectedIds.delete(c.id)); renderListFull() }
   const claim=$('#bulk-claim'); if(claim) claim.onclick=()=>bulkAction('claim')
@@ -4280,20 +4553,17 @@ panelToggle('#team-btn','#team-panel',loadTeam)
   const draftDiscard=$('#bulk-draft-discard'); if(draftDiscard) draftDiscard.onclick=async()=>{ const dlg=await showDialog({title:'Discard selected drafts?',message:'Each selected case with a pending draft has it discarded, unsent. A case with no pending draft is skipped.',confirmLabel:'Discard drafts',danger:true}); if(dlg) bulkAction('draft_discard') }
   const clr=$('#bulk-clear'); if(clr) clr.onclick=clearSelection
 })()
-// --- operator picker (cooperative attribution) ---
-async function initOperatorPicker(){
-  const sel=$('#op-picker'); if(!sel) return
-  try{
-    const j=await api('/api/operators').then(r=>r.ok?r.json():null)
-    const ops=(j&&j.operators)||[]
-    if(!ops.length) return            // no roster configured: leave the picker hidden
-    sel.innerHTML='<option value="">(not set)</option>'+ops.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.name||o.id)+'</option>').join('')
-    if(selectedOperator) sel.value=selectedOperator
-    sel.style.display=''
-    sel.onchange=()=>{ selectedOperator=sel.value; try{ selectedOperator?localStorage.setItem('casey-operator',selectedOperator):localStorage.removeItem('casey-operator') }catch{}; toast(selectedOperator?'You are '+sel.options[sel.selectedIndex].text:'Operator cleared','ok') }
-  }catch{}
+// --- who-am-i badge (login replaces the old cooperative operator picker) ---
+// selectedOperator used to be a self-picked dropdown value (cooperative
+// attribution, anyone could claim to be anyone); it is now simply the logged-
+// in account's own username -- a real identity from the session, not a guess.
+function initWhoAmI(){
+  const sel=$('#op-picker'); if(!sel || !currentUser) return
+  sel.outerHTML='<span id="whoami-badge" style="margin-left:8px" title="Logged in">'
+    +esc(currentUser.display_name||currentUser.username)
+    +' <a href="#" id="logout-link" style="margin-left:6px">log out</a></span>'
+  const lo=$('#logout-link'); if(lo) lo.onclick=(e)=>{ e.preventDefault(); doLogout() }
 }
-initOperatorPicker()
 // Inline modal replacement for native prompt()/confirm() -- works on mobile/PWA.
 // Uses DOM creation (not innerHTML) to avoid conflicts with the outer template literal.
 // Returns a Promise resolving to {value, confirmed:true} or null if cancelled.
@@ -4410,7 +4680,47 @@ async function boot(){
   const id=restoreFromHash(); if(id){ openCase(id); return }
   await restoreRefFromHash()
 }
-boot()
+// Login gate: the app shell (search bar, list, inbox) stays in the DOM but
+// hidden behind a full-screen login overlay until a session resolves. A
+// not-tech-literate operator sees one simple form, types their username and
+// password (set up for them by an admin), and the same dashboard they always
+// used appears -- no token to find or paste.
+function showLoginOverlay(){
+  const app=document.body
+  let ov=document.getElementById('login-overlay')
+  if(!ov){
+    ov=document.createElement('div')
+    ov.id='login-overlay'
+    ov.style.cssText='position:fixed;inset:0;background:var(--bg,#111);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px'
+    ov.innerHTML='<form id="login-form" style="background:var(--panel,#1a1a1a);border:1px solid var(--border,#333);border-radius:10px;padding:28px 24px;max-width:340px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,.5)">'
+      +'<h1 style="margin:0 0 18px;font-size:20px">casey</h1>'
+      +'<label style="display:block;margin-bottom:10px;font-size:13px">Username<input id="login-username" autocomplete="username" style="display:block;width:100%;margin-top:4px;padding:8px;font-size:16px" required></label>'
+      +'<label style="display:block;margin-bottom:16px;font-size:13px">Password<input id="login-password" type="password" autocomplete="current-password" style="display:block;width:100%;margin-top:4px;padding:8px;font-size:16px" required></label>'
+      +'<div id="login-error" style="color:#e66;font-size:13px;margin-bottom:10px;display:none"></div>'
+      +'<button type="submit" style="width:100%;padding:10px;font-size:15px">Log in</button>'
+      +'</form>'
+    app.appendChild(ov)
+    ov.querySelector('#login-form').addEventListener('submit', async (e)=>{
+      e.preventDefault()
+      const u=ov.querySelector('#login-username').value.trim()
+      const p=ov.querySelector('#login-password').value
+      const err=ov.querySelector('#login-error')
+      err.style.display='none'
+      try{
+        await doLogin(u,p)
+        ov.remove()
+        initWhoAmI()
+        boot()
+      }catch(e2){ err.textContent=e2.message||'Log in failed'; err.style.display='' }
+    })
+  }
+}
+;(async ()=>{
+  await checkSession()
+  if(!currentUser){ showLoginOverlay(); return }
+  initWhoAmI()
+  boot()
+})()
 // Background polls. The 5s full-list poll is the expensive one; in focus mode it
 // is suppressed so a phone only runs the cheap 30s attention poll plus health.
 const _casesIv = setInterval(() => { if(!inboxMode) loadCases() }, 5000)
@@ -4425,7 +4735,7 @@ function setMineOnly(on){
 }
 const _mineBtn = $('#mine-btn'); if(_mineBtn) _mineBtn.onclick = () => setMineOnly(!mineOnly)
 window.addEventListener('beforeunload', () => { clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv) })
-window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, loadMap, get mapState(){return mapState}, fmtDur, loadActivity, activityHtml, initOperatorPicker, get selectedOperator(){return selectedOperator}, handoverHtml, loadHandover, offlineHtml, loadOffline, teamHtml, loadTeam, fieldNotes, fieldSources, isMine, setMineOnly, get mineOnly(){return mineOnly}, undoToast, replyUndoToast, toggleSelect, clearSelection, syncBulkBar, bulkAction, get selectedIds(){return selectedIds}, applyInboxMode, setInboxMode, get inboxMode(){return inboxMode}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
+window.__casey = { esc, rel, waitFmt, sparkline, draftBanner, draftText, caseHasDraft, latestDraft, loadThresholds, hoursOf, loadMetrics, loadMetricsHtml, loadClusters, clustersHtml, loadGeo, geoHtml, loadMap, get mapState(){return mapState}, fmtDur, loadActivity, activityHtml, initWhoAmI, get selectedOperator(){return selectedOperator}, get currentUser(){return currentUser}, checkSession, doLogin, doLogout, handoverHtml, loadHandover, offlineHtml, loadOffline, teamHtml, loadTeam, fieldNotes, fieldSources, isMine, setMineOnly, get mineOnly(){return mineOnly}, undoToast, replyUndoToast, toggleSelect, clearSelection, syncBulkBar, bulkAction, get selectedIds(){return selectedIds}, applyInboxMode, setInboxMode, get inboxMode(){return inboxMode}, toast, loadCases, openCase, applyTheme, refreshHealth, refreshAttention, refreshRuntimePill, refreshGuardrailsPill, renderTriage, countTitle, setInboxBadge, get inboxCount(){return inboxCount}, get lastHealth(){return lastHealth}, get attentionInbox(){return attentionInbox}, set attentionInbox(v){attentionInbox=v},
   applySimple, stageLabel, STAGE_LABEL,
   get activeId(){return activeId}, get allCases(){return allCases}, get filt(){return filt},
   get editing(){return editing}, get simple(){return simple},
