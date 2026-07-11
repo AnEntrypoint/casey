@@ -456,28 +456,6 @@ export class CaseStore {
     return row || null
   }
   // Alias used by the enquiry/active-case tools (case_select by ref).
-  async findCaseByRef(ref) { return this.getCaseByRef(ref) }
-
-  // ---- active-case binding (worker enquiry / excursion flow) --------------
-  // A worker NEGOTIATES a case before an excursion and data-dumps into THAT case.
-  // The binding lives on the worker's contact row (active_case_id), keyed by the
-  // worker identity (the channel author). Their subsequent field updates append to
-  // the bound case; a new case is opened only when they explicitly ask.
-
-  // The contact row for a worker identity (channel author). Reused for the binding.
-  async _workerContact(author, channel = 'enquiry') {
-    const [existing] = await this.t.list('contact', { external_id: author }, { limit: 1 })
-    if (existing) return existing
-    return this.findOrCreateContact({ channel, external_id: author })
-  }
-
-  async setActiveCase(author, caseId) {
-    if (!author) return null
-    const contact = await this._workerContact(author)
-    await this.t.update('contact', contact.id, { active_case_id: caseId || '' }, SYSTEM_USER)
-    return caseId
-  }
-
   // Persist the exported dstate conversation-state bundle on the case row. WRAPPED
   // in try/catch: until the published thatcher schema carries the conv_state field
   // (or on any write race), the update throws -- which must NEVER break a live turn.
@@ -489,39 +467,23 @@ export class CaseStore {
     catch (e) { this.log?.debug?.('[casey] setConvState skipped (conv_state field unavailable)', { caseId, error: e.message }) }
   }
 
-  async getActiveCase(author) {
-    if (!author) return null
-    const [contact] = await this.t.list('contact', { external_id: author }, { limit: 1 })
-    if (!contact?.active_case_id) return null
-    return this.getCase(contact.active_case_id)
-  }
-
-  // Explicitly create a new case (the worker asked to start one). Distinct from
-  // findOrCreateCase, which is the per-conversation auto path -- this one always
-  // creates and is bound active by the caller.
-  async createCase({ subject = '', assignee = AGENT_USER.id, channel = 'enquiry', external_id = null } = {}) {
-    const ref = await this._nextRef()
-    const ext = external_id || `worker:${assignee}:${ref}`
-    return this._createReload('case', {
-      ref, channel, external_id: ext,
-      subject, summary: '', priority: 'normal', tags: '',
-      assignee, autonomy: 'auto', status: 'new', last_event_at: nowIso(),
-    }, AGENT_USER, { ref })
-  }
-
-  // Branch a FRESH case onto the SAME (channel, external_id) as an existing one --
-  // used when a worker starts a genuinely new report on a conversation whose bound
-  // case is already complete. Unlike findOrCreateCase it ALWAYS creates (no
-  // find-open short-circuit), and unlike createCase it reuses the conversationKey as
-  // external_id so the next plain inbound binds to this newest sibling (findOpenCase
-  // newest-wins). Locked on the same key so two near-simultaneous fresh-report turns
-  // cannot duplicate. Carries the parent contact_id so the worker stays one contact.
-  async branchCase({ channel, external_id, contact_id = '' }) {
+  // Explicitly branch a FRESH case for the worker (they asked to start one),
+  // reusing the SAME (channel, external_id) as their existing conversation --
+  // the real conversationKey, not a synthetic id -- so the very NEXT plain
+  // inbound message correctly binds to THIS new case via the normal
+  // findOrCreateCase/findOpenCase newest-wins path. (A prior createCase +
+  // setActiveCase implementation minted a synthetic external_id and wrote to
+  // contact.active_case_id, a field findOrCreateCase never reads -- the next
+  // message silently kept talking to the OLD case. Fixed by keying on the
+  // real conversation identity instead of a second, unread binding.) Locked on
+  // the same key so two near-simultaneous "start a new report" turns cannot
+  // duplicate.
+  async createCase({ channel, external_id, subject = '', contact_id = '' } = {}) {
     return this._withLock(`${channel}|${external_id}`, async () => {
       const ref = await this._nextRef()
       return this._createReload('case', {
         ref, channel, external_id, contact_id: contact_id || '',
-        subject: '', summary: '', priority: 'normal', tags: '',
+        subject, summary: '', priority: 'normal', tags: '',
         assignee: AGENT_USER.id, autonomy: 'auto', status: 'new', last_event_at: nowIso(),
       }, AGENT_USER, { ref })
     })
@@ -633,9 +595,9 @@ export class CaseStore {
   // Non-empty incoming values win; a known field is never overwritten with blank.
   // Returns { report } (the merged object) or { error } on guards.
   // Single chokepoint for the report-JSON safe-parse-with-fallback pattern that
-  // was previously duplicated verbatim at 4 call sites (mergeReport,
-  // markReportFieldsIfEmpty, mergeCases x2) -- any change to fallback/logging
-  // behavior now happens once instead of drifting across copies.
+  // was previously duplicated verbatim across several call sites (mergeReport,
+  // mergeCases x2) -- any change to fallback/logging behavior now happens once
+  // instead of drifting across copies.
   _parseReport(raw, caseId) {
     try { return raw ? JSON.parse(raw) : {} }
     catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); return {} }
@@ -719,36 +681,9 @@ export class CaseStore {
     })
   }
 
-  // Fill report fields ONLY where currently empty -- a structural fill that can
-  // never clobber a value the agent already recorded (incoming loses to any
-  // non-blank current value). Used at ingress to mark facts that are observable
-  // deterministically (e.g. a photo arrived) without overwriting the agent's
-  // own richer description on a later turn. Same lock, same observe guard as
-  // mergeReport. Returns { report, filled:[keys] } or { error } / no-op { report }.
-  async markReportFieldsIfEmpty(caseId, fields, user = AGENT_USER) {
-    const c0 = await this.getCase(caseId)
-    if (!c0) return { error: `no case ${caseId}` }
-    return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
-      const c = await this.getCase(caseId)
-      if (!c) return { error: `no case ${caseId}` }
-      if (c.autonomy === 'observe') return { error: 'observe' }
-      const current = this._parseReport(c.report, caseId)
-      const filled = []
-      const next = { ...current }
-      for (const [k, v] of Object.entries(fields)) {
-        const have = current[k] != null && String(current[k]).trim() !== ''
-        if (!have && v != null && String(v).trim() !== '') { next[k] = v; filled.push(k) }
-      }
-      if (!filled.length) return { report: current, filled: [] }
-      await this.updateCase(caseId, { report: JSON.stringify(next) }, user)
-      return { report: next, filled }
-    })
-  }
-
   // Append-only variant for a media field (photos/audio) whose deterministic
   // ingress note must NEVER be silently dropped just because an earlier note
-  // already occupies the field. Unlike markReportFieldsIfEmpty (correct for
-  // facts that should only ever be recorded once), a worker routinely sends
+  // already occupies the field. A worker routinely sends
   // MULTIPLE photos/voice notes across one conversation -- fill-if-empty would
   // silently discard every arrival after the first, with no field update AND no
   // operator-facing observation event (the exact bug this method fixes). Joins

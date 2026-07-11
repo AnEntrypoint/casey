@@ -8,6 +8,7 @@
 
 import { getCaseStore } from './case-runtime.js'
 import { AGENT_USER, REPORT_KEYS } from './case-store.js'
+import { CONVERSATION_PHASES } from './conversation-spec.js'
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra })
 // Shipped defaults -- used for the tool-schema `enum` hint shown to the model
@@ -526,7 +527,7 @@ export function buildCaseToolset(storeOrNull) {
       // the state I/O in casey. Mirrors freddie's case_stage.
       name: 'case_stage',
       toolset: 'cases',
-      schema: { name: 'case_stage', description: 'Declare which phase the conversation is now in: greeting (a warm opener), gathering (collecting the report), enquiring (the worker asked about their work), answering (a general question), complete (the report is on record), handoff (a person is needed), or closed (they asked to stop). Call this when the phase changes so you keep your place and never repeat a question.', parameters: { type: 'object', properties: { to: str('Conversation phase', { enum: ['greeting', 'gathering', 'enquiring', 'answering', 'complete', 'handoff', 'closed'] }) }, required: ['to'] } },
+      schema: { name: 'case_stage', description: 'Declare which phase the conversation is now in: greeting (a warm opener), gathering (collecting the report), enquiring (the worker asked about their work), answering (a general question), complete (the report is on record), handoff (a person is needed), or closed (they asked to stop). Call this when the phase changes so you keep your place and never repeat a question.', parameters: { type: 'object', properties: { to: str('Conversation phase', { enum: CONVERSATION_PHASES }) }, required: ['to'] } },
       handler: async ({ to }, ctx) => {
         const id = ctx?.activeCaseId
         if (!id) return { error: 'no active case' }
@@ -541,16 +542,18 @@ export function buildCaseToolset(storeOrNull) {
       handler: async ({ subject }, ctx) => {
         const author = ctx?.author || ctx?.principal?.id
         if (!store().createCase) return { error: 'store does not support explicit case creation' }
-        const c = await store().createCase({ subject: subject || '', assignee: author || 'agent', channel: ctx?.channel || 'enquiry' })
-        // Binding active can silently no-op (no author on ctx, or store lacks
-        // setActiveCase) while the case was still created -- surface that half-
-        // success explicitly rather than returning ok:true as if fully bound, so
-        // the caller knows subsequent turns may still be talking to the OLD
-        // active case rather than this new one.
-        let boundActive = false
-        if (store().setActiveCase && author) { await store().setActiveCase(author, c.id); boundActive = true }
+        // Reuse THIS turn's own (channel, external_id) -- the real conversation
+        // key findOrCreateCase actually binds on -- rather than inventing a
+        // synthetic id, so the very next plain inbound message from this
+        // worker correctly lands on the freshly-opened case (findOpenCase's
+        // newest-open-case-wins rule), not the old one it just moved on from.
+        const current = ctx?.activeCaseId ? await store().getCase(ctx.activeCaseId) : null
+        const channel = current?.channel || ctx?.channel || 'other'
+        const external_id = current?.external_id
+        if (!external_id) return { error: 'no conversation identity on this turn -- cannot bind a new case' }
+        const c = await store().createCase({ channel, external_id, subject: subject || '', contact_id: current?.contact_id || '' })
         await store().appendEvent(c.id, { kind: 'note', actor: 'system', text: `case explicitly opened for a fresh report by ${author || 'unknown'}` })
-        return { ok: true, activeCase: enquiryRow(c), boundActive, ...(boundActive ? {} : { warning: 'case created but not bound active (no author on this turn) -- it will not automatically receive the next message' }) }
+        return { ok: true, activeCase: enquiryRow(c) }
       },
     },
     {

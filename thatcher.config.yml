@@ -63,8 +63,6 @@ entities:
       external_id:  { type: text, required: true }   # phone number / discord user id
       handle:       { type: text }
       notes:        { type: textarea }
-      active_case_id: { type: text }                 # the case a worker has bound active (enquiry/excursion flow);
-                                                     # their field updates append to THIS case until they switch or clear it
       tier:         { type: enum, options: [reporter, field_worker], default: reporter }
                                                      # reporter = casual/public report-only, no agentic case-query access.
                                                      # field_worker = elevated tier: agentic case_list/case_mine/case_today

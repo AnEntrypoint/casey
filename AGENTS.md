@@ -309,13 +309,22 @@ the crash-budget stop state); the supervisor is its only I/O.
   with a pleasantry that asks for nothing. The agent asks one still-missing fact per
   turn until the report is as complete as can be achieved.
 - **A returning contact with a NEW case is the AGENT's call, via `case_new`.** Because
-  find-or-create reuses the open case per conversation and `markReportFieldsIfEmpty` is
-  fill-if-empty, a contact who returns and states a clearly different situation must not
+  find-or-create reuses the open case per conversation and `mergeReport`'s field-merge
+  is fill-if-empty per field (a non-blank incoming value never overwrites an already-
+  recorded one), a contact who returns and states a clearly different situation must not
   be trapped urging the old report's missing fields. There is no deterministic conflict
   detector -- the agent interprets the message and opens a fresh case with `case_new`
-  (rebinding it active) when the worker is clearly starting a new report; a genuine
-  continuation of the same incident stays on the bound case. `markReportFieldsIfEmpty`
-  is fill-if-empty, so a re-report never overwrites the old case's recorded fields.
+  when the worker is clearly starting a new report; a genuine continuation of the same
+  incident stays on the bound case. `case_new` branches the new case onto the SAME
+  (channel, external_id) as the current conversation (`CaseStore.createCase`, locked per
+  conversation) rather than a synthetic id, so the very next plain inbound message
+  correctly finds and continues on the NEW case via the normal find-open-case
+  newest-wins rule -- a prior implementation minted a synthetic external_id and wrote a
+  separate `contact.active_case_id` pointer that find-or-create never actually read, so
+  the next message silently kept talking to the old case; fixed by keying on the real
+  conversation identity instead of a second, unread binding (the whole
+  `active_case_id`/`setActiveCase`/`getActiveCase` mechanism and the schema field were
+  removed as dead code once this was found).
 - **Never stay degraded: the LLM backend self-heals.** `resolveCallLLM` probes the
   provider once, but the gateway must not latch "AI helper offline" for its whole
   life if the provider was merely down at boot. `makeResilientCallLLM` (in

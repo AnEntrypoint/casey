@@ -1938,8 +1938,9 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   })
 
   // Printable case briefing for field teams. Plain HTML, no JS, print-friendly.
+  // Uses the module-level esc() (line ~449) -- was a locally re-declared,
+  // strictly weaker copy missing the apostrophe escape; consolidated.
   app.get('/api/cases/:id/report.html', async (req, res) => {
-    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')
     try {
       const c = await store.getCase(req.params.id)
       if (!c) return res.status(404).send('<p>Case not found.</p>')
@@ -3117,6 +3118,9 @@ async function openCase(id){
       \${(c.assignee&&c.assignee!=='agent')
         ? '<span class="owner-chip'+(c.assignee===selectedOperator?' mine':'')+'" style="margin-left:4px" title="Who is handling this">'+(c.assignee===selectedOperator?'yours':esc(c.assignee))+'</span>'
         : '<button id="claim-btn" class="icon-btn" style="margin-left:4px" title="Take this case as yours (recorded against you)">Claim</button>'}
+      \${snoozedUntilTag(c.tags)
+        ? '<button id="snooze-btn" class="icon-btn" style="margin-left:4px" data-clear="1" title="Snoozed until '+esc(fmtTime(snoozedUntilTag(c.tags)))+' -- click to clear">Snoozed</button>'
+        : '<button id="snooze-btn" class="icon-btn" style="margin-left:4px" title="Hide from the inbox for a while without losing it -- a needs-human case is never hidden">Snooze</button>'}
       \${(sugg && (!c.assignee||c.assignee==='agent')) ? '<span class="hint" style="margin-left:6px" title="Based on '+esc(sugg.name)+'\\'s past work near '+esc(sugg.matched_area)+' -- a suggestion only, never automatic">suggested: '+esc(sugg.name)+'</span>' : ''}</h2>
     <div class="todo" id="todo-hint">\${esc(todoHint(c))}</div>
     \${healthBadges(c.tags)}\${intakeModeBadge(c.tags)}
@@ -3177,6 +3181,28 @@ async function openCase(id){
       if(r.ok){ undoToast(id,'Claimed -- this one is yours now'); openCase(id); refreshAttention() }
       else{ claimBtn.disabled=false; toast('Could not claim this case','warn') }
     }catch(e){ claimBtn.disabled=false; toast('Claim error: '+e.message,'warn') }
+  }
+  const snoozeBtn=$('#snooze-btn')
+  if(snoozeBtn) snoozeBtn.onclick=async()=>{
+    if(snoozeBtn.dataset.clear){
+      snoozeBtn.disabled=true
+      try{
+        const r=await api('/api/cases/'+encodeURIComponent(id)+'/snooze',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({minutes:0})})
+        if(r.ok){ toast('Snooze cleared'); openCase(id); refreshAttention() }
+        else{ snoozeBtn.disabled=false; toast('Could not clear snooze','warn') }
+      }catch(e){ snoozeBtn.disabled=false; toast('Snooze error: '+e.message,'warn') }
+      return
+    }
+    const dlg=await showDialog({title:'Snooze this case',message:'Hide it from the inbox for a while without losing it. A case where someone asked for a person is never hidden, even snoozed.',inputLabel:'Minutes from now (e.g. 60 for 1 hour, 1440 for a day)',inputPlaceholder:'240',confirmLabel:'Snooze'})
+    if(!dlg||!dlg.value) return
+    const minutes=parseInt(dlg.value,10)
+    if(!Number.isFinite(minutes)||minutes<=0){ toast('Enter a positive number of minutes','warn'); return }
+    snoozeBtn.disabled=true
+    try{
+      const r=await api('/api/cases/'+encodeURIComponent(id)+'/snooze',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({minutes})})
+      if(r.ok){ toast('Snoozed'); openCase(id); refreshAttention() }
+      else{ snoozeBtn.disabled=false; toast('Could not snooze this case','warn') }
+    }catch(e){ snoozeBtn.disabled=false; toast('Snooze error: '+e.message,'warn') }
   }
   const shareFormBtn=$('#share-form-btn')
   if(shareFormBtn) shareFormBtn.onclick=()=>{
@@ -3360,6 +3386,20 @@ async function loadDuplicateSuggestions(id){
 }
 function renderEvents(events){
   return events.map(e=>\`<div class="ev \${esc(e.kind)}"><span class="k">\${esc(e.kind)}/\${esc(e.actor)}</span> \${esc(e.text||'')} <span class="when" title="\${esc(fmtTime(e.created_at))}">\${esc(rel(e.created_at))}</span></div>\`).join('')
+}
+// Parse a 'snoozed-until:<epoch-ms>' tag (see POST /api/cases/:id/snooze,
+// attn.js's own reader) into the epoch, or null if not snoozed / expired. A
+// PAST snooze target reads as not-snoozed here (matches attnScore's own
+// now-vs-snooze comparison) so the button correctly offers "Snooze" again
+// rather than a stale "Snoozed" once the window has simply elapsed.
+function snoozedUntilTag(tags){
+  for(const t of String(tags||'').split(',').map(s=>s.trim())){
+    if(t.startsWith('snoozed-until:')){
+      const v=parseInt(t.slice('snoozed-until:'.length),10)
+      if(Number.isFinite(v)&&v>Date.now()) return v
+    }
+  }
+  return null
 }
 // Plain-language warning chips for the time-guardrail health:* tags the sweep
 // maintains, so an operator sees at a glance that a case is going wrong over time.

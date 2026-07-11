@@ -459,20 +459,6 @@ export function guessLang(text) {
   return tie ? 'en' : best
 }
 
-// Localised "your reference is X" tail, kept short. Exposed on its own so a reply
-// that already leads with a specific captured-field acknowledgement can append
-// just the reference without a second, redundant "thank you" preamble.
-export function refTail(contactText, caseRow) {
-  const ref = caseRow?.ref
-  if (!ref) return ''
-  const lang = guessLang(contactText)
-  return {
-    af: ` U verwysingsnommer is ${ref}.`,
-    zu: ` Inombolo yakho yereferensi ngu-${ref}.`,
-    xh: ` Inombolo yakho yesalathiso ngu-${ref}.`,
-  }[lang] || ` Your reference is ${ref}.`
-}
-
 // USER DIRECTIVE: no mocks/fallbacks/stubs -- only singular working mechanisms
 // and loud errors. A degraded turn (model error/timeout/empty/echo/stock-ack/
 // repeat) no longer composes a warm holding reply -- fallbackReply() is

@@ -108,13 +108,6 @@ export function canFire(machine, from, event) {
   return { ok: true, target: def.target }
 }
 
-// The events legal from `from`, for introspection (doctor/runtime API).
-export function nextEvents(machine, from) {
-  const node = machine.config.states?.[from]
-  if (!node || !node.on) return []
-  return Object.keys(node.on)
-}
-
 // Crash-loop budget, enforced by the supervisor and witnessed here so the rule is
 // declarative and testable in isolation. `times` are epoch-ms of recent crashes;
 // `now` and the window/limit are passed in (no hidden clock -- pure, replayable,
