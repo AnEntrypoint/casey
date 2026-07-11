@@ -641,9 +641,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     if (photoNote) {
       try {
         let note = photoNote
-        if (msg.media?.buffer && msg.media.type !== 'audio') {
+        const isPhotoMsg = msg.media?.buffer && msg.media.type !== 'audio'
+        if (isPhotoMsg) {
           const savedPath = store.saveMedia(caseRow.id, msg.media.buffer, { mimeType: msg.media.mimeType, kind: 'photo' })
           note = `${photoNote} (saved: ${savedPath})`
+          const description = await describePhoto(msg.media.buffer, msg.media.mimeType)
+          if (description) note += ` -- described: "${truncate(description, 500)}"`
         }
         const r = await store.appendReportField(caseRow.id, 'photos', note)
         if (r?.appended || r?.error === 'observe') {
@@ -654,11 +657,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // Same discipline for a voice note: record it as explicit state so an
     // operator always sees EVERY voice message arrive, even on an audio-only
     // message the agent turn might not narrate. Append-only; never blocks the reply.
-    const audioNote = inboundAudioNote(msg)
+    // Transcription (opt-in via CASEY_TRANSCRIBE_VOICE_NOTES=1) runs BEFORE the
+    // note is composed so a successful transcript is folded straight into the
+    // recorded field -- a failure/opt-out yields '' and the note reads exactly
+    // as it always did (operator listens, per the original degrade rung).
+    const isAudioMsg = msg.media?.buffer && msg.media.type === 'audio'
+    const transcript = isAudioMsg ? await transcribeAudio(msg.media.buffer, msg.media.mimeType) : ''
+    const audioNote = inboundAudioNote(msg, transcript)
     if (audioNote) {
       try {
         let note = audioNote
-        if (msg.media?.buffer && msg.media.type === 'audio') {
+        if (isAudioMsg) {
           const savedPath = store.saveMedia(caseRow.id, msg.media.buffer, { mimeType: msg.media.mimeType, kind: 'audio' })
           note = `${audioNote} (saved: ${savedPath})`
         }
@@ -935,7 +944,22 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // to end the turn with plain text once its first tool result is in. The
         // offline stub ignores tool_choice, which is fine.
         tool_choice: 'required',
-        enabledToolsets: ['cases', 'core'],
+        // SECURITY: 'cases' ONLY. freddie's bootHost ALWAYS discovers its own
+        // plugins/ directory (REPO_PLUGINS in freddie/src/host/index.js)
+        // regardless of casey's extraRoots, so its full library -- including
+        // 'core'-toolset tools with REAL shell/file/credential access (bash,
+        // code_execution, edit, write, file_operations, credential_files,
+        // read, grep, terminal) and send_message (bypasses every one of
+        // casey's outbound scrubs/reference-sanitization) -- is registered
+        // into the SAME host casey's agent turn draws from. Enabling 'core'
+        // here exposed all of it, schema-visible and CALLABLE, to every
+        // WhatsApp/Discord message from the public on every casey turn (a
+        // confirmed-live, confirmed-exploitable vulnerability: getEnabledToolNames
+        // returned 71 tools including a real, working bash handler). casey's
+        // agent needs ONLY its own case_* tools -- it converses and calls
+        // case_report/case_stage/etc, nothing else, per AGENTS.md's own
+        // 'the agent acts entirely through these tools' design principle.
+        enabledToolsets: ['cases'],
         // Identity for the case/enquiry tools: WHO is asking (the message author),
         // the live store, the role for row-scoped enquiries, and the active case.
         // The freddie case toolset reads these from toolCtx rather than a global, so
@@ -1317,18 +1341,87 @@ function inboundImageNote(msg) {
 // rather than type. Like the photo, it is one-shot and easy to lose if it is only
 // described into the agent's context and never recorded as explicit case state.
 // So we capture it the same way: detect a real audio/voice message (not a sticker,
-// not an image) and record a note at ingress, fill-if-empty. casey does not
-// transcribe here (no heavy dependency, P2); the operator listens and can fill the
-// richer detail -- an honest degradation rung, not a silent drop. Returns '' when
-// THIS message carries no audio.
-function inboundAudioNote(msg) {
+// not an image) and record a note at ingress, fill-if-empty. When a transcript is
+// available (see transcribeAudio below) it is folded into the note; otherwise the
+// operator listens and can fill the richer detail -- an honest degradation rung,
+// not a silent drop. Returns '' when THIS message carries no audio.
+function inboundAudioNote(msg, transcript = '') {
   const r = msg.raw || {}
-  if (r.audio || r.voice || r.type === 'audio' || r.type === 'voice') return 'farmer sent a voice note (listen and record what it says)'
+  const tail = transcript ? ` -- transcript: "${truncate(transcript, 500)}"` : ''
+  const base = 'farmer sent a voice note (listen and record what it says)' + tail
+  if (r.audio || r.voice || r.type === 'audio' || r.type === 'voice') return base
   const atts = Array.isArray(r.attachments) ? r.attachments : []
   const auds = atts.filter(a => typeof (a?.content_type || a?.contentType || a?.mimetype) === 'string'
     && /^audio\//i.test(a.content_type || a.contentType || a.mimetype))
-  if (auds.length) return 'farmer sent a voice note (listen and record what it says)'
+  if (auds.length) return base
   return ''
+}
+
+// Best-effort voice-note transcription via freddie's transcription tool (an
+// acptoapi /v1/audio/transcriptions Whisper passthrough) -- OPT-IN, degrades
+// silently to the operator-listens fallback that already existed when
+// OPENAI_API_KEY is unset or the request fails, matching the no-fallback-text
+// invariant's spirit (the transcript is an ENHANCEMENT to the recorded note,
+// never something the reply pipeline depends on existing). A field worker's
+// voice note is the single most valuable one-shot artifact on the intake path
+// (AGENTS.md), so an automatic transcript folded into the case timeline lets
+// the team read it immediately instead of waiting for someone to listen.
+// Writes to a temp file because freddie's tool takes a file_path, not a
+// buffer; the file is removed in a finally so a crash never leaks it.
+async function transcribeAudio(buffer, mimeType) {
+  if (process.env.CASEY_TRANSCRIBE_VOICE_NOTES !== '1') return ''
+  if (!process.env.OPENAI_API_KEY) return ''
+  let tmpPath = ''
+  try {
+    const os = await import('node:os')
+    const path = await import('node:path')
+    const fs = await import('node:fs')
+    const ext = /ogg/.test(mimeType || '') ? 'ogg' : /mp3|mpeg/.test(mimeType || '') ? 'mp3' : 'wav'
+    tmpPath = path.join(os.tmpdir(), `casey-voice-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`)
+    fs.writeFileSync(tmpPath, buffer)
+    const { host } = await import('freddie')
+    const h = host()
+    const result = await h.pi.dispatchTool('transcription', { file_path: tmpPath })
+    const parsed = typeof result === 'string' ? JSON.parse(result) : result
+    return typeof parsed?.text === 'string' ? parsed.text.trim() : ''
+  } catch {
+    return '' // best-effort only -- a transcription failure never blocks the reply path
+  } finally {
+    if (tmpPath) { try { (await import('node:fs')).unlinkSync(tmpPath) } catch { /* best effort cleanup */ } }
+  }
+}
+
+// Best-effort photo description via freddie's vision tool (an acptoapi
+// multimodal chat-completion passthrough) -- OPT-IN, same shape as
+// transcribeAudio above: dispatched DIRECTLY by casey's own deterministic
+// code (never exposed to the agent's own enabledToolsets, so this does not
+// reopen the tool-access security fix), degrades silently to the original
+// operator-opens-the-photo fallback on any failure/absence. A photo of a
+// sick/dead animal is the single most valuable on-site artifact (AGENTS.md);
+// an automatic description (visible lesions, swelling, lameness) folded into
+// the case timeline lets the team see what matters immediately, not only
+// once an operator manually opens the saved file. Passes the image as a
+// base64 data: URI (freddie's vision tool forwards image_url verbatim to
+// acptoapi's multimodal chat) rather than a file path -- no temp file, no
+// dependency on casey's own /media static route being reachable from
+// wherever acptoapi's provider call actually executes.
+async function describePhoto(buffer, mimeType) {
+  if (process.env.CASEY_DESCRIBE_PHOTOS !== '1') return ''
+  if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) return ''
+  try {
+    const mime = /png/.test(mimeType || '') ? 'image/png' : /gif/.test(mimeType || '') ? 'image/gif' : /webp/.test(mimeType || '') ? 'image/webp' : 'image/jpeg'
+    const dataUri = `data:${mime};base64,${buffer.toString('base64')}`
+    const { host } = await import('freddie')
+    const h = host()
+    const result = await h.pi.dispatchTool('vision', {
+      image_url: dataUri,
+      prompt: 'This is a photo of livestock a field worker sent while reporting a possible animal-health incident. Describe only what is visibly relevant to animal health: any visible signs of illness or injury (e.g. lesions, swelling, discharge, lameness, posture), the apparent species, and how many animals are visible. Do not speculate on a diagnosis.',
+    })
+    const parsed = typeof result === 'string' ? JSON.parse(result) : result
+    return typeof parsed?.content === 'string' ? parsed.content.trim() : ''
+  } catch {
+    return '' // best-effort only -- a vision-call failure never blocks the reply path
+  }
 }
 
 function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '...' : s }
