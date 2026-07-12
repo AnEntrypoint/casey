@@ -179,9 +179,6 @@ function caseHints(c, now = Date.now()) {
 // shared policy so the inbox why-line and the detail to-do line never diverge.
 function attnReason(c, now = Date.now()) { return caseHints(c, now).reason }
 
-// One plain "what to do now" line for the detail view. Same shared policy.
-function todoHint(c, now = Date.now()) { return caseHints(c, now).todo }
-
 // Rank a set of cases worst-first. Returns [{ c, score, reason }] for cases that
 // need attention (score > 0), sorted by score then recency. `cases` should be the
 // open pool; closed/resolved score 0 and drop out anyway.
@@ -198,4 +195,4 @@ function rankAttention(cases, now = Date.now(), { limit = 0, offset = 0, slaTarg
   return { total, items: sliced, atRisk, slaTargetMs }
 }
 
-export { attnScore, attnReason, todoHint, caseHints, rankAttention, tagList, ageHours, touchMs, waitAgeMs, atRiskCount, snoozedUntil }
+export { attnScore, attnReason, caseHints, rankAttention, tagList, ageHours, touchMs, waitAgeMs, atRiskCount, snoozedUntil }

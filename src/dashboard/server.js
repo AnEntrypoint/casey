@@ -35,7 +35,6 @@ import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
   issueSession, verifySession, findAccountByUsername, verifyPassword, markLogin,
   getAccount, listAccounts, createAccount, setAccountDisabled, deleteAccount,
-  ensureBootstrapAdmin, slugUsername,
 } from './auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -456,8 +455,19 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   // express.json()'s 100KB default already bounds the body.
   const MAX_LEN = 4000
   const AUTONOMY = new Set(['auto', 'assisted', 'observe'])
-  const PRIORITY = new Set(['low', 'normal', 'high', 'urgent'])
-  const CASE_TYPE = new Set(['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'])
+  // priority/case_type are config-declared enums: derive the accepted set from the
+  // SAME live source /api/config and the case_* tools validate against
+  // (store.getFieldEnum), never a hardcoded parallel copy -- otherwise a value
+  // added to thatcher.config.yml is accepted by the store and shown in the editor
+  // yet 400s here (the config-drift the stage list already avoids via
+  // getOpenStatuses). The literal list is only the fallback when getFieldEnum is
+  // absent (a pre-support store), matching the /api/config fallback shape.
+  const enumSet = (field, fallback) => new Set(
+    typeof store.getFieldEnum === 'function' && store.getFieldEnum(field, []).length
+      ? store.getFieldEnum(field, [])
+      : fallback)
+  const PRIORITY = enumSet('case.priority', ['low', 'normal', 'high', 'urgent'])
+  const CASE_TYPE = enumSet('case.case_type', ['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'])
   // Returns a validated string, or sends a 4xx and returns undefined so the
   // caller short-circuits: `const x = str(...); if (x === undefined) return`.
   const str = (res, body, field, { required = true } = {}) => {
@@ -1017,10 +1027,10 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       const c = await store.getCase(req.params.id)
       if (!c) return res.status(404).json({ error: 'not found' })
       const op = actingOperator(req)
-      const evData = (e) => {
-        if (e && typeof e.data === 'string') { try { return JSON.parse(e.data) } catch { return {} } }
-        return e?.data || {}
-      }
+      // Shared event.data parser (the same one /audit.csv and overview use) --
+      // one chokepoint for the "data is a JSON string at the read edge" rule,
+      // never a re-inlined copy that can drift.
+      const { evData } = await import('../overview.js')
       const WINDOW_MS = 120000
       const now = Date.now()
       const events = await store.listEvents(c.id)
@@ -2650,6 +2660,13 @@ function stageLabel(s){ return simple ? (STAGE_LABEL[s] || s) : s }
 // hardcoded literal that silently excludes an added/renamed stage.
 let CASEY_STAGES = ['new','triaging','in_progress','waiting','resolved','closed']
 let CASEY_NOTIFIED_STAGES = ['in_progress','waiting','resolved']
+// case_type/priority enums are config-declared (thatcher.config.yml). The editor
+// selects render from these live values (loaded from /api/config below), never a
+// hardcoded literal -- so a deployment that adds a case_type/priority value gets
+// it in the dropdown with no client change, matching the server-side accept set.
+// The literals here are only the pre-load / no-config fallback.
+let CASEY_CASE_TYPES = ['unset','outbreak','follow_up','lab_sample','import_alert']
+let CASEY_PRIORITIES = ['low','normal','high','urgent']
 // Locale defaults (South Africa) -- overridden from /api/config when the
 // deployment sets CASEY_TZ/CASEY_TZ_LABEL/CASEY_COUNTRY_CODE server-side, so
 // the SPA's own fmtTime/fmtPhone below track the same knobs as format.js
@@ -2663,6 +2680,8 @@ async function loadCaseyConfig(){
     if(!r.ok) return
     const j = await r.json()
     if(Array.isArray(j.stages) && j.stages.length) CASEY_STAGES = j.stages
+    if(Array.isArray(j.case_type) && j.case_type.length) CASEY_CASE_TYPES = j.case_type
+    if(Array.isArray(j.priority) && j.priority.length) CASEY_PRIORITIES = j.priority
     // Notified-on-move stays a UI convention (which moves are "worth telling the
     // contact about"), not itself config-declared -- keep the current default
     // set but intersected with the live stages so a removed/renamed stage name
@@ -3129,10 +3148,10 @@ async function openCase(id){
     \${reportPanel(c.report, events)}
     <button id="edit-report-btn" class="icon-btn" style="margin-bottom:14px">Edit report fields</button>
     <div class="row">
-      <div><label>Priority</label><select id="f-priority">\${['low','normal','high','urgent'].map(p=>opt(p,c.priority)).join('')}</select>\${simple?'<p class="hint">How urgent this is.</p>':''}</div>
+      <div><label>Priority</label><select id="f-priority">\${CASEY_PRIORITIES.map(p=>opt(p,c.priority)).join('')}</select>\${simple?'<p class="hint">How urgent this is.</p>':''}</div>
       <div><label>Autonomy</label><select id="f-autonomy" title="\${esc(AUTONOMY_HELP)}">\${['auto','assisted','observe'].map(p=>opt(p,c.autonomy)).join('')}</select>\${simple?'<p class="hint">Who answers the contact: the robot, a draft for you, or nobody.</p>':''}</div>
       <div><label>Assignee</label><input id="f-assignee" value="\${esc(c.assignee||'')}"></div>
-      <div><label>Case type</label><select id="f-case-type" title="Management lens: segments every report aggregate. Changing it records a case_type a -> b audit event.">\${['unset','outbreak','follow_up','lab_sample','import_alert'].map(p=>opt(p,c.case_type||'unset')).join('')}</select>\${simple?'<p class="hint">What kind of case this is, for the team\\'s reports.</p>':''}</div>
+      <div><label>Case type</label><select id="f-case-type" title="Management lens: segments every report aggregate. Changing it records a case_type a -> b audit event.">\${CASEY_CASE_TYPES.map(p=>opt(p,c.case_type||'unset')).join('')}</select>\${simple?'<p class="hint">What kind of case this is, for the team\\'s reports.</p>':''}</div>
     </div>
     <p class="hint">\${esc(AUTONOMY_HELP)}</p>
     <label>Subject</label><input id="f-subject" value="\${esc(c.subject||'')}">
@@ -4265,7 +4284,6 @@ panelToggle('#map-btn','#map-panel',loadMap)
 
 // --- Case map (Leaflet + OSM tiles, no API key) ---
 const STATUS_COLOR={new:'#3b6ea5',triaging:'#a5843b',in_progress:'#3ba55d',waiting:'#9a6bd1',resolved:'#6b7685',closed:'#3d4148'}
-const TYPE_SHAPE={outbreak:'circle',import_alert:'circle',lab_sample:'circle',follow_up:'circle',unset:'circle'}
 let mapState=null   // { map, markerLayer, clusterLines, coverageLayer, pins, clusters, showCoverage, showClusters }
 function mapMarkerIcon(color){
   return window.L.divIcon({className:'',html:'<div style="width:14px;height:14px;border-radius:50%;background:'+color+';border:2px solid rgba(255,255,255,.8);box-shadow:0 0 2px rgba(0,0,0,.5)"></div>',iconSize:[14,14]})

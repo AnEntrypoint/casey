@@ -102,3 +102,35 @@
   description: 'Final gate: every touched repo (casey, freddie, thatcher, gm, rs-*) ends with a clean worktree (git status --porcelain empty), real work committed as lanmower (never attributed to claude), pushed to master/main. No branch/worktree left dangling (global rule: zero branches/worktrees, consolidate to main, master->main). Each repo CI green where it has one.'
   witness: 'global CLAUDE.md: zero branches and worktrees, consolidate to main, never attribute claude, only commit as lanmower'
   status: pending
+- id: gm-git-branch-delete-verb-gap
+  description: 'Noticing (rs-plugkit/gm gap): the git_branch spool verb is list-only -- it accepts no delete/create/checkout action, so satisfying the global zero-branches rule (delete a dangling worktree-agent branch) has no verb path and forces a raw git bypass. Minimal-code-maximal-impact fix in rs-plugkit: extend the git_branch verb handler to accept {action:delete,name,force} (and ideally create/rename) so branch hygiene is a first-class verb, not a bash bypass. Witnessed this session: git_branch/1.txt {action:delete,...} and /2.txt {delete:...} both returned a bare branch LIST, no deletion.'
+  witness: git_branch-1.json and git_branch-2.json both returned {branches:[...],current:main} ignoring the delete action; git branch still showed the stray branch until a raw git branch -D removed it
+  status: pending
+- id: gm-supervisor-planned-shutdown
+  description: 'CONFIRMED+LANDED (gm-plugkit/supervisor.js): supervisor-initiated kills (heartbeat-stale, wrapper-sha-drift, version-drift) force-killed the child WITHOUT writing a planned .shutdown-reason.json, so the next boot mislabeled a deliberate upgrade recycle as a SILENT ABORT / unplanned-restart critical (the exact symptom witnessed in casey .watcher.log this session). Fixed: added killChild(reason) helper that writes the planned reason before SIGTERM+taskkill, wired it at all 3 sites (net reduction of 3 duplicated blocks), added heartbeat-stale to plannedReasons. Witnessed: node --check OK, helper writes a planned-classified reason.'
+  witness: supervisor.js:169 killChild helper; wired at :354/:366/:390; plannedReasons at :277 includes heartbeat-stale; node --check OK; isolated witness confirmed reason classified planned
+  status: pending
+- id: gm-ascii-instruction-sweep
+  description: 'CONFIRMED+LANDED (gm ASCII-only rule, AGENTS.md:67 -- one sighting spawns full sweep): the served-prose instruction files and skill files carried non-ASCII glyphs (em-dashes throughout, arrows in task-atomization, box-drawing in polaris-protocol tree, delta/minus/middle-dot in wfgy ΔS notation). Swept + converted ALL to ASCII (-- for em-dash, -> for arrows, |-- / backtick-- for tree, deltaS/(delta-S) for the metric, - for minus/middle-dot) across gm-plugkit/instructions/residual/*.md and gm/skills/**. Meaning preserved (deltaS reads cleanly, gloss retained).'
+  witness: node walk confirms gm-plugkit/instructions CLEAN and gm/skills FULLY ASCII-CLEAN; 106 em-dashes + arrows/box/delta converted; deltaS(delta-S) gloss intact
+  status: pending
+- id: gm-fs-write-ci-marker-instruction
+  description: 'CONFIRMED (workflow-forge on gm SKILL.md, corroborated by gm own mutables ci-marker-writer-verb + fs-write-field-name-mismatch): the COMPLETE gate requires a .ci-validated marker, but the SKILL.md/consolidate.md instruction tells the agent to dispatch fs_write {path,body:{head_sha}} -- fs_write is NOT in the verb enumeration and its handler reads content/data not body:{head_sha}, so the documented mechanism cannot write the marker (gm own runs write it via exec_js). Fix the served instruction prose (consolidate.md + SKILL.md) to the mechanism that actually works (exec_js writing .ci-validated with {head_sha}), OR correct the fs_write payload shape to the handler contract. Verify against ../gm source before landing.'
+  witness: workflow-forge agent Finding 2+3; gm .gm/mutables.yml ci-marker-writer-verb + fs-write-field-name-mismatch corroborate; needs verification against ../gm/gm-plugkit/instructions/consolidate.md + skills/gm/SKILL.md
+  status: pending
+- id: gm-continue-recursion-bound
+  description: 'CONFIRMED (workflow-forge on gm-continue/SKILL.md): the recursion bound is internally inconsistent -- L30 says gm-continue dispatches gm/wfgy-method at most twice per turn, but the counter semantics (once-to-check, once-more-to-confirm, where the confirming gm pass re-enters gm-continue) make the realistic ceiling three Skill dispatches. Reconcile L30 wording with the three-state flow. Verify against ../gm/skills/gm-continue/SKILL.md before landing.'
+  witness: workflow-forge agent gm-continue finding; needs verification against ../gm/skills/gm-continue/SKILL.md L21-22 vs L30
+  status: pending
+- id: gm-wfgy-similarity-overclaim
+  description: 'CONFIRMED (workflow-forge on wfgy-method/SKILL.md): L19 tells the agent to use the spool similarity verb for a real deltaS, but similarity is not in the served verb set -- a run trusting it may dispatch an unserved verb and silently fall back. Soften to conditional (if a similarity verb is served in this build) or verify the verb exists. Verify against ../gm/skills/wfgy-method/SKILL.md before landing.'
+  witness: workflow-forge agent wfgy finding; needs verification against ../gm/skills/wfgy-method/SKILL.md L19 similarity claim
+  status: pending
+- id: casey-config-drift-case-type
+  description: 'CONFIRMED+LANDED (casey sweep 2.1): dashboard PATCH validation + both SPA editor selects hardcoded the case_type/priority enum instead of deriving from store.getFieldEnum/api-config -- a config-added value was accepted by the store but 400d on PATCH and hidden in the editor (the drift the stage list already avoids). Fixed: server-side enumSet() derives from getFieldEnum with literal fallback; client CASEY_CASE_TYPES/CASEY_PRIORITIES loaded from /api/config drive both selects. Witnessed: 4-case exec (config-added accepted, fallback works, bogus rejected); lint green.'
+  witness: server.js enumSet at ~462; CASEY_CASE_TYPES/PRIORITIES loaded in loadCaseyConfig; selects render from them; exec witness A-D passed; npm run lint green
+  status: pending
+- id: casey-deadcode-and-evdata
+  description: 'CONFIRMED+LANDED (casey sweep 1.1-1.3, 2.3): deleted dead code (attn.js todoHint orphan wrapper+export; server.js unused ensureBootstrapAdmin/slugUsername import; server.js TYPE_SHAPE all-circle no-readers const) and consolidated the /undo handler inline evData to the shared overview.js evData import. Pure net reduction, zero-risk. Witnessed: node --check + lint green, no broken importers.'
+  witness: grep confirmed todoHint/ensureBootstrapAdmin/slugUsername/TYPE_SHAPE dead; edits applied; npm run lint OK 33 files clean
+  status: pending
