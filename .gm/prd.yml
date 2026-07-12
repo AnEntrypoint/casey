@@ -130,7 +130,3 @@
   description: 'CONFIRMED+LANDED (casey sweep 1.1-1.3, 2.3): deleted dead code (attn.js todoHint orphan wrapper+export; server.js unused ensureBootstrapAdmin/slugUsername import; server.js TYPE_SHAPE all-circle no-readers const) and consolidated the /undo handler inline evData to the shared overview.js evData import. Pure net reduction, zero-risk. Witnessed: node --check + lint green, no broken importers.'
   witness: 'LANDED+committed 593caad: deleted attn.js todoHint (orphan wrapper+export, grep-confirmed no importer), server.js unused ensureBootstrapAdmin/slugUsername import, server.js TYPE_SHAPE (all-circle no-readers); /undo handler inline evData replaced with shared overview.js evData import. Witnessed node --check + npm run lint green (33 files), no broken importers.'
   status: completed
-- id: consolidate-verify-push
-  subject: 'Consolidate: any landed casey/freddie/thatcher/gm change committed via git verbs, pushed, CI witnessed green. Honest no-change repos get no commit. freddie/thatcher changes require push to their own repos (npm latest consumption). Docs (AGENTS.md/CHANGELOG/README) updated only if public surface changed.'
-  witness: 'CONSOLIDATE phase: commit+push+CI-green per repo that actually changed; no-change repos skipped honestly'
-  status: pending
