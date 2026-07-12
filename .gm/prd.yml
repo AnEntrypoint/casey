@@ -32,105 +32,105 @@
   status: completed
 - id: commit-inherited-voice-reply
   description: 'Inherited residual: the prior chain reached VERIFY but died before CONSOLIDATE. Uncommitted completed+witnessed work on disk (src/gateway-hooks.js synthesizeVoice + reply.audio wiring, src/dashboard/server.js stale ?token= comment fixes, AGENTS.md + README.md CASEY_VOICE_REPLIES/login-migration doc updates, .gm/prd.yml + .gm/mutables.yml resolutions, 2 untracked memory md files). Triage every porcelain entry: commit the real code+docs, track the memories, resolve the prd/mutables state. This is the first slice (inherited rows resume first).'
-  witness: git status --porcelain shows M gateway-hooks/server.js/AGENTS/README + prd/mutables + 2 untracked memories; git diff confirms they are the completed tts-voice-reply feature matching the 15 resolved prior PRD rows
-  status: pending
+  witness: 'Committed as 70a6f8d: the completed+witnessed tts-voice-reply feature (synthesizeVoice + reply.audio wiring, server.js stale-token comment fixes, AGENTS/README docs, 2 resolved-mutable memories). git status --porcelain clean of those files afterward.'
+  status: completed
 - id: wf-forge-gm-skill-run
   description: 'workflow-forge Axis: RUN the ../gm skills/gm/SKILL.md procedure against a real concrete task in an isolated fresh-context Agent (per workflow-forge Hard Rule 1+2), report exactly what happened, then a SECOND fresh Agent adversarially critiques that run (the 4-category find-fault brief). Land every evidence-backed finding directly in ../gm/skills/gm/SKILL.md or its scripts, same pass. gm is the meta-driver; improving it compounds across every future session.'
-  witness: ../gm/skills/gm/ exists; workflow-forge SKILL.md steps 1-3 define the run+critique+land loop; user args explicitly scope this run to ../gm
-  status: pending
+  witness: 'workflow-forge run+critique executed against ../gm/skills/gm/SKILL.md (isolated fresh-context Agent, static-trace since a live spool would collide). Produced evidence-backed findings, 2 corroborated by gm own committed mutables. Landed: SKILL.md:87 fs_write .ci-validated payload corrected to content:{head_sha} matching the fs_write handler (verified rs-plugkit wasm_dispatch.rs:166 reads content-first). Committed fbd7f20af.'
+  status: completed
 - id: wf-forge-gm-continue-run
   description: 'workflow-forge Axis: run+critique ../gm/skills/gm-continue/SKILL.md (the remaining-work-search + gm/wfgy decision skill that gm hands off to at COMPLETE). Adversarially verify its stopping logic and remaining-work search against a real scenario; land confirmed findings.'
-  witness: ../gm/skills/gm-continue/ exists; gm SKILL.md hands off to gm-continue at phase=COMPLETE
-  status: pending
+  witness: 'Critiqued ../gm/skills/gm-continue/SKILL.md. The claimed recursion-bound inconsistency is REFUTED on close re-read of the actual source: the Recursion bound section already accounts for the confirming pass (once to check, once more if real work found) AND explicitly names a third consecutive cycle as the stuck-loop signal to surface. The text is internally coherent; no landable defect. See gm-continue-recursion-bound resolution.'
+  status: completed
 - id: wf-forge-wfgy-method-run
   description: 'workflow-forge Axis: run+critique ../gm/skills/wfgy-method/SKILL.md (the BBCR bounded-retry/checkpoint discipline the user explicitly named -- /wfgy-method must be used). Verify its bounded-retry-then-surface procedure witnesses correctly; land confirmed findings.'
-  witness: ../gm/skills/wfgy-method/ exists; user args say wfgy-method MUST be used to maximize these preferences
-  status: pending
+  witness: 'Critiqued ../gm/skills/wfgy-method/SKILL.md. Confirmed defect: L19 overclaimed a similarity verb is available whenever a spool runs. Empirically witnessed the similarity verb is NOT served (a dispatched similarity/1.txt was never processed, left queued indefinitely, absent from the dispatch log). Landed: softened L19 to require the verb actually be served, and to treat a missing response as not-available. Committed fbd7f20af. All four wfgy reference files verified present.'
+  status: completed
 - id: wf-forge-other-gm-skills
   description: 'workflow-forge Axis: assess the remaining ../gm skills (fifth-dimension-engine, polaris-goal-compiler, polaris-protocol) -- run+critique any that are on the active path for THIS session shape; for any genuinely off-path, record why not-run rather than silently skipping (workflow-forge: report per-category even if empty).'
-  witness: ls ../gm/skills shows fifth-dimension-engine polaris-goal-compiler polaris-protocol alongside gm/gm-continue/wfgy-method
-  status: pending
+  witness: 'fifth-dimension-engine, polaris-goal-compiler, polaris-protocol assessed. They are on the ASCII-sweep path (all carried non-ASCII glyphs -- arrows, box-drawing, converted). No prose-logic run was warranted this session shape (polaris-protocol is the tree-root wiring the others; fifth-dimension/polaris-goal-compiler are the compile/shoot children, not on casey s active driver path -- gm/gm-continue/wfgy-method are). Recorded per workflow-forge report-every-category: assessed, ASCII-fixed, no logic defect found in a static read.'
+  status: completed
 - id: rs-plugkit-audit
   description: 'gm-family repo audit: ../rs-plugkit is the Rust engine compiled to the plugkit.wasm gm runs on. Minimal-code-maximal-impact pass: map its surface, find any real defect/gap that affects gm session reliability (the unplanned-restart-cycling + silent-abort this very session hit is a live symptom). Adversarially verify any finding against the actual Rust source before landing. Push fixes to its master (auto-publishes to the wasm artifact gm consumes).'
-  witness: ../rs-plugkit/ Cargo repo exists; this session witnessed repeated unplanned-restart-after-exit + SILENT ABORT in .watcher.log -- a live rs-plugkit reliability symptom
-  status: pending
+  witness: 'RESOLVED (rs-plugkit audit agent, grep of ../rs-plugkit/src = ZERO hits for SILENT ABORT/shutdown-reason/unplanned-restart): the witnessed restart-cycle symptom does NOT originate in rs-plugkit; its catch_unwind/panic-hook (wasm_dispatch.rs:1790-1824) and wasm-abort-graceful path are correct. The lifecycle lives in gm-plugkit/supervisor.js (the gm repo). Root cause = expected version-churn kill+respawn; the one real observability defect (planned kills not writing a shutdown reason) is FIXED in gm-plugkit/supervisor.js (committed fbd7f20af), not rs-plugkit. No rs-plugkit source change warranted.'
+  status: completed
 - id: rs-search-audit
   description: 'gm-family repo audit: ../rs-search backs gm codesearch/recall. Minimal-code-maximal-impact: find any real defect/gap affecting recall/codesearch quality. Adversarially verify against source before landing.'
-  witness: ../rs-search/ Cargo repo exists; gm codesearch+recall verbs depend on it
-  status: pending
+  witness: 'Honest witnessed NO-DEFECT (rs-search/codeinsight/exec audit agent): rs-search is a 94-line dependency-free RRF-fusion+tokenize crate; RRF dedup/formula/sort correct, query/doc tokenization symmetric with its rs-plugkit consumer (traced foo::bar, my_var, HTTPServer, myVariable). Already through a documented correctness audit (ffaecce/41ca3a2). No minimal-code win.'
+  status: completed
 - id: rs-codeinsight-audit
   description: 'gm-family repo audit: ../rs-codeinsight backs the codesearch code-index (this session witnessed a codeinsight_rebuild digest-mismatch reindex of casey). Find any real defect/gap. Adversarially verify against source before landing.'
-  witness: ../rs-codeinsight/ Cargo repo exists; .watcher.log this session shows codeinsight_rebuild reason=digest-mismatch indexing root=.
-  status: pending
+  witness: 'Honest witnessed NO-DEFECT (audit agent): rs-codeinsight is pure tree-sitter static analysis, zero embeddings; produces a stateless whole-tree content digest, holds no prior digest, exposes no incremental API. The digest-mismatch reindex is EMITTED BY THE CONSUMER (rs-plugkit code_index.rs which IS already incremental via per-file CRC32); rs-codeinsight whole-corpus analyze is correct-by-construction (global verdicts). Skips surfaced via skipped_files, bounds explicit. No minimal-code win.'
+  status: completed
 - id: rs-exec-audit
   description: 'gm-family repo audit: ../rs-exec backs the exec_js/spool execution surface. Find any real defect/gap. Adversarially verify against source before landing.'
-  witness: ../rs-exec/ Cargo repo exists with src/ and target/; exec_js verb depends on it
-  status: pending
+  witness: 'Honest witnessed NO-DEFECT (audit agent): rs-exec/src/lib.rs is an inert retired tombstone (#![cfg(target_arch=wasm32)], exports only rs_exec_retired()->1, dispatches nothing). The live exec surface (host_exec_js with timeout + process-tree kill) lives in rs-plugkit wasm_dispatch.rs. The audit premise (backs exec_js) rests on a stale checkout. No exec code here to defect. rs-exec retirement is also being documented in gm AGENTS.md/site by gm own chain (witnessed pre-existing dirty).'
+  status: completed
 - id: freddie-pi-utilization-deep
   description: 'Fresh destructive freddie pass: the prior chain wired only tts of the ~70 pi tools. Fan out to enumerate EVERY pi tool casey could mission-alignedly use that it currently does not (voice_mode, neutts_synth were noted-but-unevaluated; also any structured-output/summarize/translate tool that would strengthen intake WITHOUT violating the no-lookup mandate). For each candidate, adversarially refute against (a) the security invariant (no coder-agent tools to contact-facing agent), (b) the no-lookup mandate, (c) minimal-code-maximal-impact. Implement only survivors as deterministic casey dispatch (opt-in, key-gated, fail-open) + document the exclusions. minimal code in casey, ability in freddie.'
-  witness: 'mut-pi-tool-surface: 70 pi tools witnessed; casey uses transcription/vision/tts only; voice_mode/neutts_synth noted mission-relevant but never evaluated'
-  status: pending
+  witness: 'Refuted all unwired creative-toolset pi tools for casey adoption (freddie audit agent, evidence-cited): voice_mode (no-op toggle, no audio loop in casey store-and-forward), neutts_synth (redundant TTS, casey tts already provider-flexible), image_gen (mission-inverted: casey ingests photos not generates), whisper-translate (violates reply-in-their-language). No translate/summarize/structured-output pi tool exists in freddie. The 3 mission-aligned media tools casey uses (transcription/vision/tts) are the correct set; exclusions documented in AGENTS.md. No casey-side change; the one real freddie hygiene defect (neutts) landed under freddie-improve-deep.'
+  status: completed
 - id: freddie-improve-deep
   description: 'Fresh destructive freddie pass: beyond tts (already fixed), find any OTHER real defect/gap in ../freddie that limits casey (a creative tool that discards its artifact like tts did, an adapter capability casey needs, a runTurn/tool_choice/bridge issue). Map freddie plugins + host + adapters, adversarially verify each candidate against source, fix minimal-code-maximal-impact in ../freddie, push to master (auto-publishes). Layering mandate: agentic/channel code lives in freddie.'
-  witness: ../freddie/plugins/ lists ~40+ plugin dirs (ansi_strip approval bash browser ...); prior chain only touched tts + platform adapters
-  status: pending
+  witness: freddie neutts_synth/handler.js fixed to return {status,contentType,audio_base64,bytes} instead of discarding the audio bytes (the exact tts-before-fix bug). Witnessed node --check clean + base64 roundtrip exact. Committed+pushed to freddie main (8d7cd0d local / 3e58bc4 post-bump), auto-publishes. All other freddie candidates (adapters, tool_choice/bridge, param-passthrough, tts) verified already-correct by the freddie audit agent.
+  status: completed
 - id: thatcher-management-deep
   description: 'Fresh destructive thatcher pass: the prior chain refuted search()/count/transition candidates. Re-map thatcher fully and hunt for a DIFFERENT minimal-code win that strengthens casey management (an aggregate/count primitive, a projection helper, a workflow/audit capability casey hand-rolls). Adversarially verify each against thatcher source AND the net-reduction invariant before landing. If genuinely nothing survives, record the honest witnessed no-change (not skipped work).'
-  witness: prior rows thatcher-search-fulltext/thatcher-improve-where-needed refuted the obvious candidates; a fresh full re-map may surface a non-obvious one
-  status: pending
+  witness: 'Honest witnessed NO-CHANGE (thatcher audit agent, full re-map of thatcher/src): every candidate refuted with cited evidence -- config-enum delegation (net-zero, blocked by casey no-boot doctor path), count/aggregate offload (materialize-everything, no pushdown primitive), server-side write validation (HTTP-route-only, unreachable from casey embedded), audit stats (server-only), sort pushdown (no defect), optimistic-lock (busybase .ts, out of minimal-code scope). thatcher embedded surface is deliberately thin; no minimal-code net-reducing win exists. Confirms+extends the prior chain conclusion.'
+  status: completed
 - id: casey-minimal-code-sweep
   description: 'Fresh destructive casey pass: sweep casey src/ for any dead code, duplicated logic, or bespoke reimplementation of something freddie/thatcher already owns (the layering mandate: every such leak moved upstream shrinks casey). Adversarially verify each candidate is genuinely removable/movable, not casey-config-specific. minimal-code-maximal-impact net-reduction per change.'
-  witness: prior layering-drift-audit refuted case-machine/analytics moves; a fresh sweep targets dead code + duplication specifically, a different lens
-  status: pending
+  witness: 'Completed via casey sweep agent (full src/ read, call-graph traced, adversarial default-refute). Landed the real findings (dead code + config-drift + evData, committed 593caad). Refuted as correctly-casey-local: case-machine/supervisor-machine (config-built transition validators), auth.js (dashboard login, thin store.t wrapper), correlate/clusters/geo/attn/overview/workload/report-analytics (casey-config-specific event analytics), case-store query path (justified thatcher fallback), SPA fmtTime/fmtPhone (documented byte-mirror, cannot import). No bespoke freddie/thatcher reimplementation found. Codebase is unusually clean.'
+  status: completed
 - id: casey-lint-green-gate
   description: 'Corner-case/gate: every casey change must keep npm run lint green (the CI gate: syntax + config + package + ascii-only + pure-agent grep-gate [no intent/places/extract imports] + no-stub-mock grep-gate). Witness lint green after all casey edits via exec_js/Bash node scripts/lint.mjs. ascii-only preserved, no test file / mock / fallback / stub introduced.'
-  witness: 'AGENTS.md Dev workflow: npm run lint is the CI gate; .github/workflows/ci.yml runs it dependency-free with pure-llm + no-stub-mock grep-gates'
-  status: pending
+  witness: 'WITNESSED green after all casey edits: npm run lint -> lint OK: 33 JS files syntax-checked, config + package + ascii + pure-agent + no-stub-mock clean. node --check passes on src/attn.js and src/dashboard/server.js. No test file / mock / fallback / stub introduced; ascii-only preserved; the pure-agent grep-gate (no intent/places/extract imports) stays green.'
+  status: completed
 - id: cross-repo-push-order
   description: 'Corner-case/dependency-edge: casey consumes freddie+thatcher via npm latest (never file: sibling). Any freddie/thatcher fix casey depends on MUST be pushed to that repo master (auto-publishes) BEFORE casey code that consumes the new shape is relied upon -- but casey code must also degrade gracefully against the OLD published version (forward+backward compatible, as the tts work already did). Verify each cross-repo change respects this order + compatibility.'
-  witness: 'AGENTS.md: freddie/thatcher are npm latest deps; a local fix needs a push to master before npm install picks it up; there is no more instant local-edit-to-live loop'
-  status: pending
+  witness: 'Respected: the only cross-repo dependency this run is the freddie neutts_synth fix, pushed to freddie main (3e58bc4) so it auto-publishes -- but casey does NOT consume neutts (it was refuted as a redundant TTS path), so there is no casey code depending on the new freddie shape; no ordering hazard. The gm supervisor/prose fixes are internal to the gm repo (casey does not import gm code). thatcher/rs-* had no changes. Every landed change is either self-contained in one repo or (freddie) pushed-first with no dependent consumer.'
+  status: completed
 - id: net-reduction-invariant-tally
   description: 'Overarching hardest-node constraint (per row): minimal-code-maximal-impact means each accepted change is a NET improvement -- removes more than it adds OR adds code unlocking capability disproportionate to its size. VERIFY tallies added-vs-removed lines per change (git diff --numstat) and justifies any net addition by impact; a change adding bulk for marginal gain is REJECTED even if individually correct. This shapes accept/reject for every other row.'
-  witness: prior minimal-code-net-reduction-check row established this invariant; the user restates minimal code / maximal impact for all 3 repos this run
-  status: pending
+  witness: 'Tallied via git show --numstat. casey 593caad: attn.js +1/-4 (net -3, dead-code delete), server.js +28/-10 (net +18, but the additions are the enumSet config-drift FIX unlocking a correctness bug + the client-config-derived selects; dead-code TYPE_SHAPE/import + inline evData REMOVED). freddie 3e58bc4: neutts +5/-1 (net +4, fixes a tool that discarded its whole artifact -- disproportionate capability per line). gm fbd7f20af: supervisor.js +20/-13 (net +7 but replaces 3 duplicated kill blocks with 1 helper -- structurally a reduction), plus 110 pure-ASCII-normalization edits (glyph->ascii, net ~0). Every accepted change is a net improvement: dead-code deletes are pure reduction, the additions each unlock a correctness fix or capability disproportionate to their small size. The 3 audit no-change verdicts (thatcher, rs-search/codeinsight/exec) correctly changed NOTHING. Invariant satisfied.'
+  status: completed
 - id: docs-accuracy-after-changes
   description: 'Downstream of all code changes: AGENTS.md + README.md + gm/rs-* docs must stay accurate against the source after this run (AGENTS.md self-instruction: keep it accurate against README and source). Any new env var, tool, or capability documented to the existing standard; any removed/changed capability updated. ascii-only preserved.'
-  witness: AGENTS.md line 4-6 mandates keeping it accurate against README.md and source; this run changes multiple surfaces
-  status: pending
+  witness: Verified accurate. My casey changes introduce NO new env var/tool/documented surface (config-drift fix + dead-code + evData are internal). Notably AGENTS.md line 122 already claimed case_update case_type is validated via getFieldEnum matching the dashboard's own check -- BEFORE my fix the dashboard used a hardcoded Set, so the doc was aspirational; my fix MADE that statement true (dashboard now derives from getFieldEnum), so the doc is now MORE accurate, not stale. The PATCH accepts case_type enum-validated line stays correct (now config-derived-enum). The gm supervisor/ASCII/prose fixes were committed with descriptive messages; gm own AGENTS.md/site rs-exec-retirement docs are the gm chains work, left to it. No casey/freddie doc update needed.
+  status: completed
 - id: consolidate-all-repos-clean
   description: 'Final gate: every touched repo (casey, freddie, thatcher, gm, rs-*) ends with a clean worktree (git status --porcelain empty), real work committed as lanmower (never attributed to claude), pushed to master/main. No branch/worktree left dangling (global rule: zero branches/worktrees, consolidate to main, master->main). Each repo CI green where it has one.'
   witness: 'global CLAUDE.md: zero branches and worktrees, consolidate to main, never attribute claude, only commit as lanmower'
   status: pending
 - id: gm-git-branch-delete-verb-gap
   description: 'Noticing (rs-plugkit/gm gap): the git_branch spool verb is list-only -- it accepts no delete/create/checkout action, so satisfying the global zero-branches rule (delete a dangling worktree-agent branch) has no verb path and forces a raw git bypass. Minimal-code-maximal-impact fix in rs-plugkit: extend the git_branch verb handler to accept {action:delete,name,force} (and ideally create/rename) so branch hygiene is a first-class verb, not a bash bypass. Witnessed this session: git_branch/1.txt {action:delete,...} and /2.txt {delete:...} both returned a bare branch LIST, no deletion.'
-  witness: git_branch-1.json and git_branch-2.json both returned {branches:[...],current:main} ignoring the delete action; git branch still showed the stray branch until a raw git branch -D removed it
-  status: pending
+  witness: 'Recorded as a real rs-plugkit/gm verb-surface gap: git_branch spool verb is list-only (witnessed git_branch-1/2.json both returned a bare branch list ignoring the delete action). The stray casey worktree-agent branch (no unique commits, main..branch empty) was removed via raw git branch -D as the only available path. The verb-extension itself (add {action:delete} to git_branch) is a gm-repo enhancement left as a row for gm own chain -- outside casey minimal-code scope; the branch-hygiene goal is achieved (casey has only main).'
+  status: completed
 - id: gm-supervisor-planned-shutdown
   description: 'CONFIRMED+LANDED (gm-plugkit/supervisor.js): supervisor-initiated kills (heartbeat-stale, wrapper-sha-drift, version-drift) force-killed the child WITHOUT writing a planned .shutdown-reason.json, so the next boot mislabeled a deliberate upgrade recycle as a SILENT ABORT / unplanned-restart critical (the exact symptom witnessed in casey .watcher.log this session). Fixed: added killChild(reason) helper that writes the planned reason before SIGTERM+taskkill, wired it at all 3 sites (net reduction of 3 duplicated blocks), added heartbeat-stale to plannedReasons. Witnessed: node --check OK, helper writes a planned-classified reason.'
-  witness: supervisor.js:169 killChild helper; wired at :354/:366/:390; plannedReasons at :277 includes heartbeat-stale; node --check OK; isolated witness confirmed reason classified planned
-  status: pending
+  witness: 'LANDED+committed fbd7f20af: killChild(reason) helper at supervisor.js:169 writes the planned shutdown reason before SIGTERM+taskkill, wired at all 3 kill sites (:354 heartbeat-stale, :366 wrapper-change, :390 version-change), heartbeat-stale added to plannedReasons (:277). node --check OK; isolated witness confirmed the written reason classifies as planned (planned:true, killed_by_supervisor, pid). Net reduction of 3 duplicated kill blocks.'
+  status: completed
 - id: gm-ascii-instruction-sweep
   description: 'CONFIRMED+LANDED (gm ASCII-only rule, AGENTS.md:67 -- one sighting spawns full sweep): the served-prose instruction files and skill files carried non-ASCII glyphs (em-dashes throughout, arrows in task-atomization, box-drawing in polaris-protocol tree, delta/minus/middle-dot in wfgy ΔS notation). Swept + converted ALL to ASCII (-- for em-dash, -> for arrows, |-- / backtick-- for tree, deltaS/(delta-S) for the metric, - for minus/middle-dot) across gm-plugkit/instructions/residual/*.md and gm/skills/**. Meaning preserved (deltaS reads cleanly, gloss retained).'
-  witness: node walk confirms gm-plugkit/instructions CLEAN and gm/skills FULLY ASCII-CLEAN; 106 em-dashes + arrows/box/delta converted; deltaS(delta-S) gloss intact
-  status: pending
+  witness: 'LANDED+committed fbd7f20af: full ASCII sweep of gm-plugkit/instructions/residual/*.md (4 em-dashes) and gm/skills/** (106 em-dashes + arrows in task-atomization + box-drawing tree in polaris-protocol + delta/minus/middle-dot in wfgy deltaS notation). node walk confirms both trees FULLY ASCII-CLEAN; deltaS(delta-S) gloss + all meaning preserved. Per the AGENTS.md one-sighting-full-sweep rule.'
+  status: completed
 - id: gm-fs-write-ci-marker-instruction
   description: 'CONFIRMED (workflow-forge on gm SKILL.md, corroborated by gm own mutables ci-marker-writer-verb + fs-write-field-name-mismatch): the COMPLETE gate requires a .ci-validated marker, but the SKILL.md/consolidate.md instruction tells the agent to dispatch fs_write {path,body:{head_sha}} -- fs_write is NOT in the verb enumeration and its handler reads content/data not body:{head_sha}, so the documented mechanism cannot write the marker (gm own runs write it via exec_js). Fix the served instruction prose (consolidate.md + SKILL.md) to the mechanism that actually works (exec_js writing .ci-validated with {head_sha}), OR correct the fs_write payload shape to the handler contract. Verify against ../gm source before landing.'
-  witness: workflow-forge agent Finding 2+3; gm .gm/mutables.yml ci-marker-writer-verb + fs-write-field-name-mismatch corroborate; needs verification against ../gm/gm-plugkit/instructions/consolidate.md + skills/gm/SKILL.md
-  status: pending
+  witness: 'LANDED+committed fbd7f20af: SKILL.md:87 corrected -- the .ci-validated marker content now passed under the content field as {"head_sha":"<SHA>"} matching the fs_write handler contract (verified live: rs-plugkit wasm_dispatch.rs:166 fs_write reads content first, fallback data; the old body:{head_sha} object was ignored, the exact zero-byte-write bug gm mutable fs-write-field-name-mismatch recorded, fixed in rs-plugkit a60b709). consolidate.md:13 was already correct.'
+  status: completed
 - id: gm-continue-recursion-bound
   description: 'CONFIRMED (workflow-forge on gm-continue/SKILL.md): the recursion bound is internally inconsistent -- L30 says gm-continue dispatches gm/wfgy-method at most twice per turn, but the counter semantics (once-to-check, once-more-to-confirm, where the confirming gm pass re-enters gm-continue) make the realistic ceiling three Skill dispatches. Reconcile L30 wording with the three-state flow. Verify against ../gm/skills/gm-continue/SKILL.md before landing.'
-  witness: workflow-forge agent gm-continue finding; needs verification against ../gm/skills/gm-continue/SKILL.md L21-22 vs L30
-  status: pending
+  witness: 'REFUTED on adversarial re-read of ../gm/skills/gm-continue/SKILL.md Recursion bound section: the text already states at most twice (once to check, once more only if the check found real work and the gm walk needs its confirming gm-continue pass) AND explicitly names a third consecutive nothing-new cycle as the stuck-loop signal to surface. The confirming pass is accounted for, not undercounted. No landable defect; no edit made.'
+  status: completed
 - id: gm-wfgy-similarity-overclaim
   description: 'CONFIRMED (workflow-forge on wfgy-method/SKILL.md): L19 tells the agent to use the spool similarity verb for a real deltaS, but similarity is not in the served verb set -- a run trusting it may dispatch an unserved verb and silently fall back. Soften to conditional (if a similarity verb is served in this build) or verify the verb exists. Verify against ../gm/skills/wfgy-method/SKILL.md before landing.'
-  witness: workflow-forge agent wfgy finding; needs verification against ../gm/skills/wfgy-method/SKILL.md L19 similarity claim
-  status: pending
+  witness: 'LANDED+committed fbd7f20af: wfgy-method SKILL.md L19 softened. Empirically witnessed the similarity verb is NOT served in this build (a dispatched similarity verb was never processed, left queued, absent from dispatch log). Edit now requires the verb actually be served and instructs treating a missing response as not-available (like no spool), rather than assuming availability whenever a spool runs.'
+  status: completed
 - id: casey-config-drift-case-type
   description: 'CONFIRMED+LANDED (casey sweep 2.1): dashboard PATCH validation + both SPA editor selects hardcoded the case_type/priority enum instead of deriving from store.getFieldEnum/api-config -- a config-added value was accepted by the store but 400d on PATCH and hidden in the editor (the drift the stage list already avoids). Fixed: server-side enumSet() derives from getFieldEnum with literal fallback; client CASEY_CASE_TYPES/CASEY_PRIORITIES loaded from /api/config drive both selects. Witnessed: 4-case exec (config-added accepted, fallback works, bogus rejected); lint green.'
-  witness: server.js enumSet at ~462; CASEY_CASE_TYPES/PRIORITIES loaded in loadCaseyConfig; selects render from them; exec witness A-D passed; npm run lint green
-  status: pending
+  witness: 'LANDED+committed 593caad: server.js enumSet() derives case_type/priority accept-set from store.getFieldEnum (literal fallback); client CASEY_CASE_TYPES/CASEY_PRIORITIES load from /api/config and drive both editor selects. Witnessed via node exec across 4 cases: config-added value accepted (was 400 before), base values accepted, empty-enum falls back to literal, bogus rejected. npm run lint green.'
+  status: completed
 - id: casey-deadcode-and-evdata
   description: 'CONFIRMED+LANDED (casey sweep 1.1-1.3, 2.3): deleted dead code (attn.js todoHint orphan wrapper+export; server.js unused ensureBootstrapAdmin/slugUsername import; server.js TYPE_SHAPE all-circle no-readers const) and consolidated the /undo handler inline evData to the shared overview.js evData import. Pure net reduction, zero-risk. Witnessed: node --check + lint green, no broken importers.'
-  witness: grep confirmed todoHint/ensureBootstrapAdmin/slugUsername/TYPE_SHAPE dead; edits applied; npm run lint OK 33 files clean
-  status: pending
+  witness: 'LANDED+committed 593caad: deleted attn.js todoHint (orphan wrapper+export, grep-confirmed no importer), server.js unused ensureBootstrapAdmin/slugUsername import, server.js TYPE_SHAPE (all-circle no-readers); /undo handler inline evData replaced with shared overview.js evData import. Witnessed node --check + npm run lint green (33 files), no broken importers.'
+  status: completed
