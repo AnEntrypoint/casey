@@ -1214,6 +1214,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // conversationKey falls back to the phone number. msg.from (author id) silently
     // 404s on Discord and the contact never sees the reply.
     const reply = { to: replyTo, text, platform, caseId: fresh.id, ...(degraded ? { degraded: true } : {}) }
+    // Opt-in voice reply: speak the (already-vetted, non-degraded) text back so a
+    // low-literacy reporter can hear it. Additive -- text still sends; null when
+    // disabled/unavailable/failed, leaving a plain text reply.
+    const audio = await synthesizeVoice(text)
+    if (audio) reply.audio = audio
     let delivered = true
     if (adapter?.send) {
       try { await adapter.send(reply) }
@@ -1421,6 +1426,36 @@ async function describePhoto(buffer, mimeType) {
     return typeof parsed?.content === 'string' ? parsed.content.trim() : ''
   } catch {
     return '' // best-effort only -- a vision-call failure never blocks the reply path
+  }
+}
+
+// Best-effort voice REPLY via freddie's tts tool (an acptoapi /v1/audio/speech
+// passthrough) -- OPT-IN, the exact mirror of transcribeAudio's voice-note-IN
+// path. A rural reporter who can send a voice note but struggles to READ a text
+// reply is the single most under-served contact on the intake path; speaking the
+// reply back to them in their own words closes that gap. Dispatched DIRECTLY by
+// casey's deterministic code (never exposed to the agent's enabledToolsets, same
+// security discipline as transcribeAudio/describePhoto), and it runs AFTER the
+// degraded/blanked-reply gate so a turn that correctly sent nothing never speaks.
+// The audio is ADDITIVE -- the text always sends; a tts failure/absence degrades
+// silently to text-only and never blocks the reply path. Length is capped so a
+// long reply can't run up TTS cost/latency. Returns {data_base64, mime} for the
+// adapter's reply.audio field, or null.
+async function synthesizeVoice(text) {
+  if (process.env.CASEY_VOICE_REPLIES !== '1') return null
+  if (!process.env.OPENAI_API_KEY && !process.env.ELEVENLABS_API_KEY) return null
+  const spoken = (text || '').trim()
+  if (!spoken) return null
+  try {
+    const provider = process.env.ELEVENLABS_API_KEY && !process.env.OPENAI_API_KEY ? 'elevenlabs' : 'openai'
+    const { host } = await import('freddie')
+    const h = host()
+    const result = await h.pi.dispatchTool('tts', { text: truncate(spoken, 600), provider })
+    const parsed = typeof result === 'string' ? JSON.parse(result) : result
+    if (!parsed?.audio_base64) return null
+    return { data_base64: parsed.audio_base64, mime: parsed.contentType || 'audio/mpeg' }
+  } catch {
+    return null // best-effort only -- a tts failure never blocks the text reply
   }
 }
 

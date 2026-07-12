@@ -1,1 +1,104 @@
-[]
+- id: tts-voice-reply
+  description: 'Maximize a witnessed-available pi ability: add opt-in TTS voice-note REPLY (freddie ''tts'' tool, confirmed present via exec_js-22, env OPENAI_API_KEY|ELEVENLABS_API_KEY). Symmetric to the existing transcription voice-note-IN path. High impact for low-literacy rural WhatsApp reporters who can send voice but struggle to read. Gated behind CASEY_VOICE_REPLIES=1, degrades silently to text-only (no-fallback invariant). Deterministic casey code dispatching h.pi.dispatchTool(''tts''), NEVER exposed to the agent''s enabledToolsets (same security discipline as transcribeAudio/describePhoto). Minimal casey glue; the ability lives in freddie.'
+  witness: 'End-to-end voice-reply implemented: freddie tts returns audio (committed/pushed), freddie adapters deliver reply.audio (committed/pushed), casey synthesizeVoice() gated behind CASEY_VOICE_REPLIES=1 dispatches tts and attaches reply.audio at gateway-hooks.js:1216. lint green, syntax OK across all 4 files.'
+  status: completed
+- id: pi-tool-surface-audit
+  description: 'Audit the full 70-tool pi surface (exec_js-22) for ANY other mission-aligned ability casey should use, and DOCUMENT the deliberate exclusions so the gap is a decision not an oversight. Confirmed: web_search/web_fetch EXCLUDED (violate no-lookup/agent-own-world-knowledge mandate); bash/read/write/edit/browser/skills/delegate/terminal EXCLUDED (coder-agent tools, security invariant forbids contact-facing exposure). Result is an AGENTS.md note enumerating which pi tools casey uses, which it deliberately does not, and why -- minimal code (docs only), maximal clarity.'
+  witness: 'AGENTS.md now documents the full 70-tool pi surface: the 3 mission-aligned creative tools casey dispatches deterministically (transcription/vision/tts), and the deliberate exclusions with rationale (coder-agent tools forbidden by security invariant; web_search/web_fetch violate the no-lookup mandate). Added as a ''pi tool surface'' paragraph after the coder-agent cwd note. Docs-only, maximal clarity.'
+  status: completed
+- id: freddie-version-gap
+  description: Installed freddie is 0.0.122 but sibling ../freddie is 0.0.136 (npm latest lags local). Determine whether casey depends on any freddie capability that only exists >0.0.122, and whether the pi tools casey wants (tts) are present at 0.0.122 (WITNESSED yes via exec_js-22 against the installed dep). If a needed freddie improvement is only local, it must be pushed to freddie's master (auto-publishes) before casey can consume it. Record the constraint; do not blindly bump.
+  witness: Recorded constraint (not a code change). casey consumes freddie via npm latest; node_modules/freddie=0.0.122 lags sibling 0.0.136. The tts fix + adapter audio-send were committed/pushed to freddie origin (e4b7aaf / 65e580a..e092fef) which auto-publishes; casey picks them up on the next npm install once published. casey's synthesizeVoice + reply.audio code is correct against the NEW freddie shape and degrades to text-only against an old freddie (reply.audio ignored by a text-only adapter, and an old tts returns no audio_base64 so synthesizeVoice returns null). No blind version bump needed -- forward+backward compatible.
+  status: completed
+- id: tts-return-shape-consume
+  description: 'Corner-case of tts-voice-reply: the tts tool''s return artifact (file path? base64? url? which audio mime?) must be witnessed and correctly forwarded to each channel. WhatsApp send of audio differs from Discord. adapter.send today takes {to,text}; a voice reply needs a media path. Must witness (a) tts return shape via exec_js, (b) whether freddie''s adapter.send supports media or needs a new field. If the adapters cannot send audio, the honest outcome is: transcript-of-reply is not deliverable -> either extend freddie''s adapter (upstream) or scope voice-reply to channels that support it. NO silent no-op that pretends to send voice.'
+  witness: casey synthesizeVoice() (gateway-hooks.js) reads freddie tts audio_base64 and sets reply.audio={data_base64,mime}; adapters deliver it. Consumption shape matches the patched freddie return {audio_base64,contentType}. Witnessed adapter delivery via adapter-witness.mjs.
+  status: completed
+- id: tts-degrade-and-cost
+  description: 'Failure/degenerate modes of voice-reply: (1) env key absent -> text-only, silent, same as transcribe/describe. (2) tts call errors/times out -> text reply STILL sends (voice is an ADDITION, never a replacement that could swallow the text). (3) empty/degraded agent reply -> no tts at all (nothing to speak). (4) very long reply -> cap length sent to tts to bound cost/latency. (5) reply already blanked by outbound scrub -> no tts. Voice must never become a path that sends audio when the text path correctly sent nothing.'
+  witness: 'synthesizeVoice placed AFTER the isFallback/degraded gate (gateway-hooks.js:1202 returns before reply build at :1216), so a blanked/degraded turn never speaks. Guards: CASEY_VOICE_REPLIES!=1 -> null; no key -> null; empty text -> null; truncate(text,600) caps cost; try/catch -> null on any failure; audio is additive (text always sends). node --check + npm run lint green.'
+  status: completed
+- id: voice-reply-doc-and-ci
+  description: 'Downstream of tts-voice-reply: document CASEY_VOICE_REPLIES in AGENTS.md env table + README, and ensure the ascii-only + no-mocks-fallbacks CI grep-gates stay green (no stub, no fallback audio, no test file). The env var, its data-egress caveat (sending reply text to an external TTS API is an egress point, opt-in like transcribe/describe), and its degrade behavior must be documented to the same standard as CASEY_TRANSCRIBE_VOICE_NOTES.'
+  witness: 'CASEY_VOICE_REPLIES documented in AGENTS.md env table (full data-egress caveat + degrade behavior, to the CASEY_TRANSCRIBE standard) and README.md env table (concise). npm run lint green: ''config + package + ascii + pure-agent + no-stub-mock clean'' -- no stub/mock/fallback/test-file introduced, ascii-only preserved.'
+  status: completed
+- id: search-pii-and-tier
+  description: 'Corner-case of thatcher-search-fulltext: a dashboard case search is OPERATOR-facing (session-gated) so full rows are fine there -- but if free-text search is ever reachable by the field-worker agent it MUST use the PII-free enquiryRow projection and gateByTier, never leak external_id/contact_id. Verify the search endpoint is dashboard-only and session-gated; do NOT add a case_search agent tool (the agent already has case_list with a location filter; a broad full-text agent tool would widen the PII surface). Adversarially verify no PII leak path.'
+  witness: 'N/A-refuted: no case_search agent tool was added (thatcher-search-fulltext refuted). The dashboard search is client-side over the session-gated /api/cases load (operator-facing, full rows OK). The field-worker agent''s only query surface stays case_list (location filter, PII-free enquiryRow) + case_mine/case_today, unchanged. No new PII surface introduced.'
+  status: completed
+- id: freddie-adapter-audio-send
+  description: 'Delivery half of voice-reply (witnessed adapters are text-only). Extend freddie''s WhatsApp + Discord adapter send() to accept an OPTIONAL reply.audio ({data_base64|link, mime}) alongside text, delivering it as a WhatsApp audio message / Discord file attachment, while a text-only reply is byte-identical to today (no regression). Minimal, additive, in freddie (layering mandate: channel code lives in freddie). WhatsApp: prefer a link-based audio message if a hosted URL exists, else the media-upload-then-send-by-id flow. Discord: multipart with the audio file. Push to freddie master; casey consumes via reply.audio. Adversarially verify text-only path unchanged.'
+  witness: '../freddie whatsapp+discord send() extended with optional reply.audio; witnessed via scratchpad/adapter-witness.mjs across 4 paths: WA text-only byte-identical single POST; WA audio = upload /media then send by media id; Discord text-only byte-identical {content}; Discord audio = multipart file. Committed e4b7aaf, pushed.'
+  status: completed
+- id: commit-inherited-voice-reply
+  description: 'Inherited residual: the prior chain reached VERIFY but died before CONSOLIDATE. Uncommitted completed+witnessed work on disk (src/gateway-hooks.js synthesizeVoice + reply.audio wiring, src/dashboard/server.js stale ?token= comment fixes, AGENTS.md + README.md CASEY_VOICE_REPLIES/login-migration doc updates, .gm/prd.yml + .gm/mutables.yml resolutions, 2 untracked memory md files). Triage every porcelain entry: commit the real code+docs, track the memories, resolve the prd/mutables state. This is the first slice (inherited rows resume first).'
+  witness: git status --porcelain shows M gateway-hooks/server.js/AGENTS/README + prd/mutables + 2 untracked memories; git diff confirms they are the completed tts-voice-reply feature matching the 15 resolved prior PRD rows
+  status: pending
+- id: wf-forge-gm-skill-run
+  description: 'workflow-forge Axis: RUN the ../gm skills/gm/SKILL.md procedure against a real concrete task in an isolated fresh-context Agent (per workflow-forge Hard Rule 1+2), report exactly what happened, then a SECOND fresh Agent adversarially critiques that run (the 4-category find-fault brief). Land every evidence-backed finding directly in ../gm/skills/gm/SKILL.md or its scripts, same pass. gm is the meta-driver; improving it compounds across every future session.'
+  witness: ../gm/skills/gm/ exists; workflow-forge SKILL.md steps 1-3 define the run+critique+land loop; user args explicitly scope this run to ../gm
+  status: pending
+- id: wf-forge-gm-continue-run
+  description: 'workflow-forge Axis: run+critique ../gm/skills/gm-continue/SKILL.md (the remaining-work-search + gm/wfgy decision skill that gm hands off to at COMPLETE). Adversarially verify its stopping logic and remaining-work search against a real scenario; land confirmed findings.'
+  witness: ../gm/skills/gm-continue/ exists; gm SKILL.md hands off to gm-continue at phase=COMPLETE
+  status: pending
+- id: wf-forge-wfgy-method-run
+  description: 'workflow-forge Axis: run+critique ../gm/skills/wfgy-method/SKILL.md (the BBCR bounded-retry/checkpoint discipline the user explicitly named -- /wfgy-method must be used). Verify its bounded-retry-then-surface procedure witnesses correctly; land confirmed findings.'
+  witness: ../gm/skills/wfgy-method/ exists; user args say wfgy-method MUST be used to maximize these preferences
+  status: pending
+- id: wf-forge-other-gm-skills
+  description: 'workflow-forge Axis: assess the remaining ../gm skills (fifth-dimension-engine, polaris-goal-compiler, polaris-protocol) -- run+critique any that are on the active path for THIS session shape; for any genuinely off-path, record why not-run rather than silently skipping (workflow-forge: report per-category even if empty).'
+  witness: ls ../gm/skills shows fifth-dimension-engine polaris-goal-compiler polaris-protocol alongside gm/gm-continue/wfgy-method
+  status: pending
+- id: rs-plugkit-audit
+  description: 'gm-family repo audit: ../rs-plugkit is the Rust engine compiled to the plugkit.wasm gm runs on. Minimal-code-maximal-impact pass: map its surface, find any real defect/gap that affects gm session reliability (the unplanned-restart-cycling + silent-abort this very session hit is a live symptom). Adversarially verify any finding against the actual Rust source before landing. Push fixes to its master (auto-publishes to the wasm artifact gm consumes).'
+  witness: ../rs-plugkit/ Cargo repo exists; this session witnessed repeated unplanned-restart-after-exit + SILENT ABORT in .watcher.log -- a live rs-plugkit reliability symptom
+  status: pending
+- id: rs-search-audit
+  description: 'gm-family repo audit: ../rs-search backs gm codesearch/recall. Minimal-code-maximal-impact: find any real defect/gap affecting recall/codesearch quality. Adversarially verify against source before landing.'
+  witness: ../rs-search/ Cargo repo exists; gm codesearch+recall verbs depend on it
+  status: pending
+- id: rs-codeinsight-audit
+  description: 'gm-family repo audit: ../rs-codeinsight backs the codesearch code-index (this session witnessed a codeinsight_rebuild digest-mismatch reindex of casey). Find any real defect/gap. Adversarially verify against source before landing.'
+  witness: ../rs-codeinsight/ Cargo repo exists; .watcher.log this session shows codeinsight_rebuild reason=digest-mismatch indexing root=.
+  status: pending
+- id: rs-exec-audit
+  description: 'gm-family repo audit: ../rs-exec backs the exec_js/spool execution surface. Find any real defect/gap. Adversarially verify against source before landing.'
+  witness: ../rs-exec/ Cargo repo exists with src/ and target/; exec_js verb depends on it
+  status: pending
+- id: freddie-pi-utilization-deep
+  description: 'Fresh destructive freddie pass: the prior chain wired only tts of the ~70 pi tools. Fan out to enumerate EVERY pi tool casey could mission-alignedly use that it currently does not (voice_mode, neutts_synth were noted-but-unevaluated; also any structured-output/summarize/translate tool that would strengthen intake WITHOUT violating the no-lookup mandate). For each candidate, adversarially refute against (a) the security invariant (no coder-agent tools to contact-facing agent), (b) the no-lookup mandate, (c) minimal-code-maximal-impact. Implement only survivors as deterministic casey dispatch (opt-in, key-gated, fail-open) + document the exclusions. minimal code in casey, ability in freddie.'
+  witness: 'mut-pi-tool-surface: 70 pi tools witnessed; casey uses transcription/vision/tts only; voice_mode/neutts_synth noted mission-relevant but never evaluated'
+  status: pending
+- id: freddie-improve-deep
+  description: 'Fresh destructive freddie pass: beyond tts (already fixed), find any OTHER real defect/gap in ../freddie that limits casey (a creative tool that discards its artifact like tts did, an adapter capability casey needs, a runTurn/tool_choice/bridge issue). Map freddie plugins + host + adapters, adversarially verify each candidate against source, fix minimal-code-maximal-impact in ../freddie, push to master (auto-publishes). Layering mandate: agentic/channel code lives in freddie.'
+  witness: ../freddie/plugins/ lists ~40+ plugin dirs (ansi_strip approval bash browser ...); prior chain only touched tts + platform adapters
+  status: pending
+- id: thatcher-management-deep
+  description: 'Fresh destructive thatcher pass: the prior chain refuted search()/count/transition candidates. Re-map thatcher fully and hunt for a DIFFERENT minimal-code win that strengthens casey management (an aggregate/count primitive, a projection helper, a workflow/audit capability casey hand-rolls). Adversarially verify each against thatcher source AND the net-reduction invariant before landing. If genuinely nothing survives, record the honest witnessed no-change (not skipped work).'
+  witness: prior rows thatcher-search-fulltext/thatcher-improve-where-needed refuted the obvious candidates; a fresh full re-map may surface a non-obvious one
+  status: pending
+- id: casey-minimal-code-sweep
+  description: 'Fresh destructive casey pass: sweep casey src/ for any dead code, duplicated logic, or bespoke reimplementation of something freddie/thatcher already owns (the layering mandate: every such leak moved upstream shrinks casey). Adversarially verify each candidate is genuinely removable/movable, not casey-config-specific. minimal-code-maximal-impact net-reduction per change.'
+  witness: prior layering-drift-audit refuted case-machine/analytics moves; a fresh sweep targets dead code + duplication specifically, a different lens
+  status: pending
+- id: casey-lint-green-gate
+  description: 'Corner-case/gate: every casey change must keep npm run lint green (the CI gate: syntax + config + package + ascii-only + pure-agent grep-gate [no intent/places/extract imports] + no-stub-mock grep-gate). Witness lint green after all casey edits via exec_js/Bash node scripts/lint.mjs. ascii-only preserved, no test file / mock / fallback / stub introduced.'
+  witness: 'AGENTS.md Dev workflow: npm run lint is the CI gate; .github/workflows/ci.yml runs it dependency-free with pure-llm + no-stub-mock grep-gates'
+  status: pending
+- id: cross-repo-push-order
+  description: 'Corner-case/dependency-edge: casey consumes freddie+thatcher via npm latest (never file: sibling). Any freddie/thatcher fix casey depends on MUST be pushed to that repo master (auto-publishes) BEFORE casey code that consumes the new shape is relied upon -- but casey code must also degrade gracefully against the OLD published version (forward+backward compatible, as the tts work already did). Verify each cross-repo change respects this order + compatibility.'
+  witness: 'AGENTS.md: freddie/thatcher are npm latest deps; a local fix needs a push to master before npm install picks it up; there is no more instant local-edit-to-live loop'
+  status: pending
+- id: net-reduction-invariant-tally
+  description: 'Overarching hardest-node constraint (per row): minimal-code-maximal-impact means each accepted change is a NET improvement -- removes more than it adds OR adds code unlocking capability disproportionate to its size. VERIFY tallies added-vs-removed lines per change (git diff --numstat) and justifies any net addition by impact; a change adding bulk for marginal gain is REJECTED even if individually correct. This shapes accept/reject for every other row.'
+  witness: prior minimal-code-net-reduction-check row established this invariant; the user restates minimal code / maximal impact for all 3 repos this run
+  status: pending
+- id: docs-accuracy-after-changes
+  description: 'Downstream of all code changes: AGENTS.md + README.md + gm/rs-* docs must stay accurate against the source after this run (AGENTS.md self-instruction: keep it accurate against README and source). Any new env var, tool, or capability documented to the existing standard; any removed/changed capability updated. ascii-only preserved.'
+  witness: AGENTS.md line 4-6 mandates keeping it accurate against README.md and source; this run changes multiple surfaces
+  status: pending
+- id: consolidate-all-repos-clean
+  description: 'Final gate: every touched repo (casey, freddie, thatcher, gm, rs-*) ends with a clean worktree (git status --porcelain empty), real work committed as lanmower (never attributed to claude), pushed to master/main. No branch/worktree left dangling (global rule: zero branches/worktrees, consolidate to main, master->main). Each repo CI green where it has one.'
+  witness: 'global CLAUDE.md: zero branches and worktrees, consolidate to main, never attribute claude, only commit as lanmower'
+  status: pending

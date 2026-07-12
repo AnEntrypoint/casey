@@ -193,7 +193,11 @@ AGENTS.md "Supervised runtime" for the full env-var set.
 | `WHATSAPP_VERIFY_TOKEN` | Webhook verification handshake token. |
 | `WHATSAPP_APP_SECRET` | When set, inbound webhooks are HMAC-SHA256 verified (`X-Hub-Signature-256`); forged posts are rejected. |
 | `WHATSAPP_WEBHOOK_PORT`, `WHATSAPP_WEBHOOK_PATH` | Fixed webhook port/path (Meta needs a stable public URL; use a tunnel in dev). |
-| `CASEY_DASHBOARD_TOKEN` | When set, the dashboard API and page require this token (`Authorization: Bearer <token>` or `X-Casey-Token` header). For the initial page load, pass `?token=` in the URL; the browser strips it from the address bar and switches to the header for all API calls. |
+| `CASEY_SESSION_SECRET` | HMAC key signing the dashboard session cookie. The dashboard uses per-operator username/password login (no bearer token, no `?token=`); a fresh deployment with zero accounts auto-creates one admin with a random printed password. Random per process when unset, so a restart logs everyone out -- set it explicitly for sessions to survive a restart. |
+| `CASEY_COOKIE_SECURE=0` | Drop the `Secure` flag on the session cookie for a plain-HTTP dev/LAN deployment (Secure is on by default). |
+| `CASEY_TRANSCRIBE_VOICE_NOTES=1` | Opt-in: transcribe an inbound voice note and fold the text into the case (needs `OPENAI_API_KEY`). Off by default (external data egress). |
+| `CASEY_DESCRIBE_PHOTOS=1` | Opt-in: describe an inbound animal photo (visible signs/species/count) into the case (needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). Off by default (external data egress). |
+| `CASEY_VOICE_REPLIES=1` | Opt-in: speak the reply back as a voice note so a reporter who cannot read still hears it (needs `OPENAI_API_KEY` or `ELEVENLABS_API_KEY`). Additive to the text, fail-open, off by default (external data egress). |
 | `CASEY_LOG=silent` | Silence casey's structured JSON logs (used by tests). |
 | `CASEY_RELOAD=0` | Disable hot-reload (crash-restart stays on). |
 | `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (default `src/` + `../freddie/src`). |

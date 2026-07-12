@@ -49,7 +49,29 @@ unreachable; casey's handler passes `tool_choice: 'required'` to nudge a weak
 model into its first classify/record call, and casey's llm.js wrappers pass the
 request through whole (never destructure-and-drop params). The bridge's
 coder-agent cwd note ("use Bash/Read/Write") is OPT-IN via an explicit `cwd`
-param -- it must never leak into a contact-facing agent's prompt. casey registers its OWN case toolset
+param -- it must never leak into a contact-facing agent's prompt.
+
+**pi tool surface (70 tools) -- what casey uses and the deliberate exclusions.**
+freddie's `pi` host exposes ~70 tools (witnessed via `bootHost().pi.tools.list()`).
+casey's CONTACT-FACING agent turn enables `enabledToolsets: ['cases']` ONLY -- so
+the agent reaches nothing but casey's own `case_*` tools. Separately, casey's own
+DETERMINISTIC code (never the agent) dispatches three `creative`-toolset pi tools
+by name to enrich a case: `transcription` (inbound voice note -> text,
+`CASEY_TRANSCRIBE_VOICE_NOTES`), `vision` (inbound photo -> animal-health
+description, `CASEY_DESCRIBE_PHOTOS`), and `tts` (outbound reply -> spoken voice
+note, `CASEY_VOICE_REPLIES`). These three are the mission-aligned media abilities;
+each is opt-in, key-gated, and fail-open. The rest of the pi surface is
+DELIBERATELY excluded, and the exclusion is a decision, not an oversight:
+`bash`/`read`/`write`/`edit`/`grep`/`browser`/`terminal`/`delegate`/`skill*` and
+the other coder-agent tools are forbidden to a contact-facing agent by the security
+invariant (never in `enabledToolsets`, never dispatched by casey for a contact);
+`web_search`/`web_fetch` are excluded because they violate the no-lookup /
+agent-uses-its-own-world-knowledge mandate (casey never geocodes or looks anything
+up on the model's behalf). If a future pi tool is genuinely mission-aligned it is
+added the same way the three media tools were: casey deterministic code dispatching
+it by name, opt-in and fail-open, never widened into the agent's toolset.
+
+casey registers its OWN case toolset
 (`plugins/case-tools/plugin.js` -> `src/case-tools.js`, discovered by
 `bootHost([CASEY_PLUGINS])`) into that host. freddie ships a separate reference
 case toolset at `src/plugins/case/` with several overlapping tool names, but it
@@ -175,6 +197,7 @@ stay green regardless.
 | `CASEY_COUNTRY_CODE` | Country calling code (digits only, e.g. `234`) casey's phone-number formatter matches/displays. Default `27` (South Africa). Digit-grouping stays SA-shaped (2-3-4) regardless of the code -- a fully correct international formatter needs a per-country grouping table, out of scope. |
 | `CASEY_TRANSCRIBE_VOICE_NOTES=1` | Opt-in: automatically transcribe an inbound voice note (via freddie's `transcription` tool, an acptoapi Whisper passthrough) and fold the transcript into the recorded `audio` report field, alongside the saved media path. Requires `OPENAI_API_KEY`. Off by default -- sending audio bytes to an external transcription API is a real data-egress point a deployment should opt into deliberately. When unset, unavailable, or the request fails, degrades silently to the original operator-listens note (never blocks the reply path). |
 | `CASEY_DESCRIBE_PHOTOS=1` | Opt-in: automatically describe an inbound animal photo (via freddie's `vision` tool, an acptoapi multimodal chat-completion passthrough) and fold the description (visible symptoms/species/count, framed for animal health, no diagnosis) into the recorded `photos` report field, alongside the saved media path. Requires `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Off by default -- sending image bytes to an external vision API is a real data-egress point a deployment should opt into deliberately. When unset, unavailable, or the request fails, degrades silently to the original operator-opens-the-photo note (never blocks the reply path). |
+| `CASEY_VOICE_REPLIES=1` | Opt-in: automatically SPEAK the agent's text reply back as a voice note (via freddie's `tts` tool, an acptoapi `/v1/audio/speech` OpenAI/ElevenLabs passthrough) and deliver it alongside the text. The exact mirror of `CASEY_TRANSCRIBE_VOICE_NOTES` on the outbound side -- the single most under-served contact is the rural reporter who sends a voice note but struggles to READ a text reply, so speaking the reply in their own words closes that gap. Requires `OPENAI_API_KEY` or `ELEVENLABS_API_KEY`. Off by default -- sending the reply text to an external TTS API is a real data-egress point a deployment should opt into deliberately. Additive and fail-open: `synthesizeVoice` runs AFTER the degraded/blanked-reply gate (a turn that correctly sent nothing never speaks), the text ALWAYS sends, the spoken text is length-capped to bound cost, and any absence/failure degrades silently to text-only (never blocks the reply path). Delivery rides freddie's adapter `reply.audio` field (WhatsApp audio message / Discord file attachment); a channel or freddie build without audio-send degrades to text. |
 | `CASEY_RELOAD=0` | Disable hot-reload (the supervisor still restarts on crash; it just stops watching source). |
 | `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (e.g. `../freddie/src`). `src/` and a sibling `../freddie/src` are watched by default; absent dirs are skipped with a warning. Allowlist only -- never contact input. |
 | `CASEY_RELOAD_DEBOUNCE_MS` | Coalesce a burst of saves into one reload (default 300). |

@@ -3096,9 +3096,9 @@ function cannedReplies(c){
 async function openCase(id){
   activeId = id
   clearHandoff(id)                             // dismiss banner locally; DB tag clears only on reply
-  // deep-link the open case in the hash only; the ?token= stays in the real
-  // query string (location.search is preserved by replaceState's relative URL),
-  // so the hash is shareable without leaking the secret.
+  // deep-link the open case in the hash only (auth is the login session cookie,
+  // so there is no secret in the URL to leak); location.search is preserved by
+  // replaceState's relative URL, keeping any benign filter params intact.
   const wantHash='#case='+encodeURIComponent(id)
   if(location.hash!==wantHash) history.replaceState(null,'',location.pathname+location.search+wantHash)
   if($('#wrap')) $('#wrap').classList.add('detail-open')
@@ -3612,8 +3612,8 @@ $('#sourcef').addEventListener('change',e=>{ filt.source=e.target.value; renderL
 // stage, channel, source, the Mine toggle, and Focus mode. We keep it client-only
 // (no server state) and encode it two ways: a base64url 'view=' segment of the URL
 // hash so a view is shareable by link (building on the existing #inbox/#case hash
-// pattern, and never carrying the ?token= secret since that lives in the query
-// string), and a small named-view map in localStorage so an operator's own views
+// pattern; auth is the login session cookie, so a shared link carries no secret),
+// and a small named-view map in localStorage so an operator's own views
 // survive a reload. No external_id is ever part of a view -- only filter knobs.
 function currentView(){ return { q: filt.q||'', status: filt.status||'', channel: filt.channel||'', source: filt.source||'', mine: !!mineOnly, focus: !!inboxMode } }
 function encodeView(v){ try{ return btoa(unescape(encodeURIComponent(JSON.stringify(v)))).replace(/=+$/,'').replace(/\\+/g,'-').replace(/\\//g,'_') }catch{ return '' } }
@@ -4036,7 +4036,7 @@ $('#intake-submit').onclick=async()=>{
   btn.disabled=false
 }
 $('#new-case-btn').onclick=()=>openIntakeForm(null)
-// --- export CSV (fetch via api() so the X-Casey-Token header is sent, then save as blob) ---
+// --- export CSV (fetch via api() so the login session cookie rides along, then save as blob) ---
 // Note: the server CSV already has an intake_source column; if a source filter is
 // active the filename suffix reminds the operator that the export is unfiltered.
 $('#export-btn').onclick=async()=>{
