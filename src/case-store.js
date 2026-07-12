@@ -7,8 +7,13 @@
 // internals (getDatabase, workflow-engine) forks the module graph into a second
 // instance with its own DB handle, making the real tables invisible. So the
 // workflow graph is parsed from the config here, and transitions apply via the
-// public update() (the published thatcher's transition() also throws -- it
-// calls executeHook without importing it; fixed in the fork).
+// public update() rather than thatcher's own transition()/getAvailableTransitions():
+// casey owns transition authority (P10) and its config does not carry the fields
+// thatcher's workflow engine assumes -- `order` (its edges collapse to backward),
+// `last_transition_at` (a 5-minute LOCKOUT_SECONDS gate), and the `entry`/`readonly`
+// stage constraints -- and casey's own transition() adds the no-op skip, the
+// append-only audited event, and the onTransition contact-notify that thatcher's
+// bare status write does not.
 
 import { createThatcher } from 'thatcher'
 import path from 'node:path'
@@ -235,28 +240,26 @@ export class CaseStore {
   // a fresh one so history stays clean.
   //
   // Worst-case correctness: we must never miss an open case hidden behind a run
-  // of more-recently-closed ones (that would double-create). thatcher's `where`
-  // is equality-only (query-engine buildSpecQuery: `col = ?`), so we cannot
-  // express `status != 'closed'` as a predicate. Instead we query each open
-  // stage directly -- the open-stage set is finite and known from the parsed
-  // workflow graph. A stage-scoped query can never return a soft-deleted row,
-  // because `status` is one column and 'deleted' is mutually exclusive with any
-  // workflow stage. thatcher ignores the orderBy/order list() options (it sorts
-  // only via options.sort / spec.list.defaultSort, neither set here), so we do
-  // NOT rely on the DB to return newest-first -- we pick max created_at in JS,
-  // the only place ordering is actually honored.
+  // of more-recently-closed ones (that would double-create). We match every open
+  // stage with a single `status: {$in: <open stages>}` predicate -- an ALLOWLIST,
+  // deliberately not `{$ne: 'closed'}`: busybase only auto-filters soft-deleted
+  // rows when `status` is absent from the where, so a `$ne` denylist would leak
+  // `status='deleted'` rows, while the open-stage allowlist (which never contains
+  // 'deleted') keeps them out for free. We still pick max created_at in JS because
+  // this list() call sets no sort, so thatcher does not guarantee newest-first.
   async findOpenCase({ channel, external_id }) {
+    // limit 200 (not 2): a worker who starts several fresh reports leaves N>2 open
+    // cases sharing one (channel, external_id), and this query sets no sort, so a
+    // small page could miss the newest -- rebinding to a stale complete case and
+    // re-creating the completeReply dead-end. We page wide and pick the GLOBAL max
+    // created_at across all open statuses in JS (the only ordering authority).
+    const rows = await this.t.list(
+      'case',
+      { channel, external_id, status: { $in: this.getOpenStatuses() } },
+      { limit: 200 },
+    )
     let best = null
-    for (const status of Object.keys(this._wf)) {
-      if (status === 'closed') continue
-      // limit 50 (not 2): a worker who starts several fresh reports leaves N>2 open
-      // cases sharing one (channel, external_id), and thatcher does not order, so a
-      // small page could miss the newest -- rebinding to a stale complete case and
-      // re-creating the completeReply dead-end. We page wide and pick the GLOBAL max
-      // created_at across all open statuses in JS (the only ordering authority).
-      const rows = await this.t.list('case', { channel, external_id, status }, { limit: 50 })
-      for (const r of rows) if (!best || (r.created_at || 0) > (best.created_at || 0)) best = r
-    }
+    for (const r of rows) if (!best || (r.created_at || 0) > (best.created_at || 0)) best = r
     return best
   }
 
@@ -270,13 +273,12 @@ export class CaseStore {
 
   async getContact(id) { return id ? this.t.get('contact', id) : null }
 
-  // Every contact, most-recently-created first in JS (thatcher's list() does not
-  // order -- same discipline as findOpenCase above), for the dashboard's
-  // Contacts/Reporters panel. Internal-team-only surface (operator/admin), never
-  // exposed on the public /report form.
+  // Every contact, most-recently-created first, for the dashboard's
+  // Contacts/Reporters panel. Contacts carry no same-second-tiebreak requirement
+  // (unlike events), so the sort pushes down to thatcher directly. Internal-team-
+  // only surface (operator/admin), never exposed on the public /report form.
   async listContacts({ limit = 500 } = {}) {
-    const rows = await this.t.list('contact', {}, { limit })
-    return [...rows].sort((a, b) => (b.created_at || 0) - (a.created_at || 0))
+    return this.t.list('contact', {}, { limit, sort: [{ field: 'created_at', dir: 'DESC' }] })
   }
 
   // Operator-assigned access-tier change (reporter <-> field_worker). NEVER
@@ -448,9 +450,7 @@ export class CaseStore {
     return null
   }
 
-  // Most-recently-active first. thatcher ignores orderBy/order so we sort in JS
-  // (by last_event_at, falling back to created_at) to make the order real. The
-  // page window is applied after sorting when a limit is given.
+  // A ref is unique, so a single-row lookup by ref needs no sort.
   async getCaseByRef(ref) {
     const [row] = await this.t.list('case', { ref }, { limit: 1 })
     return row || null
@@ -492,16 +492,10 @@ export class CaseStore {
   // List cases with an operator-aware where ({field:{$gte,$lte,$in,...}}, top-level
   // $or, bare-array IN) and an optional opts.user for row-access scoping. The new
   // worker-enquiry queries (today=created_at range, near=lat/lon box, mine=assignee
-  // + user scope, open=status $in) ride these.
-  //
-  // FEATURE-DETECT SHIM: the published thatcher that understands operator where +
-  // row-access-in-list lands via npm only after its CI publish. Until casey's
-  // installed thatcher has it, sending an operator object would break the equality-
-  // only .eq() path. So we probe support once; when absent we strip the where to its
-  // equality-only subset for the thatcher call and apply the operator predicates +
-  // recency sort in JS here (today's behaviour, just generalized). A bare clone and
-  // a pre-publish install both stay green; once the new thatcher is installed the
-  // operators + user scope push down to the store with no code change.
+  // + user scope, open=status $in) ride these. thatcher's operator-where + row-access
+  // + list sort all push down to the store directly (see the call below); there is
+  // no feature-detect or JS-side fallback -- casey consumes thatcher via npm `latest`,
+  // which has carried them since 1.0.30, so a pre-support install can never happen.
   // Three singleton `channel:'system'` cases (settings:thresholds, settings:
   // fleet-health, settings:shift) are created via findOrCreateCase, default to
   // status 'new', and never close -- they are audit-log carriers for operator-
@@ -815,11 +809,10 @@ export class CaseStore {
 
   // Friendly, collision-proof case ref. The numeric part is a best-effort
   // human-friendly sequence taken as the max over a capped page of cases; we scan
-  // every returned row and take Math.max, so thatcher's ignored orderBy/order is
-  // irrelevant here (we do not pass it -- claiming an ordering thatcher does not
-  // honour would be dishonest, P10). UNIQUENESS does not depend on the sequence:
-  // the random suffix guarantees it even if two creators read the same max
-  // concurrently or the highest case falls outside the page.
+  // every returned row and take Math.max, so ordering is irrelevant here (we pass
+  // no sort). UNIQUENESS does not depend on the sequence: the random suffix
+  // guarantees it even if two creators read the same max concurrently or the
+  // highest case falls outside the page.
   async _nextRef() {
     let seq = 1000
     const recent = await this.t.list('case', {}, { limit: 200 })
@@ -830,12 +823,11 @@ export class CaseStore {
     return `CASE-${seq + 1}-${randomSuffix()}`
   }
 
-  // opts.expectedVersion: forwarded to thatcher's optimistic-concurrency guard
-  // (feature-detected -- see _thatcherSupportsVersionGuard below; a published
-  // thatcher predating this support ignores the extra arg harmlessly since it
-  // is the 5th positional param, so a bare npm install always stays green).
-  // On a version mismatch thatcher throws {code:'conflict'}; this rethrows for
-  // the caller to handle (mergeReport retries once, see below).
+  // opts.expectedVersion: forwarded straight to thatcher's optimistic-concurrency
+  // guard (installed thatcher's update() reads opts.expectedVersion natively and
+  // adds a `_version = ?` filter). On a version mismatch thatcher throws
+  // {code:'conflict'}; this rethrows for the caller to handle (mergeReport retries
+  // once, see below).
   async updateCase(id, patch, user = AGENT_USER, opts = {}) {
     await this.t.update('case', id, { ...patch, last_event_at: nowIso() }, user, opts)
     return this.getCase(id)
@@ -1043,10 +1035,11 @@ export class CaseStore {
     return ev
   }
 
-  // Chronological (oldest-first). thatcher ignores orderBy/order, so we sort in
-  // JS to make the order a real guarantee rather than relying on its (undocumented)
-  // insertion-order behaviour. created_at is a unix-seconds integer; same-second
-  // events keep insertion order via the stable index tiebreak (see sortByCreatedStable).
+  // Chronological (oldest-first). We sort in JS rather than via thatcher's list
+  // sort because created_at is coarse unix-SECONDS: a whole turn's events share one
+  // second, and thatcher's comparator has no insertion-order tiebreak, so pushing
+  // the sort down would scramble same-second order. The JS stable sort keeps
+  // insertion order on ties (see sortByCreatedStable) -- load-bearing for replay.
   async listEvents(caseId, opts = {}) {
     // Default high, not 200: merge/split and conversation-context callers need the
     // WHOLE timeline -- a silent 200/1000 cap drops events on a long case, losing
@@ -1057,8 +1050,8 @@ export class CaseStore {
   }
 
   // Paged, newest-first window for the dashboard timeline. We sort the full set
-  // newest-first in JS, then apply the page window, so paging is correct even
-  // though thatcher does not honour orderBy/order.
+  // newest-first in JS (same coarse-seconds stable-tiebreak reason as listEvents),
+  // then apply the page window, so paging stays correct on same-second events.
   async listEventsPage(caseId, { limit = 50, offset = 0 } = {}) {
     const rows = byCreatedDescList(await this.t.list('event', { case_id: caseId }, { limit: 1000 }))
     return rows.slice(offset, offset + limit)

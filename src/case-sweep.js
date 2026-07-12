@@ -32,6 +32,13 @@ const WRITE_FAILURE_RETRY_MS = 15 * 60_000
 function tsMs(raw) {
   if (raw == null || raw === '') return NaN
   if (typeof raw === 'number') return raw < 1e12 ? raw * 1000 : raw
+  // The store hands back a numeric timestamp as a STRING ("1782977388" --
+  // busybase binds values as text); Date.parse on a bare digit string is NaN,
+  // so coerce all-digit strings to a number first (matches attn.js tsMs /
+  // case-health.js ms / format.js toDate). Without this, an operator reply
+  // whose created_at is a numeric string is dropped from the coverage window,
+  // producing a false TEAM-COVERAGE page while operators are in fact replying.
+  if (/^\d+$/.test(String(raw))) { const n = Number(raw); return n < 1e12 ? n * 1000 : n }
   const t = Date.parse(raw)
   return Number.isNaN(t) ? NaN : t
 }

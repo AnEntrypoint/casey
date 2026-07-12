@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url'
 import { VISIT_CRITICAL } from '../case-health.js'
 import { REPORT_KEY_ORDER } from '../case-store.js'
 import { rankAttention } from '../attn.js'
-import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27 } from '../format.js'
+import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27, toDate } from '../format.js'
 import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
   issueSession, verifySession, findAccountByUsername, verifyPassword, markLogin,
@@ -135,7 +135,9 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   const PUBLIC_FIELD_KEYS = new Set(PUBLIC_FIELDS.map(f => f[0]))
 
   function publicFormHtml({ ref = '', caseRow = null, done = false, err = '' } = {}) {
-    const escq = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+    // Uses the closure-level esc() (defined below in createDashboard, initialized
+    // by the time this runs at request time) -- was a locally re-declared, byte-
+    // identical copy, the same duplication removed elsewhere in this file.
     let report = {}
     try { report = caseRow?.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
     const vcTotal = PUBLIC_FIELDS.filter(f => f[4]).length
@@ -150,23 +152,23 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       let section = ''
       if (isVC && !inEssential) { inEssential = true; section = '<div class="section-head">Essential details for a visit</div>' }
       if (!isVC && !inExtra) { inExtra = true; section = '<div class="section-head">Extra details (helpful but not required)</div>' }
-      const val = escq(report[k] || '')
+      const val = esc(report[k] || '')
       const inp = isArea
-        ? `<textarea name="${k}" rows="3" placeholder="${escq(hint)}" maxlength="4000">${val}</textarea>`
-        : `<input type="text" name="${k}" placeholder="${escq(hint)}" value="${val}" maxlength="500">`
+        ? `<textarea name="${k}" rows="3" placeholder="${esc(hint)}" maxlength="4000">${val}</textarea>`
+        : `<input type="text" name="${k}" placeholder="${esc(hint)}" value="${val}" maxlength="500">`
       const vcMark = isVC ? ' <span class="req" aria-label="essential">*</span>' : ''
-      return `${section}<div class="field${isVC ? ' vc' : ''}"><label>${escq(label)}${vcMark}</label>${inp}</div>`
+      return `${section}<div class="field${isVC ? ' vc' : ''}"><label>${esc(label)}${vcMark}</label>${inp}</div>`
     }).join('')
     const banner = done
       ? `<div class="banner ok">Your details have been saved. Thank you -- the team will be in touch.</div>`
-      : err ? `<div class="banner err">${escq(err)}</div>` : ''
+      : err ? `<div class="banner err">${esc(err)}</div>` : ''
     const caseInfo = caseRow
-      ? `<div class="case-info"><strong>Reference: ${escq(caseRow.ref)}</strong> &ndash; ${escq(caseRow.subject || 'Field report')}
-         <button type="button" class="copy-link-btn" data-ref="${escq(caseRow.ref)}">Share link</button></div>`
+      ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || 'Field report')}
+         <button type="button" class="copy-link-btn" data-ref="${esc(caseRow.ref)}">Share link</button></div>`
       : ''
-    const refBlock = caseRow ? `<input type="hidden" name="ref" value="${escq(ref)}">` : `
+    const refBlock = caseRow ? `<input type="hidden" name="ref" value="${esc(ref)}">` : `
       <div class="field"><label>Your reference number</label>
-      <input type="text" name="ref" value="${escq(ref)}" placeholder="e.g. CASE-001" maxlength="50">
+      <input type="text" name="ref" value="${esc(ref)}" placeholder="e.g. CASE-001" maxlength="50">
       <div class="hint">This was shared with you when you first reported. Check your messages. If you do not have one, enter your phone number below instead.</div></div>
       <div class="field"><label>Or your phone number</label>
       <input type="tel" name="phone" placeholder="+27 82 123 4567" maxlength="30">
@@ -1039,8 +1041,12 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       const undoneIds = new Set()
       for (const e of events) { const d = evData(e); if (d.undo_of) undoneIds.add(String(d.undo_of)) }
       const isRecent = (e) => {
-        const t = e.created_at ? Date.parse(e.created_at) : NaN
-        return Number.isFinite(t) ? (now - t) <= WINDOW_MS : true   // unparseable -> allow (tests)
+        // event.created_at is unix-SECONDS, often a numeric string -- bare
+        // Date.parse yields NaN, which made every real event pass the window
+        // (unparseable -> allow), so the 120s undo window was never enforced.
+        // toDate is digit-string-aware (seconds -> ms) and returns null on junk.
+        const d = e.created_at ? toDate(e.created_at) : null
+        return d ? (now - d.getTime()) <= WINDOW_MS : true   // truly-unparseable -> allow (tests)
       }
       let target = null, kind = null
       for (let i = events.length - 1; i >= 0; i--) {
@@ -1386,7 +1392,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       const truncated = all.length > MAP_CASE_CAP
       const pool = truncated ? all.slice(0, MAP_CASE_CAP) : all
       const { buildClusters } = await import('../clusters.js')
-      const clusters = buildClusters(pool.filter(c => c.status !== 'closed' && c.status !== 'resolved'))
+      const clusters = buildClusters(pool.filter(isOpenCase))
       const clusterByRef = new Map()
       clusters.forEach((cl, i) => { for (const m of cl.members) clusterByRef.set(m.ref, i) })
 
@@ -1552,7 +1558,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     const eventsByCaseId = new Map()
     for (const c of cases) eventsByCaseId.set(c.id, await store.listEvents(c.id).catch(() => []))
     const breachRows = cases
-      .filter(c => c.status !== 'resolved' && c.status !== 'closed')
+      .filter(isOpenCase)
       .flatMap(c => classifyCaseHealth(c, now, thresholds))
     const staleMs = Number.isFinite(thresholds?.staleMs) ? thresholds.staleMs : 24 * 3600 * 1000
     const { buildReport } = await import('../report.js')

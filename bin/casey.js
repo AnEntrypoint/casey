@@ -9,7 +9,7 @@
 import { createCasey } from '../src/casey.js'
 import { createCaseStore } from '../src/case-store.js'
 import { createDashboard } from '../src/dashboard/server.js'
-import { fmtTimeSAST, fmtPhone27, hostTimezone, hostIsSAST, SAST_TZ } from '../src/format.js'
+import { fmtTimeSAST, fmtPhone27, hostTimezone, hostIsSAST, SAST_TZ, isOpenCase } from '../src/format.js'
 import { rankAttention } from '../src/attn.js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
@@ -465,7 +465,7 @@ async function main() {
     const store = createCaseStore(); await store.init()
     // Rank over the OPEN pool with the SAME scorer the dashboard inbox uses
     // (src/attn.js), so the terminal and the web view agree on what is urgent.
-    const open = (await store.listCases()).filter(c => c.status !== 'resolved' && c.status !== 'closed')
+    const open = (await store.listCases()).filter(isOpenCase)
     const limit = Number(flags.limit) > 0 ? Number(flags.limit) : 0
     const offset = Number(flags.offset) > 0 ? Number(flags.offset) : 0
     const { total, items } = rankAttention(open, Date.now(), { limit, offset })
@@ -567,7 +567,7 @@ async function main() {
     const store = createCaseStore(); await store.init()
     const { classifyCaseHealth } = await import('../src/case-health.js')
     const thresholds = await store.resolveThresholds()
-    const open = (await store.listCases()).filter(c => c.status !== 'resolved' && c.status !== 'closed')
+    const open = (await store.listCases()).filter(isOpenCase)
     const now = Date.now()
     const breachCounts = {}
     let corrupt = 0, breachedCases = 0
