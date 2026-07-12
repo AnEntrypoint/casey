@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Fixed
+- `case-sweep.js` `tsMs` was missing the digit-string clause its siblings
+  (`attn.js`, `case-health.js`) carry, so an operator reply whose `created_at`
+  is a numeric string (busybase binds timestamps as text) hit `Date.parse`=NaN
+  and was dropped from the coverage window -- `detectCoverageGap` then paged the
+  team with a false TEAM-COVERAGE breach while operators were in fact replying.
+- The dashboard undo window used bare `Date.parse` on a numeric-string event
+  `created_at` (=NaN, treated as "allow"), so the 120s undo window was never
+  actually enforced; it now uses the digit-string-aware `toDate`.
+- Refreshed `freddie`/`thatcher` to npm `latest` (0.0.139 / 1.0.41): the
+  installed `freddie` had drifted 17 versions behind and predated the media-tool
+  fixes, so all three opt-in pi media features (voice-note transcription, photo
+  vision, TTS voice replies) were silently inert against what actually ran.
 - HUMAN keyword detection had no short-message ambiguity gate (unlike STOP),
   so a report sentence like "the human gave it water" false-positived a
   handoff escalation; added the same gate STOP already used.
@@ -76,6 +88,17 @@
 - `classifyCaseHealth`'s timestamp-corrupt early-return skipped every other
   breach check, so a corrupt-timestamp case went dark on missing-critical-facts
   detection until an operator happened to fix the timestamp.
+
+### Changed
+- `findOpenCase` now issues a single `status: {$in: <open stages>}` query instead
+  of one query per open workflow stage (an allowlist that keeps soft-deleted rows
+  out, which a `$ne: 'closed'` denylist would not); `listContacts` pushes its sort
+  down to thatcher. Corrected several stale `case-store.js` comments that claimed
+  thatcher ignores `orderBy`/`order`, described a removed feature-detect shim,
+  referenced a nonexistent `_thatcherSupportsVersionGuard`, and wrongly said
+  thatcher's `transition()` throws (it does not; casey keeps transition authority
+  for its own config/lockout/audit/notify reasons). Deduped a redundant `escq()`
+  and routed remaining inline open-case filters through `isOpenCase`.
 
 ### Removed
 - `_thatcherSupportsOperators` runtime feature-detect probe and its
