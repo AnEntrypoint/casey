@@ -257,20 +257,23 @@ export function buildCaseToolset(storeOrNull) {
         // Bind server-side to the turn's active case -- same discipline case_stage
         // already applies. A model error or prompt-injected inbound text naming
         // another case's ref must never be able to write into a stranger's case.
-        // A turn with no bound active case (ctx.activeCaseId absent) has nothing
-        // to check the argument against, so it is let through unbound (matches
-        // pre-existing behaviour for callers -- tests, the dashboard-adjacent
-        // paths -- that never carry an activeCaseId); a turn that DOES carry one
-        // and receives a mismatched id is rejected and the mismatch logged.
-        if (ctx?.activeCaseId && id !== ctx.activeCaseId) {
+        // Fail CLOSED: a turn with no bound active case has nothing legitimate to
+        // check the argument against, so it is rejected too, not let through --
+        // otherwise any caller path that fails to populate ctx.activeCaseId (a
+        // race before binding, a malformed ctx, a degraded turn) would silently
+        // regain the pre-fix trust-the-argument-blindly behaviour this exists to close.
+        if (!ctx?.activeCaseId || id !== ctx.activeCaseId) {
           try {
-            await store().appendEvent(ctx.activeCaseId, {
+            const logTarget = ctx?.activeCaseId || id
+            await store().appendEvent(logTarget, {
               kind: 'observation', actor: 'system',
-              text: `SECURITY: case_report called with id=${id} but this turn's active case is ${ctx.activeCaseId}; write rejected.`,
-              data: { attemptedId: id, activeCaseId: ctx.activeCaseId, tool: 'case_report' },
+              text: `SECURITY: case_report called with id=${id} but this turn's active case is ${ctx?.activeCaseId || '(none)'}; write rejected.`,
+              data: { attemptedId: id, activeCaseId: ctx?.activeCaseId || null, tool: 'case_report' },
             })
           } catch { /* best effort -- never let the audit write block the rejection */ }
-          return { error: `case_report must target this conversation's active case (${ctx.activeCaseId}), not ${id}` }
+          return { error: ctx?.activeCaseId
+            ? `case_report must target this conversation's active case (${ctx.activeCaseId}), not ${id}`
+            : 'case_report has no bound active case on this turn -- cannot target an arbitrary case id' }
         }
         const incoming = pick(fields, [...REPORT_KEYS])
         const latLonSupplied = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon)
@@ -630,15 +633,20 @@ export function buildCaseToolset(storeOrNull) {
         // Same server-side active-case binding as case_report: an irreversible
         // control is exactly the kind of write that must never land on the wrong
         // case from a model mistake or injected text naming another case's ref.
-        if (ctx?.activeCaseId && id !== ctx.activeCaseId) {
+        // Fail CLOSED: a missing ctx.activeCaseId is itself a rejection condition,
+        // never a bypass -- see case_report's handler for the full reasoning.
+        if (!ctx?.activeCaseId || id !== ctx.activeCaseId) {
           try {
-            await store().appendEvent(ctx.activeCaseId, {
+            const logTarget = ctx?.activeCaseId || id
+            await store().appendEvent(logTarget, {
               kind: 'observation', actor: 'system',
-              text: `SECURITY: case_stop called with id=${id} but this turn's active case is ${ctx.activeCaseId}; write rejected.`,
-              data: { attemptedId: id, activeCaseId: ctx.activeCaseId, tool: 'case_stop' },
+              text: `SECURITY: case_stop called with id=${id} but this turn's active case is ${ctx?.activeCaseId || '(none)'}; write rejected.`,
+              data: { attemptedId: id, activeCaseId: ctx?.activeCaseId || null, tool: 'case_stop' },
             })
           } catch { /* best effort */ }
-          return { error: `case_stop must target this conversation's active case (${ctx.activeCaseId}), not ${id}` }
+          return { error: ctx?.activeCaseId
+            ? `case_stop must target this conversation's active case (${ctx.activeCaseId}), not ${id}`
+            : 'case_stop has no bound active case on this turn -- cannot target an arbitrary case id' }
         }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
@@ -656,15 +664,20 @@ export function buildCaseToolset(storeOrNull) {
       // Same reasoning as case_stop: a handoff request is an irreversible legal
       // control, not a content edit, so it deliberately bypasses the observe guard.
       handler: async ({ id }, ctx) => {
-        if (ctx?.activeCaseId && id !== ctx.activeCaseId) {
+        // Fail CLOSED: a missing ctx.activeCaseId is itself a rejection condition,
+        // never a bypass -- see case_report's handler for the full reasoning.
+        if (!ctx?.activeCaseId || id !== ctx.activeCaseId) {
           try {
-            await store().appendEvent(ctx.activeCaseId, {
+            const logTarget = ctx?.activeCaseId || id
+            await store().appendEvent(logTarget, {
               kind: 'observation', actor: 'system',
-              text: `SECURITY: case_handoff called with id=${id} but this turn's active case is ${ctx.activeCaseId}; write rejected.`,
-              data: { attemptedId: id, activeCaseId: ctx.activeCaseId, tool: 'case_handoff' },
+              text: `SECURITY: case_handoff called with id=${id} but this turn's active case is ${ctx?.activeCaseId || '(none)'}; write rejected.`,
+              data: { attemptedId: id, activeCaseId: ctx?.activeCaseId || null, tool: 'case_handoff' },
             })
           } catch { /* best effort */ }
-          return { error: `case_handoff must target this conversation's active case (${ctx.activeCaseId}), not ${id}` }
+          return { error: ctx?.activeCaseId
+            ? `case_handoff must target this conversation's active case (${ctx.activeCaseId}), not ${id}`
+            : 'case_handoff has no bound active case on this turn -- cannot target an arbitrary case id' }
         }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
