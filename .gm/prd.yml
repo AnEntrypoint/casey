@@ -130,10 +130,6 @@
   description: 'CONFIRMED+LANDED (casey sweep 1.1-1.3, 2.3): deleted dead code (attn.js todoHint orphan wrapper+export; server.js unused ensureBootstrapAdmin/slugUsername import; server.js TYPE_SHAPE all-circle no-readers const) and consolidated the /undo handler inline evData to the shared overview.js evData import. Pure net reduction, zero-risk. Witnessed: node --check + lint green, no broken importers.'
   witness: 'LANDED+committed 593caad: deleted attn.js todoHint (orphan wrapper+export, grep-confirmed no importer), server.js unused ensureBootstrapAdmin/slugUsername import, server.js TYPE_SHAPE (all-circle no-readers); /undo handler inline evData replaced with shared overview.js evData import. Witnessed node --check + npm run lint green (33 files), no broken importers.'
   status: completed
-- id: test-suite-policy-conflict-HOLD
-  subject: 'Policy conflict: AGENTS.md explicitly forbids adding a test suite (user directive, removed on purpose) vs outside-audit item 31/90 requesting a real-services test.js'
-  notes: 'DELIBERATE HOLD POINT per explicit dispatch instruction. Do NOT resolve either way without explicit user confirmation. status=pending, blockedBy=[external, "needs explicit user decision: keep no-test-suite policy vs add real-services test.js"]. No test files written this session.'
-  status: pending
 - id: session-auth-hardening-revocation
   subject: 'Session/auth hardening: session revocation (logout-all, admin-forced revoke)'
   notes: dashboard/auth.js currently stateless HMAC-signed cookies with no server-side session table -- means no revocation mechanism exists (a leaked cookie is valid until secret rotation or expiry). Needs either a revocation list or short-lived tokens plus refresh.
