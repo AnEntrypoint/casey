@@ -1541,6 +1541,53 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
+  // dispatch-from-map PRD row: an operator, looking at the map's case pins
+  // alongside its field-worker location overlay (GET /api/map/workers just
+  // above), selects a worker to direct to a case. This does NOT message the
+  // worker directly -- casey's WhatsApp cost-policy invariant (this repo's own
+  // earlier session work: casey must never autonomously originate a WhatsApp
+  // message outside the free 24h session window) applies here exactly the
+  // same as any other proactive outreach. A dispatch is recorded as a QUEUED
+  // suggestion (an 'action' event on the case, tagged 'dispatch-suggested',
+  // never an outbound send) -- the same queue-never-autofire discipline the
+  // earlier session's pending-outreach design established for alert/nudge
+  // messages. The worker only actually hears about it through casey's normal
+  // reply path the next time THEY message in (their own inbound opens a free
+  // session window; an LLM composing that turn's reply can surface the
+  // pending dispatch then, per the existing "the agent drives the whole
+  // conversation" design principle -- no new proactive-send code path is
+  // introduced here, only the durable record a future turn can read).
+  app.post('/api/cases/:id/dispatch', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      const workerId = String(req.body?.worker_id || '').trim()
+      if (!workerId) return res.status(400).json({ error: 'worker_id is required' })
+      const worker = await store.getContact?.(workerId).catch(() => null)
+      if (!worker) return res.status(404).json({ error: 'worker not found' })
+      if (worker.tier !== 'field_worker') return res.status(400).json({ error: 'selected contact is not a field_worker' })
+      const op = actingOperator(req)
+      const note = String(req.body?.note || '').trim().slice(0, 500)
+      // PII discipline: the case's own timeline may already carry the contact's
+      // external_id elsewhere (case timelines are operator-facing, not PII-
+      // scrubbed -- see AGENTS.md), but the worker's own PII-free display name
+      // (never external_id) is what identifies them in THIS event, matching
+      // the same enquiryRow discipline used for every worker-facing surface.
+      const label = worker.display_name || 'a field worker'
+      const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
+      if (!tags.includes('dispatch-suggested')) {
+        await store.updateCase(c.id, { tags: [...tags, 'dispatch-suggested'].join(',') }, op)
+      }
+      await store.appendEvent(c.id, {
+        kind: 'action', actor: 'operator',
+        text: `Dispatch suggested: ${label}${note ? ` -- ${note}` : ''}`,
+        data: { dispatch_worker_id: worker.id, by: op.id, note: note || null },
+      })
+      res.json({ ok: true })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
   // Management KPIs over the live case+event history: time-to-first-reply
   // (median/p90), median dwell per stage from transition events, opened-vs-closed
   // per day, open backlog by stage. Aggregate-only -- no per-contact rows or
@@ -4478,7 +4525,77 @@ function mapPopupHtml(p){
     +(counts?esc(counts)+'<br>':'')
     +(p.onset?'onset: '+esc(p.onset)+'<br>':'')
     +(p.assignee&&p.assignee!=='agent'?'assigned: '+esc(p.assignee)+'<br>':'')
-    +'<a href="#" data-open-ref="'+esc(p.id)+'">Open case</a></div>'
+    +'<a href="#" data-open-ref="'+esc(p.id)+'">Open case</a>'
+    +' | <a href="#" data-dispatch-ref="'+esc(p.id)+'" title="Suggest a field worker for this case -- never messages them directly, they hear about it on their own next reply-in">Dispatch a worker</a></div>'
+}
+// dispatch-from-map: opens a small worker picker (nearest-first, from the
+// currently-loaded worker overlay -- toggling the workers layer on first
+// populates mapState.workers) and posts the operator's choice. Never sends
+// anything to the worker directly -- see the /api/cases/:id/dispatch route
+// comment for the full cost-policy rationale (queued suggestion only, the
+// worker hears about it on their own next reply-in).
+function haversineKm(lat1,lon1,lat2,lon2){
+  const R=6371, toRad=d=>d*Math.PI/180
+  const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1)
+  const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2
+  return R*2*Math.asin(Math.sqrt(a))
+}
+// Small bespoke picker (showDialog above has no select-list support and is
+// used in many places -- a dedicated overlay here avoids risking a regression
+// there). Resolves {workerId, note} or null on cancel.
+function showWorkerPicker(title, message, workers){
+  return new Promise(function(resolve){
+    function mk(tag, css, txt){ const el=document.createElement(tag); if(css) el.style.cssText=css; if(txt!=null) el.textContent=txt; return el }
+    const overlay=mk('div','position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px')
+    overlay.setAttribute('role','dialog'); overlay.setAttribute('aria-modal','true')
+    const card=mk('div','background:var(--panel);border:1px solid var(--border);border-radius:10px;max-width:420px;width:100%;padding:22px 24px;box-shadow:0 8px 40px rgba(0,0,0,.5);font-size:14px')
+    card.appendChild(mk('h3','margin:0 0 8px;font-size:16px',title))
+    card.appendChild(mk('p','margin:0 0 10px;color:var(--muted);line-height:1.5',message))
+    const sel=document.createElement('select')
+    sel.style.cssText='width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;margin-bottom:10px'
+    for(const w of workers){
+      const o=document.createElement('option'); o.value=w.id
+      o.textContent=(w.display_name||'field worker')+(w.km!=null?' ('+w.km.toFixed(1)+'km'+(w.stale?', stale':'')+')':w.stale?' (stale)':'')
+      sel.appendChild(o)
+    }
+    card.appendChild(sel)
+    const noteLab=mk('label','display:block;margin:0 0 4px;font-size:12px;color:var(--muted)','Optional note for the team')
+    card.appendChild(noteLab)
+    const noteInp=document.createElement('textarea'); noteInp.rows=2
+    noteInp.style.cssText='width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;resize:vertical'
+    card.appendChild(noteInp)
+    const row=mk('div','display:flex;gap:8px;margin-top:14px;justify-content:flex-end')
+    const cancelBtn=mk('button','background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0','Cancel')
+    const okBtn=mk('button','background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0','Suggest dispatch')
+    row.appendChild(cancelBtn); row.appendChild(okBtn); card.appendChild(row)
+    overlay.appendChild(card); document.body.appendChild(overlay)
+    const close=function(confirmed){ overlay.remove(); resolve(confirmed?{workerId:sel.value,note:noteInp.value||''}:null) }
+    okBtn.onclick=function(){ close(true) }
+    cancelBtn.onclick=function(){ close(false) }
+    overlay.addEventListener('keydown',function(e){ if(e.key==='Escape') close(false) })
+    setTimeout(function(){ sel.focus() },60)
+  })
+}
+async function openDispatchPicker(caseId, caseLat, caseLon){
+  const workers=(mapState&&mapState.workers)||[]
+  if(!workers.length){
+    toast('No field-worker locations loaded yet -- turn on the worker overlay first ("Workers" map button) so there is someone to pick from.','warn')
+    return
+  }
+  const withDist=workers.map(w=>({...w,km:(caseLat!=null&&caseLon!=null&&Number.isFinite(w.lat)&&Number.isFinite(w.lon))?haversineKm(caseLat,caseLon,w.lat,w.lon):null}))
+    .sort((a,b)=>(a.km??Infinity)-(b.km??Infinity))
+  const picked=await showWorkerPicker(
+    'Dispatch a worker to this case',
+    'This only records a suggestion -- casey never messages a worker unprompted (cost-policy invariant). They will hear about it the next time they message in.',
+    withDist,
+  )
+  if(!picked) return
+  const worker=withDist.find(w=>w.id===picked.workerId)
+  try{
+    const r=await api('/api/cases/'+encodeURIComponent(caseId)+'/dispatch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({worker_id:picked.workerId,note:picked.note})})
+    if(!r.ok){ toast(await failMsg(r,'Could not record the dispatch suggestion'),'err'); return }
+    toast('Dispatch suggested -- '+((worker&&worker.display_name)||'the worker')+' will hear about it on their own next reply-in','ok')
+  }catch(e){ toast('Dispatch error: '+e.message,'err') }
 }
 function applyMapFilters(pins){
   const sp=$('#map-species')?.value||'', ty=$('#map-type')?.value||'', st=$('#map-status')?.value||''
@@ -4500,6 +4617,8 @@ function renderMapMarkers(){
     m.on('popupopen',()=>{
       const el=document.querySelector('[data-open-ref="'+p.id+'"]')
       if(el) el.onclick=(e)=>{e.preventDefault(); openCase(p.id)}
+      const dEl=document.querySelector('[data-dispatch-ref="'+p.id+'"]')
+      if(dEl) dEl.onclick=(e)=>{e.preventDefault(); openDispatchPicker(p.id,p.lat,p.lon)}
     })
     layer.addLayer(m)
   }
@@ -4620,6 +4739,7 @@ async function renderMapWorkers(){
   try{
     const j=await api('/api/map/workers').then(r=>r.ok?r.json():null)
     if(!j) return
+    mapState.workers=j.workers||[]
     const layer=window.L.layerGroup()
     for(const w of (j.workers||[])){
       const label=esc(w.display_name||'field worker')+(w.stale?' (last seen '+esc(fmtTime(w.last_location_at))+')':' (here now)')
