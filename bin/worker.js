@@ -172,6 +172,14 @@ async function main() {
       runSweep: () => casey.runSweepOnce(),
       receiveStatus: () => casey.receiveStatus(),
       runtimeStatus,
+      // Surfaces the LLM-down queue depth (pending / dead-lettered) and the
+      // alert webhook's last delivery attempt on GET /api/health -- see
+      // queue-alert-visibility-dashboard PRD row. queueStatus is cheap and
+      // read-only (never drives a turn); webhookUrl matches breachNotifier's
+      // own default resolution (CASEY_ALERT_WEBHOOK, falling back to
+      // CASEY_HANDOFF_WEBHOOK) so the lookup targets the URL actually in use.
+      queueStatus: () => casey.queueStatus(),
+      alertWebhookUrl: process.env.CASEY_ALERT_WEBHOOK || process.env.CASEY_HANDOFF_WEBHOOK || null,
     })
   } catch (e) {
     if (forked) ipcSend(process, WORKER_MSG.FATAL, { reason: `dashboard bind failed: ${e.message}` })

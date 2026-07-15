@@ -58,15 +58,30 @@ function sign(payload) {
 }
 
 // Stateless session token: base64url(json) + '.' + hmac. No server-side
-// session table -- verification is pure recomputation, so it works
-// unchanged across the multi-worker hot-reload supervisor (AGENTS.md) with no
-// shared session store to keep in sync.
-export function issueSession(accountId, { now = Date.now() } = {}) {
-  const payload = JSON.stringify({ id: accountId, exp: now + SESSION_TTL_MS })
+// session TABLE (still no per-session row to store/list/expire) -- verification
+// is pure recomputation plus one cheap live comparison against the account's
+// OWN current session_epoch, so revocation ("log out everywhere" / an admin
+// force-revoking a compromised account) works with zero added storage: bump
+// session_epoch and every previously-issued token for that account instantly
+// fails the epoch check on its next request, with no session list to expire
+// or garbage-collect. This still works unchanged across the multi-worker
+// hot-reload supervisor (AGENTS.md) -- session_epoch lives on the account row
+// (the one durable store every worker already reads), not in worker memory.
+export function issueSession(accountId, { now = Date.now(), epoch = 0 } = {}) {
+  const payload = JSON.stringify({ id: accountId, exp: now + SESSION_TTL_MS, epoch })
   const b64 = Buffer.from(payload).toString('base64url')
   return `${b64}.${sign(b64)}`
 }
 
+// Returns {id, epoch} (epoch defaults to 0 for a token issued before this
+// field existed, so an old outstanding cookie keeps working against an
+// account whose session_epoch is still its default 0 -- no forced mass
+// logout on upgrade) or null on any failure (bad signature, expired, malformed).
+// The caller (server.js's session middleware) is responsible for comparing
+// the returned epoch against the account's LIVE session_epoch -- this
+// function only proves the token's own internal consistency, not whether the
+// account has since revoked it (that requires the live account row, which
+// this stateless-by-design function deliberately does not fetch).
 export function verifySession(token, { now = Date.now() } = {}) {
   if (!token || typeof token !== 'string') return null
   const dot = token.lastIndexOf('.')
@@ -82,7 +97,8 @@ export function verifySession(token, { now = Date.now() } = {}) {
   catch { return null }
   if (!payload || typeof payload.id !== 'string' || !Number.isFinite(payload.exp)) return null
   if (payload.exp < now) return null
-  return payload.id
+  const epoch = Number.isFinite(payload.epoch) ? payload.epoch : 0
+  return { id: payload.id, epoch }
 }
 
 // Manual Cookie header parse -- no cookie-parser dependency, matching this
@@ -150,14 +166,37 @@ export async function createAccount(store, { username, password, displayName, ro
 // (the account holder replacing a printed bootstrap password) and any future
 // self-service "change my password" action. Clears must_change_password on
 // success so the forced flow is a one-time gate, not a recurring one.
+// Also bumps session_epoch: a password change is exactly the moment a
+// leaked/shared old cookie should stop working, matching standard
+// "changing your password logs you out everywhere else" behaviour -- the
+// account holder's OWN current session keeps working because the login flow
+// re-issues a fresh cookie carrying the new epoch on every login, and this
+// change is itself driven from an already-authed request whose cookie gets
+// replaced by the caller's own next issueSession() call site, not this one.
 export async function changePassword(store, id, newPassword) {
   if (!newPassword || String(newPassword).length < 8) throw new Error('password must be at least 8 characters')
   const { hash, salt } = hashPassword(newPassword)
-  return store.t.update('operator_account', id, { password_hash: hash, password_salt: salt, must_change_password: '0' }, SYSTEM)
+  const acct = await getAccount(store, id)
+  const nextEpoch = (Number(acct?.session_epoch) || 0) + 1
+  return store.t.update('operator_account', id, { password_hash: hash, password_salt: salt, must_change_password: '0', session_epoch: nextEpoch }, SYSTEM)
 }
 
 export async function setAccountDisabled(store, id, disabled) {
   return store.t.update('operator_account', id, { disabled: disabled ? '1' : '0' }, SYSTEM)
+}
+
+// Explicit "log out everywhere" / admin-forced revocation: bumps
+// session_epoch with no other account change, so every outstanding session
+// token for this account (issued with the OLD epoch) fails its next
+// verifySession-epoch comparison and the holder is forced to log in again.
+// No session table to enumerate or expire -- the account row's own epoch
+// counter IS the revocation list, at O(1) storage regardless of how many
+// devices/tabs held a valid session.
+export async function revokeAccountSessions(store, id) {
+  const acct = await getAccount(store, id)
+  if (!acct) throw new Error('account not found')
+  const nextEpoch = (Number(acct.session_epoch) || 0) + 1
+  return store.t.update('operator_account', id, { session_epoch: nextEpoch }, SYSTEM)
 }
 
 export async function deleteAccount(store, id) {

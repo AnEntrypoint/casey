@@ -1077,6 +1077,36 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         }
       }
     }
+    // STRUCTURAL forced-tool-call guard. tool_choice:'required' is passed above
+    // so the FIRST turn iteration must call a tool -- but freddie's acptoapi
+    // bridge only documents this as a client-side HINT it cannot actually
+    // enforce against every provider (see acptoapi-bridge.js's own
+    // "tool_choice required but no tool call returned (acptoapi does not
+    // enforce tool_choice)" warning log). A weak model in the live fallback
+    // chain (witnessed: chatjimmy/groq-tier models) can simply ignore the
+    // requirement and free-type plain prose instead -- witnessed live on real
+    // Discord traffic this session: "I'm in umtentweni" and "I need help with
+    // cows"/"chickens" (all squarely in-scope, real animal-health content) each
+    // got a self-referential "I don't have the tools/access to assist" refusal
+    // sent verbatim to the contact. This is checked STRUCTURALLY (did the
+    // model's first turn message actually carry a tool_calls array), never by
+    // matching the refusal's own wording -- a text-pattern list only catches
+    // phrasings already witnessed and would need constant extension as the
+    // model paraphrases differently each time (the same limitation
+    // isPromptEcho/isStockAck above already carry, deliberately not repeated
+    // here). A genuinely first-tool-call-less turn is degraded regardless of
+    // what its text happens to say, and never reaches the contact.
+    if (text) {
+      const firstAssistant = Array.isArray(result?.messages)
+        ? result.messages.find(m => m?.role === 'assistant')
+        : null
+      const firstCallHadTools = Array.isArray(firstAssistant?.tool_calls) && firstAssistant.tool_calls.length > 0
+      if (firstAssistant && !firstCallHadTools) {
+        log.warn?.('[casey] forced tool_choice not honored by model; blanking reply', { caseId: fresh.id })
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model ignored forced tool_choice on first turn (no tool call made); blanked' })
+        text = ''
+      }
+    }
     // PURE-AGENT REPLY. The agent drives the whole conversation -- intake (asking the
     // next needed fact via case_report + the system prompt), enquiries, status, all of
     // it. casey no longer composes or overrides the reply deterministically. USER
@@ -1895,6 +1925,19 @@ export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WE
   }
 }
 
+// Last-attempt delivery status per alert-webhook URL, in-memory only (not
+// persisted -- a process restart resets it, matching the existing supervisor
+// convention that health/runtime status is live-only, never a stale disk
+// record). Read by the dashboard's /api/health so an operator can tell "the
+// webhook itself has been failing" apart from "no breach has fired yet" --
+// the two were previously indistinguishable since a webhook POST failure only
+// ever surfaced as a console warning nobody sees on a headless deployment.
+const _webhookDeliveryStatus = new Map()   // url -> {ok, lastAttemptAt, lastError, lastLabel}
+
+export function getWebhookDeliveryStatus(webhookUrl) {
+  return _webhookDeliveryStatus.get(webhookUrl) || null
+}
+
 // Posts a one-line guardrail-breach alert to a Discord webhook. Same transport and
 // safety as the handoff notifier (no @-mentions, 5s timeout, degrade-not-throw),
 // but driven by the periodic sweep rather than an inbound turn. Returns null with
@@ -1915,15 +1958,22 @@ export function breachNotifier(webhookUrl = process.env.CASEY_ALERT_WEBHOOK || p
 // an `alert` object is given it is merged into the body so a non-Discord pager gets
 // machine-parseable breach metadata; Discord ignores the extra keys and renders
 // `content`. The alert is aggregate-only (no external_id) by construction.
+// Records the outcome into _webhookDeliveryStatus (keyed by URL) on both the
+// success and failure paths so a stale "never tried again" webhook is
+// distinguishable from one that IS being tried and failing every time.
 async function postWebhook(webhookUrl, content, log, label, alert = null) {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), 5000)
   const body = { content, allowed_mentions: { parse: [] } }
   if (alert) body.alert = alert
+  const now = Date.now()
   await fetch(webhookUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
     signal: ac.signal,
-  }).then(() => clearTimeout(timer), (e) => { clearTimeout(timer); log?.warn?.(`[casey] ${label} failed`, e.message) })
+  }).then(
+    () => { clearTimeout(timer); _webhookDeliveryStatus.set(webhookUrl, { ok: true, lastAttemptAt: now, lastError: null, lastLabel: label }) },
+    (e) => { clearTimeout(timer); log?.warn?.(`[casey] ${label} failed`, e.message); _webhookDeliveryStatus.set(webhookUrl, { ok: false, lastAttemptAt: now, lastError: String(e.message || e).slice(0, 200), lastLabel: label }) },
+  )
 }

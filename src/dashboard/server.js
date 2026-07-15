@@ -31,10 +31,12 @@ import { VISIT_CRITICAL } from '../case-health.js'
 import { REPORT_KEY_ORDER } from '../case-store.js'
 import { rankAttention } from '../attn.js'
 import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27, toDate } from '../format.js'
+import { getWebhookDeliveryStatus } from '../gateway-hooks.js'
 import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
   issueSession, verifySession, findAccountByUsername, verifyPassword, markLogin,
   getAccount, listAccounts, createAccount, setAccountDisabled, deleteAccount, changePassword,
+  revokeAccountSessions,
 } from './auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -67,7 +69,7 @@ function parseEventData(events) {
 }
 
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
-export function createDashboard(store, { port = 4000, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null } = {}) {
+export function createDashboard(store, { port = 4000, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null, queueStatus = null, alertWebhookUrl = null } = {}) {
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   app.use(express.json())
@@ -83,10 +85,20 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     req.caseyAccount = null
     try {
       const cookies = parseCookies(req.get('cookie'))
-      const accountId = verifySession(cookies[COOKIE_NAME])
-      if (accountId) {
-        const acct = await getAccount(store, accountId)
-        if (acct && acct.disabled !== '1') req.caseyAccount = acct
+      const claim = verifySession(cookies[COOKIE_NAME])
+      if (claim) {
+        const acct = await getAccount(store, claim.id)
+        // session_epoch revocation: a token's own epoch must match the
+        // account's LIVE current epoch. changePassword()/revokeAccountSessions()
+        // bump the stored epoch, so an outstanding token issued before that
+        // bump carries the OLD epoch and fails here -- "log out everywhere"
+        // with zero session-table storage (see auth.js for the full design
+        // rationale). A pre-epoch token (claim.epoch defaults to 0 when the
+        // field was absent from an old cookie) still matches an account whose
+        // session_epoch has never been bumped (also 0), so upgrading to this
+        // code does not force-logout every already-logged-in operator.
+        const liveEpoch = Number(acct?.session_epoch) || 0
+        if (acct && acct.disabled !== '1' && claim.epoch === liveEpoch) req.caseyAccount = acct
       }
     } catch { /* a broken/tampered cookie just means not-logged-in, never a crash */ }
     next()
@@ -410,7 +422,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       if (!acct || acct.disabled === '1' || !verifyPassword(password, acct.password_salt, acct.password_hash)) {
         return res.status(401).json({ error: 'invalid username or password' })
       }
-      const token = issueSession(acct.id)
+      const token = issueSession(acct.id, { epoch: Number(acct.session_epoch) || 0 })
       res.set('Set-Cookie', sessionCookieHeader(token))
       markLogin(store, acct.id).catch(() => {}) // best-effort, never blocks login
       res.json({ ok: true, username: acct.username, display_name: acct.display_name, role: acct.role })
@@ -555,7 +567,29 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
           }
         }
       } catch { gateway = null }   // receive status is best-effort; never break health
-      res.json({ ...view, source: s.source, model, url, degraded: !!s.degraded, last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null, gateway })
+      // LLM-down queue depth (pending re-drives + dead-lettered) so an operator
+      // sees not just "AI helper offline" but how much is actually backed up
+      // behind that outage. Best-effort: a scan failure never breaks health.
+      let queue = null
+      try {
+        const qs = typeof queueStatus === 'function' ? await queueStatus() : null
+        if (qs) queue = { pending: qs.pending || 0, dead_lettered: qs.deadLettered || 0 }
+      } catch { queue = null }
+      // Alert-webhook delivery status: distinguishes "no breach has fired since
+      // boot" (ds === null, nothing to report) from "the webhook itself is
+      // failing" (ds.ok === false) -- previously a failed POST only ever logged
+      // a console warning, invisible on a headless deployment. No URL/detail
+      // ever leaks the webhook itself (a secret), only pass/fail + timing.
+      let alertWebhook = null
+      if (alertWebhookUrl) {
+        const ds = getWebhookDeliveryStatus(alertWebhookUrl)
+        alertWebhook = ds
+          ? { configured: true, ok: ds.ok, last_attempt_at: ds.lastAttemptAt, last_error: ds.ok ? null : ds.lastError }
+          : { configured: true, ok: null, last_attempt_at: null, last_error: null }
+      } else {
+        alertWebhook = { configured: false, ok: null, last_attempt_at: null, last_error: null }
+      }
+      res.json({ ...view, source: s.source, model, url, degraded: !!s.degraded, last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null, gateway, queue, alert_webhook: alertWebhook })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -1332,6 +1366,33 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     try { await setAccountDisabled(store, req.params.id, false); res.json({ ok: true }) }
     catch (e) { res.status(400).json({ error: e.message }) }
   })
+  // Session revocation (session-auth-hardening-revocation PRD row): admin-forced
+  // revoke on ANY account (a leaked cookie, a departing team member) -- bumps
+  // session_epoch, every outstanding token for that account fails its next
+  // request. Same auth gate as disable/enable (admin only, matches "this is an
+  // account-management action" not a self-service one).
+  app.post('/api/accounts/:id/revoke-sessions', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    try { await revokeAccountSessions(store, req.params.id); res.json({ ok: true }) }
+    catch (e) { res.status(400).json({ error: e.message }) }
+  })
+  // Self-service "log out everywhere" -- any authed operator (not admin-only:
+  // a leaked cookie or a lost/stolen device is every operator's own risk to
+  // clear, not something that should require asking an admin). Revokes the
+  // CALLER's own account only (req.caseyAccount.id, never req.params/body),
+  // then immediately re-issues a fresh cookie at the new epoch so the request
+  // that triggered this does not itself get logged out.
+  app.post('/api/logout-everywhere', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      await revokeAccountSessions(store, req.caseyAccount.id)
+      const fresh = await getAccount(store, req.caseyAccount.id)
+      const token = issueSession(fresh.id, { epoch: Number(fresh.session_epoch) || 0 })
+      res.set('Set-Cookie', sessionCookieHeader(token))
+      res.json({ ok: true })
+    } catch (e) { res.status(400).json({ error: e.message }) }
+  })
   app.delete('/api/accounts/:id', async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
@@ -1830,6 +1891,45 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       const suggestions = suggestLinks(c, pool).slice(0, 5)
         .map(s => ({ ...s, subject: byId.get(s.id)?.subject || '', status: byId.get(s.id)?.status || '' }))
       res.json({ count: suggestions.length, suggestions })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+  // site-durable-entity-visit-history PRD row: a field worker does not OWN a
+  // case (a different person may follow up from whoever reported it) -- what
+  // an operator actually needs is "who has been to this SITE and when", across
+  // every conversation (case) that turns out to be the same real place, not
+  // just this one contact's own thread. Rather than a new site/place entity
+  // (a schema migration + a second grouping mechanism competing with the
+  // existing one), this reuses correlate.js's own location/species/symptom
+  // scoring UNCHANGED -- the same signal that already powers "possibly the
+  // same case" merge suggestions above -- but over the FULL case pool
+  // (open AND closed/resolved: a visit history must include past visits, not
+  // only currently-open threads) and returns each match's reporting contact
+  // identity + timestamp rather than a merge action. PII discipline: no
+  // external_id/contact_id -- "who" is the case ref + reported-by-channel only
+  // (the same PII-free shape enquiryRow already uses elsewhere), an operator
+  // can open the linked case itself for the real contact detail if needed.
+  app.get('/api/cases/:id/site-history', async (req, res) => {
+    try {
+      const c = await store.getCase(req.params.id)
+      if (!c) return res.status(404).json({ error: 'not found' })
+      const { suggestLinks } = await import('../correlate.js')
+      const pool = (await store.listCases({}, { limit: 500 }))
+        .filter(o => o.id !== c.id
+          && !String(o.tags || '').split(',').map(s => s.trim()).includes('merged'))
+      const byId = new Map(pool.map(o => [o.id, o]))
+      const visits = suggestLinks(c, pool, 0.2).slice(0, 20)
+        .map(s => {
+          const row = byId.get(s.id)
+          return {
+            id: s.id, ref: s.ref, score: s.score, reasons: s.reasons,
+            channel: row?.channel || null,
+            status: row?.status || null,
+            reported_at: row?.created_at || null,
+            last_activity_at: row?.last_event_at || null,
+          }
+        })
+        .sort((a, b) => (Number(b.reported_at) || 0) - (Number(a.reported_at) || 0))
+      res.json({ site_ref: c.ref, count: visits.length, visits })
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -2744,6 +2844,18 @@ async function doLogout(){
   currentUser = null
   location.reload()
 }
+// session-auth-hardening-revocation: self-service "log out everywhere" --
+// revokes every OTHER outstanding session for the caller's own account (a
+// lost/stolen device, a leaked cookie) via a session_epoch bump server-side,
+// then reloads since the server already re-issued this tab's own cookie at
+// the new epoch (see POST /api/logout-everywhere).
+async function doLogoutEverywhere(){
+  try{
+    const r = await api('/api/logout-everywhere', { method:'POST' })
+    if(!r.ok){ const j = await r.json().catch(()=>({})); throw new Error(j.error||'failed') }
+  }catch(e){ toast('Could not log out other sessions: '+e.message, 'err'); return }
+  toast('Logged out everywhere else. This device stays signed in.')
+}
 // Back-compat shim: every "who am I" check below (claim/mine/skills-key/owner-
 // chip highlighting) was written against a self-picked selectedOperator
 // variable from the old cooperative-attribution picker. It is now simply
@@ -3199,6 +3311,7 @@ async function openCase(id){
       <button id="send-reply">Send reply</button>
     </div>
     <div id="dup-panel"></div>
+    <div id="site-history-panel"></div>
     <h3 style="margin:18px 0 6px">Timeline\${events_total!=null?\` (\${events.length}/\${events_total})\`:''}
       <button id="add-case-note" class="icon-btn" style="float:right;margin-top:-2px">+ Note</button>
       <button id="split-case-btn" class="icon-btn" style="float:right;margin-top:-2px;margin-right:4px">Split</button></h3>
@@ -3210,6 +3323,11 @@ async function openCase(id){
   // one-click merge. Best-effort and isolated -- a suggestions failure must never
   // break the case view, so it is loaded after the main render and swallows errors.
   loadDuplicateSuggestions(id)
+  // Site visit history: who else has reported at this same place (any reporter,
+  // any time -- a field worker does not own a case, a different person may
+  // follow up from whoever first reported it). Same best-effort/isolated
+  // loading discipline as loadDuplicateSuggestions above.
+  loadSiteHistory(id)
   // pause polling while any field is focused so a refresh can't wipe the edit;
   // resume on blur. A blur fallback guarantees we never get stuck paused.
   $('#detail').querySelectorAll('input,select,textarea').forEach(el=>{
@@ -3429,6 +3547,28 @@ async function loadDuplicateSuggestions(id){
     lastCasesJson=''; await loadCases(); await openCase(id)
   })
 }
+// Load and render the "who has visited this site" history: every OTHER case
+// (open or closed) casey thinks describes the same real place, reused from
+// the same correlate.js scoring that powers the merge-suggestion panel above,
+// but at a lower threshold and including closed cases -- a visit history is
+// about the PLACE's past, not just currently-open threads. PII-free by
+// construction (server only returns ref/channel/status/timestamps, never
+// external_id) -- clicking a row opens that case for full detail the same
+// way the case list already does. Isolated/best-effort like
+// loadDuplicateSuggestions: a failure here must never break the case view.
+async function loadSiteHistory(id){
+  const panel=$('#site-history-panel'); if(!panel) return
+  let j
+  try{ j = await api('/api/cases/'+encodeURIComponent(id)+'/site-history').then(r=>r.ok?r.json():null) }catch{ return }
+  if(!j||!j.visits||!j.visits.length){ panel.innerHTML=''; return }
+  panel.innerHTML='<div class="dup"><h3 style="margin:14px 0 6px">Visit history for this site</h3>'
+    + '<p class="hint">Other reports casey thinks are the same place, most recent first -- any reporter may have visited, not only whoever opened this case.</p>'
+    + j.visits.map(v=>\`<div class="dup-row" data-open="\${esc(v.id)}" style="cursor:pointer">
+        <b>\${esc(v.ref)}</b> <span class="when">\${esc(v.channel||'')} - \${esc(v.status||'')} - reported \${esc(rel(v.reported_at))}</span>
+        <span class="hint" style="display:block">\${esc(v.reasons.join(', '))}</span></div>\`).join('')
+    + '</div>'
+  panel.querySelectorAll('[data-open]').forEach(row=>row.onclick=()=>openCase(row.dataset.open))
+}
 function renderEvents(events){
   return events.map(e=>\`<div class="ev \${esc(e.kind)}"><span class="k">\${esc(e.kind)}/\${esc(e.actor)}</span> \${esc(e.text||'')} <span class="when" title="\${esc(fmtTime(e.created_at))}">\${esc(rel(e.created_at))}</span></div>\`).join('')
 }
@@ -3599,7 +3739,21 @@ async function refreshHealth(){
     return
   }
   el.textContent=h.label
-  el.title=h.detail+(h.model?(' ('+h.model+')'):'')+(gw&&gw.label?(' - '+gw.label):'')
+  // Queue-alert-visibility: append LLM-down queue depth and alert-webhook
+  // delivery status into the SAME pill's title (no new UI element needed --
+  // an operator already hovers this pill to see why auto-replies may be
+  // paused, so the backlog/webhook detail belongs right there). Silent when
+  // there is nothing worth surfacing (no queue backlog, webhook never
+  // attempted or unconfigured) so a healthy deployment's tooltip stays terse.
+  let extra=''
+  if(h.queue && (h.queue.pending>0 || h.queue.dead_lettered>0)){
+    extra+=' - Queued messages waiting to retry: '+h.queue.pending
+    if(h.queue.dead_lettered>0) extra+=' ('+h.queue.dead_lettered+' gave up after repeated failures)'
+  }
+  if(h.alert_webhook && h.alert_webhook.configured && h.alert_webhook.ok===false){
+    extra+=' - Alert webhook is failing to send.'
+  }
+  el.title=h.detail+(h.model?(' ('+h.model+')'):'')+(gw&&gw.label?(' - '+gw.label):'')+extra
   el.style.background=h.ok?'rgba(34,160,80,.18)':'rgba(200,140,0,.20)'
   el.style.color=h.ok?'#1c8c44':'#9a6a00'
   refreshRuntimePill(); refreshGuardrailsPill()
@@ -4645,8 +4799,10 @@ function initWhoAmI(){
   const sel=$('#op-picker'); if(!sel || !currentUser) return
   sel.outerHTML='<span id="whoami-badge" style="margin-left:8px" title="Logged in">'
     +esc(currentUser.display_name||currentUser.username)
-    +' <a href="#" id="logout-link" style="margin-left:6px">log out</a></span>'
+    +' <a href="#" id="logout-link" style="margin-left:6px">log out</a>'
+    +' <a href="#" id="logout-everywhere-link" style="margin-left:6px" title="Sign out any other device or browser tab using this account">log out everywhere</a></span>'
   const lo=$('#logout-link'); if(lo) lo.onclick=(e)=>{ e.preventDefault(); doLogout() }
+  const loe=$('#logout-everywhere-link'); if(loe) loe.onclick=(e)=>{ e.preventDefault(); doLogoutEverywhere() }
 }
 // Inline modal replacement for native prompt()/confirm() -- works on mobile/PWA.
 // Uses DOM creation (not innerHTML) to avoid conflicts with the outer template literal.

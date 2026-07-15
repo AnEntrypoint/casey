@@ -176,6 +176,7 @@ entities:
       disabled:       { type: text, default: "0" }        # "1" disables login without deleting the account/history
       last_login_at:  { type: text }
       must_change_password: { type: text, default: "0" }  # "1" forces a change-password flow before any other route -- set on the auto-created bootstrap admin (see ensureBootstrapAdmin) so a printed random password cannot persist indefinitely; cleared once the account holder sets their own
+      session_epoch:  { type: number, default: 0 }        # bumped by changePassword()/revokeAccountSessions() (auth.js) -- every session token carries the epoch it was issued at; a mismatch against this live value fails verification, giving stateless "log out everywhere" revocation with no session table (see auth.js header comment for the full design)
     # Real, actual credentials -- never PII-free-projected, never returned in a
     # list response (password_hash/password_salt must never leave the server).
     row_access: { scope: none }

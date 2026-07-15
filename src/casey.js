@@ -644,6 +644,44 @@ export class Casey {
     }
   }
 
+  // Read-only queue-depth check for the dashboard health panel: how many
+  // messages are currently sitting in the LLM-down queue (QUEUED-FOR-AGENT
+  // recorded, no completing outbound/draft/dead-letter yet) and how many have
+  // been dead-lettered (queue-drive-failed, exhausted retryCap). Mirrors
+  // drainQueuedTurns' own event-marker scan (see its comments for the exact
+  // marker vocabulary) but never drives a turn -- this must be cheap enough to
+  // call on every /api/health poll, so it is capped the same way (maxCases)
+  // and never touches _draining (a concurrent real drain is unaffected).
+  async queueStatus({ maxCases = 200 } = {}) {
+    let pending = 0, deadLettered = 0
+    try {
+      const rows = await this.store.listCases({}, { limit: maxCases, offset: 0 })
+      for (const c of rows) {
+        let events
+        try { events = await this.store.listEvents(c.id) } catch { continue }
+        const queued = new Map()
+        const completedAfter = new Set()
+        const dead = new Set()
+        for (const ev of events) {
+          if (ev.kind === 'observation' && typeof ev.text === 'string') {
+            let m = ev.text.match(/^QUEUED-FOR-AGENT:(.+)$/)
+            if (m) { const inb = events.find(e => e.kind === 'inbound' && e.msg_id === m[1]); if (inb) queued.set(m[1], inb) }
+            m = ev.text.match(/^queue-drive-failed:(.+)$/)
+            if (m) dead.add(m[1])
+          }
+          if (ev.kind === 'outbound' || ev.kind === 'draft') {
+            for (const id of queued.keys()) completedAfter.add(id)
+          }
+        }
+        for (const id of queued.keys()) {
+          if (dead.has(id)) deadLettered++
+          else if (!completedAfter.has(id)) pending++
+        }
+      }
+    } catch (e) { this.log?.warn?.('[casey] queueStatus scan failed', { error: e.message }) }
+    return { pending, deadLettered }
+  }
+
   // Quiet sweep: cases with no intake_mode tag and channel != 'web' get intake_mode:channel.
   async _backfillIntakeMode() {
     const PAGE = 200; let offset = 0; let tagged = 0
