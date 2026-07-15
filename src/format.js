@@ -84,3 +84,50 @@ export function hostTimezone() {
 export function hostIsSAST() {
   return hostTimezone() === SAST_TZ
 }
+
+// WhatsApp business-initiated messaging is priced (Meta template pricing);
+// a REPLY sent inside the 24h window after the contact's own last inbound is
+// free. This is the single shared gate every proactive-send path (stage
+// notes, queued dispatch suggestions, visit-critical follow-ups) must consult
+// before sending on WhatsApp -- casey must never autonomously originate a
+// WhatsApp message outside this window (cost-policy invariant). Only a
+// channel AFFIRMATIVELY known to be non-whatsapp (e.g. 'discord') skips the
+// window check; a missing/corrupt/unrecognised channel fails CLOSED (treated
+// as whatsapp-restrictive) rather than open, matching the fail-closed
+// discipline the same function applies to a missing last-inbound timestamp
+// and AGENTS.md's fail-closed convention elsewhere (e.g. contact.tier).
+export const WHATSAPP_SESSION_WINDOW_MS = 24 * 60 * 60 * 1000
+const NON_WHATSAPP_CHANNELS = new Set(['discord'])
+
+// The case row itself carries no dedicated "last inbound from the contact"
+// column (only last_event_at, which advances on ANY event -- inbound,
+// outbound, or observation -- see case-health.js lastTouch). The session
+// window must be keyed on the CONTACT's own last inbound specifically: an
+// outbound-only last_event_at (e.g. a proactive note just sent) must not be
+// read as "the window is open", or a chain of casey-originated sends could
+// each treat the previous send as justification for the next. Callers own an
+// event-log lookup for the true last-inbound timestamp; that same query
+// already exists via listEvents (case-tools.js/case-store.js), so this helper
+// takes the resolved timestamp directly rather than reaching into the store
+// itself (kept a pure, dependency-free function like format.js's siblings).
+export function isWithinWhatsAppSessionWindow(caseRow, lastInboundAt, now = Date.now()) {
+  if (!caseRow) return false
+  if (NON_WHATSAPP_CHANNELS.has(caseRow.channel)) return true
+  const d = toDate(lastInboundAt)
+  if (!d) return false   // no known last inbound -> fail CLOSED (cannot prove a free window is open)
+  return (now - d.getTime()) < WHATSAPP_SESSION_WINDOW_MS
+}
+
+// Convenience for a caller holding a raw event list (e.g. store.listEvents
+// results, already newest-last per casey's convention): finds the most recent
+// kind==='inbound' event's created_at. Returns null if none found (a case
+// with no inbound at all -- e.g. the runtime/system singleton cases -- always
+// fails the window check above, correctly, since no contact has ever
+// messaged).
+export function lastInboundAtFromEvents(events) {
+  if (!Array.isArray(events)) return null
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]?.kind === 'inbound') return events[i].created_at
+  }
+  return null
+}
