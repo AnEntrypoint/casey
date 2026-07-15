@@ -32,7 +32,17 @@ const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 // contact's language, short warm sentences, one question, no jargon, greet+give
 // the reference on first contact, and reassure when a human is requested.
 export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {}) {
-  const recent = events.slice(-20).map(e =>
+  // Exclude 'draft' (a held/never-sent reply -- often the EXACT broken text a
+  // guard just caught, e.g. a leaked internal-permission refusal) and 'observation'
+  // (system-internal bookkeeping: TURN-START markers, JARGON-HELD/tool_choice-miss
+  // notes, guardrail pages -- none of it conversational). Witnessed live: a stale
+  // draft carrying a leaked tool-refusal string stayed in this window turn after
+  // turn, and the model kept re-anchoring on that broken pattern instead of
+  // producing a clean tool call -- the model must only see what actually happened
+  // in the conversation (inbound/outbound) and what it actually committed
+  // (action/transition), never its own held-back or system-only noise.
+  const CONTEXT_KINDS = new Set(['inbound', 'outbound', 'action', 'transition', 'autonomy_change'])
+  const recent = events.filter(e => CONTEXT_KINDS.has(e.kind)).slice(-20).map(e =>
     `- [${e.created_at}] ${e.kind}/${e.actor}: ${truncate(e.text, 280)}`).join('\n')
   const firstMessage = events.filter(e => e.kind === 'inbound').length <= 1
   let reportObj = null

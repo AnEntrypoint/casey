@@ -108,14 +108,26 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // per-turn ceiling; `slowWindow` is how many recent turns we keep.
   const recent = []                  // newest-last: { ms, ok }
   const recordTurn = (ms, ok) => { recent.push({ ms, ok }); if (recent.length > slowWindow) recent.shift() }
-  // Degraded when the recent window has any turns and ALL of them were slow or
-  // failed -- one fast turn (a recovered provider) clears it. Conservative: a
+  // Degraded when the recent window has ENOUGH turns and ALL of them were slow
+  // or failed -- one fast turn (a recovered provider) clears it. Conservative: a
   // mixed window (some fast) is still online, so a single slow turn never flips
-  // the pill, but a sustained slow/failing brain does.
+  // the pill, but a sustained slow/failing brain does. MIN_SAMPLES_FOR_DEGRADED
+  // guards the early-window case the comment above claimed but the code did not
+  // actually enforce: right after a boot (or after the window was last cleared),
+  // recent.length can be 1 -- a single unlucky sample (e.g. one rate-limited
+  // provider hop pushing a turn past its timeout) then trivially satisfies
+  // "ALL of them failed" and gates every new inbound into the LLM-down queue for
+  // a full intervalMs, even though the very next real call succeeds fine.
+  // Witnessed live: a genuine chat ok right after a lone prior timeout still
+  // read degraded and queued a plain "hi I'm in sheppie" report with no reply.
+  // Requiring at least 2 samples before degraded can fire matches the
+  // "sustained", not "one bad roll", intent the comment already promised.
+  const MIN_SAMPLES_FOR_DEGRADED = 2
   const completionHealth = () => {
     if (!recent.length) return { degraded: false, lastMs: null, recentSlow: 0 }
     const slow = recent.filter(r => !r.ok || r.ms >= slowMs)
-    return { degraded: slow.length === recent.length, lastMs: recent[recent.length - 1].ms, recentSlow: slow.length }
+    const degraded = recent.length >= MIN_SAMPLES_FOR_DEGRADED && slow.length === recent.length
+    return { degraded, lastMs: recent[recent.length - 1].ms, recentSlow: slow.length }
   }
 
   // `resolve` and `now` are injectable so the single real-services test can drive the
