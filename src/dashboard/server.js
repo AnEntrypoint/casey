@@ -1430,6 +1430,21 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       res.json({ contact: publicContact(updated) })
     } catch (e) { res.status(400).json({ error: e.message }) }
   })
+  // Data retention / right-to-erasure (POPIA/GDPR-style): admin-only, irreversible
+  // -- scrubs the contact's identifying fields plus every case's PII report fields
+  // (see case-store.js eraseContact), leaving an audited tombstone event on each
+  // touched case rather than a silent delete. Admin-gated like account management,
+  // not the low-friction everyday-triage tier of /api/contacts/:id/tier above --
+  // this is a compliance action with no undo.
+  app.post('/api/contacts/:id/erase', async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    try {
+      const reason = String(req.body?.reason || '').trim().slice(0, 300)
+      const result = await store.eraseContact(req.params.id, { reason, operator: { id: actingOperator(req).id } })
+      res.json({ ok: true, ...result })
+    } catch (e) { res.status(400).json({ error: e.message }) }
+  })
 
   // Learned operator identities -- the roster enriched with each operator's
   // working-area history (case-store.js learnOperatorActivity), for the map's
@@ -4861,17 +4876,21 @@ panelToggle('#team-btn','#team-panel',loadTeam)
 function contactsHtml(j){
   const contacts=(j&&j.contacts)||[]
   if(!contacts.length) return '<div class="empty" style="padding:8px 0">No one has reported yet.</div>'
+  const isAdmin=currentUser&&currentUser.role==='admin'
   return '<table class="contacts-table" style="width:100%;font-size:13px"><thead><tr>'
     +'<th style="text-align:left">Who</th><th style="text-align:left">Channel</th><th style="text-align:left">Tier</th><th style="text-align:left">Last check-in</th><th></th>'
     +'</tr></thead><tbody>'+contacts.map(c=>{
       const isField=c.tier==='field_worker'
       const checkin=c.last_location_at?fmtTime(c.last_location_at):'never'
+      const erased=c.external_id_masked==='[erased]'
       return '<tr data-id="'+esc(c.id)+'">'
         +'<td>'+esc(c.display_name||c.external_id_masked)+'</td>'
         +'<td>'+esc(c.channel||'')+'</td>'
         +'<td>'+(isField?'<span class="owner-chip mine">field worker</span>':'<span class="owner-chip">reporter</span>')+'</td>'
         +'<td>'+esc(checkin)+'</td>'
-        +'<td><button class="icon-btn contact-tier-toggle" data-id="'+esc(c.id)+'" data-to="'+(isField?'reporter':'field_worker')+'">'+(isField?'Demote':'Promote')+'</button></td>'
+        +'<td><button class="icon-btn contact-tier-toggle" data-id="'+esc(c.id)+'" data-to="'+(isField?'reporter':'field_worker')+'">'+(isField?'Demote':'Promote')+'</button>'
+        +(isAdmin&&!erased?' <button class="icon-btn contact-erase" data-id="'+esc(c.id)+'" title="Data retention / right-to-erasure: irreversibly scrub this contact\'s identifying info and PII report fields">Erase PII</button>':'')
+        +'</td>'
         +'</tr>'
     }).join('')+'</tbody></table>'
 }
@@ -4891,6 +4910,21 @@ async function loadContacts(){
           toast(to==='field_worker'?'Promoted to field worker':'Demoted to reporter','ok')
           loadContacts()
         }catch(e){ toast('Could not change tier: '+e.message,'err'); btn.disabled=false }
+      }
+    })
+    body.querySelectorAll('.contact-erase').forEach(btn=>{
+      btn.onclick=async()=>{
+        const id=btn.dataset.id
+        const dlg=await showDialog({title:'Erase this contact\'s data?',message:'Irreversibly scrubs their identifying info (name, id, location check-ins) and any owner/present-person/photo/audio fields on their cases. The case reports themselves and the audit trail stay -- this only removes what could identify a specific person. This cannot be undone.',inputLabel:'Reason (optional, for the audit trail)',inputPlaceholder:'e.g. contact requested erasure',confirmLabel:'Erase PII',danger:true})
+        if(!dlg) return
+        btn.disabled=true
+        try{
+          const r=await api('/api/contacts/'+encodeURIComponent(id)+'/erase',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:dlg.value||''})})
+          if(!r.ok){ const err=await r.json().catch(()=>({})); toast(err.error||'Could not erase contact','err'); btn.disabled=false; return }
+          const j=await r.json()
+          toast('Erased -- '+(j.casesScrubbed?j.casesScrubbed.length:0)+' case(s) scrubbed','ok')
+          loadContacts()
+        }catch(e){ toast('Could not erase contact: '+e.message,'err'); btn.disabled=false }
       }
     })
   }catch(e){ body.innerHTML='<div class="empty">Reporters error: '+esc(e.message)+'</div>' }

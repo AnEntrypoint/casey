@@ -944,6 +944,56 @@ export class CaseStore {
     return this.getCase(id)
   }
 
+  // Data retention / right-to-erasure for a contact's PII (POPIA/GDPR-style).
+  // Never a silent delete -- the append-only event log (P: full observability)
+  // must keep a record that an erasure happened, even though the erasure itself
+  // necessarily scrubs the very fields that log otherwise carries. Scrubs:
+  //  - the contact row itself: external_id, display_name, handle, notes,
+  //    last_location_lat/lon/at (the identifying/contactable fields; channel and
+  //    tier are kept -- they carry no PII and dashboard rollups key on them)
+  //  - every case tied to this contact (case.contact_id) whose report JSON
+  //    carries a REPORT_KEYS PII field (owner_name/owner_contact/present_person/
+  //    present_person_relation/contact_fallback/photos/audio -- the fields that
+  //    can identify a specific person or place a specific person was), scrubbed
+  //    to null in the report blob
+  // A tombstone `action` event is appended on the CONTACT's synthetic case slot
+  // is not possible (contacts have no case row of their own), so the tombstone
+  // rides on each touched case instead -- one per case, naming the erasure but
+  // never repeating the erased values. Idempotent: re-running against an
+  // already-erased contact is a no-op (already-blank fields do not get a
+  // second scrub event).
+  async eraseContact(contactId, { reason = '', operator = SYSTEM_USER } = {}) {
+    const contact = await this.getContact(contactId)
+    if (!contact) throw new Error(`eraseContact: no such contact ${contactId}`)
+    const PII_CONTACT_FIELDS = { external_id: '[erased]', display_name: '[erased]', handle: '', notes: '', last_location_lat: null, last_location_lon: null, last_location_at: '' }
+    const alreadyErased = contact.external_id === '[erased]'
+    if (!alreadyErased) {
+      await this.t.update('contact', contactId, PII_CONTACT_FIELDS, SYSTEM_USER)
+    }
+    const PII_REPORT_FIELDS = ['owner_name', 'owner_contact', 'present_person', 'present_person_relation', 'contact_fallback', 'photos', 'audio']
+    const cases = await this.listCases({ contact_id: contactId }, { limit: 10000 })
+    const touchedCaseIds = []
+    for (const c of cases) {
+      let report
+      try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+      const hadPII = PII_REPORT_FIELDS.some(k => report[k] != null && report[k] !== '')
+      if (!hadPII) continue
+      for (const k of PII_REPORT_FIELDS) report[k] = null
+      // writeGuardViolation forbids the system actor from writing `report` (it
+      // exists to stop the system FABRICATING report content); erasure only ever
+      // NULLs existing PII fields, never invents text, so it goes straight to
+      // thatcher rather than through updateCase/updateCaseQuiet's guard.
+      await this.t.update('case', c.id, { report: JSON.stringify(report) }, SYSTEM_USER)
+      await this.appendEvent(c.id, {
+        kind: 'action', actor: 'system', touch: false,
+        text: `PII erasure: contact data and report identifying fields scrubbed${reason ? ` (${reason})` : ''}`,
+        data: { erasure: true, by: operator?.id || 'system', fields: PII_REPORT_FIELDS },
+      })
+      touchedCaseIds.push(c.id)
+    }
+    return { contactId, contactErased: !alreadyErased, casesScrubbed: touchedCaseIds }
+  }
+
   // Metadata-only update that does NOT touch last_event_at -- used by the health
   // sweep to set/clear health:* tags. Stamping recency here would corrupt the very
   // signal staleness is measured from (a swept stale case would look freshly

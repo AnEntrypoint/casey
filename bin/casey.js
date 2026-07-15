@@ -115,6 +115,7 @@ ${bold('usage:')}
   casey health                                  read-only guardrail summary (no changes written)
   casey sweep                                   run the health-guardrail sweep once now (writes tags/observations)
   casey transition <ref|id> <stage> [--reason]  move a case to a stage (legality-checked)
+  casey erase-contact <contact-id> [--reason]   data retention: irreversibly scrub a contact's PII (POPIA/GDPR)
   casey operators add <username> [--password ...] [--name ...] [--role admin|operator]
                                                  create a dashboard login account (break-glass/scripted provisioning)
   casey operators list                          list dashboard login accounts (never prints password hashes)
@@ -622,6 +623,23 @@ async function main() {
     const after = await store.getCase(caseRow.id)
     console.log(green(`${after.ref}: ${caseRow.status} -> ${after.status}`) + dim(`  (${reason})`))
     process.exit(0)
+  }
+
+  // Data retention / right-to-erasure CLI trigger (retention-erasure-flow):
+  // the same store.eraseContact the dashboard's admin-gated Reporters panel
+  // "Erase PII" button calls -- a break-glass path for a deployment with no
+  // dashboard access yet, or a scripted compliance run. Irreversible.
+  if (cmd === 'erase-contact') {
+    const store = createCaseStore(); await store.init()
+    const id = rest.find(a => !a.startsWith('--'))
+    if (!id) { console.log('usage: casey erase-contact <contact-id> [--reason "..."]'); process.exit(1) }
+    const reason = typeof flags.reason === 'string' ? flags.reason : ''
+    try {
+      const result = await store.eraseContact(id, { reason, operator: { id: 'cli-operator' } })
+      console.log(green(`erased contact ${id}`) + dim(result.contactErased ? '' : ' (already erased)'))
+      console.log(`cases scrubbed: ${result.casesScrubbed.length}` + (result.casesScrubbed.length ? '  ' + dim(result.casesScrubbed.join(', ')) : ''))
+      process.exit(0)
+    } catch (e) { console.log(bad(e.message)); process.exit(1) }
   }
 
   // Break-glass account management: talks to the SAME dashboard/auth.js the
