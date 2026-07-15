@@ -29,6 +29,37 @@ import { tokens } from './correlate.js'
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
 export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
 
+// Fields only casey's own system code may write (computed FROM other fields,
+// never hand-typed or agent-composed) -- see thatcher.config.yml's matching
+// comment. A contact-authored text field the structural-automation invariant
+// protects in the OTHER direction (below).
+export const DERIVED_ONLY_FIELDS = new Set(['normalized_location', 'geocell', 'cluster_id', 'dedupe_score'])
+// Contact-authored free text a SYSTEM actor must never originate -- the sweep/
+// notifier/other background system code may tag/observe/reclassify, but must
+// never fabricate what a person supposedly said. Mirrors DERIVED_ONLY_FIELDS'
+// protection in the opposite direction: one guard, two rules, same chokepoint.
+export const SYSTEM_FORBIDDEN_FIELDS = new Set(['report', 'summary', 'subject'])
+
+// One chokepoint both updateCase-family writers call before touching thatcher.
+// Returns an error string on a violation, or null when the patch is clean.
+function writeGuardViolation(patch, user) {
+  if (!patch || typeof patch !== 'object') return null
+  const isSystemActor = user?.id === SYSTEM_USER.id
+  const keys = Object.keys(patch)
+  if (!isSystemActor) {
+    const derivedTouched = keys.filter(k => DERIVED_ONLY_FIELDS.has(k))
+    if (derivedTouched.length) {
+      return `writeGuard: only casey's own system code may write derived field(s): ${derivedTouched.join(', ')}`
+    }
+  } else {
+    const forbiddenTouched = keys.filter(k => SYSTEM_FORBIDDEN_FIELDS.has(k))
+    if (forbiddenTouched.length) {
+      return `writeGuard: the system actor may never write contact-authored field(s): ${forbiddenTouched.join(', ')}`
+    }
+  }
+  return null
+}
+
 export const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_find', 'affected_count', 'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits', 'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'audio', 'notes',
   // People on site for a field-worker report: who the worker spoke to and their
   // link to the owner, plus the owner's identity/contact -- so an absent owner with
@@ -127,7 +158,85 @@ export class CaseStore {
     if (Array.isArray(statusOpts)) {
       for (const n of names) if (!statusOpts.includes(n)) throw new Error(`casey config: case.status enum is missing stage "${n}"`)
     }
+    this._validateFieldDefs(cfg)
+    this._validateRowAccessAndSort(cfg)
     return graph
+  }
+
+  // Broader structural validation over every declared entity.field beyond the
+  // workflow-stage-coverage check above: a field definition must be an object
+  // with a recognised `type`, an `enum` field must declare a non-empty
+  // `options` array, and the required system columns (id/created_at/
+  // created_by/updated_at, matching _system_fields in the config) must be
+  // present on every entity -- thatcher's write engine always writes these,
+  // so a missing one fails obscurely at first insert rather than at boot.
+  _validateFieldDefs(cfg) {
+    const KNOWN_TYPES = new Set(['id', 'text', 'textarea', 'number', 'enum', 'timestamp', 'boolean', 'json'])
+    const REQUIRED_SYSTEM_FIELDS = ['id', 'created_at', 'created_by', 'updated_at']
+    for (const [entName, ent] of Object.entries(cfg.entities || {})) {
+      const fields = ent?.fields
+      if (!fields || typeof fields !== 'object') {
+        throw new Error(`casey config: entity "${entName}" has no fields object`)
+      }
+      for (const sys of REQUIRED_SYSTEM_FIELDS) {
+        if (!fields[sys]) throw new Error(`casey config: entity "${entName}" is missing required system field "${sys}"`)
+      }
+      for (const [fieldName, def] of Object.entries(fields)) {
+        if (!def || typeof def !== 'object') {
+          throw new Error(`casey config: entity "${entName}" field "${fieldName}" has no definition object`)
+        }
+        if (!def.type) {
+          throw new Error(`casey config: entity "${entName}" field "${fieldName}" has no "type"`)
+        }
+        if (!KNOWN_TYPES.has(def.type)) {
+          throw new Error(`casey config: entity "${entName}" field "${fieldName}" has unrecognised type "${def.type}"`)
+        }
+        if (def.type === 'enum' && (!Array.isArray(def.options) || !def.options.length)) {
+          throw new Error(`casey config: entity "${entName}" field "${fieldName}" is type enum but has no non-empty "options" array`)
+        }
+      }
+    }
+  }
+
+  // row_access (when declared) must name a scope this codebase actually
+  // understands and a field that is a real column on the entity -- a typo
+  // here (e.g. "asignee") would silently no-op the worker enquiry scoping
+  // this exists to enforce, handing every worker every case. list.defaultSort
+  // (when declared) must be a non-empty array of {field, dir} pairs with dir
+  // in ASC/DESC and field a real column, else a sort silently falls back to
+  // whatever thatcher/sqlite happens to return.
+  _validateRowAccessAndSort(cfg) {
+    // 'none' explicitly disables row-access scoping for an entity (e.g.
+    // operator_identity/operator_account below -- internal bookkeeping no
+    // worker ever queries) and carries no `field`; every other known scope
+    // keys on a real column.
+    const KNOWN_ROW_ACCESS_SCOPES = new Set(['assigned', 'owner', 'none'])
+    for (const [entName, ent] of Object.entries(cfg.entities || {})) {
+      const fieldNames = new Set(Object.keys(ent?.fields || {}))
+      if (ent?.row_access) {
+        const { scope, field } = ent.row_access
+        if (!KNOWN_ROW_ACCESS_SCOPES.has(scope)) {
+          throw new Error(`casey config: entity "${entName}" row_access.scope "${scope}" is not recognised (expected one of: ${[...KNOWN_ROW_ACCESS_SCOPES].join(', ')})`)
+        }
+        if (scope !== 'none' && (!field || !fieldNames.has(field))) {
+          throw new Error(`casey config: entity "${entName}" row_access.field "${field}" is not a declared field on this entity`)
+        }
+      }
+      const sort = ent?.list?.defaultSort
+      if (sort != null) {
+        if (!Array.isArray(sort) || !sort.length) {
+          throw new Error(`casey config: entity "${entName}" list.defaultSort must be a non-empty array`)
+        }
+        for (const s of sort) {
+          if (!s || !fieldNames.has(s.field)) {
+            throw new Error(`casey config: entity "${entName}" list.defaultSort references unknown field "${s?.field}"`)
+          }
+          if (s.dir && !['ASC', 'DESC'].includes(s.dir)) {
+            throw new Error(`casey config: entity "${entName}" list.defaultSort field "${s.field}" has invalid dir "${s.dir}" (expected ASC or DESC)`)
+          }
+        }
+      }
+    }
   }
 
   // Read every entity.field { type: enum, options: [...] } declaration off the
@@ -829,6 +938,8 @@ export class CaseStore {
   // {code:'conflict'}; this rethrows for the caller to handle (mergeReport retries
   // once, see below).
   async updateCase(id, patch, user = AGENT_USER, opts = {}) {
+    const violation = writeGuardViolation(patch, user)
+    if (violation) throw new Error(violation)
     await this.t.update('case', id, { ...patch, last_event_at: nowIso() }, user, opts)
     return this.getCase(id)
   }
@@ -838,8 +949,21 @@ export class CaseStore {
   // signal staleness is measured from (a swept stale case would look freshly
   // active), so the guardrail must never perturb the field it reads (P1).
   async updateCaseQuiet(id, patch, user = SYSTEM_USER) {
+    const violation = writeGuardViolation(patch, user)
+    if (violation) throw new Error(violation)
     await this.t.update('case', id, patch, user)
     return this.getCase(id)
+  }
+
+  // Narrow convenience for a caller (case-tools.js's case_report handler) that
+  // wants to refresh a DERIVED_ONLY field as the system actor without reaching
+  // for updateCaseQuiet directly and risking a future caller widening the patch
+  // to a non-derived field. Rejects any key outside DERIVED_ONLY_FIELDS itself,
+  // as a second, narrower layer on top of writeGuardViolation's own check.
+  async systemUpdateDerived(id, patch) {
+    const bad = Object.keys(patch || {}).filter(k => !DERIVED_ONLY_FIELDS.has(k))
+    if (bad.length) throw new Error(`systemUpdateDerived: not a derived-only field: ${bad.join(', ')}`)
+    return this.updateCaseQuiet(id, patch, SYSTEM_USER)
   }
 
   // Re-point / edit a single timeline event. The one primitive merge and split

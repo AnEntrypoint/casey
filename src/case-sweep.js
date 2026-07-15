@@ -13,6 +13,9 @@
 // drives this (casey.js) owns the interval and clears it on stop.
 
 import { classifyCaseHealth, healthTag, ALL_HEALTH_TAGS, DEFAULT_THRESHOLDS } from './case-health.js'
+// tsMs moved to timestamp.js (one shared implementation, was independently
+// duplicated here/attn.js/case-health.js).
+import { tsMs } from './timestamp.js'
 
 const HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
@@ -25,23 +28,6 @@ const HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 // to once per this interval regardless of sweep cadence.
 const writeFailureRetryAt = new Map()
 const WRITE_FAILURE_RETRY_MS = 15 * 60_000
-
-// Normalize a thatcher/ISO timestamp to epoch ms (thatcher persists unix-seconds as
-// a number; events/ISO strings parse directly). Mirrors attn.js tsMs/case-health.js
-// ms so every surface reads the same epoch. NaN when unknown.
-function tsMs(raw) {
-  if (raw == null || raw === '') return NaN
-  if (typeof raw === 'number') return raw < 1e12 ? raw * 1000 : raw
-  // The store hands back a numeric timestamp as a STRING ("1782977388" --
-  // busybase binds values as text); Date.parse on a bare digit string is NaN,
-  // so coerce all-digit strings to a number first (matches attn.js tsMs /
-  // case-health.js ms / format.js toDate). Without this, an operator reply
-  // whose created_at is a numeric string is dropped from the coverage window,
-  // producing a false TEAM-COVERAGE page while operators are in fact replying.
-  if (/^\d+$/.test(String(raw))) { const n = Number(raw); return n < 1e12 ? n * 1000 : n }
-  const t = Date.parse(raw)
-  return Number.isNaN(t) ? NaN : t
-}
 
 // Coverage gap: a TEAM-level signal distinct from a per-case breach. The per-case
 // path pages when one case breaches; this fires when the WHOLE roster is idle while

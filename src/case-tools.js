@@ -9,6 +9,7 @@
 import { getCaseStore } from './case-runtime.js'
 import { AGENT_USER, REPORT_KEYS } from './case-store.js'
 import { CONVERSATION_PHASES } from './conversation-spec.js'
+import { normalizeLocation } from './location-normalize.js'
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra })
 // Shipped defaults -- used for the tool-schema `enum` hint shown to the model
@@ -109,11 +110,15 @@ export function buildCaseToolset(storeOrNull) {
         const pull = location ? Math.max(limit * 20, 500) : limit
         let rows = await store().listCases(where, { limit: pull })
         if (location) {
-          const needle = String(location).toLowerCase()
+          // Shared normalization (case-fold, trim, collapse whitespace/punctuation
+          // noise) so "eMalahleni," "eMalahleni.", and "emalahleni  " all match the
+          // same needle -- consistent with the normalized_location derived field
+          // (case-store.js), never a gazetteer/alias table.
+          const needle = normalizeLocation(location)
           rows = rows.filter(c => {
             let loc = ''
             try { loc = (c.report ? JSON.parse(c.report) : {}).location || '' } catch { loc = '' }
-            return String(loc).toLowerCase().includes(needle)
+            return normalizeLocation(loc).includes(needle)
           }).slice(0, limit)
         }
         // A proximity enquiry ("closest case" / "cases near me"): rank by great-circle
@@ -248,7 +253,25 @@ export function buildCaseToolset(storeOrNull) {
           required: ['id'],
         },
       },
-      handler: async ({ id, lat, lon, ...fields }) => {
+      handler: async ({ id, lat, lon, ...fields }, ctx) => {
+        // Bind server-side to the turn's active case -- same discipline case_stage
+        // already applies. A model error or prompt-injected inbound text naming
+        // another case's ref must never be able to write into a stranger's case.
+        // A turn with no bound active case (ctx.activeCaseId absent) has nothing
+        // to check the argument against, so it is let through unbound (matches
+        // pre-existing behaviour for callers -- tests, the dashboard-adjacent
+        // paths -- that never carry an activeCaseId); a turn that DOES carry one
+        // and receives a mismatched id is rejected and the mismatch logged.
+        if (ctx?.activeCaseId && id !== ctx.activeCaseId) {
+          try {
+            await store().appendEvent(ctx.activeCaseId, {
+              kind: 'observation', actor: 'system',
+              text: `SECURITY: case_report called with id=${id} but this turn's active case is ${ctx.activeCaseId}; write rejected.`,
+              data: { attemptedId: id, activeCaseId: ctx.activeCaseId, tool: 'case_report' },
+            })
+          } catch { /* best effort -- never let the audit write block the rejection */ }
+          return { error: `case_report must target this conversation's active case (${ctx.activeCaseId}), not ${id}` }
+        }
         const incoming = pick(fields, [...REPORT_KEYS])
         const latLonSupplied = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon)
         const hasLatLon = latLonSupplied && Math.abs(lat) <= 90 && Math.abs(lon) <= 180
@@ -288,6 +311,15 @@ export function buildCaseToolset(storeOrNull) {
           const c = await store().getCase(id)
           if (c?.autonomy === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
           await store().updateCase(id, { lat, lon }, AGENT_USER)
+        }
+        // Keep the derived normalized_location field (case-store.js
+        // DERIVED_ONLY_FIELDS) in step with a newly-recorded/changed location,
+        // as the SYSTEM actor -- the write guard rejects this same field from
+        // AGENT_USER, so it must go through the system principal. Best-effort:
+        // a failure here must never block the real report write above.
+        if ('location' in incoming && typeof store().systemUpdateDerived === 'function') {
+          try { await store().systemUpdateDerived(id, { normalized_location: normalizeLocation(incoming.location) }) }
+          catch { /* best effort -- derived-field freshness, not the write itself, is at stake */ }
         }
         const fieldsRecorded = [...Object.keys(incoming), ...(hasLatLon ? ['lat', 'lon'] : [])]
         // photos/audio append rather than overwrite (see mergeReport), so a
@@ -467,6 +499,7 @@ export function buildCaseToolset(storeOrNull) {
         // operator assignee -- an assignee scope returned nothing for the asking worker.
         // enquiryRow strips external_id, so filtering on it never leaks it.
         const rows = await mineRows(store(), ctx, limit)
+        if (rows?.error) return rows
         return { count: rows.length, cases: rows.map(enquiryRow) }
       },
     },
@@ -478,6 +511,7 @@ export function buildCaseToolset(storeOrNull) {
         // The worker's OWN open cases, most-recently-active first (recency-sorted) --
         // "today" is the practical itinerary of what is live for them. Reporter-scoped.
         const rows = await mineRows(store(), ctx, limit)
+        if (rows?.error) return rows
         return { count: rows.length, cases: rows.map(enquiryRow) }
       },
     },
@@ -557,6 +591,34 @@ export function buildCaseToolset(storeOrNull) {
       },
     },
     {
+      // Ownership-gated re-bind of the conversation's active case by ref -- lets a
+      // worker with multiple open cases explicitly say "go back to CASE-1042" or
+      // "switch to the goat case" and have the agent actually target it, instead
+      // of every subsequent case_report/case_stage call silently continuing to
+      // hit whatever case findOrCreateCase happened to bind this turn. Ownership
+      // gated the same way case_get/mineRows already are: a worker may only
+      // switch onto a case they themselves reported.
+      name: 'case_switch',
+      toolset: 'cases',
+      schema: {
+        name: 'case_switch',
+        description: 'Re-bind the conversation to a DIFFERENT one of the worker\'s own open cases by ref (e.g. "CASE-1042"). Use when the worker names a case they want to continue, other than the one currently active. Confirms the switch back to them.',
+        parameters: { type: 'object', properties: { ref: str('The case ref to switch to, e.g. CASE-1042') }, required: ['ref'] },
+      },
+      handler: async ({ ref }, ctx) => {
+        const author = ctx?.author || ctx?.principal?.id
+        if (!author) return { error: 'no author on this turn -- cannot resolve ownership for a switch' }
+        const target = typeof store().getCaseByRef === 'function'
+          ? await store().getCaseByRef(ref)
+          : (await store().listCases({}, { limit: 500 })).find(c => c.ref === ref)
+        if (!target) return { error: `no case found with ref ${ref}` }
+        if (!ownsCase(target.external_id, author)) {
+          return { error: `case ${ref} does not belong to you -- cannot switch to it` }
+        }
+        return { ok: true, activeCase: enquiryRow(target), confirm: `Switched to ${target.ref}.` }
+      },
+    },
+    {
       name: 'case_stop',
       toolset: 'cases',
       schema: { name: 'case_stop', description: 'The person asked to STOP receiving messages (opt out). Records the opt-out. Use ONLY on a clear opt-out.', parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] } },
@@ -564,7 +626,20 @@ export function buildCaseToolset(storeOrNull) {
       // is an irreversible LEGAL control (matching gateway-hooks.js's deterministic
       // STOP short-circuit), not a content edit -- it must register regardless of
       // autonomy, so an observe-mode contact's opt-out is never silently dropped.
-      handler: async ({ id }) => {
+      handler: async ({ id }, ctx) => {
+        // Same server-side active-case binding as case_report: an irreversible
+        // control is exactly the kind of write that must never land on the wrong
+        // case from a model mistake or injected text naming another case's ref.
+        if (ctx?.activeCaseId && id !== ctx.activeCaseId) {
+          try {
+            await store().appendEvent(ctx.activeCaseId, {
+              kind: 'observation', actor: 'system',
+              text: `SECURITY: case_stop called with id=${id} but this turn's active case is ${ctx.activeCaseId}; write rejected.`,
+              data: { attemptedId: id, activeCaseId: ctx.activeCaseId, tool: 'case_stop' },
+            })
+          } catch { /* best effort */ }
+          return { error: `case_stop must target this conversation's active case (${ctx.activeCaseId}), not ${id}` }
+        }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -580,7 +655,17 @@ export function buildCaseToolset(storeOrNull) {
       schema: { name: 'case_handoff', description: 'The person wants a real person / operator to help. Flags the case for a human. Use on a clear ask for a person.', parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] } },
       // Same reasoning as case_stop: a handoff request is an irreversible legal
       // control, not a content edit, so it deliberately bypasses the observe guard.
-      handler: async ({ id }) => {
+      handler: async ({ id }, ctx) => {
+        if (ctx?.activeCaseId && id !== ctx.activeCaseId) {
+          try {
+            await store().appendEvent(ctx.activeCaseId, {
+              kind: 'observation', actor: 'system',
+              text: `SECURITY: case_handoff called with id=${id} but this turn's active case is ${ctx.activeCaseId}; write rejected.`,
+              data: { attemptedId: id, activeCaseId: ctx.activeCaseId, tool: 'case_handoff' },
+            })
+          } catch { /* best effort */ }
+          return { error: `case_handoff must target this conversation's active case (${ctx.activeCaseId}), not ${id}` }
+        }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -612,7 +697,13 @@ function gateByTier(tool) {
   return {
     ...tool,
     handler: async (args, ctx) => {
-      if (ctx?.tier && ctx.tier !== 'field_worker') {
+      // FAIL CLOSED: allow-list, not deny-list. A ctx built with no tier at all
+      // (a missing/undefined value, not merely a wrong one) must NOT fall through
+      // to full access -- only an EXPLICIT 'field_worker' tier proceeds. The prior
+      // `if (ctx?.tier && ctx.tier !== 'field_worker')` shape only denied when a
+      // tier was present and wrong, silently granting full access to any caller
+      // whose ctx carried no tier property whatsoever.
+      if (ctx?.tier !== 'field_worker') {
         return { error: `${tool.name} requires field-worker access -- ask an operator to grant it` }
       }
       return handler(args, ctx)
@@ -679,7 +770,12 @@ async function mineRows(store, ctx, limit) {
     ? store.getOpenStatuses()
     : ['new', 'triaging', 'in_progress', 'waiting']
   const open = await store.listCases({ status: { $in: openStatuses } }, { limit: Math.max(limit * 10, 200) })
-  if (!author) return open.slice(0, limit)
+  // Fail CLOSED like case_get already does: no author on ctx means we cannot
+  // prove which cases are "mine", so return nothing rather than defaulting to
+  // everyone's open cases (a prior shape here silently handed back the whole
+  // open set -- a cross-contact leak of case existence/species/location -- to
+  // any caller whose ctx happened to carry no author).
+  if (!author) return { error: 'no author on this turn -- cannot resolve "my cases"' }
   const mine = open.filter(c => ownsCase(c.external_id, author))
   return mine.slice(0, limit)
 }

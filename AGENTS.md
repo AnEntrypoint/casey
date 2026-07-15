@@ -189,7 +189,7 @@ stay green regardless.
 | `CASEY_PUBLIC_URL` | When set, the agent includes a `{CASEY_PUBLIC_URL}/report?ref={ref}` link in the first contact message. The `/report` page is a public (no-token) contact-facing form where contacts can fill in case details directly. |
 | `CASEY_ALERT_WEBHOOK` | When set, a high-severity health breach (unanswered handoff, and the escalated tier) POSTs a plain JSON alert to this URL so a team is paged off-dashboard. Each newly-entered breach pages once; an already-flagged case is not re-paged. |
 | `CASEY_ESCALATE_WEBHOOK` | Distinct endpoint for the `unanswered_handoff_escalated` breach tier only (casey.js `ESCALATION_BREACHES`) -- lets a deployment route "still no reply after the escalation window" to a different on-call channel (e.g. a supervisor) than routine breaches. Falls back to `CASEY_ALERT_WEBHOOK` when unset, so escalation is never silently dropped. Routing is by breach TIER only, not by `case_type`/severity_tier -- `buildAlertPayload`'s `case_type`/`severity_tier` fields are in every payload sent to whichever URL is picked, so a deployment wanting outbreak-vs-follow_up routing can branch on those fields downstream (or extend `ESCALATION_BREACHES`-style routing with a `case_type`-keyed webhook map, following the same pattern). |
-| `CASEY_OPERATORS` | Cooperative operator roster (comma-separated `id:Name` pairs), fixed at boot. `GET /api/operators` lists it and `X-Casey-Operator` selects a known id to attribute an action; this is attribution, not authentication -- an unknown/absent value falls back to the default actor and can never inject a new identity. |
+| `CASEY_OPERATORS` | Roster used ONLY by `casey.js`'s team-coverage-gap check (`_checkCoverageGap`, re-read every health-sweep pass) to know how many people are EXPECTED to be covering, comma-separated `id:Name` pairs. Superseded everywhere else by the real `operator_account` table: `GET /api/operators` (dashboard) lists the actual accounts and the acting operator is derived from the authenticated session (`actingOperator(req)`), never this env var or a header -- this variable's only remaining live use is the coverage-gap headcount. |
 | `CASEY_LOG=silent` | Silence structured JSON logs (used by tests). |
 | `CASEY_LLM_MODEL` | Override the model requested from the acptoapi bridge (default `claude/sonnet` -- chosen over a cheaper tier because casey's turn is multi-step extraction + tool orchestration + tone-sensitive reply composition, where a weaker model has repeatedly dropped tool calls or repeated questions). Set to a cheaper tier for cost-sensitive deployments. |
 | `CASEY_TZ` | IANA timezone name (e.g. `Africa/Lagos`) casey displays absolute times in (CLI and dashboard both, via `format.js`/`GET /api/config`). Default `Africa/Johannesburg` (SAST) -- casey's shipped design is a South African deployment, but this lets the same architecture serve a deployment elsewhere. |
@@ -542,9 +542,13 @@ the crash-budget stop state); the supervisor is its only I/O.
   team that retunes a window via `PUT /api/thresholds` changes detection
   immediately, with no restart and no drift from the shipped defaults.
 - **Operator identity is learned, never asserted.** Operators act ONLY through the
-  dashboard (self-attested via `X-Casey-Operator`, cooperative attribution, never
-  authentication) -- there is no path where a channel message is treated as an
-  operator speaking as themselves. `learnOperatorActivity` builds a durable
+  dashboard, identified by their AUTHENTICATED SESSION (`dashboard/auth.js`
+  username/password login) -- `actingOperator(req)` derives identity from
+  `req.caseyAccount`, the session the login flow set, never a client-supplied
+  header. (An earlier design self-attested via an `X-Casey-Operator` header,
+  cooperative attribution with no authentication; that header is retired --
+  the per-operator login replaced it.) There is no path where a channel
+  message is treated as an operator speaking as themselves. `learnOperatorActivity` builds a durable
   per-operator working-area profile (frequency-ranked location tokens from the
   cases they claim/transition/reply to/edit) from these dashboard-attributed
   actions, best-effort and fire-and-forget so learning can never slow or fail the

@@ -133,7 +133,7 @@ export async function listAccounts(store) {
   return store.t.list('operator_account', {}, { limit: 500 })
 }
 
-export async function createAccount(store, { username, password, displayName, role = 'operator' }) {
+export async function createAccount(store, { username, password, displayName, role = 'operator', mustChangePassword = false }) {
   const sid = slugUsername(username)
   if (!sid) throw new Error('invalid username')
   if (!password || String(password).length < 8) throw new Error('password must be at least 8 characters')
@@ -142,8 +142,18 @@ export async function createAccount(store, { username, password, displayName, ro
   return store.t.create('operator_account', {
     username: sid, password_hash: hash, password_salt: salt,
     display_name: String(displayName || sid).slice(0, 80), role: role === 'admin' ? 'admin' : 'operator',
-    disabled: '0',
+    disabled: '0', must_change_password: mustChangePassword ? '1' : '0',
   }, SYSTEM)
+}
+
+// Set a new password for an account -- used both by the forced-change flow
+// (the account holder replacing a printed bootstrap password) and any future
+// self-service "change my password" action. Clears must_change_password on
+// success so the forced flow is a one-time gate, not a recurring one.
+export async function changePassword(store, id, newPassword) {
+  if (!newPassword || String(newPassword).length < 8) throw new Error('password must be at least 8 characters')
+  const { hash, salt } = hashPassword(newPassword)
+  return store.t.update('operator_account', id, { password_hash: hash, password_salt: salt, must_change_password: '0' }, SYSTEM)
 }
 
 export async function setAccountDisabled(store, id, disabled) {
@@ -163,9 +173,13 @@ export async function ensureBootstrapAdmin(store, log = console) {
   const existing = await store.t.list('operator_account', {}, { limit: 1 })
   if (existing.length) return null
   const password = randomHex(6) // 12 hex chars, printed once -- easy to read off a terminal
-  await createAccount(store, { username: 'admin', password, displayName: 'Admin', role: 'admin' })
+  // Forced from the start: a printed random password must not persist
+  // indefinitely as a standing credential. must_change_password gates every
+  // other route (server.js) until the admin sets their own password via
+  // changePassword(), a one-time flow cleared on success.
+  await createAccount(store, { username: 'admin', password, displayName: 'Admin', role: 'admin', mustChangePassword: true })
   log?.warn?.('[casey] no operator accounts found -- created bootstrap admin account', {
-    username: 'admin', password, note: 'log in once and consider creating named accounts for the team',
+    username: 'admin', password, note: 'log in once -- you will be required to set your own password before doing anything else',
   })
   return { username: 'admin', password }
 }

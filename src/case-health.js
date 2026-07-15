@@ -12,6 +12,8 @@
 // millisecond. It returns the list of breaches currently true for the case; the
 // sweep layer turns that list into observable tags and notes.
 
+import { tsMs, tagList, parseReport } from './timestamp.js'
+
 // Default thresholds, in milliseconds, tuned for a rural one-shot reporting
 // service where a field visit is the goal and delay is the enemy. Every value is
 // overridable so an operator team can tighten or relax without code changes.
@@ -64,26 +66,12 @@ const OPEN = new Set(['new', 'triaging', 'in_progress', 'waiting', 'resolved'])
 // without the other).
 const ACTIVE_WORK_STAGES = new Set(['in_progress', 'waiting'])
 
-function ms(v) {
-  // last_event_at is an ISO string (nowIso); created_at can be unix-seconds
-  // (thatcher) or ISO. Normalize both to epoch ms, or NaN when unknown.
-  if (v == null || v === '') return NaN
-  // Numeric timestamps may arrive as STRINGS ("1782977388" -- busybase binds
-  // values as text); Date.parse on a bare digit string is NaN (matches attn.js).
-  const n = typeof v === 'number' ? v : (/^\d+$/.test(String(v)) ? Number(v) : NaN)
-  if (!Number.isNaN(n)) return n < 1e12 ? n * 1000 : n   // seconds to ms
-  const t = Date.parse(v)
-  return Number.isNaN(t) ? NaN : t
-}
-function parseReport(c) {
-  try { return c && c.report ? JSON.parse(c.report) : {} } catch { return {} }
-}
-function tagList(c) {
-  return String(c?.tags || '').split(',').map(s => s.trim()).filter(Boolean)
-}
+// tsMs/tagList/parseReport moved to timestamp.js (one shared implementation
+// -- see that file's header for why the three near-identical copies existed
+// and why format.js's toDate stays separate).
 function lastTouch(c) {
   // The most recent signal of activity: last_event_at if present, else created_at.
-  const le = ms(c?.last_event_at), ca = ms(c?.created_at)
+  const le = tsMs(c?.last_event_at), ca = tsMs(c?.created_at)
   return Number.isNaN(le) ? ca : le
 }
 
@@ -121,6 +109,19 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
     return out
   }
   const idle = now - touched
+  // A case_type-specific SLA override (thresholds.byCaseType[case_type][key])
+  // wins over the deployment-wide default -- e.g. an 'outbreak' can carry a
+  // tighter handoffMs than a routine 'follow_up'. Falls straight through to
+  // the global value when no per-type override exists (or thatcher's own
+  // getFieldEnum-validated default of 'unset'). Inlined rather than imported
+  // from thresholds.js: that module imports DEFAULT_THRESHOLDS from HERE, so
+  // an import back would be circular; this is a tiny, deliberately duplicated
+  // pure lookup, not a second copy of the clamping/merge logic.
+  const caseType = caseRow.case_type || 'unset'
+  const forType = (key) => {
+    const perType = thresholds?.byCaseType?.[caseType]?.[key]
+    return Number.isFinite(perType) ? perType : thresholds?.[key]
+  }
 
   // A resolved case is awaiting only closure: its single over-time failure is
   // never being closed. It is not "stale/stuck/abandoned" -- the work is done.
@@ -132,7 +133,7 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   }
 
   // STALE: an open case no one has touched in too long.
-  if (Number.isFinite(touched) && idle >= thresholds.staleMs) {
+  if (Number.isFinite(touched) && idle >= forType('staleMs')) {
     out.push({ breach: 'stale', since_ms: idle, detail: `no activity for ${hours(idle)}` })
   }
 
@@ -148,13 +149,13 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   // UNANSWERED_HANDOFF: the contact asked for a human (needs-human tag) and no
   // operator has replied within the window. An operator reply clears needs-human
   // (see dashboard reply), so the tag still being present IS the unanswered signal.
-  if (tagList(caseRow).includes('needs-human') && Number.isFinite(touched) && idle >= thresholds.handoffMs) {
+  if (tagList(caseRow).includes('needs-human') && Number.isFinite(touched) && idle >= forType('handoffMs')) {
     out.push({ breach: 'unanswered_handoff', since_ms: idle, detail: `a person was asked for ${hours(idle)} ago` })
     // ESCALATED tier: a DISTINCT breach (own name -> own health tag) so the sweep,
     // which dedups one observation per newly-entered tag, fires a SECOND, separate
     // notification when the wait crosses the escalation window. Same name with a
     // larger since_ms would never re-fire (the tag is already present).
-    const escMs = thresholds.escalateHandoffMs ?? (12 * 3600e3)
+    const escMs = forType('escalateHandoffMs') ?? (12 * 3600e3)
     if (idle >= escMs) {
       out.push({ breach: 'unanswered_handoff_escalated', since_ms: idle, detail: `still no operator reply after ${hours(idle)} -- escalating` })
     }
@@ -174,7 +175,7 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   const rep = parseReport(caseRow)
   const visitCritical = Array.isArray(thresholds?.visitCritical) ? thresholds.visitCritical : VISIT_CRITICAL
   const missingCritical = visitCritical.some(k => rep[k] == null || String(rep[k]).trim() === '')
-  if (missingCritical && Number.isFinite(touched) && idle >= thresholds.abandonMs) {
+  if (missingCritical && Number.isFinite(touched) && idle >= forType('abandonMs')) {
     out.push({ breach: 'abandoned_intake', since_ms: idle, detail: `on-site facts still missing after ${hours(idle)}` })
   }
 

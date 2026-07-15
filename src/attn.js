@@ -9,25 +9,9 @@
 // `now` is passed in (never read from the clock here) so the score is a pure
 // function of (case, now) -- testable and identical on every caller.
 
-function tagList(c) {
-  return String(c?.tags || '').split(',').map(t => t.trim()).filter(Boolean)
-}
-
-// Normalize a timestamp to epoch ms, or NaN when unknown. thatcher persists
-// updated_at/created_at as unix-SECONDS (a number), while the dashboard and tests
-// pass ISO strings; both must yield the same epoch ms or the live age/SLA clock
-// silently reads 0 for every real case (a number fed to Date.parse coerces to a
-// string and returns NaN). Mirrors case-health.js ms() so the two surfaces agree.
-function tsMs(raw) {
-  if (raw == null || raw === '') return NaN
-  // The store may hand back a numeric timestamp as a STRING ("1782977388" --
-  // busybase binds values as text); Date.parse on a bare digit string is NaN,
-  // so coerce all-digit strings to a number first (matches format.js toDate).
-  const n = typeof raw === 'number' ? raw : (/^\d+$/.test(String(raw)) ? Number(raw) : NaN)
-  if (!Number.isNaN(n)) return n < 1e12 ? n * 1000 : n   // seconds -> ms
-  const t = Date.parse(raw)
-  return Number.isNaN(t) ? NaN : t
-}
+// tagList/tsMs moved to timestamp.js (one shared implementation, was
+// independently duplicated here/case-health.js/case-sweep.js).
+import { tsMs, tagList } from './timestamp.js'
 
 // Age in hours from the last-touch timestamp, relative to `now`. Tolerates a
 // missing/corrupt timestamp (returns 0 -- a brand-new or unparseable case is not

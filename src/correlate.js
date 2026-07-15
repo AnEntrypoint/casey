@@ -12,6 +12,10 @@
 // two real outbreaks would hide a disease spreading in a second place, which is
 // exactly the failure this whole system exists to prevent (P6, P9 worst-case).
 
+// parseReport (tolerant-of-already-parsed variant) moved to timestamp.js --
+// was independently duplicated here/clusters.js/geo.js.
+import { parseReportTolerant as parseReport } from './timestamp.js'
+
 const STOP = new Set(['the', 'a', 'an', 'of', 'at', 'in', 'on', 'near', 'by', 'and',
   'farm', 'plaas', 'area', 'district', 'town', 'next', 'to', 'road', 'r', 'n'])
 
@@ -44,11 +48,6 @@ function tokenOverlap(a, b) {
 function normPhone(s) {
   const d = String(s || '').replace(/\D/g, '')
   return d.length >= 7 ? d.slice(-9) : ''
-}
-
-function parseReport(c) {
-  if (c && typeof c.report === 'object' && c.report) return c.report   // already slimmed
-  try { return c && c.report ? JSON.parse(c.report) : {} } catch { return {} }
 }
 
 // created_at is unix-seconds (thatcher). Returns the absolute gap in days, or

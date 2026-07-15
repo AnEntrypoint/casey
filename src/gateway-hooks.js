@@ -113,6 +113,24 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
     `  first message from this person? ${firstMessage ? 'YES (brand new)' : 'no'}`,
     `  report so far (private): ${reportLine}`,
     ``,
+    // Active-case identity: a worker who has more than one open report can easily
+    // lose track of which one a given message is updating. A structural instruction
+    // (no copyable sample reply) rather than a hardcoded suffix, so the model still
+    // composes its own plain-language sentence.
+    `If this worker could plausibly have more than one open report (ask yourself:`,
+    `have they mentioned more than one place or animal group recently, or does the`,
+    `timeline above show more than one distinct report?), and their latest message is`,
+    `an update whose target report is not obvious, ask ONE short plain-language`,
+    `question first to confirm which report it is about (e.g. which animals, or`,
+    `which place) before recording anything with case_report -- never guess and file`,
+    `it against the wrong one. If they name a different report you have not been`,
+    `talking about, use case_switch to move onto it first (it only works for a`,
+    `report they themselves are the reporter on). Otherwise, once a report is clearly`,
+    `settled as the one you are discussing, weave a short, natural mention of which`,
+    `one it is (their own words for it, e.g. the place or the animals -- never the`,
+    `internal ref or the word "case") into your reply after you record something with`,
+    `case_report, so they always know which report you just updated.`,
+    ``,
     `RECENT TIMELINE (private):`,
     recent || '  (no prior events)',
     ``,

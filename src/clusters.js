@@ -13,6 +13,9 @@
 // on-demand, not on every dashboard poll.
 
 import { correlationScore, SUGGEST_THRESHOLD, tokens } from './correlate.js'
+// parseReport (tolerant-of-already-parsed variant) moved to timestamp.js --
+// was independently duplicated here/geo.js/correlate.js.
+import { parseReportTolerant as parseReport } from './timestamp.js'
 
 // Disjoint-set union-find with path compression. Indices are positions in the
 // `cases` array.
@@ -21,11 +24,6 @@ function makeUF(n) {
   const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x] } return x }
   const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb }
   return { find, union }
-}
-
-function parseReport(c) {
-  if (c && typeof c.report === 'object' && c.report) return c.report
-  try { return c && c.report ? JSON.parse(c.report) : {} } catch { return {} }
 }
 
 // Most-frequent tokens of a report field across a component's members, so the

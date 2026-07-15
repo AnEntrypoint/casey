@@ -109,6 +109,17 @@ entities:
       lon:         { type: number }
       claimed_at:  { type: text }                    # when a worker claimed/assigned themselves (enquiry flow)
       conv_state:  { type: text }                    # exported dstate conversation-state bundle (the agent-driven soft FSM: greeting/gathering/enquiring/answering/complete/handoff/closed); JSON blob, optional -- absent/unpublished degrades to a fresh greeting machine
+      # Derived-only fields: computed FROM other fields by casey's own system
+      # code, never hand-typed by a contact/worker/operator and never agent-
+      # settable. DERIVED_ONLY_FIELDS in case-store.js enforces this at the
+      # store-write boundary (writeGuard) -- a non-system actor's patch touching
+      # any of these is rejected rather than silently accepted or silently
+      # dropped, so a derived value can never accidentally carry an operator's
+      # or the agent's freehand text instead of the real computed one.
+      normalized_location: { type: text }            # lowercased/trimmed form of report.location, for consistent matching
+      geocell:             { type: text }             # coarse lat/lon grid cell (for area rollups), derived from lat/lon
+      cluster_id:          { type: text }             # correlate.js/clusters.js outbreak-cluster membership id
+      dedupe_score:        { type: number }           # similarity score against other open cases, for merge suggestions
     # Row-access scope for worker enquiries: scope=assigned keys on the `assignee`
     # field (thatcher's checkRowAccess reads rowAccess.field), so a worker's 'my
     # cases' returns only cases assigned to them. Enforced when list() is called
@@ -164,6 +175,7 @@ entities:
       role:           { type: enum, options: [admin, operator], default: operator }
       disabled:       { type: text, default: "0" }        # "1" disables login without deleting the account/history
       last_login_at:  { type: text }
+      must_change_password: { type: text, default: "0" }  # "1" forces a change-password flow before any other route -- set on the auto-created bootstrap admin (see ensureBootstrapAdmin) so a printed random password cannot persist indefinitely; cleared once the account holder sets their own
     # Real, actual credentials -- never PII-free-projected, never returned in a
     # list response (password_hash/password_salt must never leave the server).
     row_access: { scope: none }

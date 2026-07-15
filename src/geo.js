@@ -9,11 +9,9 @@
 // is re-grouped.
 
 import { tokens } from './correlate.js'
-
-function parseReport(c) {
-  if (c && typeof c.report === 'object' && c.report) return c.report
-  try { return c && c.report ? JSON.parse(c.report) : {} } catch { return {} }
-}
+// parseReport (tolerant-of-already-parsed variant) moved to timestamp.js --
+// was independently duplicated here/clusters.js/correlate.js.
+import { parseReportTolerant as parseReport } from './timestamp.js'
 
 // Group open cases by location token. Returns places ranked by case count, each
 // with the count, the species mix (token -> count), and the most-recent report

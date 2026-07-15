@@ -41,8 +41,29 @@ const MAX_STAGE_KEY_LEN = 64
 // VISIT_CRITICAL) -- an array of short field-name strings, not a duration.
 const LIST_KEYS = { visitCritical: { maxItems: 32, maxItemLen: 64 } }
 
+// Per-case_type SLA overrides: byCaseType.<case_type>.<scalarKey> = ms, so an
+// 'outbreak' can carry a tighter handoffMs than the deployment-wide default
+// while 'follow_up' stays on the looser global one. Only SCALAR_BOUNDS keys
+// are eligible (never stageMaxDwellMs/visitCritical -- those are not
+// meaningfully "per category"); each value is clamped with the SAME bounds
+// as its global counterpart, so a per-type override can never smuggle in an
+// out-of-range value the global knob itself would reject. A case_type key is
+// accepted whenever it is a non-empty string (not restricted to the shipped
+// default enum) so a deployment's own custom case_type values just work.
+const MAX_CASE_TYPE_KEY_LEN = 40
+
 export const SCALAR_KEYS = Object.keys(SCALAR_BOUNDS)
-export const THRESHOLD_KEYS = [...SCALAR_KEYS, 'stageMaxDwellMs', ...Object.keys(LIST_KEYS)]
+export const THRESHOLD_KEYS = [...SCALAR_KEYS, 'stageMaxDwellMs', 'byCaseType', ...Object.keys(LIST_KEYS)]
+
+// Resolve the effective scalar threshold for a specific case_type: a
+// byCaseType override for that key wins, otherwise the deployment-wide
+// value. `thresholds` is a resolved thresholds object (mergeThresholds'
+// output, or DEFAULT_THRESHOLDS). Pure lookup, no clamping (already clamped
+// at merge time).
+export function resolveScalarForType(thresholds, caseType, key) {
+  const perType = thresholds?.byCaseType?.[caseType]?.[key]
+  return Number.isFinite(perType) ? perType : thresholds?.[key]
+}
 
 function clampInt(v, [min, max]) {
   const n = Number(v)
@@ -58,11 +79,33 @@ export function mergeThresholds(patch, base = DEFAULT_THRESHOLDS) {
   const out = {
     ...base,
     stageMaxDwellMs: { ...(base.stageMaxDwellMs || {}) },
+    byCaseType: { ...(base.byCaseType || {}) },
   }
   const applied = []
   const rejected = []
   const src = patch && typeof patch === 'object' ? patch : {}
   for (const key of Object.keys(src)) {
+    if (key === 'byCaseType') {
+      const byType = src.byCaseType
+      if (!byType || typeof byType !== 'object') { rejected.push(key); continue }
+      const outByType = { ...(base.byCaseType || {}) }
+      for (const ct of Object.keys(byType)) {
+        if (typeof ct !== 'string' || !ct || ct.length > MAX_CASE_TYPE_KEY_LEN) { rejected.push(`byCaseType.${ct}`); continue }
+        const overrides = byType[ct]
+        if (!overrides || typeof overrides !== 'object') { rejected.push(`byCaseType.${ct}`); continue }
+        const outOverrides = { ...(outByType[ct] || {}) }
+        for (const sk of Object.keys(overrides)) {
+          if (!(sk in SCALAR_BOUNDS)) { rejected.push(`byCaseType.${ct}.${sk}`); continue }
+          const c = clampInt(overrides[sk], SCALAR_BOUNDS[sk])
+          if (c === null) { rejected.push(`byCaseType.${ct}.${sk}`); continue }
+          outOverrides[sk] = c
+          applied.push(`byCaseType.${ct}.${sk}`)
+        }
+        outByType[ct] = outOverrides
+      }
+      out.byCaseType = outByType
+      continue
+    }
     if (key === 'stageMaxDwellMs') {
       const stages = src.stageMaxDwellMs
       if (!stages || typeof stages !== 'object') { rejected.push(key); continue }

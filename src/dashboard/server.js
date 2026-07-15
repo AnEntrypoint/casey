@@ -34,7 +34,7 @@ import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27, toDate } from '../format.
 import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
   issueSession, verifySession, findAccountByUsername, verifyPassword, markLogin,
-  getAccount, listAccounts, createAccount, setAccountDisabled, deleteAccount,
+  getAccount, listAccounts, createAccount, setAccountDisabled, deleteAccount, changePassword,
 } from './auth.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -428,14 +428,34 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   app.get('/api/whoami', (req, res) => {
     if (!req.caseyAccount) return res.json({ authed: false })
     const a = req.caseyAccount
-    res.json({ authed: true, username: a.username, display_name: a.display_name, role: a.role })
+    res.json({ authed: true, username: a.username, display_name: a.display_name, role: a.role, must_change_password: a.must_change_password === '1' })
+  })
+  // Forced password change: the ONE route a must_change_password account may
+  // reach besides login/logout/whoami/change-password itself (gated below).
+  // A printed bootstrap password (or any account an admin creates with the
+  // flag set) can never be used as a standing credential past the first login.
+  app.post('/api/change-password', async (req, res) => {
+    if (!req.caseyAccount) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      const { new_password } = req.body || {}
+      await changePassword(store, req.caseyAccount.id, new_password)
+      res.json({ ok: true })
+    } catch (e) { res.status(400).json({ error: e.message }) }
   })
 
   app.use((req, res, next) => {
     if (req.path.startsWith('/design') || req.path.startsWith('/vendor')) return next()
     if (req.path === '/api/login' || req.path === '/api/logout' || req.path === '/api/whoami') return next()
-    if (authed(req)) return next()
-    res.status(401).json({ error: 'unauthorized' })
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    // A must_change_password account is authed but locked to ONLY the
+    // change-password route until it clears the flag -- every other route
+    // (including reading case data) is refused with a distinct, SPA-
+    // detectable error code so the frontend can route straight to a
+    // change-password screen instead of a generic login redirect.
+    if (req.caseyAccount.must_change_password === '1' && req.path !== '/api/change-password') {
+      return res.status(403).json({ error: 'must change password before continuing', code: 'must_change_password' })
+    }
+    next()
   })
 
   app.use('/design', express.static(DESIGN_DIR))
