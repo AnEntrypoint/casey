@@ -16,7 +16,28 @@ const INTENTS = (1 << 9) | (1 << 12) | (1 << 15)
 
 // Attach a live gateway connection to an existing freddie DiscordAdapter.
 // The adapter keeps its send(); we add receive. Returns a disconnect fn.
-export function connectDiscordReceive(adapter, { token = adapter.token, log = console } = {}) {
+// onConnect(readyPayload|null) fires on the REAL READY/RESUMED dispatch events
+// below -- casey.js previously wrapped freddie's adapter._dispatch
+// (a._dispatch) expecting THAT to see READY/RESUMED, but this module owns the
+// entire real WebSocket gateway connection itself (freddie's
+// DiscordAdapter.start() never opens a socket at all, per this file's own
+// header comment); a._dispatch is never called by anything in casey's real
+// receive path and that wrapper was dead code -- TWO real, independent bugs
+// riding the same dead wrapper: (1) receiveHealth.connectedAt was never
+// stamped (GET /api/health reported Discord state:never-connected even though
+// real inbound messages were being received and processed correctly --
+// sinceInboundMs WAS populated, via the working adapter.emit('message',...)
+// wrapper in onMessageCreate below, confirming connectedAt's stamping path
+// specifically was the broken half, not receive as a whole); (2) the bot's own
+// user id was never captured from READY (botUserId stayed null forever), so
+// casey.js's mention-filter guard (only respond to a DM or an @-mention of
+// THIS bot) silently degraded to "any @-mention of anyone" -- readyPayload is
+// passed through here specifically so casey.js can fix both at their real
+// source instead of a second dead wrapper. Called on READY (full payload,
+// including .user.id) and on RESUMED (called with no payload -- a resume
+// carries no fresh READY body, so there is nothing new to capture, only the
+// connectedAt liveness stamp to refresh).
+export function connectDiscordReceive(adapter, { token = adapter.token, log = console, onConnect = null } = {}) {
   if (!token) throw new Error('connectDiscordReceive: DISCORD_BOT_TOKEN required')
   let ws, heartbeat, seq = null, acked = true, closed = false
   let sessionId = null, resumeUrl = null
@@ -116,9 +137,13 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
           if (p.t === 'READY') {
             sessionId = p.d.session_id
             resumeUrl = p.d.resume_gateway_url || adapter.gatewayUrl
+            try { onConnect?.(p.d) } catch (e) { log.warn?.('[discord] onConnect callback failed', e.message) }
           }
           if (p.t === 'MESSAGE_CREATE') onMessageCreate(p.d)
-          if (p.t === 'RESUMED') log.info?.('[discord] session resumed successfully')
+          if (p.t === 'RESUMED') {
+            log.info?.('[discord] session resumed successfully')
+            try { onConnect?.(null) } catch (e) { log.warn?.('[discord] onConnect callback failed', e.message) }
+          }
           break
       }
     })

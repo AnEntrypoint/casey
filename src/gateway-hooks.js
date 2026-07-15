@@ -949,90 +949,125 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     let convOrient = null
     try { convOrient = await orientCase(fresh, {}) }
     catch (e) { log.debug?.('[casey] orient failed', { caseId: fresh.id, error: e.message }); convOrient = null }
-    let result, errored = false
-    try {
-      result = await runTurn({
-        prompt,
-        messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, { orient: convOrient }) }],
-        sessionKey: `case:${fresh.id}`,
-        callLLM,
-        // Nudge the weak model into its first classify/record tool call. freddie
-        // applies tool_choice on ITERATION 0 ONLY (later iterations are model
-        // choice), so this cannot break loop termination -- the model is still free
-        // to end the turn with plain text once its first tool result is in. The
-        // offline stub ignores tool_choice, which is fine.
-        tool_choice: 'required',
-        // SECURITY: 'cases' ONLY. freddie's bootHost ALWAYS discovers its own
-        // plugins/ directory (REPO_PLUGINS in freddie/src/host/index.js)
-        // regardless of casey's extraRoots, so its full library -- including
-        // 'core'-toolset tools with REAL shell/file/credential access (bash,
-        // code_execution, edit, write, file_operations, credential_files,
-        // read, grep, terminal) and send_message (bypasses every one of
-        // casey's outbound scrubs/reference-sanitization) -- is registered
-        // into the SAME host casey's agent turn draws from. Enabling 'core'
-        // here exposed all of it, schema-visible and CALLABLE, to every
-        // WhatsApp/Discord message from the public on every casey turn (a
-        // confirmed-live, confirmed-exploitable vulnerability: getEnabledToolNames
-        // returned 71 tools including a real, working bash handler). casey's
-        // agent needs ONLY its own case_* tools -- it converses and calls
-        // case_report/case_stage/etc, nothing else, per AGENTS.md's own
-        // 'the agent acts entirely through these tools' design principle.
-        enabledToolsets: ['cases'],
-        // Identity for the case/enquiry tools: WHO is asking (the message author),
-        // the live store, the role for row-scoped enquiries, and the active case.
-        // The freddie case toolset reads these from toolCtx rather than a global, so
-        // "my cases"/"near me"/"today" answer FOR this worker and writes target the
-        // bound case. author = msg.from (the per-author identity); the channel author
-        // is the worker (no login). principal feeds thatcher row-access scoping.
-        toolCtx: {
-          author: msg.from || external_id,
-          channel,
-          // The channel inbound is a WORKER (no login; the operator is the dashboard).
-          // role:'worker' makes the freddie case tools return the PII-free enquiryRow
-          // projection on reads (case_get/case_list) -- a worker asking status can
-          // never be handed a case body carrying external_id/contact_id/phone. Only
-          // the dashboard read path is role:'operator'. This is a SEPARATE axis from
-          // `tier` below -- role controls PII projection shape, tier controls which
-          // case_* tools are reachable at all.
-          role: 'worker',
-          // Access tier: 'reporter' (casual/public, report-only) or 'field_worker'
-          // (elevated -- agentic case_list/case_mine/case_today queries + location
-          // check-ins). Read from the contact's own stored tier, operator-assigned
-          // via the dashboard/CLI, NEVER contact-self-service or LLM-settable. Fails
-          // CLOSED to 'reporter' on any falsy/missing/unrecognised value -- a brand
-          // new contact, a pre-migration row with no tier populated yet, or a
-          // corrupt value all get the LOWER-privilege tier, never silently elevated.
-          // Same discipline as ownsCase's "no author on ctx -> not owned" fail-closed
-          // guard a few lines up in case-tools.js.
-          tier: contact?.tier === 'field_worker' ? 'field_worker' : 'reporter',
-          store,
-          principal: { id: msg.from || external_id, role: 'worker' },
-          activeCaseRef: fresh.ref,
-          activeCaseId: fresh.id,
-          now: Date.now(),
-        },
-        // freddie's runTurn defaults to 30s, which is too tight for a COLD first
-        // turn (host boot + first provider probe) against the real bridge -- the
-        // crucible run timed out there and the contact got a degraded reply. The
-        // lead providers answer in well under a second once warm, so this bound
-        // protects the cold start without abandoning a live contact for minutes.
-        // CASEY_LLM_TURN_TIMEOUT_MS overrides for slow links / dead-provider walks.
-        timeoutMs: Number(process.env.CASEY_LLM_TURN_TIMEOUT_MS) || 120000,
-      })
-    } catch (e) {
-      errored = true
-      log.error?.('[casey] agent turn failed', { caseId: fresh.id, error: e.message })
-      // A failed write here (store down, lock timeout) must not throw OUT of this
-      // catch block -- that would propagate as an unhandled rejection from the
-      // whole handleInbound call, defeating the very error handling this block
-      // exists for. Degrade to a log line; the degraded-turn no-reply path below
-      // still records the failure regardless.
-      try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent turn error: ${e.message}` }) }
-      catch (e2) { log.error?.('[casey] failed to record agent-turn-error observation', { caseId: fresh.id, error: e2.message }) }
-      result = {}
-    } finally {
-      inFlight.delete(external_id)
+    // Does the turn's own return shape show the FIRST assistant message made a
+    // real tool call? (freddie's runTurn message shape: an assistant message
+    // only ever carries a tool_calls array when the model actually called a
+    // tool -- see the STRUCTURAL forced-tool-call guard below for the full
+    // rationale.) Factored out so both the attempt loop (to decide whether a
+    // retry is worth it) and the guard itself (to decide whether to blank the
+    // final reply) share one definition.
+    function firstTurnHadToolCall(r) {
+      const firstAssistant = Array.isArray(r?.messages) ? r.messages.find(m => m?.role === 'assistant') : null
+      if (!firstAssistant) return true   // nothing to judge (e.g. an error result) -- do not treat as a miss
+      return Array.isArray(firstAssistant.tool_calls) && firstAssistant.tool_calls.length > 0
     }
+    // A forced-tool-call turn (tool_choice:'required' below) that comes back
+    // with NO tool call at all is retried ONCE with a fresh runTurn dispatch
+    // before the turn is accepted as genuinely degraded -- freddie's own
+    // provider fallback chain walks a live-availability-ranked model order
+    // per call, not a fixed sequence, so a second full attempt is a
+    // genuinely different roll, not a repeat of the same failing call.
+    // Witnessed live this session: the structural guard alone correctly
+    // stopped a bad refusal from reaching the contact, but then left them
+    // with total silence on repeated attempts (worse than the old wrong-but-
+    // present refusal text) -- a retry gives the contact a real chance at an
+    // actual reply before giving up. Capped at 2 total attempts (not
+    // unbounded) so a persistently broken backend still fails within the
+    // existing timeout budget rather than silently doubling every contact's
+    // wait time.
+    const MAX_TOOL_CHOICE_ATTEMPTS = 2
+    let result, errored = false
+    for (let attempt = 1; attempt <= MAX_TOOL_CHOICE_ATTEMPTS; attempt++) {
+      try {
+        result = await runTurn({
+          prompt,
+          messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, { orient: convOrient }) }],
+          sessionKey: `case:${fresh.id}`,
+          callLLM,
+          // Nudge the weak model into its first classify/record tool call. freddie
+          // applies tool_choice on ITERATION 0 ONLY (later iterations are model
+          // choice), so this cannot break loop termination -- the model is still free
+          // to end the turn with plain text once its first tool result is in. The
+          // offline stub ignores tool_choice, which is fine.
+          tool_choice: 'required',
+          // SECURITY: 'cases' ONLY. freddie's bootHost ALWAYS discovers its own
+          // plugins/ directory (REPO_PLUGINS in freddie/src/host/index.js)
+          // regardless of casey's extraRoots, so its full library -- including
+          // 'core'-toolset tools with REAL shell/file/credential access (bash,
+          // code_execution, edit, write, file_operations, credential_files,
+          // read, grep, terminal) and send_message (bypasses every one of
+          // casey's outbound scrubs/reference-sanitization) -- is registered
+          // into the SAME host casey's agent turn draws from. Enabling 'core'
+          // here exposed all of it, schema-visible and CALLABLE, to every
+          // WhatsApp/Discord message from the public on every casey turn (a
+          // confirmed-live, confirmed-exploitable vulnerability: getEnabledToolNames
+          // returned 71 tools including a real, working bash handler). casey's
+          // agent needs ONLY its own case_* tools -- it converses and calls
+          // case_report/case_stage/etc, nothing else, per AGENTS.md's own
+          // 'the agent acts entirely through these tools' design principle.
+          enabledToolsets: ['cases'],
+          // Identity for the case/enquiry tools: WHO is asking (the message author),
+          // the live store, the role for row-scoped enquiries, and the active case.
+          // The freddie case toolset reads these from toolCtx rather than a global, so
+          // "my cases"/"near me"/"today" answer FOR this worker and writes target the
+          // bound case. author = msg.from (the per-author identity); the channel author
+          // is the worker (no login). principal feeds thatcher row-access scoping.
+          toolCtx: {
+            author: msg.from || external_id,
+            channel,
+            // The channel inbound is a WORKER (no login; the operator is the dashboard).
+            // role:'worker' makes the freddie case tools return the PII-free enquiryRow
+            // projection on reads (case_get/case_list) -- a worker asking status can
+            // never be handed a case body carrying external_id/contact_id/phone. Only
+            // the dashboard read path is role:'operator'. This is a SEPARATE axis from
+            // `tier` below -- role controls PII projection shape, tier controls which
+            // case_* tools are reachable at all.
+            role: 'worker',
+            // Access tier: 'reporter' (casual/public, report-only) or 'field_worker'
+            // (elevated -- agentic case_list/case_mine/case_today queries + location
+            // check-ins). Read from the contact's own stored tier, operator-assigned
+            // via the dashboard/CLI, NEVER contact-self-service or LLM-settable. Fails
+            // CLOSED to 'reporter' on any falsy/missing/unrecognised value -- a brand
+            // new contact, a pre-migration row with no tier populated yet, or a
+            // corrupt value all get the LOWER-privilege tier, never silently elevated.
+            // Same discipline as ownsCase's "no author on ctx -> not owned" fail-closed
+            // guard a few lines up in case-tools.js.
+            tier: contact?.tier === 'field_worker' ? 'field_worker' : 'reporter',
+            store,
+            principal: { id: msg.from || external_id, role: 'worker' },
+            activeCaseRef: fresh.ref,
+            activeCaseId: fresh.id,
+            now: Date.now(),
+          },
+          // freddie's runTurn defaults to 30s, which is too tight for a COLD first
+          // turn (host boot + first provider probe) against the real bridge -- the
+          // crucible run timed out there and the contact got a degraded reply. The
+          // lead providers answer in well under a second once warm, so this bound
+          // protects the cold start without abandoning a live contact for minutes.
+          // CASEY_LLM_TURN_TIMEOUT_MS overrides for slow links / dead-provider walks.
+          timeoutMs: Number(process.env.CASEY_LLM_TURN_TIMEOUT_MS) || 120000,
+        })
+      } catch (e) {
+        errored = true
+        log.error?.('[casey] agent turn failed', { caseId: fresh.id, error: e.message })
+        // A failed write here (store down, lock timeout) must not throw OUT of this
+        // catch block -- that would propagate as an unhandled rejection from the
+        // whole handleInbound call, defeating the very error handling this block
+        // exists for. Degrade to a log line; the degraded-turn no-reply path below
+        // still records the failure regardless.
+        try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent turn error: ${e.message}` }) }
+        catch (e2) { log.error?.('[casey] failed to record agent-turn-error observation', { caseId: fresh.id, error: e2.message }) }
+        result = {}
+        break   // an error is not the forced-tool-choice-miss case; no retry benefit, stop here
+      }
+      // Retry only when the turn genuinely completed but skipped the forced
+      // tool call -- a real reply, or an already-errored turn, never retries.
+      if (firstTurnHadToolCall(result) || attempt === MAX_TOOL_CHOICE_ATTEMPTS) break
+      log.warn?.('[casey] forced tool_choice not honored by model; retrying turn', { caseId: fresh.id, attempt })
+      try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `tool_choice miss on attempt ${attempt}; retrying` }) }
+      catch (e2) { log.warn?.('[casey] failed to record tool_choice-retry observation', { caseId: fresh.id, error: e2.message }) }
+    }
+    inFlight.delete(external_id)
     // Re-read the case after the agent turn: the agent may have completed intake via
     // case_report (or moved the stage) during the turn. Report-aware decisions below
     // -- the precedence gate, the fallback intake-advance, the jargon hold -- must see
@@ -1096,16 +1131,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // isPromptEcho/isStockAck above already carry, deliberately not repeated
     // here). A genuinely first-tool-call-less turn is degraded regardless of
     // what its text happens to say, and never reaches the contact.
-    if (text) {
-      const firstAssistant = Array.isArray(result?.messages)
-        ? result.messages.find(m => m?.role === 'assistant')
-        : null
-      const firstCallHadTools = Array.isArray(firstAssistant?.tool_calls) && firstAssistant.tool_calls.length > 0
-      if (firstAssistant && !firstCallHadTools) {
-        log.warn?.('[casey] forced tool_choice not honored by model; blanking reply', { caseId: fresh.id })
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model ignored forced tool_choice on first turn (no tool call made); blanked' })
-        text = ''
-      }
+    if (text && !firstTurnHadToolCall(result)) {
+      log.warn?.('[casey] forced tool_choice not honored by model on final attempt; blanking reply', { caseId: fresh.id })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model ignored forced tool_choice (all attempts exhausted); blanked' })
+      text = ''
     }
     // PURE-AGENT REPLY. The agent drives the whole conversation -- intake (asking the
     // next needed fact via case_report + the system prompt), enquiries, status, all of

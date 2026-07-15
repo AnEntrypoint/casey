@@ -186,14 +186,6 @@ export class Casey {
       // Force receive:false unconditionally and always use casey's own path.
       const a = new DiscordAdapter({ receive: false })
       const { connectDiscordReceive } = await import('./discord-receive.js')
-      const orig = a.start.bind(a)
-      a.start = async () => {
-        // A failed Discord start (bad token, gateway unreachable) must surface,
-        // not leave the channel half-initialised with no receive and no log.
-        try { await orig() }
-        catch (e) { this.log?.error?.('[casey] discord adapter.start failed', { error: e.message }); throw e }
-        this._disconnects.push(connectDiscordReceive(a))
-      }
       // Filter guild channel messages to only DMs (guild_id absent) or @mentions of
       // the bot. Without this, every message in any guild channel creates a case --
       // surveillance intake should only trigger when someone deliberately contacts
@@ -214,16 +206,31 @@ export class Casey {
         }
         return origEmit(event, msg, ...rest)
       }
-      // Capture bot user ID from READY event so mention filter is precise, and
-      // stamp the connect so a long silence after a healthy READY is observable
-      // as a possibly-zombie socket rather than a false green.
-      const origDispatch = a._dispatch?.bind(a)
-      if (origDispatch) {
-        a._dispatch = (p) => {
-          if (p.t === 'READY') { if (p.d?.user?.id) botUserId = p.d.user.id; this._markConnected('discord') }
-          if (p.t === 'RESUMED') this._markConnected('discord')
-          return origDispatch(p)
-        }
+      const orig = a.start.bind(a)
+      a.start = async () => {
+        // A failed Discord start (bad token, gateway unreachable) must surface,
+        // not leave the channel half-initialised with no receive and no log.
+        try { await orig() }
+        catch (e) { this.log?.error?.('[casey] discord adapter.start failed', { error: e.message }); throw e }
+        // onConnect fires on the REAL READY/RESUMED gateway dispatch events
+        // inside connectDiscordReceive -- NOT via a wrapped a._dispatch, which
+        // is a method on freddie's DiscordAdapter that this receive path never
+        // calls at all (freddie's adapter never opens its own socket; see
+        // discord-receive.js's header comment). The previous a._dispatch
+        // wrapper was dead code that silently broke TWO things: connectedAt
+        // was never stamped (GET /api/health falsely reported Discord
+        // state:never-connected despite real inbound flowing correctly) and
+        // botUserId was never captured from READY (degrading the mention
+        // filter above to "any @-mention of anyone", not just this bot).
+        // readyPayload is the full READY event body on a fresh connect, or
+        // null on a RESUME (a resume carries no fresh READY body -- there is
+        // nothing new to capture, only the liveness stamp to refresh).
+        this._disconnects.push(connectDiscordReceive(a, {
+          onConnect: (readyPayload) => {
+            if (readyPayload?.user?.id) botUserId = readyPayload.user.id
+            this._markConnected('discord')
+          },
+        }))
       }
       // Verify outbound delivery. freddie's adapter.send does fetch(...).then(
       // r => r.json()) with NO status check, so a non-2xx (wrong channel, missing
@@ -478,12 +485,15 @@ export class Casey {
         // attempted. A completion or a later inbound for the SAME msgId is positional.
         const started = new Map()       // msgId -> inbound event
         const completedAfter = new Set()
-        const attempted = new Set()
+        const attempted = new Set()     // resume-attempted this boot's own pass (same-boot dedup only)
+        const degradedCount = new Map() // msgId -> count of resume-degraded markers across ALL boots
         for (const ev of events) {
           if (ev.kind === 'inbound' && ev.msg_id) started.set(ev.msg_id, ev)
           else if (ev.kind === 'observation' && typeof ev.text === 'string') {
-            const m = ev.text.match(/^resume-attempted:(.+)$/)
+            let m = ev.text.match(/^resume-attempted:(.+)$/)
             if (m) attempted.add(m[1])
+            m = ev.text.match(/^resume-degraded:(.+)$/)
+            if (m) degradedCount.set(m[1], (degradedCount.get(m[1]) || 0) + 1)
           }
           // Any outbound/draft completes EVERY turn started before it: a reply on the
           // conversation answers the latest inbound, so an earlier unanswered inbound
@@ -492,16 +502,48 @@ export class Casey {
             for (const id of started.keys()) completedAfter.add(id)
           }
         }
-        // The pending msgId: started, not completed, not already attempted. Take the
-        // most recent such inbound only -- one re-drive answers the live thread.
+        // The pending msgId: started, not completed, and either never attempted
+        // OR previously attempted-but-degraded (no real reply) with retries
+        // still under the cap. A msgId marked resume-attempted with NO
+        // resume-degraded marker is treated as a genuine, silent completion
+        // (the handler threw, or something unexpected happened with no
+        // observation recorded) -- still not retried, matching the ORIGINAL
+        // at-most-once-forever behavior for that specific failure shape, since
+        // there is no positive signal here (unlike degraded) that another
+        // attempt would behave differently. RESUME_DEGRADED_RETRY_CAP bounds
+        // total retries across all future boots so a permanently-broken
+        // backend still stops trying eventually, same discipline as
+        // drainQueuedTurns' retryCap -> queue-drive-failed dead-letter.
+        const RESUME_DEGRADED_RETRY_CAP = 5
         let pending = null
         for (const [id, ev] of started) {
-          if (completedAfter.has(id) || attempted.has(id)) continue
+          if (completedAfter.has(id)) continue
+          const wasAttempted = attempted.has(id)
+          const degraded = degradedCount.get(id) || 0
+          if (wasAttempted && degraded === 0) continue           // silent non-degraded completion: leave it alone
+          if (degraded >= RESUME_DEGRADED_RETRY_CAP) continue     // exhausted retries: stop trying
           if (!pending || ev.created_at >= pending.ev.created_at) pending = { id, ev }
         }
         if (!pending) continue
-        // Mark BEFORE re-drive -- at-most-once. A crash now leaves attempted-not-done,
-        // and the next boot skips this msgId rather than re-driving (miss over double).
+        // Mark BEFORE re-drive -- at-most-once PER BOOT. A crash now leaves
+        // attempted-not-done, and the next boot within the SAME resume pass
+        // would otherwise re-drive the same msgId twice; the per-boot marker
+        // prevents that immediate double-drive. It does NOT mean permanently
+        // done -- see the completion check below, which appends a SEPARATE
+        // resume-degraded:<id> marker when the redrive itself came back
+        // degraded (blanked, no real reply), so a LATER boot's sweep still
+        // sees this msgId as pending (resume-attempted alone no longer
+        // suffices to mark it completedAfter-equivalent) and gets another
+        // shot once the underlying model/provider issue clears. Previously
+        // handle.call(...)'s return value was never inspected -- ANY
+        // non-throwing call (including one whose reply was correctly blanked
+        // by the degraded-turn guards) was treated as a permanent success,
+        // silently abandoning a contact whose message was never actually
+        // answered. Witnessed live this session: case mrm1kieg-fdvbupbo had
+        // two "hi there I'm in tweni" messages each marked resume-attempted
+        // yet neither ever received a real outbound reply -- confirmed via
+        // the case's own event log (resume-attempted with no following
+        // outbound/degraded-with-no-retry-path).
         try {
           await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-attempted:${pending.id}` })
         } catch (e) { this.log?.warn?.('[casey] resume marker failed', { caseId: c.id, error: e.message }); continue }
@@ -514,11 +556,20 @@ export class Casey {
           raw: { channel_id: c.external_id, id: pending.id, author: {} },
         }
         try {
-          await handle.call(this.gateway, platform, msg)
+          const res = await handle.call(this.gateway, platform, msg)
           resumed++
-          this.log?.info?.('[casey] resumed pending turn', { caseId: c.id, channel: c.channel })
+          if (res && res.degraded) {
+            this.log?.warn?.('[casey] resumed turn came back degraded; still no reply', { caseId: c.id, channel: c.channel })
+            try { await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-degraded:${pending.id}` }) }
+            catch (e2) { this.log?.warn?.('[casey] resume-degraded marker failed', { caseId: c.id, error: e2.message }) }
+          } else {
+            this.log?.info?.('[casey] resumed pending turn', { caseId: c.id, channel: c.channel })
+          }
         } catch (e) {
-          // Already marked attempted, so it will not be retried -- log and move on.
+          // Already marked attempted, so it will not be re-driven again THIS
+          // sweep, but the throw itself means no observation was recorded for
+          // it either -- log loud so an operator can see the failure even
+          // though no resume-degraded marker exists to name it as such.
           this.log?.warn?.('[casey] resume re-drive failed', { caseId: c.id, error: e.message })
         }
       }
