@@ -36,29 +36,21 @@ function dominantTokens(members, field, max = 3) {
   return [...freq.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, max).map(([t]) => t)
 }
 
-// How urgent a cluster is, so the panel ranks suspected outbreaks by data, not by
-// the operator opening each in turn. Member count dominates (a six-farm spread
-// outranks a pair), and the case_type mix biases it up: a cluster of outbreaks is
-// more urgent than the same-size cluster of routine follow_ups. Pure of the member
-// rows already on the cluster; aggregate-only.
-const TYPE_WEIGHT = { outbreak: 4, import_alert: 3, lab_sample: 2, follow_up: 1, unset: 1 }
-export function clusterSeverity(cluster) {
-  const members = cluster.members || []
-  const count = cluster.count || members.length
-  // Mean case_type weight across members (default 1 for an unscored member), so a
-  // cluster skewed to outbreaks scores above an equal-size routine cluster.
-  let wsum = 0
-  for (const m of members) wsum += (TYPE_WEIGHT[m.case_type] || 1)
-  const typeBias = members.length ? wsum / members.length : 1
-  // Count is the spine; typeBias scales it. Round to one decimal for a stable sort.
-  return Math.round(count * typeBias * 10) / 10
-}
-
-// Build the outbreak clusters. `cases` is the open/non-merged pool. Returns the
+// Build the clusters. `cases` is the open/non-merged pool. Returns the
 // connected components of size >= 2, each with member refs, dominant shared
-// location/species/symptom tokens, the count, a severity score, and the
-// report-date span (SAST rendering is the caller's job; here it is raw
-// unix-seconds min/max).
+// location/species/symptom tokens, the raw member count, and the report-date
+// span (SAST rendering is the caller's job; here it is raw unix-seconds
+// min/max).
+//
+// Deliberately NO severity/urgency score: ranking by count alone is a pure,
+// verifiable aggregate of what was actually reported. An earlier version
+// scaled count by the agent-set case_type mix (an "outbreak" label weighted
+// 4x a "follow_up") -- that baked an unverified, single-conversation guess
+// into a number presented as a triage priority, exactly the kind of
+// diagnostic inference this system does not make. The team reads the raw
+// distribution (member count, shared symptoms/species/location) and judges
+// for themselves; casey surfaces what was reported, never what it thinks it
+// means.
 //
 // `symptoms` is drawn from what was actually SEEN/described in the animals --
 // the real, confirmed-observed field. `suspected_disease` is a name the worker
@@ -97,10 +89,8 @@ export function buildClusters(cases, threshold = SUGGEST_THRESHOLD) {
       reported_disease_names: dominantTokens(members, 'suspected_disease'),
       span: { from: created.length ? Math.min(...created) : null, to: created.length ? Math.max(...created) : null },
     }
-    cluster.severity = clusterSeverity(cluster)
     clusters.push(cluster)
   }
-  // Most severe suspected outbreak first (count scaled by case_type mix); count
-  // breaks ties so the ordering stays stable for equal-severity clusters.
-  return clusters.sort((a, b) => b.severity - a.severity || b.count - a.count)
+  // Largest reported cluster first -- a plain count, nothing inferred.
+  return clusters.sort((a, b) => b.count - a.count)
 }

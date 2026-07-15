@@ -1517,7 +1517,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       res.json({
         pins, unresolved, unresolved_count: unresolved.length,
         clusters: clusters.map((cl, i) => ({
-          index: i, count: cl.count, severity: cl.severity, location: cl.location,
+          index: i, count: cl.count, location: cl.location,
           species: cl.species, symptoms: cl.symptoms, reported_disease_names: cl.reported_disease_names,
         })),
         truncated, cap: MAP_CASE_CAP, total_considered: all.length,
@@ -1664,6 +1664,23 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       const { buildGeo } = await import('../geo.js')
       const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
       res.json({ open: open.length, places: buildGeo(open) })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+
+  // Symptom/species distribution: the pure-aggregation view this system leans
+  // on INSTEAD of outbreak/severity inference (see clusters.js's own header
+  // comment on why clusterSeverity was removed). Purely a frequency count of
+  // what was actually reported -- species x symptom co-occurrence, ranked by
+  // count -- so an operator or field worker reads the real pattern themselves
+  // rather than being handed a system-guessed diagnosis. `since` (unix
+  // seconds) narrows to a recent window; omit for the full open pool.
+  app.get('/api/distribution', async (req, res) => {
+    try {
+      const { buildSymptomDistribution } = await import('../distribution.js')
+      const since = req.query.since ? Number(req.query.since) : null
+      if (req.query.since && !Number.isFinite(since)) return res.status(400).json({ error: 'since must be a unix-seconds number' })
+      const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
+      res.json(buildSymptomDistribution(open, { since }))
     } catch (e) { res.status(500).json({ error: e.message }) }
   })
 
@@ -2337,8 +2354,14 @@ const PAGE = /* html */ `<!doctype html>
   .cl-head{font-size:13px;margin-bottom:5px}
   .cl-sub{font-size:12px;color:var(--muted);margin-bottom:4px}
   .cl-chips{display:flex;flex-wrap:wrap;gap:4px}
-  .cl-sev{display:inline-block;background:var(--danger,#b4432e);color:#fff;font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;margin-right:6px}
   .ref-chip{background:#2a3340;font-size:12px;padding:2px 8px}
+  .dist-group{margin-bottom:12px}
+  .dist-title{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px}
+  .dist-row{display:grid;grid-template-columns:120px 1fr auto;gap:8px;align-items:center;padding:2px 0;font-size:12px}
+  .dist-token{color:var(--fg)}
+  .dist-bar-track{background:var(--bg2);border-radius:3px;height:8px;overflow:hidden}
+  .dist-bar-fill{display:block;height:100%;background:var(--accent,#4a90d9);border-radius:3px}
+  .dist-count{color:var(--muted);text-align:right;min-width:2ch}
   .bt-sec{margin-top:14px}
   .bt-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
   .bt-table th,.bt-table td{text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)}
@@ -2556,7 +2579,8 @@ const PAGE = /* html */ `<!doctype html>
         <button class="icon-btn" id="stats-btn" title="Show fill-rate comparison by intake source">Stats</button>
         <button class="icon-btn" id="settings-btn" title="Tune how long casey waits before flagging a case">Settings</button>
         <button class="icon-btn" id="metrics-btn" title="Response times, backlog and trend">Metrics</button>
-        <button class="icon-btn" id="clusters-btn" title="Cases that look like one outbreak">Outbreaks</button>
+        <button class="icon-btn" id="clusters-btn" title="Cases that may describe the same real-world situation, grouped for you to review">Related reports</button>
+        <button class="icon-btn" id="distribution-btn" title="Species and symptoms across all open reports, ranked by how often they were actually reported">Distribution</button>
         <button class="icon-btn" id="geo-btn" title="Where reports are concentrating">Hotspots</button>
         <button class="icon-btn" id="map-btn" title="Every case pinned on a map: status, type, species, outbreak links, operator coverage">Map</button>
         <button class="icon-btn" id="activity-btn" title="Everything that has happened, newest first">Activity</button>
@@ -2597,8 +2621,12 @@ const PAGE = /* html */ `<!doctype html>
       <div id="metrics-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
     </div>
     <div class="stats-panel" id="clusters-panel">
-      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Possible outbreaks (cases that look related)</div>
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Cases that look related (for you to review -- casey never merges these itself)</div>
       <div id="clusters-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="distribution-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Species and symptoms actually reported, across open cases -- no inference, just counts</div>
+      <div id="distribution-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
     </div>
     <div class="stats-panel" id="geo-panel">
       <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Hotspots by area</div>
@@ -2613,7 +2641,7 @@ const PAGE = /* html */ `<!doctype html>
           <select id="map-status"><option value="">all stages</option></select>
           <select id="map-days"><option value="0">all time</option><option value="90">last 90 days</option><option value="30">last 30 days</option><option value="7">last 7 days</option></select>
           <button class="icon-btn" id="map-coverage-btn" title="Toggle operator working-area coverage overlay">Coverage</button>
-          <button class="icon-btn" id="map-clusters-btn" title="Toggle outbreak-cluster links">Outbreak links</button>
+          <button class="icon-btn" id="map-clusters-btn" title="Toggle links between cases that look related">Related links</button>
           <button class="icon-btn" id="map-workers-btn" title="Toggle field-worker live location check-ins (for direction/dispatch)">Field workers</button>
         </div>
       </div>
@@ -4478,11 +4506,12 @@ function clustersHtml(j){
     const loc=(c.location||[]).join(', '), sp=(c.species||[]).join(', '), sym=(c.symptoms||[]).join(', ')
     const reported=(c.reported_disease_names||[]).join(', ')
     const chips=(c.members||[]).map(m=>'<button class="ref-chip" data-id="'+esc(m.id)+'" title="'+esc((m.case_type&&m.case_type!=='unset'?m.case_type+': ':'')+(m.subject||''))+'">'+esc(m.ref)+'</button>').join(' ')
-    const sev=(c.severity!=null)?'<span class="cl-sev" title="Suspected-outbreak severity: member count scaled by case_type mix (outbreak>import_alert>lab_sample>follow_up)">severity '+esc(c.severity)+'</span> ':''
     // symptoms is what was actually seen/reported -- shown plainly. reported_disease_names
     // is only ever the farmer/worker's own unverified guess, so it is always qualified
-    // "as reported" and never rendered as if it were a determined diagnosis.
-    return '<div class="cl-row"><div class="cl-head">'+sev+'<b>'+c.count+' cases</b>'
+    // "as reported" and never rendered as if it were a determined diagnosis. No severity
+    // score -- the raw member count and shared fields are the whole signal; the team
+    // reads the pattern and judges for themselves.
+    return '<div class="cl-row"><div class="cl-head"><b>'+c.count+' cases</b>'
       +(loc?' near '+esc(loc):'')+(sp?' -- '+esc(sp):'')+'</div>'
       +(sym?'<div class="cl-sub">symptoms: '+esc(sym)+'</div>':'')
       +(reported?'<div class="cl-sub" title="Named by the worker/farmer, not a lab result">as reported: '+esc(reported)+'</div>':'')
@@ -4493,9 +4522,31 @@ async function loadClusters(){
   const body=$('#clusters-body'); if(!body) return
   body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
   try{ const j=await api('/api/clusters').then(r=>r.ok?r.json():null)
-    body.innerHTML=j?clustersHtml(j):'<div class="empty">Could not load outbreaks.</div>'
+    body.innerHTML=j?clustersHtml(j):'<div class="empty">Could not load related-case groups.</div>'
     body.querySelectorAll('.ref-chip').forEach(b=>b.onclick=()=>openCase(b.dataset.id))
-  }catch(e){ body.innerHTML='<div class="empty">Outbreaks error: '+esc(e.message)+'</div>' }
+  }catch(e){ body.innerHTML='<div class="empty">Related-reports error: '+esc(e.message)+'</div>' }
+}
+function distributionHtml(j){
+  const species=j.species||[], symptoms=j.symptoms||[]
+  if(!species.length && !symptoms.length) return '<div class="empty" style="padding:8px 0">No species or symptom data recorded yet.</div>'
+  const bar=(rows,max)=>rows.map(r=>{
+    const pct=max?Math.round(100*r.count/max):0
+    return '<div class="dist-row"><span class="dist-token">'+esc(r.token)+'</span>'
+      +'<span class="dist-bar-track"><span class="dist-bar-fill" style="width:'+pct+'%"></span></span>'
+      +'<span class="dist-count">'+r.count+'</span></div>'
+  }).join('')
+  const maxSp=species.length?species[0].count:0, maxSym=symptoms.length?symptoms[0].count:0
+  return '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">'
+    +j.total_cases+' open case(s), '+j.cases_with_species_or_symptom+' with species or symptoms recorded</div>'
+    +(species.length?'<div class="dist-group"><div class="dist-title">Species</div>'+bar(species,maxSp)+'</div>':'')
+    +(symptoms.length?'<div class="dist-group"><div class="dist-title">Symptoms</div>'+bar(symptoms,maxSym)+'</div>':'')
+}
+async function loadDistribution(){
+  const body=$('#distribution-body'); if(!body) return
+  body.innerHTML='<div class="empty" style="padding:8px 0">Loading...</div>'
+  try{ const j=await api('/api/distribution').then(r=>r.ok?r.json():null)
+    body.innerHTML=j?distributionHtml(j):'<div class="empty">Could not load distribution.</div>'
+  }catch(e){ body.innerHTML='<div class="empty">Distribution error: '+esc(e.message)+'</div>' }
 }
 function geoHtml(j){
   const places=j.places||[]
@@ -4520,6 +4571,7 @@ function panelToggle(btnId,panelId,loader){
   if(btn) btn.onclick=async()=>{ open=!open; panel.classList.toggle('show',open); btn.classList.toggle('active',open); if(open) await loader() }
 }
 panelToggle('#metrics-btn','#metrics-panel',loadMetrics)
+panelToggle('#distribution-btn','#distribution-panel',loadDistribution)
 panelToggle('#clusters-btn','#clusters-panel',loadClusters)
 panelToggle('#geo-btn','#geo-panel',loadGeo)
 panelToggle('#map-btn','#map-panel',loadMap)

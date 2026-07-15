@@ -410,7 +410,7 @@ export function buildCaseToolset(storeOrNull) {
       toolset: 'cases',
       schema: {
         name: 'case_link_suggestions',
-        description: 'Find OTHER open cases that look like the SAME real-world outbreak as this one -- same place, same animals, a shared contact or fallback number, reported around the same time. Use this to decide whether two reports should be one case. Returns ranked candidates with the reasons for each, strongest first. It only SUGGESTS; you decide whether to case_merge.',
+        description: 'Find OTHER open cases that look like they may describe the same real-world situation as this one -- same place, same animals, a shared contact or fallback number, reported around the same time. Returns ranked candidates with the reasons for each, strongest first, for a human to review -- this never merges anything itself; only an operator decides whether two reports should become one case.',
         parameters: { type: 'object', properties: { id: str('Case id to find matches for'), limit: { type: 'number', default: 5 } }, required: ['id'] },
       },
       handler: async ({ id, limit = 5 }) => {
@@ -426,29 +426,14 @@ export function buildCaseToolset(storeOrNull) {
         return { count: suggestions.length, suggestions }
       },
     },
-    {
-      name: 'case_merge',
-      toolset: 'cases',
-      schema: {
-        name: 'case_merge',
-        description: 'Fold one case (source) into another (target) when they are the SAME outbreak -- the target keeps the full combined report and timeline; the source becomes a redirect. Lossless and safe to retry. Use after case_link_suggestions confirms a real match. The TARGET is the case you keep.',
-        parameters: {
-          type: 'object',
-          properties: {
-            source: str('Case id to fold IN (becomes a redirect)'),
-            target: str('Case id to keep (gathers everything)'),
-            reason: str('Why these are the same outbreak (recorded on both timelines)'),
-          },
-          required: ['source', 'target'],
-        },
-      },
-      handler: async ({ source, target, reason = '' }) => {
-        const res = await store().mergeCases(source, target, AGENT_USER, { reason })
-        if (res.error === 'observe') return { error: 'target case autonomy is "observe"; merging is operator-only' }
-        if (res.error) return { error: res.error }
-        return { ok: true, alreadyMerged: !!res.alreadyMerged, movedEvents: res.movedEvents, target: slimCase(res.target) }
-      },
-    },
+    // case_merge is deliberately NOT exposed here. Folding two reports together
+    // is a judgment about whether they describe the same real-world situation --
+    // exactly the kind of call this system leaves to a human working from the
+    // full picture, never to the agent acting on one conversation alone. The
+    // dashboard's own merge endpoint (POST /api/cases/:id/merge) calls
+    // store.mergeCases directly as the operator, entirely independent of this
+    // toolset; case_link_suggestions below still lets the agent surface a
+    // possible match for a human to review, it just never acts on it.
     {
       name: 'case_split',
       toolset: 'cases',
