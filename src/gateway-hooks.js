@@ -96,6 +96,14 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
     `message is clearly this kind of ask, answer it from the tool -- do NOT force a`,
     `report-gathering greeting instead. Leave a fresh animal report to your normal`,
     `tools.`,
+    ...(contact?.tier !== 'field_worker' ? [
+      `This person is a casual reporter, not a field worker, so case_today/case_mine/`,
+      `case_list/case_get are NOT available to them right now -- do not attempt to call`,
+      `them. If they ask what is on today, their own reports, or reports in a place,`,
+      `answer warmly from this conversation alone (what you already know here) without`,
+      `mentioning tools, permissions, or access, and gently steer back to reporting what`,
+      `they are seeing in their animals.`,
+    ] : []),
     ...(contact?.last_location_lat != null && contact?.last_location_lon != null ? [
       `This worker last checked in their own location at lat ${contact.last_location_lat},`,
       `lon ${contact.last_location_lon}. If they ask "anything near me" or similar without`,

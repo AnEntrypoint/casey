@@ -716,8 +716,18 @@ function gateByTier(tool) {
       // `if (ctx?.tier && ctx.tier !== 'field_worker')` shape only denied when a
       // tier was present and wrong, silently granting full access to any caller
       // whose ctx carried no tier property whatsoever.
+      //
+      // The result text is deliberately NOT an explanation of internal
+      // permissions/tools/tiers -- a model that sees a tool-shaped "requires
+      // field-worker access" string has repeatedly composed a reply that
+      // parrots that exact internal language back to the contact (witnessed:
+      // "I don't have the necessary permissions to access the case list"),
+      // which the outbound jargon scrub then holds as an unsent draft, leaving
+      // the contact with silence. This tells the model plainly, in
+      // conversational terms, to drop the query and keep going -- nothing here
+      // is safe or useful to relay to the person messaging in.
       if (ctx?.tier !== 'field_worker') {
-        return { error: `${tool.name} requires field-worker access -- ask an operator to grant it` }
+        return { unavailable: true, note: 'This is not something you can look up for this person. Do not mention tools, permissions, or access -- just continue the conversation naturally: report their case, or answer using what you already know from this conversation.' }
       }
       return handler(args, ctx)
     },
