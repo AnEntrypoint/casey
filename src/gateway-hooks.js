@@ -998,20 +998,22 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       return Array.isArray(firstAssistant.tool_calls) && firstAssistant.tool_calls.length > 0
     }
     // A forced-tool-call turn (tool_choice:'required' below) that comes back
-    // with NO tool call at all is retried ONCE with a fresh runTurn dispatch
-    // before the turn is accepted as genuinely degraded -- freddie's own
-    // provider fallback chain walks a live-availability-ranked model order
-    // per call, not a fixed sequence, so a second full attempt is a
-    // genuinely different roll, not a repeat of the same failing call.
+    // with NO tool call at all is retried with a fresh runTurn dispatch before
+    // the turn is accepted as genuinely degraded -- freddie's own provider
+    // fallback chain walks a live-availability-ranked model order per call,
+    // not a fixed sequence, so each attempt is a genuinely different roll,
+    // not a repeat of the same failing call.
     // Witnessed live this session: the structural guard alone correctly
     // stopped a bad refusal from reaching the contact, but then left them
-    // with total silence on repeated attempts (worse than the old wrong-but-
-    // present refusal text) -- a retry gives the contact a real chance at an
-    // actual reply before giving up. Capped at 2 total attempts (not
-    // unbounded) so a persistently broken backend still fails within the
-    // existing timeout budget rather than silently doubling every contact's
-    // wait time.
-    const MAX_TOOL_CHOICE_ATTEMPTS = 2
+    // with total silence -- a retry gives the contact a real chance at an
+    // actual reply before giving up. Raised from 2 to 3: even
+    // CASEY_LLM_MODEL's own primary occasionally misses tool_choice
+    // (witnessed live: mistral/codestral-latest missed on 2/2 attempts for a
+    // plain "I'm in sheppie" location report with no ambiguity at all) --
+    // capped, not unbounded, so a persistently broken backend still fails
+    // within a bounded number of extra round trips rather than doubling
+    // every contact's wait time indefinitely.
+    const MAX_TOOL_CHOICE_ATTEMPTS = 3
     let result, errored = false
     for (let attempt = 1; attempt <= MAX_TOOL_CHOICE_ATTEMPTS; attempt++) {
       try {
