@@ -544,12 +544,21 @@ export class Casey {
           await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-attempted:${pending.id}` })
         } catch (e) { this.log?.warn?.('[casey] resume marker failed', { caseId: c.id, error: e.message }); continue }
         const platform = c.channel
+        // Same channel_id split as drainQueuedTurns below: external_id is the
+        // CASE IDENTITY (conversationKey's "container:author" shape on a
+        // multi-author channel), not a valid Discord channel snowflake on its
+        // own -- replyTarget() reads msg.raw.channel_id directly, so passing
+        // the combined external_id through unsplit sent every resumed reply
+        // on a multi-author Discord channel to Discord as an invalid channel
+        // id (400 Invalid Form Body, NUMBER_TYPE_COERCE), silently never
+        // reaching the contact even when the LLM call itself succeeded.
+        const container = c.external_id.includes(':') ? c.external_id.split(':')[0] : c.external_id
         const msg = {
           from: c.external_id,
           text: pending.ev.text || '',
           platform,
           resume: true,
-          raw: { channel_id: c.external_id, id: pending.id, author: {} },
+          raw: { channel_id: container, id: pending.id, author: {} },
         }
         try {
           const res = await handle.call(this.gateway, platform, msg)
