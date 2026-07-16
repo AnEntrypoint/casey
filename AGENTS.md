@@ -614,6 +614,109 @@ read back from busybase may be numeric-seconds STRINGS ("1782977388"): parse row
 timestamps with the digit-string-aware helpers (attn.js tsMs / case-health.js ms
 / format.js toDate), never bare Date.parse.
 
+## Provenance subsystem (src/core/, src/engine/, src/packs/)
+
+An ADDITIVE ground-truth/provenance layer sits alongside casey's existing
+thatcher-backed case/event architecture (untouched -- freddie, thatcher, and
+anentrypoint-design are consumed exactly as documented above; nothing in this
+section replaces or guts any of them). It exists to answer, for the new
+subsystem's own data, a stricter question than the live agent conversation
+alone can: for every value, WHO said it, HOW (observed/reported/measured/
+inferred/unknown), and WHEN -- so a future aggregate/audit/export can never
+blend a model guess into a ground-truth count.
+
+**Provenance is a type, not a field.** `src/core/provenance.js`'s `mkValue`/
+`mkUnknown` are the ONLY construction path for a provenanced value (frozen,
+`__provenanced`-marked); `isProvenanced`/`requireProvenance` reject any bare
+object literal shaped like one. Five kinds, ranked worst-to-best: `unknown <
+inferred < reported < observed < measured`. `canReplace(current, incoming)`
+enforces the no-silent-inference rule -- a lower-rank value can never
+overwrite a higher-rank one (an agent's inferred lat/lon estimate can never
+clobber a worker's real GPS reading).
+
+**The Observation record (`src/core/observation.js`)** is the invariant
+spine: subject / observer+role / location / onset+observed+reported+synced
+(four DISTINCT timestamps, never conflated -- an unknowable onset date is a
+first-class `mkUnknown()` value, never silently defaulted to observedAt) /
+findings (provenanced per-field) / evidence (each entry requires an explicit
+`present:boolean`, absence is a stated fact not a gap) / verificationTier
+(unverified|field_confirmed|lab_confirmed, non-unverified requires
+verifiedBy) / escalatedTo / packId+packVersion (schema-at-the-boundary: every
+record is permanently stamped to the exact pack version that captured it) /
+correctsId+correctionReason (a correction is a NEW Observation, never a
+mutation -- `withSyncedAt` produces a new frozen object, the original is
+untouched).
+
+**Four physically separate tiers.** `src/core/raw-log.js` (RawLog) is TIER 1:
+an append-only JSONL file per dataDir, write-once -- the class has no
+update/delete method, so mutation is structurally absent, not merely
+forbidden. `src/core/event-log.js` names this log the SYSTEM OF RECORD;
+`rebuildProjection(log, fn)` is the literal "delete the aggregate store and
+recompute" operation. `src/core/aggregate.js` is TIER 3: every function
+(`countByFinding`, `drilldown`, `recency`, `withCoverage`, `sparseMark`) is a
+PURE function of the raw log, proven via `assertPureRebuild`. TIER 4,
+`src/core/interpretation.js`, is the ONLY place a model estimate may live --
+`mkEstimate` requires an explicit `method`+`basedOnCount` and always carries
+an "ESTIMATED ... not a ground-truth count" label; nothing in
+core/aggregate.js can produce a shape `isEstimate()` would accept, so an
+estimate can never be silently blended into a ground-truth query.
+
+**The single write-path chokepoint** is `src/core/write-path.js`
+`writeObservation(rawLog, params)` -- the ONE function every writer (a future
+agent-turn integration, a dashboard correction, a sync reconciler) calls.
+It re-derives the latest known value per field across the subject's prior
+observations and rejects (returns in `rejectedFields`, never throws, never
+silently drops the observation itself) any incoming finding that would
+violate `canReplace`. A per-subject async lock (same pattern as
+`case-store.js`'s own `_withLock`) serializes concurrent writers.
+
+**Subject identity linking** (`src/core/subject.js`, `SubjectLinks`) is
+separate from thatcher's own case entity: a case id doubles as the default
+subjectId, and this module exists only for the harder problem of two
+DIFFERENT cases turning out to describe the same real-world herd/site --
+`link()` requires an explicit `linkedBy`+`reason` (never automatic/inferred),
+persisted as a small JSON graph alongside the raw log.
+
+**Config packs** (`src/core/pack-schema.js` validates, `src/core/pack-loader.js`
+versions+migrates) are declarative data only -- subjectTypes, observationForms
+(fields carry `unknownAllowed`, which CANNOT be set to `false`: a pack that
+tries is rejected at validation, this is how "unknown is always reachable" is
+structurally enforced rather than merely conventional), codelists, rules
+(a bounded `eq|neq|gt|gte|lt|lte|in|notIn|and|or` vocabulary --
+`validateRuleCondition` rejects a function or any op outside this list),
+roles, views, strings. `src/packs/animal-health.js` ports casey's own domain
+into this format as the first proof pack; `src/packs/water-point.js` (a
+genuinely unrelated rural water-point inspection domain) is the second,
+proving zero domain-specific code exists anywhere in `core/`/`engine/` --
+both validate through the identical engine functions with no branching on
+domain identity.
+
+**The bounded rule evaluator** (`src/engine/rule-engine.js`) resolves a
+pack's `rules` against a real Observation's findings (`evaluateRules`) and
+reconciles multiple fired rules to a highest-severity/all-distinct-routes
+result (`topEscalation`). An `unknown`-provenanced finding never satisfies a
+threshold comparison. This is deliberately a pure evaluator with no side
+effects -- the CALLER (casey's existing `case_handoff`/needs-human mechanism
+in `case-tools.js`/`gateway-hooks.js`, untouched) decides what a fired rule's
+`route` actually does.
+
+**Trust-boundary enforcement**: `scripts/lint.mjs` carries a dependency-arrow
+gate (`trust-boundary`) forbidding any `src/packs/*.js` file from importing
+`src/core/` or `src/engine/` -- a pack must stay pure data, never code wearing
+a config costume. Violating this fails `npm run lint` (and CI) with the
+specific offending file+import spec named.
+
+**What this subsystem does NOT yet do**: it is not wired into the live agent
+conversation (`case-tools.js`'s `case_report` continues to write directly to
+thatcher's `case.report` JSON blob exactly as before -- see
+`expansion-write-path-existing-callsites` for the enumerated migration
+targets a future session should wire through `writeObservation()` when the
+live conversation is ready to also produce provenance-tagged Observations
+alongside its existing report write). It has no offline-first field client
+(casey's capture surface today is WhatsApp/Discord, inherently online); the
+append-only-log-as-system-of-record design in this section is the contract a
+future offline client would implement against, not yet a running client.
+
 ## Conventions
 
 - ASCII only in source and docs -- no arrow/box/bullet/check glyphs or emoji

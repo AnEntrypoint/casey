@@ -131,6 +131,40 @@ for (const dir of STUB_MOCK_SCAN_DIRS) {
   }
 }
 
+// Trust-boundary dependency arrows (core -> engine -> packs/clients, one way
+// only): the new provenance subsystem's src/core/, src/engine/, src/packs/
+// directories may only import DOWNWARD. A packs/ file importing from core/
+// or engine/ (packs must be data-shaped, referencing the engine only via
+// runtime injection, never a static import) or an engine/ file importing
+// upward from packs/ would let a config change silently reach into engine
+// internals -- exactly the "can this change fabricate a number" question
+// this boundary exists to keep answerable by directory alone.
+const BOUNDARY_DIRS = { core: 'src/core', engine: 'src/engine', packs: 'src/packs' }
+const FORBIDDEN_IMPORTS = {
+  // packs/ is declarative data -- it must never import ANYTHING from core/
+  // or engine/ (a pack that imports engine code is code wearing a config
+  // costume, the exact anti-pattern item 16 forbids).
+  packs: ['src/core', 'src/engine', './core', './engine', '../core', '../engine'],
+}
+for (const [dirKey, relDir] of Object.entries(BOUNDARY_DIRS)) {
+  const forbidden = FORBIDDEN_IMPORTS[dirKey]
+  if (!forbidden) continue
+  let files = []
+  try { files = walk(join(ROOT, relDir)).filter((p) => ['.js', '.mjs'].includes(extname(p))) } catch { continue }
+  for (const f of files) {
+    let src = ''
+    try { src = readFileSync(f, 'utf8') } catch { continue }
+    const importRe = /(?:from\s+['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"])/g
+    let m
+    while ((m = importRe.exec(src))) {
+      const spec = m[1] || m[2]
+      if (forbidden.some((bad) => spec.includes(bad))) {
+        note(`trust-boundary: ${f.replace(ROOT, '')} imports "${spec}" -- ${dirKey}/ may never import engine/core (one-way dependency arrow: core -> engine -> packs/clients)`)
+      }
+    }
+  }
+}
+
 if (fails.length) {
   console.error('lint FAIL:\n' + fails.map((m) => '  - ' + m).join('\n'))
   process.exit(1)
