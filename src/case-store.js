@@ -24,57 +24,18 @@ import fs from 'node:fs'
 import yaml from 'js-yaml'
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
+import { DERIVED_ONLY_FIELDS, SYSTEM_FORBIDDEN_FIELDS, writeGuardViolation } from './store/guards.js'
+import { REPORT_KEYS, REPORT_KEY_ORDER } from './store/report-shape.js'
+import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 
 // Principals casey acts as. role:agent satisfies normal requires_role gates.
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
 export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
 
-// Fields only casey's own system code may write (computed FROM other fields,
-// never hand-typed or agent-composed) -- see thatcher.config.yml's matching
-// comment. A contact-authored text field the structural-automation invariant
-// protects in the OTHER direction (below).
-export const DERIVED_ONLY_FIELDS = new Set(['normalized_location', 'geocell', 'cluster_id', 'dedupe_score'])
-// Contact-authored free text a SYSTEM actor must never originate -- the sweep/
-// notifier/other background system code may tag/observe/reclassify, but must
-// never fabricate what a person supposedly said. Mirrors DERIVED_ONLY_FIELDS'
-// protection in the opposite direction: one guard, two rules, same chokepoint.
-export const SYSTEM_FORBIDDEN_FIELDS = new Set(['report', 'summary', 'subject'])
-
-// One chokepoint both updateCase-family writers call before touching thatcher.
-// Returns an error string on a violation, or null when the patch is clean.
-function writeGuardViolation(patch, user) {
-  if (!patch || typeof patch !== 'object') return null
-  const isSystemActor = user?.id === SYSTEM_USER.id
-  const keys = Object.keys(patch)
-  if (!isSystemActor) {
-    const derivedTouched = keys.filter(k => DERIVED_ONLY_FIELDS.has(k))
-    if (derivedTouched.length) {
-      return `writeGuard: only casey's own system code may write derived field(s): ${derivedTouched.join(', ')}`
-    }
-  } else {
-    const forbiddenTouched = keys.filter(k => SYSTEM_FORBIDDEN_FIELDS.has(k))
-    if (forbiddenTouched.length) {
-      return `writeGuard: the system actor may never write contact-authored field(s): ${forbiddenTouched.join(', ')}`
-    }
-  }
-  return null
-}
-
-export const REPORT_KEYS = new Set(['species', 'symptoms', 'location', 'how_to_find', 'affected_count', 'dead_count', 'onset', 'suspected_disease', 'recent_movement', 'identifying_traits', 'access_notes', 'farmer_available', 'contact_fallback', 'photos', 'audio', 'notes',
-  // People on site for a field-worker report: who the worker spoke to and their
-  // link to the owner, plus the owner's identity/contact -- so an absent owner with
-  // a relative present is still captured. Reported by the worker, model- or
-  // pending-ask-captured (no deterministic extractor).
-  'present_person', 'present_person_relation', 'owner_name', 'owner_contact', 'language_detected',
-  // A SECOND distinct site/herd within the same visit (species/location/count
-  // fields above stay the primary site) -- append-only, see mergeReport.
-  'sites'])
-
-// Same fields, ordered for stable display/fill-rate rendering (dashboard).
-export const REPORT_KEY_ORDER = ['species', 'symptoms', 'affected_count', 'dead_count', 'onset',
-  'suspected_disease', 'recent_movement', 'location', 'how_to_find', 'access_notes',
-  'farmer_available', 'contact_fallback', 'identifying_traits', 'photos', 'audio', 'notes',
-  'present_person', 'present_person_relation', 'owner_name', 'owner_contact', 'language_detected', 'sites']
+// Re-exported so every existing external import (case-tools.js, dashboard/
+// server.js, etc.) keeps resolving these names from case-store.js unchanged,
+// even though the actual definitions now live in src/store/*.js.
+export { DERIVED_ONLY_FIELDS, SYSTEM_FORBIDDEN_FIELDS, REPORT_KEYS, REPORT_KEY_ORDER }
 
 export class CaseStore {
   constructor(opts = {}) {
@@ -1305,29 +1266,8 @@ function nowIso() {
   return new Date().toISOString()
 }
 
-// Event ordering: created_at is a unix-SECONDS integer (coarse -- a whole turn's
-// events routinely share one second), and thatcher's id is a time-prefixed string
-// with a RANDOM suffix, so the id is NOT a reliable insertion-order tiebreaker:
-// within one second, two events sort by their random suffixes, scrambling order.
-// What IS reliable is thatcher's raw list order, which preserves insertion order
-// (witnessed). So we sort by created_at with a STABLE sort that breaks ties by the
-// row's original index in the input -- insertion order is preserved exactly on a
-// tie, and positional logic (resume completed-after, timeline replay) is
-// deterministic. ordered(rows, dir) is the only sort entry point; it never tie-
-// breaks on the id. (A prior version tie-broke on id assuming monotonic integer
-// ids -- false for thatcher's random-suffix ids -- and made the resume sweep flaky.)
-const ca = (r) => (r?.created_at || 0)
-function sortByCreatedStable(rows, dir) {
-  // Decorate with the input index, sort by (created_at, index), undecorate. The
-  // index tiebreak keeps same-second events in arrival order regardless of the
-  // engine's sort stability or the id's unsortable suffix.
-  return rows
-    .map((row, idx) => ({ row, idx }))
-    .sort((a, b) => dir * (ca(a.row) - ca(b.row)) || (a.idx - b.idx))
-    .map(x => x.row)
-}
-function byCreatedAscList(rows) { return sortByCreatedStable(rows, 1) }
-function byCreatedDescList(rows) { return sortByCreatedStable(rows, -1) }
+// byCreatedAscList / byCreatedDescList (stable created_at sort, index-tiebreak
+// on same-second rows) now live in store/query.js -- imported above.
 
 // The ref is the sole "secret" gating the unauthenticated public /report form
 // (see dashboard/server.js) -- a farmer's phone, symptoms, and location are all

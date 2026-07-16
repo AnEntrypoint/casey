@@ -12,6 +12,15 @@ import { CONVERSATION_PHASES } from './conversation-spec.js'
 import { normalizeLocation } from './location-normalize.js'
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra })
+
+// Constructor-shape dedup: every tool object below is { name, toolset, schema:
+// { name, description, parameters }, handler }, with `name` repeated verbatim
+// between the outer object and the inner schema. defTool takes it once and
+// builds both. Purely structural -- does not touch handler logic, toolset
+// values, description text, or parameters schemas.
+function defTool(name, toolset, description, parameters, handler) {
+  return { name, toolset, schema: { name, description, parameters }, handler }
+}
 // Shipped defaults -- used for the tool-schema `enum` hint shown to the model
 // (built once at plugin-load time, before a store necessarily exists, so it
 // cannot read live config) AND as the fallback when a config has no case_type/
@@ -46,15 +55,10 @@ export function buildCaseToolset(storeOrNull) {
   const store = () => storeOrNull || getCaseStore()
 
   const tools = [
-    {
-      name: 'case_get',
-      toolset: 'cases',
-      schema: {
-        name: 'case_get',
-        description: 'Fetch a case by id, including its recent timeline events. Use to refresh your view before acting.',
-        parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
-      },
-      handler: async ({ id }, ctx) => {
+    defTool('case_get', 'cases',
+      'Fetch a case by id, including its recent timeline events. Use to refresh your view before acting.',
+      { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
+      async ({ id }, ctx) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         // case_get's `id` param is agent-chosen -- the model can ask about ANY
@@ -72,35 +76,29 @@ export function buildCaseToolset(storeOrNull) {
         const owns = ownsCase(c.external_id, author)
         const events = owns ? await store().listEvents(id, { limit: 30 }) : []
         return { case: owns ? slimCase(c) : enquiryRow(c), events: events.map(slimEvent) }
-      },
-    },
-    {
-      name: 'case_list',
-      toolset: 'cases',
-      schema: {
-        name: 'case_list',
-        description: 'List cases, optionally filtered by status/channel/assignee/location. Use `location` (a town, area, or place a person mentions) to find reports in a place -- this is the place-enquiry tool. Use `near` (your own best-estimate lat/lon for the place the worker said they are at) to find the NEAREST reports -- this is the "closest case" / "cases near me" tool; it returns rows sorted by distance with a distance_km on each, so you can answer "the nearest on record is CASE-xxxx at <place>, about N km away" from the real result, never from memory. Returns most-recently-active first (or nearest-first when `near` is given), PII-free.',
-        parameters: {
-          type: 'object',
-          properties: {
-            status: str('Filter by workflow status', { enum: DEFAULT_STAGE_VALUES }),
-            channel: str('Filter by channel'),
-            assignee: str('Filter by assignee'),
-            location: str('A place name (town/area) to match reports whose location contains it'),
-            near: {
-              type: 'object',
-              description: 'Your own best-estimate latitude/longitude for the place the worker said they are at (a named town/farm/landmark you can place). Returns cases nearest that point, sorted by distance, each with distance_km. Coordinates are model-estimated, so this is a best-effort "nearest we have on record", not a surveyed exact distance. Leave cases with no recorded coordinate out of the ranking.',
-              properties: {
-                lat: { type: 'number', description: 'Latitude of the place the worker described' },
-                lon: { type: 'number', description: 'Longitude of the place the worker described' },
-                radius_km: { type: 'number', description: 'Optional cap: only return cases within this many km (e.g. 100). Omit to rank all coordinate-bearing cases by distance.' },
-              },
+      }),
+    defTool('case_list', 'cases',
+      'List cases, optionally filtered by status/channel/assignee/location. Use `location` (a town, area, or place a person mentions) to find reports in a place -- this is the place-enquiry tool. Use `near` (your own best-estimate lat/lon for the place the worker said they are at) to find the NEAREST reports -- this is the "closest case" / "cases near me" tool; it returns rows sorted by distance with a distance_km on each, so you can answer "the nearest on record is CASE-xxxx at <place>, about N km away" from the real result, never from memory. Returns most-recently-active first (or nearest-first when `near` is given), PII-free.',
+      {
+        type: 'object',
+        properties: {
+          status: str('Filter by workflow status', { enum: DEFAULT_STAGE_VALUES }),
+          channel: str('Filter by channel'),
+          assignee: str('Filter by assignee'),
+          location: str('A place name (town/area) to match reports whose location contains it'),
+          near: {
+            type: 'object',
+            description: 'Your own best-estimate latitude/longitude for the place the worker said they are at (a named town/farm/landmark you can place). Returns cases nearest that point, sorted by distance, each with distance_km. Coordinates are model-estimated, so this is a best-effort "nearest we have on record", not a surveyed exact distance. Leave cases with no recorded coordinate out of the ranking.',
+            properties: {
+              lat: { type: 'number', description: 'Latitude of the place the worker described' },
+              lon: { type: 'number', description: 'Longitude of the place the worker described' },
+              radius_km: { type: 'number', description: 'Optional cap: only return cases within this many km (e.g. 100). Omit to rank all coordinate-bearing cases by distance.' },
             },
-            limit: { type: 'number', default: 25 },
           },
+          limit: { type: 'number', default: 25 },
         },
       },
-      handler: async ({ status, channel, assignee, location, near, limit = 25 }) => {
+      async ({ status, channel, assignee, location, near, limit = 25 }) => {
         const where = {}
         if (status) where.status = status
         if (channel) where.channel = channel
@@ -146,29 +144,23 @@ export function buildCaseToolset(storeOrNull) {
         // (enquiryRow: ref/status/species/location only) -- NEVER the full slimCase
         // report, which carries owner_name/contact_fallback/other-worker contact text.
         return { count: rows.length, cases: rows.map(enquiryRow) }
-      },
-    },
-    {
-      name: 'case_update',
-      toolset: 'cases',
-      schema: {
-        name: 'case_update',
-        description: 'Update editable case fields (subject, summary, priority, tags, assignee, autonomy, case_type). Keep `summary` current -- it is your working memory of the case. Set `case_type` as soon as the report makes the category clear -- this drives the organisers\' map, SLA targets, and workload views, so it must not sit unset waiting for a human to classify it by hand: outbreak (multiple animals, fast onset, or a suspected notifiable disease), follow_up (a routine check-in on an already-known situation), lab_sample (mainly about a sample/test result), import_alert (tied to recently moved/imported animals). Leave it unset only when nothing yet points to a category.',
-        parameters: {
-          type: 'object',
-          properties: {
-            id: str('Case id'),
-            subject: str('Short human title'),
-            summary: str('One-paragraph rolling summary of the case state'),
-            priority: str('Priority', { enum: DEFAULT_PRIORITY_VALUES }),
-            tags: str('Comma-separated tags'),
-            assignee: str('Operator handle, or "agent"'),
-            case_type: str('Category, set as soon as the report makes it clear', { enum: DEFAULT_CASE_TYPE_VALUES }),
-          },
-          required: ['id'],
+      }),
+    defTool('case_update', 'cases',
+      'Update editable case fields (subject, summary, priority, tags, assignee, autonomy, case_type). Keep `summary` current -- it is your working memory of the case. Set `case_type` as soon as the report makes the category clear -- this drives the organisers\' map, SLA targets, and workload views, so it must not sit unset waiting for a human to classify it by hand: outbreak (multiple animals, fast onset, or a suspected notifiable disease), follow_up (a routine check-in on an already-known situation), lab_sample (mainly about a sample/test result), import_alert (tied to recently moved/imported animals). Leave it unset only when nothing yet points to a category.',
+      {
+        type: 'object',
+        properties: {
+          id: str('Case id'),
+          subject: str('Short human title'),
+          summary: str('One-paragraph rolling summary of the case state'),
+          priority: str('Priority', { enum: DEFAULT_PRIORITY_VALUES }),
+          tags: str('Comma-separated tags'),
+          assignee: str('Operator handle, or "agent"'),
+          case_type: str('Category, set as soon as the report makes it clear', { enum: DEFAULT_CASE_TYPE_VALUES }),
         },
+        required: ['id'],
       },
-      handler: async ({ id, ...patch }) => {
+      async ({ id, ...patch }) => {
         // Validate case_type/priority BEFORE pick()'s empty-string filtering: an
         // explicit case_type:"" must be rejected the same way a bogus value is,
         // not silently dropped as if the field were never supplied -- pick()
@@ -214,46 +206,40 @@ export function buildCaseToolset(storeOrNull) {
           await store().appendEvent(id, { kind: 'action', actor: 'agent', text: `updated ${otherKeys.join(', ')}`, data: Object.fromEntries(otherKeys.map(k => [k, clean[k]])) })
         }
         return { ok: true, case: slimCase(updated) }
-      },
-    },
-    {
-      name: 'case_report',
-      toolset: 'cases',
-      schema: {
-        name: 'case_report',
-        description: 'Record what you have learned about an animal-disease report, one field at a time, as the farmer gives it. Pass ONLY the fields you actually learned this turn -- they merge into the running report, so you never lose earlier facts and never need to repeat a field the farmer already gave. This is how the organisers see a structured, organised report without the farmer being interrogated. Leave a field out if you do not know it yet; do not guess.',
-        parameters: {
-          type: 'object',
-          properties: {
-            id: str('Case id'),
-            species: str('Animal(s): cattle, sheep, goats, pigs, etc.'),
-            symptoms: str('What the farmer sees: drooling, blisters, lameness, sudden death, etc.'),
-            location: str('Where: farm name, nearest town, district, GPS, or the farmer\'s own description'),
-            how_to_find: str('Directions / landmarks to reach the place in the bush'),
-            affected_count: str('How many animals are affected (number or "a few"/"many")'),
-            dead_count: str('How many have died, if any'),
-            onset: str('When it started and how fast it is spreading'),
-            suspected_disease: str('A disease the farmer names or you reasonably infer (record, do not diagnose or alarm)'),
-            recent_movement: str('Recent animal movement/contact: auctions, new stock, shared grazing'),
-            identifying_traits: str('Markings, ear tags, breed -- anything to identify the animals'),
-            access_notes: str('Access/travel notes: gate, road condition, 4x4 needed, permission'),
-            farmer_available: str('Will the farmer be there on arrival? When are they reachable?'),
-            contact_fallback: str('Who else to contact / another number if the farmer is unreachable'),
-            photos: str('Note that the farmer sent a photo (set to a short description). Each call ADDS a new photo note -- if more than one photo arrives, call again with a description of the new one; earlier descriptions are kept, never overwritten.'),
-            audio: str('Note that the farmer sent a voice note (set to a short description or transcription). Each call ADDS a new note -- if more than one voice note arrives, call again; earlier notes are kept, never overwritten.'),
-            notes: str('Anything else worth recording for the organisers'),
-            present_person: str('Who is with the animals right now, if not the owner (e.g. a relative, herder, neighbour)'),
-            present_person_relation: str('How the present person is linked to the owner: owner, relative, herder, or neighbour'),
-            owner_name: str("The animals' owner's name, if the worker learns it and the owner is not present"),
-            owner_contact: str("A number to reach the owner, if the worker learns it and the owner is not present"),
-            lat: { type: 'number', description: 'Latitude for the organisers\' map. If the worker reads out real GPS coordinates, use those exactly. Otherwise, use your OWN knowledge to give your best estimate for the place described (a named town, farm, or landmark you can place) -- this is how the case gets a map point at all, so estimate confidently when the description is identifiable; leave both lat and lon out only when the place genuinely cannot be placed from what was said.' },
-            lon: { type: 'number', description: 'Longitude, alongside lat -- your own best-effort estimate when no exact GPS was given, using your own knowledge of the place described.' },
-            sites: str('ONLY when the worker describes a SECOND distinct place/herd within the SAME visit (not a separate outbreak elsewhere -- use case_new for that): a short plain-text note of the second site, e.g. "5 goats down the road at the old kraal, also drooling". The main species/location fields above stay the first/primary site; this adds the second one alongside it without losing it. Each call with this set ADDS one more site note.'),
-          },
-          required: ['id'],
+      }),
+    defTool('case_report', 'cases',
+      'Record what you have learned about an animal-disease report, one field at a time, as the farmer gives it. Pass ONLY the fields you actually learned this turn -- they merge into the running report, so you never lose earlier facts and never need to repeat a field the farmer already gave. This is how the organisers see a structured, organised report without the farmer being interrogated. Leave a field out if you do not know it yet; do not guess.',
+      {
+        type: 'object',
+        properties: {
+          id: str('Case id'),
+          species: str('Animal(s): cattle, sheep, goats, pigs, etc.'),
+          symptoms: str('What the farmer sees: drooling, blisters, lameness, sudden death, etc.'),
+          location: str('Where: farm name, nearest town, district, GPS, or the farmer\'s own description'),
+          how_to_find: str('Directions / landmarks to reach the place in the bush'),
+          affected_count: str('How many animals are affected (number or "a few"/"many")'),
+          dead_count: str('How many have died, if any'),
+          onset: str('When it started and how fast it is spreading'),
+          suspected_disease: str('A disease the farmer names or you reasonably infer (record, do not diagnose or alarm)'),
+          recent_movement: str('Recent animal movement/contact: auctions, new stock, shared grazing'),
+          identifying_traits: str('Markings, ear tags, breed -- anything to identify the animals'),
+          access_notes: str('Access/travel notes: gate, road condition, 4x4 needed, permission'),
+          farmer_available: str('Will the farmer be there on arrival? When are they reachable?'),
+          contact_fallback: str('Who else to contact / another number if the farmer is unreachable'),
+          photos: str('Note that the farmer sent a photo (set to a short description). Each call ADDS a new photo note -- if more than one photo arrives, call again with a description of the new one; earlier descriptions are kept, never overwritten.'),
+          audio: str('Note that the farmer sent a voice note (set to a short description or transcription). Each call ADDS a new note -- if more than one voice note arrives, call again; earlier notes are kept, never overwritten.'),
+          notes: str('Anything else worth recording for the organisers'),
+          present_person: str('Who is with the animals right now, if not the owner (e.g. a relative, herder, neighbour)'),
+          present_person_relation: str('How the present person is linked to the owner: owner, relative, herder, or neighbour'),
+          owner_name: str("The animals' owner's name, if the worker learns it and the owner is not present"),
+          owner_contact: str("A number to reach the owner, if the worker learns it and the owner is not present"),
+          lat: { type: 'number', description: 'Latitude for the organisers\' map. If the worker reads out real GPS coordinates, use those exactly. Otherwise, use your OWN knowledge to give your best estimate for the place described (a named town, farm, or landmark you can place) -- this is how the case gets a map point at all, so estimate confidently when the description is identifiable; leave both lat and lon out only when the place genuinely cannot be placed from what was said.' },
+          lon: { type: 'number', description: 'Longitude, alongside lat -- your own best-effort estimate when no exact GPS was given, using your own knowledge of the place described.' },
+          sites: str('ONLY when the worker describes a SECOND distinct place/herd within the SAME visit (not a separate outbreak elsewhere -- use case_new for that): a short plain-text note of the second site, e.g. "5 goats down the road at the old kraal, also drooling". The main species/location fields above stay the first/primary site; this adds the second one alongside it without losing it. Each call with this set ADDS one more site note.'),
         },
+        required: ['id'],
       },
-      handler: async ({ id, lat, lon, ...fields }, ctx) => {
+      async ({ id, lat, lon, ...fields }, ctx) => {
         // Bind server-side to the turn's active case -- same discipline case_stage
         // already applies. A model error or prompt-injected inbound text naming
         // another case's ref must never be able to write into a stranger's case.
@@ -338,47 +324,35 @@ export function buildCaseToolset(storeOrNull) {
           : `recorded report fields: ${fieldsRecorded.join(', ')}`
         await store().appendEvent(id, { kind: 'action', actor: 'agent', text, data: { ...incoming, ...(hasLatLon ? { lat, lon } : {}), ...(corrections.length ? { corrections } : {}) } })
         return { ok: true, report: res.report, fieldsRecorded }
+      }),
+    defTool('case_observe', 'cases',
+      'Record an observation or internal note on the case timeline WITHOUT replying to the contact. Use for triage reasoning, flags, or anything an operator should see.',
+      {
+        type: 'object',
+        properties: { id: str('Case id'), text: str('The observation') },
+        required: ['id', 'text'],
       },
-    },
-    {
-      name: 'case_observe',
-      toolset: 'cases',
-      schema: {
-        name: 'case_observe',
-        description: 'Record an observation or internal note on the case timeline WITHOUT replying to the contact. Use for triage reasoning, flags, or anything an operator should see.',
-        parameters: {
-          type: 'object',
-          properties: { id: str('Case id'), text: str('The observation') },
-          required: ['id', 'text'],
-        },
-      },
-      handler: async ({ id, text }) => {
+      async ({ id, text }) => {
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text })
         return { ok: true }
-      },
-    },
+      }),
     // (case_intent was deleted: it was a record-only stub whose INTENT-DECLARED
     // marker nothing read after the pure-LLM strip -- an enquiry declared through it
     // produced NOTHING. The prompt now directs the model straight to the real data
     // tools: case_today / case_mine / case_list / case_get. case_stage stays -- the
     // dstate loop DOES read its STAGE-DECLARED marker.)
-    {
-      name: 'case_transition',
-      toolset: 'cases',
-      schema: {
-        name: 'case_transition',
-        description: 'Move the case to a new workflow stage. Valid targets depend on current stage (new->triaging->in_progress->waiting->resolved->closed, with reopen paths). Call case_get first if unsure. Honour the case autonomy setting.',
-        parameters: {
-          type: 'object',
-          properties: {
-            id: str('Case id'),
-            to: str('Target stage', { enum: DEFAULT_STAGE_VALUES }),
-            reason: str('Why you are transitioning (recorded on the timeline)'),
-          },
-          required: ['id', 'to'],
+    defTool('case_transition', 'cases',
+      'Move the case to a new workflow stage. Valid targets depend on current stage (new->triaging->in_progress->waiting->resolved->closed, with reopen paths). Call case_get first if unsure. Honour the case autonomy setting.',
+      {
+        type: 'object',
+        properties: {
+          id: str('Case id'),
+          to: str('Target stage', { enum: DEFAULT_STAGE_VALUES }),
+          reason: str('Why you are transitioning (recorded on the timeline)'),
         },
+        required: ['id', 'to'],
       },
-      handler: async ({ id, to, reason = '' }) => {
+      async ({ id, to, reason = '' }) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         if (c.autonomy === 'observe') return { error: 'case autonomy is "observe"; transitions are operator-only' }
@@ -388,32 +362,20 @@ export function buildCaseToolset(storeOrNull) {
         } catch (e) {
           return { error: e.message }
         }
-      },
-    },
-    {
-      name: 'case_transitions_available',
-      toolset: 'cases',
-      schema: {
-        name: 'case_transitions_available',
-        description: 'List the workflow stages you are allowed to move this case to right now.',
-        parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
-      },
-      handler: async ({ id }) => {
+      }),
+    defTool('case_transitions_available', 'cases',
+      'List the workflow stages you are allowed to move this case to right now.',
+      { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
+      async ({ id }) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const avail = store().availableTransitions(c, AGENT_USER)
         return { current: c.status, available: avail }
-      },
-    },
-    {
-      name: 'case_link_suggestions',
-      toolset: 'cases',
-      schema: {
-        name: 'case_link_suggestions',
-        description: 'Find OTHER open cases that look like they may describe the same real-world situation as this one -- same place, same animals, a shared contact or fallback number, reported around the same time. Returns ranked candidates with the reasons for each, strongest first, for a human to review -- this never merges anything itself; only an operator decides whether two reports should become one case.',
-        parameters: { type: 'object', properties: { id: str('Case id to find matches for'), limit: { type: 'number', default: 5 } }, required: ['id'] },
-      },
-      handler: async ({ id, limit = 5 }) => {
+      }),
+    defTool('case_link_suggestions', 'cases',
+      'Find OTHER open cases that look like they may describe the same real-world situation as this one -- same place, same animals, a shared contact or fallback number, reported around the same time. Returns ranked candidates with the reasons for each, strongest first, for a human to review -- this never merges anything itself; only an operator decides whether two reports should become one case.',
+      { type: 'object', properties: { id: str('Case id to find matches for'), limit: { type: 'number', default: 5 } }, required: ['id'] },
+      async ({ id, limit = 5 }) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const { suggestLinks } = await import('./correlate.js')
@@ -424,8 +386,7 @@ export function buildCaseToolset(storeOrNull) {
             && !((o.tags || '').split(',').map(s => s.trim()).includes('merged')))
         const suggestions = suggestLinks(slimCase(c), pool.map(slimCase)).slice(0, limit)
         return { count: suggestions.length, suggestions }
-      },
-    },
+      }),
     // case_merge is deliberately NOT exposed here. Folding two reports together
     // is a judgment about whether they describe the same real-world situation --
     // exactly the kind of call this system leaves to a human working from the
@@ -434,54 +395,41 @@ export function buildCaseToolset(storeOrNull) {
     // store.mergeCases directly as the operator, entirely independent of this
     // toolset; case_link_suggestions below still lets the agent surface a
     // possible match for a human to review, it just never acts on it.
-    {
-      name: 'case_split',
-      toolset: 'cases',
-      schema: {
-        name: 'case_split',
-        description: 'Carve a set of timeline events out of a case into a NEW case, when one thread actually holds TWO separate outbreaks (e.g. a contact reported a second, unrelated sick herd). The named events move to the new case; both are linked. Get event ids from case_get.',
-        parameters: {
-          type: 'object',
-          properties: {
-            id: str('Case id to split FROM'),
-            event_ids: { type: 'array', items: { type: 'string' }, description: 'Ids of the events to move into the new case' },
-            subject: str('Short title for the new case'),
-            reason: str('Why these belong to a separate outbreak (recorded on both timelines)'),
-          },
-          required: ['id', 'event_ids'],
+    defTool('case_split', 'cases',
+      'Carve a set of timeline events out of a case into a NEW case, when one thread actually holds TWO separate outbreaks (e.g. a contact reported a second, unrelated sick herd). The named events move to the new case; both are linked. Get event ids from case_get.',
+      {
+        type: 'object',
+        properties: {
+          id: str('Case id to split FROM'),
+          event_ids: { type: 'array', items: { type: 'string' }, description: 'Ids of the events to move into the new case' },
+          subject: str('Short title for the new case'),
+          reason: str('Why these belong to a separate outbreak (recorded on both timelines)'),
         },
+        required: ['id', 'event_ids'],
       },
-      handler: async ({ id, event_ids, subject = '', reason = '' }) => {
+      async ({ id, event_ids, subject = '', reason = '' }) => {
         const res = await store().splitCase(id, event_ids, { subject, reason }, AGENT_USER)
         if (res.error === 'observe') return { error: 'case autonomy is "observe"; splitting is operator-only' }
         if (res.error) return { error: res.error }
         return { ok: true, movedEvents: res.movedEvents, newCase: slimCase(res.newCase) }
-      },
-    },
-    {
-      name: 'case_health',
-      toolset: 'cases',
-      schema: {
-        name: 'case_health',
-        description: 'Check whether a case is going wrong over time -- stale (no activity), stuck in a stage too long, an unanswered request for a person, an abandoned intake with on-site facts still missing, or resolved-but-never-closed. Returns the current guardrail breaches with how long each has been true. Use it to decide what needs attention.',
-        parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
-      },
-      handler: async ({ id }) => {
+      }),
+    defTool('case_health', 'cases',
+      'Check whether a case is going wrong over time -- stale (no activity), stuck in a stage too long, an unanswered request for a person, an abandoned intake with on-site facts still missing, or resolved-but-never-closed. Returns the current guardrail breaches with how long each has been true. Use it to decide what needs attention.',
+      { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
+      async ({ id }) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const { classifyCaseHealth } = await import('./case-health.js')
         const breaches = classifyCaseHealth(c, Date.now())
         return { id, status: c.status, healthy: breaches.length === 0, breaches }
-      },
-    },
+      }),
     // ---- worker-enquiry surface: answer FOR the asking worker (ctx.author), scoped
     // and PII-free (enquiryRow). ctx carries {author, principal, activeCaseRef} that
     // casey builds per turn in gateway-hooks; scoping is by the assignee owner field.
-    {
-      name: 'case_mine',
-      toolset: 'cases',
-      schema: { name: 'case_mine', description: "List the asking worker's OWN open cases (their itinerary). PII-free.", parameters: { type: 'object', properties: { limit: { type: 'number', default: 25 } } } },
-      handler: async ({ limit = 25 }, ctx) => {
+    defTool('case_mine', 'cases',
+      "List the asking worker's OWN open cases (their itinerary). PII-free.",
+      { type: 'object', properties: { limit: { type: 'number', default: 25 } } },
+      async ({ limit = 25 }, ctx) => {
         // Scope by REPORTER, not assignee: a worker's cases are the ones they reported
         // (the per-contact external_id 'channel:author' or the bare author), never an
         // operator assignee -- an assignee scope returned nothing for the asking worker.
@@ -489,45 +437,37 @@ export function buildCaseToolset(storeOrNull) {
         const rows = await mineRows(store(), ctx, limit)
         if (rows?.error) return rows
         return { count: rows.length, cases: rows.map(enquiryRow) }
-      },
-    },
-    {
-      name: 'case_today',
-      toolset: 'cases',
-      schema: { name: 'case_today', description: "List cases active today for the asking worker (today's list). PII-free.", parameters: { type: 'object', properties: { limit: { type: 'number', default: 25 } } } },
-      handler: async ({ limit = 25 }, ctx) => {
+      }),
+    defTool('case_today', 'cases',
+      "List cases active today for the asking worker (today's list). PII-free.",
+      { type: 'object', properties: { limit: { type: 'number', default: 25 } } },
+      async ({ limit = 25 }, ctx) => {
         // The worker's OWN open cases, most-recently-active first (recency-sorted) --
         // "today" is the practical itinerary of what is live for them. Reporter-scoped.
         const rows = await mineRows(store(), ctx, limit)
         if (rows?.error) return rows
         return { count: rows.length, cases: rows.map(enquiryRow) }
-      },
-    },
-    {
-      // Casual, self-reported location check-in for a field worker -- DISTINCT from
-      // a CASE's lat/lon (an animal-report location, see case_report). This is the
-      // WORKER's own current position, a live coverage/dispatch signal: it shows
-      // them on the operator map (dashboard-worker-location-map-layer) so a team
-      // can direct/dispatch them, and lets a later "anything near me" enquiry use
-      // it as the near-lookup origin (near-me-lookup-for-field-workers) without
-      // re-describing their location every time. field_worker-tier only (gated by
-      // gateByTier below like every other non-report tool) -- a casual public
-      // reporter has no reason to broadcast standing location.
-      name: 'case_checkin',
-      toolset: 'cases',
-      schema: {
-        name: 'case_checkin',
-        description: "Record the FIELD WORKER's own current location (not an animal report's location) -- call this when they say where they are now, e.g. 'I'm at the clinic', 'just arrived at the Bela-Bela farm', or share GPS. Shows them on the team's map and lets a later 'anything near me' question use this as the starting point.",
-        parameters: {
-          type: 'object',
-          properties: {
-            lat: { type: 'number', description: 'Latitude of where the worker is now (their own best estimate for a described place, or exact if they shared GPS)' },
-            lon: { type: 'number', description: 'Longitude of where the worker is now' },
-          },
-          required: ['lat', 'lon'],
+      }),
+    // Casual, self-reported location check-in for a field worker -- DISTINCT from
+    // a CASE's lat/lon (an animal-report location, see case_report). This is the
+    // WORKER's own current position, a live coverage/dispatch signal: it shows
+    // them on the operator map (dashboard-worker-location-map-layer) so a team
+    // can direct/dispatch them, and lets a later "anything near me" enquiry use
+    // it as the near-lookup origin (near-me-lookup-for-field-workers) without
+    // re-describing their location every time. field_worker-tier only (gated by
+    // gateByTier below like every other non-report tool) -- a casual public
+    // reporter has no reason to broadcast standing location.
+    defTool('case_checkin', 'cases',
+      "Record the FIELD WORKER's own current location (not an animal report's location) -- call this when they say where they are now, e.g. 'I'm at the clinic', 'just arrived at the Bela-Bela farm', or share GPS. Shows them on the team's map and lets a later 'anything near me' question use this as the starting point.",
+      {
+        type: 'object',
+        properties: {
+          lat: { type: 'number', description: 'Latitude of where the worker is now (their own best estimate for a described place, or exact if they shared GPS)' },
+          lon: { type: 'number', description: 'Longitude of where the worker is now' },
         },
+        required: ['lat', 'lon'],
       },
-      handler: async ({ lat, lon }, ctx) => {
+      async ({ lat, lon }, ctx) => {
         if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
           return { error: 'lat/lon must be finite numbers in range (lat -90..90, lon -180..180)' }
         }
@@ -541,27 +481,23 @@ export function buildCaseToolset(storeOrNull) {
           last_location_lat: lat, last_location_lon: lon, last_location_at: new Date().toISOString(),
         }, { id: 'casey-agent', role: 'agent' })
         return { ok: true }
-      },
-    },
-    {
-      // The agent declares its conversation phase; the gateway reads the STAGE-DECLARED
-      // observation back and applies the durable dstate transition. Append-only, keeps
-      // the state I/O in casey. Mirrors freddie's case_stage.
-      name: 'case_stage',
-      toolset: 'cases',
-      schema: { name: 'case_stage', description: 'Declare which phase the conversation is now in: greeting (a warm opener), gathering (collecting the report), enquiring (the worker asked about their work), answering (a general question), complete (the report is on record), handoff (a person is needed), or closed (they asked to stop). Call this when the phase changes so you keep your place and never repeat a question.', parameters: { type: 'object', properties: { to: str('Conversation phase', { enum: CONVERSATION_PHASES }) }, required: ['to'] } },
-      handler: async ({ to }, ctx) => {
+      }),
+    // The agent declares its conversation phase; the gateway reads the STAGE-DECLARED
+    // observation back and applies the durable dstate transition. Append-only, keeps
+    // the state I/O in casey. Mirrors freddie's case_stage.
+    defTool('case_stage', 'cases',
+      'Declare which phase the conversation is now in: greeting (a warm opener), gathering (collecting the report), enquiring (the worker asked about their work), answering (a general question), complete (the report is on record), handoff (a person is needed), or closed (they asked to stop). Call this when the phase changes so you keep your place and never repeat a question.',
+      { type: 'object', properties: { to: str('Conversation phase', { enum: CONVERSATION_PHASES }) }, required: ['to'] },
+      async ({ to }, ctx) => {
         const id = ctx?.activeCaseId
         if (!id) return { error: 'no active case' }
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: `STAGE-DECLARED ${to}` })
         return { ok: true, stage: to }
-      },
-    },
-    {
-      name: 'case_new',
-      toolset: 'cases',
-      schema: { name: 'case_new', description: 'Open a NEW case for the worker and bind it active. Use ONLY when the worker is clearly starting a fresh report (a different animal/place/incident), never to auto-open one.', parameters: { type: 'object', properties: { subject: str('Optional short subject') } } },
-      handler: async ({ subject }, ctx) => {
+      }),
+    defTool('case_new', 'cases',
+      'Open a NEW case for the worker and bind it active. Use ONLY when the worker is clearly starting a fresh report (a different animal/place/incident), never to auto-open one.',
+      { type: 'object', properties: { subject: str('Optional short subject') } },
+      async ({ subject }, ctx) => {
         const author = ctx?.author || ctx?.principal?.id
         if (!store().createCase) return { error: 'store does not support explicit case creation' }
         // Reuse THIS turn's own (channel, external_id) -- the real conversation
@@ -576,24 +512,18 @@ export function buildCaseToolset(storeOrNull) {
         const c = await store().createCase({ channel, external_id, subject: subject || '', contact_id: current?.contact_id || '' })
         await store().appendEvent(c.id, { kind: 'note', actor: 'system', text: `case explicitly opened for a fresh report by ${author || 'unknown'}` })
         return { ok: true, activeCase: enquiryRow(c) }
-      },
-    },
-    {
-      // Ownership-gated re-bind of the conversation's active case by ref -- lets a
-      // worker with multiple open cases explicitly say "go back to CASE-1042" or
-      // "switch to the goat case" and have the agent actually target it, instead
-      // of every subsequent case_report/case_stage call silently continuing to
-      // hit whatever case findOrCreateCase happened to bind this turn. Ownership
-      // gated the same way case_get/mineRows already are: a worker may only
-      // switch onto a case they themselves reported.
-      name: 'case_switch',
-      toolset: 'cases',
-      schema: {
-        name: 'case_switch',
-        description: 'Re-bind the conversation to a DIFFERENT one of the worker\'s own open cases by ref (e.g. "CASE-1042"). Use when the worker names a case they want to continue, other than the one currently active. Confirms the switch back to them.',
-        parameters: { type: 'object', properties: { ref: str('The case ref to switch to, e.g. CASE-1042') }, required: ['ref'] },
-      },
-      handler: async ({ ref }, ctx) => {
+      }),
+    // Ownership-gated re-bind of the conversation's active case by ref -- lets a
+    // worker with multiple open cases explicitly say "go back to CASE-1042" or
+    // "switch to the goat case" and have the agent actually target it, instead
+    // of every subsequent case_report/case_stage call silently continuing to
+    // hit whatever case findOrCreateCase happened to bind this turn. Ownership
+    // gated the same way case_get/mineRows already are: a worker may only
+    // switch onto a case they themselves reported.
+    defTool('case_switch', 'cases',
+      'Re-bind the conversation to a DIFFERENT one of the worker\'s own open cases by ref (e.g. "CASE-1042"). Use when the worker names a case they want to continue, other than the one currently active. Confirms the switch back to them.',
+      { type: 'object', properties: { ref: str('The case ref to switch to, e.g. CASE-1042') }, required: ['ref'] },
+      async ({ ref }, ctx) => {
         const author = ctx?.author || ctx?.principal?.id
         if (!author) return { error: 'no author on this turn -- cannot resolve ownership for a switch' }
         const target = typeof store().getCaseByRef === 'function'
@@ -604,17 +534,15 @@ export function buildCaseToolset(storeOrNull) {
           return { error: `case ${ref} does not belong to you -- cannot switch to it` }
         }
         return { ok: true, activeCase: enquiryRow(target), confirm: `Switched to ${target.ref}.` }
-      },
-    },
-    {
-      name: 'case_stop',
-      toolset: 'cases',
-      schema: { name: 'case_stop', description: 'The person asked to STOP receiving messages (opt out). Records the opt-out. Use ONLY on a clear opt-out.', parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] } },
-      // No autonomy=observe guard here, unlike case_update/case_transition: opt-out
-      // is an irreversible LEGAL control (matching gateway-hooks.js's deterministic
-      // STOP short-circuit), not a content edit -- it must register regardless of
-      // autonomy, so an observe-mode contact's opt-out is never silently dropped.
-      handler: async ({ id }, ctx) => {
+      }),
+    // No autonomy=observe guard here, unlike case_update/case_transition: opt-out
+    // is an irreversible LEGAL control (matching gateway-hooks.js's deterministic
+    // STOP short-circuit), not a content edit -- it must register regardless of
+    // autonomy, so an observe-mode contact's opt-out is never silently dropped.
+    defTool('case_stop', 'cases',
+      'The person asked to STOP receiving messages (opt out). Records the opt-out. Use ONLY on a clear opt-out.',
+      { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
+      async ({ id }, ctx) => {
         // Same server-side active-case binding as case_report: an irreversible
         // control is exactly the kind of write that must never land on the wrong
         // case from a model mistake or injected text naming another case's ref.
@@ -640,15 +568,13 @@ export function buildCaseToolset(storeOrNull) {
         await store().updateCase(id, { tags: tags.join(',') })
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: 'OPT-OUT: the person asked to stop; no more automatic replies.' })
         return { ok: true }
-      },
-    },
-    {
-      name: 'case_handoff',
-      toolset: 'cases',
-      schema: { name: 'case_handoff', description: 'The person wants a real person / operator to help. Flags the case for a human. Use on a clear ask for a person.', parameters: { type: 'object', properties: { id: str('Case id') }, required: ['id'] } },
-      // Same reasoning as case_stop: a handoff request is an irreversible legal
-      // control, not a content edit, so it deliberately bypasses the observe guard.
-      handler: async ({ id }, ctx) => {
+      }),
+    // Same reasoning as case_stop: a handoff request is an irreversible legal
+    // control, not a content edit, so it deliberately bypasses the observe guard.
+    defTool('case_handoff', 'cases',
+      'The person wants a real person / operator to help. Flags the case for a human. Use on a clear ask for a person.',
+      { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
+      async ({ id }, ctx) => {
         // Fail CLOSED: a missing ctx.activeCaseId is itself a rejection condition,
         // never a bypass -- see case_report's handler for the full reasoning.
         if (!ctx?.activeCaseId || id !== ctx.activeCaseId) {
@@ -671,8 +597,7 @@ export function buildCaseToolset(storeOrNull) {
         await store().updateCase(id, { tags: tags.join(',') })
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: 'HANDOFF REQUESTED: the person asked for a real person.' })
         return { ok: true }
-      },
-    },
+      }),
   ]
   return tools.map(gateByTier)
 }

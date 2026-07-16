@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="casey">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>casey - cases</title>
+<link rel="stylesheet" href="/design/colors_and_type.css">
+<link rel="stylesheet" href="/design/app-shell.css">
+<link rel="stylesheet" href="/design/editor-primitives.css">
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/vendor/leaflet.markercluster/MarkerCluster.css">
+<link rel="stylesheet" href="/vendor/leaflet.markercluster/MarkerCluster.Default.css">
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script src="/vendor/leaflet.markercluster/leaflet.markercluster.js"></script>
+<div id="conn" class="conn">Connection lost - retrying...</div>
+<div id="handoff" class="handoff" title="Click to open the person who needs help">
+  <span id="handoff-msg"></span>
+  <button class="x" id="handoff-dismiss" title="Hide this message">Hide</button>
+</div>
+<div class="wrap" id="wrap">
+  <div class="list">
+    <div class="topbar">
+      <h1>casey <span class="counts" id="counts"></span>
+        <span class="aihealth" id="aihealth" title="Is the AI helper connected?" style="margin-left:12px;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600"></span>
+        <span class="aihealth" id="runtime-pill" title="Is the casey process healthy?" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;display:none"></span>
+        <span class="aihealth" id="guardrails-pill" title="Latest health-guardrail sweep" style="margin-left:6px;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;display:none"></span>
+        <button class="icon-btn" id="help" title="What does this screen mean?" aria-label="Help: what does this screen mean?" style="margin-left:auto">?</button>
+        <button class="icon-btn" id="new-case-btn" title="Add a case manually (no WhatsApp or Discord needed)">+ New</button>
+        <button class="icon-btn" id="export-btn" title="Download all cases as a spreadsheet (CSV)">Export</button>
+        <button class="icon-btn" id="sweep-btn" title="Run health-guardrail sweep now (re-evaluates all cases for time-based issues)">Sweep</button>
+        <button class="icon-btn" id="stats-btn" title="Show fill-rate comparison by intake source">Stats</button>
+        <button class="icon-btn" id="settings-btn" title="Tune how long casey waits before flagging a case">Settings</button>
+        <button class="icon-btn" id="metrics-btn" title="Response times, backlog and trend">Metrics</button>
+        <button class="icon-btn" id="clusters-btn" title="Cases that may describe the same real-world situation, grouped for you to review">Related reports</button>
+        <button class="icon-btn" id="distribution-btn" title="Species and symptoms across all open reports, ranked by how often they were actually reported">Distribution</button>
+        <button class="icon-btn" id="geo-btn" title="Where reports are concentrating">Hotspots</button>
+        <button class="icon-btn" id="map-btn" title="Every case pinned on a map: status, type, species, outbreak links, operator coverage">Map</button>
+        <button class="icon-btn" id="activity-btn" title="Everything that has happened, newest first">Activity</button>
+        <button class="icon-btn" id="handover-btn" title="Start-of-shift digest: what needs you, open handoffs, unsent drafts, what changed">Shift</button>
+        <button class="icon-btn" id="offline-btn" title="Cases that came in while casey could not answer -- waiting for a person">AI offline</button>
+        <button class="icon-btn" id="team-btn" title="Who is holding what: open cases per person, stale claims, replies today, response speed">Team</button>
+        <button class="icon-btn" id="contacts-btn" title="Everyone who has reported: their access tier, and a promote/demote control">Reporters</button>
+        <select id="op-picker" title="Who you are -- attributed on your actions" style="display:none"></select>
+        <button class="icon-btn" id="focus-btn" title="Focus mode: show only the ranked Needs-you-now list, lighten background polling (good on a phone)">Focus</button>
+        <button class="icon-btn" id="refresh" title="Refresh now">Refresh</button>
+        <button class="icon-btn" id="theme" title="Toggle light/dark">dark</button>
+        <button class="icon-btn" id="simple" title="Plain-language mode: show friendly stage names" aria-label="Toggle plain-language mode">Aa</button>
+      </h1>
+      <div class="filters">
+        <input id="q" placeholder="Search ref, subject, contact... ( / )" autocomplete="off">
+        <select id="statusf"><option value="">all stages</option></select>
+        <select id="channelf" title="Filter by channel"><option value="">all channels</option></select>
+        <select id="sourcef" title="Filter by intake source"><option value="">all sources</option><option value="manual">Manual (operator)</option><option value="channel">Channel (AI)</option><option value="public_form">Public form</option></select>
+        <button class="icon-btn" id="mine-btn" title="Show only the cases you have claimed (pick who you are first, top-right)">Mine</button>
+        <select id="viewsf" title="Saved views: a named bundle of your current filters. Pick one to apply, or Save view to keep the current set."><option value="">saved views</option></select>
+        <button class="icon-btn" id="view-save" title="Save the current filters (search, stage, channel, source, Mine, Focus) as a named view you can return to or share by link">Save view</button>
+      </div>
+    </div>
+    <div class="stats-panel" id="stats-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Fill-rate by intake source</div>
+      <div class="stats-grid" id="stats-grid"><div class="empty" style="grid-column:1/-1;padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="settings-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">How long before casey flags a case</div>
+      <div id="settings-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="metrics-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <div style="font-size:12px;font-weight:700;color:var(--muted)">How the team is doing (last 14 days)</div>
+        <span><a id="report-csv" class="icon-btn" style="text-decoration:none" href="/api/report.csv?days=14" target="_blank">Export CSV</a>
+        <a id="report-html" class="icon-btn" style="text-decoration:none;margin-left:4px" href="/api/report.html?days=14" target="_blank">Printable</a></span>
+      </div>
+      <div id="metrics-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="clusters-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Cases that look related (for you to review -- casey never merges these itself)</div>
+      <div id="clusters-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="distribution-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Species and symptoms actually reported, across open cases -- no inference, just counts</div>
+      <div id="distribution-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="geo-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Hotspots by area</div>
+      <div id="geo-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="map-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:6px">
+        <div style="font-size:12px;font-weight:700;color:var(--muted)">Case map</div>
+        <div class="map-filters">
+          <select id="map-species"><option value="">all species</option></select>
+          <select id="map-type"><option value="">all types</option></select>
+          <select id="map-status"><option value="">all stages</option></select>
+          <select id="map-days"><option value="0">all time</option><option value="90">last 90 days</option><option value="30">last 30 days</option><option value="7">last 7 days</option></select>
+          <button class="icon-btn" id="map-coverage-btn" title="Toggle operator working-area coverage overlay">Coverage</button>
+          <button class="icon-btn" id="map-clusters-btn" title="Toggle links between cases that look related">Related links</button>
+          <button class="icon-btn" id="map-workers-btn" title="Toggle field-worker live location check-ins (for direction/dispatch)">Field workers</button>
+        </div>
+      </div>
+      <div class="map-legend" id="map-legend"></div>
+      <div class="map-wrap" id="map-canvas"><div class="empty" style="padding:8px 0">Loading...</div></div>
+      <div id="map-unresolved" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
+      <div id="map-unresolved-list" style="font-size:12px;margin-top:4px"></div>
+    </div>
+    <div class="stats-panel" id="activity-panel">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+        <div style="font-size:12px;font-weight:700;color:var(--muted)">Activity (newest first)</div>
+        <select id="act-kind"><option value="">All kinds</option><option value="inbound">Inbound</option><option value="outbound">Outbound</option><option value="transition">Stage change</option><option value="note">Note</option><option value="observation">Observation</option><option value="action">Action</option></select>
+        <select id="act-actor"><option value="">Anyone</option><option value="agent">casey</option><option value="operator">Operator</option><option value="contact">Contact</option><option value="system">System</option></select>
+      </div>
+      <div id="activity-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="handover-panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <div style="font-size:12px;font-weight:700;color:var(--muted)">Shift handover</div>
+        <span><button id="start-shift-btn" class="icon-btn" title="Mark the start of your shift -- 'what changed' is measured from now">Start my shift</button>
+        <a id="handover-print" class="icon-btn" style="text-decoration:none;margin-left:4px" href="/api/handover?format=html" target="_blank">Printable</a></span>
+      </div>
+      <div id="handover-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="offline-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Came in while casey was offline (waiting for a person)</div>
+      <div id="offline-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="team-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Who is holding what (worst first)</div>
+      <div id="team-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="stats-panel" id="contacts-panel">
+      <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:4px">Everyone who has reported -- promote a field worker to give them agentic case access and let them check in with their location</div>
+      <div id="contacts-body"><div class="empty" style="padding:8px 0">Loading...</div></div>
+    </div>
+    <div class="triage" id="triage" role="list" aria-label="Needs you now"></div>
+    <div class="bulk-bar" id="bulk-bar" style="display:none">
+      <label class="bulk-all"><input type="checkbox" id="bulk-all"> <span id="bulk-count">0 selected</span></label>
+      <button class="icon-btn" id="bulk-claim">Claim</button>
+      <select id="bulk-stage" title="Move selected to a stage"><option value="">Move to...</option></select>
+      <button class="icon-btn" id="bulk-tag">Tag</button>
+      <button class="icon-btn" id="bulk-untag">Untag</button>
+      <button class="icon-btn" id="bulk-note">Note</button>
+      <button class="icon-btn" id="bulk-draft-approve" title="Send each selected case's pending draft as composed">Send drafts</button>
+      <button class="icon-btn" id="bulk-draft-discard" title="Discard each selected case's pending draft">Discard drafts</button>
+      <button class="icon-btn" id="bulk-clear" title="Clear selection">Clear</button>
+    </div>
+    <div class="caselist" id="cases" role="list" aria-label="Cases"><div class="empty">Loading cases...</div></div>
+  </div>
+  <div class="detail" id="detail" tabindex="-1"><p class="empty">Select a case to observe, edit, reply, or override its workflow stage.</p></div>
+</div>
+<div class="intake-ovl" id="intake-ovl" role="dialog" aria-modal="true" aria-labelledby="intake-title">
+  <div class="intake-card">
+    <h2 id="intake-title">New case</h2>
+    <div id="intake-step-bar" class="intake-step-bar" style="display:none">
+      <div id="step-dot-1" class="step-dot active">1</div>
+      <div id="step-line-1" class="step-line"></div>
+      <div id="step-dot-2" class="step-dot">2</div>
+      <div id="step-line-2" class="step-line"></div>
+      <div id="step-dot-3" class="step-dot">3</div>
+      <span id="intake-step-label" style="margin-left:4px">Step 1 of 3: Contact details</span>
+    </div>
+    <div id="intake-fill-bar" class="fill-bar" style="display:none">
+      <span id="intake-fill-label"></span>
+      <div class="bar"><div class="fill" id="intake-fill-pct" style="width:0%"></div></div>
+    </div>
+    <div id="intake-contact-fields">
+      <label>Contact name (optional)</label><input id="int-name" placeholder="e.g. Johannes">
+      <label>Contact phone (optional)</label><input id="int-phone" placeholder="+27 82 123 4567">
+      <label>Subject (what is the report about?)</label><input id="int-subject" placeholder="e.g. Sick cattle near Musina">
+    </div>
+    <div id="intake-report-fields"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button id="intake-next" style="display:none">Next</button>
+      <button id="intake-submit">Save</button>
+      <button id="intake-back" style="display:none;background:transparent;color:var(--muted);border:1px solid var(--border)">Back</button>
+      <button id="intake-cancel" style="background:transparent;color:var(--muted);border:1px solid var(--border)">Cancel</button>
+    </div>
+    <p class="hint" id="intake-error" style="color:var(--danger);display:none"></p>
+  </div>
+</div>
+<div class="help-ovl" id="help-ovl">
+  <div class="help-card">
+    <h2>Welcome to casey</h2>
+    <p class="lead">casey watches your messages on WhatsApp and Discord and helps you answer them. Here is what this screen shows you, in plain words.</p>
+    <h3>What is each row?</h3>
+    <p>Each row on the left is one person who messaged you, and the whole story of what they need. Click a row to open it.</p>
+    <h3>What is the yellow dot?</h3>
+    <p><span class="swatch"></span> A yellow dot means this one is waiting for a person. casey will not answer it on its own. Open it, read it, and reply.</p>
+    <h3>The buttons when you open one</h3>
+    <ul>
+      <li><b>How urgent</b> - mark how important it is, so you know what to do first.</li>
+      <li><b>Who answers</b> - choose who replies to the person: casey on its own, casey writes a draft for you to send, or only you (casey just listens).</li>
+      <li><b>Reply to contact</b> - type a message and send it to the person yourself.</li>
+      <li><b>Change the stage</b> - move it along by hand, like marking it Done. The person is not told.</li>
+    </ul>
+    <h3>How do I answer someone?</h3>
+    <p>Open the row. Scroll to <b>Reply to contact</b>, type your message, and press <b>Send reply</b>. The person gets it on WhatsApp or Discord.</p>
+    <p class="hint">Tip: the <b>Aa</b> button at the top turns on plain-language labels everywhere.</p>
+    <h3>Keyboard shortcuts (for fast triage)</h3>
+    <ul class="keys">
+      <li><b>j</b> / <b>k</b> - move down / up the list</li>
+      <li><b>o</b> or <b>Enter</b> - open the highlighted case</li>
+      <li><b>c</b> - claim the open case as yours</li>
+      <li><b>e</b> - jump to the reply box</li>
+      <li><b>/</b> - search &nbsp; <b>n</b> - new case &nbsp; <b>Esc</b> - back / close</li>
+      <li><b>?</b> - show this help</li>
+    </ul>
+    <button id="onboard-again">Show me the quick start again</button>
+    <button id="help-close">Got it</button>
+    <p class="foot">You can open this help again any time with the <b>?</b> button at the top.</p>
+  </div>
+</div>
+<div class="help-ovl" id="onboard-ovl">
+  <div class="help-card">
+    <h2>Quick start - three things</h2>
+    <p class="lead">A new shift starts here. These three steps are all you need to begin.</p>
+    <ol>
+      <li><b>Pick who you are.</b> Use the name box at the top right so every reply and claim is recorded against you.</li>
+      <li><b>The "Needs you now" list is your queue.</b> It puts the cases that cannot wait at the top. Work it from the top down.</li>
+      <li><b>Claim a case before you reply.</b> Claiming tells the rest of the team you have it, so two people do not answer the same person.</li>
+    </ol>
+    <button id="onboard-close">Start working</button>
+    <p class="foot">You can see this again from the <b>?</b> help, under "Show me the quick start again".</p>
+  </div>
+</div>
+<div class="help-ovl" id="skills-ovl">
+  <div class="help-card">
+    <h2>Getting the hang of it</h2>
+    <p class="lead">A short checklist of the three moves that make a shift fast. Tick each one as you learn it -- this is just for you, kept on this device, and it will not nag you again once you finish or close it.</p>
+    <ul id="skills-list" class="skills-list"></ul>
+    <button id="skills-close">Close</button>
+    <p class="foot">Reopen this any time from the <b>?</b> help.</p>
+  </div>
+</div>
+<div id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+<script type="module" src="/app.js"></script>
+<script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{})</script>
+</body></html>

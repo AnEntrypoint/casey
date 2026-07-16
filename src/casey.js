@@ -15,6 +15,7 @@ import { setCaseStore, resetCaseStore } from './case-runtime.js'
 import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier, breachNotifier } from './gateway-hooks.js'
 import { sweepCases } from './case-sweep.js'
 import { ALL_HEALTH_TAGS } from './case-health.js'
+import { parseListEnv } from './safe.js'
 
 const CASE_HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
@@ -22,12 +23,7 @@ const CASE_HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 // only need the count of people EXPECTED to cover for the coverage-gap check, so a
 // tolerant count is enough: a malformed roster counts as no roster (never a crash).
 function rosterFromEnv(raw = process.env.CASEY_OPERATORS) {
-  const s = String(raw || '').trim()
-  if (!s) return []
-  if (s.startsWith('[')) {
-    try { const a = JSON.parse(s); return Array.isArray(a) ? a.filter(Boolean) : [] } catch { return [] }
-  }
-  return s.split(',').map(t => t.trim()).filter(Boolean)
+  return parseListEnv(raw)
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))

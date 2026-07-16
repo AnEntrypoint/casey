@@ -11,6 +11,13 @@
 // from here?". It holds no per-case state and runs no actor; it is a pure
 // decision surface built once from the same workflow graph thatcher uses. There
 // is therefore no second source of truth to drift.
+//
+// Distinct from conversation-state.js/conversation-spec.js: those track the
+// AGENT-DECLARED conversation PHASE (greeting/gathering/enquiring/.../closed,
+// via case_stage), a soft dstate FSM entirely separate from this file's
+// workflow STATUS (new/triaging/in_progress/...). Both are load-bearing and
+// intentionally independent -- a case's conv_state and its status can (and
+// routinely do) sit at different points in their respective graphs.
 
 import { createMachine } from 'xstate'
 

@@ -7,6 +7,13 @@
 // prompt, so the model knows where it is in the report arc -- never re-asking,
 // always advancing.
 //
+// Distinct from case-machine.js: that file is the TRANSITION-VALIDATION
+// AUTHORITY for a case's workflow STATUS (new/triaging/in_progress/...,
+// thatcher-owned). This file tracks the separate, agent-declared conversation
+// PHASE (greeting/gathering/enquiring/.../closed). Both are load-bearing and
+// intentionally independent -- see case-machine.js's own header for its side
+// of this boundary.
+//
 // Pattern B persistence (no separate file per case): the dstate bundle is
 // export()'d to a JSON blob stored on the thatcher case row (conv_state), and
 // importState(':memory:', blob) rehydrates it. This keeps the durable boundary the

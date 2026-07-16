@@ -10,17 +10,13 @@
 const SEC = 1000
 
 // thatcher persists event.data as a JSON string (case-store.appendEvent), and
-// store.listEvents returns it unparsed. Read it as an object either way: an object
-// passes through, a string is parsed, anything malformed is {} (never throws).
-// Without this, reads like data.from/data.by silently miss (a string has no such
-// key), mis-attributing dwell-per-stage and reply credit. Shared by workload.js.
-export function evData(e) {
-  const d = e?.data
-  if (d == null) return {}
-  if (typeof d === 'object') return d
-  if (typeof d === 'string') { try { return JSON.parse(d) || {} } catch { return {} } }
-  return {}
-}
+// store.listEvents returns it unparsed. evData() reads it as an object either
+// way -- an object passes through, a string is parsed, anything malformed is
+// {} (never throws). Without this, reads like data.from/data.by silently miss
+// (a string has no such key), mis-attributing dwell-per-stage and reply
+// credit. Shared by workload.js. Now defined in src/safe.js (casey's small
+// defensive-parsing module) and re-exported here for backward compatibility.
+export { evData } from './safe.js'
 
 // created_at is unix seconds; -> ms, or null if missing/corrupt (never throws).
 function evMs(e) {
