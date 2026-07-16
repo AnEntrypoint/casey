@@ -60,6 +60,7 @@ data/
 .gm/witness/
 .gm/long-gap-retry-state
 .gm/exec-spool/.gm-plugkit-stale.json
+.gm/memories/*.md.tmp-*
 .gm/disciplines/codeinsight/
 .gm/disciplines/codeinsight-vec/
 .gm/disciplines/codeinsight-manifest/
