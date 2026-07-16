@@ -646,7 +646,19 @@ export class Casey {
           // queuedRedrive marks this as a QUEUE re-drive (vs a boot resume): a
           // degraded turn then records an observation instead of an outbound so
           // the queued msgId is never positionally burned.
-          const msg = { from: c.external_id, text: ev.text || '', platform: c.channel, resume: true, queuedRedrive: true, raw: { channel_id: c.external_id, id, author: {} } }
+          //
+          // external_id is the CASE IDENTITY (conversationKey's own "container:author"
+          // shape on a multi-author channel -- see hooks/handler.js's conversationKey/
+          // replyTarget split) -- it is NOT a valid Discord channel snowflake on its
+          // own. replyTarget(msg) reads msg.raw.channel_id directly, so passing the
+          // combined external_id through unsplit sent every queued-redrive reply on a
+          // multi-author Discord channel to Discord as an invalid channel id (400
+          // Invalid Form Body, NUMBER_TYPE_COERCE) -- the queued reply silently never
+          // reached the contact. Recover the real container id (the part before the
+          // first ':'), falling back to the whole external_id for a 1:1 chat where
+          // conversationKey never inserted a colon.
+          const container = c.external_id.includes(':') ? c.external_id.split(':')[0] : c.external_id
+          const msg = { from: c.external_id, text: ev.text || '', platform: c.channel, resume: true, queuedRedrive: true, raw: { channel_id: container, id, author: {} } }
           try {
             const res = await handle.call(this.gateway, c.channel, msg)
             // A DEGRADED re-drive (the turn ended in the fallback path -- the agent
