@@ -507,6 +507,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // within a bounded number of extra round trips rather than doubling
     // every contact's wait time indefinitely.
     const MAX_TOOL_CHOICE_ATTEMPTS = 3
+    // A resume/queue re-drive (msg.resume) is retrying a turn already known to
+    // have failed before -- exempt it from the shared completion-health window
+    // (see llm.js's recordHealth doc) so a burst of boot-time redrives of old
+    // stuck cases can never gate a brand-new, unrelated contact's fresh message
+    // into the LLM-down queue.
+    const turnCallLLM = msg.resume ? (req) => callLLM(req, { recordHealth: false }) : callLLM
     let result, errored = false
     for (let attempt = 1; attempt <= MAX_TOOL_CHOICE_ATTEMPTS; attempt++) {
       try {
@@ -514,7 +520,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
           prompt,
           messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, { orient: convOrient }) }],
           sessionKey: `case:${fresh.id}`,
-          callLLM,
+          callLLM: turnCallLLM,
           // Nudge the weak model into its first classify/record tool call. freddie
           // applies tool_choice on ITERATION 0 ONLY (later iterations are model
           // choice), so this cannot break loop termination -- the model is still free

@@ -161,7 +161,21 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
     return inflight
   }
 
-  const callLLM = async (req) => {
+  // recordHealth: true for a live inbound turn (the default -- these ARE the
+  // completion-path health signal), false for a boot-time resume/redrive of a
+  // case already known to have failed before. A resume re-drive is, by
+  // definition, retrying past failures -- letting a burst of them (e.g. the
+  // boot-time resumePendingTurns sweep re-attempting several already-degraded
+  // cases in a row) dominate the small rolling window would poison the SAME
+  // gate that decides whether a brand-new, unrelated contact's fresh message
+  // gets queued instead of answered live. Witnessed live: two ancient stuck
+  // cases timing out during the boot resume sweep flipped completionHealth()
+  // to degraded just as a genuinely new "hi there" arrived seconds later, and
+  // it was queued even though the very next real turn succeeded in under a
+  // second. Resume turns still throw/succeed normally for their OWN caller
+  // (resumePendingTurns still sees a real degraded result) -- only the shared
+  // health window is exempted.
+  const callLLM = async (req, { recordHealth = true } = {}) => {
     const b = await ensure()
     if (!b) throw new Error('AI helper offline (provider unreachable); no reply sent')
     // Time the real turn so the health row sees completion-path latency. A throw
@@ -171,10 +185,10 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
     const t0 = clock()
     try {
       const r = await b(req)
-      recordTurn(clock() - t0, true)
+      if (recordHealth) recordTurn(clock() - t0, true)
       return r
     } catch (e) {
-      recordTurn(clock() - t0, false)
+      if (recordHealth) recordTurn(clock() - t0, false)
       throw e
     }
   }
