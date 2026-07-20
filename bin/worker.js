@@ -21,6 +21,30 @@ import { WORKER_MSG, PARENT_MSG, ipcSend } from '../src/supervisor-ipc.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+// Global crash net: Node's DEFAULT behavior for an unhandled rejection or a
+// synchronous uncaught exception ANYWHERE (a background timer, a fire-and-
+// forget promise not wrapped by casey.js's own _wrapInflight guard, a bug in
+// a dependency's own async interval) is to terminate the process immediately
+// -- silently, with no line in this worker's own log explaining why, since
+// the crash happens outside every try/catch this codebase wrote. Live-
+// witnessed: the worker vanished entirely mid-session with zero trace of the
+// cause, discoverable only by noticing the whole process tree was gone.
+// main().catch() below only covers a throw during the boot sequence itself;
+// this covers everything AFTER boot too. Log loud, tell the supervisor via
+// the same WORKER_MSG.FATAL channel a known boot failure already uses (so
+// the crash budget counts it and the supervisor's existing backoff/restart
+// takes over), then exit non-zero -- never swallow and keep running, since a
+// process that just had an unhandled rejection is in an unknown state and
+// continuing risks a worse silent failure than a clean, budgeted restart.
+function crashLoud(kind, err) {
+  const reason = (err && err.stack) || (err && err.message) || String(err)
+  console.error(`[worker] ${kind} (worker crashing):`, reason)
+  if (typeof process.send === 'function') { try { ipcSend(process, WORKER_MSG.FATAL, { reason: `${kind}: ${err && err.message || String(err)}` }) } catch { /* best-effort */ } }
+  process.exit(1)
+}
+process.on('uncaughtException', (err) => crashLoud('uncaughtException', err))
+process.on('unhandledRejection', (err) => crashLoud('unhandledRejection', err))
+
 // Minimal flag parse (the supervisor forks us with the same --flag value shape
 // the CLI uses). Unknown flags are ignored so the supervisor can pass extras.
 function parseFlags(argv) {
