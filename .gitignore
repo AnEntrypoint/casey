@@ -44,6 +44,9 @@ data/
 .gm/rs-learn.db
 .gm/rs-learn.db-shm
 .gm/rs-learn.db-wal
+.gm/gm.db
+.gm/gm.db-shm
+.gm/gm.db-wal
 .gm/learning-state.md
 .gm/git-block-counter.json
 .gm/next-step.md

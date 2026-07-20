@@ -137,6 +137,7 @@ export function connectDiscordReceive(adapter, { token = adapter.token, log = co
           if (p.t === 'READY') {
             sessionId = p.d.session_id
             resumeUrl = p.d.resume_gateway_url || adapter.gatewayUrl
+            log.info?.('[discord] gateway READY', { botUser: p.d?.user?.username || null })
             try { onConnect?.(p.d) } catch (e) { log.warn?.('[discord] onConnect callback failed', e.message) }
           }
           if (p.t === 'MESSAGE_CREATE') onMessageCreate(p.d)
