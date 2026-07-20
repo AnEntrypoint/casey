@@ -106,8 +106,8 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // small rolling window of {ms, ok}. The health row reads `degraded` from it, so
   // a slow/erroring brain shows degraded instead of online. `slowMs` is the
   // per-turn ceiling; `slowWindow` is how many recent turns we keep.
-  const recent = []                  // newest-last: { ms, ok }
-  const recordTurn = (ms, ok) => { recent.push({ ms, ok }); if (recent.length > slowWindow) recent.shift() }
+  const recent = []                  // newest-last: { ms, ok, at }
+  const recordTurn = (ms, ok) => { recent.push({ ms, ok, at: clock() }); if (recent.length > slowWindow) recent.shift() }
   // Degraded when the recent window has ENOUGH turns and ALL of them were slow
   // or failed -- one fast turn (a recovered provider) clears it. Conservative: a
   // mixed window (some fast) is still online, so a single slow turn never flips
@@ -124,10 +124,10 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // "sustained", not "one bad roll", intent the comment already promised.
   const MIN_SAMPLES_FOR_DEGRADED = 2
   const completionHealth = () => {
-    if (!recent.length) return { degraded: false, lastMs: null, recentSlow: 0 }
+    if (!recent.length) return { degraded: false, lastMs: null, recentSlow: 0, newestSampleAt: null }
     const slow = recent.filter(r => !r.ok || r.ms >= slowMs)
     const degraded = recent.length >= MIN_SAMPLES_FOR_DEGRADED && slow.length === recent.length
-    return { degraded, lastMs: recent[recent.length - 1].ms, recentSlow: slow.length }
+    return { degraded, lastMs: recent[recent.length - 1].ms, recentSlow: slow.length, newestSampleAt: recent[recent.length - 1].at }
   }
 
   // `resolve` and `now` are injectable so the single real-services test can drive the
@@ -209,6 +209,29 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
     // the block that was preventing one.
     if (backend && health.degraded && clock() - lastAttempt >= intervalMs) {
       backend = null
+    }
+    // SELF-SUSTAINING-TRAP fix: the LLM-down queue gate (hooks/handler.js) reads
+    // ok:false and queues the inbound WITHOUT ever calling callLLM -- so a
+    // degraded window can never collect a fresh sample to clear itself once
+    // every inbound is being queued instead of attempted. Live-witnessed: a
+    // heavy multi-hour testing burst (many real rate-limited/timed-out turns
+    // against shared provider capacity) poisoned the 5-sample window into
+    // permanently reading degraded; a real, unrelated, freshly-sent "hi" then
+    // got queued with zero attempt even though a direct resolveCallLLM+chat
+    // call succeeded in under a second moments later -- the backend was NEVER
+    // actually down, only the window's memory of it was stale. Time-decay the
+    // degraded verdict by the age of its NEWEST sample (not merely how many
+    // status() polls have observed it, which fires on every inbound and would
+    // race with the actual staleness): once the most recent recorded turn is
+    // itself older than intervalMs (the same debounce window already
+    // governing re-resolve), treat the verdict as stale-not-current and
+    // report healthy so the NEXT real inbound is actually attempted live --
+    // which, if the backend truly is still down, immediately re-poisons the
+    // window with a fresh failed sample (a real down backend still reads
+    // down; only a STALE verdict about a backend that recovered or was never
+    // really down gets cleared).
+    if (health.degraded && health.newestSampleAt != null && clock() - health.newestSampleAt >= intervalMs) {
+      return { ...last, degraded: false, lastMs: health.lastMs, recentSlow: health.recentSlow, ok: !!backend }
     }
     return { ...last, ...health, ok: !!backend && health.degraded !== true }
   }
