@@ -451,7 +451,7 @@ export class Casey {
   // already-recorded one). conversationKey reads raw.channel_id first; messageId
   // reads raw.id first -- so both live in `raw`. `resume:true` tells the handler the
   // already-recorded inbound is expected, not a duplicate to drop.
-  async resumePendingTurns({ maxCases = 200, maxRedrives = 50 } = {}) {
+  async resumePendingTurns({ maxCases = 200, maxRedrives = Number(process.env.CASEY_RESUME_MAX_REDRIVES) || 10, spacingMs = Number(process.env.CASEY_RESUME_SPACING_MS) || 2000 } = {}) {
     if (this.opts.resumeOnBoot === false) return { scanned: 0, resumed: 0 }
     const handle = this.gateway?.handleInbound
     if (typeof handle !== 'function') return { scanned: 0, resumed: 0 }
@@ -540,6 +540,23 @@ export class Casey {
         // yet neither ever received a real outbound reply -- confirmed via
         // the case's own event log (resume-attempted with no following
         // outbound/degraded-with-no-retry-path).
+        // Spaced, not a burst: each re-drive walks the SAME provider chain a
+        // brand-new live contact's message would, and a boot with many stuck
+        // cases fires them back-to-back with no delay between -- directly
+        // competing for the same tiny per-minute rate-limit windows a real
+        // inbound needs right now. Live-witnessed: a genuine "hey whats up"
+        // arrived mid-sweep and timed out because every configured provider
+        // was still rate-limited from the sweep's OWN traffic seconds
+        // earlier. maxRedrives also dropped from 50 to a
+        // CASEY_RESUME_MAX_REDRIVES-tunable default of 10 for the same
+        // reason -- most boots have few or zero genuinely-stuck cases; a high
+        // count is itself a symptom (heavy testing/restart churn) that should
+        // not compound into starving live traffic. Gated on resumed > 0 so
+        // the FIRST re-drive of a boot still fires immediately (nothing to
+        // wait behind yet); placed here (immediately before the actual
+        // re-drive), not earlier in the loop, so cases skipped by the
+        // eligibility filters above never pay the delay.
+        if (resumed > 0 && spacingMs > 0) await new Promise(r => setTimeout(r, spacingMs))
         try {
           await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-attempted:${pending.id}` })
         } catch (e) { this.log?.warn?.('[casey] resume marker failed', { caseId: c.id, error: e.message }); continue }

@@ -206,6 +206,8 @@ stay green regardless.
 | `CASEY_DRAIN_DEADLINE_MS` | How long a reloading worker may finish in-flight turns before it is killed (default 15000). |
 | `CASEY_CRASH_WINDOW_MS`, `CASEY_CRASH_LIMIT` | Crash budget: more than `LIMIT` crashes within `WINDOW` ms stops the restart loop instead of thrashing (defaults 60000 / 5). |
 | `CASEY_RESTART_BACKOFF_MS`, `CASEY_RESTART_BACKOFF_CEIL_MS` | Restart backoff base and ceiling (defaults 500 / 10000). |
+| `CASEY_RESUME_MAX_REDRIVES` | Cap on how many stuck cases the boot-time `resumePendingTurns` sweep re-drives in one pass (default 10). Each re-drive walks the same live provider chain a fresh inbound message would; live-witnessed a heavy-testing boot with many stuck cases starving a genuinely new contact's message by exhausting every configured provider's rate limit before the fresh turn ever got a fair shot. A high natural stuck-case count is itself a symptom (heavy restart/testing churn), not something worth burning through in one burst. |
+| `CASEY_RESUME_SPACING_MS` | Delay between each resume re-drive within one sweep (default 2000), so the sweep never fires as one synchronized burst against the same rate-limited providers live traffic needs. The first re-drive of a sweep always fires immediately (nothing to wait behind). |
 | `CASEY_RECEIVE_SILENCE_MS` | Zombie-receive self-heal: a channel that was receiving then went silent longer than this is treated as a wedged gateway and restarted. Default 0 = OFF (a quiet day is indistinguishable from a wedge by silence alone). |
 
 ## Supervised runtime (hot reload + crash restart)
