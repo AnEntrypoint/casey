@@ -49,7 +49,6 @@ export class Casey {
     this.gateway = null
     this.adapters = {}
     this._inflight = new Set()      // track in-flight inbound turns for drain-tracking
-    this._disconnects = []
     this._sweepTimer = null         // periodic health-guardrail interval handle
     this._coverageGapActive = false // rising-edge dedup so a persistent gap pages once
     // Per-channel receive liveness. A gateway WebSocket can go zombie (TCP still
@@ -158,35 +157,26 @@ export class Casey {
   // host's pi.platforms registry. We instantiate their adapter classes directly
   // for gateway use.
   //
-  // Discord needs real resilience wrapping (freddie's own receive loop has no
-  // backoff ceiling and no zombie-heartbeat detection) -- a new realtime-socket
-  // channel will likely need the same shape: force the library adapter's own
-  // receive loop off, wrap start() with casey's own resilient reconnect path,
-  // filter inbound events to what should actually open a case, and verify
-  // outbound delivery status rather than trusting a library send() that
-  // swallows a non-2xx response. Follow this method as the template.
+  // Discord's gateway connect/reconnect/heartbeat/typing mechanics live
+  // ENTIRELY in freddie's own DiscordAdapter now (plugins/platform-discord/
+  // handler.js) -- casey previously carried a second, parallel implementation
+  // (discord-receive.js) because an earlier freddie build's built-in receive
+  // loop lacked a reconnect backoff ceiling and zombie-heartbeat detection.
+  // freddie's adapter has since been upgraded to include both (merged in from
+  // casey's own implementation, per the project's layering mandate: agentic
+  // harness -> freddie, casey is setup + configuration only) plus a `ready`
+  // event and a `botUserId` getter, so casey's wrapper here is now purely
+  // CONFIGURATION -- filtering which inbound events open a case, and
+  // verifying outbound delivery status -- never adapter mechanics. Follow
+  // this method as the template for a future realtime-socket channel.
   async _makeDiscordAdapter() {
     {
-      const { DiscordAdapter } = await import(freddieFile('plugins/platform-discord/handler.js'))
-      // ALWAYS receive:false: freddie's DiscordAdapter opens its OWN gateway
-      // WebSocket by default (this.receive = opts.receive !== false, then
-      // start() calls this._connect() when this.receive), with a flat, uncapped
-      // ~2500ms reconnect loop and no zombie-heartbeat detection. casey's own
-      // connectDiscordReceive (below) is the intended, more resilient receive
-      // path: backoff ceiling, MAX_RETRIES, resume_gateway_url handling, and
-      // zombie-heartbeat termination. The previous feature-detect
-      // (`typeof a._connect === 'function' || a.receive !== undefined`) was
-      // ALWAYS true against every installed freddie build -- both are always
-      // defined on DiscordAdapter -- so casey's resilient wrapper never actually
-      // ran; it silently degraded to freddie's weaker loop on every deployment.
-      // Force receive:false unconditionally and always use casey's own path.
-      const a = new DiscordAdapter({ receive: false })
-      const { connectDiscordReceive } = await import('./discord-receive.js')
+      const { DiscordAdapter } = await import(freddieFile('plugins/platform/platform-discord/handler.js'))
+      const a = new DiscordAdapter({ log: this.log })
       // Filter guild channel messages to only DMs (guild_id absent) or @mentions of
       // the bot. Without this, every message in any guild channel creates a case --
       // surveillance intake should only trigger when someone deliberately contacts
       // the bot, not from general server conversation.
-      let botUserId = null
       const origEmit = a.emit.bind(a)
       a.emit = (event, msg, ...rest) => {
         if (event === 'message') {
@@ -194,7 +184,7 @@ export class Casey {
           // DM: no guild_id. Guild: only if bot is @mentioned.
           const isDM = !raw.guild_id
           const mentions = Array.isArray(raw.mentions) ? raw.mentions : []
-          const botMentioned = botUserId ? mentions.some(u => u.id === botUserId) : mentions.length > 0
+          const botMentioned = a.botUserId ? mentions.some(u => u.id === a.botUserId) : mentions.length > 0
           if (!isDM && !botMentioned) return false
           // We received a real, addressed-to-us inbound: receive is alive. Stamp
           // BEFORE delegating so a throw downstream still records that we heard.
@@ -202,39 +192,18 @@ export class Casey {
         }
         return origEmit(event, msg, ...rest)
       }
-      const orig = a.start.bind(a)
-      a.start = async () => {
-        // A failed Discord start (bad token, gateway unreachable) must surface,
-        // not leave the channel half-initialised with no receive and no log.
-        try { await orig() }
-        catch (e) { this.log?.error?.('[casey] discord adapter.start failed', { error: e.message }); throw e }
-        // onConnect fires on the REAL READY/RESUMED gateway dispatch events
-        // inside connectDiscordReceive -- NOT via a wrapped a._dispatch, which
-        // is a method on freddie's DiscordAdapter that this receive path never
-        // calls at all (freddie's adapter never opens its own socket; see
-        // discord-receive.js's header comment). The previous a._dispatch
-        // wrapper was dead code that silently broke TWO things: connectedAt
-        // was never stamped (GET /api/health falsely reported Discord
-        // state:never-connected despite real inbound flowing correctly) and
-        // botUserId was never captured from READY (degrading the mention
-        // filter above to "any @-mention of anyone", not just this bot).
-        // readyPayload is the full READY event body on a fresh connect, or
-        // null on a RESUME (a resume carries no fresh READY body -- there is
-        // nothing new to capture, only the liveness stamp to refresh).
-        this._disconnects.push(connectDiscordReceive(a, {
-          onConnect: (readyPayload) => {
-            if (readyPayload?.user?.id) botUserId = readyPayload.user.id
-            this._markConnected('discord')
-          },
-        }))
-      }
-      // Verify outbound delivery. freddie's adapter.send does fetch(...).then(
-      // r => r.json()) with NO status check, so a non-2xx (wrong channel, missing
-      // perms, rate-limit, revoked token) is swallowed and casey would still log a
-      // clean outbound -- a reply that never arrived. Wrap send to inspect the
-      // Discord response: a successful message has an `id`; an error body carries a
-      // numeric `code` and `message` and no `id`. Throw on a detected failure so the
-      // caller records it as an observation rather than a false-positive outbound.
+      // 'ready' fires on the REAL READY/RESUMED gateway dispatch events inside
+      // the adapter -- stamps connectedAt so GET /api/health reflects true
+      // receive-liveness (a live TCP socket is not the same as a dead gateway
+      // delivering no inbound; see AGENTS.md's receive-liveness principle).
+      a.on('ready', () => this._markConnected('discord'))
+      // Verify outbound delivery. A bare fetch(...).then(r => r.json()) with no
+      // status check would swallow a non-2xx (wrong channel, missing perms,
+      // rate-limit, revoked token) and casey would still log a clean outbound --
+      // a reply that never arrived. Wrap send to inspect the Discord response: a
+      // successful message has an `id`; an error body carries a numeric `code`
+      // and `message` and no `id`. Throw on a detected failure so the caller
+      // records it as an observation rather than a false-positive outbound.
       const origSend = a.send.bind(a)
       a.send = async (reply) => {
         const resp = await origSend(reply)
@@ -253,7 +222,7 @@ export class Casey {
   // A future webhook-driven channel (e.g. SMS via a carrier webhook) likely
   // fits this simpler shape rather than Discord's.
   async _makeWhatsappAdapter() {
-    const { WhatsappAdapter } = await import(freddieFile('plugins/platform-whatsapp/handler.js'))
+    const { WhatsappAdapter } = await import(freddieFile('plugins/platform/platform-whatsapp/handler.js'))
     return new WhatsappAdapter({ port: this.opts.whatsappPort || 0 })
   }
 
@@ -792,7 +761,6 @@ export class Casey {
   // (avoids the WAL/libuv teardown race seen on abrupt exit).
   async stop() {
     this.stopSweep()
-    for (const d of this._disconnects) { try { d() } catch { /* ignore */ } }
     await this.gateway?.stop()
     try { await this.drain() } catch { /* in-flight turn errored; already logged */ }
     await this.store?.close()

@@ -81,5 +81,10 @@ data/
 .gm/*.err
 .gm/witness-*.txt
 
+# gm-plugkit's shared cross-project "agentplug" daemon (2026-07 architecture)
+# keeps its own runtime key-value state at the repo root, not under .gm/ --
+# same transient-runtime-state class as the .gm/exec-spool/ entries above.
+.agentplug-kv/
+
 # this repo has no lockfile committed yet; ignore stray npm lock
 package-lock.json

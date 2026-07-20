@@ -31,10 +31,64 @@ import { transcribeAudio, describePhoto, synthesizeVoice } from './media.js'
 
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 
+// GUARANTEED-RESPONSE FSM (typing indicator + bounded turnaround + explicit
+// fallback message). USER DIRECTIVE: every LIVE first-attempt turn must end
+// in either a real chat reply or an explicit, truthful "still working" /
+// "having trouble" status message -- never total silence. This is a
+// deliberate, scoped evolution of the no-fallback-text principle, not a
+// reversal of it: the banned thing was always FABRICATED case content or a
+// scripted apology standing in for real understanding (a mock). A truthful
+// status update ("still working on this", "having trouble right now, please
+// try again in a moment") invents nothing and claims nothing about the
+// contact's case -- it is the same class of honesty as the existing loud
+// log lines, just also shown to the contact. Applies ONLY to a live,
+// first-attempt turn (not msg.resume / msg.queuedRedrive, which are
+// background catch-up re-drives of an OLD message the contact has likely
+// moved on from -- see the isBackgroundRedrive guard below).
+//
+// CASEY_TURN_HARD_DEADLINE_MS is the real, unconditional guarantee: the
+// attempt loop below spends AT MOST this much total wall-clock time retrying
+// (each individual attempt still gets to run its own bounded provider-chain
+// walk -- acptoapi's own 20s-per-hop DEFAULT_LINK_TIMEOUT_MS -- to real
+// completion rather than being cut off mid-hop; this is the "completing
+// through multiple samples" behavior the design calls for: a retry that
+// starts with real remaining budget gets a genuine chance, not an
+// arbitrarily truncated one). Once the hard deadline is reached the loop
+// stops retrying and the guaranteed-fallback text is composed and sent --
+// see the attempt loop's own remainingMs calculation for exactly how each
+// attempt's budget is derived.
+//
+// CASEY_TURN_SOFT_DEADLINE_MS is NOT a second timeout gate -- it only picks
+// which of the two fallback strings to send, based on how long the whole
+// turn actually took: a turn that degraded FAST (under the soft deadline --
+// a structural refusal, an immediate provider auth error) reads as "still
+// working, one moment" since a quick follow-up message has a real chance of
+// landing on a healthier attempt; a turn that ran long (spent real time
+// genuinely retrying/waiting on providers, past the soft deadline) gets the
+// more honest "having trouble" text instead of understating an already-long
+// wait.
+const TURN_SOFT_DEADLINE_MS = Number(process.env.CASEY_TURN_SOFT_DEADLINE_MS) || 25000
+const TURN_HARD_DEADLINE_MS = Number(process.env.CASEY_TURN_HARD_DEADLINE_MS) || 60000
+// Discord's own typing-indicator TTL is ~10s; DiscordAdapter.startTyping
+// re-POSTs on its own shorter interval internally, so this handler only
+// needs to call start/stop once per turn, not manage a repeat itself.
+
+// Truthful, plain-language status copy (per AGENTS.md's existing tone
+// principles: no jargon, mirror the contact's own language where the case
+// system prompt already does that for a real reply -- these two fixed
+// strings are deliberately language-neutral/short so they read reasonably
+// in translation without needing a full localization pass).
+const STILL_WORKING_TEXT = "Still working on this -- one moment."
+const TURN_TIMEOUT_TEXT = "Sorry, I'm having trouble right now. Please try again in a little while, or send your message again."
+
 // Returns an async (platform, msg) handler suitable to assign to
 // gateway.handleInbound. `store` is a CaseStore; opts.callLLM optional;
-// opts.autoRespond=false to track-only (no agent turn / reply).
-
+// opts.autoRespond=false to track-only (no agent turn / reply). The typing
+// indicator (adapter.startTyping/stopTyping) and the guaranteed-fallback send
+// both reuse `adapter` (this.platforms.get(platform), already resolved per
+// inbound below) -- no separate adapter set needs threading through here.
+// Missing methods on a given channel degrade to a no-op, never a thrown error
+// (typing is a UX affordance, never load-bearing).
 export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
   // Per-contact in-flight guard: if a prior agent turn is still running for this
   // contact, we drop the new message rather than race two concurrent LLM calls
@@ -471,6 +525,29 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // TURN-DONE marker is needed; the outbound IS the completion witness.
     try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `TURN-START:${msgId}` }) }
     catch (e) { log.warn?.('[casey] turn-start marker failed', { caseId: fresh.id, error: e.message }) }
+    // GUARANTEED-RESPONSE FSM, start: a live, first-attempt turn (never a
+    // background resume/queue re-drive -- see isBackgroundRedrive) shows a
+    // typing indicator for its whole duration. Best-effort: startTyping is a
+    // UX affordance, never load-bearing -- an adapter with no typing support
+    // (WhatsApp today) or a failed POST degrades silently, never blocks or
+    // throws into the real turn. stopTyping is called from EVERY exit path
+    // below via the tryStopTyping() helper (including the crash-net's own
+    // reach -- but a genuine process crash bypasses this entirely, which is
+    // fine: Discord's own typing indicator expires on its own ~10s TTL with
+    // no re-POST, so a crashed turn's indicator self-clears, it does not hang
+    // forever).
+    const isBackgroundRedrive = !!(msg.resume || msg.queuedRedrive)
+    let typingStarted = false
+    if (!isBackgroundRedrive && typeof adapter?.startTyping === 'function') {
+      try { adapter.startTyping(replyTo); typingStarted = true }
+      catch (e) { log.warn?.('[casey] startTyping failed', { caseId: fresh.id, error: e.message }) }
+    }
+    const stopTyping = () => {
+      if (!typingStarted) return
+      typingStarted = false
+      try { adapter.stopTyping?.(replyTo) }
+      catch (e) { log.warn?.('[casey] stopTyping failed', { caseId: fresh.id, error: e.message }) }
+    }
     // Durable conversation state (dstate) -- where the AGENT has declared it is in the
     // report arc. Null when adaptogen is absent/degraded (the prompt then drives from
     // the raw report alone). casey does NOT compute completion -- the model declares
@@ -513,8 +590,32 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // stuck cases can never gate a brand-new, unrelated contact's fresh message
     // into the LLM-down queue.
     const turnCallLLM = msg.resume ? (req) => callLLM(req, { recordHealth: false }) : callLLM
+    // GUARANTEED-RESPONSE FSM, bounded turnaround: the turn's own start time
+    // (TURN-START, just recorded above) anchors a remaining-budget calculation
+    // for EACH attempt, so a multi-attempt retry loop can never exceed
+    // TURN_HARD_DEADLINE_MS in total even though each individual attempt still
+    // gets to run its own bounded chain walk (acptoapi's own 20s per-hop
+    // timeout -- see chain-machine.js's DEFAULT_LINK_TIMEOUT_MS) to
+    // completion rather than being cut off mid-hop. This is the "completing
+    // through multiple samples" behavior: a retry attempt that starts with
+    // real remaining budget gets a REAL chance, not an arbitrarily truncated
+    // one -- only once the hard deadline is genuinely exhausted does the next
+    // attempt get skipped (remainingMs <= 0 breaks the loop early, same as a
+    // normal attempt exhaustion). A background redrive (msg.resume) is exempt
+    // from this budget -- it already ran once as a live turn and is now a
+    // background catch-up with its own separate retry/cap discipline
+    // (RESUME_DEGRADED_RETRY_CAP in casey.js), not subject to the live-turn
+    // guarantee at all.
+    const turnStartedAt = Date.now()
     let result, errored = false
     for (let attempt = 1; attempt <= MAX_TOOL_CHOICE_ATTEMPTS; attempt++) {
+      const configuredTimeoutMs = Number(process.env.CASEY_LLM_TURN_TIMEOUT_MS) || 120000
+      const remainingMs = isBackgroundRedrive ? configuredTimeoutMs : (TURN_HARD_DEADLINE_MS - (Date.now() - turnStartedAt))
+      if (!isBackgroundRedrive && remainingMs <= 0) {
+        log.warn?.('[casey] turn hard deadline reached before this attempt could start; stopping retries', { caseId: fresh.id, attempt })
+        break
+      }
+      const attemptTimeoutMs = isBackgroundRedrive ? configuredTimeoutMs : Math.min(configuredTimeoutMs, remainingMs)
       try {
         result = await runTurn({
           prompt,
@@ -582,7 +683,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
           // lead providers answer in well under a second once warm, so this bound
           // protects the cold start without abandoning a live contact for minutes.
           // CASEY_LLM_TURN_TIMEOUT_MS overrides for slow links / dead-provider walks.
-          timeoutMs: Number(process.env.CASEY_LLM_TURN_TIMEOUT_MS) || 120000,
+          // attemptTimeoutMs additionally bounds this to the REMAINING hard-deadline
+          // budget for a live turn (see the guaranteed-response FSM comment above);
+          // a background redrive uses the plain configured value unbounded by that
+          // budget, since it isn't subject to the live-turn guarantee at all.
+          timeoutMs: attemptTimeoutMs,
         })
       } catch (e) {
         errored = true
@@ -737,6 +842,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
           catch (e) { log.warn?.('[casey] jargon-held notify failed', { caseId: fresh.id, error: e.message }) }
         }
       } catch (e) { log.warn?.('[casey] jargon-held flag failed', { caseId: fresh.id, error: e.message }) }
+      stopTyping()
       return { to: replyTo, text: '', platform, caseId: fresh.id, drafted: true, jargonHeld: jHits }
     }
 
@@ -759,6 +865,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       } catch (e) { log.warn?.('[casey] assisted draft flag failed', { caseId: fresh.id, error: e.message }) }
       // Nothing is sent in assisted mode -- return empty text so the gateway sends
       // nothing and the contact waits on a human-approved reply.
+      stopTyping()
       return { to: replyTo, text: '', platform, caseId: fresh.id, drafted: true }
     }
 
@@ -810,11 +917,44 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
     }
 
-    // No fallback text: a degraded turn (isFallback) has nothing to send. The
-    // failure was already recorded loudly above; return here rather than
-    // recording an empty outbound event and calling adapter.send with blank text.
+    // GUARANTEED-RESPONSE FSM, terminal fallback: a degraded LIVE first-attempt
+    // turn no longer sends total silence -- it sends the truthful status text
+    // (STILL_WORKING_TEXT if the hard deadline has not yet been reached --
+    // rare here, since the attempt loop above already spent up to the whole
+    // hard-deadline budget retrying, but a genuinely instant degrade, e.g. a
+    // structural refusal caught before any real network wait, can still land
+    // here well under the deadline -- vs TURN_TIMEOUT_TEXT once it has). A
+    // background redrive (msg.resume / msg.queuedRedrive) stays SILENT on
+    // degrade, unchanged from before: it is a background catch-up re-drive of
+    // an old message the contact has likely moved on from, never subject to
+    // the live-turn guarantee (see isBackgroundRedrive's definition above,
+    // and the queuedRedrive-specific silent return just above this block).
     if (isFallback) {
-      return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
+      if (isBackgroundRedrive) {
+        return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
+      }
+      // Message tone: a turn that degraded FAST (a structural refusal, an
+      // immediate provider auth error -- under the soft deadline) reads as
+      // "still working, one moment" since a quick retry from the contact's
+      // next message has a real chance of landing on a healthier attempt. A
+      // turn that ran long (spent real time genuinely retrying/waiting on
+      // providers, past the soft deadline) reads as the more honest "having
+      // trouble" -- the contact has already been waiting a while and a vague
+      // "still working" would understate that.
+      const elapsedMs = Date.now() - turnStartedAt
+      const fallbackText = elapsedMs >= TURN_SOFT_DEADLINE_MS ? TURN_TIMEOUT_TEXT : STILL_WORKING_TEXT
+      await store.appendEvent(fresh.id, {
+        kind: 'outbound', actor: 'system', channel,
+        text: fallbackText, data: { to: replyTo, fallback: isFallback, guaranteedFallback: true },
+      })
+      stopTyping()
+      const fallbackReply = { to: replyTo, text: fallbackText, platform, caseId: fresh.id, degraded: true, guaranteedFallback: true }
+      try {
+        if (typeof adapter?.send === 'function') await adapter.send(fallbackReply)
+      } catch (e) {
+        log.error?.('[casey] guaranteed-fallback send failed', { caseId: fresh.id, error: e.message })
+      }
+      return fallbackReply
     }
 
     await store.appendEvent(fresh.id, {
@@ -842,6 +982,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` })
       }
     }
+    // GUARANTEED-RESPONSE FSM, end: the real reply attempt (success or a failed
+    // send, either way nothing more is coming) is the last point a typing
+    // indicator should still be showing.
+    stopTyping()
     // ADVANCE the durable conversation state -- ONLY on a real, delivered, non-fallback
     // turn, and ONLY to the phase the AGENT itself DECLARED this turn (the newest
     // STAGE-DECLARED observation the case_stage tool wrote). casey does NOT derive a
@@ -883,7 +1027,23 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
   // handleInboundOnce still resolves (casey.js binds handleInbound to the
   // gateway instance).
   return async function handleInbound(platform, msg) {
-    const result = await handleInboundOnce.call(this, platform, msg)
+    // Crash-safety backstop for the guaranteed-response FSM's typing indicator:
+    // handleInboundOnce has no outer try/finally around its ~850-line body (a
+    // restructure risky enough to defer), so an unhandled throw deep inside
+    // would otherwise bypass every stopTyping() call threaded through its own
+    // return paths, leaking a live typing indicator until Discord's own ~10s
+    // TTL silently expires it. adapter.stopTyping is idempotent (a no-op if
+    // nothing was ever started for this channel -- see DiscordAdapter's own
+    // Map-based tracking), so calling it here defensively in a finally, keyed
+    // on the same replyTarget() the inner handler used to start it, is safe
+    // even on the many paths that never started one at all.
+    const adapter = this?.platforms?.get?.(platform)
+    let result
+    try {
+      result = await handleInboundOnce.call(this, platform, msg)
+    } finally {
+      try { adapter?.stopTyping?.(replyTarget(msg)) } catch { /* best-effort */ }
+    }
     const external_id = conversationKey(msg)
     const buf = pendingBuffer.get(external_id)
     if (buf && buf.length && !inFlight.has(external_id)) {

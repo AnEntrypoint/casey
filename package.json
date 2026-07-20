@@ -18,7 +18,7 @@
     "adaptogen": "file:../dstate",
     "anentrypoint-design": "file:../anentrypoint-design",
     "express": "^4.19.2",
-    "freddie": "latest",
+    "freddie": "^0.0.204",
     "js-yaml": "^4.1.0",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",

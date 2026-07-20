@@ -136,8 +136,7 @@ src/
   report-analytics.js      pure management analytics for /api/report.json: buildSLAReport (pass/fail vs the live handoff SLA, answered-late vs never-answered), buildSLAReportByType (the same compliance partitioned by case_type, with an `overall` that reconciles), buildReportComparison (this window vs the prior adjacent window, signed deltas), buildChannelMetrics + buildCaseTypeMetrics (shared rollupByKey: first-response median, opened/closed, closed_pct, reopen_count per channel / per case_type), buildAlertPayload (structured machine-parseable breach payload for an external pager: case_ref/case_type/breach_type/severity_tier/since_ms, NEVER external_id); all aggregate-only, no external_id
   conversation-spec.js     the agent-driven dstate conversation machine as a plan() spec (soft-FSM nodes greeting/gathering/enquiring/answering/complete/handoff/closed; soft intake edges, enforcement:off for the irreversible handoff/closed; an intake zone)
   conversation-state.js    per-case dstate wrapper: optional-imports adaptogen (degrades to no-op), rehydrates/creates a per-case DState from the conv_state blob (export/importState), advanceCase(to) applies a transition + persists, orientCase() returns {state, legalMoves} for the prompt; advance only on a completed turn, only to the phase the AGENT declared
-  gateway-hooks.js         makeCaseHandler PURE-LLM flow: an inbound hits the STOP/HUMAN deterministic short-circuit (detectContactIntent, above the queue gate), OR the LLM-down queue gate (record a QUEUED-FOR-AGENT marker, send nothing, log loud), OR one runTurn tool loop where the agent classifies + routes + answers + RECORDS THE REPORT (case_report) + declares its phase (case_stage) via the case_* tools. casey does NO deterministic text processing -- no field extraction, no computed next-question. The prompt surfaces the raw report-so-far + the dstate phase (orient) and TRUSTS the model to acknowledge + not repeat + ask the next thing. A degraded turn (empty/error/echo/stock-ack/repeat) sends NOTHING and logs loud (no fallback text -- see the no-mocks-fallbacks-stubs invariant). dedup, media, observe
-  discord-receive.js       fallback Discord WS receive for older freddie builds
+  gateway-hooks.js/hooks/handler.js   makeCaseHandler PURE-LLM flow: an inbound hits the STOP/HUMAN deterministic short-circuit (detectContactIntent, above the queue gate), OR the LLM-down queue gate (record a QUEUED-FOR-AGENT marker, send nothing, log loud), OR one runTurn tool loop where the agent classifies + routes + answers + RECORDS THE REPORT (case_report) + declares its phase (case_stage) via the case_* tools. casey does NO deterministic text processing -- no field extraction, no computed next-question. The prompt surfaces the raw report-so-far + the dstate phase (orient) and TRUSTS the model to acknowledge + not repeat + ask the next thing. GUARANTEED-RESPONSE FSM: a LIVE first-attempt turn (never a background resume/queue re-drive, which stays silent on degrade) shows a typing indicator for its duration and, if still degraded once the bounded retry budget (CASEY_TURN_HARD_DEADLINE_MS) is exhausted, sends a truthful status fallback message instead of silence -- see the no-mocks-fallbacks-stubs design principle's own "deliberate, scoped evolution" note for why this is not a reversal of that principle. dedup, media, observe
   llm.js                   model call wiring; resolveCallLLM (boot precedence: acptoapi/null) + makeResilientCallLLM (self-healing backend that re-resolves a recovered provider, single live status() for the health row, and fires an onRecover edge that drives drainQueuedTurns)
   dashboard/server.js      express API + anentrypoint-design SPA (observe/edit/override/reply); GET/POST /report public contact form (no login); GET /api/map/cases (PII-free pins with resolved lat/lon, cluster membership, unresolved bucket, capped+truncation-reported), GET /api/operators/identities (learned per-operator working-area coverage), and GET /api/map/workers (field_worker-tier contacts' case_checkin self-reports, staleness-flagged) back the dashboard's Leaflet+OSM map view (status-colored markers, marker clustering via leaflet.markercluster, outbreak-cluster link overlay, operator-coverage overlay, field-worker location overlay, species/type/status/date filters, click-through to case detail) -- all session-gated like every other /api route; /vendor/leaflet and /vendor/leaflet.markercluster serve the map's static JS/CSS, exempted from the auth gate the same way /design already is (static UI assets, no case data). GET/POST /api/contacts(/:id/tier) and the Reporters panel are the operator-facing surface for the reporter/field_worker access-tier system (see AGENTS.md's contact.tier design principle); GET/POST/DELETE /api/accounts (admin-only) manage operator login accounts. Auth is per-operator username/password login (dashboard/auth.js), not a shared bearer token.
 ```
@@ -209,6 +208,9 @@ stay green regardless.
 | `CASEY_RESUME_MAX_REDRIVES` | Cap on how many stuck cases the boot-time `resumePendingTurns` sweep re-drives in one pass (default 10). Each re-drive walks the same live provider chain a fresh inbound message would; live-witnessed a heavy-testing boot with many stuck cases starving a genuinely new contact's message by exhausting every configured provider's rate limit before the fresh turn ever got a fair shot. A high natural stuck-case count is itself a symptom (heavy restart/testing churn), not something worth burning through in one burst. |
 | `CASEY_RESUME_SPACING_MS` | Delay between each resume re-drive within one sweep (default 2000), so the sweep never fires as one synchronized burst against the same rate-limited providers live traffic needs. The first re-drive of a sweep always fires immediately (nothing to wait behind). |
 | `CASEY_RECEIVE_SILENCE_MS` | Zombie-receive self-heal: a channel that was receiving then went silent longer than this is treated as a wedged gateway and restarted. Default 0 = OFF (a quiet day is indistinguishable from a wedge by silence alone). |
+| `CASEY_LLM_TURN_TIMEOUT_MS` | Per-attempt agent-turn timeout passed to freddie's `runTurn` (default 120000). For a LIVE first-attempt turn this is additionally capped by the remaining `CASEY_TURN_HARD_DEADLINE_MS` budget for that turn (see the guaranteed-response FSM below); a background resume/queue re-drive uses this value unbounded by that budget. |
+| `CASEY_TURN_HARD_DEADLINE_MS` | Guaranteed-response FSM (`hooks/handler.js`): the total wall-clock budget (default 60000) a LIVE first-attempt turn's retry loop may spend before the turn is closed out with a guaranteed fallback message instead of continuing to retry. Each individual attempt still gets to run its own bounded provider-chain walk (acptoapi's `DEFAULT_LINK_TIMEOUT_MS`, 20s per hop) to real completion rather than being cut off mid-hop -- a retry that starts with real remaining budget gets a genuine chance. Never applies to a background resume/queue re-drive. |
+| `CASEY_TURN_SOFT_DEADLINE_MS` | Guaranteed-response FSM: not a second timeout gate, only picks which of the two fallback strings to send once the hard deadline closes out a degraded turn -- under this elapsed time (default 25000) sends the "still working, one moment" text; at or past it sends the more honest "having trouble" text, since the contact has already been waiting a while by then. |
 
 ## Supervised runtime (hot reload + crash restart)
 
@@ -258,7 +260,8 @@ the crash-budget stop state); the supervisor is its only I/O.
   give a plain-words reference number on first contact.
 - **No mocks, fallbacks, or stubs -- only singular working mechanisms and loud
   errors.** A degraded turn (empty/error/echo/stock-ack/repeat-of-last-outbound)
-  sends NOTHING to the contact -- there is no scripted holding reply
+  never fabricates case CONTENT and never claims to have understood the report
+  -- there is no scripted reply standing in for real comprehension
   (`fallbackReply` was removed by explicit user directive). The failure is
   logged loud (`log.error`) and recorded as an observation for operator
   visibility, never silently papered over. The reliability fix lives upstream:
@@ -270,6 +273,20 @@ the crash-budget stop state); the supervisor is its only I/O.
   internal jargon (`jargonHits`), or a malformed reference
   (`sanitizeOutboundRef`) is caught before send -- caught means blanked/held,
   never replaced with fallback text.
+  **Deliberate, scoped evolution (guaranteed-response FSM, `hooks/handler.js`):**
+  a LIVE, first-attempt turn (never a background resume/queue re-drive, which
+  stays silent on degrade exactly as before) that is STILL degraded after the
+  bounded retry budget is exhausted now sends a TRUTHFUL STATUS message
+  (`STILL_WORKING_TEXT` / `TURN_TIMEOUT_TEXT`) instead of pure silence -- this
+  is not a reversal of the principle above, it is the same honesty discipline
+  applied to the contact's WAIT, not their report: the message invents nothing
+  about the case, claims no understanding of what was said, and states only
+  the true fact that the system is still trying or has not managed to answer
+  yet. A typing indicator (`adapter.startTyping`/`stopTyping`, Discord today;
+  degrades silently on a channel with no typing concept) shows for the whole
+  live-turn duration, and `CASEY_TURN_HARD_DEADLINE_MS` (default 60s) bounds
+  the total retry budget so this fallback message is itself guaranteed to
+  fire within a bounded time -- never an indefinite silent wait.
 - **The reporter is usually a field worker relaying a farmer's animals, not the
   owner.** The person messaging is typically a field worker out on a visit,
   reporting livestock they have just come to see -- standing with the farmer, a
