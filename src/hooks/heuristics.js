@@ -69,6 +69,37 @@ export function isStockAck(text) {
   })
 }
 
+// A forced-tool-call turn (tool_choice:'required') that comes back with no
+// tool_calls array is not automatically bad content -- a model can perfectly
+// well answer a plain "hi" or a status question in real, on-topic prose
+// without touching a tool, and blanking every such reply wastes a genuinely
+// good answer the contact was owed. What MUST never reach the contact is the
+// specific witnessed failure mode: a self-referential REFUSAL about its own
+// tool access ("I don't have the tools/access to assist") -- that is the
+// model narrating its own malfunction, not answering the contact at all.
+// Detected structurally by matching the model talking ABOUT its own
+// tools/capabilities/access, not by the topic of the message (an on-topic
+// "cows"/"chickens" report has none of these self-referential phrases).
+// ASCII only, matches heuristics.js's existing pattern style.
+const TOOL_REFUSAL_MARKERS = [
+  "don't have the tools",
+  'do not have the tools',
+  "don't have access to",
+  'do not have access to',
+  'unable to access the',
+  'i cannot call',
+  "i can't call",
+  'no tool available',
+  'lack the necessary tools',
+  'as an ai, i',
+  'as a language model',
+]
+export function isToolRefusal(text) {
+  if (!text) return false
+  const norm = String(text).toLowerCase().replace(/\s+/g, ' ').trim()
+  return TOOL_REFUSAL_MARKERS.some(m => norm.includes(m))
+}
+
 // Pre-send jargon guard. casey's design rule is plain, warm language to the
 // contact: never internal jargon (case/triage/workflow/status/priority). A weak
 // model occasionally leaks one of these words into a reply. This is a

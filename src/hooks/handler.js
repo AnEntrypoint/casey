@@ -18,6 +18,7 @@ import {
   isPromptEcho,
   sanitizeOutboundRef,
   isStockAck,
+  isToolRefusal,
   jargonHits,
   guessLang,
   stripChannelMarkup,
@@ -702,10 +703,30 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         result = {}
         break   // an error is not the forced-tool-choice-miss case; no retry benefit, stop here
       }
-      // Retry only when the turn genuinely completed but skipped the forced
-      // tool call -- a real reply, or an already-errored turn, never retries.
-      if (firstTurnHadToolCall(result) || attempt === MAX_TOOL_CHOICE_ATTEMPTS) break
-      log.warn?.('[casey] forced tool_choice not honored by model; retrying turn', { caseId: fresh.id, attempt })
+      // Retry only when the turn genuinely needs it: a real reply (tool call
+      // OR genuine on-topic prose) never retries, and neither does an
+      // already-errored turn. Only a tool-call MISS whose text is empty or a
+      // self-referential refusal (isToolRefusal, below) is worth spending a
+      // retry on -- a model that answered the contact's question in plain
+      // prose without touching a tool is a genuinely good outcome, not a
+      // miss to burn the retry budget correcting.
+      //
+      // CRITICAL: retrying does NOT change which model gets picked. Live-
+      // witnessed this session: sambanova/gemma-4-31B-it won the "best
+      // available model" ranking on 3/3 consecutive attempts of the SAME
+      // turn (each a fresh chain build) because it responded fast with zero
+      // errors every time -- acptoapi's own availability ranker has no
+      // concept of tool-call compliance, so a model that reliably ignores
+      // tool_choice while otherwise "succeeding" looks perfect to it and
+      // keeps re-winning. The bridge itself (acptoapi-bridge.js) now
+      // penalizes the served model directly in that same shared availability
+      // tracker on a detected miss, so THIS retry (and every later chain
+      // build) actually routes around it instead of hitting the identical
+      // broken model three times in a row.
+      const rawText = (result?.result || '').toString().trim()
+      const genuineMiss = !firstTurnHadToolCall(result) && (!rawText || isToolRefusal(rawText))
+      if (!genuineMiss || attempt === MAX_TOOL_CHOICE_ATTEMPTS) break
+      log.warn?.('[casey] forced tool_choice not honored by model (empty/refusal); retrying turn', { caseId: fresh.id, attempt })
       try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `tool_choice miss on attempt ${attempt}; retrying` }) }
       catch (e2) { log.warn?.('[casey] failed to record tool_choice-retry observation', { caseId: fresh.id, error: e2.message }) }
     }
@@ -754,28 +775,25 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         }
       }
     }
-    // STRUCTURAL forced-tool-call guard. tool_choice:'required' is passed above
-    // so the FIRST turn iteration must call a tool -- but freddie's acptoapi
-    // bridge only documents this as a client-side HINT it cannot actually
-    // enforce against every provider (see acptoapi-bridge.js's own
-    // "tool_choice required but no tool call returned (acptoapi does not
-    // enforce tool_choice)" warning log). A weak model in the live fallback
-    // chain (witnessed: chatjimmy/groq-tier models) can simply ignore the
-    // requirement and free-type plain prose instead -- witnessed live on real
-    // Discord traffic this session: "I'm in umtentweni" and "I need help with
-    // cows"/"chickens" (all squarely in-scope, real animal-health content) each
-    // got a self-referential "I don't have the tools/access to assist" refusal
-    // sent verbatim to the contact. This is checked STRUCTURALLY (did the
-    // model's first turn message actually carry a tool_calls array), never by
-    // matching the refusal's own wording -- a text-pattern list only catches
-    // phrasings already witnessed and would need constant extension as the
-    // model paraphrases differently each time (the same limitation
-    // isPromptEcho/isStockAck above already carry, deliberately not repeated
-    // here). A genuinely first-tool-call-less turn is degraded regardless of
-    // what its text happens to say, and never reaches the contact.
-    if (text && !firstTurnHadToolCall(result)) {
-      log.warn?.('[casey] forced tool_choice not honored by model on final attempt; blanking reply', { caseId: fresh.id })
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model ignored forced tool_choice (all attempts exhausted); blanked' })
+    // STRUCTURAL forced-tool-call guard. tool_choice:'required' is a HINT casey
+    // cannot force every provider to honor (freddie's acptoapi bridge logs this
+    // explicitly). A weak model can ignore it and free-type plain prose instead
+    // -- but that prose is not automatically bad: USER DIRECTIVE (this session):
+    // if the model isn't calling a tool, is it still answering? Yes it can be,
+    // and a genuine on-topic answer must reach the contact rather than being
+    // discarded on a structural technicality -- discarding a real answer is
+    // itself a failure to deliver, not a safety measure. The ONLY thing that
+    // must never reach the contact is the specific witnessed failure mode: a
+    // self-referential REFUSAL about its own tool access ("I don't have the
+    // tools/access to assist", witnessed live on real Discord traffic against
+    // squarely in-scope reports like "I'm in umtentweni" / "cows"/"chickens").
+    // isToolRefusal (heuristics.js) matches that shape by content, the same
+    // established pattern isPromptEcho/isStockAck already use elsewhere in this
+    // file -- only a genuine refusal or fully empty text is blanked; real
+    // content is sent.
+    if (text && !firstTurnHadToolCall(result) && isToolRefusal(text)) {
+      log.warn?.('[casey] model produced a self-referential tool-refusal; blanking reply', { caseId: fresh.id })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model refused citing missing tool access; blanked' })
       text = ''
     }
     // PURE-AGENT REPLY. The agent drives the whole conversation -- intake (asking the

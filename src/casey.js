@@ -185,10 +185,38 @@ export class Casey {
           const isDM = !raw.guild_id
           const mentions = Array.isArray(raw.mentions) ? raw.mentions : []
           const botMentioned = a.botUserId ? mentions.some(u => u.id === a.botUserId) : mentions.length > 0
-          if (!isDM && !botMentioned) return false
+          if (!isDM && !botMentioned) {
+            // OBSERVABILITY: this filter used to drop a message with ZERO trace
+            // anywhere -- not even a debug log line -- so a real inbound that
+            // failed this check for any reason (a.botUserId not yet captured
+            // from READY, Discord's mentions array shaped differently than
+            // expected, a genuine non-mention message) was structurally
+            // invisible: no case created, no receive-health stamp, nothing to
+            // grep for. Live-witnessed this session: a real "@memobot hi" got
+            // a guaranteed-fallback reply from an OLD, unrelated case while
+            // the actual live message left no log trace at all, making this
+            // exact gate the prime suspect with no way to confirm it. Log
+            // every filtered-out message loud (never PII -- author id only,
+            // never message content) so a silent drop is never silent again.
+            this.log?.warn?.('[discord] message filtered (not a DM, bot not mentioned)', {
+              channelId: raw.channel_id || null,
+              guildId: raw.guild_id || null,
+              authorId: raw?.author?.id || null,
+              botUserId: a.botUserId || null,
+              mentionIds: mentions.map(u => u?.id).filter(Boolean),
+            })
+            return false
+          }
           // We received a real, addressed-to-us inbound: receive is alive. Stamp
           // BEFORE delegating so a throw downstream still records that we heard.
           this._markInbound('discord')
+          this.log?.info?.('[discord] message accepted for intake', {
+            channelId: raw.channel_id || null,
+            guildId: raw.guild_id || null,
+            authorId: raw?.author?.id || null,
+            isDM,
+            botMentioned,
+          })
         }
         return origEmit(event, msg, ...rest)
       }
