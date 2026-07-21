@@ -126,6 +126,23 @@ async function main() {
   // The queue-drain hard status-gate reads the SAME resilient backend the handler and
   // health row use, so a drain only fires when the provider is genuinely back.
   casey.resilientStatus = brain.status
+  // COLD-START RACE, fixed here: makeResilientCallLLM never eagerly resolves at
+  // construction -- the backend only actually resolves (and, transitively, the
+  // acptoapi readiness prober only actually STARTS, see llm.js resolveCallLLM ->
+  // freddie.acptoapiReachable -> acptoapi.chatChain -> _ensureReadinessStarted)
+  // on the FIRST real callLLM()/status() call. casey.start() below connects the
+  // Discord gateway and begins accepting real inbound messages immediately --
+  // so a message arriving within the first seconds of a restart used to race
+  // the readiness system's own cold start, walking a chain with zero
+  // real-request-verified availability data instead of one already warmed by
+  // a boot-time probe. USER DIRECTIVE: the correct model must already be ready
+  // when the call happens, not discovered live. Force one status() read here,
+  // BEFORE gateway.start(), so the backend resolves and the readiness prober's
+  // own immediate warm-up pass (readiness.js start()'s tick()) has already run
+  // by the time real traffic can possibly arrive. Best-effort: a failure here
+  // must never block boot -- the existing self-healing/queue-gate machinery
+  // still covers a genuinely unreachable backend exactly as before.
+  try { await brain.status() } catch (e) { console.error('[worker] boot-time readiness warm-up failed (continuing, self-heals on first real turn):', e.message) }
   await casey.start()
 
   const dashPort = Number(flags.port || 4000)
