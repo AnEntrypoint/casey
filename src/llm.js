@@ -92,7 +92,7 @@ export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {
 //
 // This is the never-stay-degraded half (auto-resume when the provider returns) --
 // the missing "never send anything but never stay silently broken either" half.
-export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, intervalMs = 30000, resolve = resolveCallLLM, now = null, slowMs = 20000, slowWindow = 5, onRecover = null } = {}) {
+export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, intervalMs = 30000, resolveDebounceMs = null, resolve = resolveCallLLM, now = null, slowMs = 20000, slowWindow = 5, onRecover = null } = {}) {
   let backend = null                 // resolved real callLLM, or null while degraded
   let last = { source: 'none', model: null, url: null }
   let inflight = null                // shared promise so concurrent inbounds probe once
@@ -150,12 +150,33 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   }
 
   // Debounced lazy re-resolve: returns the live backend (possibly still null). A
-  // probe already in flight is shared; an attempt within intervalMs of the last is
-  // skipped so a down provider never adds a round-trip to every inbound or stampedes.
+  // probe already in flight is shared; an attempt within RESOLVE_DEBOUNCE_MS of
+  // the last is skipped so a down provider never adds a round-trip to every
+  // inbound or stampedes.
+  //
+  // SEVERE, live-witnessed bug this constant fixes: this debounce used to share
+  // `intervalMs` (30s, the same window governing the SEPARATE completion-health
+  // staleness decay below) -- but those are genuinely different signals. A
+  // single FAILED reachability probe (source:'none', backend still null) used
+  // to lock EVERY subsequent inbound into the LLM-down queue gate
+  // (hooks/handler.js: "LLM backend down; queued inbound, no reply sent") for
+  // a full 30 REAL seconds, with zero attempt made, even when the underlying
+  // provider chain was fully reachable the whole time -- live-witnessed
+  // directly: resolveCallLLM's own reachability probe (freddie's isReachable,
+  // itself walking a real multi-provider chatChain) raced against a too-short
+  // internal timeout and lost, then a genuinely independent chain call
+  // succeeded in barely over a second moments later, proving the backend was
+  // never actually down -- only the ONE probe attempt was unlucky. Retrying a
+  // failed reachability probe is cheap (worst case: another quick failure, no
+  // worse than today) so this now debounces on a MUCH shorter window by
+  // default, independent of the health-staleness decay's own 30s -- a caller
+  // that explicitly wants the old shared-window behavior can still pass
+  // resolveDebounceMs to override.
+  const RESOLVE_DEBOUNCE_MS = resolveDebounceMs != null ? resolveDebounceMs : Math.min(intervalMs, 3000)
   async function ensure() {
     if (backend) return backend
     if (inflight) return inflight
-    if (clock() - lastAttempt < intervalMs) return backend
+    if (clock() - lastAttempt < RESOLVE_DEBOUNCE_MS) return backend
     lastAttempt = clock()
     inflight = resolveOnce().finally(() => { inflight = null })
     return inflight
@@ -198,7 +219,12 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // It folds in completion-path health so a resolved-but-slow backend reads
   // degraded -- the operator can tell "online" from "online but answering nobody".
   const status = async () => {
-    if (!backend && clock() - lastAttempt >= intervalMs) await ensure()
+    // Matches ensure()'s own RESOLVE_DEBOUNCE_MS gate exactly (not intervalMs)
+    // -- this is a pre-check for whether ensure() is worth calling at all, so
+    // it must use the SAME window ensure() itself checks, or status() would
+    // still silently wait the old, longer intervalMs before ever attempting
+    // the fix ensure() now provides.
+    if (!backend && clock() - lastAttempt >= RESOLVE_DEBOUNCE_MS) await ensure()
     const health = completionHealth()
     // A resolved backend that has gone consistently degraded (every recent real
     // turn failed/slow) never re-resolves on its own: `ensure()` only probes
