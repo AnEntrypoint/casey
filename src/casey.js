@@ -16,6 +16,7 @@ import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier, breach
 import { sweepCases } from './case-sweep.js'
 import { ALL_HEALTH_TAGS } from './case-health.js'
 import { parseListEnv } from './safe.js'
+import { mergeTag } from './hooks/heuristics.js'
 
 const CASE_HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
@@ -470,6 +471,22 @@ export class Casey {
         if (openStatuses.size && !openStatuses.has(c.status)) continue
         // Skip channels with no live adapter to send on.
         if (!this.adapters[c.channel]?.send) continue
+        // CASE-LEVEL DEAD-LETTER: a case already flagged resume-exhausted (below)
+        // has NO genuinely-pending msgId left -- every one it ever had is either
+        // completed or has hit RESUME_DEGRADED_RETRY_CAP. Skip it before even
+        // fetching its event log, the cheapest possible short-circuit. Without
+        // this, the per-msgId cap alone was not enough: a case with MANY
+        // historical inbound messages (a contact who sent several messages
+        // during an outage) picks a DIFFERENT still-under-cap msgId on each
+        // boot's sweep, so the case as a whole never actually stopped being
+        // re-driven -- live-witnessed this session as ~28 ancient stuck cases
+        // (some carrying 5-10 distinct pending msgIds each) getting walked on
+        // EVERY single boot for hours, each walk burning a full provider-chain
+        // attempt per msgId and competing directly with live traffic for the
+        // same rate-limited capacity. A dead-lettered case still shows up in
+        // the operator's needs-human queue (tagged below) -- nothing is lost,
+        // it just stops silently consuming provider budget forever.
+        if ((c.tags || '').split(',').map(s => s.trim()).includes('resume-exhausted')) continue
         let events
         try { events = await this.store.listEvents(c.id) } catch { continue }
         scanned++
@@ -508,16 +525,49 @@ export class Casey {
         // backend still stops trying eventually, same discipline as
         // drainQueuedTurns' retryCap -> queue-drive-failed dead-letter.
         const RESUME_DEGRADED_RETRY_CAP = 5
+        // Age ceiling, independent of attempt count: a message that has sat
+        // unanswered this long has almost certainly had its sender move on --
+        // continuing to resume-retry it provides no real value to anyone and
+        // only keeps consuming provider budget shared with live traffic.
+        // Bounds the total number of BOOTS a stuck msgId can ever be retried
+        // across (not just attempts within one boot), which the attempt-count
+        // cap alone did not do: a case with many old distinct pending msgIds
+        // could keep finding a fresh under-cap one to retry, boot after boot,
+        // indefinitely -- live-witnessed as ~28 cases some untouched for many
+        // hours still being walked on every single restart tonight.
+        const RESUME_MAX_AGE_MS = Number(process.env.CASEY_RESUME_MAX_AGE_MS) || 24 * 60 * 60 * 1000
+        const nowMs = Date.now()
         let pending = null
+        let anyCapped = false
         for (const [id, ev] of started) {
           if (completedAfter.has(id)) continue
           const wasAttempted = attempted.has(id)
           const degraded = degradedCount.get(id) || 0
           if (wasAttempted && degraded === 0) continue           // silent non-degraded completion: leave it alone
-          if (degraded >= RESUME_DEGRADED_RETRY_CAP) continue     // exhausted retries: stop trying
+          const ageMs = nowMs - (Number(ev.created_at) || nowMs)
+          if (degraded >= RESUME_DEGRADED_RETRY_CAP || ageMs >= RESUME_MAX_AGE_MS) { anyCapped = true; continue }  // exhausted retries or too old: stop trying
           if (!pending || ev.created_at >= pending.ev.created_at) pending = { id, ev }
         }
-        if (!pending) continue
+        if (!pending) {
+          // No genuinely-pending msgId survives (each is either completed,
+          // a silent non-degraded miss, or capped) -- if at least one was a
+          // REAL exhausted retry (anyCapped), this case has demonstrably
+          // never going to self-resolve via more resume attempts. Dead-letter
+          // it so it stops consuming a scan+event-fetch AND, more importantly,
+          // never re-enters the pending selection above on a future boot.
+          // A case whose only uncompleted msgIds are silent (non-degraded)
+          // misses is left alone deliberately -- unlike a capped degraded
+          // retry, a silent miss has no positive signal that resuming would
+          // ever have helped in the first place, so there is nothing to
+          // conclude by giving up.
+          if (anyCapped) {
+            try {
+              await this.store.updateCase(c.id, { tags: mergeTag(mergeTag(c.tags, 'resume-exhausted'), 'needs-human') })
+              await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: 'resume-exhausted: every pending message hit the resume-degraded retry cap; this case will no longer be auto-resumed and needs a human.' })
+            } catch (e) { this.log?.warn?.('[casey] resume-exhausted tag failed', { caseId: c.id, error: e.message }) }
+          }
+          continue
+        }
         // Mark BEFORE re-drive -- at-most-once PER BOOT. A crash now leaves
         // attempted-not-done, and the next boot within the SAME resume pass
         // would otherwise re-drive the same msgId twice; the per-boot marker
@@ -566,9 +616,30 @@ export class Casey {
         // on a multi-author Discord channel to Discord as an invalid channel
         // id (400 Invalid Form Body, NUMBER_TYPE_COERCE), silently never
         // reaching the contact even when the LLM call itself succeeded.
-        const container = c.external_id.includes(':') ? c.external_id.split(':')[0] : c.external_id
+        const parts = c.external_id.split(':')
+        const container = parts[0]
+        // SEVERE COMPOUNDING-KEY BUG, fixed here: msg.from must be the bare
+        // AUTHOR id only -- passing the whole combined external_id back in as
+        // `from` (as this line used to) makes conversationKey() (which
+        // computes `container:from`) recombine it into
+        // `container:container:author` on THIS redrive's own next write,
+        // growing by one duplicated container segment on every single
+        // resume-sweep pass. Live-witnessed: real production external_ids for
+        // this channel's cases had accumulated the SAME channel id 30+ times,
+        // colon-joined, after weeks of nightly resume sweeps silently
+        // corrupting them one redrive at a time -- conversationKey() itself
+        // was never the bug (it always emits a clean two-part key), the bug
+        // was this call site feeding its own prior output back in as raw
+        // input. The real author is always the LAST colon-separated segment,
+        // regardless of how many duplicated container segments already
+        // accumulated in front of it -- taking the last part both fixes the
+        // bug going forward AND self-heals existing corrupted keys on their
+        // very next successful resume (the freshly split-and-rejoined key
+        // this redrive writes collapses back to a clean two-part
+        // container:author, no separate one-off migration needed).
+        const author = parts[parts.length - 1]
         const msg = {
-          from: c.external_id,
+          from: author,
           text: pending.ev.text || '',
           platform,
           resume: true,
@@ -677,11 +748,17 @@ export class Casey {
           // combined external_id through unsplit sent every queued-redrive reply on a
           // multi-author Discord channel to Discord as an invalid channel id (400
           // Invalid Form Body, NUMBER_TYPE_COERCE) -- the queued reply silently never
-          // reached the contact. Recover the real container id (the part before the
-          // first ':'), falling back to the whole external_id for a 1:1 chat where
-          // conversationKey never inserted a colon.
-          const container = c.external_id.includes(':') ? c.external_id.split(':')[0] : c.external_id
-          const msg = { from: c.external_id, text: ev.text || '', platform: c.channel, resume: true, queuedRedrive: true, raw: { channel_id: container, id, author: {} } }
+          // reached the contact. Recover the real container id (the FIRST segment)
+          // and the real author id (the LAST segment) -- same compounding-key fix
+          // as resumePendingTurns above: passing the whole combined external_id
+          // through as `from` let conversationKey() recombine it into an
+          // ever-growing container:container:...:author on every redrive. Taking
+          // the last segment also self-heals an already-corrupted multi-segment
+          // key back to a clean two-part one on this redrive's own write.
+          const qParts = c.external_id.split(':')
+          const container = qParts[0]
+          const author = qParts[qParts.length - 1]
+          const msg = { from: author, text: ev.text || '', platform: c.channel, resume: true, queuedRedrive: true, raw: { channel_id: container, id, author: {} } }
           try {
             const res = await handle.call(this.gateway, c.channel, msg)
             // A DEGRADED re-drive (the turn ended in the fallback path -- the agent
