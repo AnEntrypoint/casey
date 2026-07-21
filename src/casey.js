@@ -663,7 +663,14 @@ export class Casey {
           this.log?.warn?.('[casey] resume re-drive failed', { caseId: c.id, error: e.message })
         }
       }
-      if (resumed) this.log?.info?.('[casey] resume sweep complete', { scanned, resumed })
+      // Always log the sweep's outcome, not just when it actually redrove
+      // something -- a silent "nothing happened" completion is exactly as
+      // important to see as a busy one when diagnosing whether the sweep is
+      // running at all vs. genuinely idle vs. quietly stuck. Previously
+      // gated on `if (resumed)`, so a fully-idle sweep (the common,
+      // healthy case once the dead-letter fix above is doing its job) left
+      // zero trace it ever ran.
+      this.log?.info?.('[casey] resume sweep complete', { scanned, resumed })
       return { scanned, resumed }
     } finally { this._draining = false }
   }
