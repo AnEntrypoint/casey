@@ -112,6 +112,37 @@ export function registerMap(app, deps) {
     res.json({ workers, stale_ms: staleMs })
   }))
 
+  // Last-reported-location layer: each CONTACT's most recent ANIMAL-REPORT
+  // location (contact.last_report_lat/lon, propagated by case_report --
+  // case-tools.js -- every time the agent records/refines a case's own
+  // lat/lon). Distinct from BOTH /api/map/cases (one pin per CASE, which can
+  // include many closed/historical reports) and /api/map/workers (a
+  // field_worker's own casual position check-in, not tied to any report) --
+  // this is "where did this PERSON most recently say the animals were",
+  // carried forward across their reports the same way a single case's own
+  // coordinate refines on a later, more specific case_report call.
+  // last_report_case_id is the DRILL-DOWN target: every pin here must be able
+  // to open the exact case that produced it, never a bare aggregate dot with
+  // no way back to the underlying report.
+  app.get('/api/map/last-reports', wrap(async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const contacts = await store.listContacts({ limit: 2000 })
+    const reports = []
+    for (const c of contacts) {
+      if (c.last_report_lat == null || c.last_report_lon == null) continue
+      const lat = Number(c.last_report_lat), lon = Number(c.last_report_lon)
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) continue
+      reports.push({
+        contact_id: c.id,
+        display_name: c.display_name || null,
+        lat, lon,
+        last_report_at: c.last_report_at || null,
+        case_id: c.last_report_case_id || null,
+      })
+    }
+    res.json({ reports })
+  }))
+
   // dispatch-from-map PRD row: an operator, looking at the map's case pins
   // alongside its field-worker location overlay (GET /api/map/workers just
   // above), selects a worker to direct to a case. This does NOT message the

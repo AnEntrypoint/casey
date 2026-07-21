@@ -1952,7 +1952,7 @@ async function loadMap(){
       canvas.innerHTML=''
       const map=window.L.map(canvas,{center:[-28.5,25],zoom:5})
       window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'(c) OpenStreetMap contributors'}).addTo(map)
-      mapState={map,markerLayer:null,clusterLines:null,coverageLayer:null,workersLayer:null,pins:[],clusters:[],showCoverage:false,showClusters:false,showWorkers:false}
+      mapState={map,markerLayer:null,clusterLines:null,coverageLayer:null,workersLayer:null,lastReportsLayer:null,pins:[],clusters:[],showCoverage:false,showClusters:false,showWorkers:false,showLastReports:false}
       $('#map-species').onchange=renderMapMarkers
       $('#map-type').onchange=renderMapMarkers
       $('#map-status').onchange=renderMapMarkers
@@ -1961,6 +1961,8 @@ async function loadMap(){
       $('#map-coverage-btn').onclick=async()=>{ mapState.showCoverage=!mapState.showCoverage; $('#map-coverage-btn').classList.toggle('active',mapState.showCoverage); await renderMapCoverage() }
       const workersBtn=$('#map-workers-btn')
       if(workersBtn) workersBtn.onclick=async()=>{ mapState.showWorkers=!mapState.showWorkers; workersBtn.classList.toggle('active',mapState.showWorkers); await renderMapWorkers() }
+      const lastReportsBtn=$('#map-last-reports-btn')
+      if(lastReportsBtn) lastReportsBtn.onclick=async()=>{ mapState.showLastReports=!mapState.showLastReports; lastReportsBtn.classList.toggle('active',mapState.showLastReports); await renderMapLastReports() }
     }
     mapState.pins=j.pins||[]
     mapState.clusters=j.clusters||[]
@@ -2054,6 +2056,41 @@ async function renderMapWorkers(){
     layer.addTo(map)
     mapState.workersLayer=layer
   }catch(e){ /* worker-location overlay is a soft add-on -- a failure here must not break the map */ }
+}
+// Last-reported-location layer (GET /api/map/last-reports): each contact's
+// most recent ANIMAL-REPORT location, distinct from the case-pin layer (one
+// dot per CASE, including old/closed ones) and from the field-worker layer
+// (a worker's own casual position, not a report). Every pin drills down to
+// the exact case that produced it via openCase(case_id) -- never a bare
+// aggregate dot with no path back to the underlying report.
+async function renderMapLastReports(){
+  if(!mapState) return
+  const {map}=mapState
+  if(mapState.lastReportsLayer){ map.removeLayer(mapState.lastReportsLayer); mapState.lastReportsLayer=null }
+  if(!mapState.showLastReports) return
+  try{
+    const j=await api('/api/map/last-reports').then(r=>r.ok?r.json():null)
+    if(!j) return
+    mapState.lastReports=j.reports||[]
+    const layer=window.L.layerGroup()
+    for(const rpt of (j.reports||[])){
+      const marker=window.L.circleMarker([rpt.lat,rpt.lon],{
+        radius:7, color:'#3ba05c', weight:2, fillColor:'#3ba05c', fillOpacity:0.55,
+      })
+      const when=rpt.last_report_at?fmtTime(rpt.last_report_at):'unknown time'
+      const name=esc(rpt.display_name||'a reporter')
+      const openLink=rpt.case_id?'<div style="margin-top:4px"><a href="#" data-open-last-report="'+esc(rpt.case_id)+'">Open case</a></div>':''
+      const html='<div style="font-size:12px"><b>'+name+'</b><br>Last reported: '+esc(when)+openLink+'</div>'
+      marker.bindPopup(html)
+      marker.on('popupopen',()=>{
+        const el=document.querySelector('[data-open-last-report="'+rpt.case_id+'"]')
+        if(el) el.onclick=(e)=>{e.preventDefault(); openCase(rpt.case_id)}
+      })
+      layer.addLayer(marker)
+    }
+    layer.addTo(map)
+    mapState.lastReportsLayer=layer
+  }catch(e){ /* last-reported-location overlay is a soft add-on -- a failure here must not break the map */ }
 }
 // --- Activity / audit stream ---
 const ACT_KIND_LABEL={inbound:'Inbound',outbound:'Reply',transition:'Stage change',note:'Note',observation:'Note',action:'Action',autonomy_change:'Autonomy'}

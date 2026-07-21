@@ -74,6 +74,14 @@ entities:
       last_location_lat:  { type: number }            # field_worker casual location check-in (see case_checkin tool);
       last_location_lon:  { type: number }            # distinct from case.lat/lon (a CASE's location, not a person's)
       last_location_at:   { type: text }              # ISO timestamp of the check-in, for map staleness fade-out
+      last_report_lat:    { type: number }            # this contact's most recent ANIMAL-REPORT location (case_report's
+      last_report_lon:    { type: number }            # own lat/lon, propagated here on write) -- distinct from
+                                                       # last_location_* (the worker's own position) and from any single
+                                                       # case's own lat/lon (this is the CONTACT's latest, refined forward
+                                                       # across their reports the same way a case's own coordinate refines
+                                                       # on a later, more specific case_report call).
+      last_report_at:      { type: text }             # ISO timestamp of the propagating case_report call
+      last_report_case_id: { type: text }              # the case id that produced last_report_lat/lon -- drill-down target
 
   case:
     label: Case

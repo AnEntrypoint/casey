@@ -926,7 +926,7 @@ export class CaseStore {
   async eraseContact(contactId, { reason = '', operator = SYSTEM_USER } = {}) {
     const contact = await this.getContact(contactId)
     if (!contact) throw new Error(`eraseContact: no such contact ${contactId}`)
-    const PII_CONTACT_FIELDS = { external_id: '[erased]', display_name: '[erased]', handle: '', notes: '', last_location_lat: null, last_location_lon: null, last_location_at: '' }
+    const PII_CONTACT_FIELDS = { external_id: '[erased]', display_name: '[erased]', handle: '', notes: '', last_location_lat: null, last_location_lon: null, last_location_at: '', last_report_lat: null, last_report_lon: null, last_report_at: '', last_report_case_id: '' }
     const alreadyErased = contact.external_id === '[erased]'
     if (!alreadyErased) {
       await this.t.update('contact', contactId, PII_CONTACT_FIELDS, SYSTEM_USER)

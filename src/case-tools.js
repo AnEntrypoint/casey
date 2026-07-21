@@ -300,6 +300,25 @@ export function buildCaseToolset(storeOrNull) {
           const c = await store().getCase(id)
           if (c?.autonomy === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
           await store().updateCase(id, { lat, lon }, AGENT_USER)
+          // Propagate to the CONTACT as their last-reported location, distinct
+          // from both case.lat/lon (this specific report's animal location,
+          // just written above) and contact.last_location_* (a field_worker's
+          // own casual position check-in via case_checkin -- a different axis
+          // entirely: where the WORKER is standing, not where an animal report
+          // is). last_report_lat/lon/at is "where did this contact's most
+          // recent report say the animals were", refined forward across their
+          // reports the same way case.lat/lon itself refines on a later, more
+          // specific case_report call. Best-effort: a contact-propagation
+          // failure must never block the real case write above, which already
+          // succeeded.
+          if (c?.contact_id) {
+            try {
+              await store().t.update('contact', c.contact_id, {
+                last_report_lat: lat, last_report_lon: lon, last_report_at: new Date().toISOString(),
+                last_report_case_id: id,
+              }, AGENT_USER)
+            } catch { /* best-effort -- the case's own lat/lon write is the source of truth */ }
+          }
         }
         // Keep the derived normalized_location field (case-store.js
         // DERIVED_ONLY_FIELDS) in step with a newly-recorded/changed location,
