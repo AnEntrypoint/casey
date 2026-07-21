@@ -41,8 +41,7 @@ The dashboard reads/edits thatcher over its API.
 
 **Layering mandate: agentic harness -> freddie, CRM code -> thatcher, casey is
 setup + configuration.** freddie owns the agent harness (runTurn tool loop, plugin
-host, the acptoapi bridge, and a reference case toolset at
-`freddie/src/plugins/case/`) and threads `tool_choice` (e.g. `'required'`) through
+host, and the acptoapi bridge) and threads `tool_choice` (e.g. `'required'`) through
 runTurn -> machine -> the bridge -- a plain value applies on ITERATION 0 ONLY
 (then model choice) so a forced first tool call can never make loop termination
 unreachable; casey's handler passes `tool_choice: 'required'` to nudge a weak
@@ -73,12 +72,11 @@ it by name, opt-in and fail-open, never widened into the agent's toolset.
 
 casey registers its OWN case toolset
 (`plugins/case-tools/plugin.js` -> `src/case-tools.js`, discovered by
-`bootHost([CASEY_PLUGINS])`) into that host. freddie ships a separate reference
-case toolset at `src/plugins/case/` with several overlapping tool names, but it
-has no `plugin.js` and sits outside freddie's own `plugins/` discovery root, so
-it is never loaded by any boot path -- casey's is the only toolset that actually
-runs. Watch for real collision risk if freddie's copy is ever wired into a
-discovered plugin root. The agent acts entirely through
+`bootHost([CASEY_PLUGINS])`) into that host. freddie's own former reference case
+toolset at `src/plugins/case/` (which never had a `plugin.js` and sat outside
+freddie's `plugins/` discovery root, so it was never actually loaded by any boot
+path) has since been removed from freddie entirely -- casey's toolset is now the
+only one that exists, not merely the only one that runs. The agent acts entirely through
 these tools -- `case_report` (extract report fields), `case_list` (a `location` param
 matching a place token against the report location; there is NO province->town
 gazetteer, so a literal-location match, and the rows are the PII-free `enquiryRow`,
