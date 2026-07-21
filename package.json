@@ -17,7 +17,7 @@
   "dependencies": {
     "adaptogen": "file:../dstate",
     "anentrypoint-design": "file:../anentrypoint-design",
-    "acptoapi": "^1.0.171",
+    "acptoapi": "^1.0.173",
     "express": "^4.19.2",
     "freddie": "^0.0.206",
     "js-yaml": "^4.1.0",
