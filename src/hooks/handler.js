@@ -988,11 +988,21 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       })
       stopTyping()
       const fallbackReply = { to: replyTo, text: fallbackText, platform, caseId: fresh.id, degraded: true, guaranteedFallback: true }
+      let fallbackDelivered = true
       try {
         if (typeof adapter?.send === 'function') await adapter.send(fallbackReply)
       } catch (e) {
+        fallbackDelivered = false
         log.error?.('[casey] guaranteed-fallback send failed', { caseId: fresh.id, error: e.message })
+        // Mirrors the successful-reply path's send-failure visibility below --
+        // this is precisely the path meant to GUARANTEE an observable record
+        // for a worried farmer, so its own delivery failure must not be the
+        // one silent case. The 'sent' event above already exists; this adds
+        // the correcting fact so the timeline is never wrong about whether
+        // the fallback text actually reached the contact.
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `fallback send failed on ${channel}: ${e.message}` })
       }
+      fallbackReply.delivered = fallbackDelivered
       return fallbackReply
     }
 

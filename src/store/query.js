@@ -14,7 +14,7 @@
 // breaks on the id. (A prior version tie-broke on id assuming monotonic integer
 // ids -- false for thatcher's random-suffix ids -- and made the resume sweep flaky.)
 const ca = (r) => (r?.created_at || 0)
-export function sortByCreatedStable(rows, dir) {
+function sortByCreatedStable(rows, dir) {
   // Decorate with the input index, sort by (created_at, index), undecorate. The
   // index tiebreak keeps same-second events in arrival order regardless of the
   // engine's sort stability or the id's unsortable suffix.

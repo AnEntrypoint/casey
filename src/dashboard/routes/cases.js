@@ -292,6 +292,15 @@ export function registerCases(app, deps) {
     if ((action === 'tag' || action === 'untag') && /[,]/.test(tag)) return res.status(400).json({ error: 'tag must not contain a comma' })
     const noteText = action === 'note' ? String(req.body?.text || '').trim() : null
     if (action === 'note' && !noteText) return res.status(400).json({ error: 'note requires non-empty "text"' })
+    // Same cap the single-case note route enforces (server.js MAX_LEN, not
+    // exported -- kept in sync by value since it's a product-level cap, not a
+    // storage limit). Without this, a bulk note wrote arbitrary-length text
+    // verbatim into up to 500 case timelines with no bound at all, unlike
+    // every other text-writing route in this file.
+    const NOTE_MAX_LEN = 4000
+    if (action === 'note' && noteText.length > NOTE_MAX_LEN) {
+      return res.status(413).json({ error: `text too long (max ${NOTE_MAX_LEN})` })
+    }
 
     const results = []
     for (const id of ids) {

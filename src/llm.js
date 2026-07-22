@@ -256,7 +256,19 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
     // window with a fresh failed sample (a real down backend still reads
     // down; only a STALE verdict about a backend that recovered or was never
     // really down gets cleared).
-    if (health.degraded && health.newestSampleAt != null && clock() - health.newestSampleAt >= intervalMs) {
+    // Only decay-clear to healthy when a backend is ACTUALLY resolved right now.
+    // Without this, a call that just nulled `backend` two lines above (line
+    // 236-238, same invocation) could still fall through to this branch and
+    // report ok:true with no backend to serve anything -- a false-healthy
+    // verdict feeding both the dashboard's "AI helper: online" pill and the
+    // LLM-down queue gate (hooks/handler.js reads st.ok === false to decide
+    // whether to queue), inviting a real inbound to be attempted against a
+    // backend that is provably null. The trap this decay exists to break (a
+    // stale degraded verdict about a backend that's actually fine) only
+    // applies when there IS a resolved backend to re-sample; when backend is
+    // null the honest verdict is still "not ok", and the queue path already
+    // triggers ensure() debounced re-resolution on its own.
+    if (backend && health.degraded && health.newestSampleAt != null && clock() - health.newestSampleAt >= intervalMs) {
       return { ...last, degraded: false, lastMs: health.lastMs, recentSlow: health.recentSlow, ok: true }
     }
     return { ...last, ...health, ok: !!backend && health.degraded !== true }

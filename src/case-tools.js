@@ -160,7 +160,7 @@ export function buildCaseToolset(storeOrNull) {
         },
         required: ['id'],
       },
-      async ({ id, ...patch }) => {
+      async ({ id, ...patch }, ctx) => {
         // Validate case_type/priority BEFORE pick()'s empty-string filtering: an
         // explicit case_type:"" must be rejected the same way a bogus value is,
         // not silently dropped as if the field were never supplied -- pick()
@@ -182,23 +182,37 @@ export function buildCaseToolset(storeOrNull) {
         if (!Object.keys(clean).length) return { error: 'no editable fields supplied' }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
+        // A field_worker may learn another case's id via case_list/case_mine
+        // (PII-free rows still carry `id`) -- ownership must be checked here too,
+        // same gate case_get/case_switch already apply, or any worker could edit
+        // a stranger's case (priority/tags/assignee/case_type/subject/summary).
+        const author = ctx?.author || ctx?.principal?.id
+        if (!ownsCase(c.external_id, author)) {
+          return { error: `case ${id} does not belong to you -- cannot update it` }
+        }
         // Autonomy is operator control: it is set only from the dashboard, never by
         // the agent -- otherwise the agent could flip observe back to auto and
         // escape the very mode an operator used to stop it acting. So in observe
-        // mode the agent may only observe; all content edits are blocked.
-        if (c.autonomy === 'observe') {
+        // mode the agent may only observe; all content edits are blocked. Routed
+        // through updateCaseChecked (re-reads autonomy INSIDE the per-conversation
+        // lock, same discipline as mergeReport) rather than this outer read-then-
+        // write, so an operator's dashboard observe-mode flip landing between this
+        // handler's own read and its write cannot be raced.
+        const result = await store().updateCaseChecked(id, clean, AGENT_USER)
+        if (result.error === 'observe') {
           return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
         }
-        const caseTypeChanged = 'case_type' in clean && (c.case_type || 'unset') !== clean.case_type
-        const updated = await store().updateCase(id, clean, AGENT_USER)
+        if (result.error) return result
+        const { case: updated, prior } = result
+        const caseTypeChanged = 'case_type' in clean && (prior.case_type || 'unset') !== clean.case_type
         // Audited as its own from/to action, matching the dashboard's own
         // reclassification event shape, so /api/report.json's per-type analytics
         // can trace an agent-driven reclassification the same way as an operator one.
         if (caseTypeChanged) {
           await store().appendEvent(id, {
             kind: 'action', actor: 'agent',
-            text: `case_type ${c.case_type || 'unset'} -> ${clean.case_type}`,
-            data: { from: c.case_type || 'unset', to: clean.case_type, field: 'case_type' },
+            text: `case_type ${prior.case_type || 'unset'} -> ${clean.case_type}`,
+            data: { from: prior.case_type || 'unset', to: clean.case_type, field: 'case_type' },
           })
         }
         const otherKeys = Object.keys(clean).filter(k => k !== 'case_type')
@@ -351,7 +365,13 @@ export function buildCaseToolset(storeOrNull) {
         properties: { id: str('Case id'), text: str('The observation') },
         required: ['id', 'text'],
       },
-      async ({ id, text }) => {
+      async ({ id, text }, ctx) => {
+        const c = await store().getCase(id)
+        if (!c) return { error: `no case ${id}` }
+        const author = ctx?.author || ctx?.principal?.id
+        if (!ownsCase(c.external_id, author)) {
+          return { error: `case ${id} does not belong to you -- cannot add an observation to it` }
+        }
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text })
         return { ok: true }
       }),
@@ -371,9 +391,13 @@ export function buildCaseToolset(storeOrNull) {
         },
         required: ['id', 'to'],
       },
-      async ({ id, to, reason = '' }) => {
+      async ({ id, to, reason = '' }, ctx) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
+        const author = ctx?.author || ctx?.principal?.id
+        if (!ownsCase(c.external_id, author)) {
+          return { error: `case ${id} does not belong to you -- cannot transition it` }
+        }
         if (c.autonomy === 'observe') return { error: 'case autonomy is "observe"; transitions are operator-only' }
         try {
           await store().transition(id, to, { user: AGENT_USER, reason })
@@ -431,7 +455,13 @@ export function buildCaseToolset(storeOrNull) {
         },
         required: ['id', 'event_ids'],
       },
-      async ({ id, event_ids, subject = '', reason = '' }) => {
+      async ({ id, event_ids, subject = '', reason = '' }, ctx) => {
+        const target = await store().getCase(id)
+        if (!target) return { error: `no case ${id}` }
+        const author = ctx?.author || ctx?.principal?.id
+        if (!ownsCase(target.external_id, author)) {
+          return { error: `case ${id} does not belong to you -- cannot split it` }
+        }
         const res = await store().splitCase(id, event_ids, { subject, reason }, AGENT_USER)
         if (res.error === 'observe') return { error: 'case autonomy is "observe"; splitting is operator-only' }
         if (res.error) return { error: res.error }

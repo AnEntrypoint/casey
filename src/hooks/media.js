@@ -9,6 +9,24 @@
 
 import { truncate } from './heuristics.js'
 
+// None of the three dispatchTool calls below carry any timeout of their own
+// (freddie's dispatch path and the bare fetch() calls beneath it are both
+// unbounded), and transcribeAudio/describePhoto run BEFORE turnStartedAt is
+// set (hooks/handler.js), so they sit entirely outside
+// CASEY_TURN_HARD_DEADLINE_MS -- a half-open connection to the transcription/
+// vision/tts provider would hang the whole inbound turn and the per-contact
+// concurrency gate forever. Bounded well under the 60s turn hard-deadline
+// (these three effectively steal from that same budget) so a stuck provider
+// still lets the turn's own retry/fallback machinery run with real time left.
+const MEDIA_TOOL_TIMEOUT_MS = Number(process.env.CASEY_MEDIA_TOOL_TIMEOUT_MS) || 12000
+
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`media tool timed out after ${ms}ms`)), ms)
+    promise.then(v => { clearTimeout(t); resolve(v) }, e => { clearTimeout(t); reject(e) })
+  })
+}
+
 // Best-effort voice-note transcription via freddie's transcription tool (an
 // acptoapi /v1/audio/transcriptions Whisper passthrough) -- OPT-IN, degrades
 // silently to the operator-listens fallback that already existed when
@@ -33,7 +51,7 @@ export async function transcribeAudio(buffer, mimeType) {
     fs.writeFileSync(tmpPath, buffer)
     const { host } = await import('freddie')
     const h = host()
-    const result = await h.pi.dispatchTool('transcription', { file_path: tmpPath })
+    const result = await withTimeout(h.pi.dispatchTool('transcription', { file_path: tmpPath }), MEDIA_TOOL_TIMEOUT_MS)
     const parsed = typeof result === 'string' ? JSON.parse(result) : result
     return typeof parsed?.text === 'string' ? parsed.text.trim() : ''
   } catch {
@@ -65,10 +83,10 @@ export async function describePhoto(buffer, mimeType) {
     const dataUri = `data:${mime};base64,${buffer.toString('base64')}`
     const { host } = await import('freddie')
     const h = host()
-    const result = await h.pi.dispatchTool('vision', {
+    const result = await withTimeout(h.pi.dispatchTool('vision', {
       image_url: dataUri,
       prompt: 'This is a photo of livestock a field worker sent while reporting a possible animal-health incident. Describe only what is visibly relevant to animal health: any visible signs of illness or injury (e.g. lesions, swelling, discharge, lameness, posture), the apparent species, and how many animals are visible. Do not speculate on a diagnosis.',
-    })
+    }), MEDIA_TOOL_TIMEOUT_MS)
     const parsed = typeof result === 'string' ? JSON.parse(result) : result
     return typeof parsed?.content === 'string' ? parsed.content.trim() : ''
   } catch {
@@ -97,7 +115,7 @@ export async function synthesizeVoice(text) {
     const provider = process.env.ELEVENLABS_API_KEY && !process.env.OPENAI_API_KEY ? 'elevenlabs' : 'openai'
     const { host } = await import('freddie')
     const h = host()
-    const result = await h.pi.dispatchTool('tts', { text: truncate(spoken, 600), provider })
+    const result = await withTimeout(h.pi.dispatchTool('tts', { text: truncate(spoken, 600), provider }), MEDIA_TOOL_TIMEOUT_MS)
     const parsed = typeof result === 'string' ? JSON.parse(result) : result
     if (!parsed?.audio_base64) return null
     return { data_base64: parsed.audio_base64, mime: parsed.contentType || 'audio/mpeg' }

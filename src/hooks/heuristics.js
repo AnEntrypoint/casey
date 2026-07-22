@@ -448,6 +448,13 @@ const HUMAN_EXCLUDE = [
   // direct "please call me back" (no relay marker) still fires.
   'said call me', 'said to call', 'told me to call', 'said i must call',
   'said i should call',
+  // Answers to casey's own present_person/present_person_relation prompt
+  // (hooks/prompt.js: "who is on-site with the animals") -- ordinary report
+  // content naming who is with the animals right now, not a handoff request.
+  // Live-witnessed false positive: "a person is with the cattle now" fired
+  // 'human' and short-circuited the turn instead of recording the answer.
+  'person is with', 'person feeding', 'person minding', 'person watching',
+  'person taking care', 'person herding', 'a person now',
 ]
 
 // RESUME set: the small multi-language "help" vocabulary that opts a STOPPED

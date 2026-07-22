@@ -105,6 +105,19 @@ function printableReport(title, bodyHtml, extraCss = '') {
 export function createDashboard(store, { port = 4000, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null, queueStatus = null, alertWebhookUrl = null } = {}) {
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
+  // Trust-proxy is env-driven and defaults OFF (req.ip stays the raw socket
+  // peer, today's exact behavior -- no regression for a direct/ngrok/dev
+  // deployment). A deployment that sits behind a reverse proxy/load balancer
+  // (the normal internet-facing topology) MUST set CASEY_TRUST_PROXY_HOPS to
+  // the number of trusted proxy hops in front of it, or every request's
+  // socket peer is the proxy -- reportRateLimited (routes/auth.js) then keys
+  // ALL farmers into one shared 10-req/60s bucket, so any combination of 10
+  // legitimate submissions in a minute gets every OTHER farmer 429'd.
+  // Misconfiguring the hop count the other way (too high/untrusted) lets a
+  // client spoof X-Forwarded-For to bypass the limiter -- an operator setting
+  // this must know their own real proxy chain depth.
+  const trustProxyHops = Number(process.env.CASEY_TRUST_PROXY_HOPS)
+  if (Number.isFinite(trustProxyHops) && trustProxyHops > 0) app.set('trust proxy', trustProxyHops)
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
   // A malformed JSON body (e.g. POST /report, public and unauthenticated)

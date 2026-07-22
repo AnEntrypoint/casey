@@ -314,39 +314,50 @@ export class Casey {
   // Run one health-guardrail sweep now. Exposed for tests and manual runs; the
   // scheduler calls the same path. Isolated: a sweep error is the caller's to log.
   async runSweepOnce(now = Date.now()) {
-    // Only the breaches a person must act on raise an alert; stale/stuck are
-    // surfaced in the inbox but do not page the team. The sweep passes
-    // (caseId, breach, detail); we look the case up so the alert carries its ref.
-    const notifyBreach = this._notifyBreach
-      ? async (caseId, breach, detail) => {
-          if (!SWEEP_ALERT_BREACHES.has(breach)) return
-          const c = await this.store.getCase(caseId).catch(() => null)
-          if (!c) return
-          // The escalated tier goes to the supervisor channel; everything else to
-          // the ordinary breach channel.
-          const notify = ESCALATION_BREACHES.has(breach) ? this._notifyEscalation : this._notifyBreach
-          if (notify) await notify(c, breach, detail)
-        }
-      : null
-    // Read the live thresholds (persisted operator patch over the boot override
-    // over defaults) at call time, so a /api/thresholds change takes effect on the
-    // very next sweep without a restart.
-    const thresholds = await this.store.resolveThresholds(this.opts.healthThresholds)
-    const summary = await sweepCases(this.store, now, thresholds, { log: this.log, notifyBreach })
-    // Persist the rich summary as a rolling audited observation so the dashboard
-    // can show a trend over time and a degraded-sweep banner -- otherwise the
-    // breaches/errors detail is logged once and lost. A persistence failure must
-    // not fail the sweep itself, so it is best-effort and recorded as a warning.
-    try { this._lastSweepSummary = await this.store.recordSweepSummary(summary, now) }
-    catch (e) { this.log?.warn?.('[casey] fleet-health persist failed', { error: e.message }) }
-    // Team-level coverage gap: distinct from a per-case breach. If the whole roster
-    // is idle while breaches pile up, page the team-lead once on the rising edge and
-    // clear on the falling edge (the same "once per newly-entered breach" discipline
-    // as the per-case path, so a persistent gap is not re-spammed every 15 minutes).
-    // Best-effort: a coverage-check failure must never fail the sweep itself.
-    try { await this._checkCoverageGap(now) }
-    catch (e) { this.log?.warn?.('[casey] coverage-gap check failed', { error: e.message }) }
-    return summary
+    // Re-entrancy guard, same pattern as resumePendingTurns/drainQueuedTurns's
+    // shared _draining boolean. Without it, a sweep pass that runs longer than
+    // sweepIntervalMs can overlap a second concurrent pass -- both would append
+    // a "newly breaching" observation event and both would call notifyBreach
+    // for the same case (violating case-sweep.js's own "never re-spammed"
+    // contract), and both could race the unlocked _coverageGapActive
+    // read-then-set, double-paging the team-lead.
+    if (this._sweeping) return { scanned: 0, deferred: true }
+    this._sweeping = true
+    try {
+      // Only the breaches a person must act on raise an alert; stale/stuck are
+      // surfaced in the inbox but do not page the team. The sweep passes
+      // (caseId, breach, detail); we look the case up so the alert carries its ref.
+      const notifyBreach = this._notifyBreach
+        ? async (caseId, breach, detail) => {
+            if (!SWEEP_ALERT_BREACHES.has(breach)) return
+            const c = await this.store.getCase(caseId).catch(() => null)
+            if (!c) return
+            // The escalated tier goes to the supervisor channel; everything else to
+            // the ordinary breach channel.
+            const notify = ESCALATION_BREACHES.has(breach) ? this._notifyEscalation : this._notifyBreach
+            if (notify) await notify(c, breach, detail)
+          }
+        : null
+      // Read the live thresholds (persisted operator patch over the boot override
+      // over defaults) at call time, so a /api/thresholds change takes effect on the
+      // very next sweep without a restart.
+      const thresholds = await this.store.resolveThresholds(this.opts.healthThresholds)
+      const summary = await sweepCases(this.store, now, thresholds, { log: this.log, notifyBreach })
+      // Persist the rich summary as a rolling audited observation so the dashboard
+      // can show a trend over time and a degraded-sweep banner -- otherwise the
+      // breaches/errors detail is logged once and lost. A persistence failure must
+      // not fail the sweep itself, so it is best-effort and recorded as a warning.
+      try { this._lastSweepSummary = await this.store.recordSweepSummary(summary, now) }
+      catch (e) { this.log?.warn?.('[casey] fleet-health persist failed', { error: e.message }) }
+      // Team-level coverage gap: distinct from a per-case breach. If the whole roster
+      // is idle while breaches pile up, page the team-lead once on the rising edge and
+      // clear on the falling edge (the same "once per newly-entered breach" discipline
+      // as the per-case path, so a persistent gap is not re-spammed every 15 minutes).
+      // Best-effort: a coverage-check failure must never fail the sweep itself.
+      try { await this._checkCoverageGap(now) }
+      catch (e) { this.log?.warn?.('[casey] coverage-gap check failed', { error: e.message }) }
+      return summary
+    } finally { this._sweeping = false }
   }
 
   // Compute the team coverage gap and page once on the rising edge. The roster is

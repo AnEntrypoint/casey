@@ -24,7 +24,7 @@ import fs from 'node:fs'
 import yaml from 'js-yaml'
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
-import { DERIVED_ONLY_FIELDS, SYSTEM_FORBIDDEN_FIELDS, writeGuardViolation } from './store/guards.js'
+import { DERIVED_ONLY_FIELDS, writeGuardViolation } from './store/guards.js'
 import { REPORT_KEYS, REPORT_KEY_ORDER } from './store/report-shape.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 
@@ -35,7 +35,7 @@ export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
 // Re-exported so every existing external import (case-tools.js, dashboard/
 // server.js, etc.) keeps resolving these names from case-store.js unchanged,
 // even though the actual definitions now live in src/store/*.js.
-export { DERIVED_ONLY_FIELDS, SYSTEM_FORBIDDEN_FIELDS, REPORT_KEYS, REPORT_KEY_ORDER }
+export { REPORT_KEYS, REPORT_KEY_ORDER }
 
 export class CaseStore {
   constructor(opts = {}) {
@@ -902,6 +902,25 @@ export class CaseStore {
     if (violation) throw new Error(violation)
     await this.t.update('case', id, { ...patch, last_event_at: nowIso() }, user, opts)
     return this.getCase(id)
+  }
+
+  // Same lock-and-re-check discipline as mergeReport: an operator's dashboard
+  // autonomy flip to "observe" landing between a caller's own read and its
+  // subsequent write must actually block that write, not just the read it
+  // already saw. updateCase() itself has no lock at all -- a caller doing
+  // read-then-check-then-write outside a lock (as case_tools.js's case_update
+  // handler used to) can be raced by a concurrent autonomy change. Returns
+  // {error:'observe'} on the same rejection shape mergeReport already uses.
+  async updateCaseChecked(id, patch, user = AGENT_USER) {
+    const c0 = await this.getCase(id)
+    if (!c0) return { error: `no case ${id}` }
+    return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
+      const c = await this.getCase(id)               // re-read INSIDE the lock
+      if (!c) return { error: `no case ${id}` }
+      if (c.autonomy === 'observe') return { error: 'observe' }
+      const updated = await this.updateCase(id, patch, user)
+      return { ok: true, case: updated, prior: c }
+    })
   }
 
   // Data retention / right-to-erasure for a contact's PII (POPIA/GDPR-style).
