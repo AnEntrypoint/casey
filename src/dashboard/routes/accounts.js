@@ -15,11 +15,11 @@ export function registerAccounts(app, deps) {
 
   // The operator roster + who the server resolved THIS request to (from the
   // logged-in session), so the SPA can label every action with a real name.
-  app.get('/api/operators', async (req, res) => {
+  app.get('/api/operators', wrap(async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const roster = await getRoster()
     res.json({ operators: roster, current: actingOperator(req).id, attributed: roster.length > 0 })
-  })
+  }))
 
   // Account management -- admin-only. Never returns password_hash/password_salt.
   const publicAccount = (a) => ({ id: a.id, username: a.username, display_name: a.display_name, role: a.role, disabled: a.disabled === '1', last_login_at: a.last_login_at || null })

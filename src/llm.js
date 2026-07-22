@@ -257,7 +257,7 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
     // down; only a STALE verdict about a backend that recovered or was never
     // really down gets cleared).
     if (health.degraded && health.newestSampleAt != null && clock() - health.newestSampleAt >= intervalMs) {
-      return { ...last, degraded: false, lastMs: health.lastMs, recentSlow: health.recentSlow, ok: !!backend }
+      return { ...last, degraded: false, lastMs: health.lastMs, recentSlow: health.recentSlow, ok: true }
     }
     return { ...last, ...health, ok: !!backend && health.degraded !== true }
   }

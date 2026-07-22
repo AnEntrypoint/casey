@@ -179,7 +179,7 @@ export function registerReports(app, deps) {
     const cases = await store.listCases({}, { limit: 10000, offset: 0 })
     const refById = new Map(cases.map(c => [c.id, c.ref]))
     const extById = new Map(cases.map(c => [c.id, String(c.external_id || '')]))
-    let rows = await store.listAllEvents(optActor ? { actor: optActor } : {}, { limit: 100000 })
+    let { rows, truncated } = await store.listAllEvents(optActor ? { actor: optActor } : {}, { limit: 100000 })
     rows = rows.filter(e => Number(e.created_at) >= sinceSec)
     const lines = []
     lines.push(['case_ref', 'timestamp_sast', 'actor', 'action', 'field', 'old_value', 'new_value', 'reason'].join(','))
@@ -202,6 +202,10 @@ export function registerReports(app, deps) {
         csvCell(newVal),
         csvCell(reason),
       ].join(','))
+    }
+    if (truncated) {
+      lines.push(`# TRUNCATED: more than 100000 events in this window; export a shorter --days range for a complete trail`)
+      res.setHeader('X-Audit-Truncated', 'true')
     }
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', 'attachment; filename="casey-audit-trail.csv"')

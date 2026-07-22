@@ -403,7 +403,12 @@ export function buildCaseToolset(storeOrNull) {
         const pool = (await store().listCases({}, { limit: 200 }))
           .filter(o => o.id !== id && o.status !== 'closed'
             && !((o.tags || '').split(',').map(s => s.trim()).includes('merged')))
-        const suggestions = suggestLinks(slimCase(c), pool.map(slimCase)).slice(0, limit)
+        // Score against the raw case rows, not slimCase projections -- slimCase
+        // drops external_id and created_at, which correlationScore needs for
+        // its same-contact/fallback-number/time-proximity signals. suggestLinks
+        // only ever returns {id, ref, score, reasons}, so no extra PII reaches
+        // the caller even though the scoring inputs are the full rows.
+        const suggestions = suggestLinks(c, pool).slice(0, limit)
         return { count: suggestions.length, suggestions }
       }),
     // case_merge is deliberately NOT exposed here. Folding two reports together

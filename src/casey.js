@@ -226,21 +226,10 @@ export class Casey {
       // receive-liveness (a live TCP socket is not the same as a dead gateway
       // delivering no inbound; see AGENTS.md's receive-liveness principle).
       a.on('ready', () => this._markConnected('discord'))
-      // Verify outbound delivery. A bare fetch(...).then(r => r.json()) with no
-      // status check would swallow a non-2xx (wrong channel, missing perms,
-      // rate-limit, revoked token) and casey would still log a clean outbound --
-      // a reply that never arrived. Wrap send to inspect the Discord response: a
-      // successful message has an `id`; an error body carries a numeric `code`
-      // and `message` and no `id`. Throw on a detected failure so the caller
-      // records it as an observation rather than a false-positive outbound.
-      const origSend = a.send.bind(a)
-      a.send = async (reply) => {
-        const resp = await origSend(reply)
-        if (resp && typeof resp === 'object' && !resp.id && (resp.code != null || resp.message)) {
-          throw new Error(`discord send rejected (code ${resp.code ?? '?'}): ${String(resp.message || '').slice(0, 200)}`)
-        }
-        return resp
-      }
+      // Outbound delivery is verified upstream: freddie's DiscordAdapter.send()
+      // (freddie ^0.0.212) already routes through its own verifiedSend(), which
+      // throws on a non-2xx / errored response body, so the caller here already
+      // gets a rejected promise on a failed send.
       return a
     }
   }
@@ -283,17 +272,19 @@ export class Casey {
 
   // Receive-liveness snapshot for the real-time channels (currently discord),
   // so the health surface can distinguish "online" from "deaf". `web` is
-  // request-driven and has no socket to go zombie, so it is omitted. A channel
-  // is `ok` once it has connected; `quiet` is informational only (a real channel
-  // can legitimately receive nothing for long stretches), so quietness alone never
-  // flips the pill -- only "configured but never connected since start" does, which
-  // is the actionable signal an operator can act on (a wedged/zombie initial
+  // request-driven and `whatsapp` is webhook-driven (Meta posts to us) --
+  // neither holds a persistent socket that can go zombie, so both are
+  // omitted. A channel is `ok` once it has connected; `quiet` is
+  // informational only (a real channel can legitimately receive nothing for
+  // long stretches), so quietness alone never flips the pill -- only
+  // "configured but never connected since start" does, which is the
+  // actionable signal an operator can act on (a wedged/zombie initial
   // connect). `now` is injectable for tests.
   receiveStatus(now = Date.now()) {
     const channels = {}
     let worst = 'ok'
     for (const ch of this.channels) {
-      if (ch === 'web') continue   // no real-time receive socket
+      if (ch === 'web' || ch === 'whatsapp') continue   // no real-time receive socket
       const r = this.receiveHealth[ch] || {}
       const connected = r.connectedAt != null
       const sinceInboundMs = r.lastInboundAt != null ? now - r.lastInboundAt : null

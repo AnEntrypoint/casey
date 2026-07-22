@@ -24,7 +24,6 @@
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "thatcher": "latest",
-    "ws": "^8.18.0",
     "xstate": "^5.32.0"
   }
 }

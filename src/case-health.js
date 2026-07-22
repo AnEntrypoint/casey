@@ -89,6 +89,15 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
 
   const touched = lastTouch(caseRow)
   if (!Number.isFinite(touched)) {
+    // A resolved case must never surface abandoned_intake/incomplete_critical --
+    // both breaches page on-call about work that is done, contradicting the
+    // resolved-only-ever-carries-never_closed invariant below. openStatuses
+    // includes 'resolved' (it is not 'closed'), so this branch is otherwise
+    // reachable for it before that invariant's own status check runs.
+    if (status === 'resolved') {
+      out.push({ breach: 'timestamp_corrupt', since_ms: 0, detail: 'case timestamps missing or corrupted; unable to assess staleness' })
+      return out
+    }
     out.push({ breach: 'timestamp_corrupt', since_ms: 0, detail: 'case timestamps missing or corrupted; unable to assess staleness' })
     // Every check below this point is gated on a valid `idle` duration (now -
     // touched), which is unavailable here -- but MISSING_CRITICAL is a pure
@@ -126,7 +135,7 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   // A resolved case is awaiting only closure: its single over-time failure is
   // never being closed. It is not "stale/stuck/abandoned" -- the work is done.
   if (status === 'resolved') {
-    if (Number.isFinite(touched) && idle >= thresholds.neverClosedMs) {
+    if (Number.isFinite(touched) && idle >= forType('neverClosedMs')) {
       out.push({ breach: 'never_closed', since_ms: idle, detail: `resolved but not closed for ${hours(idle)}` })
     }
     return out
@@ -165,7 +174,7 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   // to approve it. The draft-pending tag is set when the draft is held and cleared
   // on approve/discard/supersede, so the tag still being present past the window
   // IS the unsent-draft signal -- the contact is waiting on a human to release it.
-  if (tagList(caseRow).includes('draft-pending') && Number.isFinite(touched) && idle >= (thresholds.unsentDraftMs ?? (1 * 3600e3))) {
+  if (tagList(caseRow).includes('draft-pending') && Number.isFinite(touched) && idle >= (forType('unsentDraftMs') ?? (1 * 3600e3))) {
     out.push({ breach: 'unsent_draft', since_ms: idle, detail: `a drafted reply has waited ${hours(idle)} for approval` })
   }
 
@@ -183,7 +192,7 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   // but still lacks critical visit facts. The farmer may still be reachable, but
   // the window is closing and the team cannot dispatch without this information.
   const activeWorkStages = thresholds?.activeWorkStatuses instanceof Set ? thresholds.activeWorkStatuses : ACTIVE_WORK_STAGES
-  const icThreshold = thresholds.incompleteCriticalMs ?? (8 * 3600e3)
+  const icThreshold = forType('incompleteCriticalMs') ?? (8 * 3600e3)
   if (missingCritical && activeWorkStages.has(status) && Number.isFinite(touched) && idle >= icThreshold) {
     out.push({ breach: 'incomplete_critical', since_ms: idle, detail: `in ${status} for ${hours(idle)} but visit-critical facts still missing` })
   }

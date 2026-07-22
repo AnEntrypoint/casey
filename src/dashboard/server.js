@@ -107,6 +107,15 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   const app = express()
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
+  // A malformed JSON body (e.g. POST /report, public and unauthenticated)
+  // otherwise reaches express's default error handler, which returns a full
+  // stack trace including absolute server filesystem paths to any anonymous
+  // client. Catch only the body-parse failure here; everything else falls
+  // through to next(err) unchanged.
+  app.use((err, req, res, next) => {
+    if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid request body' })
+    next(err)
+  })
 
   // /api/login, /api/logout, and the public /report contact form are the only
   // routes reachable with no session -- every other /api route and the SPA

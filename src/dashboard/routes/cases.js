@@ -28,7 +28,10 @@ export function registerCases(app, deps) {
       }
       where.status = req.query.status
     }
-    if (req.query.channel) where.channel = req.query.channel
+    if (req.query.channel) {
+      if (typeof req.query.channel !== 'string') return res.status(400).json({ error: 'invalid channel' })
+      where.channel = req.query.channel
+    }
     // ?ref= is a direct-lookup shortcut (used by shareable ref deep-links)
     if (req.query.ref) {
       const ref = String(req.query.ref).slice(0, 50)
@@ -102,7 +105,10 @@ export function registerCases(app, deps) {
       if (!valid.includes(req.query.status)) return res.status(400).json({ error: `invalid status: ${req.query.status}` })
       where.status = req.query.status
     }
-    if (req.query.channel) where.channel = req.query.channel
+    if (req.query.channel) {
+      if (typeof req.query.channel !== 'string') return res.status(400).json({ error: 'invalid channel' })
+      where.channel = req.query.channel
+    }
     const cases = await store.listCases(where, { limit: 10000, offset: 0 })
     const META = ['ref', 'subject', 'status', 'priority', 'channel', 'created_at']
     const headers = [...META, 'intake_source', ...REPORT_KEY_LIST]
@@ -602,7 +608,7 @@ export function registerCases(app, deps) {
         await store.updateCase(c.id, { tags: keep.join(',') }, op)
       }
     }
-    res.json({ ok: true, sent: !!sendReply, delivered, claimed })
+    res.json({ ok: delivered, sent: !!sendReply, delivered, claimed })
   }))
 
   // The latest pending assisted-mode draft for a case, or null. A draft is
@@ -641,7 +647,7 @@ export function registerCases(app, deps) {
       const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
       await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending' && t !== 'needs-human').join(',') }, op)
     }
-    res.json({ ok: true, sent: !!sendReply, delivered })
+    res.json({ ok: delivered, sent: !!sendReply, delivered })
   }))
 
   // Discard a held assisted draft without sending: clear draft-pending and record

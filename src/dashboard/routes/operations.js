@@ -298,12 +298,12 @@ export function registerOperations(app, deps) {
     const actor = ACTORS.has(req.query.actor) ? req.query.actor : null
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500)
     const since = parseInt(req.query.since, 10) || 0
-    let rows = await store.listAllEvents({ kind, actor }, { limit: limit + (since ? 500 : 0) })
+    let { rows, truncated } = await store.listAllEvents({ kind, actor }, { limit: limit + (since ? 500 : 0) })
     if (since) rows = rows.filter(e => Number(e.created_at) * 1000 >= since)
     const events = rows.slice(0, limit).map(e => ({
       id: e.id, case_id: e.case_id, kind: e.kind, actor: e.actor,
       text: e.text || '', created_at: e.created_at,
     }))
-    res.json({ count: events.length, kind, actor, events })
+    res.json({ count: events.length, kind, actor, events, truncated })
   }))
 }

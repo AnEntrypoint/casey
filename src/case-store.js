@@ -700,7 +700,6 @@ export class CaseStore {
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe') return { error: 'observe' }
       const merged = this._mergeReportFields(this._parseReport(c.report, caseId), incoming)
-      const patch = { report: JSON.stringify(merged) }
       // No server-side geocoding: the map's lat/lon comes ONLY from the agent's
       // own case_report call (its own best-effort estimate from the location the
       // worker described, using the model's own world knowledge -- see
@@ -934,23 +933,33 @@ export class CaseStore {
     const PII_REPORT_FIELDS = ['owner_name', 'owner_contact', 'present_person', 'present_person_relation', 'contact_fallback', 'photos', 'audio']
     const cases = await this.listCases({ contact_id: contactId }, { limit: 10000 })
     const touchedCaseIds = []
-    for (const c of cases) {
-      let report
-      try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
-      const hadPII = PII_REPORT_FIELDS.some(k => report[k] != null && report[k] !== '')
-      if (!hadPII) continue
-      for (const k of PII_REPORT_FIELDS) report[k] = null
-      // writeGuardViolation forbids the system actor from writing `report` (it
-      // exists to stop the system FABRICATING report content); erasure only ever
-      // NULLs existing PII fields, never invents text, so it goes straight to
-      // thatcher rather than through updateCase/updateCaseQuiet's guard.
-      await this.t.update('case', c.id, { report: JSON.stringify(report) }, SYSTEM_USER)
-      await this.appendEvent(c.id, {
-        kind: 'action', actor: 'system', touch: false,
-        text: `PII erasure: contact data and report identifying fields scrubbed${reason ? ` (${reason})` : ''}`,
-        data: { erasure: true, by: operator?.id || 'system', fields: PII_REPORT_FIELDS },
+    for (const c0 of cases) {
+      // Locked and re-read (same discipline as mergeReport): a concurrent
+      // case_report write landing between the pre-loop snapshot and this
+      // erasure write could otherwise be silently clobbered, or complete
+      // AFTER the erasure and reintroduce a just-nulled PII field with no
+      // error and no audit trail.
+      await this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
+        const c = await this.getCase(c0.id)
+        if (!c) return
+        let report
+        try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+        const hadPII = PII_REPORT_FIELDS.some(k => report[k] != null && report[k] !== '')
+        if (!hadPII) return
+        for (const k of PII_REPORT_FIELDS) report[k] = null
+        // writeGuardViolation forbids the system actor from writing `report` (it
+        // exists to stop the system FABRICATING report content); erasure only ever
+        // NULLs existing PII fields, never invents text, so it goes straight to
+        // thatcher rather than through updateCase/updateCaseQuiet's guard.
+        await this.t.update('case', c.id, { report: JSON.stringify(report) }, SYSTEM_USER,
+          c._version != null ? { expectedVersion: c._version } : {})
+        await this.appendEvent(c.id, {
+          kind: 'action', actor: 'system', touch: false,
+          text: `PII erasure: contact data and report identifying fields scrubbed${reason ? ` (${reason})` : ''}`,
+          data: { erasure: true, by: operator?.id || 'system', fields: PII_REPORT_FIELDS },
+        })
+        touchedCaseIds.push(c.id)
       })
-      touchedCaseIds.push(c.id)
     }
     return { contactId, contactErased: !alreadyErased, casesScrubbed: touchedCaseIds }
   }
@@ -1200,12 +1209,16 @@ export class CaseStore {
   // where-filterable by kind/actor (validated by the caller against known enums);
   // returned newest-first and capped so a huge log cannot blow the response. The
   // case_id stays on each row so the UI can deep-link back to the case.
+  // `truncated` tells the caller whether more rows existed past `limit` --
+  // fetching one sentinel row beyond the cap (limit+1) makes silent truncation
+  // observable instead of the caller believing they saw the whole log.
   async listAllEvents({ kind = null, actor = null } = {}, { limit = 200 } = {}) {
     const where = {}
     if (kind) where.kind = kind
     if (actor) where.actor = actor
-    const rows = byCreatedDescList(await this.t.list('event', where, { limit: 10000 }))
-    return rows.slice(0, Math.max(1, limit))
+    const cappedLimit = Math.max(1, limit)
+    const rows = byCreatedDescList(await this.t.list('event', where, { limit: cappedLimit + 1 }))
+    return { rows: rows.slice(0, cappedLimit), truncated: rows.length > cappedLimit }
   }
 
   // Has this exact platform message already been recorded? Used to dedup webhook

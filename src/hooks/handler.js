@@ -157,6 +157,19 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const external_id = conversationKey(msg)   // per-contact case IDENTITY
     const replyTo = replyTarget(msg)           // channel/chat DELIVERY target
     const adapter = this?.platforms?.get?.(platform)
+    // Rate limits are checked here, before findOrCreateCase/recordInbound run
+    // any store write, so a signature-verified flood is turned away without
+    // driving unbounded case/event writes -- checking only after those writes
+    // (as this used to) still protected the LLM spend but let the flood itself
+    // through to the store on every single message.
+    if (rateLimited(external_id)) {
+      log.error?.('[casey] rate limit: skipping turn, no store write, no reply sent', { channel })
+      return { to: replyTo, text: '', platform, rateLimited: true }
+    }
+    if (globallyRateLimited()) {
+      log.error?.('[casey] global rate limit: skipping turn, no store write, no reply sent', { channel })
+      return { to: replyTo, text: '', platform, rateLimited: true }
+    }
     if (!store) {
       // USER DIRECTIVE: no mocks/fallbacks/stubs, only singular working mechanisms
       // and loud errors. The store is a hard dependency -- if it is not
@@ -477,26 +490,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       }
     }
 
-    // Per-contact rate limit: unlike the simultaneous-message inFlight gate below,
-    // this bounds SEQUENTIAL message rate over time. USER DIRECTIVE: no fallback
-    // text -- log loud, send nothing, skip the LLM turn.
-    if (rateLimited(external_id)) {
-      log.error?.('[casey] rate limit: skipping LLM turn, no reply sent', { caseId: fresh.id })
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `RATE-LIMITED: more than ${RATE_LIMIT_MSGS} messages in ${Math.round(RATE_LIMIT_WINDOW_MS / 1000)}s; no reply sent, no LLM turn.` })
-      return { to: replyTo, text: '', platform, caseId: fresh.id, rateLimited: true }
-    }
-    // Global (aggregate, across ALL contacts) rate limit: many distinct sender
-    // ids each stay under their own per-contact cap while collectively driving
-    // unbounded case creation/LLM spend, since the per-contact window above has
-    // no ceiling on the number of distinct ids. Checked after the per-contact
-    // gate so a single noisy contact is still attributed to their own limit
-    // first; this catches the aggregate case specifically.
-    if (globallyRateLimited()) {
-      log.error?.('[casey] global rate limit: skipping LLM turn, no reply sent', { caseId: fresh.id })
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `GLOBAL-RATE-LIMITED: more than ${GLOBAL_RATE_LIMIT_MSGS} messages across all contacts in ${Math.round(GLOBAL_RATE_LIMIT_WINDOW_MS / 1000)}s; no reply sent, no LLM turn.` })
-      return { to: replyTo, text: '', platform, caseId: fresh.id, rateLimited: true }
-    }
-
     // Per-contact concurrency gate: a second message from the same contact while
     // the first turn is still in the LLM is held off until next poll / retry.
     if (inFlight.has(external_id)) {
@@ -516,6 +509,8 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       return { to: replyTo, text: '', platform, caseId: fresh.id, skipped: true, buffered: true }
     }
     inFlight.add(external_id)
+    let result, errored = false
+    try {
     // Durable turn-lifecycle marker: record that an agent turn STARTED for this
     // inbound (keyed by msgId) as an append-only observation, BEFORE the LLM call.
     // If the process crashes/reloads between here and the outbound below, the boot
@@ -608,7 +603,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // (RESUME_DEGRADED_RETRY_CAP in casey.js), not subject to the live-turn
     // guarantee at all.
     const turnStartedAt = Date.now()
-    let result, errored = false
     for (let attempt = 1; attempt <= MAX_TOOL_CHOICE_ATTEMPTS; attempt++) {
       const configuredTimeoutMs = Number(process.env.CASEY_LLM_TURN_TIMEOUT_MS) || 120000
       const remainingMs = isBackgroundRedrive ? configuredTimeoutMs : (TURN_HARD_DEADLINE_MS - (Date.now() - turnStartedAt))
@@ -730,7 +724,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `tool_choice miss on attempt ${attempt}; retrying` }) }
       catch (e2) { log.warn?.('[casey] failed to record tool_choice-retry observation', { caseId: fresh.id, error: e2.message }) }
     }
-    inFlight.delete(external_id)
     // Re-read the case after the agent turn: the agent may have completed intake via
     // case_report (or moved the stage) during the turn. Report-aware decisions below
     // -- the precedence gate, the fallback intake-advance, the jargon hold -- must see
@@ -1035,6 +1028,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       } catch (e) { log.debug?.('[casey] conversation advance skipped', { caseId: fresh.id, error: e.message }) }
     }
     return reply
+    } finally { inFlight.delete(external_id) }
   }
 
   // Public entrypoint: run one turn, then drain any message a fast burst
@@ -1138,7 +1132,7 @@ function inboundImageNote(msg) {
 // rather than type. Like the photo, it is one-shot and easy to lose if it is only
 // described into the agent's context and never recorded as explicit case state.
 // So we capture it the same way: detect a real audio/voice message (not a sticker,
-// not an image) and record a note at ingress, fill-if-empty. When a transcript is
+// not an image) and record a note at ingress, append-only. When a transcript is
 // available (see transcribeAudio below) it is folded into the note; otherwise the
 // operator listens and can fill the richer detail -- an honest degradation rung,
 // not a silent drop. Returns '' when THIS message carries no audio.
