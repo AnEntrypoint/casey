@@ -836,7 +836,16 @@ export class Casey {
           }
         }
       }
-      if (drained) this.log?.info?.('[casey] queue drain complete', { scanned, drained })
+      // Always log the outcome, not just when something drained -- matching the
+      // same fix already applied to resumePendingTurns's sweep-complete log
+      // (see its own comment). A silent "nothing queued" completion is exactly
+      // as important to see as a busy one when diagnosing whether the periodic
+      // drain-poll timer (startDrainPoll) is actually running at all vs.
+      // genuinely idle vs. quietly stuck/never-started -- live-witnessed
+      // needing this while verifying the drain-poll fix itself: with no log on
+      // an empty scan, a real stuck case sitting un-drained was indistinguishable
+      // from "the timer never fired" and "the timer fired but found nothing".
+      this.log?.info?.('[casey] queue drain complete', { scanned, drained })
       return { scanned, drained }
     } finally {
       this._draining = false
