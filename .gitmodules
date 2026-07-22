@@ -1,0 +1,6 @@
+[submodule "vendor/freddie"]
+	path = vendor/freddie
+	url = https://github.com/AnEntrypoint/freddie.git
+[submodule "vendor/acptoapi"]
+	path = vendor/acptoapi
+	url = https://github.com/AnEntrypoint/acptoapi

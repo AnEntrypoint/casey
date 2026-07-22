@@ -3,6 +3,9 @@
 // (freddie/thatcher are npm `latest`; anentrypoint-design is still a `file:../`
 // sibling). Validates what can be checked from a bare clone -- JS syntax, YAML
 // config, package.json, and the ASCII-only source convention from AGENTS.md.
+// vendor/ (git submodule checkouts of freddie/acptoapi for convenient local
+// editing/browsing only -- casey still consumes them from npm, see AGENTS.md)
+// is excluded: it is a separate repo with its own conventions and its own CI.
 // Exits nonzero on any failure so CI and humans share one gate. Run:
 // node scripts/lint.mjs (or npm run lint).
 
@@ -17,7 +20,7 @@ const note = (m) => fails.push(m)
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
-    if (name === 'node_modules' || name.startsWith('.')) continue
+    if (name === 'node_modules' || name === 'vendor' || name.startsWith('.')) continue
     const p = join(dir, name)
     const st = statSync(p)
     if (st.isDirectory()) walk(p, out)
