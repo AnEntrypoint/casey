@@ -121,6 +121,11 @@ async function main() {
     // Live backend health for the handler's LLM-down queue gate (drainQueuedTurns
     // drains on recovery).
     llmStatus: brain.status,
+    // Periodic background poll driving drainQueuedTurns -- see casey.js
+    // startDrainPoll's own comment for why this cannot rely solely on the
+    // onRecover edge or a new inbound arriving. CASEY_DRAIN_POLL_INTERVAL_MS=0
+    // disables it (falls back to the reactive-only paths).
+    drainPollIntervalMs: process.env.CASEY_DRAIN_POLL_INTERVAL_MS != null ? Number(process.env.CASEY_DRAIN_POLL_INTERVAL_MS) : undefined,
   })
   caseyRef = casey
   // The queue-drain hard status-gate reads the SAME resilient backend the handler and

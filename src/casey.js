@@ -418,10 +418,43 @@ export class Casey {
     if (this._sweepTimer) { clearInterval(this._sweepTimer); this._sweepTimer = null }
   }
 
+  // Periodic drain-poll: drainQueuedTurns is otherwise only reached via the
+  // brain's onRecover edge (which itself only fires from a real callLLM/status()
+  // call -- i.e. a NEW inbound on the SAME conversation, or a human loading the
+  // dashboard health row) or the boot-time resumePendingTurns sweep (which
+  // deliberately skips any case already tagged resume-exhausted). A contact whose
+  // message got queued during a real outage, who then does not write again
+  // (the ordinary case -- they are waiting for casey, not casey waiting for
+  // them) and whom no operator happens to check on, has its queued reply sit
+  // forever even once the backend is fully healthy again -- live-witnessed: a
+  // real "hi there" queued during a genuine LLM-down window stayed queued with
+  // no reply long after the backend had recovered, because nothing in the
+  // running process was ever polling status() in the background to notice the
+  // recovery and fire the drain. This timer is that missing background poll --
+  // deliberately much shorter than the 15-minute case-health sweep, since it
+  // directly gates how long a real contact is left in silence. drainQueuedTurns
+  // itself is a cheap no-op when nothing is queued (an empty scan), and its own
+  // status-gate gets the backend to skip work entirely while still down, so a
+  // short interval costs nothing during normal healthy operation.
+  startDrainPoll(intervalMs = this.opts.drainPollIntervalMs ?? 60 * 1000) {
+    this.stopDrainPoll()
+    if (!(intervalMs > 0)) return
+    this._drainPollTimer = setInterval(() => {
+      this.drainQueuedTurns().catch(e => this.log?.warn?.('[casey] drain poll failed', { error: e.message }))
+    }, intervalMs)
+    this._drainPollTimer.unref?.()
+  }
+
+  stopDrainPoll() {
+    if (this._drainPollTimer) { clearInterval(this._drainPollTimer); this._drainPollTimer = null }
+  }
+
   async start() {
     await this.gateway.start()
     // Default-on guardrails: enabled unless explicitly disabled (sweepIntervalMs<=0).
     if (this.opts.sweepIntervalMs !== 0) this.startSweep()
+    // Default-on: enabled unless explicitly disabled (drainPollIntervalMs<=0).
+    if (this.opts.drainPollIntervalMs !== 0) this.startDrainPoll()
     // One-time backfill: tag channel-created cases that predate intake_mode tagging.
     this._backfillIntakeMode().catch(e => this.log?.warn?.('[casey] intake_mode backfill failed', { error: e.message }))
     // One-shot boot recovery: re-drive turns that started but never replied (the
@@ -873,6 +906,7 @@ export class Casey {
   // (avoids the WAL/libuv teardown race seen on abrupt exit).
   async stop() {
     this.stopSweep()
+    this.stopDrainPoll()
     await this.gateway?.stop()
     try { await this.drain() } catch { /* in-flight turn errored; already logged */ }
     await this.store?.close()
