@@ -736,7 +736,16 @@ export class Casey {
         || this.opts.llmStatus
         || (typeof this.opts.callLLM?.status === 'function' ? this.opts.callLLM.status.bind(this.opts.callLLM) : null)
       const st = statusFn ? await statusFn() : null
-      if (st && st.ok === false) return { scanned: 0, drained: 0, degraded: true }
+      if (st && st.ok === false) {
+        // Same "always log the outcome" discipline as the post-scan completion
+        // log below -- this early bail is the MOST common outcome of a routine
+        // drain-poll tick (the backend is still down between recovery windows)
+        // and was previously silent, making it indistinguishable from the timer
+        // never having fired at all. Live-witnessed needing this while
+        // verifying the drain-poll fix itself.
+        this.log?.info?.('[casey] queue drain skipped (backend degraded)', { source: st.source, degraded: st.degraded })
+        return { scanned: 0, drained: 0, degraded: true }
+      }
     } catch { /* if status is unavailable, fall through and let the turn throw-guard handle it */ }
     this._draining = true
     let scanned = 0, drained = 0
