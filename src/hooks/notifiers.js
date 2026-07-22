@@ -113,7 +113,21 @@ async function postWebhook(webhookUrl, content, log, label, alert = null) {
     body: JSON.stringify(body),
     signal: ac.signal,
   }).then(
-    () => { clearTimeout(timer); _webhookDeliveryStatus.set(webhookUrl, { ok: true, lastAttemptAt: now, lastError: null, lastLabel: label }) },
+    (res) => {
+      clearTimeout(timer)
+      // fetch() resolving only means a response was RECEIVED, not that Discord
+      // accepted it -- a revoked/expired webhook token, deleted webhook, or a
+      // rate-limit (401/404/429) all resolve normally with a non-2xx status.
+      // Without checking res.ok, every one of those was recorded ok:true, so
+      // GET /api/health told an operator the breach/handoff alert channel was
+      // healthy while every real alert had silently failed to reach Discord.
+      if (res.ok) {
+        _webhookDeliveryStatus.set(webhookUrl, { ok: true, lastAttemptAt: now, lastError: null, lastLabel: label })
+      } else {
+        log?.warn?.(`[casey] ${label} failed`, `HTTP ${res.status}`)
+        _webhookDeliveryStatus.set(webhookUrl, { ok: false, lastAttemptAt: now, lastError: `HTTP ${res.status}`, lastLabel: label })
+      }
+    },
     (e) => { clearTimeout(timer); log?.warn?.(`[casey] ${label} failed`, e.message); _webhookDeliveryStatus.set(webhookUrl, { ok: false, lastAttemptAt: now, lastError: String(e.message || e).slice(0, 200), lastLabel: label }) },
   )
 }

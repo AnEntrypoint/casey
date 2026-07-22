@@ -35,13 +35,24 @@ export function isPromptEcho(text) {
 // case-ref-shaped token that is not this case's real ref is rewritten to the real
 // ref. Deterministic, ASCII, no model in the loop -- the contact can never be
 // handed a fabricated reference. Returns { text, corrected:[wrong refs] }.
-const CASE_REF_RE = /CASE-\d+-[a-z0-9]+/gi
+// Exported so callers (handler.js) can scan OTHER text (e.g. raw tool-call
+// results) for the same ref shape without duplicating the pattern.
+export const CASE_REF_RE = /CASE-\d+-[a-z0-9]+/gi
 
-export function sanitizeOutboundRef(text, realRef) {
+// extraAllowedRefs: real refs the agent legitimately learned THIS turn via a
+// tool call (case_list/case_mine/case_today/case_get/case_link_suggestions --
+// the enquiry surface AGENTS.md documents as answering "my cases"/"any cases
+// near X" by citing OTHER cases' real refs). Without this, every genuinely-
+// different, tool-returned ref was indistinguishable from a hallucinated one
+// and got silently rewritten to THIS case's own ref -- corrupting every
+// multi-case enquiry answer into a wrong case number. Case-insensitive, same
+// as the realRef comparison already was.
+export function sanitizeOutboundRef(text, realRef, extraAllowedRefs = []) {
   if (!text || !realRef) return { text, corrected: [] }
+  const allowed = new Set([String(realRef).toLowerCase(), ...extraAllowedRefs.map(r => String(r).toLowerCase())])
   const corrected = []
   const fixed = String(text).replace(CASE_REF_RE, (tok) => {
-    if (tok.toLowerCase() === String(realRef).toLowerCase()) return tok
+    if (allowed.has(tok.toLowerCase())) return tok
     corrected.push(tok)
     return realRef
   })
@@ -340,12 +351,19 @@ export function detectContactIntent(text) {
 
 // Keyword tables. Single-word keys match as whole tokens; multi-word keys as
 // space-bounded phrases. Accent-stripped, lowercase (see normalizeIntentText).
-// Languages: en, es, pt, it, fr, de, af (Afrikaans), zu (Zulu), xh (Xhosa),
-// st (Sesotho), tn (Setswana), ts (Xitsonga), ve (Tshivenda), ss (siSwati),
-// nr (isiNdebele), ar (transliterated), hi (transliterated) -- all 11 SA
-// official languages plus a few widely-spoken others are covered so the ONE
-// deterministic safety layer (STOP/HUMAN, must work with the LLM down) fires
-// correctly in whichever language a field worker writes in.
+// Languages actually covered here: en, es, pt, it, fr, de, af (Afrikaans),
+// zu (Zulu), xh (Xhosa), st (Sesotho), tn (Setswana), ts (Xitsonga),
+// ve (Tshivenda), ss (siSwati), nr (isiNdebele) -- all 11 SA official
+// languages plus a few widely-spoken others, so the ONE deterministic safety
+// layer (STOP/HUMAN, must work with the LLM down) fires correctly in
+// whichever of THESE a field worker writes in. Arabic and Hindi are detected
+// only by guessLang's script-range check (below) for REPLY LANGUAGE
+// selection -- neither has any transliterated token in STOP_KEYS/HUMAN_KEYS/
+// STOP_EXCLUDE/HUMAN_EXCLUDE/HELP_KEYS, so a contact writing a STOP/human
+// request in ar/hi transliteration gets no deterministic match; if the LLM
+// happens to be down at that exact moment, that message is queued rather
+// than acted on immediately (the same outcome as any other language this
+// deterministic layer does not cover).
 // The bare over-broad tokens ('enough', 'cancel', 'genoeg', 'ngeke', 'yima',
 // 'hambani') were removed: each falsely opted a contact out mid-conversation
 // ("is that enough information", "how do i cancel the vet visit", Nguni

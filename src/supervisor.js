@@ -96,6 +96,24 @@ export function detectZombieReceive(receive, silenceMs) {
 
 export function createSupervisor(opts = {}) {
   const log = opts.log || console
+  // The supervisor parent exists specifically to keep every forked worker
+  // alive and restart it on crash -- but it had no crash net of its own.
+  // Without this, an unhandled rejection anywhere in the PARENT (IPC
+  // handling, the auto-update pull() timer, a future dependency bug) hits
+  // Node's default uncaught-exception behavior and terminates the whole
+  // parent process, killing every forked worker with zero restart and only a
+  // raw stack trace on stderr -- the exact "supervisor stops the restart loop
+  // instead of thrashing" discipline this file already applies to WORKER
+  // crashes (see the crash-budget logic below) never applied to itself.
+  // Mirrors bin/worker.js's own uncaughtException/unhandledRejection net.
+  process.on('uncaughtException', (e) => {
+    log.error?.('[supervisor] uncaughtException (exiting)', { error: e?.stack || e?.message || String(e) })
+    process.exit(1)
+  })
+  process.on('unhandledRejection', (e) => {
+    log.error?.('[supervisor] unhandledRejection (exiting)', { error: e?.stack || e?.message || String(e) })
+    process.exit(1)
+  })
   const workerArgs = opts.workerArgs || []   // passed through to the worker (--channels, --port, ...)
   const enableReload = opts.reload !== false && process.env.CASEY_RELOAD !== '0'
 

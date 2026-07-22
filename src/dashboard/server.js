@@ -120,15 +120,6 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   if (Number.isFinite(trustProxyHops) && trustProxyHops > 0) app.set('trust proxy', trustProxyHops)
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
-  // A malformed JSON body (e.g. POST /report, public and unauthenticated)
-  // otherwise reaches express's default error handler, which returns a full
-  // stack trace including absolute server filesystem paths to any anonymous
-  // client. Catch only the body-parse failure here; everything else falls
-  // through to next(err) unchanged.
-  app.use((err, req, res, next) => {
-    if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid request body' })
-    next(err)
-  })
 
   // /api/login, /api/logout, and the public /report contact form are the only
   // routes reachable with no session -- every other /api route and the SPA
@@ -300,6 +291,22 @@ a{color:#3b6ea5;text-decoration:none;border:1px solid #3b6ea5;border-radius:6px;
   // session identity from /api/whoami at load time, so the static files are
   // byte-identical in content to what the inline template used to render.
   app.use(express.static(PUBLIC_DIR, { index: 'index.html' }))
+
+  // Error middleware MUST be registered last -- express only routes an error
+  // to middleware defined AFTER the point where it was thrown/passed via
+  // next(err), so registering this before any route (its previous position)
+  // meant it could never actually catch a route error, only ever the
+  // malformed-JSON body-parse failure that happens to occur upstream of every
+  // route. casey never sets NODE_ENV=production anywhere, so anything that
+  // fell through to express's own default handler (a framework-level error,
+  // e.g. a static-file range error) rendered a full HTML page with a stack
+  // trace and absolute filesystem paths to any anonymous client. Handles the
+  // existing entity.parse.failed case first (unchanged response shape), then
+  // a final catch-all that never echoes err.message/err.stack.
+  app.use((err, req, res, next) => {
+    if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid request body' })
+    res.status(err?.status || 500).json({ error: 'internal error' })
+  })
 
   const server = app.listen(port)
   return new Promise((resolve, reject) => {

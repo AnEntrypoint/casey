@@ -135,6 +135,22 @@ ${bold('dashboard login:')} the dashboard now uses per-operator username/passwor
 
 ${dim('new here? run')} ${cyan('casey init')} ${dim('then')} ${cyan('casey doctor')} ${dim('then')} ${cyan('casey up')}`
 
+// The --no-supervise legacy path (and every other CLI command) runs the gateway
+// +dashboard+store combination in-process with only SIGINT installed -- an
+// unhandled rejection anywhere falls through to Node's default abrupt kill with
+// no thatcher WAL flush, no dash.close(), no explanation. Installed once, cheap
+// on every path (a version/help/init/doctor command never triggers it in
+// practice, but costs nothing to have armed). Logs loud and exits non-zero,
+// same discipline as bin/worker.js's own crash net.
+process.on('uncaughtException', (e) => {
+  console.error('[casey] uncaughtException (exiting):', e?.stack || e?.message || String(e))
+  process.exit(1)
+})
+process.on('unhandledRejection', (e) => {
+  console.error('[casey] unhandledRejection (exiting):', e?.stack || e?.message || String(e))
+  process.exit(1)
+})
+
 async function main() {
   const flags = parseFlags(rest)
   if (flags.version || cmd === 'version') { console.log(pkgVersion()); return }
@@ -331,26 +347,34 @@ async function main() {
 
     // Legacy single-process path (--no-supervise): build casey inline, no parent,
     // no live reload. Kept for debugging -- a code change here needs a manual restart.
-    const { resolveCallLLM } = await import('../src/llm.js')
-    // A probe failure must degrade to honest offline mode, never crash `up` with
-    // a raw stack trace before the gateway is even started (P9 graceful degradation).
-    const brain = await resolveCallLLM({ probe: true }).catch(() => ({ callLLM: null, source: 'none' }))
-    const casey = await createCasey({ channels, callLLM: brain.callLLM })
+    // Uses the SAME makeResilientCallLLM wiring bin/worker.js's supervised path
+    // uses (previously a one-shot resolveCallLLM + a hand-rolled llmStatus that
+    // never returned a `degraded` key) -- without this, handler.js's LLM-down
+    // queue-gate branch never fires (llmStatus was null-shaped for it),
+    // drainQueuedTurns' status gate had nothing to fall back to, and GET
+    // /api/health's degraded field was hardcoded false so the amber "AI helper:
+    // slow" pill could never appear under --no-supervise.
+    const { makeResilientCallLLM } = await import('../src/llm.js')
+    let caseyRef = null
+    const brainResilient = makeResilientCallLLM({
+      probe: true,
+      onRecover: () => caseyRef?.drainQueuedTurns?.().catch(e => caseyRef?.log?.warn?.('[casey] recovery drain failed', { error: e.message })),
+    })
+    const casey = await createCasey({ channels, callLLM: brainResilient.callLLM, llmStatus: brainResilient.status })
+    caseyRef = casey
+    // Force one status() read before start() so a message arriving in the
+    // first seconds after boot does not race the readiness system's own cold
+    // start -- same fix bin/worker.js already applies.
+    const brain = await brainResilient.status().catch(() => ({ source: 'none' }))
     await casey.start()
     const dashPort = Number(flags.port || 4000)
     const sendReply = (caseRow, text) => {
       const a = casey.adapters[caseRow.channel]
       return a?.send ? a.send({ to: caseRow.external_id, text }) : Promise.resolve()
     }
-    // Health pill re-resolves live so an operator sees acptoapi going up/down
-    // without restarting casey.
-    const llmStatus = async () => {
-      const b = await resolveCallLLM({ probe: true }).catch(() => ({ source: 'none' }))
-      return { source: b.source, model: b.model, url: b.url }
-    }
     let dash
     try {
-      dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus, runSweep: () => casey.runSweepOnce(), receiveStatus: () => casey.receiveStatus() })
+      dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus: brainResilient.status, runSweep: () => casey.runSweepOnce(), receiveStatus: () => casey.receiveStatus() })
     } catch (e) {
       console.log(bad(`dashboard failed to bind port ${dashPort}: ${e.message} - start with --port <other>`))
       process.exit(1)

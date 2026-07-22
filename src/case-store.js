@@ -662,9 +662,17 @@ export class CaseStore {
   // was previously duplicated verbatim across several call sites (mergeReport,
   // mergeCases x2) -- any change to fallback/logging behavior now happens once
   // instead of drifting across copies.
+  // Returns { value, corrupted }: corrupted:true means the stored report JSON
+  // failed to parse, so `value` is a fallback EMPTY object standing in for
+  // unrecoverable data, not a genuinely-empty report. Callers that merge on
+  // top of this must be able to tell "the case really had no report yet"
+  // (corrupted:false, value:{}) apart from "we just silently discarded every
+  // previously-recorded field" (corrupted:true) -- without the flag, a
+  // corruption event looked identical to a normal successful merge, and the
+  // caller had no way to warn anyone or avoid persisting the loss.
   _parseReport(raw, caseId) {
-    try { return raw ? JSON.parse(raw) : {} }
-    catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); return {} }
+    try { return { value: raw ? JSON.parse(raw) : {}, corrupted: false } }
+    catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); return { value: {}, corrupted: true } }
   }
 
   // Builds the merged report object from current+incoming; extracted so
@@ -699,7 +707,8 @@ export class CaseStore {
       const c = await this.getCase(caseId)             // re-read INSIDE the lock
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe') return { error: 'observe' }
-      const merged = this._mergeReportFields(this._parseReport(c.report, caseId), incoming)
+      const { value: currentReport, corrupted: initCorrupted } = this._parseReport(c.report, caseId)
+      const merged = this._mergeReportFields(currentReport, incoming)
       // No server-side geocoding: the map's lat/lon comes ONLY from the agent's
       // own case_report call (its own best-effort estimate from the location the
       // worker described, using the model's own world knowledge -- see
@@ -725,11 +734,12 @@ export class CaseStore {
       const MERGE_RETRY_LIMIT = 3
       let attemptCase = c
       let attemptMerged = merged
+      let attemptCorrupted = initCorrupted
       for (let attempt = 0; attempt <= MERGE_RETRY_LIMIT; attempt++) {
         try {
           await this.updateCase(caseId, { report: JSON.stringify(attemptMerged) }, user,
             attemptCase._version != null ? { expectedVersion: attemptCase._version } : {})
-          return { report: attemptMerged }
+          return attemptCorrupted ? { report: attemptMerged, reportWasCorrupted: true } : { report: attemptMerged }
         } catch (e) {
           if (e.code !== 'conflict') throw e
           if (attempt === MERGE_RETRY_LIMIT) {
@@ -737,8 +747,17 @@ export class CaseStore {
           }
           const fresh = await this.getCase(caseId)
           if (!fresh) return { error: `no case ${caseId}` }
+          // Re-check autonomy on the retry path too: mergeReport's first
+          // attempt already gates on observe-mode, but a version conflict
+          // means SOMETHING else wrote concurrently -- if that write was the
+          // operator's own dashboard flip to observe, the retry must honour
+          // it rather than silently landing one write later than the
+          // operator intended.
+          if (fresh.autonomy === 'observe') return { error: 'observe' }
           attemptCase = fresh
-          attemptMerged = this._mergeReportFields(this._parseReport(fresh.report, caseId), incoming)
+          const { value: freshReport, corrupted: retryCorrupted } = this._parseReport(fresh.report, caseId)
+          attemptMerged = this._mergeReportFields(freshReport, incoming)
+          attemptCorrupted = attemptCorrupted || retryCorrupted
         }
       }
     })
@@ -761,11 +780,11 @@ export class CaseStore {
       const c = await this.getCase(caseId)
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe') return { error: 'observe' }
-      const current = this._parseReport(c.report, caseId)
+      const { value: current, corrupted } = this._parseReport(c.report, caseId)
       const have = current[field] != null && String(current[field]).trim() !== ''
       const next = { ...current, [field]: have ? `${current[field]}; ${note}` : String(note) }
       await this.updateCase(caseId, { report: JSON.stringify(next) }, user)
-      return { report: next, appended: true }
+      return corrupted ? { report: next, appended: true, reportWasCorrupted: true } : { report: next, appended: true }
     })
   }
 
@@ -821,7 +840,7 @@ export class CaseStore {
     try {
       const existing = await this._operatorIdentityRow(operatorId)
       const areas = existing ? this._parseJsonArray(existing.areas) : []
-      const report = this._parseReport(caseRow.report, caseRow.id)
+      const { value: report } = this._parseReport(caseRow.report, caseRow.id)
       const locToks = [...tokens(report.location)]
       for (const t of locToks) {
         const i = areas.findIndex(a => a.token === t)
@@ -1077,8 +1096,9 @@ export class CaseStore {
       // 1) Re-point every source event onto the target -- lossless.
       for (const ev of srcEvents) await this.updateEvent(ev.id, { case_id: targetId })
       // 2) Fill-if-empty report merge (target value wins -- it is canonical).
-      const srcReport = this._parseReport(src.report, sourceId)
-      const tgtReport = this._parseReport(tgt.report, targetId)
+      const { value: srcReport, corrupted: srcCorrupted } = this._parseReport(src.report, sourceId)
+      const { value: tgtReport, corrupted: tgtCorrupted } = this._parseReport(tgt.report, targetId)
+      const reportWasCorrupted = srcCorrupted || tgtCorrupted
       const mergedReport = { ...tgtReport }
       for (const [k, v] of Object.entries(srcReport)) {
         if (!REPORT_KEYS.has(k)) continue
@@ -1114,7 +1134,12 @@ export class CaseStore {
         text: `This report was merged into ${tgt.ref}${reason ? ` -- ${reason}` : ''}.`,
         data: { merged_into: targetId, merged_into_ref: tgt.ref, reason },
       })
-      return { merged: true, alreadyMerged: false, target: await this.getCase(targetId), source: await this.getCase(sourceId), movedEvents: srcEvents.length }
+      return {
+        merged: true, alreadyMerged: false,
+        target: await this.getCase(targetId), source: await this.getCase(sourceId),
+        movedEvents: srcEvents.length,
+        ...(reportWasCorrupted ? { reportWasCorrupted: true } : {}),
+      }
     }
     if (srcKey === tgtKey) return this._withLock(tgtKey, mergeFn)
     const [key1, key2] = [srcKey, tgtKey].sort()

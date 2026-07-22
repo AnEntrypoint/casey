@@ -311,9 +311,16 @@ export function buildCaseToolset(storeOrNull) {
         // no server-side lookup. A later, more specific case_report call simply
         // overwrites the coordinate with the model's improved estimate.
         if (hasLatLon) {
-          const c = await store().getCase(id)
-          if (c?.autonomy === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
-          await store().updateCase(id, { lat, lon }, AGENT_USER)
+          // Routed through updateCaseChecked (re-reads autonomy INSIDE the
+          // per-conversation lock, same discipline mergeReport/case_update
+          // already use) rather than a raw getCase-then-check-then-write --
+          // that stale-read-then-write shape is exactly the TOCTOU race
+          // updateCaseChecked was introduced to close, and this lat/lon
+          // branch had silently kept the old unlocked shape.
+          const latLonResult = await store().updateCaseChecked(id, { lat, lon }, AGENT_USER)
+          if (latLonResult.error === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
+          if (latLonResult.error) return { error: latLonResult.error }
+          const c = latLonResult.case
           // Propagate to the CONTACT as their last-reported location, distinct
           // from both case.lat/lon (this specific report's animal location,
           // just written above) and contact.last_location_* (a field_worker's
@@ -615,11 +622,22 @@ export function buildCaseToolset(storeOrNull) {
             ? `case_stop must target this conversation's active case (${ctx.activeCaseId}), not ${id}`
             : 'case_stop has no bound active case on this turn -- cannot target an arbitrary case id' }
         }
-        const c = await store().getCase(id)
-        if (!c) return { error: `no case ${id}` }
-        const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
-        if (!tags.includes('opted-out')) tags.push('opted-out')
-        await store().updateCase(id, { tags: tags.join(',') })
+        const c0 = await store().getCase(id)
+        if (!c0) return { error: `no case ${id}` }
+        // Locked read-modify-write: unlike every other case mutator in this
+        // file, this used to read/modify/write tags with no lock at all -- two
+        // concurrent calls (case_stop racing case_handoff, or a retried tool
+        // call) could silently drop a tag the other write just added. Not
+        // routed through updateCaseChecked -- opt-out is an irreversible legal
+        // control that must register regardless of observe mode, so it must
+        // NOT pick up that helper's autonomy gate.
+        await store()._withLock(`${c0.channel}|${c0.external_id}`, async () => {
+          const c = await store().getCase(id)
+          if (!c) return
+          const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
+          if (!tags.includes('opted-out')) tags.push('opted-out')
+          await store().updateCase(id, { tags: tags.join(',') })
+        })
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: 'OPT-OUT: the person asked to stop; no more automatic replies.' })
         return { ok: true }
       }),
@@ -644,11 +662,19 @@ export function buildCaseToolset(storeOrNull) {
             ? `case_handoff must target this conversation's active case (${ctx.activeCaseId}), not ${id}`
             : 'case_handoff has no bound active case on this turn -- cannot target an arbitrary case id' }
         }
-        const c = await store().getCase(id)
-        if (!c) return { error: `no case ${id}` }
-        const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
-        if (!tags.includes('needs-human')) tags.push('needs-human')
-        await store().updateCase(id, { tags: tags.join(',') })
+        const c0 = await store().getCase(id)
+        if (!c0) return { error: `no case ${id}` }
+        // Same locked read-modify-write as case_stop above, same reasoning
+        // (concurrent tag writes can otherwise silently drop each other), same
+        // deliberate bypass of the observe-mode gate (handoff is an
+        // irreversible legal control, not a content edit).
+        await store()._withLock(`${c0.channel}|${c0.external_id}`, async () => {
+          const c = await store().getCase(id)
+          if (!c) return
+          const tags = String(c.tags || '').split(',').map(s => s.trim()).filter(Boolean)
+          if (!tags.includes('needs-human')) tags.push('needs-human')
+          await store().updateCase(id, { tags: tags.join(',') })
+        })
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: 'HANDOFF REQUESTED: the person asked for a real person.' })
         return { ok: true }
       }),

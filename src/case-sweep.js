@@ -95,7 +95,23 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
     summary.scanned++
     let breaches
     try { breaches = classifyCaseHealth(c, now, effThresholds) }
-    catch (e) { log?.warn?.('[sweep] classify failed', { caseId: c.id, error: e.message }); summary.errors.push({ caseId: c.id, error: e.message, phase: 'classify' }); continue }
+    catch (e) {
+      log?.warn?.('[sweep] classify failed', { caseId: c.id, error: e.message })
+      summary.errors.push({ caseId: c.id, error: e.message, phase: 'classify' })
+      // The abort check below (post-classify) never runs for a classify-phase
+      // failure -- this `continue` skips straight past it back to the loop
+      // head every time, so a systemic classify bug (e.g. malformed rows
+      // across thousands of cases) never tripped the documented safety halt.
+      // Duplicated here so BOTH failure paths (classify and the existing
+      // post-classify check, which still covers reconcile-phase failures)
+      // are actually guarded.
+      if (summary.errors.length > 100) {
+        log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: 'too many errors, sweep halted for safety' })
+        summary.errors.push({ phase: 'aborted', reason: 'too many errors, sweep halted for safety' })
+        break
+      }
+      continue
+    }
     if (summary.errors.length > 100) {
       log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: 'too many errors, sweep halted for safety' })
       summary.errors.push({ phase: 'aborted', reason: 'too many errors, sweep halted for safety' })

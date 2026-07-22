@@ -442,7 +442,13 @@ export class Casey {
     this.stopDrainPoll()
     if (!(intervalMs > 0)) return
     this._drainPollTimer = setInterval(() => {
-      this.drainQueuedTurns().catch(e => this.log?.warn?.('[casey] drain poll failed', { error: e.message }))
+      // Tracked in _inflight the same way gateway.handleInbound is (see
+      // _wrapInflight) -- without this, drain()'s shutdown wait never saw
+      // this poll's own store writes in flight, letting stop() close the
+      // store mid-write on this exact background path.
+      const p = this.drainQueuedTurns().catch(e => this.log?.warn?.('[casey] drain poll failed', { error: e.message }))
+      this._inflight.add(p)
+      p.finally(() => this._inflight.delete(p))
     }, intervalMs)
     this._drainPollTimer.unref?.()
   }
@@ -461,8 +467,14 @@ export class Casey {
     this._backfillIntakeMode().catch(e => this.log?.warn?.('[casey] intake_mode backfill failed', { error: e.message }))
     // One-shot boot recovery: re-drive turns that started but never replied (the
     // process crashed/reloaded mid-turn). Bounded; never blocks start; never
-    // double-sends (each re-drive is marked BEFORE it runs).
-    this.resumePendingTurns().catch(e => this.log?.warn?.('[casey] resume sweep failed', { error: e.message }))
+    // double-sends (each re-drive is marked BEFORE it runs). Tracked so stop()
+    // can await it -- unawaited-and-untracked here meant drain()'s _inflight
+    // scan (which only ever saw wrapped gateway.handleInbound calls) could
+    // return immediately while this sweep was still mid-write, letting
+    // store.close() race a concurrent store.appendEvent/updateCase call from
+    // this same sweep -- the exact torn-shutdown race stop()'s own header
+    // comment claims to prevent.
+    this._resumeSweepPromise = this.resumePendingTurns().catch(e => this.log?.warn?.('[casey] resume sweep failed', { error: e.message }))
   }
 
   // Boot-time recovery for the "contact messaged, casey crashed before replying"
@@ -928,6 +940,11 @@ export class Casey {
     this.stopSweep()
     this.stopDrainPoll()
     await this.gateway?.stop()
+    // Wait out the boot-time resume sweep too, not just gateway.handleInbound's
+    // own in-flight turns -- see start()'s comment on why this is tracked
+    // separately (resumePendingTurns is not itself a gateway.handleInbound call
+    // so _wrapInflight never saw it).
+    await this._resumeSweepPromise?.catch(() => {})
     try { await this.drain() } catch { /* in-flight turn errored; already logged */ }
     await this.store?.close()
     resetCaseStore()   // clear the process-wide singleton so the next boot is clean

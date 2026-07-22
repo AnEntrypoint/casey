@@ -17,6 +17,7 @@ import {
   truncate,
   isPromptEcho,
   sanitizeOutboundRef,
+  CASE_REF_RE,
   isStockAck,
   isToolRefusal,
   isMetaCommentary,
@@ -845,9 +846,25 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // Final guard before the reply leaves (send OR assisted draft): correct any
     // fabricated/stale case reference to this case's real ref. A weak model recites
     // a memorized stock reply carrying the wrong ref; the contact must never be
-    // handed a reference that does not resolve to their case.
+    // handed a reference that does not resolve to their case. BUT an enquiry turn
+    // (case_list/case_mine/case_today/case_get/case_link_suggestions) legitimately
+    // cites OTHER cases' real refs per AGENTS.md's enquiry-surface design -- every
+    // ref that actually came back from a tool call this turn is real, not
+    // hallucinated, and must pass through unmodified. Scan the raw tool-message
+    // content (already JSON-stringified by the bridge) for ref-shaped tokens
+    // rather than parsing each tool's own result shape -- a superset is safe here
+    // since only a token this regex would ALSO strip out of the reply is at risk.
     {
-      const { text: safeText, corrected } = sanitizeOutboundRef(text, fresh.ref)
+      const toolRefs = []
+      if (Array.isArray(result?.messages)) {
+        for (const m of result.messages) {
+          if (m?.role !== 'tool' || !m.content) continue
+          const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+          const found = content.match(CASE_REF_RE)
+          if (found) toolRefs.push(...found)
+        }
+      }
+      const { text: safeText, corrected } = sanitizeOutboundRef(text, fresh.ref, toolRefs)
       if (corrected.length) {
         text = safeText
         await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `REF-CORRECTED: model emitted ${corrected.join(', ')}; rewrote to real ref ${fresh.ref}.` })
