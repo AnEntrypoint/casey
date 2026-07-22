@@ -218,7 +218,15 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // the expected path here, not a duplicate to drop: the boot resume sweep is
     // re-running the turn for a message whose inbound persisted but whose reply
     // never went out. Fall through to the agent turn instead of short-circuiting.
-    if (!inboundEvent && !msg.resume) {
+    // Same reasoning for msg.burstReplay: the fast-message-burst buffer (below)
+    // stores the ORIGINAL msg object, whose inbound was already recorded the
+    // first time this same message hit the inFlight guard -- the replay re-enters
+    // this same function to actually run the turn, not to re-record a redelivery.
+    // Without this exemption the replay always self-dedupes on its own earlier
+    // recording and silently no-ops, defeating the "buffered and replayed, never
+    // silently dropped" design principle -- the message ends up IN the event log
+    // but never gets a real reply.
+    if (!inboundEvent && !msg.resume && !msg.burstReplay) {
       log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
       return { to: replyTo, text: '', platform, caseId: caseRow.id, duplicate: true }
     }
@@ -495,6 +503,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     if (inFlight.has(external_id)) {
       log.info?.('[casey] skipping concurrent LLM turn, buffered for replay', { caseId: fresh.id })
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'concurrent turn skipped: prior LLM turn still in-flight for this contact; buffered for replay' })
+      // Mark so the replay (which re-enters handleInboundOnce with this SAME msg
+      // object) skips the inbound-dedup guard above -- that guard already saw
+      // this exact message once, just now, and correctly recorded it; the
+      // replay's job is to run the turn, not to re-record an inbound that is
+      // not actually a redelivery.
+      msg.burstReplay = true
       // Buffer bounded per contact (a runaway sender cannot grow this
       // unboundedly): keep the most recent BUFFER_CAP, oldest dropped silently
       // logged, mirroring the existing no-silent-caps discipline elsewhere.

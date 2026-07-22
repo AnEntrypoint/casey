@@ -86,6 +86,8 @@ const TOOL_REFUSAL_MARKERS = [
   'do not have the tools',
   "don't have access to",
   'do not have access to',
+  "don't have the capability",
+  'do not have the capability',
   'unable to access the',
   'i cannot call',
   "i can't call",
@@ -93,6 +95,15 @@ const TOOL_REFUSAL_MARKERS = [
   'lack the necessary tools',
   'as an ai, i',
   'as a language model',
+  // Witnessed live: unlike the phrases above (each names the missing TOOL/ACCESS
+  // specifically), a weak model sometimes refuses in a vaguer, content-free way
+  // that names no reason at all -- "unable to assist with that request" sent in
+  // direct reply to an on-topic follow-up (a farewell on an already-open case),
+  // which the model had every tool needed to handle. A genuine, GOOD scope
+  // decline ("I can only help with reporting sick or dead animals") never
+  // matches this exact phrase, so the two are not confused.
+  "unable to assist with that",
+  'cannot assist with that',
 ]
 export function isToolRefusal(text) {
   if (!text) return false

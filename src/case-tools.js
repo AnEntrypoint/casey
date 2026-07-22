@@ -636,8 +636,15 @@ export function buildCaseToolset(storeOrNull) {
 // reach the query/mutation tools. REPORT_ONLY_TOOLS are available at every
 // tier: case_report (the whole point of a reporter existing), case_stage
 // (internal dstate bookkeeping, not a data-access concern), case_stop/
-// case_handoff (opt-out/human-escalation, service controls not data access).
-const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stage', 'case_stop', 'case_handoff'])
+// case_handoff (opt-out/human-escalation, service controls not data access),
+// case_new (opening a fresh case for a genuinely new situation -- the
+// never-a-dead-end design principle applies to every reporter, not only
+// field workers; without this, a reporter's second unrelated report has no
+// tool to branch and silently overwrites the first via mergeReport's
+// fill-if-empty semantics). case_split stays field_worker-only: it edits an
+// EXISTING case's already-recorded history, a materially different risk
+// than opening a brand new empty one.
+const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stage', 'case_stop', 'case_handoff', 'case_new'])
 function gateByTier(tool) {
   if (REPORT_ONLY_TOOLS.has(tool.name)) return tool
   const handler = tool.handler
