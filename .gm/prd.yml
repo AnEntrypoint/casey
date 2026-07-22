@@ -368,3 +368,60 @@
   status: completed
   id: add-periodic-background-drainqueuedturns-poll-missing-recovery-d
   witness: 'src/casey.js: startDrainPoll/stopDrainPoll methods added, wired into start()/stop(); node --check src/casey.js and bin/worker.js both pass; npm run lint reports clean (68 files). bin/worker.js wires CASEY_DRAIN_POLL_INTERVAL_MS through createCasey opts. AGENTS.md documents the new env var alongside the other CASEY_*_MS entries.'
+- id: deploy-package-json-floor-bump
+  description: Bump casey/package.json acptoapi floor to ^1.0.182 (stable-prefix + readiness self-healing fix), reinstall, lint, commit, push, restart casey worker with the fix live -- last outstanding deployment step before test harness work begins
+  status: pending
+- id: build-direct-turn-harness
+  description: Build a reusable in-process test script that drives casey's real makeCaseHandler/gateway.handleInbound path directly (no real Discord network hop) -- a synthetic adapter object with send()/startTyping()/stopTyping() capturing outbound replies, a fresh unique conversation per round (container:author) so no state bleeds between rounds, and full observability of the turn's outcome (reply text, degraded flag, elapsed ms, which model actually served it)
+  status: pending
+- id: scenario-fresh-greeting
+  description: 'Test round: a brand-new contact sends a bare greeting (''hi''/''hello'') with no prior case -- expect a warm opener asking for location, per AGENTS.md''s greeting-is-opening-of-report design principle, not a stock ack or silence'
+  status: pending
+- id: scenario-full-report-single-message
+  description: 'Test round: a single message containing a complete report (species, count, location, symptoms) in one shot -- expect the agent to record via case_report and acknowledge without re-asking for facts already given'
+  status: pending
+- id: scenario-multi-turn-report
+  description: 'Test round: a multi-message conversation building up a report incrementally (location, then species, then symptom count across 3-4 separate turns on the SAME case) -- expect no repeated questions for already-answered facts and a natural progression toward case_stage:complete'
+  status: pending
+- id: scenario-field-worker-enquiry
+  description: 'Test round: a field_worker-tier contact asks ''what''s on today''/''my cases'' -- expect case_mine/case_today tool invocation returning PII-free enquiryRow data, not a report-intake flow'
+  status: pending
+- id: scenario-stop-opt-out
+  description: 'Test round: a contact sends ''stop messaging me'' -- expect the deterministic STOP short-circuit fires (detectContactIntent), opt-out recorded, contact tagged, regardless of LLM health'
+  status: pending
+- id: scenario-help-resume-after-optout
+  description: 'Test round: an opted-out contact sends HELP -- expect deterministic resume (tag cleared, localized resume ack) even with LLM simulated down'
+  status: pending
+- id: scenario-human-handoff-request
+  description: 'Test round: a contact asks to speak to a human -- expect deterministic HANDOFF short-circuit, needs-human tag, handoff notification path exercised'
+  status: pending
+- id: scenario-farewell-last-chance-push
+  description: 'Test round: a contact says thanks/goodbye mid-report with a still-missing VISIT_CRITICAL field -- expect the single LAST-CHANCE PUSH instruction to fire before case_stage:complete is declared, per AGENTS.md''s strike-while-iron-is-hot principle'
+  status: pending
+- id: scenario-off-topic-redirect
+  description: 'Test round: a contact asks something off-topic (maths, translation, chit-chat) -- expect a warm one-sentence decline with no jargon, per the scope-boundary design principle, not a real answer or silence'
+  status: pending
+- id: scenario-returning-contact-new-case
+  description: 'Test round: a contact whose prior case is complete sends a clearly different new report -- expect the agent to call case_new and branch a fresh case rather than reusing the completed one'
+  status: pending
+- id: scenario-field-correction
+  description: 'Test round: a contact corrects an already-filled report field (''actually it was goats not sheep'') -- expect the merge to overwrite with an audited old-to-new diff observation, not silently ignore the correction'
+  status: pending
+- id: scenario-non-english-language
+  description: 'Test round: a report written in a non-English language the agent should mirror -- expect the reply in the same language, not translated to English or an error'
+  status: pending
+- id: scenario-burst-messages
+  description: 'Test round: 3 messages sent in rapid succession before the first turn completes -- expect the per-contact in-flight guard buffers and replays every message (none silently dropped), per the fast-message-burst design principle'
+  status: pending
+- id: regression-drain-poll-timer
+  description: 'Regression check: confirm the new startDrainPoll timer is actively running in the current live process (queue drain complete log lines appearing on a ~60s cadence) and that a case queued via a simulated LLM-down window gets redriven within one cycle once simulated recovery'
+  status: pending
+- id: regression-live-turn-no-cold-discovery
+  description: 'Regression check for the user''s core directive (''these providers should already immediately be available when the message arrives''): run several successive real turns through the live process and confirm NONE of them exhaust a full chain walk with zero prior-verified leads -- readiness''s periodic pre-warming should mean the FIRST attempt on each turn succeeds or falls through minimally, not walks 10+ links cold'
+  status: pending
+- id: regression-extra-provider-models-used
+  description: 'Regression check: confirm at least one real turn in the test rounds is actually served by an extra-N/* model (the tokenhun.shadw.app endpoint), not just registered-but-unused, proving the extra-providers capacity genuinely contributes to real traffic'
+  status: pending
+- id: round-summary-and-final-verdict
+  description: After all scenario rounds run, compile a clear pass/fail summary per scenario with the actual reply text and elapsed time for each, and either declare the system genuinely 100% working as expected or identify the specific remaining failure(s) and iterate fixes until every scenario passes -- this is the closing row for the whole test-harness task
+  status: pending
