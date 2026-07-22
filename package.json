@@ -19,7 +19,7 @@
     "anentrypoint-design": "file:../anentrypoint-design",
     "acptoapi": "^1.0.183",
     "express": "^4.19.2",
-    "freddie": "^0.0.211",
+    "freddie": "^0.0.212",
     "js-yaml": "^4.1.0",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
