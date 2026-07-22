@@ -19,6 +19,7 @@ import {
   sanitizeOutboundRef,
   isStockAck,
   isToolRefusal,
+  isMetaCommentary,
   jargonHits,
   guessLang,
   stripChannelMarkup,
@@ -732,7 +733,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       // build) actually routes around it instead of hitting the identical
       // broken model three times in a row.
       const rawText = (result?.result || '').toString().trim()
-      const genuineMiss = !firstTurnHadToolCall(result) && (!rawText || isToolRefusal(rawText))
+      const genuineMiss = !firstTurnHadToolCall(result) && (!rawText || isToolRefusal(rawText) || isMetaCommentary(rawText))
       if (!genuineMiss || attempt === MAX_TOOL_CHOICE_ATTEMPTS) break
       log.warn?.('[casey] forced tool_choice not honored by model (empty/refusal); retrying turn', { caseId: fresh.id, attempt })
       try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `tool_choice miss on attempt ${attempt}; retrying` }) }
@@ -801,6 +802,19 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     if (text && !firstTurnHadToolCall(result) && isToolRefusal(text)) {
       log.warn?.('[casey] model produced a self-referential tool-refusal; blanking reply', { caseId: fresh.id })
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model refused citing missing tool access; blanked' })
+      text = ''
+    }
+    // Live-witnessed on real Discord traffic (a reasoning-family model,
+    // cerebras/gpt-oss-120b): the model's final content was its OWN planning
+    // narration about how to reply ("We should reply warmly, short, in
+    // English, ask if they have anything to report.") rather than the reply
+    // itself, sent verbatim to a real contact. Not gated on
+    // firstTurnHadToolCall -- this leak is about the shape of the FINAL
+    // natural-language turn, independent of whether a tool was called
+    // earlier in the same turn.
+    if (text && isMetaCommentary(text)) {
+      log.warn?.('[casey] model produced reply-planning meta-commentary instead of an actual reply; blanking', { caseId: fresh.id })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'model narrated its own reply plan instead of replying; blanked' })
       text = ''
     }
     // PURE-AGENT REPLY. The agent drives the whole conversation -- intake (asking the

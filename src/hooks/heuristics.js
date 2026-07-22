@@ -111,6 +111,30 @@ export function isToolRefusal(text) {
   return TOOL_REFUSAL_MARKERS.some(m => norm.includes(m))
 }
 
+// Live-witnessed (real Discord traffic, cerebras/gpt-oss-120b -- a reasoning-
+// family model): the model's final-turn content was its OWN planning
+// narration about how to compose the reply, not the reply itself -- "We
+// should reply warmly, short, in English, ask if they have anything to
+// report." sent verbatim to the contact instead of an actual warm reply. A
+// reasoning-family model sometimes fails to separate its internal plan from
+// its final answer when the API gives it no distinct reasoning/thinking
+// field. Detected structurally, narrowly: the message OPENS with a
+// first-person-plural or self-instructional planning verb ("we should",
+// "i should", "i will", "let me") directly followed by "reply"/"respond" --
+// and, since a genuine reply can legitimately start "I will reply..." while
+// actually addressing the contact next in the SAME sentence, the match only
+// fires when that opening is immediately followed by a STYLE/MANNER
+// description of the reply (an adverb like "warmly"/"briefly"/"shortly", or
+// a THIRD-PERSON reference to the contact -- "ask them"/"tell them") rather
+// than real, direct, second-person content. A genuine reply speaks TO the
+// contact ("please tell me more", "I need to know where..."); this pattern
+// speaks ABOUT the act of speaking to them.
+const META_COMMENTARY_RE = /^(we|i)\s+(should|will|need to|must|could|can)\s+(reply|respond)\s*,?\s*(warmly|briefly|shortly|kindly|politely|in\s+\w+\s*,|short\b|to\s+them\b|and\s+ask\s+them\b|ask\s+(if\s+)?them\b)/i
+export function isMetaCommentary(text) {
+  if (!text) return false
+  return META_COMMENTARY_RE.test(String(text).trim())
+}
+
 // Pre-send jargon guard. casey's design rule is plain, warm language to the
 // contact: never internal jargon (case/triage/workflow/status/priority). A weak
 // model occasionally leaks one of these words into a reply. This is a
