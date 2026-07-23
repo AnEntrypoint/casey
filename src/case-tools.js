@@ -708,6 +708,29 @@ export function buildCaseToolset(storeOrNull) {
 // EXISTING case's already-recorded history, a materially different risk
 // than opening a brand new empty one.
 const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stage', 'case_stop', 'case_handoff', 'case_new'])
+
+// Every tool NOT in REPORT_ONLY_TOOLS is already runtime-gated to field_worker
+// tier by gateByTier below -- but freddie's runTurn still serializes ALL 18
+// tools' full JSON-schema descriptions into every single request regardless of
+// tier, since enabledToolsets operates at the toolset-category level ('cases'
+// as a whole), not per-tool. For the far-more-common reporter tier (the
+// default per AGENTS.md's contact.tier design), 13 of those 18 tool schemas
+// (~10KB of the ~14.6KB total case-tools payload) are pure dead weight on
+// every request -- they will only ever return the same
+// {unavailable:true,...} rejection at call time. freddie's own
+// getEnabledToolSchemas (toolsets.js) filters `disabledToolsets` by TOOL NAME
+// (despite the parameter's plural-toolset-sounding name), so passing this list
+// there excludes them from the request payload entirely rather than merely
+// rejecting them after the model already spent tokens reading their schemas
+// and (for a weak model) sometimes attempting to call them anyway. Derived
+// from the live toolset rather than hand-duplicated, so a newly added
+// query/mutation tool is automatically tier-gated at the request-size layer
+// the same way it already is at the handler layer, with nothing to keep in
+// sync by hand.
+export function reporterTierExcludedToolNames() {
+  return buildCaseToolset(null).map(t => t.name).filter(name => !REPORT_ONLY_TOOLS.has(name))
+}
+
 function gateByTier(tool) {
   if (REPORT_ONLY_TOOLS.has(tool.name)) return tool
   const handler = tool.handler

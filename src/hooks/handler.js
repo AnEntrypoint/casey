@@ -12,6 +12,7 @@
 import { runTurn } from 'freddie'
 import { fmtTimeSAST } from '../format.js'
 import { orientCase, advanceCase } from '../conversation-state.js'
+import { reporterTierExcludedToolNames } from '../case-tools.js'
 import { caseSystemPrompt } from './prompt.js'
 import {
   truncate,
@@ -709,6 +710,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         break
       }
       const attemptTimeoutMs = isBackgroundRedrive ? configuredTimeoutMs : Math.min(configuredTimeoutMs, remainingMs)
+      // Same fail-closed tier resolution toolCtx.tier uses below -- computed once
+      // here so both stay byte-identical, never two independent tier expressions
+      // that could silently drift apart.
+      const resolvedTier = contact?.tier === 'field_worker' ? 'field_worker' : 'reporter'
       try {
         result = await runTurn({
           prompt,
@@ -737,6 +742,18 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
           // case_report/case_stage/etc, nothing else, per AGENTS.md's own
           // 'the agent acts entirely through these tools' design principle.
           enabledToolsets: ['cases'],
+          // A reporter-tier turn (the default, and the far more common contact
+          // tier per AGENTS.md's contact.tier design) can never call the 13
+          // query/mutation tools anyway -- gateByTier's runtime handler check
+          // already rejects them. Excluding their schemas from the request here
+          // too (freddie's getEnabledToolSchemas filters `disabledToolsets` by
+          // tool NAME, not by toolset category despite the parameter name) cuts
+          // ~10KB/~2500 tokens of dead-weight tool-schema payload off every
+          // reporter-tier turn's request size -- real headroom against a
+          // smaller/lower-TPM provider's rate limit, and one less thing for a
+          // weak model to waste a turn attempting to call and being rejected.
+          // field_worker tier passes an empty array (every tool stays visible).
+          disabledToolsets: resolvedTier === 'field_worker' ? [] : reporterTierExcludedToolNames(),
           // Identity for the case/enquiry tools: WHO is asking (the message author),
           // the live store, the role for row-scoped enquiries, and the active case.
           // The freddie case toolset reads these from toolCtx rather than a global, so
@@ -763,7 +780,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
             // corrupt value all get the LOWER-privilege tier, never silently elevated.
             // Same discipline as ownsCase's "no author on ctx -> not owned" fail-closed
             // guard a few lines up in case-tools.js.
-            tier: contact?.tier === 'field_worker' ? 'field_worker' : 'reporter',
+            tier: resolvedTier,
             store,
             principal: { id: msg.from || external_id, role: 'worker' },
             activeCaseRef: fresh.ref,
@@ -914,10 +931,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     if (isFallback) {
       if (!errored && result?.error) {
         log.error?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent result error: ${result.error}` })
+        // Structured data.degraded_turn marker (not just free-form text) so a
+        // cross-case aggregate query (GET /api/turns/degraded, operations.js)
+        // can reliably find every degraded turn across the whole system without
+        // already knowing which case to look at -- the prose-only text this
+        // event used to carry alone was queryable only by fragile substring
+        // matching, or by an operator who happened to already be looking at
+        // THIS specific case's own timeline.
+        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent result error: ${result.error}`, data: { degraded_turn: true, reason: 'error', error: String(result.error).slice(0, 500) } })
       }
       log.error?.('[casey] degraded turn produced no reply', { caseId: fresh.id })
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded turn (empty/error/echo/stock-ack/repeat); no reply sent.' })
+      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded turn (empty/error/echo/stock-ack/repeat); no reply sent.', data: { degraded_turn: true, reason: 'empty' } })
     }
     // A turn that ended empty (model error OR empty/echo/stock-ack/repeat) is
     // DEGRADED: the agent never actually understood this message. Surfaced on

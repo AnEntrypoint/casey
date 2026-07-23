@@ -306,4 +306,40 @@ export function registerOperations(app, deps) {
     }))
     res.json({ count: events.length, kind, actor, events, truncated })
   }))
+
+  // Real per-turn reply-path health, distinct from /api/health's aggregated
+  // "is the AI helper currently reachable/degraded" pill. The pill's own
+  // MIN_SAMPLES_FOR_DEGRADED window (llm.js) deliberately never flips on a
+  // single failed turn -- by design, to avoid a lone rate-limited hop flapping
+  // the whole dashboard red. That correctness comes at a real observability
+  // cost: a genuine one-off turn failure (a real contact getting the
+  // guaranteed-response fallback text) can happen while every "is it working"
+  // signal (process alive, /api/health, gateway connected) still reads green,
+  // because none of them individually witness whether a specific reply
+  // actually generated. This route answers the question those cannot: query
+  // the durable data.degraded_turn marker (hooks/handler.js) directly, across
+  // every case, so "did any real turn actually fail recently, and why" has a
+  // real answer without already knowing which case to look at or grepping the
+  // raw log file. `since` (unix ms, default last hour) windows the query.
+  app.get('/api/turns/degraded', wrap(async (req, res) => {
+    const { evData } = await import('../../safe.js')
+    const since = req.query.since ? Number(req.query.since) : (Date.now() - 3600_000)
+    if (!Number.isFinite(since)) return res.status(400).json({ error: 'since must be a unix-ms number' })
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 1000)
+    // Over-fetch (data.degraded_turn is not a thatcher-queryable column, only
+    // discoverable after parsing each row's JSON data blob) then filter+window
+    // client-side; listAllEvents' own truncated flag still reports honestly if
+    // even the over-fetch pool itself was capped before filtering ran.
+    const { rows, truncated } = await store.listAllEvents({ kind: 'observation', actor: 'system' }, { limit: Math.max(limit * 4, 800) })
+    const windowed = rows.filter(e => Number(e.created_at) * 1000 >= since)
+    const degraded = windowed
+      .map(e => ({ e, d: evData(e) }))
+      .filter(({ d }) => d.degraded_turn === true)
+      .slice(0, limit)
+      .map(({ e, d }) => ({
+        case_id: e.case_id, created_at: e.created_at,
+        reason: d.reason || 'unknown', error: d.error || null,
+      }))
+    res.json({ count: degraded.length, since, turns: degraded, truncated })
+  }))
 }

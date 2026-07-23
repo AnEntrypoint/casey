@@ -53,7 +53,22 @@ param -- it must never leak into a contact-facing agent's prompt.
 **pi tool surface (70 tools) -- what casey uses and the deliberate exclusions.**
 freddie's `pi` host exposes ~70 tools (witnessed via `bootHost().pi.tools.list()`).
 casey's CONTACT-FACING agent turn enables `enabledToolsets: ['cases']` ONLY -- so
-the agent reaches nothing but casey's own `case_*` tools. Separately, casey's own
+the agent reaches nothing but casey's own `case_*` tools. Of those 18 tools, 13
+are already runtime-gated to `field_worker` tier by `case-tools.js`'s `gateByTier`
+(a `reporter`-tier call is rejected at the handler, never reaching the store) --
+but freddie's `enabledToolsets` operates at the toolset-CATEGORY level, so their
+full JSON-schema descriptions were still being serialized into EVERY reporter-tier
+request regardless, ~10KB/~2500 tokens of dead weight on the far-more-common tier
+(reporter is the default per `contact.tier` above). `hooks/handler.js` now passes
+`disabledToolsets: reporterTierExcludedToolNames()` (`case-tools.js`) for a
+reporter-tier turn -- freddie's `getEnabledToolSchemas` filters `disabledToolsets`
+by tool NAME (despite the plural-toolset-sounding parameter name), so this excludes
+the 13 tool schemas from the request payload itself, not merely from what the
+handler will accept a call to. `field_worker` tier passes an empty exclusion list
+(every tool stays visible, unchanged). The excluded-name list is derived from the
+live toolset at call time, never hand-duplicated, so a newly added query/mutation
+tool is automatically request-size-gated the same way it is already handler-gated,
+with nothing to keep in sync by hand. Separately, casey's own
 DETERMINISTIC code (never the agent) dispatches three `creative`-toolset pi tools
 by name to enrich a case: `transcription` (inbound voice note -> text,
 `CASEY_TRANSCRIBE_VOICE_NOTES`), `vision` (inbound photo -> animal-health
@@ -498,6 +513,22 @@ the crash-budget stop state); the supervisor is its only I/O.
   shows "Messages: not connected" in red when a configured channel never connected
   since start. Outbound send verifies delivery (a non-2xx is a recorded
   send-failure observation), so neither a deaf receive nor a dropped send hides.
+- **Reply-path health is queryable, not just aggregated.** `/api/health`'s AI-helper
+  pill is an aggregated, deliberately-conservative rolling window (`llm.js`
+  `MIN_SAMPLES_FOR_DEGRADED`, currently 2) -- a lone failed turn never flips it red,
+  by design, so one unlucky provider hop cannot flap the whole dashboard on an
+  otherwise-healthy system. That correctness has a real observability cost: a
+  genuine one-off degraded turn (a real contact receiving the guaranteed-response
+  fallback text) can happen while every "is it working" signal an operator or a
+  debugging session would normally check (process alive, `/api/health`, gateway
+  connected) still reads green, because none of them individually witness whether
+  a specific reply actually generated. `hooks/handler.js` stamps every degraded
+  turn's own `observation` event with a structured `data.degraded_turn: true`
+  marker (reason + error text), and `GET /api/turns/degraded` (`operations.js`)
+  queries it across every case via `store.listAllEvents`, windowed by `since`
+  (default last hour) -- so "did a real turn actually fail recently, and why" has
+  a direct answer with no need to already know which case to look at or grep the
+  raw structured log file.
 - **Autonomy modes** per case (`auto | assisted | observe`) scope what the agent
   may do; the dashboard can override stage and reply as a human.
 - **Operator surface is low-jargon**: "Needs you now" inbox, plain-language mode,
