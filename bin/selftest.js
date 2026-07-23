@@ -19,7 +19,7 @@ import { createCasey } from '../src/casey.js'
 import { createCaseStore } from '../src/case-store.js'
 import { reporterTierExcludedToolNames } from '../src/case-tools.js'
 import { caseSystemPrompt } from '../src/hooks/prompt.js'
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -27,6 +27,18 @@ import { EventEmitter } from 'node:events'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
+
+// bin/casey.js loads .env via process.loadEnvFile before forking the real
+// supervisor/worker (Node 20.6+, no dotenv dependency) -- this script never
+// did, so every acptoapi/casey tuning knob set in .env (chain cap, turn
+// deadlines, etc.) was silently invisible here, running selftest against
+// the CODE DEFAULTS instead of the actual live-deployed configuration.
+// Live-witnessed: a selftest run showed a chain walking 12-13 candidates
+// (the acptoapi default) moments after .env was tuned down to
+// ACPTOAPI_AUTO_CHAIN_CAP=10 specifically to fix a real production timeout
+// -- selftest was verifying a DIFFERENT config than what casey up actually
+// runs, undermining the whole point of using it to verify a live fix.
+try { if (existsSync(path.join(ROOT, '.env')) && process.loadEnvFile) process.loadEnvFile(path.join(ROOT, '.env')) } catch { /* ignore */ }
 
 function parseFlags(argv) {
   const f = {}
