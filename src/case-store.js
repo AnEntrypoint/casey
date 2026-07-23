@@ -934,11 +934,31 @@ export class CaseStore {
     const c0 = await this.getCase(id)
     if (!c0) return { error: `no case ${id}` }
     return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
-      const c = await this.getCase(id)               // re-read INSIDE the lock
+      // Bounded retry with mergeReport's own expectedVersion discipline: the
+      // per-conversation lock only serializes THIS contact's own sequential
+      // agent turns, not a dashboard operator's PATCH on the same case id
+      // landing concurrently (a genuinely different lock, no lock at all).
+      // Without forwarding _version as expectedVersion, this write could
+      // silently clobber a concurrent operator edit with no error -- exactly
+      // the gap mergeReport already closes for report-field writes, just
+      // never carried over when this helper was introduced for case_update.
+      const RETRY_LIMIT = 3
+      let c = await this.getCase(id)               // re-read INSIDE the lock
       if (!c) return { error: `no case ${id}` }
-      if (c.autonomy === 'observe') return { error: 'observe' }
-      const updated = await this.updateCase(id, patch, user)
-      return { ok: true, case: updated, prior: c }
+      for (let attempt = 0; attempt <= RETRY_LIMIT; attempt++) {
+        if (c.autonomy === 'observe') return { error: 'observe' }
+        try {
+          const updated = await this.updateCase(id, patch, user, c._version != null ? { expectedVersion: c._version } : {})
+          return { ok: true, case: updated, prior: c }
+        } catch (e) {
+          if (e.code !== 'conflict') throw e
+          if (attempt === RETRY_LIMIT) {
+            return { error: `update conflict on case ${id} after ${RETRY_LIMIT} retries -- concurrent writers still contending, not applied` }
+          }
+          c = await this.getCase(id)
+          if (!c) return { error: `no case ${id}` }
+        }
+      }
     })
   }
 
@@ -1292,22 +1312,53 @@ export class CaseStore {
     // not record a junk event or re-notify the contact.
     if (before.status === toState) return before
     this._validateTransition(before.status, toState, user)
-    await this.t.update('case', caseId, {
-      status: toState,
-      transition_reason: reason || '',
-      last_event_at: nowIso(),
-    }, user)
+    // Optimistic-concurrency guard, same discipline mergeReport/updateCaseChecked
+    // already use: without it, a concurrent write (a dashboard operator's PATCH
+    // landing between the read above and this write, or a second agent turn
+    // racing the same case) can silently win-then-lose against this stage
+    // change with no error and no re-validation against the fresh row --
+    // before._status was already read fresh here, so `before._version` is the
+    // exact optimistic-lock token thatcher expects. Bounded retry: on a real
+    // conflict, re-read and re-validate the transition against the CURRENT
+    // status (which may have moved since `before` was read), not blindly
+    // retry the original from-state check against stale data.
+    const TRANSITION_RETRY_LIMIT = 3
+    let attemptBefore = before
+    for (let attempt = 0; attempt <= TRANSITION_RETRY_LIMIT; attempt++) {
+      try {
+        await this.t.update('case', caseId, {
+          status: toState,
+          transition_reason: reason || '',
+          last_event_at: nowIso(),
+        }, user, attemptBefore._version != null ? { expectedVersion: attemptBefore._version } : {})
+        break
+      } catch (e) {
+        if (e.code !== 'conflict') throw e
+        if (attempt === TRANSITION_RETRY_LIMIT) {
+          throw new Error(`transition conflict on case ${caseId} after ${TRANSITION_RETRY_LIMIT} retries -- concurrent writers still contending, not applied`)
+        }
+        const fresh = await this.getCase(caseId)
+        if (!fresh) throw new Error(`no case ${caseId}`)
+        if (fresh.status === toState) return fresh   // someone else already made this exact move
+        this._validateTransition(fresh.status, toState, user)
+        attemptBefore = fresh
+      }
+    }
     const result = await this.getCase(caseId)
+    // attemptBefore.status is the TRUE prior stage the write actually
+    // overwrote -- on a conflict retry this is the freshly re-read status,
+    // not the original (possibly now-stale) `before` snapshot, so the audit
+    // trail and the notify hook both report the real transition that happened.
     await this.appendEvent(caseId, {
       kind: 'transition',
       actor: user.role === 'agent' ? 'agent' : 'operator',
-      text: `${before.status} -> ${toState}${reason ? ` (${reason})` : ''}`,
-      data: { from: before.status, to: toState, by: user.id, reason },
+      text: `${attemptBefore.status} -> ${toState}${reason ? ` (${reason})` : ''}`,
+      data: { from: attemptBefore.status, to: toState, by: user.id, reason },
     })
     // Proactive contact note. Isolated: a notify failure must not fail the
     // operator's transition (the stage change already committed).
     if (this.onTransition) {
-      try { await this.onTransition({ caseRow: result, from: before.status, to: toState, user, reason }) }
+      try { await this.onTransition({ caseRow: result, from: attemptBefore.status, to: toState, user, reason }) }
       catch (e) {
         this.log?.warn?.('[casey] onTransition hook failed', { caseId, to: toState, error: e.message })
         try { await this.appendEvent(caseId, { kind: 'observation', actor: 'system', text: `Stage notification failed: ${e.message}` }) }

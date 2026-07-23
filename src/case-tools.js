@@ -789,7 +789,19 @@ async function mineRows(store, ctx, limit) {
   const openStatuses = typeof store.getOpenStatuses === 'function'
     ? store.getOpenStatuses()
     : ['new', 'triaging', 'in_progress', 'waiting']
-  const open = await store.listCases({ status: { $in: openStatuses } }, { limit: Math.max(limit * 10, 200) })
+  // KNOWN LIMITATION: this pulls the N most-recently-SYSTEM-WIDE-active open
+  // cases (no query-level scoping by author is possible -- thatcher.config.yml
+  // declares no row_access owner field for `case`, only `assignee`, and
+  // ownsCase's container:author containment semantics are not expressible via
+  // thatcher's documented $gte/$lte/$in/$or operators, only exact equality),
+  // then JS-filters to this worker's own. On a high-traffic deployment where
+  // 200+ OTHER contacts have more recent activity than this worker's own open
+  // cases, a genuinely-open case can silently fall outside the scan window and
+  // "my cases" reads empty even though the case exists. Widened well past the
+  // old flat 200 floor (env-tunable) as a mitigation; a real fix needs a
+  // thatcher-side owner-scoped index this deployment does not have.
+  const mineScanLimit = Number(process.env.CASEY_MINE_SCAN_LIMIT) || 1000
+  const open = await store.listCases({ status: { $in: openStatuses } }, { limit: Math.max(limit * 10, mineScanLimit) })
   // Fail CLOSED like case_get already does: no author on ctx means we cannot
   // prove which cases are "mine", so return nothing rather than defaulting to
   // everyone's open cases (a prior shape here silently handed back the whole

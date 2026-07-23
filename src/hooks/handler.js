@@ -210,11 +210,25 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // recordInbound below for audit; only the reasoning copy is cleaned.
     const inboundText = stripChannelMarkup(msg.text || '')
     const media = describeMedia(msg)
-    const inboundEvent = await store.recordInbound(caseRow, {
-      channel,
-      text: inboundText || (media ? `[${media}]` : '[empty message]'),
-      data: {}, msg_id: msgId,
-    })
+    let inboundEvent
+    try {
+      inboundEvent = await store.recordInbound(caseRow, {
+        channel,
+        text: inboundText || (media ? `[${media}]` : '[empty message]'),
+        data: {}, msg_id: msgId,
+      })
+    } catch (e) {
+      // Unlike every sibling store call around it (findOrCreateCase above,
+      // appendReportField below), this one had no try/catch of its own -- a
+      // transient store error here (thatcher busy, a lock timeout) threw
+      // straight past this point and silently dropped the WHOLE inbound turn,
+      // with only casey.js's _wrapInflight backstop (its own comment admits
+      // it's a backstop, not a real handler) standing between this and an
+      // unhandled rejection. Same explicit-drop discipline as the
+      // findOrCreateCase catch above: log loud, send nothing (no fallback text).
+      log.error?.('[casey] recordInbound failed; dropping inbound', { caseId: caseRow.id, channel, error: e.message })
+      return { to: replyTo, text: '', platform, caseId: caseRow.id, error: e.message }
+    }
     // A resume re-drive (msg.resume) intentionally carries the ORIGINAL msg_id of
     // an inbound already recorded -- recordInbound correctly returns null. That is
     // the expected path here, not a duplicate to drop: the boot resume sweep is
@@ -314,12 +328,33 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
           await store.updateCase(caseRow.id, { tags: [...tags, 'intake_mode:channel'].join(',') })
         }
       } catch (e) { log.warn?.('[casey] intake_mode tag failed', { error: e.message }) }
-      await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` })
+      // Unlike its immediate siblings above (subject seed, intake_mode tag),
+      // this append had no try/catch -- a transient store error here silently
+      // dropped the whole inbound turn with no reply, no observation, no
+      // logged reason. This event is audit-trail decoration (the case already
+      // exists by this point), so a failure here must never block the reply
+      // path -- best-effort, same discipline as every other non-critical
+      // append in this function.
+      try { await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` }) }
+      catch (e) { log.warn?.('[casey] case-opened note failed', { caseId: caseRow.id, error: e.message }) }
     }
 
     if (!autoRespond) return { to: replyTo, text: '', platform, caseId: caseRow.id }
 
-    let fresh = await store.getCase(caseRow.id)
+    // Unguarded like the two fixed above -- a transient store error here
+    // silently dropped the entire agent turn (the STOP/HUMAN short-circuit,
+    // the LLM call, the reply) past this point with no explicit error
+    // response. The case row from findOrCreateCase (caseRow) is a fine
+    // fallback: it is only slightly staler (missing whatever the
+    // append/updateCase calls just above wrote), and a genuinely broken store
+    // will fail again on the very next real call in this turn, surfacing
+    // loudly there instead of vanishing here.
+    let fresh
+    try { fresh = await store.getCase(caseRow.id) }
+    catch (e) {
+      log.warn?.('[casey] getCase(fresh) failed; continuing with the pre-turn case snapshot', { caseId: caseRow.id, error: e.message })
+      fresh = caseRow
+    }
 
     // PURE LLM: casey does NOT deterministically extract report fields. The AGENT
     // records what it learns via case_report during its turn. There is no keyword
@@ -871,6 +906,21 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       }
     }
 
+    // A genuinely non-degraded turn (the model produced real, usable content)
+    // proves the AI is back online RIGHT NOW, independent of whether that
+    // content ends up held for jargon or assisted-mode approval below --
+    // clearing the stale ai-offline flag here (moved ahead of both of those
+    // early-return guards) instead of only after them means a jargon-held or
+    // assisted-draft reply still clears a prior failure's flag. Previously
+    // this lived after the jargon guard's own early return, so a successful-
+    // but-jargon-laden reply held as a draft never reached the clear logic at
+    // all, leaving a stale ai-offline tag in the operator's offline queue even
+    // though the AI had genuinely recovered.
+    if (!degraded && (fresh.tags || '').split(',').map(s => s.trim()).includes('ai-offline')) {
+      try { await store.updateCase(fresh.id, { tags: dropTag(fresh.tags, 'ai-offline') }) }
+      catch (e) { log.warn?.('[casey] ai-offline clear failed', { caseId: fresh.id, error: e.message }) }
+    }
+
     // PRE-SEND JARGON GUARD: if the composed reply leaked internal jargon
     // (case/triage/workflow/status/priority as whole words), do NOT send it. Hold
     // it as a draft for a human exactly like assisted mode -- the contact must never
@@ -953,14 +1003,13 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // /api/unreplied) and on the case list, on EITHER a genuine turn failure OR a
     // degraded/blanked reply -- both leave the contact unanswered. The next
     // operator reply clears it (claim-on-reply untags it), and a later successful
-    // agent turn does too. Best-effort: a tag failure must never block the reply.
+    // agent turn does too (the clear half now runs earlier, ahead of the
+    // jargon/assisted-mode early returns -- see that comment above -- so only
+    // the tag-ON-degraded half remains here). Best-effort: a tag failure must
+    // never block the reply.
     if (degraded) {
       try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'ai-offline') }) }
       catch (e) { log.warn?.('[casey] ai-offline tag failed', { caseId: fresh.id, error: e.message }) }
-    } else if ((fresh.tags || '').split(',').map(s => s.trim()).includes('ai-offline')) {
-      // A successful, delivered turn clears a stale offline flag from a prior failure.
-      try { await store.updateCase(fresh.id, { tags: dropTag(fresh.tags, 'ai-offline') }) }
-      catch (e) { log.warn?.('[casey] ai-offline clear failed', { caseId: fresh.id, error: e.message }) }
     }
 
     // A QUEUED message re-driven (msg.queuedRedrive, set only by drainQueuedTurns)

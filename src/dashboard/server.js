@@ -212,7 +212,12 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   function csvCell(v) {
     let s = v == null ? '' : String(v)
     if (/^[=+\-@\t\r]/.test(s)) s = "'" + s
-    if (s.includes(',') || s.includes('\n') || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"'
+    // A bare \r (no \n) is itself a row-breaking character to Excel and many
+    // CSV parsers (old-Mac-style or stray CR line endings), but was missing
+    // from the quoting trigger below -- a farmer-supplied field containing a
+    // lone \r (public /report form, WhatsApp/Discord free text) could split a
+    // CSV export into a bogus row with no quoting to prevent it.
+    if (s.includes(',') || s.includes('\n') || s.includes('\r') || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"'
     return s
   }
 

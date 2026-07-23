@@ -411,16 +411,38 @@ const STOP_EXCLUDE = [
 // animals'/farmer's story, not an instruction to casey. Unambiguous keys
 // (unsubscribe, messaging-object phrases) are deliberately NOT in this set.
 const AMBIGUOUS_STOP_KEYS = new Set(['stop', 'quit', 'yeka', 'hamba', 'go away', 'hou op', 'los my',
-  'khaotsa', 'emisa', 'yima', 'ima', 'yekela'])
+  'khaotsa', 'emisa', 'yima', 'ima', 'yekela',
+  // 'yeka oku' (xh, "stop this") is a bare unqualified phrase, structurally
+  // identical to the English 'stop this'/'stop that'/'stop it' that ARE
+  // ambiguity-gated -- unlike its sibling messaging-object phrases in
+  // STOP_KEYS ('yeka imilayezo' = "stop messages"), it carries no messaging
+  // qualifier, so an animal-report sentence ending "...yeka oku" (stop this
+  // [symptom/behavior]) would otherwise unconditionally opt the contact out.
+  'yeka oku'])
 const AMBIGUOUS_MAX_WORDS = 3
 
 // HUMAN keys that double as ordinary report vocabulary ("the human gave it
 // water", relaying who did what to the animal) -- 'human' alone is not a
 // handoff request unless the whole message is short, same discipline as
 // AMBIGUOUS_STOP_KEYS above. Multi-word/unambiguous keys (speak to, real
-// person, umuntu, ...) are deliberately NOT in this set and keep firing at
-// any length.
-const AMBIGUOUS_HUMAN_KEYS = new Set(['human'])
+// person, ...) are deliberately NOT in this set and keep firing at any
+// length. The bare SA-language single-word 'person' tokens below carry the
+// SAME false-positive risk the bare English 'person' has (an ordinary answer
+// to casey's own present_person prompt -- "umuntu ukhona nezinkomo", "a
+// person is with the cattle" -- naming who is on-site), but unlike English
+// 'person' (which has an 18-entry HUMAN_EXCLUDE guard, see below) these had
+// ZERO exclude coverage: any report mentioning who is present in these
+// languages unconditionally fired a handoff. Gating them here (short-message-
+// only, same as 'human') is the safety-preserving fix -- the safety-critical
+// concord-prefixed WHOLE forms this file's own header comment protects
+// ('ngicela ukukhuluma nomuntu' etc.) are multi-word and untouched by this
+// gate, so a genuine handoff request in any of these languages still fires
+// at any length.
+const AMBIGUOUS_HUMAN_KEYS = new Set(['human',
+  'umuntu', 'umntu', 'umuntfu',          // zu/xh/ss bare 'person'
+  'motho', 'mongwe',                     // st/tn bare 'person'/'someone'
+  'munhu', 'muthu',                      // ts/ve bare 'person'
+])
 
 // Bare single-word tokens like 'someone'/'staff'/'manager'/'operator'/'agent' were
 // removed: casey's own system prompt asks who is on-site with the animals, and
