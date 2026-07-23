@@ -211,7 +211,22 @@ export function registerCases(app, deps) {
       if (prior?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy setting can be changed' })
     }
     const op = actingOperator(req)
-    const updated = await store.updateCase(req.params.id, patch, op)
+    // Forward the version this operator's edit was actually based on (prior,
+    // already read above for the audit-diff below) as an optimistic-concurrency
+    // guard -- without this, two operators editing DIFFERENT fields on the same
+    // case at the same time could still silently clobber each other (thatcher's
+    // last-write-wins with no version check at all). A genuine conflict 409s
+    // cleanly with a plain "someone else changed this case" message rather than
+    // either an uncaught throw or a silent lost update; the operator re-fetches
+    // and retries with the fresh state, same recovery shape as any other 409 in
+    // this file.
+    let updated
+    try {
+      updated = await store.updateCase(req.params.id, patch, op, prior?._version != null ? { expectedVersion: prior._version } : {})
+    } catch (e) {
+      if (e.code === 'conflict') return res.status(409).json({ error: 'this case was changed by someone else -- reload and try again' })
+      throw e
+    }
     if (!updated) return res.status(404).json({ error: 'not found' })
     // Best-effort operator-identity learning: an edit is a real working-area
     // signal. Not awaited on the response path -- learning must never slow or

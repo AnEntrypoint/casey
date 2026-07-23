@@ -165,7 +165,7 @@ export function registerMap(app, deps) {
     if (!c) return res.status(404).json({ error: 'not found' })
     const workerId = String(req.body?.worker_id || '').trim()
     if (!workerId) return res.status(400).json({ error: 'worker_id is required' })
-    const worker = await store.getContact?.(workerId).catch(() => null)
+    const worker = store.getContact ? await store.getContact(workerId).catch(() => null) : null
     if (!worker) return res.status(404).json({ error: 'worker not found' })
     if (worker.tier !== 'field_worker') return res.status(400).json({ error: 'selected contact is not a field_worker' })
     const op = actingOperator(req)

@@ -541,8 +541,8 @@ export function buildCaseToolset(storeOrNull) {
         }
         const author = ctx?.author || ctx?.principal?.id
         if (!author) return { error: 'no author on this turn -- cannot attribute a check-in' }
-        const contact = ctx?.store?.findOrCreateContact
-          ? await ctx.store.findOrCreateContact({ channel: ctx.channel || 'other', external_id: author })
+        const contact = ctx?.store?.findOrCreateContactLocked
+          ? await ctx.store.findOrCreateContactLocked({ channel: ctx.channel || 'other', external_id: author })
           : null
         if (!contact?.id) return { error: 'could not resolve the contact record for this check-in' }
         await store().t.update('contact', contact.id, {

@@ -303,6 +303,18 @@ export class CaseStore {
     }, SYSTEM_USER, { channel, external_id })
   }
 
+  // Locked variant for callers OUTSIDE findOrCreateCase's own lock (which already
+  // wraps its own internal findOrCreateContact call, so this must never be used
+  // there or the shared per-key lock would deadlock on itself). Two near-
+  // simultaneous first-ever check-ins/enquiries from a brand-new contact calling
+  // the plain unlocked findOrCreateContact directly could both miss the same
+  // "existing" read and each create a duplicate contact row for the same
+  // (channel, external_id) -- the same duplicate-creation race findOrCreateCase's
+  // own lock exists to prevent, just for the contact row instead of the case row.
+  async findOrCreateContactLocked(args) {
+    return this._withLock(`contact|${args.channel}|${args.external_id}`, () => this.findOrCreateContact(args))
+  }
+
   // ---- cases --------------------------------------------------------------
 
   // The conversation key (channel + external_id) is casey's identity for a

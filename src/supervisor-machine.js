@@ -115,9 +115,17 @@ export function canFire(machine, from, event) {
 // BUDGET_EXCEEDED instead of another restart, i.e. stop the tight loop and fail
 // loud (full -> degraded -> safe-fail ladder, never a silent catastrophic respawn).
 export function crashBudgetExceeded(times, now, { windowMs = 60_000, limit = 5 } = {}) {
-  if (!Array.isArray(times) || times.length < limit) return false
+  // A non-positive limit (a caller passing an unvalidated CASEY_CRASH_LIMIT<=0
+  // straight through) would otherwise trip on the very first recorded crash --
+  // there is no valid "no limit" expression for this budget, so fall back to
+  // the documented default (5) rather than a degenerate floor of 1, which would
+  // still trip on the very first crash, the same failure this guards against.
+  // Defense-in-depth alongside supervisor.js's own env-read fallback, so this
+  // pure function can never be misused into an instant-stop trap by any caller.
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 5
+  if (!Array.isArray(times) || times.length < safeLimit) return false
   const recent = times.filter(t => Number.isFinite(t) && now - t <= windowMs)
-  return recent.length >= limit
+  return recent.length >= safeLimit
 }
 
 // Convenience: is this a terminal state? (the supervisor stops dispatching once here)

@@ -33,7 +33,18 @@ const WORKER_ENTRY = path.join(__dirname, '..', 'bin', 'worker.js')
 const RELOAD_DEBOUNCE_MS = Number(process.env.CASEY_RELOAD_DEBOUNCE_MS || 300)
 const DRAIN_DEADLINE_MS = Number(process.env.CASEY_DRAIN_DEADLINE_MS || 15_000)
 const CRASH_WINDOW_MS = Number(process.env.CASEY_CRASH_WINDOW_MS || 60_000)
-const CRASH_LIMIT = Number(process.env.CASEY_CRASH_LIMIT || 5)
+// CASEY_CRASH_LIMIT has no "disabled"/"no limit" mode -- it is a crash-loop
+// circuit breaker, and a value of 0 or below is invalid input, not a valid way
+// to express "never stop". CASEY_CRASH_LIMIT=0 (a plausible-but-wrong attempt
+// to mean exactly that) would otherwise trip crashBudgetExceeded on the very
+// FIRST crash: '0' is a non-empty string so `|| 5` never applies its fallback,
+// and Number('0') is 0, meaning `recent.length >= 0` is true immediately -- the
+// exact opposite of the operator's likely intent. A non-positive value falls
+// back to the documented default (5) rather than a degenerate floor of 1 (which
+// would still trip on the very first crash, the same failure this exists to
+// prevent, just relabeled).
+const rawCrashLimit = Number(process.env.CASEY_CRASH_LIMIT || 5)
+const CRASH_LIMIT = rawCrashLimit > 0 ? rawCrashLimit : 5
 const BACKOFF_BASE_MS = Number(process.env.CASEY_RESTART_BACKOFF_MS || 500)
 const BACKOFF_CEIL_MS = Number(process.env.CASEY_RESTART_BACKOFF_CEIL_MS || 10_000)
 // Zombie-receive self-heal threshold: a real-time channel that WAS receiving and
@@ -268,6 +279,12 @@ export function createSupervisor(opts = {}) {
       }
       // Unexpected exit == crash. Record, count against the budget, restart-or-degrade.
       ctx.crashes.push(now)
+      // Trim to the windowed subset here, not just inside crashBudgetExceeded's
+      // own per-check filter (which only ever reads a COPY) -- without this,
+      // ctx.crashes grows by one entry per crash for the entire process
+      // lifetime, an unbounded array on a long-uptime host with occasional
+      // below-budget crashes.
+      ctx.crashes = ctx.crashes.filter(t => now - t <= CRASH_WINDOW_MS)
       ctx.lastCrashReason = ctx.lastCrashReason || `worker exited code=${code} signal=${signal || ''}`
       log.error?.('[supervisor] worker crashed', { code, signal, reason: ctx.lastCrashReason })
       fire('CRASH', now, ctx.lastCrashReason)

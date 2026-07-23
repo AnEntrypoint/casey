@@ -199,7 +199,19 @@ export async function revokeAccountSessions(store, id) {
   return store.t.update('operator_account', id, { session_epoch: nextEpoch }, SYSTEM)
 }
 
+// Deletion is irreversible (unlike disable, which the sibling route already
+// documents as an accepted self-lockout risk because it is recoverable via
+// the CLI break-glass path) -- deleting the last enabled admin account would
+// leave no way back in short of direct DB surgery. Block it, matching the
+// asymmetry: an operator can always re-enable a disabled admin, but a deleted
+// one is gone.
 export async function deleteAccount(store, id) {
+  const target = await getAccount(store, id)
+  if (target?.role === 'admin' && target.disabled !== '1') {
+    const accounts = await listAccounts(store)
+    const otherEnabledAdmins = accounts.some(a => a.id !== id && a.role === 'admin' && a.disabled !== '1')
+    if (!otherEnabledAdmins) throw new Error('cannot delete the last enabled admin account')
+  }
   return store.t.delete('operator_account', id)
 }
 
