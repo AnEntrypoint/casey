@@ -114,7 +114,20 @@ async function runOneTurn(casey, { platform = 'testplatform', contact = 'selftes
   // drive the SAME tracked path a real inbound uses.
   await casey.gateway.handleInbound(platform, msg)
   const elapsedMs = Date.now() - started
-  return { adapter, elapsedMs, sent: adapter.sent }
+  let events = null
+  if (process.env.CASEY_SELFTEST_DEBUG) {
+    // Real diagnosis instead of guessing: when a turn produces no reply, the
+    // case's own event timeline (observation/action rows) almost always
+    // names exactly why -- an outbound scrub (JARGON-HELD, prompt-echo,
+    // stock-ack, isMetaCommentary), an autonomy=observe gate, or a genuine
+    // degraded-turn marker (data.degraded_turn, see AGENTS.md's reply-path
+    // observability principle). Reading it here beats re-guessing blind.
+    try {
+      const { case: c } = await casey.store.findOrCreateCase({ channel: platform, external_id: contact })
+      events = await casey.store.listEvents(c.id)
+    } catch { /* best-effort diagnostic only */ }
+  }
+  return { adapter, elapsedMs, sent: adapter.sent, events }
 }
 
 async function measureRequestSize({ tier = 'reporter' } = {}) {
@@ -185,6 +198,10 @@ Always runs against an isolated temp data dir; never touches the live data/app.d
         for (const s of r.sent) console.log(`  REPLY: ${JSON.stringify(s.text)}${s.degraded ? '  [DEGRADED]' : ''}`)
       } else {
         console.log('  REPLY: (none sent -- check for a queued/degraded/observe-mode turn)')
+        if (r.events) {
+          console.log('  --- CASEY_SELFTEST_DEBUG event timeline ---')
+          for (const e of r.events) console.log(`    [${e.kind}/${e.actor}] ${e.text}`)
+        }
       }
       return r
     }
