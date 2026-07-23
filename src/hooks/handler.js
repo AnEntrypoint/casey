@@ -1169,7 +1169,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       // Fire-and-forget: the replay is a full turn in its own right (it will
       // append its own events/outbound), not something the original caller
       // should block on -- mirrors how drainQueuedTurns re-drives independently.
-      handleInbound.call(this, platform, next).catch(e => log.error?.('[casey] burst replay failed', { error: e.message }))
+      // Routed through `this.handleInbound` (the casey.js _wrapInflight-WRAPPED
+      // reference -- `this` here is the gateway instance, and _wrapInflight
+      // reassigns `this.gateway.handleInbound` to a tracked version
+      // immediately after this very function is bound to it), NOT the raw
+      // closure-local `handleInbound` variable this function itself is bound
+      // to. The raw self-call bypassed casey.js's `_inflight` tracking
+      // entirely, so a burst-replay turn could still be mid-flight when
+      // casey.stop() closed the store -- live-witnessed: "CaseStore not
+      // initialised -- call init() first" thrown from a replay turn racing a
+      // real stop() call during a test run.
+      this.handleInbound(platform, next).catch(e => log.error?.('[casey] burst replay failed', { error: e.message }))
     }
     return result
   }
