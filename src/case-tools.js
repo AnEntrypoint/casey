@@ -146,7 +146,7 @@ export function buildCaseToolset(storeOrNull) {
         return { count: rows.length, cases: rows.map(enquiryRow) }
       }),
     defTool('case_update', 'cases',
-      'Update editable case fields (subject, summary, priority, tags, assignee, autonomy, case_type). Keep `summary` current -- it is your working memory of the case. Set `case_type` as soon as the report makes the category clear -- this drives the organisers\' map, SLA targets, and workload views, so it must not sit unset waiting for a human to classify it by hand: outbreak (multiple animals, fast onset, or a suspected notifiable disease), follow_up (a routine check-in on an already-known situation), lab_sample (mainly about a sample/test result), import_alert (tied to recently moved/imported animals). Leave it unset only when nothing yet points to a category.',
+      'Update editable case fields (subject, summary, priority, assignee, autonomy, case_type). Keep `summary` current -- it is your working memory of the case. Set `case_type` as soon as the report makes the category clear -- this drives the organisers\' map, SLA targets, and workload views, so it must not sit unset waiting for a human to classify it by hand: outbreak (multiple animals, fast onset, or a suspected notifiable disease), follow_up (a routine check-in on an already-known situation), lab_sample (mainly about a sample/test result), import_alert (tied to recently moved/imported animals). Leave it unset only when nothing yet points to a category.',
       {
         type: 'object',
         properties: {
@@ -154,7 +154,6 @@ export function buildCaseToolset(storeOrNull) {
           subject: str('Short human title'),
           summary: str('One-paragraph rolling summary of the case state'),
           priority: str('Priority', { enum: DEFAULT_PRIORITY_VALUES }),
-          tags: str('Comma-separated tags'),
           assignee: str('Operator handle, or "agent"'),
           case_type: str('Category, set as soon as the report makes it clear', { enum: DEFAULT_CASE_TYPE_VALUES }),
         },
@@ -178,14 +177,14 @@ export function buildCaseToolset(storeOrNull) {
         if ('priority' in patch && !priorityValues.has(patch.priority)) {
           return { error: `invalid priority: ${patch.priority}`, allowed: [...priorityValues] }
         }
-        const clean = pick(patch, ['subject', 'summary', 'priority', 'tags', 'assignee', 'case_type'])
+        const clean = pick(patch, ['subject', 'summary', 'priority', 'assignee', 'case_type'])
         if (!Object.keys(clean).length) return { error: 'no editable fields supplied' }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         // A field_worker may learn another case's id via case_list/case_mine
         // (PII-free rows still carry `id`) -- ownership must be checked here too,
         // same gate case_get/case_switch already apply, or any worker could edit
-        // a stranger's case (priority/tags/assignee/case_type/subject/summary).
+        // a stranger's case (priority/assignee/case_type/subject/summary).
         const author = ctx?.author || ctx?.principal?.id
         if (!ownsCase(c.external_id, author)) {
           return { error: `case ${id} does not belong to you -- cannot update it` }
@@ -305,6 +304,14 @@ export function buildCaseToolset(storeOrNull) {
           res = await store().mergeReport(id, incoming, AGENT_USER)
           if (res.error === 'observe') return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
           if (res.error) return { error: res.error }
+          if (res.reportWasCorrupted) {
+            try {
+              await store().appendEvent(id, {
+                kind: 'observation', actor: 'system',
+                text: 'WARNING: this case\'s stored report JSON was corrupted and has been reset before merging in this turn\'s fields -- some previously recorded fields may be lost. Review the case history for what was said before this point.',
+              })
+            } catch { /* best-effort -- the report write itself already succeeded */ }
+          }
         }
         // lat/lon are real case columns, not report JSON, and the model's own
         // estimate (or the worker's exact GPS) is the ONLY source -- casey does

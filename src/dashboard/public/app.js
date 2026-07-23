@@ -2248,7 +2248,13 @@ async function loadContacts(){
           const r=await api('/api/contacts/'+encodeURIComponent(id)+'/erase',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({reason:dlg.value||''})})
           if(!r.ok){ const err=await r.json().catch(()=>({})); toast(err.error||'Could not erase contact','err'); btn.disabled=false; return }
           const j=await r.json()
-          toast('Erased -- '+(j.casesScrubbed?j.casesScrubbed.length:0)+' case(s) scrubbed','ok')
+          const scrubbedN=j.casesScrubbed?j.casesScrubbed.length:0
+          const failedN=j.casesFailed?j.casesFailed.length:0
+          if(failedN>0){
+            toast('Erased -- '+scrubbedN+' case(s) scrubbed, '+failedN+' FAILED (retry needed)','err')
+          }else{
+            toast('Erased -- '+scrubbedN+' case(s) scrubbed','ok')
+          }
           loadContacts()
         }catch(e){ toast('Could not erase contact: '+e.message,'err'); btn.disabled=false }
       }

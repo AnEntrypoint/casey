@@ -179,4 +179,4 @@ function rankAttention(cases, now = Date.now(), { limit = 0, offset = 0, slaTarg
   return { total, items: sliced, atRisk, slaTargetMs }
 }
 
-export { attnScore, attnReason, caseHints, rankAttention, tagList, ageHours, touchMs, waitAgeMs, atRiskCount, snoozedUntil }
+export { rankAttention, tagList, atRiskCount, snoozedUntil }

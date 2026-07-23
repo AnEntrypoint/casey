@@ -193,6 +193,13 @@ async function main() {
       console.log(bad('WHATSAPP_APP_SECRET is required to enable WhatsApp (verify inbound webhook signatures)'))
       problems++
     }
+    // Unlike WHATSAPP_APP_SECRET, an unset WHATSAPP_VERIFY_TOKEN does not block
+    // serving -- freddie falls back to its own literal 'freddie' default webhook
+    // handshake token, which is guessable by anyone who has read freddie's
+    // source. Warn (not a hard problem) so an operator sets a real one.
+    if (hasCreds('whatsapp') && !process.env.WHATSAPP_VERIFY_TOKEN) {
+      console.log(warn('WHATSAPP_VERIFY_TOKEN unset - webhook verification will use freddie\'s default token (set WHATSAPP_VERIFY_TOKEN to a real secret)'))
+    }
     if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected - casey cannot start without at least one of discord/whatsapp configured'))
     // thatcher config
     const cfgFile = path.join(ROOT, 'thatcher.config.yml')
@@ -260,6 +267,13 @@ async function main() {
     const channels = requested.filter(ch => hasCreds(ch))
     const skipped = requested.filter(ch => !hasCreds(ch))
     if (!channels.length) { console.log(bad('no channels available - set discord/whatsapp credentials')); process.exit(1) }
+    // Loud, non-fatal warning (see bin/worker.js's matching guard): an unset
+    // WHATSAPP_VERIFY_TOKEN falls back to freddie's own literal 'freddie'
+    // default webhook handshake token, guessable by anyone who has read
+    // freddie's source.
+    if (channels.includes('whatsapp') && !process.env.WHATSAPP_VERIFY_TOKEN) {
+      console.log(warn('WHATSAPP_VERIFY_TOKEN is unset - webhook verification will use freddie\'s default token (set WHATSAPP_VERIFY_TOKEN to a real secret)'))
+    }
 
     // Supervised path (default): a parent supervisor forks the serving worker
     // (bin/worker.js = gateway + dashboard + store), watches src/ for changes, and

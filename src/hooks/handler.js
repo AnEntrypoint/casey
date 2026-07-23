@@ -282,26 +282,45 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // exactly the mode with no LLM narration to compensate), so a plain
     // observation event is appended even when the field write was refused. A
     // failure here must never block the reply path.
-    // When the channel adapter actually downloaded the media bytes (msg.media),
+    // Normalize msg.media across adapter shapes: WhatsApp's adapter resolves a
+    // SINGLE object ({type, mimeType, buffer}, freddie's platform-whatsapp
+    // handler.js), but Discord's resolves an ARRAY (one entry per attachment,
+    // freddie's platform-discord handler.js _resolveAttachments). Every read
+    // below used to assume the WhatsApp shape unconditionally
+    // (msg.media?.buffer), so on Discord msg.media.buffer was always undefined
+    // (arrays have no .buffer property) -- isPhotoMsg/isAudioMsg were
+    // permanently false, meaning every Discord photo/voice note was stuck at
+    // the honest-degradation floor ("farmer sent a photo", no bytes saved, no
+    // transcription/description) even with real downloaded bytes sitting right
+    // there and CASEY_DESCRIBE_PHOTOS/CASEY_TRANSCRIBE_VOICE_NOTES enabled.
+    // Picking the first entry that actually has a buffer (a failed-download
+    // entry may be null/error-only) mirrors WhatsApp's own single-object
+    // degrade shape; Array.isArray is false for WhatsApp's object, so this is
+    // a no-op there (mediaItem === msg.media, byte-identical to before).
+    const mediaItem = Array.isArray(msg.media) ? (msg.media.find(m => m?.buffer) || msg.media[0]) : msg.media
+    // When the channel adapter actually downloaded the media bytes (mediaItem),
     // save them to disk and fold the saved path into the note -- otherwise the
     // note is text-only ("farmer sent a photo") with nothing behind it, which is
     // exactly the "looks captured but isn't" gap this closes. A download failure
-    // (msg.media.error set, buffer null) still yields the plain text note, same
+    // (mediaItem.error set, buffer null) still yields the plain text note, same
     // as before freddie could fetch media at all -- never a harder failure.
     const photoNote = inboundImageNote(msg)
     if (photoNote) {
       try {
         let note = photoNote
-        const isPhotoMsg = msg.media?.buffer && msg.media.type !== 'audio'
+        const isPhotoMsg = mediaItem?.buffer && mediaItem.type !== 'audio'
         if (isPhotoMsg) {
-          const savedPath = store.saveMedia(caseRow.id, msg.media.buffer, { mimeType: msg.media.mimeType, kind: 'photo' })
+          const savedPath = store.saveMedia(caseRow.id, mediaItem.buffer, { mimeType: mediaItem.mimeType, kind: 'photo' })
           note = `${photoNote} (saved: ${savedPath})`
-          const description = await describePhoto(msg.media.buffer, msg.media.mimeType)
+          const description = await describePhoto(mediaItem.buffer, mediaItem.mimeType)
           if (description) note += ` -- described: "${truncate(description, 500)}"`
         }
         const r = await store.appendReportField(caseRow.id, 'photos', note)
         if (r?.appended || r?.error === 'observe') {
           await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `PHOTO RECEIVED: ${note} (recorded for the field team).` })
+        }
+        if (r?.reportWasCorrupted) {
+          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: 'WARNING: this case\'s stored report JSON was corrupted and has been reset before appending this photo note -- some previously recorded fields may be lost.' })
         }
       } catch (e) { log.warn?.('[casey] photo mark failed', { caseId: caseRow.id, error: e.message }) }
     }
@@ -312,19 +331,22 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // note is composed so a successful transcript is folded straight into the
     // recorded field -- a failure/opt-out yields '' and the note reads exactly
     // as it always did (operator listens, per the original degrade rung).
-    const isAudioMsg = msg.media?.buffer && msg.media.type === 'audio'
-    const transcript = isAudioMsg ? await transcribeAudio(msg.media.buffer, msg.media.mimeType) : ''
+    const isAudioMsg = mediaItem?.buffer && mediaItem.type === 'audio'
+    const transcript = isAudioMsg ? await transcribeAudio(mediaItem.buffer, mediaItem.mimeType) : ''
     const audioNote = inboundAudioNote(msg, transcript)
     if (audioNote) {
       try {
         let note = audioNote
         if (isAudioMsg) {
-          const savedPath = store.saveMedia(caseRow.id, msg.media.buffer, { mimeType: msg.media.mimeType, kind: 'audio' })
+          const savedPath = store.saveMedia(caseRow.id, mediaItem.buffer, { mimeType: mediaItem.mimeType, kind: 'audio' })
           note = `${audioNote} (saved: ${savedPath})`
         }
         const r = await store.appendReportField(caseRow.id, 'audio', note)
         if (r?.appended || r?.error === 'observe') {
           await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `AUDIO RECEIVED: ${note}.` })
+        }
+        if (r?.reportWasCorrupted) {
+          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: 'WARNING: this case\'s stored report JSON was corrupted and has been reset before appending this audio note -- some previously recorded fields may be lost.' })
         }
       } catch (e) { log.warn?.('[casey] audio mark failed', { caseId: caseRow.id, error: e.message }) }
     }
@@ -418,12 +440,18 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     }
     if (intent === 'stop' || intent === 'human') {
       if (intent === 'human') {
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'HANDOFF REQUESTED: contact asked for a human. Needs an operator.' })
         // detectContactIntent returns 'human' for EVERY message with a human
         // keyword, so the notify must fire only on the FIRST handoff for this
         // case -- otherwise a contact repeating "person?" re-pings every time.
         // mergeTag is idempotent; the notify is not.
         const alreadyFlagged = (fresh.tags || '').split(',').map(s => s.trim()).includes('needs-human')
+        // STATE-CHANGING WRITE FIRST, independently guarded: this used to run
+        // AFTER an unguarded appendEvent (the audit-trail note two lines
+        // below), so a transient thatcher/lock error on that leading append
+        // threw before this write ever ran, silently losing the needs-human
+        // flag with no record the handoff was ever requested -- an
+        // irreversible-control tag must be structurally guaranteed to persist
+        // independent of whether its own audit-trail note happens to land.
         try {
           // Flag needs-human as an OBSERVABLE signal; do NOT auto-raise priority.
           // casey amplifies the organisers' intent, it does not impose escalation
@@ -436,10 +464,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
             catch (e) { log.warn?.('[casey] handoff notify failed', { caseId: fresh.id, error: e.message }) }
           }
         } catch (e) { log.warn?.('[casey] handoff flag failed', { caseId: fresh.id, error: e.message }) }
+        try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'HANDOFF REQUESTED: contact asked for a human. Needs an operator.' }) }
+        catch (e) { log.warn?.('[casey] handoff audit event failed', { caseId: fresh.id, error: e.message }) }
       } else if (intent === 'stop') {
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'OPT-OUT: contact asked to stop messaging.' })
+        // Same ordering fix as the human branch above: the state-changing
+        // opt-out tag write must never be gated behind its own audit-trail
+        // append succeeding first -- STOP is a legal opt-out control and must
+        // be structurally guaranteed to persist even if the append throws.
         try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'opted-out') }) }
         catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: fresh.id, error: e.message }) }
+        try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'OPT-OUT: contact asked to stop messaging.' }) }
+        catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: fresh.id, error: e.message }) }
         // A stop can arrive packed with real report content ("...please stop
         // messaging me") -- the agent never sees it (opt-out means no further
         // engagement, correctly), so any facts in the same message would

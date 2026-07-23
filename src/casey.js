@@ -424,8 +424,14 @@ export class Casey {
     this.stopSweep()
     if (!(intervalMs > 0)) return
     this._sweepTimer = setInterval(() => {
+      // Tracked in _inflight the same way startDrainPoll's own timer callback
+      // is (see below) -- without this, drain()'s shutdown wait never saw a
+      // sweep's own store writes in flight, letting stop() close the store
+      // mid-write on this background path exactly like the drain-poll case.
       // A sweep failure must never crash the loop or wedge the process.
-      this.runSweepOnce().catch(e => this.log?.warn?.('[casey] sweep failed', { error: e.message }))
+      const p = this.runSweepOnce().catch(e => this.log?.warn?.('[casey] sweep failed', { error: e.message }))
+      this._inflight.add(p)
+      p.finally(() => this._inflight.delete(p))
     }, intervalMs)
     // Do not keep the event loop alive solely for the sweep (clean test/CLI exit).
     this._sweepTimer.unref?.()

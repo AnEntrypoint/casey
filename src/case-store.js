@@ -1177,9 +1177,17 @@ export class CaseStore {
       // 3) Union tags onto target (drop the internal 'merged' marker).
       const tgtTags = new Set((tgt.tags || '').split(',').map(s => s.trim()).filter(Boolean))
       for (const tg of srcTags) if (tg !== 'merged') tgtTags.add(tg)
+      // lat/lon are real case columns (the agent's own map coordinate), not
+      // report fields -- fill-if-empty only, same "target value wins" contract
+      // as the report merge above, so a target that already has its own
+      // coordinate is never displaced by the source's.
+      const latLonPatch = (tgt.lat == null || tgt.lon == null) && src.lat != null && src.lon != null
+        ? { lat: src.lat, lon: src.lon }
+        : {}
       await this.updateCase(targetId, {
         report: JSON.stringify(mergedReport),
         tags: [...tgtTags].join(','),
+        ...latLonPatch,
       }, user)
       await this.appendEvent(targetId, {
         kind: 'note', actor: user.role === 'agent' ? 'agent' : 'operator',

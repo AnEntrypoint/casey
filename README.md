@@ -216,7 +216,6 @@ casey/
     case-runtime.js          process singleton so the plugin reaches the live CaseStore
     case-tools.js            case_* tool definitions (get/list/update/observe/transition), autonomy-enforced
     gateway-hooks.js         makeCaseHandler: case-aware inbound (agent-driven, no deterministic text processing), dedup, media, observe
-    discord-receive.js       fallback Discord WS receive for older freddie builds
     dashboard/server.js      express API + anentrypoint-design-styled SPA (observe + edit + override + reply, plain-language mode + help overlay)
 ```
 

@@ -137,16 +137,26 @@ export function isToolRefusal(text) {
 // its final answer when the API gives it no distinct reasoning/thinking
 // field. Detected structurally, narrowly: the message OPENS with a
 // first-person-plural or self-instructional planning verb ("we should",
-// "i should", "i will", "let me") directly followed by "reply"/"respond" --
-// and, since a genuine reply can legitimately start "I will reply..." while
-// actually addressing the contact next in the SAME sentence, the match only
-// fires when that opening is immediately followed by a STYLE/MANNER
-// description of the reply (an adverb like "warmly"/"briefly"/"shortly", or
-// a THIRD-PERSON reference to the contact -- "ask them"/"tell them") rather
-// than real, direct, second-person content. A genuine reply speaks TO the
-// contact ("please tell me more", "I need to know where..."); this pattern
-// speaks ABOUT the act of speaking to them.
-const META_COMMENTARY_RE = /^(we|i)\s+(should|will|need to|must|could|can)\s+(reply|respond)\s*,?\s*(warmly|briefly|shortly|kindly|politely|in\s+\w+\s*,|short\b|to\s+them\b|and\s+ask\s+them\b|ask\s+(if\s+)?them\b)/i
+// "i should", "i will", "let me") directly followed by "reply"/"respond",
+// then a STYLE/MANNER description of the reply (an adverb like "warmly"/
+// "briefly"/"shortly"). A genuine reply speaks TO the contact ("please tell
+// me more", "I need to know where..."); this pattern speaks ABOUT the act of
+// speaking to them.
+//
+// The alternation used to also match a THIRD-PERSON reference to the contact
+// ("to them"/"and ask them"/"ask if them") on the theory that a genuine reply
+// never refers to the contact in third person -- live-witnessed as FALSE:
+// "I will reply to them now: the cow is sick, three dead, near the dam." and
+// "I need to reply to them and ask them about the animals location please."
+// both open with exactly that shape while carrying real, direct report
+// content in the very same sentence, and both got silently blanked (the case
+// tagged ai-offline) instead of delivering a genuine, on-topic answer. Third-
+// person self-narration does not reliably distinguish meta-commentary from a
+// real reply the way a style/manner adverb does, so those branches are
+// dropped -- narrowing strictly reduces matches, so the original
+// live-witnessed leak ("We should reply warmly, short, in English...") still
+// matches via 'warmly'/'short'/'in <lang>,'.
+const META_COMMENTARY_RE = /^(we|i)\s+(should|will|need to|must|could|can)\s+(reply|respond)\s*,?\s*(warmly|briefly|shortly|kindly|politely|in\s+\w+\s*,|short\b)/i
 export function isMetaCommentary(text) {
   if (!text) return false
   return META_COMMENTARY_RE.test(String(text).trim())

@@ -94,6 +94,14 @@ async function main() {
     console.error('[worker] WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')
   }
   const channels = requested.filter(ch => (ch === 'whatsapp' ? (hasCreds(ch) && !!process.env.WHATSAPP_APP_SECRET) : hasCreds(ch)))
+  // Loud, non-fatal warning (unlike WHATSAPP_APP_SECRET above, which refuses to
+  // serve): an unset WHATSAPP_VERIFY_TOKEN falls back to freddie's own literal
+  // 'freddie' default for the webhook handshake token, which is guessable by
+  // anyone who has read freddie's source. Warn so an operator notices and sets
+  // a real token, rather than silently running the handshake on a public default.
+  if (channels.includes('whatsapp') && !process.env.WHATSAPP_VERIFY_TOKEN) {
+    console.error('[worker] WHATSAPP_VERIFY_TOKEN is unset - webhook verification will use freddie\'s default token (set WHATSAPP_VERIFY_TOKEN to a real secret)')
+  }
   if (!channels.length) {
     // No serving surface: fatal, not a silent idle. The supervisor treats a FATAL
     // boot as a crash for budget purposes, so a permanently-misconfigured worker

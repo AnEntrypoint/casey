@@ -471,6 +471,15 @@ export function registerCases(app, deps) {
     if (kind === 'transition') {
       const to = d.from
       if (!to) return res.status(409).json({ error: 'transition has no recorded prior stage' })
+      // Not every forward move has a symmetric backward edge in
+      // thatcher.config.yml (e.g. waiting->resolved exists but resolved's own
+      // backward list is only [in_progress]) -- pre-validate the reverse move
+      // the same way the plain transition route above does, rather than
+      // letting an illegal reverse throw an uncaught 500 out of store.transition.
+      const legal = store.availableTransitions(c, OPERATOR)
+      if (to !== c.status && !legal.includes(to)) {
+        return res.status(409).json({ error: `cannot undo: '${to}' is not a legal transition from '${c.status}'`, allowed: legal })
+      }
       await store.transition(c.id, to, { user: op, reason: 'undo' })
       summary = `undid transition: back to ${to}`
     } else if (kind === 'claim') {
@@ -562,14 +571,18 @@ export function registerCases(app, deps) {
     const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
     const res2 = await store.mergeCases(into, req.params.id, actingOperator(req), { reason: reason || 'operator merge' })
     if (res2.error) return res.status(400).json({ error: res2.error })
-    res.json({ ok: true, movedEvents: res2.movedEvents, alreadyMerged: !!res2.alreadyMerged })
+    res.json({ ok: true, movedEvents: res2.movedEvents, alreadyMerged: !!res2.alreadyMerged, ...(res2.reportWasCorrupted ? { reportWasCorrupted: true } : {}) })
   }))
 
   // Split selected events out of this case into a NEW linked case.
   // Body: { event_ids: string[], subject?: string, reason?: string }
   app.post('/api/cases/:id/split', wrap(async (req, res) => {
-    const { event_ids, subject, reason } = req.body
+    const { event_ids } = req.body
     if (!Array.isArray(event_ids) || !event_ids.length) return res.status(400).json({ error: 'event_ids must be a non-empty array' })
+    // Same MAX_LEN guardrail every sibling route enforces (str() below); split's
+    // subject/reason used to bypass it entirely via a raw req.body destructure.
+    const subject = str(res, req.body, 'subject', { required: false }); if (subject === undefined) return
+    const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
     const result = await store.splitCase(req.params.id, event_ids, { subject: subject || '', reason: reason || 'operator split' }, actingOperator(req))
     if (result.error) return res.status(400).json({ error: result.error })
     res.json({ ok: true, new_case_id: result.newCase?.id, new_case_ref: result.newCase?.ref, moved_events: result.movedEvents })
@@ -650,9 +663,14 @@ export function registerCases(app, deps) {
     if (!c) return res.status(404).json({ error: 'not found' })
     const draft = await pendingDraft(c)
     if (!draft) return res.status(409).json({ error: 'no pending draft' })
-    // Operator may edit before approving; fall back to the drafted text.
+    // Operator may edit before approving; fall back to the drafted text. Same
+    // MAX_LEN guardrail every sibling route enforces (str() below) -- an
+    // operator-edited draft used to bypass it via a raw req.body read.
     let text = draft.text || ''
-    if (req.body && typeof req.body.text === 'string' && req.body.text.trim()) text = req.body.text.trim()
+    if (req.body && typeof req.body.text === 'string' && req.body.text.trim()) {
+      const edited = str(res, req.body, 'text', { required: false }); if (edited === undefined) return
+      if (edited.trim()) text = edited.trim()
+    }
     if (!text) return res.status(400).json({ error: 'empty draft' })
     let delivered = false
     if (sendReply) {
@@ -676,7 +694,9 @@ export function registerCases(app, deps) {
     if (!c) return res.status(404).json({ error: 'not found' })
     const draft = await pendingDraft(c)
     if (!draft) return res.status(409).json({ error: 'no pending draft' })
-    const reason = (req.body && typeof req.body.reason === 'string' ? req.body.reason.trim() : '') || 'operator discarded'
+    // Same MAX_LEN guardrail every sibling route enforces (str() below).
+    const rawReason = str(res, req.body, 'reason', { required: false }); if (rawReason === undefined) return
+    const reason = rawReason.trim() || 'operator discarded'
     const op = actingOperator(req)
     const tags = String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean)
     await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending').join(',') }, op)
