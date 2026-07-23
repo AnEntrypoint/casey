@@ -991,6 +991,8 @@ export class CaseStore {
     const PII_REPORT_FIELDS = ['owner_name', 'owner_contact', 'present_person', 'present_person_relation', 'contact_fallback', 'photos', 'audio']
     const cases = await this.listCases({ contact_id: contactId }, { limit: 10000 })
     const touchedCaseIds = []
+    const failedCaseIds = []
+    const ERASE_RETRY_LIMIT = 3
     for (const c0 of cases) {
       // Locked and re-read (same discipline as mergeReport): a concurrent
       // case_report write landing between the pre-loop snapshot and this
@@ -998,28 +1000,50 @@ export class CaseStore {
       // AFTER the erasure and reintroduce a just-nulled PII field with no
       // error and no audit trail.
       await this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
-        const c = await this.getCase(c0.id)
+        let c = await this.getCase(c0.id)
         if (!c) return
-        let report
-        try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
-        const hadPII = PII_REPORT_FIELDS.some(k => report[k] != null && report[k] !== '')
-        if (!hadPII) return
-        for (const k of PII_REPORT_FIELDS) report[k] = null
-        // writeGuardViolation forbids the system actor from writing `report` (it
-        // exists to stop the system FABRICATING report content); erasure only ever
-        // NULLs existing PII fields, never invents text, so it goes straight to
-        // thatcher rather than through updateCase/updateCaseQuiet's guard.
-        await this.t.update('case', c.id, { report: JSON.stringify(report) }, SYSTEM_USER,
-          c._version != null ? { expectedVersion: c._version } : {})
-        await this.appendEvent(c.id, {
-          kind: 'action', actor: 'system', touch: false,
-          text: `PII erasure: contact data and report identifying fields scrubbed${reason ? ` (${reason})` : ''}`,
-          data: { erasure: true, by: operator?.id || 'system', fields: PII_REPORT_FIELDS },
-        })
-        touchedCaseIds.push(c.id)
+        for (let attempt = 0; attempt <= ERASE_RETRY_LIMIT; attempt++) {
+          let report
+          try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+          const hadPII = PII_REPORT_FIELDS.some(k => report[k] != null && report[k] !== '')
+          if (!hadPII) return
+          for (const k of PII_REPORT_FIELDS) report[k] = null
+          try {
+            // writeGuardViolation forbids the system actor from writing `report`
+            // (it exists to stop the system FABRICATING report content); erasure
+            // only ever NULLs existing PII fields, never invents text, so it goes
+            // straight to thatcher rather than through updateCase/updateCaseQuiet's
+            // guard.
+            await this.t.update('case', c.id, { report: JSON.stringify(report) }, SYSTEM_USER,
+              c._version != null ? { expectedVersion: c._version } : {})
+            await this.appendEvent(c.id, {
+              kind: 'action', actor: 'system', touch: false,
+              text: `PII erasure: contact data and report identifying fields scrubbed${reason ? ` (${reason})` : ''}`,
+              data: { erasure: true, by: operator?.id || 'system', fields: PII_REPORT_FIELDS },
+            })
+            touchedCaseIds.push(c.id)
+            return
+          } catch (e) {
+            if (e.code !== 'conflict') throw e
+            // Unlike every other optimistic-concurrency writer in this file
+            // (mergeReport, updateCaseChecked, transition), this write had no
+            // retry at all -- a concurrent case_report write mid-erasure threw
+            // uncaught out of the loop, aborting the ENTIRE erasure (an
+            // irreversible, documented "every case scrubbed" action) after only
+            // some cases were touched, with the route surfacing an opaque 400
+            // and touchedCaseIds discarded. Bounded retry against the freshly
+            // re-read row, same pattern as the rest of this file; on exhaustion
+            // the case is recorded as failed rather than aborting the whole
+            // erasure, so every OTHER case still gets scrubbed.
+            if (attempt === ERASE_RETRY_LIMIT) { failedCaseIds.push(c.id); return }
+            const fresh = await this.getCase(c.id)
+            if (!fresh) return
+            c = fresh
+          }
+        }
       })
     }
-    return { contactId, contactErased: !alreadyErased, casesScrubbed: touchedCaseIds }
+    return { contactId, contactErased: !alreadyErased, casesScrubbed: touchedCaseIds, casesFailed: failedCaseIds }
   }
 
   // Metadata-only update that does NOT touch last_event_at -- used by the health
@@ -1115,15 +1139,40 @@ export class CaseStore {
       const srcEvents = await this.listEvents(sourceId)
       // 1) Re-point every source event onto the target -- lossless.
       for (const ev of srcEvents) await this.updateEvent(ev.id, { case_id: targetId })
-      // 2) Fill-if-empty report merge (target value wins -- it is canonical).
+      // 2) Fill-if-empty report merge (target value wins -- it is canonical,
+      // NEVER overwritten by the source, unlike mergeReport's own overwrite-
+      // on-refinement contract for a single case's own incoming turns) for
+      // every field EXCEPT photos/audio/sites, which are append-only
+      // everywhere else in this codebase (_mergeReportFields, appendReportField,
+      // and case_report's own promise that a photo note is never overwritten).
+      // The old plain fill-if-empty loop treated those three the same as any
+      // other field, so the realistic duplicate-report-merge case -- both
+      // source and target already hold a non-empty photos/audio/sites note --
+      // silently DROPPED the source's note entirely, contradicting the
+      // append-only guarantee.
+      //
+      // NOTE: _mergeReportFields is NOT reused here despite implementing the
+      // correct join-with-'; ' shape for these three keys -- it OVERWRITES
+      // every other field with the incoming value whenever incoming is
+      // non-empty (correct for mergeReport's own "a later message refines an
+      // earlier one" contract), which would silently violate mergeCases' own
+      // "target value wins" contract for every ordinary field. Kept as an
+      // explicit fill-if-empty loop with only photos/audio/sites special-cased
+      // to append, so the target's canonical values for every OTHER field are
+      // never at risk from a source case's stale/conflicting data.
       const { value: srcReport, corrupted: srcCorrupted } = this._parseReport(src.report, sourceId)
       const { value: tgtReport, corrupted: tgtCorrupted } = this._parseReport(tgt.report, targetId)
       const reportWasCorrupted = srcCorrupted || tgtCorrupted
       const mergedReport = { ...tgtReport }
       for (const [k, v] of Object.entries(srcReport)) {
         if (!REPORT_KEYS.has(k)) continue
+        if (v == null || String(v).trim() === '') continue
         const have = tgtReport[k] != null && String(tgtReport[k]).trim() !== ''
-        if (!have && v != null && String(v).trim() !== '') mergedReport[k] = v
+        if ((k === 'photos' || k === 'audio' || k === 'sites') && have && String(tgtReport[k]) !== String(v)) {
+          mergedReport[k] = `${tgtReport[k]}; ${v}`
+        } else if (!have) {
+          mergedReport[k] = v
+        }
       }
       // 3) Union tags onto target (drop the internal 'merged' marker).
       const tgtTags = new Set((tgt.tags || '').split(',').map(s => s.trim()).filter(Boolean))

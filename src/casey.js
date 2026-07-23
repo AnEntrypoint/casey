@@ -185,7 +185,17 @@ export class Casey {
           // DM: no guild_id. Guild: only if bot is @mentioned.
           const isDM = !raw.guild_id
           const mentions = Array.isArray(raw.mentions) ? raw.mentions : []
-          const botMentioned = a.botUserId ? mentions.some(u => u.id === a.botUserId) : mentions.length > 0
+          // Fail CLOSED when botUserId is not yet known (process boot, or a
+          // reconnect that lost the cached id), not open: the old fallback
+          // (mentions.length > 0) treated ANY guild message mentioning ANY
+          // user as "the bot was mentioned", opening a case from ordinary
+          // guild chatter that never referenced casey at all -- the opposite
+          // of this gate's whole purpose. The OBSERVABILITY log below already
+          // records a.botUserId (null or real) on every filtered message, so
+          // an operator can still distinguish "filtered because identity
+          // isn't known yet" from "filtered because not a mention" with no
+          // further plumbing.
+          const botMentioned = a.botUserId ? mentions.some(u => u.id === a.botUserId) : false
           if (!isDM && !botMentioned) {
             // OBSERVABILITY: this filter used to drop a message with ZERO trace
             // anywhere -- not even a debug log line -- so a real inbound that
@@ -373,8 +383,13 @@ export class Casey {
     // worker restart -- same fix as dashboard/server.js's getRoster().
     const roster = rosterFromEnv()
     if (!roster.length) return                      // no one expected to cover
-    const open = (await this.store.listCases({}, { limit: 10000 }))
-      .filter(c => c.status !== 'closed' && c.status !== 'resolved')
+    const allCases = await this.store.listCases({}, { limit: 10000 })
+    // Same silent-truncation risk case-sweep.js's own fetch has: as the case
+    // table grows past this cap, some genuinely-open breaching cases could
+    // fall outside the fetched window and the coverage gap check would never
+    // see them, with zero warning. Log loud so an operator can raise the cap.
+    if (allCases.length >= 10000) this.log?.warn?.('[sweep] hit case-fetch cap in coverage-gap check; some cases may be unclassified', { fetched: allCases.length })
+    const open = allCases.filter(c => c.status !== 'closed' && c.status !== 'resolved')
     const breaching = open.filter(c => String(c.tags || '').split(',').map(s => s.trim()).some(t => CASE_HEALTH_SET.has(t)))
     if (!breaching.length) {                        // no breaches -> gap is impossible
       this._coverageGapActive = false

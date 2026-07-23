@@ -82,9 +82,21 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
   // thresholds.js mergeThresholds), ride straight through -- classifyCaseHealth
   // reads them off effThresholds with its own literal fallback, same pattern as
   // openStatuses above.
-  // Only open cases can be unhealthy; a closed case is finished. listCases with no
-  // filter returns recency-sorted; we classify each and skip closed defensively.
-  const cases = await store.listCases({}, { limit: 10000 })
+  // Only open cases can be unhealthy; a closed case is finished. Filtered
+  // server-side to the open-stage set (same pattern findOpenCase already uses,
+  // case-store.js) rather than fetching every historical case and discarding
+  // closed/system rows in JS -- an unfiltered fetch grows with TOTAL case
+  // count forever (cases are append-only, never deleted), not open-case count,
+  // so every 15-minute sweep pass was doing strictly more work than it needed
+  // to as the table grew. The in-loop skip below stays as defense-in-depth:
+  // the system pseudo-cases may still carry an "open" status value and must
+  // still be excluded.
+  const sweepOpenStatuses = typeof store.getOpenStatuses === 'function' ? store.getOpenStatuses() : null
+  const cases = await store.listCases(sweepOpenStatuses ? { status: { $in: sweepOpenStatuses } } : {}, { limit: 10000 })
+  // A case table that has grown past this fetch cap would silently leave some
+  // open cases unclassified every pass, with zero prior warning -- log loud so
+  // an operator can raise the limit before a stuck/abandoned case goes dark.
+  if (cases.length >= 10000) log?.warn?.('[sweep] hit case-fetch cap; some cases may be unclassified', { fetched: cases.length })
   for (const c of cases) {
     // The settings/fleet-health/shift singleton pseudo-cases (channel:'system',
     // created by CaseStore's internal bookkeeping) are not farmer reports -- they

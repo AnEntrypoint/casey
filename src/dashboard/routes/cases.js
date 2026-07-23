@@ -287,17 +287,26 @@ export function registerCases(app, deps) {
     // rather than half-applying across the selection.
     const to = action === 'transition' ? String(req.body?.to || '') : null
     if (action === 'transition' && !to) return res.status(400).json({ error: 'transition requires a "to" stage' })
+    // Same cap the single-case note route enforces (server.js MAX_LEN, not
+    // exported -- kept in sync by value since it's a product-level cap, not a
+    // storage limit).
+    const NOTE_MAX_LEN = 4000
     const tag = (action === 'tag' || action === 'untag') ? String(req.body?.tag || '').trim() : null
     if ((action === 'tag' || action === 'untag') && !tag) return res.status(400).json({ error: `${action} requires a "tag"` })
     if ((action === 'tag' || action === 'untag') && /[,]/.test(tag)) return res.status(400).json({ error: 'tag must not contain a comma' })
+    // Unlike the bulk note action three lines below (which already caps at
+    // NOTE_MAX_LEN for the identical reason), the tag/untag value had no
+    // length bound at all -- an operator (or hijacked session) could push a
+    // body-limit-sized string into the tags CSV column of up to 500 cases in
+    // one request.
+    if ((action === 'tag' || action === 'untag') && tag.length > NOTE_MAX_LEN) {
+      return res.status(413).json({ error: `tag too long (max ${NOTE_MAX_LEN})` })
+    }
     const noteText = action === 'note' ? String(req.body?.text || '').trim() : null
     if (action === 'note' && !noteText) return res.status(400).json({ error: 'note requires non-empty "text"' })
-    // Same cap the single-case note route enforces (server.js MAX_LEN, not
-    // exported -- kept in sync by value since it's a product-level cap, not a
-    // storage limit). Without this, a bulk note wrote arbitrary-length text
-    // verbatim into up to 500 case timelines with no bound at all, unlike
-    // every other text-writing route in this file.
-    const NOTE_MAX_LEN = 4000
+    // Without this, a bulk note wrote arbitrary-length text verbatim into up
+    // to 500 case timelines with no bound at all, unlike every other
+    // text-writing route in this file.
     if (action === 'note' && noteText.length > NOTE_MAX_LEN) {
       return res.status(413).json({ error: `text too long (max ${NOTE_MAX_LEN})` })
     }

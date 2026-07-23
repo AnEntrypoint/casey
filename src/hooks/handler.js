@@ -34,6 +34,18 @@ import { transcribeAudio, describePhoto, synthesizeVoice } from './media.js'
 
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 
+// Best-effort extraction of the agent-recorded language_detected field from a
+// case's raw report JSON string, for guessLang's fallback hint (see
+// heuristics.js). Never throws -- a malformed/missing report degrades to no
+// hint, same as guessLang's own no-cue-match default.
+function recordedLangHint(report) {
+  if (!report) return null
+  try {
+    const parsed = typeof report === 'string' ? JSON.parse(report) : report
+    return parsed?.language_detected || null
+  } catch { return null }
+}
+
 // GUARANTEED-RESPONSE FSM (typing indicator + bounded turnaround + explicit
 // fallback message). USER DIRECTIVE: every LIVE first-attempt turn must end
 // in either a real chat reply or an explicit, truthful "still working" /
@@ -383,7 +395,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       try { await store.updateCase(fresh.id, { tags: dropTag(fresh.tags, 'opted-out') }) }
       catch (e) { log.warn?.('[casey] opt-back-in untag failed', { caseId: fresh.id, error: e.message }) }
       await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'OPT-BACK-IN: contact asked for help after opting out; messages resumed.' })
-      const text = intentReply('resume', fresh, guessLang(inboundText))
+      const text = intentReply('resume', fresh, guessLang(inboundText, recordedLangHint(fresh.report)))
       await store.appendEvent(fresh.id, {
         kind: 'outbound', actor: 'system', channel,
         text, data: { to: replyTo, intent: 'resume', deterministic: true },
@@ -448,7 +460,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       // A plain, warm deterministic acknowledgement for the irreversible control --
       // no LLM needed (and it must work with the model down). intentReply still
       // carries the per-language stop/human confirmation strings.
-      const text = intentReply(intent, fresh, guessLang(inboundText))
+      const text = intentReply(intent, fresh, guessLang(inboundText, recordedLangHint(fresh.report)))
       await store.appendEvent(fresh.id, {
         kind: 'outbound', actor: 'system', channel,
         text, data: { to: replyTo, intent, deterministic: true },

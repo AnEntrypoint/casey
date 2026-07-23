@@ -115,6 +115,12 @@ const TOOL_REFUSAL_MARKERS = [
   // matches this exact phrase, so the two are not confused.
   "unable to assist with that",
   'cannot assist with that',
+  // Live-witnessed this session: "I'm sorry, but I can't assist with that."
+  // slipped through because only the full form ('cannot assist with that')
+  // was covered -- the contraction is the more natural, and apparently more
+  // common, way a model actually phrases this exact refusal.
+  "can't assist with that",
+  "cant assist with that",
 ]
 export function isToolRefusal(text) {
   if (!text) return false
@@ -198,20 +204,38 @@ const LANG_CUES = {
   tn: [' ke a leboga ', ' rra ', ' mma ', ' kgomo ', ' dikgomo ', ' a lwala ', ' ke kopa ', ' thusa '],
 }
 
-export function guessLang(text) {
+// Maps the plain-English language name the agent records via case_report's
+// language_detected field (prompt.js: 'English'/'Afrikaans'/'isiZulu'/
+// 'isiXhosa'/'Sesotho'/'Setswana') to the same 2-letter cue-table key
+// guessLang's own per-message scoring uses. Only consulted as a fallback (see
+// guessLang below) -- a short, high-stakes STOP/HUMAN message often carries no
+// distinctive per-message cue token, so without this a farmer who has been
+// conversing in isiZulu for several turns gets the deterministic STOP/HUMAN
+// ack in English at exactly the moment getting the language right matters
+// most, and this layer is the one place a down LLM cannot recover it later.
+const LANG_NAME_TO_CUE_KEY = {
+  english: 'en', afrikaans: 'af', isizulu: 'zu', zulu: 'zu',
+  isixhosa: 'xh', xhosa: 'xh', sesotho: 'st', sotho: 'st',
+  setswana: 'tn', tswana: 'tn',
+}
+export function guessLang(text, recordedLangName) {
   const t = ` ${normalizeIntentText(text)} `
-  if (!t.trim()) return 'en'
   if (/[؀-ۿ]/.test(text || '')) return 'ar'
   if (/[ऀ-ॿ]/.test(text || '')) return 'hi'
   let best = 'en', bestScore = 0, tie = false
-  for (const [lang, cues] of Object.entries(LANG_CUES)) {
-    const score = cues.reduce((n, c) => n + (t.includes(c) ? 1 : 0), 0)
-    if (score > bestScore) { best = lang; bestScore = score; tie = false }
-    else if (score === bestScore && score > 0) tie = true
+  if (t.trim()) {
+    for (const [lang, cues] of Object.entries(LANG_CUES)) {
+      const score = cues.reduce((n, c) => n + (t.includes(c) ? 1 : 0), 0)
+      if (score > bestScore) { best = lang; bestScore = score; tie = false }
+      else if (score === bestScore && score > 0) tie = true
+    }
   }
-  // A genuine tie between two non-English languages is ambiguous: English is
-  // the safe default (it never claims to speak a language it might have wrong).
-  return tie ? 'en' : best
+  // A genuine tie between two non-English languages is ambiguous, and an
+  // empty/no-cue message has nothing to score at all -- both fall through to
+  // the already-recorded language hint (if any) before defaulting to English.
+  if (bestScore > 0 && !tie) return best
+  const hint = LANG_NAME_TO_CUE_KEY[String(recordedLangName || '').trim().toLowerCase()]
+  return hint || 'en'
 }
 
 // USER DIRECTIVE: no mocks/fallbacks/stubs -- only singular working mechanisms

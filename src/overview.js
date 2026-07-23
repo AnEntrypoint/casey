@@ -124,4 +124,4 @@ export function buildOverview(cases, eventsByCaseId, now = Date.now(), windowMs 
   }
 }
 
-export { median, p90, firstResponseMs }
+export { median, firstResponseMs }
