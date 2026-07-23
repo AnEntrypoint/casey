@@ -244,6 +244,17 @@ Always runs against an isolated temp data dir; never touches the live data/app.d
       }
     }
   }
+  // acptoapi's own extra-providers.js starts a real periodic re-probe timer
+  // (lib/extra-providers.js start(), via a module-level singleton
+  // ensureExtraProvidersStarted in acptoapi's index.js) the first time a
+  // chain call actually runs -- casey.stop()'s own shutdown chain never
+  // touches it (a real, separate gap from this harness's own scope; casey's
+  // own long-running `casey up` process never needed to worry about this
+  // because it never exits on its own). Without an explicit process.exit()
+  // here, that timer keeps the event loop alive indefinitely and this
+  // script would hang forever after a successful run instead of returning
+  // control to whoever invoked it.
+  process.exit(0)
 }
 
 main().catch(e => { console.error(e.stack || e.message || e); process.exit(1) })
