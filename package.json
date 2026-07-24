@@ -15,7 +15,7 @@
     "auto-update": "node scripts/auto-update.mjs"
   },
   "dependencies": {
-    "acptoapi": "^1.0.195",
+    "acptoapi": "^1.0.197",
     "adaptogen": "file:../dstate",
     "anentrypoint-design": "file:../anentrypoint-design",
     "express": "^4.19.2",
