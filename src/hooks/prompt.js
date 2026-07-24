@@ -5,6 +5,20 @@
 // I/O, no store writes -- moved verbatim; only the physical location changed.
 
 import { truncate } from './heuristics.js'
+import { tsMs } from '../timestamp.js'
+
+// Same constant/value as case-health.js DEFAULT_THRESHOLDS.workerLocationStaleMs
+// (3 hours) -- that threshold already governs when a field worker's self-
+// reported location fades/drops as stale on the operator map; reusing the
+// identical value here keeps "is this location still current" consistent
+// across the whole app rather than inventing a second, unrelated notion of
+// staleness. Not read from resolveThresholds() (an async store call) because
+// caseSystemPrompt is deliberately a pure, synchronous function (see file
+// header) -- threading store access through it for one rarely-tuned constant
+// would cost every turn an extra async round-trip for no real benefit;
+// CASEY_LOCATION_STALE_MS lets an operator override it without code changes,
+// matching every other env-tunable constant in this codebase.
+const LOCATION_STALE_MS = Number(process.env.CASEY_LOCATION_STALE_MS) || 3 * 3600e3
 
 // Build the system context the agent sees for a given case + recent timeline.
 //
@@ -27,7 +41,25 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
   const CONTEXT_KINDS = new Set(['inbound', 'outbound', 'action', 'transition', 'autonomy_change'])
   const recent = events.filter(e => CONTEXT_KINDS.has(e.kind)).slice(-20).map(e =>
     `- [${e.created_at}] ${e.kind}/${e.actor}: ${truncate(e.text, 280)}`).join('\n')
-  const firstMessage = events.filter(e => e.kind === 'inbound').length <= 1
+  const inboundEvents = events.filter(e => e.kind === 'inbound')
+  const firstMessage = inboundEvents.length <= 1
+  // USER DIRECTIVE: once the reporter is no longer available, casey must not
+  // keep pushing for more case info until a person is on-site again -- a long
+  // gap since their PRIOR message (before this current one) suggests they
+  // likely left the animals in between; returning now does not mean they are
+  // still standing there. Compares the two most recent inbound timestamps
+  // (not "now", since the model has no real-time clock -- only what actually
+  // happened in this conversation's own history) so a fresh return after a
+  // real gap is distinguishable from a normal back-and-forth. Same threshold
+  // as LOCATION_STALE_MS (3h) -- both describe the same underlying real-world
+  // fact (has this person plausibly moved on from where they were).
+  let returnedAfterGap = false
+  if (inboundEvents.length >= 2) {
+    const prevMs = tsMs(inboundEvents[inboundEvents.length - 2]?.created_at)
+    const lastMs = tsMs(inboundEvents[inboundEvents.length - 1]?.created_at)
+    const gapMs = lastMs - prevMs
+    returnedAfterGap = Number.isFinite(gapMs) && gapMs > LOCATION_STALE_MS
+  }
   let reportObj = null
   try { reportObj = caseRow.report ? JSON.parse(caseRow.report) : null } catch { reportObj = null }
   // != null (not falsy) so a recorded 0 -- e.g. affected_count: 0, "no animals
@@ -97,12 +129,32 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
       `mentioning tools, permissions, or access, and gently steer back to reporting what`,
       `they are seeing in their animals.`,
     ] : []),
-    ...(contact?.last_location_lat != null && contact?.last_location_lon != null ? [
-      `This worker last checked in their own location at lat ${contact.last_location_lat},`,
-      `lon ${contact.last_location_lon}. If they ask "anything near me" or similar without`,
-      `naming a new place, use THIS as the near parameter for case_list instead of asking`,
-      `them to repeat where they are. If they name a DIFFERENT place, use that instead.`,
-    ] : []),
+    // USER DIRECTIVE: never silently assume a returning worker is still at
+    // their last known location -- only offer it as a default when the
+    // check-in is genuinely recent (see LOCATION_STALE_MS above); a stale
+    // check-in gets an explicit ask instead, never a silent guess. Live gap
+    // this closes: the OLD version used last_location_lat/lon unconditionally
+    // with no recency check at all, even though last_location_at (recorded by
+    // case_checkin on every check-in) was always available to gate on.
+    ...( (() => {
+      if (contact?.last_location_lat == null || contact?.last_location_lon == null) return []
+      const ageMs = Date.now() - tsMs(contact?.last_location_at)
+      if (!Number.isFinite(ageMs) || ageMs > LOCATION_STALE_MS) {
+        return [
+          `This worker checked in a location before, but it is now too old to trust`,
+          `(or its time is unknown) -- do NOT assume they are still there. If they ask`,
+          `"anything near me" or similar without naming a place, ask where they are`,
+          `right now rather than reusing the old position.`,
+        ]
+      }
+      return [
+        `This worker last checked in their own location at lat ${contact.last_location_lat},`,
+        `lon ${contact.last_location_lon}, recently enough to still trust. If they ask`,
+        `"anything near me" or similar without naming a new place, use THIS as the near`,
+        `parameter for case_list instead of asking them to repeat where they are. If`,
+        `they name a DIFFERENT place, use that instead.`,
+      ]
+    })() ),
     ``,
     // The "CURRENT CASE <ref> (id=<id>)" token is parsed by tooling/tests; keep it.
     `CURRENT CASE ${caseRow.ref} (id=${caseRow.id})  [private -- do not mention to the person]`,
@@ -201,6 +253,16 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
     `than guessing which reading is correct.`,
     `THIS IS USUALLY YOUR ONE CHANCE. The worker will soon move on from this place`,
     `and be hard to reach, so facts that can only be got on site matter most.`,
+    ...( returnedAfterGap ? [
+      `USER DIRECTIVE: this person went quiet for a while and has only just come`,
+      `back -- they may no longer be with the animals. Do NOT resume pushing for`,
+      `on-site facts (the PRIORITY ORDER list below) as if they never left; a`,
+      `person who is no longer standing there cannot answer them anyway. Warmly`,
+      `acknowledge what they just said and continue naturally, but only ask for`,
+      `an on-site fact if THEY indicate they (or the person there) are still`,
+      `with the animals right now -- otherwise wait for someone to actually be`,
+      `on site again before gently prompting for what is still missing.`,
+    ] : [] ),
     `PRIORITY ORDER for what to ask if one thing is missing and you must gently`,
     `prompt -- worker-observable facts FIRST: (1) WHERE are the animals -- a farm name,`,
     `specific area/landmark, or GPS. A bare town or district name ALONE (e.g. just`,
@@ -280,8 +342,17 @@ export function caseSystemPrompt(caseRow, events, contact, { orient = null } = {
     `   languages on them.`,
     `2. KEEP IT SHORT: short, plain sentences. One idea per sentence. No big or`,
     `   technical words. No lists or forms. Just a few warm lines.`,
-    `3. ONE QUESTION: ask at most ONE question per message, and only if you need it`,
-    `   and do not already have the answer. No question at all is often best.`,
+    `3. ONE QUESTION, NAMING WHAT YOU STILL NEED: ask at most one question per`,
+    `   message, and only if you need it and do not already have the answer.`,
+    `   USER DIRECTIVE: when you DO ask, that one question should be built to`,
+    `   surface at least TWO distinct still-missing things from the PRIORITY`,
+    `   ORDER list below (e.g. "where are they, and what kind of animals?"),`,
+    `   not just one -- weave them into a single natural sentence, never a`,
+    `   list or a form. If genuinely only ONE thing is still missing, ask for`,
+    `   just that one thing; never invent a second question to pad it out.`,
+    `   If nothing is missing, or asking would be pushy right now (see`,
+    `   MOVE THE CONVERSATION FORWARD and LAST-CHANCE PUSH below), it is`,
+    `   still fine to ask nothing at all.`,
     `4. BE WARM: sound calm, friendly, reassuring. Thank them for reporting it. Let`,
     `   them know it matters and the team will look into it. Never alarm them.`,
     `5. NO JARGON: never say case, ticket, triage, status, priority, workflow,`,
