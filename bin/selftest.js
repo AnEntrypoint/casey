@@ -271,4 +271,25 @@ Always runs against an isolated temp data dir; never touches the live data/app.d
   process.exit(0)
 }
 
-main().catch(e => { console.error(e.stack || e.message || e); process.exit(1) })
+// Exported so other scripts (bin/adversarial-epoch.mjs) can drive real,
+// multi-turn conversations against the SAME real handler path this file's
+// own single-turn/scenario modes use, without duplicating the isolated-
+// data-dir/synthetic-adapter setup a second time.
+//
+// selftest.js is ALWAYS loaded via bin/selftest-bootstrap.mjs's dynamic
+// import() (never run directly -- see that file's own header for why: an
+// .env-loading-order bug), so process.argv[1] is the bootstrap's own path,
+// never this file's -- an import.meta.url-vs-argv[1] direct-execution check
+// (the usual ESM equivalent of CJS's `require.main === module`) would
+// therefore ALWAYS read false here regardless of caller intent, silently
+// skipping main() even for a genuine CLI invocation through the bootstrap.
+// Exporting runCli() explicitly and having each caller decide whether to
+// invoke it (the bootstrap always does; bin/adversarial-epoch.mjs never
+// does, it drives runOneTurn/makeIsolatedCasey directly instead) is the
+// correct, unambiguous alternative to a heuristic that cannot work through
+// an intentional bootstrap indirection layer.
+export { makeIsolatedCasey, runOneTurn, SCENARIOS, runCli }
+
+async function runCli() {
+  await main()
+}

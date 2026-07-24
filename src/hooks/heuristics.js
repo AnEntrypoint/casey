@@ -9,6 +9,36 @@
 // Shared truncate helper -- also used by prompt.js, media.js, and handler.js.
 export function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '...' : s }
 
+// Live-witnessed (bin/selftest.js real turn, extra-0/minimax-m3 -- a
+// "thinking"/reasoning-family model behind casey's own extra-providers
+// aggregator): the model's raw response was its own <think>...</think>
+// reasoning block, verbatim, immediately followed by the real intended
+// reply -- "<think>\nThe person sent \"hi there\"...\n</think>\nHello!
+// Welcome...". Distinct from isMetaCommentary above (which catches a
+// model's PLANNING NARRATION replacing the reply entirely, no real
+// content left) -- here the genuine, correct reply IS present, just
+// prefixed with a large, structurally-delimited block of leaked internal
+// reasoning that must never reach a contact. Some providers strip a
+// model's <think> tags server-side before returning content (the
+// documented, expected behavior); others -- confirmed live -- pass them
+// through raw when the caller does not explicitly separate a reasoning
+// channel. Applied BEFORE any other outbound heuristic (handler.js) so a
+// downstream check (isPromptEcho, jargonHits, etc) only ever sees the
+// real intended reply, never the reasoning noise around it. Strips any
+// <think>...</think> pair anywhere in the text (a leaked block is not
+// guaranteed to be a clean prefix -- safer to remove every occurrence
+// than assume one specific position) and any leftover unclosed <think>
+// tag with everything after it (a truncated response cut off mid-
+// reasoning, which would otherwise leave a dangling open tag in the
+// contact-facing text). Case-insensitive, since a model is not guaranteed
+// to emit lowercase tags consistently.
+export function stripThinkingBlock(text) {
+  if (!text) return text
+  let out = String(text).replace(/<think>[\s\S]*?<\/think>/gi, '')
+  out = out.replace(/<think>[\s\S]*$/i, '')
+  return out.trim()
+}
+
 // Guard against the small model parroting the system-prompt examples verbatim.
 // The first-message guidance describes an acknowledgement + reference; a weak
 // model sometimes copies a canned exemplar instead of composing fresh. We reject

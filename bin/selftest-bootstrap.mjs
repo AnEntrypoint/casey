@@ -25,4 +25,5 @@ const ROOT = path.resolve(__dirname, '..')
 const envPath = path.join(ROOT, '.env')
 try { if (existsSync(envPath) && process.loadEnvFile) process.loadEnvFile(envPath) } catch { /* ignore, selftest still runs on code defaults */ }
 
-await import('./selftest.js')
+const { runCli } = await import('./selftest.js')
+await runCli()

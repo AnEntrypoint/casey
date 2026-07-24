@@ -30,6 +30,7 @@ import {
   dropTag,
   canAgentAct,
   intentReply,
+  stripThinkingBlock,
 } from './heuristics.js'
 import { transcribeAudio, describePhoto, synthesizeVoice } from './media.js'
 
@@ -832,7 +833,15 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       // tracker on a detected miss, so THIS retry (and every later chain
       // build) actually routes around it instead of hitting the identical
       // broken model three times in a row.
-      const rawText = (result?.result || '').toString().trim()
+      // stripThinkingBlock BEFORE any other heuristic sees this text -- see
+      // its own comment (heuristics.js) for the live-witnessed leak this
+      // closes (a reasoning-family model's raw <think>...</think> block
+      // passed straight through server-side, with a genuine correct reply
+      // immediately following it). Every downstream check in this function
+      // (isToolRefusal, isMetaCommentary, isPromptEcho, jargonHits, the
+      // retry-on-genuine-miss judgment) must only ever reason about the
+      // real intended reply, never the reasoning noise around it.
+      const rawText = stripThinkingBlock((result?.result || '').toString().trim())
       const genuineMiss = !firstTurnHadToolCall(result) && (!rawText || isToolRefusal(rawText) || isMetaCommentary(rawText))
       if (!genuineMiss || attempt === MAX_TOOL_CHOICE_ATTEMPTS) break
       log.warn?.('[casey] forced tool_choice not honored by model (empty/refusal); retrying turn', { caseId: fresh.id, attempt })
@@ -849,7 +858,13 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
 
     // Never send a raw error string to the contact. USER DIRECTIVE: no fallback
     // text -- a degraded turn (below) sends nothing and logs loud instead.
-    let text = (result?.result || '').toString().trim()
+    // stripThinkingBlock here too -- this is the ACTUAL text that gets sent
+    // to the contact (the rawText stripped above is a separate local used
+    // only for the retry-on-genuine-miss judgment a few lines up); both
+    // extraction points independently read result?.result, so both must
+    // independently strip a leaked <think> block or only one path closes
+    // the real, live-witnessed leak.
+    let text = stripThinkingBlock((result?.result || '').toString().trim())
     // Reject a reply that parrots the system-prompt example verbatim: record it
     // as a failed turn rather than leak a canned, robotic message to the contact.
     if (text && isPromptEcho(text)) {
