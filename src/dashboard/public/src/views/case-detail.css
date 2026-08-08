@@ -1,0 +1,113 @@
+/* case-detail.css -- SURVIVING bespoke rules only for the new webjsx
+   case-detail surface (architecture spec section 7): everything with a
+   design-token equivalent rides the SDK's own component CSS instead. Every
+   value here resolves through a --token (colors_and_type.css / app-shell.css),
+   never a raw literal, per design AGENTS.md's zero-tolerance lint gates.
+   Loaded alongside casey's existing app.css during the migration window --
+   scoped entirely under .casey- prefixed classes so it cannot collide with
+   the legacy stylesheet's own rules. */
+
+.casey-detail-pane{padding:var(--space-5, 20px);display:flex;flex-direction:column;gap:var(--space-4, 14px)}
+.casey-case-header{position:sticky;top:0;z-index:1;background:var(--bg);padding-bottom:var(--space-2, 8px);border-bottom:1px solid var(--border-soft, var(--border))}
+.casey-detail-empty,.casey-detail-loading,.casey-detail-error{padding:var(--space-5, 20px)}
+.casey-back-btn{display:inline-flex;align-items:center;gap:4px;background:transparent;border:0;color:var(--fg-2, var(--muted));cursor:pointer;font-size:var(--fs-nano, 12px);padding:0;margin:0 0 var(--space-2, 6px)}
+.casey-back-btn:hover{color:var(--fg)}
+
+.casey-case-header{display:flex;flex-direction:column;gap:var(--space-2, 6px)}
+.casey-case-header-top{display:flex;align-items:center;gap:var(--space-3, 12px);flex-wrap:wrap}
+.casey-case-header-top .ds-icon-btn + .ds-icon-btn{margin-left:var(--space-2, 8px)}
+.casey-case-ref{font-size:var(--fs-md, 16px);font-weight:600;margin:0;display:flex;align-items:center;gap:var(--space-2, 8px)}
+.casey-suggested{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted))}
+.casey-copy-btn{background:transparent;border:0;color:var(--fg-3, var(--muted));cursor:pointer;padding:0;font-size:var(--fs-nano, 11px);text-decoration:underline}
+.casey-linklike{background:transparent;border:0;color:var(--accent-ink, var(--accent));cursor:pointer;padding:0;font-weight:600;text-decoration:underline}
+
+.casey-health-badges{display:flex;flex-wrap:wrap;gap:var(--space-1, 6px)}
+.casey-intake-badge{display:inline-flex;gap:4px}
+
+.casey-case-meta{font-size:var(--fs-nano, 12px);color:var(--fg-3, var(--muted))}
+.casey-meta-toggle{display:inline-flex;align-items:center;gap:4px;background:transparent;border:0;color:var(--fg-3, var(--muted));cursor:pointer;padding:0;font-size:inherit}
+.casey-meta-toggle:hover{color:var(--fg)}
+.casey-meta-body{display:flex;align-items:center;gap:var(--space-2, 8px);margin-top:4px}
+.casey-meta-id{font-family:var(--ff-mono);font-size:var(--fs-pico, 10px);color:var(--fg-3, var(--muted))}
+
+.casey-progress{display:flex;align-items:center;gap:0;padding:var(--space-2, 8px) 0}
+.casey-progress-step{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.casey-progress-label{font-size:var(--fs-pico, 10px);color:var(--fg-3, var(--muted));white-space:nowrap}
+.casey-progress-step--active .casey-progress-label{color:var(--fg);font-weight:700}
+.casey-progress-line{flex:0 0 20px;width:20px;min-width:20px;height:2px;background:var(--border);margin:0 6px}
+.casey-progress-step--done .casey-progress-line,.casey-progress-step--active .casey-progress-line{background:var(--accent)}
+
+.casey-autonomy-badge{display:inline-block}
+
+.casey-todo-hint{margin:0}
+
+.casey-report{display:flex;flex-direction:column;gap:var(--space-3, 10px);border:1px solid var(--border);border-radius:var(--r-md, 8px);padding:var(--space-3, 12px)}
+.casey-report-head{font-family:var(--ff-body);font-weight:600;font-size:var(--fs-sm, 13px)}
+.casey-rep-missing{color:var(--fg-3, var(--muted))}
+.casey-rep-src-legend{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted));display:flex;align-items:center;gap:6px}
+
+.casey-rep-row{display:flex;gap:var(--space-3, 10px);padding:var(--space-1, 6px) 0;border-bottom:1px solid var(--border-soft, var(--border));font-size:var(--fs-sm, 13px)}
+.casey-rep-row:last-child{border-bottom:none}
+.casey-rep-label{flex:0 0 40%;color:var(--fg-3, var(--muted))}
+.casey-rep-val{flex:1 1 auto;display:flex;flex-direction:column;gap:4px;word-break:break-word}
+.casey-rep-editable{cursor:text;border-radius:var(--r-sm, 4px);padding:2px 4px;display:inline-flex;align-items:center;gap:6px}
+.casey-rep-editable:hover,.casey-rep-editable:focus{background:var(--bg-2, var(--panel));outline:none}
+.casey-rep-edit-actions{display:flex;gap:6px}
+.casey-rep-save,.casey-rep-cancel{background:transparent;border:1px solid var(--border);border-radius:var(--r-sm, 4px);cursor:pointer;font-size:var(--fs-pico, 10px);padding:2px 8px}
+.casey-rep-note-btn{background:transparent;border:0;color:var(--accent-ink, var(--accent));cursor:pointer;padding:0;font-size:var(--fs-pico, 10px);align-self:flex-start}
+.casey-rep-note-btn:hover{text-decoration:underline}
+.casey-rep-field-note{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted));background:var(--bg-2, var(--panel));border-radius:var(--r-sm, 4px);padding:3px 8px;border-left:2px solid var(--border)}
+
+.casey-fields-editor{display:flex;flex-direction:column;gap:var(--space-3, 10px)}
+.casey-fields-row{display:flex;gap:var(--space-3, 10px);flex-wrap:wrap}
+.casey-fields-row>*{flex:1 1 160px}
+
+.casey-transitions{display:flex;flex-direction:column;gap:var(--space-2, 6px)}
+.casey-transition-btns{display:flex;flex-wrap:wrap;gap:var(--space-1, 6px)}
+.casey-hint{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted))}
+
+.casey-dialog-backdrop{position:fixed;inset:0;background:color-mix(in oklab, black 55%, transparent);z-index:var(--z-modal, 900);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:var(--space-6, 40px) var(--space-3, 16px)}
+.casey-dialog-card{background:var(--panel, var(--bg-2));border:1px solid var(--border);border-radius:var(--r-lg, 10px);max-width:520px;width:100%;padding:var(--space-4, 22px);box-shadow:var(--shadow-lg, 0 8px 40px rgba(0,0,0,.45))}
+.casey-dialog-card--wide{max-width:640px}
+.casey-dialog-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-2, 8px)}
+.casey-dialog-title{margin:0;font-size:var(--fs-md, 16px)}
+.casey-dialog-body{display:flex;flex-direction:column;gap:var(--space-2, 10px)}
+.casey-dialog-actions{display:flex;gap:var(--space-2, 8px);justify-content:flex-end;margin-top:var(--space-2, 8px)}
+
+.casey-draft-actions{display:flex;gap:var(--space-2, 8px);margin-top:var(--space-2, 8px)}
+.casey-reply-box{display:flex;flex-direction:column;gap:var(--space-2, 6px)}
+.casey-reply-label{font-size:var(--fs-nano, 12px);color:var(--fg-3, var(--muted))}
+.casey-canned-wrap{display:flex;flex-direction:column;gap:var(--space-2, 6px)}
+.casey-canned-lab{font-size:var(--fs-nano, 12px);color:var(--fg-3, var(--muted));margin:0}
+.casey-canned{display:flex;flex-wrap:wrap;gap:var(--space-2, 8px)}
+.casey-canned-btn{margin:0;background:var(--panel, var(--bg-2));color:var(--fg);border:1px solid var(--border);border-radius:var(--r-md, 8px);padding:10px 14px;font-size:var(--fs-sm, 14px);min-height:44px;text-align:left;flex:0 1 auto;cursor:pointer}
+.casey-canned-btn:hover{border-color:var(--accent)}
+.casey-reply-send-row{display:flex;justify-content:flex-end}
+
+.casey-timeline-wrap{display:flex;flex-direction:column;gap:var(--space-2, 8px)}
+.casey-timeline-head{margin:0;font-size:var(--fs-sm, 14px)}
+.casey-timeline{display:flex;flex-direction:column}
+.casey-ev{display:flex;align-items:baseline;gap:var(--space-2, 8px);padding:6px 0 6px 8px;border-bottom:1px dashed var(--border-soft, var(--border));border-left:3px solid transparent;font-size:var(--fs-sm, 13px)}
+.casey-ev-icon{flex:0 0 auto;color:var(--fg-3, var(--muted))}
+.casey-ev-k{flex:0 0 auto;min-width:110px;color:var(--fg-3, var(--muted));font-size:var(--fs-pico, 10px)}
+.casey-ev-text{flex:1 1 auto}
+.casey-ev-when{flex:0 0 auto;font-size:var(--fs-pico, 10px);color:var(--fg-3, var(--muted))}
+.casey-ev-tone--accent{border-left-color:var(--accent)}
+.casey-ev-tone--ok{border-left-color:var(--success, #2e8b57)}
+.casey-ev-tone--warn{border-left-color:var(--warn, #d98a00)}
+.casey-ev-tone--muted{border-left-color:var(--border)}
+.casey-load-older{align-self:flex-start;background:transparent;border:1px solid var(--border);border-radius:var(--r-sm, 6px);color:var(--fg);cursor:pointer;font-size:var(--fs-nano, 12px);padding:6px 10px}
+
+.casey-dedup-panel,.casey-site-history{display:flex;flex-direction:column;gap:var(--space-2, 6px);border-top:1px solid var(--border-soft, var(--border));padding-top:var(--space-3, 12px)}
+.casey-dup-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2, 8px);padding:var(--space-1, 6px) 0;border-bottom:1px solid var(--border-soft, var(--border));font-size:var(--fs-sm, 13px)}
+
+.casey-split-evbox{border:1px solid var(--border);border-radius:var(--r-sm, 6px);padding:6px;max-height:220px;overflow-y:auto}
+.casey-split-row{display:flex;align-items:flex-start;gap:6px;padding:4px 2px;border-bottom:1px solid var(--border-soft, var(--border));font-size:var(--fs-nano, 12px)}
+
+.casey-share-url{font-size:var(--fs-sm, 13px);word-break:break-all;background:var(--bg-2, var(--panel));border-radius:var(--r-sm, 6px);padding:8px 10px}
+
+.casey-timeline-actions{display:flex;gap:var(--space-2, 8px);justify-content:flex-end}
+
+@media (prefers-reduced-motion: reduce){
+  .casey-progress-line,.casey-rep-editable{transition:none}
+}

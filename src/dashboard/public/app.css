@@ -1,0 +1,339 @@
+/* casey dashboard -- SURVIVING bespoke rules only. Everything with a real
+   design-SDK primitive equivalent (button/panel/input/table/pill/chip/badge,
+   sidebar/topbar chrome, overlay backdrop pattern, theme variables, z-index
+   ladder) was deleted in the webjsx/AppShell rewrite -- those come from
+   /design/colors_and_type.css + /design/app-shell.css + /design/editor-
+   primitives.css. What remains here has no SDK-owned equivalent: the
+   two-pane case-list/case-detail split, the casey-local Dialog shell, case
+   list/inbox/row/bulk-bar/pagination markup, health-chip/draft-banner tone
+   colors, map legend + Leaflet overrides, print CSS, onboarding/help/skills
+   overlay geometry, and the account/notifications/toast/login/handoff
+   chrome. Every color/radius/z-index below resolves through a design token
+   var() -- zero raw hex/rgb, per the lint-tokens CI gate. */
+
+.ds-app-root, .ds-app-surface { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* casey mounts the shell as a full standalone page, never inside the SDK's
+   .fd-root windowed-WM embed -- so the AppShell's own topbar.css .app rule
+   (no explicit width outside .fd-root, by design per that file's comment)
+   collapses to 0 width at desktop and the whole shell renders blank. Give it
+   the same 100% stretch .fd-root would have provided. */
+.ds-app-surface .app { width: 100%; }
+
+/* ---- two-pane case list / case detail split (architecture spec section 5) */
+.app-two-pane { display: flex; height: 100%; min-height: 0; }
+.app-two-pane > .case-list-pane { flex: 0 0 380px; border-right: 1px solid var(--border); overflow: auto; min-height: 0; }
+.app-two-pane > .case-detail-pane { flex: 1; overflow: auto; min-height: 0; }
+@container (max-width: 900px) {
+  .app-two-pane { flex-direction: column; }
+  .app-two-pane > .case-list-pane { flex: 1 1 auto; border-right: none; }
+  .app-two-pane.has-active > .case-list-pane { display: none; }
+  .app-two-pane.has-active > .case-detail-pane { position: fixed; inset: 0; z-index: var(--z-overlay, 40); background: var(--bg); }
+}
+
+/* ---- panel-swap chrome (the 10 content-swap panels: back affordance) --- */
+.ds-panel-swap { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+.ds-panel-swap-body { min-height: 0; }
+
+/* ---- casey-local Dialog primitive (dialog-shell.js) --------------------
+   Not an SDK component -- the SDK's own VideoLightbox/full-screen backdrop
+   pattern re-implemented once here so every dialog-shaped surface (help,
+   onboarding, skills, settings, stats, case-detail dialogs) shares one
+   accessible modal shell. */
+.ds-dialog-backdrop {
+  position: fixed; inset: 0;
+  background: color-mix(in oklab, var(--ink) 55%, transparent);
+  z-index: var(--z-modal);
+  display: flex; align-items: flex-start; justify-content: center;
+  overflow: auto;
+  padding: var(--space-6) var(--space-3);
+}
+.ds-dialog-panel {
+  background: var(--bg-2, var(--panel, var(--bg)));
+  border: 1px solid var(--border, var(--ink-3));
+  border-radius: var(--r-2, var(--r-lg));
+  max-width: 560px; width: 100%;
+  padding: var(--space-4) var(--space-5);
+  box-shadow: var(--shadow-2, var(--shadow-lg, none));
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  max-height: calc(100dvh - var(--space-7, var(--space-6)));
+  overflow: auto;
+}
+.ds-dialog-panel-wide, .ds-dialog-panel--wide { max-width: 720px; }
+.ds-dialog-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+}
+.ds-dialog-title { margin: 0; font-size: var(--fs-lg); }
+.ds-dialog-x, .ds-dialog-close {
+  background: transparent; border: 0; cursor: pointer; padding: var(--space-1);
+  border-radius: var(--r-0, var(--r-sm)); color: var(--fg-2, var(--muted));
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ds-dialog-x:hover, .ds-dialog-close:hover { background: var(--bg-3, var(--hover)); color: var(--fg); }
+.ds-dialog-body h3 { margin: var(--space-3) 0 var(--space-1); font-size: var(--fs-sm); }
+.ds-dialog-body p { margin: var(--space-1) 0; color: var(--fg-2, var(--muted)); }
+.ds-dialog-body .ds-lede, .ds-dialog-body .lede { color: var(--fg); }
+.ds-dialog-body ul, .ds-dialog-body ol { margin: var(--space-1) 0; padding-left: var(--space-4); color: var(--fg-2, var(--muted)); }
+.ds-dialog-body li { margin: var(--space-1) 0; }
+.ds-dialog-foot { margin-top: var(--space-3); }
+.ds-dialog-foot-row, .ds-dialog-actions { display: flex; gap: var(--space-2); justify-content: flex-end; align-items: center; flex-wrap: wrap; margin-top: var(--space-4, var(--space-3)); }
+.ds-dialog-foot-note { font-size: var(--fs-micro); color: var(--fg-3, var(--faint)); margin-top: var(--space-3); }
+.ds-dialog-message { color: var(--fg-2, var(--muted)); font-size: var(--fs-sm); }
+.ds-dialog-input { width: 100%; }
+.ds-help-swatch {
+  display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill);
+  background: var(--amber); vertical-align: middle; margin-right: var(--space-1);
+}
+.ds-help-hint { color: var(--fg-2, var(--muted)); }
+.ds-kbd {
+  display: inline-block; font-family: var(--ff-mono);
+  background: var(--bg-3, var(--hover)); border: 1px solid var(--border);
+  border-radius: var(--r-hair, var(--r-sm)); padding: 0 var(--space-1);
+  font-size: var(--fs-micro);
+}
+.ds-help-keys { list-style: none; padding-left: 0; }
+.ds-help-glossary { margin: var(--space-2) 0; }
+.ds-help-glossary dt { font-weight: 600; margin-top: var(--space-2); text-transform: capitalize; }
+.ds-help-glossary dd { margin: 0 0 0 var(--space-2); color: var(--fg-2, var(--muted)); }
+
+/* ---- contextual glossary term (term.js) -------------------------------- */
+.ds-term { border-bottom: 1px dotted var(--fg-3, var(--faint)); cursor: help; }
+
+/* ---- onboarding quick-start steps -------------------------------------- */
+.ds-onboard-steps { list-style: decimal; padding-left: var(--space-4); }
+.ds-onboard-steps li { margin: var(--space-2) 0; }
+
+/* ---- per-operator skills checklist ------------------------------------- */
+.ds-skills-list { list-style: none; margin: var(--space-2) 0; padding: 0; }
+.ds-skills-item {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  margin: var(--space-2) 0; cursor: pointer; color: var(--fg);
+  border-radius: var(--r-0, var(--r-sm)); padding: var(--space-1);
+}
+.ds-skills-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ds-skills-box {
+  flex: 0 0 auto; width: 18px; height: 18px;
+  border: 2px solid var(--border); border-radius: var(--r-hair, var(--r-sm));
+  display: flex; align-items: center; justify-content: center;
+  color: var(--accent-fg, var(--paper));
+}
+.ds-skills-item.is-done .ds-skills-box { background: var(--accent); border-color: var(--accent); }
+.ds-skills-item.is-done .ds-skills-label { color: var(--fg-2, var(--muted)); text-decoration: line-through; }
+
+/* ---- health pills (health-pills.js) ------------------------------------ */
+.ds-health-pills, .ds-health-pill { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.ds-health-pill-group { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.ds-pill-with-spark { display: inline-flex; align-items: center; gap: var(--space-1); }
+.ds-sparkline { vertical-align: middle; color: var(--fg-3, var(--muted)); margin-left: var(--space-2); }
+
+.ds-metrics-exports { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+
+/* ---- draft banner accent stripe (assisted-mode held AI draft) ---------- */
+.draft-banner, .ds-draft-banner {
+  margin-top: var(--space-4); padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warn, var(--amber));
+  background: var(--warn-bg, color-mix(in oklab, var(--amber) 10%, var(--bg)));
+  border-radius: var(--r-md, var(--r-1));
+}
+.draft-banner .draft-lab, .ds-draft-banner .ds-draft-label { font-size: var(--fs-sm); font-weight: 600; color: var(--warn, var(--amber)); margin-bottom: var(--space-2); }
+.draft-banner .draft-acts, .ds-draft-banner .ds-draft-actions { display: flex; gap: var(--space-2); }
+
+/* ---- health-chip / stage-tone colors (per-case health breach chips) ---- */
+.health-chip, .ds-breach-chip {
+  display: inline-block;
+  background: color-mix(in oklab, var(--amber) 20%, var(--bg));
+  color: var(--danger);
+  border: 1px solid color-mix(in oklab, var(--amber) 40%, transparent);
+  border-radius: var(--r-pill, var(--r-1));
+  padding: 2px var(--space-3, var(--space-2));
+  font-size: var(--fs-nano, var(--fs-micro));
+  font-weight: 600;
+}
+:root[data-theme="light"] .health-chip { background: color-mix(in oklab, var(--amber) 14%, var(--bg)); }
+
+/* ---- step indicator geometry (case-detail progress) -------------------- */
+.ds-step-bar { display: flex; align-items: center; gap: var(--space-1); margin: 0 0 var(--space-3); font-size: var(--fs-micro); color: var(--fg-2, var(--muted)); }
+.ds-step-dot {
+  width: 22px; height: 22px; border-radius: var(--r-pill);
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--fs-micro); font-weight: 700;
+  background: var(--bg-3, var(--border)); color: var(--fg-2, var(--muted));
+  flex-shrink: 0;
+}
+.ds-step-dot.is-active { background: var(--accent); color: var(--accent-fg, var(--paper)); }
+.ds-step-dot.is-done { background: var(--accent); color: var(--accent-fg, var(--paper)); opacity: .6; }
+.ds-step-line { flex: 1; height: 2px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); }
+.ds-step-line.is-done { background: var(--accent); opacity: .5; }
+
+/* ---- fill bar (visit-critical readiness meter) -------------------------- */
+.ds-fill-bar { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); font-size: var(--fs-micro); color: var(--fg-2, var(--muted)); }
+.ds-fill-bar .ds-fill-track { flex: 1; height: 6px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); overflow: hidden; }
+.ds-fill-bar .ds-fill-fill { display: block; height: 100%; background: var(--green-2, var(--green)); transition: width .3s; }
+@media (prefers-reduced-motion: reduce) { .ds-fill-bar .ds-fill-fill { transition: none; } }
+
+/* ---- case list / inbox / row / bulk-bar / pagination ------------------- */
+.case-list-view { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; }
+.case-list-head { display: flex; align-items: baseline; gap: var(--space-4, var(--space-3)); }
+.case-list-head h1 { font-weight: 700; }
+.ds-case-counts { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.ds-case-filters-bar { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+
+/* Stage quick-filter pill color distinction rides entirely on the SDK's own
+   tone-accent/tone-warn/tone-live/tone-sun/tone-success/tone-dim classes
+   (format.js's stageTone() already emits these real SDK tone names) -- no
+   casey-local override needed here. */
+.ds-case-filters-search { position: relative; flex: 2 1 220px; }
+.ds-mine-toggle { background: transparent; border: 0; padding: 0; cursor: pointer; display: inline-flex; }
+
+.ds-case-list-scroll { overflow-y: auto; }
+.ds-case-list-plain, .ds-case-list-empty { display: flex; flex-direction: column; }
+.ds-case-list-empty { padding: var(--space-5) var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
+
+.case-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--border); cursor: pointer; min-height: 64px; }
+/* Native checkbox has no square guarantee across browsers/zoom levels and
+   defaults to baseline-ish vertical alignment that sits high relative to
+   the bold case-row-ref text next to it -- lock the box shape and nudge it
+   down to the first text line's optical center. */
+.case-row-cb { width: 16px; height: 16px; aspect-ratio: 1; flex: 0 0 auto; margin: 3px 0 0; accent-color: var(--accent); }
+.case-row:hover { background: var(--bg-2); }
+.case-row.active { background: var(--accent-soft, var(--bg-2)); box-shadow: inset 3px 0 0 var(--accent); }
+.case-row.selected { box-shadow: inset 3px 0 0 var(--accent-ink, var(--accent)); }
+/* j/k keyboard triage's currently-highlighted row (state._focusRowId) -- an
+   outline distinct from .active's inset accent bar so a keyboard user can
+   tell "the row I'm about to open with Enter" apart from "the row currently
+   open in the detail pane" when they differ. */
+.case-row.kbd-focused { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: -2px; }
+.case-row-body { flex: 1; min-width: 0; }
+.case-row-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; row-gap: var(--space-1); min-height: 24px; }
+.case-row-ref { font-weight: 600; font-size: var(--fs-sm, var(--fs-body)); }
+.case-row-when { margin-left: auto; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.case-row-sub { display: flex; align-items: center; gap: var(--space-2); row-gap: var(--space-1-75, var(--space-2)); font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-top: var(--space-2); flex-wrap: wrap; }
+.ds-guardrail-toggle-btn { background: none; border: none; color: var(--accent-ink, var(--accent)); font-size: var(--fs-pico, var(--fs-micro)); cursor: pointer; padding: 0; margin-top: var(--space-1-75, var(--space-2)); display: block; text-decoration: underline; text-underline-offset: 2px; }
+.ds-guardrail-toggle-btn:hover { color: var(--accent); }
+.ds-guardrail-expanded { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+
+.ds-pagination { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.ds-pagination-single { justify-content: flex-end; }
+.ds-pagination-jump { flex: 1; text-align: center; }
+
+.ds-bulk-bar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-2) var(--space-3); background: var(--bg-2); border-radius: var(--r-md, var(--r-1)); }
+.ds-bulk-count { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+
+.triage { border-bottom: 1px solid var(--border); background: var(--accent-soft, var(--bg-2)); border-radius: var(--r-md, var(--r-1)); }
+.triage-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-1); }
+.triage .calm { padding: var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
+.tcase { padding: var(--space-3); border-top: 1px solid var(--border); cursor: pointer; }
+.tcase:hover { background: var(--bg-2); }
+.tcase.active { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tcase-why { font-size: var(--fs-nano, var(--fs-micro)); font-weight: 600; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.tcase-meta { font-size: var(--fs-pico, var(--fs-micro)); color: var(--fg-3, var(--muted)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tcase-breach-detail { font-size: var(--fs-pico, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.tcase.heat-3 { box-shadow: inset 4px 0 0 var(--danger); }
+.tcase.heat-2 { box-shadow: inset 4px 0 0 var(--warn, var(--accent)); }
+.tcase.heat-1 { box-shadow: inset 4px 0 0 var(--border); }
+.tcase.claimed-other { opacity: .62; }
+
+@media (prefers-reduced-motion: reduce) { .case-row, .tcase { transition: none; } }
+
+/* ---- handoff alert banner: loud, sticky, dismiss-per-case --------------- */
+/* The SDK's Alert(kind:'warn') only tints its icon (--alert-tone: --amber)
+   and leaves the background at the neutral --panel-1 in every theme, so a
+   'needs a person' alert read as gray/beige with no urgency. Override the
+   background locally to a real warm tint, using the same --warn-bg pattern
+   app.css already uses for .draft-banner/.health-chip. */
+.ds-handoff-banner { display: flex; align-items: center; gap: var(--space-3); cursor: pointer; animation: ds-handoff-pulse 1.3s ease-in-out infinite; }
+.ds-handoff-banner .ds-alert-warn {
+  flex: 1; min-width: 0;
+  background: var(--warn-bg, color-mix(in oklab, var(--warn, var(--amber)) 14%, var(--bg)));
+  border-color: var(--warn-border, color-mix(in oklab, var(--warn, var(--amber)) 35%, transparent));
+}
+.ds-handoff-banner .ds-alert-warn .ds-alert-icon { color: var(--warn, var(--amber)); }
+.ds-handoff-banner-hide { flex-shrink: 0; }
+@media (prefers-reduced-motion: reduce) { .ds-handoff-banner { animation: none; } }
+@keyframes ds-handoff-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .85; } }
+
+/* ---- connection-lost banner --------------------------------------------- */
+.ds-conn-banner { position: sticky; top: 0; z-index: var(--z-banner, var(--z-toast, 30)); }
+
+/* ---- toast tray ---------------------------------------------------------- */
+.ds-toast-tray { position: fixed; right: var(--space-4); bottom: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); z-index: var(--z-toast, 50); max-width: 340px; }
+.ds-toast-item { box-shadow: var(--shadow-md, var(--shadow-1, none)); }
+
+/* ---- login gate ----------------------------------------------------------- */
+.ds-login-gate { position: fixed; inset: 0; background: var(--bg); z-index: var(--z-modal, 1000); display: flex; align-items: center; justify-content: center; padding: var(--space-4); }
+.ds-login-form { display: flex; flex-direction: column; gap: var(--space-2); background: var(--panel, var(--bg-2)); border: 1px solid var(--border); border-radius: var(--r-lg, var(--r-2)); padding: var(--space-7, var(--space-6)) var(--space-6); max-width: 340px; width: 100%; box-shadow: var(--shadow-lg, none); }
+.ds-login-brand { margin: 0 0 var(--space-5); font-size: var(--fs-xl, var(--fs-lg)); }
+.ds-login-error { color: var(--danger); font-size: var(--fs-sm); margin-bottom: var(--space-3); }
+
+/* ---- table cell overflow guard -------------------------------------------
+   The SDK's own table CSS has no overflow-wrap/word-break fallback on td
+   text (only specific components opt in). One pathological unbroken string
+   in real data (a malformed contact id concatenation, live-witnessed on the
+   Reporters panel: a single td rendering to 6100px+ wide off a ~780-char
+   colon-joined token run) blows out the whole table's column width and the
+   .ds-table-wrap's overflow-x:auto turns into a wall of blank horizontal
+   scroll instead of a readable, bounded cell. Force any table cell to break
+   at an arbitrary point once it has nowhere else to break -- normal short
+   text is unaffected, only content with zero natural wrap points is caught. */
+/* th excluded: short header words (e.g. "Source") have no pathological
+   unbroken-string risk and were wrapping mid-word (SOURC/E) under the
+   arbitrary-break rule meant only for runaway td content. */
+.ds-table-wrap table td { overflow-wrap: anywhere; word-break: break-word; max-width: 32ch; }
+.ds-table-wrap table th { white-space: nowrap; }
+
+/* ---- account menu trigger / notifications bell --------------------------- */
+/* Dropdown's own trigger-rewrap drops any trigger vnode's children (design-
+   SDK bug, see account-menu.js's comment on its trigger for the mechanics),
+   so the account menu trigger routes through Dropdown's other branch and
+   renders as a bare .ds-dropdown-trigger button instead of the custom
+   .ds-account-trigger class this rule used to target -- style the class the
+   SDK actually emits. */
+.ds-account-trigger, .ds-dropdown-trigger { display: inline-flex; align-items: center; gap: var(--space-2); background: transparent; border: 1px solid var(--border); border-radius: var(--r-md, var(--r-1)); padding: var(--space-1) var(--space-3); cursor: pointer; color: var(--fg); font-size: var(--fs-sm); }
+.ds-notif-trigger { position: relative; display: inline-flex; }
+
+/* ---- related-reports cluster row / case-id pill grid --------------------- */
+.ds-cluster-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--border-soft, var(--border)); }
+.ds-cluster-row:last-child { border-bottom: none; }
+.ds-cluster-sub { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
+/* a real column grid instead of flex-wrap so case-id pills align edge to
+   edge across rows instead of wrapping raggedly at whatever count fits. */
+.ds-cluster-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-2); margin-top: var(--space-2); }
+
+/* ---- new-case quick-start badge ------------------------------------------ */
+.ds-quick-start-badge { display: inline-flex; align-items: center; }
+
+/* ---- map legend + Leaflet overrides (no SDK equivalent for a tile-map) --- */
+.ds-map-wrap, .map-wrap, .ds-map-canvas { height: min(70vh, 640px); border-radius: var(--r-lg, var(--r-1)); overflow: hidden; border: 1px solid var(--border); }
+.ds-map-legend, .map-legend { display: flex; gap: var(--space-3); flex-wrap: wrap; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted)); margin: var(--space-2) 0; }
+.ds-map-legend .sw, .map-legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill); margin-right: var(--space-1); vertical-align: middle; }
+.ds-map-filters, .map-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.leaflet-popup-content { font-size: var(--fs-nano, var(--fs-micro)); }
+
+/* ---- case-detail empty state -------------------------------------------- */
+.casey-detail-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-2); text-align: center; padding: var(--space-7, var(--space-6)) var(--space-4);
+  color: var(--fg-3, var(--muted));
+}
+.casey-detail-empty svg { color: var(--fg-3, var(--faint)); }
+.ds-app-surface h2.casey-detail-empty-title { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--fg-2, var(--muted)); }
+.casey-detail-empty .casey-hint { margin: 0; font-size: var(--fs-nano, var(--fs-micro)); max-width: 32ch; }
+
+/* ---- print CSS (printable handover/metrics/report links) ---------------- */
+@media print {
+  .ds-app-surface .app-shell-side, .ds-app-root .app-shell-side, .app-topbar, .app-side-shell, .app-status,
+  .ds-app-surface .app-shell-topbar, .ds-app-surface .app-shell-status,
+  .ds-dialog-backdrop, .ds-toast-tray, .ds-handoff-banner, .ds-conn-banner,
+  #toasts { display: none !important; }
+  body { background: var(--paper, var(--bg)); color: var(--ink, var(--fg)); }
+}
+
+/* prefers-reduced-motion guard for any casey-specific animation not already
+   covered by the SDK's own guard. */
+@media (prefers-reduced-motion: reduce) {
+  .ds-fill-bar .ds-fill-fill, .ds-step-line, .casey-progress-line, .casey-rep-editable,
+  .case-row, .tcase, .ds-handoff-banner { transition: none; animation: none; }
+}

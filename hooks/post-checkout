@@ -1,0 +1,11 @@
+#!/bin/sh
+# casey post-checkout hook -- fires after `git checkout` / `git switch`.
+#
+# Same purpose as post-merge: a branch switch or a `git checkout <ref> -- .` that
+# changes source must reach a running `casey up`. Bump a watched file's mtime so the
+# supervisor hot-reloads on the checked-out code. git passes prev-HEAD new-HEAD
+# branch-flag; we reload unconditionally (the supervisor debounces + drains, and a
+# file-only checkout sets branch-flag 0 which we still honor).
+here="$(cd "$(dirname "$0")/.." && pwd)"
+touch "$here/src/casey.js" 2>/dev/null || true
+echo "[casey hook] post-checkout: nudged src/casey.js so a running 'casey up' reloads on the checked-out code"
