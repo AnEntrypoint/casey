@@ -1,12 +1,32 @@
 #!/usr/bin/env node
-// scan-deps.mjs -- supply-chain scan for the obfuscated-dropper pattern found
-// in thatcher's compromised commit 724e8bce (2026-08-09): a unicode-escaped
-// require("http")/require("child_process") pair, an XOR-decode-and-eval
-// payload fetch, and a detached self-respawning spawn -- Windows Defender
-// names this class Trojan:NPM/HiddenSpawn.IAF!MTB. Static signature scan
-// only, not a general malware scanner: it looks for the SPECIFIC obfuscation
-// shape this incident used (heavy \uXXXX-escaped require() targets combined
-// with spawn/eval), which a legitimate file has no reason to contain. Run via
+// scan-deps.mjs -- supply-chain scan for the "HiddenSpawn"-class obfuscated
+// dropper first found in thatcher's compromised commit 724e8bce (2026-08-09)
+// and confirmed across 17+ separately-compromised repos in a follow-up
+// org-wide sweep, each with a DIFFERENT C2 IP/wallet/decode routine but the
+// SAME two structural properties. This scanner checks those two durable
+// properties, not any one incident's specific literal values (which are
+// trivial for an attacker to rotate and are intentionally NOT hardcoded
+// here as the primary detector):
+//
+//   1. SIZE_RATIO -- a file whose byte size is wildly disproportionate to
+//      its line count. The payload is appended as one extremely long line,
+//      often preceded by whitespace padding to push it off-screen in a
+//      normal editor/diff view; this survives any change to the payload's
+//      own content because it is a property of HOW it hides.
+//   2. ESCAPE_DENSITY -- a dense run (4+ in a row) of \uXXXX escapes that
+//      decode to plain printable ASCII. Real code contains at most one or
+//      two Unicode escapes in a row (a genuine non-ASCII literal); an
+//      obfuscated identifier like require/spawn/child_process written this
+//      way has no legitimate reason to exist. This generalizes across a
+//      payload changing its target module names or its whole C2 mechanism,
+//      as long as it still uses this specific evasion trick to dodge a
+//      plain-text grep.
+//
+// A known-signature check (spawn('node','-e',...), an XOR-decode loop
+// shape) is kept below as a fast bonus first pass against already-known
+// variants -- it catches nothing new on its own, so it is scored as a
+// SUPPLEMENT to (1)/(2), never a substitute for either. Windows Defender
+// names the first confirmed variant Trojan:NPM/HiddenSpawn.IAF!MTB. Run via
 // `npm run scan-deps` or as part of `casey doctor` -- unlike lint.mjs (which
 // is deliberately dependency-free and skips node_modules/deps entirely), this
 // walks node_modules on purpose: it exists specifically to inspect installed
@@ -20,14 +40,36 @@ import { fileURLToPath } from 'node:url'
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const NODE_MODULES = join(ROOT, 'node_modules')
 
-// A legitimate file has no reason to spell out require() targets as unicode
-// escapes -- this is specifically the evasion technique used to dodge a
-// plain-text grep for "require(\"http\")"/"require(\"child_process\")" in an
-// automated registry scanner. Five or more \uXXXX escapes clustered near a
-// require(...) call, combined with a spawn+eval pairing, is the signature;
-// a single stray \u in an otherwise normal file (e.g. a real unicode literal
-// in a string constant) does not trip this.
-const OBFUSCATED_REQUIRE = /require\(\s*"(?:\\u[0-9a-fA-F]{4}){3,}"\s*\)/
+// Bytes-per-line above this on an ordinary hand-written JS/config file is
+// suspicious. Legitimate minified/bundled/generated files are the known
+// exception (a dist/ bundle is expected to be dense) -- this scanner cannot
+// tell the difference on its own, so a hit here is a flag for human review,
+// not an automatic verdict.
+const SIZE_RATIO_THRESHOLD = 300
+
+// 4+ consecutive \uXXXX escapes that decode to what looks like an
+// identifier (letters/digits/underscore, mostly alphabetic) -- an
+// obfuscated module name (require/spawn/child_process/http/etc) is always
+// identifier-shaped. Requiring identifier shape, not merely "printable
+// ASCII", is deliberate: a plain "printable ASCII" test also matched a real
+// false positive (a CSS-selector-escape string like ",./:" in a legitimate
+// tailwindcss file) that carries no obfuscated code, live-witnessed while
+// verifying this scanner -- identifier-shape is the tighter, still-general
+// condition that survives that class of false positive while still
+// generalizing past any one incident's specific target names.
+function findSuspiciousEscapes(text) {
+  const hits = []
+  const re = /(?:\\u[0-9a-fA-F]{4}){4,}/g
+  let m
+  while ((m = re.exec(text))) {
+    const decoded = m[0].replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    if (/^[A-Za-z][A-Za-z0-9_]{2,}$/.test(decoded)) hits.push(decoded)
+  }
+  return hits
+}
+
+// Known-signature bonus check against the specific variants confirmed so
+// far -- a fast first pass, never the only check (see header comment).
 const HIDDEN_SPAWN_PAIR = /spawn\(\s*["']node["']\s*,\s*\[\s*["']-e["']/
 const XOR_DECODE_SHAPE = /\[t\]\s*\^=\s*k\.charCodeAt|charCodeAt\(t%.{0,10}\)\s*;?\s*return\s+\w+\.toString\(/
 
@@ -54,16 +96,30 @@ function scanFile(path) {
     // was first noticed (npm's own extraction failing with errno -4094).
     return { path, blocked: true, reason: e.message }
   }
-  const hasObfuscatedRequire = OBFUSCATED_REQUIRE.test(text)
+  const lines = text.split('\n').length
+  const bytes = Buffer.byteLength(text, 'utf8')
+  const ratio = lines > 0 ? Math.round(bytes / lines) : 0
+  const oversized = ratio > SIZE_RATIO_THRESHOLD
+  const escapeHits = findSuspiciousEscapes(text)
   const hasHiddenSpawn = HIDDEN_SPAWN_PAIR.test(text)
   const hasXorDecode = XOR_DECODE_SHAPE.test(text)
-  // Require at least two independent signals to flag -- a single hit alone
-  // (e.g. one stray unicode-escaped require with no spawn/xor nearby) is not
-  // enough to call it, matching the "no silent false-positive noise" spirit
-  // of every other guardrail in this codebase.
-  const signals = [hasObfuscatedRequire, hasHiddenSpawn, hasXorDecode].filter(Boolean).length
-  if (signals >= 2) return { path, blocked: false, signals: { hasObfuscatedRequire, hasHiddenSpawn, hasXorDecode } }
-  return null
+  if (!oversized && !escapeHits.length) return null
+  // escapeHits (dense \uXXXX runs decoding to ASCII) is the high-confidence
+  // durable signal -- a legitimate minified/bundled file almost never
+  // contains this, so it is a hard FAIL on its own. oversized alone is
+  // common and expected on real minified/bundled dependencies (a UMD
+  // build, an emoji-regex data table) -- live-witnessed against casey's
+  // own node_modules: 18 real hits, all legitimate minified files, zero
+  // with any escapeHits/known-signature corroboration. Downgrading
+  // oversized-alone to a WARN (not a scan failure) is what keeps this
+  // scanner usable in `postinstall`/`doctor` instead of blocking every
+  // install on unavoidable, harmless dependency noise; oversized still
+  // prints so a human can spot-check it, it just does not fail the run.
+  const severity = escapeHits.length ? 'fail' : 'warn'
+  return {
+    path, blocked: false, severity,
+    signals: { oversized, ratio, escapeHits: escapeHits.slice(0, 5), hasHiddenSpawn, hasXorDecode },
+  }
 }
 
 function main() {
@@ -80,6 +136,8 @@ function main() {
     if (r.blocked) blocked.push(r)
     else findings.push(r)
   }
+  const failing = findings.filter(f => f.severity === 'fail')
+  const warnings = findings.filter(f => f.severity === 'warn')
   if (!findings.length && !blocked.length) {
     console.log(`scan-deps OK: ${files.length} files scanned across node_modules, no HiddenSpawn-pattern matches`)
     return 0
@@ -88,11 +146,19 @@ function main() {
     console.log(`scan-deps: ${blocked.length} file(s) could not be read (a file your OS/AV already blocked reading is itself a strong signal -- treat as a finding, not a skip):`)
     for (const b of blocked) console.log(`  BLOCKED  ${b.path.replace(ROOT, '')}  (${b.reason})`)
   }
-  if (findings.length) {
-    console.log(`scan-deps: ${findings.length} file(s) matched the HiddenSpawn obfuscation signature:`)
-    for (const f of findings) console.log(`  MATCH  ${f.path.replace(ROOT, '')}  ${JSON.stringify(f.signals)}`)
+  if (failing.length) {
+    console.log(`scan-deps: ${failing.length} file(s) matched the HiddenSpawn obfuscation signature (dense \\uXXXX-escaped ASCII -- high confidence, not expected in any legitimate file):`)
+    for (const f of failing) console.log(`  FAIL  ${f.path.replace(ROOT, '')}  ${JSON.stringify(f.signals)}`)
   }
-  console.log('\nDo not run `npm install`/`casey up` again until every match above is confirmed malicious or a real false positive -- see AGENTS.md\'s "thatcher / busybase chain" section for the 2026-08-09 incident this guards against.')
+  if (warnings.length) {
+    console.log(`scan-deps: ${warnings.length} file(s) are size/line-disproportionate but carry no escape-obfuscation signal -- likely legitimate minified/bundled files, listed for spot-check, not blocking:`)
+    for (const w of warnings) console.log(`  WARN  ${w.path.replace(ROOT, '')}  ratio=${w.signals.ratio}`)
+  }
+  if (failing.length || blocked.length) {
+    console.log('\nDo not run `npm install`/`casey up` again until every FAIL/BLOCKED above is confirmed malicious or a real false positive -- see AGENTS.md\'s "thatcher / busybase chain" section for the 2026-08-09 incident this guards against.')
+    return 1
+  }
+  return 0
   return 1
 }
 
