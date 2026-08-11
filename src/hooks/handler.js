@@ -744,7 +744,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       for (const m of r.messages) {
         if (m?.role !== 'tool' || !m.content) continue
         const tname = nameById.get(m.tool_call_id)
-        if (tname && !WRITE_TOOLS.has(tname)) continue
+        if (!tname || !WRITE_TOOLS.has(tname)) continue
         const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
         try {
           const parsed = JSON.parse(content)

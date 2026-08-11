@@ -404,14 +404,18 @@ reported < observed < measured`. `canReplace` enforces that a lower-rank
 value can never overwrite a higher-rank one -- an agent's inferred lat/lon
 estimate can never clobber a worker's real GPS reading.
 
-**Four physically separate tiers.** Tier 1 (`raw-log.js`) is append-only
-JSONL with no update/delete method, so mutation is structurally absent, not
-merely forbidden -- this is the system of record. Tier 3 (`aggregate.js`)
-functions are pure functions of the raw log, proven via
-`assertPureRebuild`. Tier 4 (`interpretation.js`) is the only place a model
-estimate may live; nothing it produces can be silently blended into a
-ground-truth query because tier-3 aggregate functions can't produce a shape
-`isEstimate()` would accept.
+**The raw log is the system of record.** `raw-log.js` is append-only JSONL
+with no update/delete method, so mutation is structurally absent, not
+merely forbidden. `aggregate.js`, `interpretation.js`, and
+`engine/rule-engine.js` (an aggregation layer, a model-estimate layer, and a
+rule evaluator, respectively) were designed as further tiers on top of the
+raw log but were never wired to a real caller -- confirmed dead code via
+`casey-maximize-quality`'s 2026-08-11 audit and removed. Only `raw-log.js`,
+`write-path.js`, and their direct dependencies (`observation.js`,
+`provenance.js`) are live, reached from the agent path via
+`case-tools.js` -> `provenance-wire.js` -> `write-path.js`. Reintroduce an
+aggregation/estimate/rule-evaluation tier only wired to a real caller from
+day one, not as unreferenced scaffolding.
 
 **The single write-path chokepoint** is `write-path.js`'s
 `writeObservation()` -- the one function every writer calls. It rejects

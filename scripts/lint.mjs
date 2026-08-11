@@ -26,7 +26,33 @@ function walk(dir, out = []) {
   return out
 }
 
-const all = walk(ROOT)
+// Untracked scratch workspaces (gm-plugkit tool-verb clones, session
+// scratchpads) live at the repo root under gitignored names not on the
+// hardcoded skip list above -- ask git which of walk()'s candidates it
+// would actually ignore, rather than growing that list by hand forever.
+// Falls back to the unfiltered list if git is unavailable (bare-clone CI
+// without git on PATH), matching this script's dependency-free contract.
+function filterGitignored(paths) {
+  try {
+    const rel = paths.map((p) => p.slice(ROOT.length).replace(/\\/g, '/'))
+    const out = execFileSync('git', ['check-ignore', '--stdin'], {
+      cwd: ROOT, input: rel.join('\n'), stdio: ['pipe', 'pipe', 'pipe'],
+    }).toString()
+    const ignored = new Set(out.split('\n').filter(Boolean))
+    return paths.filter((_, i) => !ignored.has(rel[i]))
+  } catch (e) {
+    // git check-ignore exits 1 (not an error) when NOTHING is ignored --
+    // only fall back on a genuine invocation failure (git missing/not a repo).
+    if (e.status === 1 && e.stdout != null) {
+      const ignored = new Set(String(e.stdout).split('\n').filter(Boolean))
+      const rel = paths.map((p) => p.slice(ROOT.length).replace(/\\/g, '/'))
+      return paths.filter((_, i) => !ignored.has(rel[i]))
+    }
+    return paths
+  }
+}
+
+const all = filterGitignored(walk(ROOT))
 const jsFiles = all.filter((p) => ['.js', '.mjs'].includes(extname(p)))
 
 // 1. JS syntax: node --check every JS/MJS file.

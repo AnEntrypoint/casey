@@ -134,13 +134,13 @@ export function registerAuth(app, deps) {
   body{margin:0;font-family:system-ui,sans-serif;background:#f4f6f9;color:#1a1f29;min-height:100vh}
   .wrap{max-width:540px;margin:0 auto;padding:24px 16px 60px}
   h1{font-size:1.3em;margin:0 0 4px;color:#1a3a5c}
-  .sub{font-size:14px;color:#5a6675;margin:0 0 20px}
+  .sub{font-size:14px;color:#495662;margin:0 0 20px}
   .case-info{background:#e8f0fa;border:1px solid #b8d0ee;border-radius:8px;padding:10px 14px;margin:0 0 16px;font-size:14px;color:#1a3a5c}
   .banner{border-radius:8px;padding:12px 14px;margin:0 0 20px;font-size:14px}
   .banner.ok{background:#e8f7ee;border:1px solid #9ed8b4;color:#1a5c35}
   .banner.err{background:#fdeaea;border:1px solid #f0a0a0;color:#5c1a1a}
   .progress-wrap{margin:0 0 20px}
-  .progress-label{font-size:13px;color:#5a6675;margin-bottom:5px}
+  .progress-label{font-size:13px;color:#495662;margin-bottom:5px}
   .progress-track{background:#dce8f5;border-radius:4px;height:7px;overflow:hidden}
   .progress-bar{background:#f0a030;height:100%;border-radius:4px;transition:width .3s}
   .progress-bar.done{background:#2a9e5c}
@@ -158,12 +158,12 @@ export function registerAuth(app, deps) {
   button[type=submit]{width:100%;background:#2f6fb0;color:#fff;border:0;border-radius:8px;
     padding:15px;font-size:17px;font-weight:600;cursor:pointer;margin-top:10px;min-height:52px}
   button:disabled{opacity:.6;cursor:default}
-  .req-note{font-size:12px;color:#7a8a9a;margin:0 0 8px}
+  .req-note{font-size:12px;color:#495662;margin:0 0 8px}
   .copy-link-btn{background:none;border:1px solid #b8d0ee;border-radius:5px;color:#2f6fb0;font-size:12px;padding:3px 8px;cursor:pointer;margin-left:8px;vertical-align:middle}
   .copy-link-btn:hover{background:#dce8f5}
   .field-err{font-size:12px;color:#a00;margin-top:4px;display:none}
   .field-err.show{display:block}
-  footer{text-align:center;font-size:12px;color:#9aa6b2;margin-top:24px}
+  footer{text-align:center;font-size:12px;color:#495662;margin-top:24px}
 </style></head><body>
 <div class="wrap">
   <h1>Animal health report</h1>
@@ -198,16 +198,19 @@ export function registerAuth(app, deps) {
     let errEl = document.createElement('div')
     errEl.className = 'field-err'
     errEl.id = 'phone-err'
+    errEl.setAttribute('aria-live', 'polite')
+    phoneEl.setAttribute('aria-describedby', 'phone-err')
     phoneEl.parentNode.appendChild(errEl)
     phoneEl.addEventListener('blur', () => {
       const v = phoneEl.value.trim()
-      if (!v) { errEl.className = 'field-err'; return }
+      if (!v) { errEl.className = 'field-err'; phoneEl.removeAttribute('aria-invalid'); return }
       const d = v.replace(/[^0-9+]/g, '')
-      if (/^0[0-9]{9}$/.test(d)) { phoneEl.value = '+27' + d.slice(1); errEl.className = 'field-err'; return }
-      if (/^27[0-9]{9}$/.test(d)) { phoneEl.value = '+' + d; errEl.className = 'field-err'; return }
-      if (/^\\+27[0-9]{9}$/.test(d)) { errEl.className = 'field-err'; return }
+      if (/^0[0-9]{9}$/.test(d)) { phoneEl.value = '+27' + d.slice(1); errEl.className = 'field-err'; phoneEl.removeAttribute('aria-invalid'); return }
+      if (/^27[0-9]{9}$/.test(d)) { phoneEl.value = '+' + d; errEl.className = 'field-err'; phoneEl.removeAttribute('aria-invalid'); return }
+      if (/^\\+27[0-9]{9}$/.test(d)) { errEl.className = 'field-err'; phoneEl.removeAttribute('aria-invalid'); return }
       errEl.textContent = 'Please use a South African number: 0821234567 or +27821234567'
       errEl.className = 'field-err show'
+      phoneEl.setAttribute('aria-invalid', 'true')
     })
   }
   document.querySelector('form').addEventListener('submit', (e) => {

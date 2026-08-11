@@ -264,7 +264,7 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
     // could take arbitrarily long. Dropping the clear-backend branch lets the
     // decay fire unconditionally. If the backend is truly down, the next real
     // callLLM call fails and immediately re-poisons the window.
-    if (health.degraded && health.newestSampleAt != null && clock() - health.newestSampleAt >= intervalMs) {
+    if (backend && health.degraded && health.newestSampleAt != null && clock() - health.newestSampleAt >= intervalMs) {
       return { ...last, degraded: false, lastMs: health.lastMs, recentSlow: health.recentSlow, ok: true }
     }
     return { ...last, ...health, ok: !!backend && health.degraded !== true }

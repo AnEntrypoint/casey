@@ -9,9 +9,8 @@
 // and NOT configurable via a pack.
 //
 // This module owns validation only. It never executes anything a pack
-// contains: a rule is data (condition/severity/route/SLA), evaluated later by
-// engine/rule-engine.js's bounded interpreter -- never eval'd, never a
-// function, never a string of code.
+// contains: a rule is data (condition/severity/route/SLA), never eval'd,
+// never a function, never a string of code.
 
 const KNOWN_FIELD_TYPES = new Set(['text', 'number', 'enum', 'boolean', 'date', 'geo', 'photo', 'audio', 'repeat'])
 const KNOWN_RULE_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'notIn', 'and', 'or'])

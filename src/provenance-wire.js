@@ -36,10 +36,6 @@ function getRawLog(dataDir) {
   return _rawLog
 }
 
-// Reset the module-level RawLog singleton -- test isolation only (mirrors
-// case-runtime.js's resetCaseStore pattern), never called by production code.
-export function _resetRawLogForTests() { _rawLog = null }
-
 // incoming: the same { species, symptoms, ... } object case_report's handler
 // already merged into thatcher (REPORT_KEYS-scoped). Only fields the pack
 // actually declares (PACK_FIELD_MAP) are wired through -- REPORT_KEYS carries

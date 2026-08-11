@@ -376,8 +376,9 @@ export function registerCases(app, deps) {
       try {
         const c = await store.getCase(id)
         if (!c) { results.push({ id, ok: false, error: 'not found' }); continue }
+        const withVersion = c._version != null ? { expectedVersion: c._version } : {}
         if (action === 'claim') {
-          const claimed = await store.updateCase(id, { assignee: op.id }, op)
+          const claimed = await store.updateCase(id, { assignee: op.id }, op, withVersion)
           await store.appendEvent(id, { kind: 'action', actor: 'operator', text: `Claimed by ${op.name || op.id}`, data: { claimed_by: op.id, bulk: true } })
           if (op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, claimed || c).catch(() => {})
         } else if (action === 'transition') {
@@ -387,10 +388,10 @@ export function registerCases(app, deps) {
           if (op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, c).catch(() => {})
         } else if (action === 'tag') {
           const tags = tagList(c)
-          if (!tags.includes(tag)) await store.updateCase(id, { tags: [...tags, tag].join(',') }, op)
+          if (!tags.includes(tag)) await store.updateCase(id, { tags: [...tags, tag].join(',') }, op, withVersion)
         } else if (action === 'untag') {
           const tags = tagList(c)
-          if (tags.includes(tag)) await store.updateCase(id, { tags: tags.filter(t => t !== tag).join(',') }, op)
+          if (tags.includes(tag)) await store.updateCase(id, { tags: tags.filter(t => t !== tag).join(',') }, op, withVersion)
         } else if (action === 'note') {
           await store.appendEvent(id, { kind: 'note', actor: 'operator', text: noteText, data: { by: op.id, bulk: true } })
         } else if (action === 'draft_approve') {
