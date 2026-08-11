@@ -21,10 +21,13 @@ export const animalHealthPack = {
       subjectType: 'herd',
       fields: {
         species: { type: 'enum', codelist: 'species', evidenceRequired: false },
+        age_bracket: { type: 'text', evidenceRequired: false },
         symptoms: { type: 'text', evidenceRequired: false },
         affected_count: { type: 'number', evidenceRequired: false },
+        herd_total: { type: 'number', evidenceRequired: false },
         dead_count: { type: 'number', evidenceRequired: false },
         onset: { type: 'date', evidenceRequired: false },
+        treatment_history: { type: 'text', evidenceRequired: false },
         suspected_disease: { type: 'enum', codelist: 'conditions', evidenceRequired: false },
         location: { type: 'geo', evidenceRequired: false },
         // Distinct from `location` (geo): case_report's `location` report field is a
@@ -35,6 +38,9 @@ export const animalHealthPack = {
         location_text: { type: 'text', evidenceRequired: false },
         photos: { type: 'photo', evidenceRequired: true },
         audio: { type: 'audio', evidenceRequired: false },
+        condition_status: { type: 'text', evidenceRequired: false },
+        nearby_cases: { type: 'text', evidenceRequired: false },
+        environment_change: { type: 'text', evidenceRequired: false },
       },
     },
   },

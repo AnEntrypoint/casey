@@ -130,7 +130,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   const actingOperator = (req) => {
     const acct = req.caseyAccount
     if (!acct) return OPERATOR
-    return { id: acct.username, name: acct.display_name || acct.username, role: 'operator' }
+    return { id: acct.username, name: acct.display_name || acct.username, role: acct.role || 'operator' }
   }
   // Same {id, name} shape the old CASEY_OPERATORS roster returned, sourced
   // from real operator_account rows instead of an env var -- every existing

@@ -193,6 +193,48 @@ function suppressSmallCells(byKey) {
   return out
 }
 
+// Closure completeness (Herd Health roadmap Phase 3): of cases that ever
+// reached 'resolved', what percentage reached 'closed' within N days of that
+// resolution? Answers "is follow-through actually happening" (the never_closed
+// breach flags a single stuck case; this is the aggregate trend a manager
+// reads). Reads transition events only, finds the FIRST resolved timestamp and
+// the FIRST closed timestamp after it. A case resolved more than once (see
+// reopenCount) is measured from its first resolution. Aggregate-only.
+export function buildClosureCompleteness(cases, eventsByCaseId, now = Date.now(), windowDays = 7) {
+  const windowMs = windowDays * DAY
+  let resolvedTotal = 0, closedWithinWindow = 0, closedLate = 0, stillOpen = 0
+  for (const c of cases || []) {
+    const events = eventsByCaseId.get?.(c.id) || eventsByCaseId[c.id] || []
+    let resolvedAt = null, closedAt = null
+    for (const e of events) {
+      if (e.kind !== 'transition') continue
+      const d = evData(e)
+      const to = String(d.to || '')
+      const ts = Date.parse(e.created_at)
+      if (!Number.isFinite(ts)) continue
+      if (to === 'resolved' && resolvedAt == null) resolvedAt = ts
+      if (to === 'closed' && resolvedAt != null && closedAt == null && ts >= resolvedAt) closedAt = ts
+    }
+    if (resolvedAt == null) continue
+    resolvedTotal++
+    if (closedAt != null) {
+      if (closedAt - resolvedAt <= windowMs) closedWithinWindow++
+      else closedLate++
+    } else {
+      stillOpen++
+    }
+  }
+  const pct = resolvedTotal ? Math.round((closedWithinWindow / resolvedTotal) * 1000) / 10 : 0
+  return {
+    window_days: windowDays,
+    resolved_total: resolvedTotal,
+    closed_within_window: closedWithinWindow,
+    closed_late: closedLate,
+    never_closed: stillOpen,
+    closure_completeness_pct: pct,
+  }
+}
+
 // Structured, machine-parseable breach payload for an external pager
 // (PagerDuty/Opsgenie/a generic webhook), as opposed to the scraped Discord text
 // line. Carries the case ref, its case_type (so the pager can route an outbreak

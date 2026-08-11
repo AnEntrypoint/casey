@@ -187,6 +187,50 @@ export function registerOperations(app, deps) {
     res.json({ count: cases.length, total, limit, offset, at_risk: atRisk, sla_target_ms: slaTargetMs, cases })
   }))
 
+  // Secretary follow-up queue (Herd Health roadmap Phase 2/3): the same
+  // rankAttention breach list the operator inbox above already computes,
+  // grouped by normalized report.location so a secretary sees "N dropped in
+  // Bizana, M in Lusikisiki" instead of a flat list, plus filterable to their
+  // own assigned cases or the unassigned pool for a lead deciding allocation.
+  // Pull-based only (no scheduled push) -- see AGENTS.md/roadmap Phase 2c.
+  // never_closed (Phase 3: resolved-but-nothing-happened) already appears
+  // here for free since classifyCaseHealth is the same source /api/attention
+  // uses -- no new breach type, just this same queue surfacing it.
+  app.get('/api/secretary/queue', wrap(async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const { classifyCaseHealth } = await import('../../case-health.js')
+    const { normalizeLocation } = await import('../../location-normalize.js')
+    const now = Date.now()
+    const thresholds = await store.resolveThresholds()
+    const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
+    const { items } = rankAttention(open, now, { limit: 10000, offset: 0 })
+    const me = req.caseyAccount?.username || ''
+    const filter = req.query.assignee === 'me' ? 'me' : req.query.assignee === 'unassigned' ? 'unassigned' : 'all'
+    const filtered = items.filter(({ c }) => {
+      if (filter === 'me') return c.assignee === me
+      if (filter === 'unassigned') return !c.assignee
+      return true
+    })
+    const groups = new Map()
+    for (const { c, score, reason, waitMs } of filtered) {
+      let report = {}
+      try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+      const place = normalizeLocation(report.location) || 'unresolved'
+      if (!groups.has(place)) groups.set(place, [])
+      groups.get(place).push({
+        id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
+        status: c.status, updated_at: c.updated_at || c.created_at,
+        assignee: c.assignee || '',
+        wait_ms: waitMs == null ? null : waitMs,
+        score, reason, breaches: classifyCaseHealth(c, now, thresholds),
+      })
+    }
+    const places = [...groups.entries()]
+      .map(([place, cases]) => ({ place, count: cases.length, cases }))
+      .sort((a, b) => b.count - a.count)
+    res.json({ total: filtered.length, filter, places })
+  }))
+
   // How many open cases are waiting past the reply SLA, bucketed by case_type, so an
   // operator can attack the worst category first (e.g. "4 outbreaks past SLA vs 1
   // follow_up"). Reuses the live handoff threshold (resolveThresholds) and the same

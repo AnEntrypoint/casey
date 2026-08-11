@@ -157,7 +157,7 @@ export async function createAccount(store, { username, password, displayName, ro
   const { hash, salt } = hashPassword(password)
   return store.t.create('operator_account', {
     username: sid, password_hash: hash, password_salt: salt,
-    display_name: String(displayName || sid).slice(0, 80), role: role === 'admin' ? 'admin' : 'operator',
+    display_name: String(displayName || sid).slice(0, 80), role: ['admin', 'secretary'].includes(role) ? role : 'operator',
     disabled: '0', must_change_password: mustChangePassword ? '1' : '0',
   }, SYSTEM)
 }

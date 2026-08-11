@@ -159,7 +159,7 @@ export function registerReports(app, deps) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const days = reportDays(req)
     const { report: r, cases, eventsByCaseId, thresholds, now } = await gatherReport(days)
-    const { buildSLAReport, buildReportComparison, buildChannelMetrics, buildSLAReportByType, buildCaseTypeMetrics } = await import('../../report-analytics.js')
+    const { buildSLAReport, buildReportComparison, buildChannelMetrics, buildSLAReportByType, buildCaseTypeMetrics, buildClosureCompleteness } = await import('../../report-analytics.js')
     const slaTargetMs = Number.isFinite(thresholds?.handoffMs) ? thresholds.handoffMs : 30 * 60 * 1000
     res.json({
       ...r,
@@ -168,6 +168,7 @@ export function registerReports(app, deps) {
       comparison: buildReportComparison(cases, eventsByCaseId, now, days * 24 * 3600 * 1000),
       by_channel: buildChannelMetrics(cases, eventsByCaseId),
       by_case_type: buildCaseTypeMetrics(cases, eventsByCaseId),
+      closure_completeness: buildClosureCompleteness(cases, eventsByCaseId, now),
     })
   }))
 

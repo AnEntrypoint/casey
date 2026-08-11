@@ -9,6 +9,7 @@ data/
 # deliberately, not rely on it surviving untracked at the root.
 scratch-*.mjs
 scratch-*.log
+.scratch_audit/
 
 # stray crash dumps (e.g. MSYS bash.exe.stackdump on Windows) -- never source
 *.stackdump
