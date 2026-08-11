@@ -1,0 +1,27 @@
+name: ci
+
+# casey composes four projects: freddie, thatcher, anentrypoint-design, and
+# acptoapi, all resolved via a `github:` package.json dependency spec
+# (`github:AnEntrypoint/<repo>#main`), so npm fetches directly from each
+# repo's GitHub tip rather than the npm registry. This workflow runs the
+# dependency-free preflight -- JS syntax, YAML config,
+# package sanity, and the ASCII-only source convention -- via `npm run lint`,
+# which is the same gate humans run locally and needs no install at all.
+# There is no automated test suite; verification is manual/live against the
+# real running service.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Lint (syntax + config + package + ascii)
+        run: npm run lint

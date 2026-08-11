@@ -1,0 +1,68 @@
+// Field-worker dispatch picker: a small imperative modal (not webjsx --
+// raised alongside the map's own imperative Leaflet driver, see
+// map-leaflet.js) letting an operator suggest a worker for a case. Split out
+// of map-leaflet.js: distinct responsibility (a picker dialog) from map
+// rendering, and kept map-leaflet.js under the 200-line component cap.
+
+import { toast } from '../toasts.js';
+import { postDispatch } from '../api.js';
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+    const R = 6371, toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.asin(Math.sqrt(a));
+}
+
+function showWorkerPicker(title, message, workers) {
+    return new Promise((resolve) => {
+        function mk(tag, css, txt) { const el = document.createElement(tag); if (css) el.style.cssText = css; if (txt != null) el.textContent = txt; return el; }
+        const overlay = mk('div', 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px');
+        overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true');
+        const card = mk('div', 'background:var(--panel);border:1px solid var(--border);border-radius:10px;max-width:420px;width:100%;padding:22px 24px;box-shadow:0 8px 40px rgba(0,0,0,.5);font-size:14px');
+        card.appendChild(mk('h3', 'margin:0 0 8px;font-size:16px', title));
+        card.appendChild(mk('p', 'margin:0 0 10px;color:var(--muted);line-height:1.5', message));
+        const sel = document.createElement('select');
+        sel.style.cssText = 'width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;margin-bottom:10px';
+        for (const w of workers) {
+            const o = document.createElement('option'); o.value = w.id;
+            o.textContent = (w.display_name || 'field worker') + (w.km != null ? ` (${w.km.toFixed(1)}km${w.stale ? ', stale' : ''})` : (w.stale ? ' (stale)' : ''));
+            sel.appendChild(o);
+        }
+        card.appendChild(sel);
+        card.appendChild(mk('label', 'display:block;margin:0 0 4px;font-size:12px;color:var(--muted)', 'Optional note for the team'));
+        const noteInp = document.createElement('textarea'); noteInp.rows = 2;
+        noteInp.style.cssText = 'width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;resize:vertical';
+        card.appendChild(noteInp);
+        const row = mk('div', 'display:flex;gap:8px;margin-top:14px;justify-content:flex-end');
+        const cancelBtn = mk('button', 'background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0', 'Cancel');
+        const okBtn = mk('button', 'background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0', 'Suggest dispatch');
+        row.appendChild(cancelBtn); row.appendChild(okBtn); card.appendChild(row);
+        overlay.appendChild(card); document.body.appendChild(overlay);
+        const close = (confirmed) => { overlay.remove(); resolve(confirmed ? { workerId: sel.value, note: noteInp.value || '' } : null); };
+        okBtn.onclick = () => close(true);
+        cancelBtn.onclick = () => close(false);
+        overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(false); });
+        setTimeout(() => sel.focus(), 60);
+    });
+}
+
+export async function openDispatchPicker(mapState, caseId, caseLat, caseLon) {
+    const workers = mapState.workers || [];
+    if (!workers.length) {
+        toast('No field-worker locations loaded yet -- turn on the worker overlay first so there is someone to pick from.', 'warn');
+        return;
+    }
+    const withDist = workers.map((w) => ({ ...w, km: (caseLat != null && caseLon != null && Number.isFinite(w.lat) && Number.isFinite(w.lon)) ? haversineKm(caseLat, caseLon, w.lat, w.lon) : null }))
+        .sort((a, b) => (a.km ?? Infinity) - (b.km ?? Infinity));
+    const picked = await showWorkerPicker(
+        'Dispatch a worker to this case',
+        'This only records a suggestion -- casey never messages a worker unprompted. They will hear about it the next time they message in.',
+        withDist);
+    if (!picked) return;
+    const worker = withDist.find((w) => w.id === picked.workerId);
+    try {
+        await postDispatch(caseId, { worker_id: picked.workerId, note: picked.note });
+        toast('Dispatch suggested -- ' + ((worker && worker.display_name) || 'the worker') + ' will hear about it on their own next reply-in', 'ok');
+    } catch (e) { toast('Dispatch error: ' + e.message, 'err'); }
+}

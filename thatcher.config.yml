@@ -1,0 +1,245 @@
+# casey -- case-tracking system of record (thatcher config)
+#
+# Three entities:
+#   case        -- one tracked case, opened from a channel conversation
+#   event       -- append-only timeline: inbound msgs, outbound replies, agent
+#                 observations, and human/agent actions (full audit trail)
+#   contact     -- a person/identity across channels (whatsapp number, discord id)
+#
+# The workflow drives case lifecycle. The agent is fully autonomous: it may
+# create cases, append events, and transition stages via tools. Every change is
+# an `event` row, so the dashboard can observe and a human can override.
+
+roles:
+  admin:
+    hierarchy: 0
+    label: Admin
+    permissions_scope: global
+  agent:
+    hierarchy: 1
+    label: Agent
+    permissions_scope: global
+  operator:
+    hierarchy: 2
+    label: Operator
+    permissions_scope: global
+  viewer:
+    hierarchy: 3
+    label: Viewer
+    permissions_scope: global
+
+permission_templates:
+  case_perms:
+    admin:    [list, view, create, edit, delete, manage_settings]
+    agent:    [list, view, create, edit]
+    operator: [list, view, create, edit]
+    viewer:   [list, view]
+  event_perms:
+    admin:    [list, view, create, edit, delete]
+    agent:    [list, view, create]
+    operator: [list, view, create]
+    viewer:   [list, view]
+
+# Shared system fields. thatcher's migration builds columns ONLY from declared
+# fields (it does not auto-inject a primary key), while its write engine always
+# writes id/created_at/created_by/updated_at/status -- so every entity must
+# declare them or inserts fail with "no column named id".
+_system_fields: &system_fields
+  id:         { type: id }
+  created_at: { type: timestamp }
+  created_by: { type: text }
+  updated_at: { type: timestamp }
+
+entities:
+  contact:
+    label: Contact
+    label_plural: Contacts
+    permission_template: case_perms
+    fields:
+      <<: *system_fields
+      status:       { type: text, default: active }
+      display_name: { type: text }
+      channel:      { type: enum, options: [whatsapp, discord, sim, other] }
+      external_id:  { type: text, required: true }   # phone number / discord user id
+      handle:       { type: text }
+      notes:        { type: textarea }
+      tier:         { type: enum, options: [reporter, field_worker], default: reporter }
+                                                     # reporter = casual/public report-only, no agentic case-query access.
+                                                     # field_worker = elevated tier: agentic case_list/case_mine/case_today
+                                                     # queries alongside reporting, plus casual location check-ins so they
+                                                     # show up on the operator map for dispatch. OPERATOR-ASSIGNED ONLY via
+                                                     # the dashboard/CLI -- never contact-self-service, never LLM-settable.
+                                                     # Default MUST stay reporter (fail-closed): an unpromoted contact
+                                                     # (or one from before this field existed) gets the lower tier.
+      last_location_lat:  { type: number }            # field_worker casual location check-in (see case_checkin tool);
+      last_location_lon:  { type: number }            # distinct from case.lat/lon (a CASE's location, not a person's)
+      last_location_at:   { type: text }              # ISO timestamp of the check-in, for map staleness fade-out
+      last_report_lat:    { type: number }            # this contact's most recent ANIMAL-REPORT location (case_report's
+      last_report_lon:    { type: number }            # own lat/lon, propagated here on write) -- distinct from
+                                                       # last_location_* (the worker's own position) and from any single
+                                                       # case's own lat/lon (this is the CONTACT's latest, refined forward
+                                                       # across their reports the same way a case's own coordinate refines
+                                                       # on a later, more specific case_report call).
+      last_report_at:      { type: text }             # ISO timestamp of the propagating case_report call
+      last_report_case_id: { type: text }              # the case id that produced last_report_lat/lon -- drill-down target
+
+  case:
+    label: Case
+    label_plural: Cases
+    permission_template: case_perms
+    fields:
+      <<: *system_fields
+      ref:         { type: text }                    # human ref e.g. CASE-1024
+      channel:     { type: enum, options: [whatsapp, discord, sim, other], required: true }
+      external_id: { type: text, required: true }    # conversation key (chat/channel id)
+      contact_id:  { type: text }
+      subject:     { type: text }
+      summary:     { type: textarea }                # agent-maintained rolling summary
+      report:      { type: textarea }                # agent-maintained structured field report (JSON).
+                                                     # Keys the agent fills as the farmer gives them: species,
+                                                     # symptoms, location, how_to_find, affected_count, dead_count,
+                                                     # onset, suspected_disease, recent_movement, photos,
+                                                     # identifying_traits, access_notes, farmer_available,
+                                                     # contact_fallback, audio, notes, present_person,
+                                                     # present_person_relation, owner_name, owner_contact. Any
+                                                     # subset -- never required, so casey amplifies the report
+                                                     # without imposing a form on the farmer.
+      priority:    { type: enum, options: [low, normal, high, urgent], default: normal }
+      case_type:   { type: enum, options: [unset, outbreak, follow_up, lab_sample, import_alert], default: unset }
+                                                     # coarse category, enables per-type SLA targets; unset = routine intake
+      tags:        { type: text }                    # comma-separated, agent-managed
+      assignee:    { type: text }                    # operator handle, or 'agent'
+      autonomy:    { type: enum, options: [auto, assisted, observe], default: auto }
+      status:      { type: enum, options: [new, triaging, in_progress, waiting, resolved, closed], default: new }
+      transition_reason: { type: text }              # written by thatcher's workflow engine on transition
+      last_event_at: { type: text }
+      lat:         { type: number }                  # case location for proximity ("cases near me"); optional
+      lon:         { type: number }
+      claimed_at:  { type: text }                    # when a worker claimed/assigned themselves (enquiry flow)
+      # Derived-only fields: computed FROM other fields by casey's own system
+      # code, never hand-typed by a contact/worker/operator and never agent-
+      # settable. DERIVED_ONLY_FIELDS in case-store.js enforces this at the
+      # store-write boundary (writeGuard) -- a non-system actor's patch touching
+      # any of these is rejected rather than silently accepted or silently
+      # dropped, so a derived value can never accidentally carry an operator's
+      # or the agent's freehand text instead of the real computed one.
+      normalized_location: { type: text }            # lowercased/trimmed form of report.location, for consistent matching
+      geocell:             { type: text }             # coarse lat/lon grid cell (for area rollups), derived from lat/lon
+      cluster_id:          { type: text }             # correlate.js/clusters.js outbreak-cluster membership id
+      dedupe_score:        { type: number }           # similarity score against other open cases, for merge suggestions
+      author_key:          { type: text }             # the reporting author's own id, flattened out of external_id's
+                                                       # 'container:author' shape (see hooks/handler.js conversationKey) into
+                                                       # a plain exact-match token -- exists ONLY so case_mine/case_today
+                                                       # (case-tools.js mineRows) can query-scope by this worker's own
+                                                       # cases via thatcher's real equality operator-where, instead of
+                                                       # pulling a system-wide scan window and JS-filtering by ownsCase()
+      reporter_tier:       { type: enum, options: [reporter, field_worker], default: reporter }
+                                                       # snapshot of contact.tier AT CASE-CREATION TIME, denormalized
+                                                       # onto the case row the same way author_key is (see above) so
+                                                       # src/attn.js's rankAttention -- a pure function of (cases, now)
+                                                       # with no store/contact access -- can weight a field_worker's
+                                                       # report without a join. Deliberately a snapshot, not a live
+                                                       # join: a worker promoted/demoted after reporting keeps the
+                                                       # tier they had when the case was opened, since that reflects
+                                                       # who was actually on-site relaying the report at the time.
+    # Row-access scope for worker enquiries: scope=assigned keys on the `assignee`
+    # field (thatcher's checkRowAccess reads rowAccess.field), so a worker's 'my
+    # cases' returns only cases assigned to them. Enforced when list() is called
+    # with opts.user (the worker principal); internal/admin reads pass no user.
+    row_access: { scope: assigned, field: assignee }
+    # Default list order: most-recently-active first, created_at as the tiebreak --
+    # so casey's recency sort is configuration, honoured upstream once the published
+    # thatcher with array-sort is installed (the case-store shim sorts in JS until).
+    list:
+      defaultSort:
+        - { field: last_event_at, dir: DESC }
+        - { field: created_at, dir: DESC }
+
+  event:
+    label: Event
+    label_plural: Events
+    permission_template: event_perms
+    fields:
+      <<: *system_fields
+      status:   { type: text, default: active }
+      case_id:  { type: text, required: true }
+      kind:     { type: enum, options: [inbound, outbound, observation, action, transition, note], required: true }
+      actor:    { type: enum, options: [contact, agent, operator, system], default: system }
+      channel:  { type: enum, options: [whatsapp, discord, sim, other] }
+      text:     { type: textarea }
+      data:     { type: textarea }                   # JSON blob: raw payload / tool args
+      msg_id:   { type: text }                       # platform message id, for inbound dedup
+
+  operator_identity:
+    label: Operator identity
+    label_plural: Operator identities
+    permission_template: case_perms
+    fields:
+      <<: *system_fields
+      operator_id:      { type: text, required: true }  # operator_account roster id (dashboard-attributed, session-authenticated)
+      channel_ids:       { type: textarea }              # JSON array of {channel, external_id} seen for this operator (dashboard-attributed actions only -- see AGENTS.md)
+      areas:             { type: textarea }              # JSON array of location tokens (from case.report.location) this operator has acted on, most-recent-weighted
+      last_seen_at:      { type: text }                  # ISO timestamp of the most recent attributed action
+      case_count:        { type: number, default: 0 }    # running count of attributed case actions, for a lightweight "how active" signal
+    # One row per operator id -- upsert on every learn, never a growing history table.
+    row_access: { scope: none }
+
+  operator_account:
+    label: Operator account
+    label_plural: Operator accounts
+    permission_template: case_perms
+    fields:
+      <<: *system_fields
+      username:       { type: text, required: true }    # login id, slugged lowercase [a-z0-9_-]
+      password_hash:  { type: text, required: true }     # scrypt hash, hex
+      password_salt:  { type: text, required: true }     # scrypt salt, hex (per-account, random)
+      display_name:   { type: text }                     # human name shown in the dashboard, attribution
+      role:           { type: enum, options: [admin, operator], default: operator }
+      disabled:       { type: text, default: "0" }        # "1" disables login without deleting the account/history
+      last_login_at:  { type: text }
+      must_change_password: { type: text, default: "0" }  # "1" forces a change-password flow before any other route -- set on the auto-created bootstrap admin (see ensureBootstrapAdmin) so a printed random password cannot persist indefinitely; cleared once the account holder sets their own
+      session_epoch:  { type: number, default: 0 }        # bumped by changePassword()/revokeAccountSessions() (auth.js) -- every session token carries the epoch it was issued at; a mismatch against this live value fails verification, giving stateless "log out everywhere" revocation with no session table (see auth.js header comment for the full design)
+    # Real, actual credentials -- never PII-free-projected, never returned in a
+    # list response (password_hash/password_salt must never leave the server).
+    row_access: { scope: none }
+
+workflows:
+  # Stage shape per thatcher workflow-engine: each stage is an object with
+  # `forward`/`backward` allow-lists and optional `requires_role`. A transition
+  # is valid iff the target appears in the source stage's forward/backward set
+  # (and the user's role satisfies the target's requires_role, if any).
+  case_lifecycle:
+    entity: case
+    stages:
+      - name: new
+        forward: [triaging, in_progress]
+      - name: triaging
+        forward: [in_progress, waiting, resolved]
+        backward: [new]
+      - name: in_progress
+        forward: [waiting, resolved]
+        backward: [triaging]
+      - name: waiting
+        forward: [in_progress, resolved]
+      - name: resolved
+        forward: [closed]
+        backward: [in_progress]        # reopen
+      - name: closed
+        requires_role: [operator, admin]
+        backward: [resolved]           # reopen a closed case (operator/admin only)
+
+# NOTE: thatcher's config schema expects pagination at the TOP-LEVEL `system`
+# key (see node_modules/thatcher/src/config/config-loader.js
+# getConfigWithDefaults), not nested under a `thresholds` key -- that name
+# collides with thatcher's own unrelated `thresholds.timing/ui/polling`
+# defaults, which casey never uses (casey's OWN health/SLA thresholds are a
+# separate JS-side runtime concept in src/case-health.js and src/thresholds.js,
+# entirely unrelated to this yaml block). The previous `thresholds.system.
+# pagination` nesting here was silently ignored by thatcher, which fell back to
+# its own defaults (default_page_size 50, max_page_size 500) instead of the
+# 25/200 this file declared -- confirmed by reading thatcher's crud-handlers.js,
+# which reads `config.system?.pagination` directly.
+system:
+  pagination:
+    default_page_size: 25
+    max_page_size: 200

@@ -1,0 +1,17 @@
+- session_id: gm-cdn
+  id: freddie-thatcher-cannot-be-cdn-served
+  status: witnessed
+  witness: 'src/case-store.js, src/hooks/handler.js, src/casey.js import ''freddie''/''thatcher'' as Node ESM modules resolved via node_modules; a GitHub-latest CDN (jsdelivr gh: or unpkg) serves static HTTP-fetchable dist files, not a target Node''s import/require resolver can load server-side -- these two composed deps cannot be moved to CDN-only consumption without a custom Node module loader or a build step that fetches+writes into node_modules, which is npm-adjacent infrastructure, not CDN replacement.'
+  description: can freddie/thatcher genuinely be served via GitHub CDN instead of npm, given casey's own Node code imports them directly?
+  witness_evidence: npm view freddie/thatcher repository confirm GitHub source; npm supports github:owner/repo#branch dependency spec fetching directly from GitHub, bypassing npm registry -- satisfies 'latest from GitHub' for Node-resolved deps since a static CDN cannot serve a Node import target
+- session_id: gm-cdn
+  id: freddie-thatcher-cannot-be-cdn-served
+  status: witnessed
+  witness: npm view freddie repository / npm view thatcher repository confirm GitHub source (AnEntrypoint/freddie, AnEntrypoint/thatcher); npm natively supports github:owner/repo#branch dependency spec, fetching directly from GitHub on every npm install/update, bypassing the npm registry -- this satisfies 'always latest from GitHub' for Node-resolved deps. A pure static CDN (unpkg/jsdelivr) cannot serve a Node import target. anentrypoint-design (browser-loaded only) can move to a real GitHub-CDN raw reference since browsers HTTP-fetch it, never Node-import it.
+  description: 'resolved: freddie/thatcher/acptoapi move to npm github: spec (still npm as the fetch tool, but GitHub as the resolution source, tracking a branch tip); anentrypoint-design moves to a genuine GitHub-CDN URL since it is browser-fetched'
+  witness_evidence: npm view freddie/thatcher repository confirm GitHub source; npm supports github:owner/repo#branch dependency spec fetching directly from GitHub, bypassing npm registry -- satisfies 'latest from GitHub' for Node-resolved deps since a static CDN cannot serve a Node import target
+- session_id: gm-cdn
+  id: exact-github-repo-slugs
+  status: resolved
+  witness: 'npm view confirms: freddie->AnEntrypoint/freddie, thatcher->AnEntrypoint/thatcher, acptoapi->AnEntrypoint/acptoapi, anentrypoint-design->AnEntrypoint/Design (capital D, differs from npm package name). All four repos default branch is main (git symbolic-ref --short HEAD in each deps/ submodule checkout).'
+  description: 'exact owner/repo#branch strings needed for each github: package.json spec'
