@@ -124,6 +124,7 @@ export const fetchHandover = () => json('/api/handover');
 export const postStartShift = () => post('/api/handover/start-shift', {});
 export const fetchUnreplied = () => json('/api/unreplied');
 export const fetchOperatorWorkload = () => json('/api/operators/workload');
+export const fetchSecretaryQueue = (params) => json('/api/secretary/queue' + qs(params));
 
 // --- map ---
 export const fetchMapCases = (params) => json('/api/map/cases' + qs(params));

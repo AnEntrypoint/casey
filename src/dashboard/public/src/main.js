@@ -28,6 +28,7 @@ import { HandoverPanel } from './panels/handover-panel.js';
 import { OfflinePanel } from './panels/offline-panel.js';
 import { TeamPanel } from './panels/team-panel.js';
 import { ContactsPanel } from './panels/contacts-panel.js';
+import { SecretaryPanel } from './panels/secretary-panel.js';
 
 import { OnboardingOverlay, onboarded, markOnboarded } from './components/onboarding-overlay.js';
 import { SkillsOverlay, skillsDismissed } from './components/skills-overlay.js';
@@ -39,7 +40,7 @@ setSchedule(schedule);
 
 initTheme();
 
-// Content-swap panels (10) -- each is a working surface an operator reads/
+// Content-swap panels (11) -- each is a working surface an operator reads/
 // acts on for a stretch; registered once here per architecture spec section 4.
 registerPanelBody('metrics', MetricsPanel);
 registerPanelBody('clusters', ClustersPanel);
@@ -51,6 +52,7 @@ registerPanelBody('handover', HandoverPanel);
 registerPanelBody('offline', OfflinePanel);
 registerPanelBody('team', TeamPanel);
 registerPanelBody('contacts', ContactsPanel);
+registerPanelBody('secretary', SecretaryPanel);
 
 // Dialog-shaped modals (settings/stats are quick-glance overlays that never
 // displace the case queue; help/onboarding/skills share the same Dialog

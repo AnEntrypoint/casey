@@ -130,6 +130,7 @@
 .ds-sparkline { vertical-align: middle; color: var(--fg-3, var(--muted)); margin-left: var(--space-2); }
 
 .ds-metrics-exports { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.ds-secretary-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 
 /* ---- draft banner accent stripe (assisted-mode held AI draft) ---------- */
 .draft-banner, .ds-draft-banner {
