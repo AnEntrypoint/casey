@@ -20,7 +20,7 @@ export const state = {
   // pagination
   page: 1, pageSize: 50,
   bulkSelected: new Set(),
-  // 'metrics'|'clusters'|'distribution'|'geo'|'map'|'activity'|'handover'|'offline'|'team'|'contacts'|null
+  // 'metrics'|'clusters'|'distribution'|'geo'|'map'|'activity'|'handover'|'offline'|'team'|'contacts'|'secretary'|null
   activePanel: null,
   // 'settings'|'stats'|'help'|'onboarding'|'skills'|null
   activeModal: null,
