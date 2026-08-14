@@ -15,7 +15,6 @@ scratch-*.log
 *.stackdump
 
 # operator secrets -- scaffolded by `casey init`, never committed
-.env
 
 # editor / agent session state. Ignore everything under .claude EXCEPT the
 # reusable project workflows, which are source and should be tracked. (git will
