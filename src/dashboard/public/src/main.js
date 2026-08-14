@@ -40,7 +40,7 @@ setSchedule(schedule);
 
 initTheme();
 
-// Content-swap panels (10) -- each is a working surface an operator reads/
+// Content-swap panels (11) -- each is a working surface an operator reads/
 // acts on for a stretch; registered once here per architecture spec section 4.
 registerPanelBody('metrics', MetricsPanel);
 registerPanelBody('clusters', ClustersPanel);
