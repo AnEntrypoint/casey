@@ -1,15 +1,17 @@
 // Activity panel -- event log with kind/actor filters. Content-swap panel
-// (state.activePanel === 'activity'). Table-based, paginated load-older.
+// (state.activePanel === 'activity'). Icon/tone-coded row list, same visual
+// vocabulary as case-detail's Timeline (icons-map.js eventIcon/eventTone).
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Select } from '/design/src/components/content/fields.js';
-import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
-import { Btn } from '/design/src/components/shell/atoms.js';
+import { Btn, Chip } from '/design/src/components/shell/atoms.js';
+import { Icon } from '/design/src/components/shell.js';
 import { state, schedule, closePanel, setActiveId } from '../state.js';
 import { fetchActivity } from '../api.js';
-import { fmtTime } from '../format.js';
+import { fmtTime, rel } from '../format.js';
+import { eventIcon, eventTone } from '../icons-map.js';
 
 const h = webjsx.createElement;
 
@@ -18,6 +20,25 @@ const ACT_ACTOR_LABEL = { agent: 'casey', operator: 'Operator', contact: 'Contac
 
 let loading = false, error = null;
 let filters = { kind: '', actor: '' };
+
+function ActivityRow(e, i) {
+    return h('div', {
+        key: e.id != null ? e.id : i,
+        class: 'ds-activity-row ds-activity-tone--' + eventTone(e.kind),
+        tabindex: e.case_id ? '0' : null,
+        role: e.case_id ? 'button' : null,
+        'aria-label': e.case_id ? 'open case for this event' : null,
+        onclick: e.case_id ? () => setActiveId(e.case_id) : null,
+        onkeydown: e.case_id ? (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); setActiveId(e.case_id); } } : null,
+    },
+        h('span', { class: 'ds-activity-icon' }, Icon(eventIcon(e.kind), { size: 14 })),
+        h('div', { class: 'ds-activity-body' },
+            h('div', { class: 'ds-activity-top' },
+                Chip({ tone: eventTone(e.kind), size: 'sm', children: ACT_KIND_LABEL[e.kind] || e.kind }),
+                h('span', { class: 'ds-activity-who' }, ACT_ACTOR_LABEL[e.actor] || e.actor || ''),
+                h('span', { class: 'ds-activity-when', title: fmtTime(e.created_at) }, rel(e.created_at))),
+            (e.text || '').trim() ? h('div', { class: 'ds-activity-text' }, (e.text || '').slice(0, 200)) : null));
+}
 
 function load() {
     loading = true; schedule();
@@ -50,12 +71,8 @@ export function ActivityPanel() {
     else {
         const ev = (state._activity && state._activity.events) || [];
         body = ev.length
-            ? Table({
-                headers: ['When', 'Kind', 'Who', 'Text'],
-                rows: ev.map((e) => [fmtTime(e.created_at), ACT_KIND_LABEL[e.kind] || e.kind, ACT_ACTOR_LABEL[e.actor] || e.actor || '', (e.text || '').slice(0, 160)]),
-                onRowClick: (i) => { if (ev[i].case_id) setActiveId(ev[i].case_id); },
-            })
-            : Alert({ kind: 'info', children: 'Nothing matches.' });
+            ? h('div', { class: 'ds-activity-list' }, ...ev.map((e, i) => ActivityRow(e, i)))
+            : Alert({ kind: 'info', children: 'Nothing matches these filters.' });
     }
     return Panel({ title: 'Activity', children: [back, filterRow, body] });
 }

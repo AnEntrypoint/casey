@@ -10,7 +10,7 @@ import { Select } from '/design/src/components/content/fields.js';
 import { Chip, Btn } from '/design/src/components/shell/atoms.js';
 import { state, schedule, closePanel, setActiveId } from '../state.js';
 import {
-    loadMap, toggleClusters, refilterMarkers, toggleCoverage, toggleWorkers, toggleLastReports, STATUS_COLOR,
+    loadMap, toggleClusters, refilterMarkers, toggleCoverage, toggleWorkers, toggleLastReports, STATUS_TOKEN,
 } from './map-leaflet.js';
 
 const h = webjsx.createElement;
@@ -36,8 +36,8 @@ function onMountCanvas(el) {
 
 export function MapPanel() {
     const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: () => { mounted = false; closePanel(); } });
-    const legend = h('div', { class: 'ds-map-legend' }, ...Object.entries(STATUS_COLOR).map(([k, c]) =>
-        h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', style: `background:${c}` }), k)));
+    const legend = h('div', { class: 'ds-map-legend' }, ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
+        h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', style: `background:var(${tok})` }), k.replace(/_/g, ' '))));
 
     const filterRow = h('div', { class: 'ds-map-filters' },
         Select({

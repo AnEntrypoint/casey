@@ -10,6 +10,13 @@ import { fetchHandover, postStartShift } from '../api.js';
 import { fmtTime } from '../format.js';
 import { toast } from '../toasts.js';
 
+const SECTION_EMPTY_TEXT = {
+    'Needs you now': 'Nothing needs you right now.',
+    'Open handoffs': 'No open handoffs.',
+    'Unsent drafts': 'No unsent drafts.',
+    'Changed this shift': 'Nothing has changed yet this shift.',
+};
+
 const h = webjsx.createElement;
 
 let loaded = false, loading = false, error = null, starting = false;
@@ -34,12 +41,17 @@ async function startShift() {
 }
 
 function hoSection(title, rows, render) {
-    if (!rows || !rows.length) return Section({ title, children: [Alert({ kind: 'info', children: 'None.' })] });
+    if (!rows || !rows.length) return Section({ title, children: [Alert({ kind: 'info', children: SECTION_EMPTY_TEXT[title] || 'None.' })] });
     return Section({ title: `${title} (${rows.length})`, children: rows.map(render) });
 }
 
 function refLink(ref, id) {
-    return h('span', { class: 'ds-ho-ref', onclick: () => { if (id) setActiveId(id); } }, ref || '');
+    if (!id) return h('span', { class: 'ds-ho-ref' }, ref || '');
+    return h('span', {
+        class: 'ds-ho-ref', tabindex: '0', role: 'button', 'aria-label': 'open case ' + (ref || ''),
+        onclick: () => setActiveId(id),
+        onkeydown: (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); setActiveId(id); } },
+    }, ref || '');
 }
 
 function handoverBody(j) {

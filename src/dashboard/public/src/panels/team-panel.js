@@ -32,7 +32,7 @@ export function TeamPanel() {
     else if (error) body = Alert({ kind: 'error', children: 'Team-view error: ' + error });
     else {
         const ops = (state._team && state._team.operators) || [];
-        if (!ops.length) body = Alert({ kind: 'info', children: 'No operators configured yet.' });
+        if (!ops.length) body = Alert({ kind: 'info', children: 'No operators on the roster yet. Workload shows up here once accounts are added.' });
         else {
             const sorted = [...ops].sort((a, b) => (b.stale_claims || 0) - (a.stale_claims || 0) || (b.oldest_waiting_ms || 0) - (a.oldest_waiting_ms || 0));
             body = Table({
@@ -48,5 +48,5 @@ export function TeamPanel() {
             });
         }
     }
-    return Panel({ title: 'Team workload', children: [back, body] });
+    return Panel({ title: 'Team workload', children: [h('div', { class: 'ds-team-panel' }, back, body)] });
 }

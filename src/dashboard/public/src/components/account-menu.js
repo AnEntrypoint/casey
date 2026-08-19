@@ -34,7 +34,7 @@ export function applyTheme(t) {
 
 export function initTheme() {
   const saved = (() => { try { return localStorage.casey_theme; } catch { return null; } })();
-  applyTheme(saved || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'));
+  applyTheme(saved || (matchMedia('(prefers-color-scheme: light)').matches ? 'paper' : 'ink'));
 }
 
 function openLogoutEverywhereConfirm() { openModal('confirm-logout-everywhere'); }
@@ -67,7 +67,7 @@ export function LogoutEverywhereConfirmDialog() {
 
 export function AccountMenu() {
   const items = [
-    { id: 'theme', label: state.theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme', glyph: Icon(state.theme === 'light' ? 'moon' : 'sun', { size: 14 }) },
+    { id: 'theme', label: state.theme === 'paper' ? 'Switch to dark theme' : 'Switch to light theme', glyph: Icon(state.theme === 'paper' ? 'moon' : 'sun', { size: 14 }) },
     { id: 'simple', label: state.simpleMode ? 'Turn off plain-language mode' : 'Turn on plain-language mode', glyph: Icon('smile', { size: 14 }) },
     { id: 'help', label: 'Help', glyph: Icon('help', { size: 14 }) },
     { separator: true },
@@ -75,7 +75,7 @@ export function AccountMenu() {
     { id: 'logout-everywhere', label: 'Log out everywhere else', danger: true },
   ];
   const onSelect = (id) => {
-    if (id === 'theme') applyTheme(state.theme === 'light' ? 'dark' : 'light');
+    if (id === 'theme') applyTheme(state.theme === 'paper' ? 'ink' : 'paper');
     else if (id === 'simple') setSimpleMode(!state.simpleMode);
     else if (id === 'help') openModal('help');
     else if (id === 'logout') doLogout();

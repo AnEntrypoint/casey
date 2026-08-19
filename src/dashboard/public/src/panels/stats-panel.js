@@ -54,7 +54,7 @@ export function StatsPanel() {
     else {
         const j = state._stats;
         const modes = j ? Object.keys(j.by_mode || {}) : [];
-        if (!modes.length) body = Alert({ kind: 'info', children: 'No data yet.' });
+        if (!modes.length) body = Alert({ kind: 'info', children: 'No intake data yet. Fill-rate breakdown shows up here once reports start coming in.' });
         else body = Table({
             headers: ['Source', 'Count', 'Fields', 'Visit-ready', 'Essential'],
             rows: modes.map((m) => statRow(m, j.by_mode[m])),

@@ -9,7 +9,15 @@ import { fmtDur } from '../format.js';
 import { fetchMapCases, fetchMapWorkers, fetchMapLastReports, fetchOperatorIdentities } from '../api.js';
 import { openDispatchPicker } from './dispatch-picker.js';
 
-const STATUS_COLOR = { new: '#3b6ea5', triaging: '#a5843b', in_progress: '#3ba55d', waiting: '#9a6bd1', resolved: '#6b7685', closed: '#3d4148' };
+export const STATUS_TOKEN = { new: '--sky', triaging: '--amber', in_progress: '--green', waiting: '--purple-2', resolved: '--fg-3', closed: '--fg-3' };
+
+function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || name;
+}
+
+function statusColor(status) {
+    return cssVar(STATUS_TOKEN[status] || '--fg-3');
+}
 
 function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -25,7 +33,7 @@ function mapMarkerIcon(color) {
 
 function mapPopupHtml(p) {
     const counts = [p.affected_count != null ? p.affected_count + ' affected' : '', p.dead_count != null ? p.dead_count + ' dead' : ''].filter(Boolean).join(', ');
-    return `<div><b>${esc(p.ref)}</b> <span style="color:var(--muted)">${esc(p.status)}</span><br>`
+    return `<div><b>${esc(p.ref)}</b> <span style="color:var(--fg-2)">${esc(p.status)}</span><br>`
         + (p.species ? esc(p.species) + '<br>' : '')
         + (p.case_type && p.case_type !== 'unset' ? esc(p.case_type) + '<br>' : '')
         + (p.location ? esc(p.location) + '<br>' : '')
@@ -52,7 +60,7 @@ function renderMapMarkers(mapState, filters) {
     const filtered = applyMapFilters(mapState.pins, filters);
     const layer = window.L.markerClusterGroup({ maxClusterRadius: 40 });
     for (const p of filtered) {
-        const m = window.L.marker([p.lat, p.lon], { icon: mapMarkerIcon(STATUS_COLOR[p.status] || '#6b7685') });
+        const m = window.L.marker([p.lat, p.lon], { icon: mapMarkerIcon(statusColor(p.status)) });
         m.bindPopup(mapPopupHtml(p));
         m.on('popupopen', () => {
             const el = document.querySelector(`[data-open-ref="${p.id}"]`);
@@ -71,7 +79,7 @@ function renderMapMarkers(mapState, filters) {
         for (const [, members] of byIdx) {
             if (members.length < 2) continue;
             for (let i = 1; i < members.length; i++) {
-                window.L.polyline([[members[0].lat, members[0].lon], [members[i].lat, members[i].lon]], { color: '#c0392b', weight: 1, opacity: .5, dashArray: '4,4' }).addTo(lines);
+                window.L.polyline([[members[0].lat, members[0].lon], [members[i].lat, members[i].lon]], { color: cssVar('--danger'), weight: 1, opacity: .5, dashArray: '4,4' }).addTo(lines);
             }
         }
         lines.addTo(map);
@@ -93,7 +101,7 @@ async function renderMapCoverage(mapState) {
             if (!matched.length) continue;
             const lat = matched.reduce((s, p) => s + p.lat, 0) / matched.length;
             const lon = matched.reduce((s, p) => s + p.lon, 0) / matched.length;
-            window.L.circle([lat, lon], { radius: 25000, color: '#3b6ea5', weight: 1, fillOpacity: .06 })
+            window.L.circle([lat, lon], { radius: 25000, color: cssVar('--accent'), weight: 1, fillOpacity: .06 })
                 .bindTooltip(esc(idOp.name) + ' -- ' + idOp.case_count + ' case action(s)')
                 .addTo(layer);
         }
@@ -116,7 +124,7 @@ async function renderMapWorkers(mapState) {
             const staleNote = w.stale ? ` (stale: ${ageText})` : ` (here now, ${ageText})`;
             const overdueNote = w.overdue_checkin ? ' OVERDUE check-in' : '';
             const label = esc(w.display_name || 'field worker') + staleNote + overdueNote;
-            const color = w.overdue_checkin ? '#e74c3c' : '#e0a83b';
+            const color = w.overdue_checkin ? cssVar('--danger') : cssVar('--amber');
             const fillOpacity = w.overdue_checkin ? 0.8 : (w.stale ? 0.15 : 0.7);
             window.L.circleMarker([w.lat, w.lon], { radius: w.overdue_checkin ? 10 : 8, color, weight: 2, fillColor: color, fillOpacity })
                 .bindTooltip(label).addTo(layer);
@@ -136,7 +144,8 @@ async function renderMapLastReports(mapState) {
         mapState.lastReports = j.reports || [];
         const layer = window.L.layerGroup();
         for (const rpt of (j.reports || [])) {
-            const marker = window.L.circleMarker([rpt.lat, rpt.lon], { radius: 7, color: '#3ba05c', weight: 2, fillColor: '#3ba05c', fillOpacity: 0.55 });
+            const reportColor = cssVar('--green');
+            const marker = window.L.circleMarker([rpt.lat, rpt.lon], { radius: 7, color: reportColor, weight: 2, fillColor: reportColor, fillOpacity: 0.55 });
             const when = rpt.last_report_at ? fmtDur(Date.now() - Number(rpt.last_report_at) * 1000) + ' ago' : 'unknown time';
             marker.bindTooltip(esc(rpt.location || '') + ' -- ' + when);
             marker.on('click', () => { if (rpt.case_id) setActiveId(rpt.case_id); });
@@ -188,4 +197,4 @@ export function refilterMarkers(mapState, filters) { renderMapMarkers(mapState, 
 export async function toggleCoverage(mapState) { mapState.showCoverage = !mapState.showCoverage; await renderMapCoverage(mapState); }
 export async function toggleWorkers(mapState) { mapState.showWorkers = !mapState.showWorkers; await renderMapWorkers(mapState); }
 export async function toggleLastReports(mapState) { mapState.showLastReports = !mapState.showLastReports; await renderMapLastReports(mapState); }
-export { STATUS_COLOR };
+export { statusColor };
