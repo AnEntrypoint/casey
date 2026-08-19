@@ -38,6 +38,15 @@ const DEFAULT_PRIORITY_VALUES = ['low', 'normal', 'high', 'urgent']
 // wherever a transition is attempted. This default only seeds the tool-schema
 // `enum` hint shown to the model before a store necessarily exists.
 const DEFAULT_STAGE_VALUES = ['new', 'triaging', 'in_progress', 'waiting', 'resolved', 'closed']
+// case_observe/case_split write straight to appendEvent, which has no
+// length guard of its own (unlike case_report's fields, capped in
+// case-store.js's mergeReport at APPEND_FIELD_MAX_LEN=20000) -- an
+// adversarial or malfunctioning model call could otherwise write an
+// arbitrarily large blob into a single event row with no bound at all,
+// per-call or cumulative. Same cap value as the store's own convention,
+// enforced here at the tool boundary (the earliest point that still has
+// the offending value in scope) rather than deep in appendEvent.
+const OBSERVE_TEXT_MAX_LEN = 20000
 
 // external_id is 'container:author' (a multi-author channel) or the bare author
 // (a 1:1 chat) -- a case is "owned" by an author when their id appears as one
@@ -422,10 +431,13 @@ export function buildCaseToolset(storeOrNull) {
       'Record an observation or internal note on the case timeline WITHOUT replying to the contact. Use for triage reasoning, flags, or anything an operator should see.',
       {
         type: 'object',
-        properties: { id: str('Case id'), text: str('The observation') },
+        properties: { id: str('Case id'), text: str('The observation', { maxLength: OBSERVE_TEXT_MAX_LEN }) },
         required: ['id', 'text'],
       },
       async ({ id, text }, ctx) => {
+        if (String(text).length > OBSERVE_TEXT_MAX_LEN) {
+          return { error: `text too long (${String(text).length} chars, max ${OBSERVE_TEXT_MAX_LEN})` }
+        }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const author = ctx?.author || ctx?.principal?.id
@@ -516,13 +528,16 @@ export function buildCaseToolset(storeOrNull) {
         type: 'object',
         properties: {
           id: str('Case id to split FROM'),
-          event_ids: { type: 'array', items: { type: 'string' }, description: 'Ids of the events to move into the new case' },
-          subject: str('Short title for the new case'),
-          reason: str('Why these belong to a separate outbreak (recorded on both timelines)'),
+          event_ids: { type: 'array', items: { type: 'string' }, maxItems: 500, description: 'Ids of the events to move into the new case' },
+          subject: str('Short title for the new case', { maxLength: OBSERVE_TEXT_MAX_LEN }),
+          reason: str('Why these belong to a separate outbreak (recorded on both timelines)', { maxLength: OBSERVE_TEXT_MAX_LEN }),
         },
         required: ['id', 'event_ids'],
       },
       async ({ id, event_ids, subject = '', reason = '' }, ctx) => {
+        if (String(subject).length > OBSERVE_TEXT_MAX_LEN || String(reason).length > OBSERVE_TEXT_MAX_LEN) {
+          return { error: `subject/reason too long (max ${OBSERVE_TEXT_MAX_LEN} chars)` }
+        }
         const target = await store().getCase(id)
         if (!target) return { error: `no case ${id}` }
         const author = ctx?.author || ctx?.principal?.id
