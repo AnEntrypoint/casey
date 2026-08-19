@@ -11,6 +11,7 @@
    chrome. Every color/radius/z-index below resolves through a design token
    var() -- zero raw hex/rgb, per the lint-tokens CI gate. */
 
+body { background: var(--bg); color: var(--fg); }
 .ds-app-root, .ds-app-surface { display: flex; flex-direction: column; min-height: 100vh; }
 
 /* casey mounts the shell as a full standalone page, never inside the SDK's
