@@ -35,10 +35,52 @@
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { join, extname } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const NODE_MODULES = join(ROOT, 'node_modules')
+
+// 2026-08-14 incident: this same payload shape was found live on casey's own
+// main branch in plugins/case-tools/plugin.js (commit c266c4e), a git-tracked
+// source file -- not a dependency. The node_modules-only walk below caught
+// nothing because it never looked at casey's own source tree. deps/ is
+// excluded (separate submodule repos, own lint policy, per AGENTS.md);
+// node_modules is walked separately by walk(NODE_MODULES) below, so it is
+// excluded here too to avoid a redundant double-walk.
+function walkSource(dir, out = []) {
+  let entries
+  try { entries = readdirSync(dir) } catch { return out }
+  for (const name of entries) {
+    if (name === 'node_modules' || name === 'deps' || name.startsWith('.')) continue
+    const p = join(dir, name)
+    let st
+    try { st = statSync(p) } catch { continue }
+    if (st.isDirectory()) walkSource(p, out)
+    else if (['.js', '.mjs', '.cjs'].includes(extname(p))) out.push(p)
+  }
+  return out
+}
+
+// Matches lint.mjs's filterGitignored: ask git which candidates it would
+// ignore rather than hardcoding a skip list, dependency-free fallback intact.
+function filterGitignored(paths) {
+  try {
+    const rel = paths.map((p) => p.slice(ROOT.length).replace(/\\/g, '/'))
+    const out = execFileSync('git', ['check-ignore', '--stdin'], {
+      cwd: ROOT, input: rel.join('\n'), stdio: ['pipe', 'pipe', 'pipe'],
+    }).toString()
+    const ignored = new Set(out.split('\n').filter(Boolean))
+    return paths.filter((_, i) => !ignored.has(rel[i]))
+  } catch (e) {
+    if (e.status === 1 && e.stdout != null) {
+      const ignored = new Set(String(e.stdout).split('\n').filter(Boolean))
+      const rel = paths.map((p) => p.slice(ROOT.length).replace(/\\/g, '/'))
+      return paths.filter((_, i) => !ignored.has(rel[i]))
+    }
+    return paths
+  }
+}
 
 // Bytes-per-line above this on an ordinary hand-written JS/config file is
 // suspicious. Legitimate minified/bundled/generated files are the known
@@ -123,11 +165,13 @@ function scanFile(path) {
 }
 
 function main() {
-  if (!existsSync(NODE_MODULES)) {
-    console.log('scan-deps: no node_modules present -- nothing to scan (run npm install first)')
+  const sourceFiles = filterGitignored(walkSource(ROOT))
+  const depFiles = existsSync(NODE_MODULES) ? walk(NODE_MODULES) : []
+  if (!sourceFiles.length && !depFiles.length) {
+    console.log('scan-deps: no node_modules present and no git-tracked source found -- nothing to scan (run npm install first)')
     return 0
   }
-  const files = walk(NODE_MODULES)
+  const files = [...sourceFiles, ...depFiles]
   const findings = []
   const blocked = []
   for (const f of files) {
@@ -139,7 +183,7 @@ function main() {
   const failing = findings.filter(f => f.severity === 'fail')
   const warnings = findings.filter(f => f.severity === 'warn')
   if (!findings.length && !blocked.length) {
-    console.log(`scan-deps OK: ${files.length} files scanned across node_modules, no HiddenSpawn-pattern matches`)
+    console.log(`scan-deps OK: ${files.length} files scanned (${sourceFiles.length} own source + ${depFiles.length} in node_modules), no HiddenSpawn-pattern matches`)
     return 0
   }
   if (blocked.length) {

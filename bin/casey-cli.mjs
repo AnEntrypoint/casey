@@ -201,7 +201,7 @@ async function main() {
       const { execFileSync } = await import('node:child_process')
       try {
         execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'scan-deps.mjs')], { cwd: ROOT, stdio: 'pipe' })
-        console.log(ok('scan-deps: no HiddenSpawn-pattern matches in node_modules'))
+        console.log(ok('scan-deps: no HiddenSpawn-pattern matches in own source or node_modules'))
       } catch (e) {
         console.log(bad('scan-deps found a match -- run `npm run scan-deps` for details before starting casey'))
         problems++
