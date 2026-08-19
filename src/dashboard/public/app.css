@@ -213,13 +213,13 @@
 }
 .ds-step-dot.is-active { background: var(--accent); color: var(--accent-fg, var(--paper)); }
 .ds-step-dot.is-done { background: var(--accent); color: var(--accent-fg, var(--paper)); opacity: .6; }
-.ds-step-line { flex: 1; height: 2px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); }
+.ds-step-line { flex: 1; height: 2px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); transition: background var(--dur-base) var(--ease); }
 .ds-step-line.is-done { background: var(--accent); opacity: .5; }
 
 /* ---- fill bar (visit-critical readiness meter) -------------------------- */
 .ds-fill-bar { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); font-size: var(--fs-micro); color: var(--fg-2, var(--muted)); }
 .ds-fill-bar .ds-fill-track { flex: 1; height: 6px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); overflow: hidden; }
-.ds-fill-bar .ds-fill-fill { display: block; height: 100%; background: var(--green-2, var(--green)); transition: width .3s; }
+.ds-fill-bar .ds-fill-fill { display: block; height: 100%; background: var(--green-2, var(--green)); transition: width var(--dur-slow) var(--ease); }
 @media (prefers-reduced-motion: reduce) { .ds-fill-bar .ds-fill-fill { transition: none; } }
 
 /* ---- case list / inbox / row / bulk-bar / pagination ------------------- */
@@ -240,7 +240,7 @@
 .ds-case-list-plain, .ds-case-list-empty { display: flex; flex-direction: column; }
 .ds-case-list-empty { padding: var(--space-5) var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
 
-.case-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--border); cursor: pointer; min-height: 64px; }
+.case-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--border); cursor: pointer; min-height: 64px; transition: background var(--dur-snap) var(--ease), box-shadow var(--dur-snap) var(--ease); }
 /* Native checkbox has no square guarantee across browsers/zoom levels and
    defaults to baseline-ish vertical alignment that sits high relative to
    the bold case-row-ref text next to it -- lock the box shape and nudge it
@@ -254,13 +254,13 @@
    tell "the row I'm about to open with Enter" apart from "the row currently
    open in the detail pane" when they differ. */
 .case-row.kbd-focused { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: -2px; }
-.case-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
+.case-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; transition: outline-offset var(--dur-snap) var(--ease); }
 .case-row-body { flex: 1; min-width: 0; }
 .case-row-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; row-gap: var(--space-1); min-height: 24px; }
 .case-row-ref { font-weight: 600; font-size: var(--fs-sm, var(--fs-body)); }
 .case-row-when { margin-left: auto; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
 .case-row-sub { display: flex; align-items: center; gap: var(--space-2); row-gap: var(--space-1-75, var(--space-2)); font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-top: var(--space-2); flex-wrap: wrap; }
-.ds-guardrail-toggle-btn { background: none; border: none; color: var(--accent-ink, var(--accent)); font-size: var(--fs-pico, var(--fs-micro)); cursor: pointer; padding: 0; margin-top: var(--space-1-75, var(--space-2)); display: block; text-decoration: underline; text-underline-offset: 2px; }
+.ds-guardrail-toggle-btn { background: none; border: none; color: var(--accent-ink, var(--accent)); font-size: var(--fs-pico, var(--fs-micro)); cursor: pointer; padding: 0; margin-top: var(--space-1-75, var(--space-2)); display: block; text-decoration: underline; text-underline-offset: 2px; transition: color var(--dur-snap) var(--ease); }
 .ds-guardrail-toggle-btn:hover { color: var(--accent); }
 .ds-guardrail-expanded { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 
@@ -274,7 +274,7 @@
 .triage { border-bottom: 1px solid var(--border); background: var(--accent-soft, var(--bg-2)); border-radius: var(--r-md, var(--r-1)); }
 .triage-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-1); }
 .triage .calm { padding: var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
-.tcase { padding: var(--space-3); border-top: 1px solid var(--border); cursor: pointer; }
+.tcase { padding: var(--space-3); border-top: 1px solid var(--border); cursor: pointer; transition: background var(--dur-snap) var(--ease); }
 .tcase:hover { background: var(--bg-2); }
 .tcase.active { outline: 2px solid var(--accent); outline-offset: -2px; }
 .tcase:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
@@ -457,5 +457,5 @@
    covered by the SDK's own guard. */
 @media (prefers-reduced-motion: reduce) {
   .ds-fill-bar .ds-fill-fill, .ds-step-line, .casey-progress-line, .casey-rep-editable,
-  .case-row, .tcase, .ds-handoff-banner { transition: none; animation: none; }
+  .case-row, .tcase, .ds-handoff-banner, .ds-guardrail-toggle-btn, .casey-meta-toggle { transition: none; animation: none; }
 }
