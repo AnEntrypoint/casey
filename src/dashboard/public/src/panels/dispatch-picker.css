@@ -1,0 +1,14 @@
+.casey-dispatch-overlay{position:fixed;inset:0;background:color-mix(in oklab, black 60%, transparent);z-index:var(--z-modal, 500);display:flex;align-items:center;justify-content:center;padding:var(--space-3, 16px)}
+.casey-dispatch-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--r-lg, 10px);max-width:420px;width:100%;padding:var(--space-4, 22px) var(--space-4, 24px);box-shadow:var(--shadow-overlay, var(--shadow-3));font-size:var(--fs-sm, 14px)}
+.casey-dispatch-title{margin:0 0 var(--space-1, 8px);font-size:var(--fs-md, 16px)}
+.casey-dispatch-message{margin:0 0 var(--space-2, 10px);color:var(--muted);line-height:1.5}
+.casey-dispatch-select{width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:var(--r-sm, 6px);padding:var(--space-1, 6px) var(--space-1-75, 8px);font-size:var(--fs-sm, 14px);box-sizing:border-box;margin-bottom:var(--space-2, 10px)}
+.casey-dispatch-select:focus-visible{outline:var(--focus-w) solid var(--focus-color);outline-offset:var(--focus-offset)}
+.casey-dispatch-label{display:block;margin:0 0 var(--space-hair, 4px);font-size:var(--fs-nano, 12px);color:var(--muted)}
+.casey-dispatch-note{width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:var(--r-sm, 6px);padding:var(--space-1, 6px) var(--space-1-75, 8px);font-size:var(--fs-sm, 14px);box-sizing:border-box;resize:vertical}
+.casey-dispatch-note:focus-visible{outline:var(--focus-w) solid var(--focus-color);outline-offset:var(--focus-offset)}
+.casey-dispatch-actions{display:flex;gap:var(--space-1, 8px);margin-top:var(--space-3, 14px);justify-content:flex-end}
+.casey-dispatch-cancel{background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:var(--r-sm, 6px);padding:7px var(--space-2, 14px);cursor:pointer;font-size:var(--fs-sm, 13px);margin:0}
+.casey-dispatch-cancel:focus-visible{outline:var(--focus-w) solid var(--focus-color);outline-offset:var(--focus-offset)}
+.casey-dispatch-ok{background:var(--accent);color:var(--accent-fg, #fff);border:0;border-radius:var(--r-sm, 6px);padding:7px var(--space-2, 14px);cursor:pointer;font-size:var(--fs-sm, 13px);margin:0}
+.casey-dispatch-ok:focus-visible{outline:var(--focus-w) solid var(--focus-color);outline-offset:var(--focus-offset)}

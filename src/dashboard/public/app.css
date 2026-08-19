@@ -132,6 +132,53 @@
 .ds-metrics-exports { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 .ds-secretary-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 
+/* ---- metrics summary stat cards (metrics-panel.js) ---------------------- */
+.ds-stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--space-3); margin: var(--space-3) 0; }
+.ds-stat-card {
+  background: var(--bg-2, var(--panel, var(--bg)));
+  border: 1px solid var(--border, var(--ink-3));
+  border-radius: var(--r-md, var(--r-1));
+  padding: var(--space-3) var(--space-4);
+  display: flex; flex-direction: column; gap: var(--space-1);
+}
+.ds-stat-label { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); text-transform: uppercase; letter-spacing: .03em; }
+.ds-stat-value { font-size: var(--fs-xl, var(--fs-lg)); font-weight: 700; color: var(--fg); line-height: 1.15; }
+.ds-stat-sub { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+
+/* ---- at-risk-by-case-type strip (metrics-panel.js) ----------------------- */
+.ds-risk-strip { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-2); }
+.ds-risk-chip {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  background: var(--warn-bg, color-mix(in oklab, var(--amber) 12%, var(--bg)));
+  border: 1px solid var(--warn-border, color-mix(in oklab, var(--amber) 35%, transparent));
+  border-radius: var(--r-pill, var(--r-1));
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--fs-sm);
+  color: var(--fg);
+}
+.ds-risk-chip b { color: var(--warn, var(--amber)); font-weight: 700; }
+
+/* ---- intake-stats modal wrapper (stats-panel.js) ------------------------- */
+.ds-stats-panel { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* ---- species/symptom distribution bars (distribution-panel.js) ---------- */
+.ds-dist-group-body { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+.ds-dist-row { display: grid; grid-template-columns: minmax(90px, 26%) 1fr auto; align-items: center; gap: var(--space-3); }
+.ds-dist-token { font-size: var(--fs-sm); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-dist-bar-track { position: relative; height: 8px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); overflow: hidden; }
+.ds-dist-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--r-hair, var(--r-sm)); transition: width .3s; }
+.ds-dist-count { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); text-align: right; min-width: 2ch; }
+@media (prefers-reduced-motion: reduce) { .ds-dist-bar-fill { transition: none; } }
+
+/* ---- team workload panel (team-panel.js) --------------------------------- */
+.ds-team-panel { display: flex; flex-direction: column; gap: var(--space-3); }
+
+/* ---- settings panel: tunable thresholds (settings-panel.js) ------------- */
+.ds-settings-panel { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-1) 0; }
+.ds-settings-row { display: flex; flex-direction: column; }
+.ds-settings-actions { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-2); }
+.ds-settings-state { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+
 /* ---- draft banner accent stripe (assisted-mode held AI draft) ---------- */
 .draft-banner, .ds-draft-banner {
   margin-top: var(--space-4); padding: var(--space-3) var(--space-4);
@@ -207,6 +254,7 @@
    tell "the row I'm about to open with Enter" apart from "the row currently
    open in the detail pane" when they differ. */
 .case-row.kbd-focused { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: -2px; }
+.case-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
 .case-row-body { flex: 1; min-width: 0; }
 .case-row-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; row-gap: var(--space-1); min-height: 24px; }
 .case-row-ref { font-weight: 600; font-size: var(--fs-sm, var(--fs-body)); }
@@ -229,6 +277,7 @@
 .tcase { padding: var(--space-3); border-top: 1px solid var(--border); cursor: pointer; }
 .tcase:hover { background: var(--bg-2); }
 .tcase.active { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tcase:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
 .tcase-why { font-size: var(--fs-nano, var(--fs-micro)); font-weight: 600; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .tcase-meta { font-size: var(--fs-pico, var(--fs-micro)); color: var(--fg-3, var(--muted)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tcase-breach-detail { font-size: var(--fs-pico, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
@@ -308,10 +357,36 @@
 
 /* ---- map legend + Leaflet overrides (no SDK equivalent for a tile-map) --- */
 .ds-map-wrap, .map-wrap, .ds-map-canvas { height: min(70vh, 640px); border-radius: var(--r-lg, var(--r-1)); overflow: hidden; border: 1px solid var(--border); }
-.ds-map-legend, .map-legend { display: flex; gap: var(--space-3); flex-wrap: wrap; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted)); margin: var(--space-2) 0; }
-.ds-map-legend .sw, .map-legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill); margin-right: var(--space-1); vertical-align: middle; }
+.ds-map-legend, .map-legend {
+  display: flex; gap: var(--space-3); flex-wrap: wrap;
+  font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted));
+  margin: var(--space-2) 0; padding: var(--space-2) var(--space-3);
+  background: var(--bg-2, var(--panel-1)); border: 1px solid var(--border); border-radius: var(--r-1);
+}
+.ds-map-legend .sw, .map-legend .sw,
+.ds-map-legend-sw { display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill); margin-right: var(--space-1); vertical-align: middle; }
+.ds-map-legend-item { display: inline-flex; align-items: center; text-transform: capitalize; }
 .ds-map-filters, .map-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.ds-map-overlays { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.ds-chip-btn { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; }
+.ds-map-unresolved-note { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin: var(--space-2) 0; }
+.ds-map-unresolved-list { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
+.ds-map-unresolved-row {
+  display: flex; align-items: baseline; gap: var(--space-1); flex-wrap: wrap;
+  font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted));
+  padding: var(--space-1) var(--space-2); border-radius: var(--r-1);
+}
+.ds-map-unresolved-row:hover { background: var(--bg-2, var(--panel-1)); }
+.ds-muted { color: var(--fg-3, var(--muted)); }
 .leaflet-popup-content { font-size: var(--fs-nano, var(--fs-micro)); }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg-2, var(--panel-1)); color: var(--fg); }
+.leaflet-container { background: var(--bg-2, var(--panel-1)); }
+
+@container (max-width: 640px) {
+  .ds-map-wrap, .map-wrap, .ds-map-canvas { height: min(55vh, 420px); }
+  .ds-map-filters, .ds-map-overlays { gap: var(--space-1); }
+  .ds-map-legend { font-size: var(--fs-micro, 11px); gap: var(--space-2); }
+}
 
 /* ---- case-detail empty state -------------------------------------------- */
 .casey-detail-empty {
@@ -322,6 +397,52 @@
 .casey-detail-empty svg { color: var(--fg-3, var(--faint)); }
 .ds-app-surface h2.casey-detail-empty-title { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--fg-2, var(--muted)); }
 .casey-detail-empty .casey-hint { margin: 0; font-size: var(--fs-nano, var(--fs-micro)); max-width: 32ch; }
+
+/* ---- activity feed panel (activity-panel.js) ---------------------------- */
+.ds-activity-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--space-3); }
+.ds-activity-list { display: flex; flex-direction: column; }
+.ds-activity-row {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--border);
+  box-shadow: inset 3px 0 0 transparent;
+}
+.ds-activity-row[role="button"] { cursor: pointer; }
+.ds-activity-row[role="button"]:hover { background: var(--bg-2); }
+.ds-activity-row[role="button"]:focus-visible { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: -2px; }
+.ds-activity-row.ds-activity-tone--accent { box-shadow: inset 3px 0 0 var(--accent); }
+.ds-activity-row.ds-activity-tone--ok { box-shadow: inset 3px 0 0 var(--success, var(--green)); }
+.ds-activity-row.ds-activity-tone--warn { box-shadow: inset 3px 0 0 var(--warn, var(--amber)); }
+.ds-activity-row.ds-activity-tone--muted { box-shadow: inset 3px 0 0 var(--border); }
+.ds-activity-icon { flex: 0 0 auto; color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
+.ds-activity-body { flex: 1; min-width: 0; }
+.ds-activity-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.ds-activity-who { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted)); }
+.ds-activity-when { margin-left: auto; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.ds-activity-text { font-size: var(--fs-sm); color: var(--fg); margin-top: var(--space-1); overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .ds-activity-row { transition: none; } }
+
+/* ---- shift handover panel (handover-panel.js) ---------------------------- */
+.ds-ho-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.ds-ho-since { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-bottom: var(--space-3); }
+.ds-ho-row {
+  display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--border-soft, var(--border));
+}
+.ds-ho-row:last-child { border-bottom: none; }
+.ds-ho-ref {
+  font-weight: 600; font-size: var(--fs-sm, var(--fs-body)); color: var(--accent-ink, var(--accent));
+  cursor: pointer; border-radius: var(--r-hair, var(--r-sm));
+}
+.ds-ho-ref:hover { text-decoration: underline; }
+.ds-ho-ref:focus-visible { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+.ds-ho-why { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); overflow-wrap: anywhere; }
+.ds-owner-chip {
+  display: inline-block; font-size: var(--fs-pico, var(--fs-micro)); font-weight: 600;
+  padding: 2px var(--space-2); border-radius: var(--r-pill, var(--r-1));
+  background: var(--accent-tint, var(--bg-2)); color: var(--accent-ink, var(--accent));
+  margin-left: auto;
+}
+.ds-act-when { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-left: auto; }
 
 /* ---- print CSS (printable handover/metrics/report links) ---------------- */
 @media print {

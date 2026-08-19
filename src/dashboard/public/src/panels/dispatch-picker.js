@@ -16,27 +16,27 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 
 function showWorkerPicker(title, message, workers) {
     return new Promise((resolve) => {
-        function mk(tag, css, txt) { const el = document.createElement(tag); if (css) el.style.cssText = css; if (txt != null) el.textContent = txt; return el; }
-        const overlay = mk('div', 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:500;display:flex;align-items:center;justify-content:center;padding:16px');
+        function mk(tag, cls, txt) { const el = document.createElement(tag); if (cls) el.className = cls; if (txt != null) el.textContent = txt; return el; }
+        const overlay = mk('div', 'casey-dispatch-overlay');
         overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true');
-        const card = mk('div', 'background:var(--panel);border:1px solid var(--border);border-radius:10px;max-width:420px;width:100%;padding:22px 24px;box-shadow:0 8px 40px rgba(0,0,0,.5);font-size:14px');
-        card.appendChild(mk('h3', 'margin:0 0 8px;font-size:16px', title));
-        card.appendChild(mk('p', 'margin:0 0 10px;color:var(--muted);line-height:1.5', message));
+        const card = mk('div', 'casey-dispatch-card');
+        card.appendChild(mk('h3', 'casey-dispatch-title', title));
+        card.appendChild(mk('p', 'casey-dispatch-message', message));
         const sel = document.createElement('select');
-        sel.style.cssText = 'width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;margin-bottom:10px';
+        sel.className = 'casey-dispatch-select';
         for (const w of workers) {
             const o = document.createElement('option'); o.value = w.id;
             o.textContent = (w.display_name || 'field worker') + (w.km != null ? ` (${w.km.toFixed(1)}km${w.stale ? ', stale' : ''})` : (w.stale ? ' (stale)' : ''));
             sel.appendChild(o);
         }
         card.appendChild(sel);
-        card.appendChild(mk('label', 'display:block;margin:0 0 4px;font-size:12px;color:var(--muted)', 'Optional note for the team'));
+        card.appendChild(mk('label', 'casey-dispatch-label', 'Optional note for the team'));
         const noteInp = document.createElement('textarea'); noteInp.rows = 2;
-        noteInp.style.cssText = 'width:100%;background:var(--panel);border:1px solid var(--border);color:var(--fg);border-radius:6px;padding:6px 8px;font-size:14px;box-sizing:border-box;resize:vertical';
+        noteInp.className = 'casey-dispatch-note';
         card.appendChild(noteInp);
-        const row = mk('div', 'display:flex;gap:8px;margin-top:14px;justify-content:flex-end');
-        const cancelBtn = mk('button', 'background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0', 'Cancel');
-        const okBtn = mk('button', 'background:var(--accent);color:#fff;border:0;border-radius:6px;padding:7px 14px;cursor:pointer;font-size:13px;margin:0', 'Suggest dispatch');
+        const row = mk('div', 'casey-dispatch-actions');
+        const cancelBtn = mk('button', 'casey-dispatch-cancel', 'Cancel');
+        const okBtn = mk('button', 'casey-dispatch-ok', 'Suggest dispatch');
         row.appendChild(cancelBtn); row.appendChild(okBtn); card.appendChild(row);
         overlay.appendChild(card); document.body.appendChild(overlay);
         const close = (confirmed) => { overlay.remove(); resolve(confirmed ? { workerId: sel.value, note: noteInp.value || '' } : null); };
