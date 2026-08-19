@@ -199,6 +199,37 @@ for (const [dirKey, relDir] of Object.entries(BOUNDARY_DIRS)) {
   }
 }
 
+// deps/design's own token/inline-css lint gates, pointed at casey's dashboard
+// SPA source (src/dashboard/public) via DS_LINT_EXTRA_CSS_FILES/
+// DS_LINT_EXTRA_JS_DIRS -- see AGENTS.md's Architecture section: deps/design
+// is a real editable submodule, not vendored code, and its lint scripts only
+// exist on disk after `git submodule update --init`. This script's own
+// contract (dependency-free, runs from a bare clone with empty deps/*) means
+// this check degrades to a skip, never a failure, when the submodule is
+// absent -- the CI gate stays green in a bare clone per AGENTS.md's CI
+// section, and a populated clone gets real coverage over the dashboard's
+// token/inline-CSS compliance that no gate previously provided.
+const DESIGN_ROOT = join(ROOT, 'deps', 'design')
+const DASHBOARD_PUBLIC = join(ROOT, 'src', 'dashboard', 'public')
+try {
+  statSync(join(DESIGN_ROOT, 'scripts', 'lint-tokens.mjs'))
+  const cssFiles = walk(DASHBOARD_PUBLIC).filter((p) => extname(p) === '.css')
+  const env = {
+    ...process.env,
+    DS_LINT_EXTRA_CSS_FILES: cssFiles.join(','),
+    DS_LINT_EXTRA_JS_DIRS: join(DASHBOARD_PUBLIC, 'src'),
+  }
+  for (const script of ['lint-tokens.mjs', 'lint-inline-css.mjs']) {
+    try {
+      execFileSync(process.execPath, [join(DESIGN_ROOT, 'scripts', script)], { cwd: DESIGN_ROOT, env, stdio: 'pipe' })
+    } catch (e) {
+      note(`design-lint: ${script} against src/dashboard/public\n${String(e.stdout || e.stderr || e).trim()}`)
+    }
+  }
+} catch {
+  // deps/design not checked out (bare clone, no `git submodule update --init`) -- skip.
+}
+
 if (fails.length) {
   console.error('lint FAIL:\n' + fails.map((m) => '  - ' + m).join('\n'))
   process.exit(1)
