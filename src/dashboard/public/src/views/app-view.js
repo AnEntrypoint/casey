@@ -63,7 +63,7 @@ export function App() {
   const side = Side({ sections: buildSideSections({}) });
   const topbar = Topbar({
     brand: 'casey', leaf: 'Cases',
-    items: [],
+    items: [], themeToggle: false,
   });
   const crumbRight = [
     QuickStartBadge(),
