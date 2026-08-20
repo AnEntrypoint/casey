@@ -27,21 +27,21 @@
 .casey-case-meta{font-size:var(--fs-nano, 12px);color:var(--fg-3, var(--muted))}
 .casey-meta-toggle{display:inline-flex;align-items:center;gap:var(--space-1, 4px);background:transparent;border:0;color:var(--fg-3, var(--muted));cursor:pointer;padding:0;font-size:inherit;transition:color var(--dur-snap) var(--ease)}
 .casey-meta-toggle:hover{color:var(--fg)}
-.casey-meta-body{display:flex;align-items:center;gap:var(--space-2, 8px);margin-top:4px}
+.casey-meta-body{display:flex;align-items:center;gap:var(--space-2, 8px);margin-top:var(--space-1, 4px)}
 .casey-meta-id{font-family:var(--ff-mono);font-size:var(--fs-pico, 10px);color:var(--fg-3, var(--muted))}
 
 .casey-progress{display:flex;align-items:center;gap:0;padding:var(--space-2, 8px) 0}
 .casey-progress-step{display:flex;align-items:center;gap:var(--space-1-75, 6px);flex:0 0 auto}
 .casey-progress-label{font-size:var(--fs-pico, 10px);color:var(--fg-3, var(--muted));white-space:nowrap}
 .casey-progress-step--active .casey-progress-label{color:var(--fg);font-weight:700}
-.casey-progress-line{flex:0 0 20px;width:20px;min-width:20px;height:2px;background:var(--border);margin:0 6px;transition:background var(--dur-base) var(--ease)}
+.casey-progress-line{flex:0 0 20px;width:20px;min-width:20px;height:2px;background:var(--border);margin:0 var(--space-1-75, 6px);transition:background var(--dur-base) var(--ease)}
 .casey-progress-step--done .casey-progress-line,.casey-progress-step--active .casey-progress-line{background:var(--accent)}
 
 .casey-autonomy-badge{display:inline-block}
 
 .casey-todo-hint{margin:0}
 
-.casey-source-badge{display:inline-block;font-size:var(--fs-pico, 10px);margin-top:4px}
+.casey-source-badge{display:inline-block;font-size:var(--fs-pico, 10px);margin-top:var(--space-1, 4px)}
 .casey-source-badge--agent{color:var(--fg-3, var(--muted))}
 .casey-ev-flagged{display:inline-flex;color:var(--fg-3, var(--muted))}
 
