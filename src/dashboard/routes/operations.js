@@ -8,6 +8,7 @@
 //   getWebhookDeliveryStatus, SAST_TZ, llmStatus, runSweep, receiveStatus,
 //   runtimeStatus, queueStatus, alertWebhookUrl
 import { tagList } from '../../timestamp.js'
+import { calculateDegradationRate } from '../../degraded-turns.js'
 
 export function registerOperations(app, deps) {
   const {
@@ -89,7 +90,133 @@ export function registerOperations(app, deps) {
     } else {
       alertWebhook = { configured: false, ok: null, last_attempt_at: null, last_error: null }
     }
-    res.json({ ...view, source: s.source, model, url, degraded: !!s.degraded, last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null, gateway, queue, alert_webhook: alertWebhook })
+    // Turn degradation rate (last hour): best-effort calculation of % of turns degraded
+    let degradationRate = null
+    try {
+      degradationRate = await calculateDegradationRate(store, { hours: 1 })
+    } catch (e) { /* best-effort; never break health */ }
+    res.json({ ...view, source: s.source, model, url, degraded: !!s.degraded, last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null, gateway, queue, alert_webhook: alertWebhook, degradation_rate: degradationRate })
+  }))
+
+  // Detailed provider health: current status, timestamps, queue depth, chain position.
+  // More granular than /api/health's pill; used by monitoring/debugging.
+  // Aggregate-only (no case refs, no contact data), visible to any authed operator.
+  app.get('/api/health/provider', wrap(async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    let providerStatus = {}
+    try {
+      if (typeof llmStatus === 'function') {
+        const s = await llmStatus()
+        if (s && s.status) {
+          // Full snapshot from ProviderHealthTracker if available
+          providerStatus = {
+            status: s.status,
+            last_success_at: s.lastSuccessAt || null,
+            last_failure_at: s.lastFailureAt || null,
+            last_failure_error: s.lastFailureError || null,
+            queued_turn_count: Number.isFinite(s.queuedTurnCount) ? s.queuedTurnCount : 0,
+            dead_lettered_count: Number.isFinite(s.deadLetteredCount) ? s.deadLetteredCount : 0,
+            current_chain_position: s.currentChainPosition || null,
+            up_since: s.upSince || null,
+          }
+        }
+      }
+    } catch { /* best-effort; never break health */ }
+    // Fallback to old-style simple status if tracker not available
+    if (!providerStatus.status) {
+      let s = typeof llmStatus === 'function' ? await llmStatus() : llmStatus
+      s = s || { source: 'unknown' }
+      providerStatus = {
+        status: s.source === 'acptoapi' ? (s.degraded ? 'degraded' : 'up') : (s.source === 'none' ? 'down' : 'unknown'),
+        last_success_at: null,
+        last_failure_at: null,
+        last_failure_error: null,
+        queued_turn_count: 0,
+        dead_lettered_count: 0,
+        current_chain_position: null,
+        up_since: null,
+      }
+    }
+    // Bound strings so a corrupted tracker cannot inject markup
+    if (providerStatus.last_failure_error) {
+      providerStatus.last_failure_error = String(providerStatus.last_failure_error).slice(0, 500)
+    }
+    if (providerStatus.current_chain_position) {
+      providerStatus.current_chain_position = String(providerStatus.current_chain_position).slice(0, 100)
+    }
+    res.json(providerStatus)
+  }))
+
+  // Case-level health signals from the periodic guardrail sweep: which cases are
+  // stuck, stale, incomplete, abandoned, or awaiting team action. Exposes the live
+  // breach set per open case (stale, stage_stuck, handoff_needed, incomplete_critical,
+  // abandoned_intake, never_closed, unsentDraft) and the last sweep summary
+  // (scanned, flagged, cleared, errors). PII-free (no external_id or contact_id).
+  // The sweep runs periodically (default 15 min); this endpoint returns the live
+  // classification, not a cached snapshot.
+  app.get('/api/health/cases', wrap(async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const { classifyCaseHealth, DEFAULT_THRESHOLDS } = await import('../../case-health.js')
+    const { tagList } = await import('../../timestamp.js')
+    const now = Date.now()
+    // Read live operator-tuned thresholds, same path /api/attention uses
+    const thresholds = await store.resolveThresholds()
+    // Scan all open cases for current health status
+    const openCases = (await store.listCases({}, { limit: 10000 }))
+      .filter(c => c.status !== 'closed' && c.channel !== 'system')
+    // Compute live breaches per case (not cached tags, which lag the real state)
+    const cases = openCases.map(c => ({
+      id: c.id,
+      ref: c.ref,
+      status: c.status,
+      tags: tagList(c).join(','),
+      breaches: classifyCaseHealth(c, now, thresholds),
+      updated_at: c.updated_at || c.created_at,
+    })).filter(c => c.breaches.length > 0)  // only show cases with active breaches
+    // Sweep status: last run time, interval, and aggregate summary
+    let sweepStatus = {
+      ok: true,
+      last_run_at: null,
+      interval_ms: 15 * 60 * 1000,  // default, same as casey.js line 484
+      next_run_at: null,
+      scanned: 0,
+      flagged: 0,
+      cleared: 0,
+      errors: 0,
+    }
+    try {
+      // If the casey instance has stored the last sweep summary (recordSweepSummary),
+      // surface it here. This is best-effort; a missing summary never breaks the endpoint.
+      if (store._lastSweepSummary) {
+        const summary = store._lastSweepSummary
+        sweepStatus = {
+          ok: !summary.errors || summary.errors.length === 0,
+          last_run_at: summary.timestamp || null,
+          interval_ms: 15 * 60 * 1000,
+          next_run_at: summary.timestamp ? summary.timestamp + (15 * 60 * 1000) : null,
+          scanned: summary.scanned || 0,
+          flagged: summary.flagged || 0,
+          cleared: summary.cleared || 0,
+          errors: summary.errors ? summary.errors.length : 0,
+        }
+      }
+    } catch { /* best-effort; a missing or corrupt summary never breaks this endpoint */ }
+    const healthCaseCount = cases.length
+    const label = healthCaseCount === 0
+      ? 'Cases: all healthy'
+      : healthCaseCount === 1
+        ? 'Cases: 1 needs attention'
+        : `Cases: ${healthCaseCount} need attention`
+    res.json({
+      ok: healthCaseCount === 0,
+      label,
+      detail: healthCaseCount === 0
+        ? 'No cases are breaching guardrails. The team is keeping up.'
+        : `${healthCaseCount} open case(s) are stale, stuck, or waiting for team action.`,
+      sweep: sweepStatus,
+      case_count: healthCaseCount,
+      cases,
+    })
   }))
 
   // Runtime/supervisor state: the lifecycle the SUPERVISOR (parent process) drives

@@ -28,6 +28,7 @@ import {
 } from './heuristics.js'
 import { judgeReply } from './reply-judge.js'
 import { transcribeAudio, describePhoto, synthesizeVoice } from './media.js'
+import { recordDegradedTurn, FAILURE_REASONS } from '../degraded-turns.js'
 
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 
@@ -829,11 +830,15 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // fed into retry prompts ("already DONE -- do not repeat") since the model
     // cannot see the prior attempt's tool results.
     const completedActions = []
+    // Track degradation reason for this turn's failure (if any)
+    let degradedReason = null
+    let degradedErrorMsg = null
     for (let attempt = 1; attempt <= MAX_TOOL_CHOICE_ATTEMPTS; attempt++) {
       const configuredTimeoutMs = Number(process.env.CASEY_LLM_TURN_TIMEOUT_MS) || 120000
       const remainingMs = isBackgroundRedrive ? configuredTimeoutMs : (TURN_HARD_DEADLINE_MS - (Date.now() - turnStartedAt))
       if (!isBackgroundRedrive && remainingMs <= 0) {
         log.warn?.('[casey] turn hard deadline reached before this attempt could start; stopping retries', { caseId: fresh.id, attempt })
+        if (!degradedReason) degradedReason = FAILURE_REASONS.TIMEOUT
         break
       }
       const attemptTimeoutMs = isBackgroundRedrive ? configuredTimeoutMs : Math.min(configuredTimeoutMs, remainingMs)
@@ -944,6 +949,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       } catch (e) {
         errored = true
         log.error?.('[casey] agent turn failed', { caseId: fresh.id, error: e.message })
+        // Classify the failure reason: timeout vs provider down
+        if (!degradedReason) {
+          if (e.message?.includes('timeout') || e.message?.includes('deadline')) {
+            degradedReason = FAILURE_REASONS.TIMEOUT
+          } else if (e.message?.includes('provider') || e.message?.includes('unreachable') || e.message?.includes('404') || e.message?.includes('503')) {
+            degradedReason = FAILURE_REASONS.PROVIDER
+          } else {
+            degradedReason = FAILURE_REASONS.RETRY_EXHAUSTED
+          }
+        }
+        degradedErrorMsg = e.message
         // A failed write here (store down, lock timeout) must not throw OUT of this
         // catch block -- that would propagate as an unhandled rejection from the
         // whole handleInbound call, defeating the very error handling this block
@@ -1259,6 +1275,26 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       if (isBackgroundRedrive) {
         return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
       }
+      // Record degraded_turn event with reason classification (timeout/provider/retry-exhausted/llm-refusal)
+      if (!degradedReason) {
+        // If no specific reason was set during attempt loop, classify based on final state
+        if (errored) {
+          degradedReason = FAILURE_REASONS.RETRY_EXHAUSTED
+        } else if (result?.error) {
+          degradedReason = FAILURE_REASONS.LLM_REFUSAL
+        } else {
+          degradedReason = FAILURE_REASONS.RETRY_EXHAUSTED
+        }
+      }
+      try {
+        await recordDegradedTurn(store, {
+          caseId: fresh.id,
+          contactId: fresh.contact_id,
+          reason: degradedReason,
+          turnStartMs: turnStartedAt,
+          channel,
+        })
+      } catch (e) { log.warn?.('[casey] failed to record degraded-turn event', { caseId: fresh.id, error: e.message }) }
       // Message tone: a turn that degraded FAST (a structural refusal, an
       // immediate provider auth error -- under the soft deadline) reads as
       // "still working, one moment" since a quick retry from the contact's

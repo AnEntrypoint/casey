@@ -163,11 +163,11 @@ entities:
       <<: *system_fields
       status:   { type: text, default: active }
       case_id:  { type: text, required: true }
-      kind:     { type: enum, options: [inbound, outbound, observation, action, transition, note], required: true }
+      kind:     { type: enum, options: [inbound, outbound, observation, action, transition, note, degraded_turn], required: true }
       actor:    { type: enum, options: [contact, agent, operator, system], default: system }
       channel:  { type: enum, options: [whatsapp, discord, sim, other] }
       text:     { type: textarea }
-      data:     { type: textarea }                   # JSON blob: raw payload / tool args
+      data:     { type: textarea }                   # JSON blob: raw payload / tool args (degraded_turn: {reason, turn_ts, recovery_ts})
       msg_id:   { type: text }                       # platform message id, for inbound dedup
 
   operator_identity:
