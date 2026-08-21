@@ -218,6 +218,66 @@ from the name alone.
 | `ACPTOAPI_AUTO_CHAIN_CAP` | Caps candidate models per `auto` chain build. Too high risks not finishing the walk inside the turn deadline; too low risks exhausting the pool on backed-off providers before reaching a healthy one. |
 | `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS`, `ACPTOAPI_READINESS_PROBE_TIMEOUT_MS`, `ACPTOAPI_EXTRA_PROBE_TIMEOUT_MS`, `ACPTOAPI_REACHABILITY_PROBE_TIMEOUT_MS` | Four independent timeouts across acptoapi/freddie layers (chat-completion link, readiness pass, discovery-time probe, and freddie's own bridge reachability check). All four must agree on an outer bound, or a genuinely slow-but-working model gets marked unhealthy/unreachable at an earlier, tighter layer before its own longer budget ever gets a chance. |
 
+## Timeout Coordination (live turn guarantee)
+
+The timeout stack is four independent layers. Each layer has its own deadline; all four must agree on an outer bound or a genuinely slow-but-working provider gets marked unhealthy/unreachable at an earlier layer before its own longer budget ever gets a chance. Misalignment causes live contacts to hit fallback messages even when the backend is healthy but slow.
+
+**Layer 1: Live-turn hard deadline (casey)**
+- `CASEY_TURN_HARD_DEADLINE_MS` (default 120000 / 2 min): Total retry budget for a live first-attempt inbound
+- `CASEY_TURN_SOFT_DEADLINE_MS` (default 25000 / 25 sec): Threshold for changing fallback message tone ("still working" vs "having trouble")
+- `CASEY_LLM_TURN_TIMEOUT_MS` (default 120000): Per-attempt safety ceiling, never exceeds remaining hard deadline
+- Applies to: Live inbound, first-attempt turn only (excludes background queue re-drives and resume sweep)
+- Guarantees: Every live turn ends with either a real reply OR a truthful status message sent to the contact
+
+**Layer 2: Provider chain link (acptoapi)**
+- `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS` (default 20000 / 20 sec): Per-provider timeout for each hop through the ranked candidate list
+- Applies to: Each provider in the auto-chain walk, once per attempt
+- Constraint: Each attempt calls the full chain to completion, not truncated mid-hop; only the hard deadline stops retries
+
+**Layer 3: Provider readiness and discovery (acptoapi/freddie)**
+- `ACPTOAPI_READINESS_PROBE_TIMEOUT_MS`: Per-provider readiness check (readiness.json)
+- `ACPTOAPI_EXTRA_PROBE_TIMEOUT_MS`: Additional provider discovery timeout
+- `ACPTOAPI_REACHABILITY_PROBE_TIMEOUT_MS`: Boot-time/dashboard reachability check
+- Applies to: Probe/discovery phase, not the real turn itself
+- Constraint: Boot probe uses a narrower sample (REACHABILITY_PROBE_CHAIN_LINK_CAP) than live turns
+
+**Coordination rules:**
+```
+Hard deadline (120s) >= Soft deadline (25s) ✓           -- tone changes partway through wait
+Hard deadline >= Per-attempt timeout (120s) ✓          -- retries fit within hard budget
+Per-attempt >= Per-link timeout (20s) ✓                -- full chain walk completes per attempt
+Per-link >= Readiness/discovery timeouts ✓             -- inner probes complete before outer
+Chain-link (20s) * max retries (3) + buffer            -- allows multiple complete chain walks
+```
+
+**Typical healthy turn timeline:**
+```
+T+0s:   inbound arrives, hard deadline clock starts, typing indicator starts
+T+2s:   agent turn dispatched, runTurn calls bridge.callLLM, chain walk starts
+T+8s:   provider responds, tool_choice forced, case_report succeeds, reply composed
+T+9s:   reply judge passes, outbound recorded and sent, typing indicator stops
+T+9s:   degraded: false, replied: true, no fallback sent
+```
+
+**Timeout degrade timeline (healthy model, slow link):**
+```
+T+0s:   inbound arrives, hard deadline clock starts
+T+2s:   attempt 1 starts, chain walks providers A, B, C (each ~18s)
+T+20s:  attempt 1 times out at hard deadline, scheduled fallback sent
+T+20s:  "Sorry, I'm having trouble right now" sent to contact (soft deadline exceeded)
+```
+
+**Background queue re-drives (separate budget):**
+- Queue re-drives and resume sweep turns are NOT subject to hard deadline
+- They use `CASEY_LLM_TURN_TIMEOUT_MS` unbounded (no hard deadline)
+- No guaranteed-fallback text sent on background degrade (stays silent)
+- Retry cap: 5 per msgId before dead-letter (queue) or 5 + 24h age (resume)
+
+**Health monitoring:**
+- `GET /api/health` returns degraded:true if recent turns were slow (rolling window, MIN_SAMPLES_FOR_DEGRADED=2)
+- `GET /api/turns/degraded` lists all degraded turns across all cases (queryable by structured data)
+- `GET /api/queue` shows pending queue depth and dead-lettered count
+
 ## Supervised runtime (hot reload + crash restart)
 
 `casey up` runs under a supervisor (`src/supervisor.js`) that forks the
