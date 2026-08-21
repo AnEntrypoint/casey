@@ -1,0 +1,69 @@
+=== WCAG ACCESSIBILITY HARDENING ANALYSIS ===
+
+FILES TO MODIFY:
+1. src/dashboard/public/app.css
+2. src/dashboard/public/src/views/case-detail.css
+3. src/dashboard/public/src/panels/dispatch-picker.css
+
+IDENTIFIED INTERACTIVE ELEMENTS NEEDING :focus-visible:
+
+From app.css (lines 1-463):
+- .ds-dialog-x, .ds-dialog-close (line 71-75)
+- .ds-mine-toggle (line 238)
+- .case-row (line 244) - already has some focus handling, but needs prefers-reduced-motion
+- .case-row-cb (line 249) - native checkbox
+- .ds-guardrail-toggle-btn (line 264)
+- .ds-account-trigger, .ds-dropdown-trigger (line 345)
+- .ds-chip-btn (line 372)
+- .ds-map-unresolved-row (line 375) - hover but no focus
+- .ds-ho-ref (line 433)
+- .ds-account-trigger, .ds-dropdown-trigger (line 345)
+- .tcase (line 278) - already has focus-visible
+
+From case-detail.css:
+- .casey-back-btn (line 13)
+- .casey-copy-btn (line 21)
+- .casey-linklike (line 22)
+- .casey-meta-toggle (line 28)
+- .casey-rep-note-btn (line 63)
+- .casey-canned-btn (line 89)
+- .casey-load-older (line 106)
+
+From dispatch-picker.css:
+- .casey-dispatch-select (line 12) - already has :focus-visible
+- .casey-dispatch-note (line 15) - already has :focus-visible
+- .casey-dispatch-cancel (line 18) - already has :focus-visible
+- .casey-dispatch-ok (line 21) - already has :focus-visible
+
+PREFERS-REDUCED-MOTION REVIEW (lines ~458-462 in app.css):
+Current coverage:
+- .ds-fill-bar .ds-fill-fill
+- .ds-step-line
+- .casey-progress-line
+- .casey-rep-editable
+- .case-row
+- .tcase
+- .ds-handoff-banner
+- .ds-guardrail-toggle-btn
+- .casey-meta-toggle
+
+Need to ADD transitions with prefers-reduced-motion guards:
+- .ds-dist-bar-fill (line 170) - has transition, NO prefers-reduced-motion guard
+- .ds-step-line (line 217) - need to verify coverage
+- .ds-fill-bar .ds-fill-fill (line 223) - already covered
+- .casey-rep-editable (line 57) - already covered
+- .casey-meta-toggle (line 28) - already covered
+- .ds-guardrail-toggle-btn (line 264) - already covered
+
+ANIMATIONS with prefers-reduced-motion guards:
+- @keyframes ds-handoff-pulse (line 307) - already has guard at line 306
+
+NEW TRANSITIONS DISCOVERED:
+- .casey-back-btn:hover (no transition, but needs focus)
+- .casey-dispatch-select (line 12) - has transition
+- .casey-dispatch-note (line 15) - has transition
+- .casey-dispatch-cancel (line 18) - has transition
+- .casey-dispatch-ok (line 21) - has transition
+- .casey-meta-toggle (line 28) - has transition, already in prefers-reduced-motion block
+- .casey-rep-editable (line 57) - has transition, already in prefers-reduced-motion block
+- .ds-dist-bar-fill (line 170) - HAS TRANSITION, MISSING prefers-reduced-motion guard!
