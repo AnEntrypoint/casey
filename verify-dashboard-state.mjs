@@ -97,11 +97,11 @@ async function login() {
   })
 
   if (result.status === 200 && result.data?.token) {
-    console.log('  ✓ Logged in')
+    console.log('  [x] Logged in')
     return result.data.token
   } else if (result.status === 200 && result.data?.authed) {
     // May be in cookie-based session
-    console.log('  ✓ Session established')
+    console.log('  [x] Session established')
     return 'cookie-based'
   }
   throw new Error(`Login failed: ${result.status}`)
@@ -116,9 +116,9 @@ async function testDashboardLoadTime() {
   const result = await httpGet(`${BASE_URL}/`)
   const elapsedMs = performance.now() - startMs
   metrics.dashboard_lcp_ms = elapsedMs
-  console.log(`✓ Dashboard home page loads in ${elapsedMs.toFixed(1)}ms (target: <2000ms)`)
+  console.log(`[x] Dashboard home page loads in ${elapsedMs.toFixed(1)}ms (target: <2000ms)`)
   if (elapsedMs > 2000) {
-    console.warn(`⚠ LCP exceeds target (${elapsedMs.toFixed(1)}ms > 2000ms)`)
+    console.warn(`WARNING LCP exceeds target (${elapsedMs.toFixed(1)}ms > 2000ms)`)
   }
 }
 
@@ -143,10 +143,10 @@ async function testCreateCase() {
 
   const result = await httpPost(`${BASE_URL}/api/cases`, casePayload)
   if (result.status >= 200 && result.status < 300) {
-    console.log(`✓ Case created: ${result.data?.id || TEST_CASE_REF}`)
+    console.log(`[x] Case created: ${result.data?.id || TEST_CASE_REF}`)
     return result.data
   } else {
-    console.error(`✗ Failed to create case: ${result.status}`, result.data)
+    console.error(`[-] Failed to create case: ${result.status}`, result.data)
     return null
   }
 }
@@ -167,16 +167,16 @@ async function testCaseListUpdate() {
       const found = listResult.data.find(c => c.ref === TEST_CASE_REF || c.subject?.includes('State Verification'))
       if (found) {
         metrics.case_list_to_first_appearance_ms = elapsedMs
-        console.log(`✓ Case found in list after ${elapsedMs.toFixed(0)}ms (target: <2000ms)`)
+        console.log(`[x] Case found in list after ${elapsedMs.toFixed(0)}ms (target: <2000ms)`)
         if (elapsedMs > 2000) {
-          console.warn(`⚠ Appearance time exceeds target (${elapsedMs.toFixed(0)}ms > 2000ms)`)
+          console.warn(`WARNING Appearance time exceeds target (${elapsedMs.toFixed(0)}ms > 2000ms)`)
         }
         return found
       }
     }
 
     if (elapsedMs > timeout) {
-      console.error(`✗ Case not found in list after ${timeout}ms (${attempt + 1} attempts)`)
+      console.error(`[-] Case not found in list after ${timeout}ms (${attempt + 1} attempts)`)
       return null
     }
 
@@ -193,13 +193,13 @@ async function testFieldEditPersistence() {
   // Fetch case first
   const listResult = await httpGet(`${BASE_URL}/api/cases`)
   if (listResult.status !== 200 || !Array.isArray(listResult.data)) {
-    console.error('✗ Failed to fetch case list')
+    console.error('[-] Failed to fetch case list')
     return false
   }
 
   const caseToEdit = listResult.data.find(c => c.ref === TEST_CASE_REF || c.subject?.includes('State Verification'))
   if (!caseToEdit) {
-    console.error('✗ Test case not found for edit')
+    console.error('[-] Test case not found for edit')
     return false
   }
 
@@ -211,7 +211,7 @@ async function testFieldEditPersistence() {
   const updateResult = await httpPost(`${BASE_URL}/api/cases/${caseId}`, updatePayload)
 
   if (updateResult.status >= 200 && updateResult.status < 300) {
-    console.log(`✓ Case field updated (assignee=${OPERATOR_ID})`)
+    console.log(`[x] Case field updated (assignee=${OPERATOR_ID})`)
 
     // Refresh and verify persistence
     await new Promise(r => setTimeout(r, 100))
@@ -220,14 +220,14 @@ async function testFieldEditPersistence() {
     if (refetchResult.status === 200 && refetchResult.data?.assignee === OPERATOR_ID) {
       const elapsedMs = performance.now() - startMs
       metrics.field_edit_persist_ms = elapsedMs
-      console.log(`✓ Field edit persisted after ${elapsedMs.toFixed(0)}ms`)
+      console.log(`[x] Field edit persisted after ${elapsedMs.toFixed(0)}ms`)
       return true
     } else {
-      console.error(`✗ Field edit did not persist (got: ${refetchResult.data?.assignee})`)
+      console.error(`[-] Field edit did not persist (got: ${refetchResult.data?.assignee})`)
       return false
     }
   } else {
-    console.error(`✗ Failed to update case field: ${updateResult.status}`, updateResult.data)
+    console.error(`[-] Failed to update case field: ${updateResult.status}`, updateResult.data)
     return false
   }
 }
@@ -242,7 +242,7 @@ async function testConcurrentEditHandling() {
   const listResult = await httpGet(`${BASE_URL}/api/cases`)
   const testCase = listResult.data.find(c => c.ref === TEST_CASE_REF)
   if (!testCase) {
-    console.error('✗ Test case not found')
+    console.error('[-] Test case not found')
     return false
   }
 
@@ -261,17 +261,17 @@ async function testConcurrentEditHandling() {
   const conflict2 = result2.status === 409 || result2.data?.error?.includes('conflict')
 
   if (success1 || success2 || conflict1 || conflict2) {
-    console.log(`✓ Concurrent edits handled (Edit1: ${success1 ? 'success' : conflict1 ? 'conflict' : 'error'}, Edit2: ${success2 ? 'success' : conflict2 ? 'conflict' : 'error'})`)
+    console.log(`[x] Concurrent edits handled (Edit1: ${success1 ? 'success' : conflict1 ? 'conflict' : 'error'}, Edit2: ${success2 ? 'success' : conflict2 ? 'conflict' : 'error'})`)
     metrics.concurrent_merge_handled = success1 || success2 || conflict1 || conflict2
 
     // Fetch final state
     const finalResult = await httpGet(`${BASE_URL}/api/cases/${caseId}`)
     if (finalResult.status === 200) {
-      console.log(`✓ Final case state retrieved (status: ${finalResult.data?.status})`)
+      console.log(`[x] Final case state retrieved (status: ${finalResult.data?.status})`)
       return true
     }
   } else {
-    console.error('✗ Concurrent edits not handled correctly')
+    console.error('[-] Concurrent edits not handled correctly')
   }
 
   return false
@@ -288,7 +288,7 @@ async function testPerformanceMetrics() {
   metrics.case_list_query_ms = result1.elapsedMs
   console.log(`  /api/cases query: ${result1.elapsedMs.toFixed(1)}ms (target: <200ms)`)
   if (result1.elapsedMs > 200) {
-    console.warn(`  ⚠ Case-list query exceeds target (${result1.elapsedMs.toFixed(1)}ms > 200ms)`)
+    console.warn(`  WARNING Case-list query exceeds target (${result1.elapsedMs.toFixed(1)}ms > 200ms)`)
   }
 
   // Test case-detail query time
@@ -298,7 +298,7 @@ async function testPerformanceMetrics() {
     metrics.case_detail_query_ms = result2.elapsedMs
     console.log(`  /api/cases/:id detail query: ${result2.elapsedMs.toFixed(1)}ms (target: <200ms)`)
     if (result2.elapsedMs > 200) {
-      console.warn(`  ⚠ Case-detail query exceeds target (${result2.elapsedMs.toFixed(1)}ms > 200ms)`)
+      console.warn(`  WARNING Case-detail query exceeds target (${result2.elapsedMs.toFixed(1)}ms > 200ms)`)
     }
   }
 }
@@ -312,12 +312,12 @@ async function testSystemHealth() {
   const healthResult = await httpGet(`${BASE_URL}/api/health`)
   if (healthResult.status === 200) {
     const health = healthResult.data
-    console.log(`✓ Health endpoint: ${health.ok ? 'OK' : 'DEGRADED'}`)
+    console.log(`[x] Health endpoint: ${health.ok ? 'OK' : 'DEGRADED'}`)
     if (health.provider) console.log(`  Provider: ${health.provider.ok ? 'OK' : 'DOWN'}`)
     if (health.gateway) console.log(`  Gateway: ${health.gateway.ok ? 'OK' : 'DOWN'}`)
     if (health.queue) console.log(`  Queue depth: ${health.queue?.pending || 0}`)
   } else {
-    console.error(`✗ Health check failed: ${healthResult.status}`)
+    console.error(`[-] Health check failed: ${healthResult.status}`)
   }
 }
 
@@ -355,15 +355,15 @@ async function runVerification() {
     if (metrics.case_list_to_first_appearance_ms > 2000) failures.push('case_list_to_first_appearance exceeds 2000ms')
 
     if (failures.length > 0) {
-      console.error('\n⚠ THRESHOLD VIOLATIONS:')
+      console.error('\nWARNING THRESHOLD VIOLATIONS:')
       failures.forEach(f => console.error(`  - ${f}`))
       process.exit(1)
     }
 
-    console.log('\n✓ All tests passed')
+    console.log('\n[x] All tests passed')
     process.exit(0)
   } catch (err) {
-    console.error('\n✗ VERIFICATION FAILED:', err.message)
+    console.error('\n[-] VERIFICATION FAILED:', err.message)
     console.error(err.stack)
     process.exit(1)
   }
