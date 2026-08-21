@@ -12,6 +12,17 @@
 import { tagList } from '../../timestamp.js'
 import { mergeTag } from '../../hooks/heuristics.js'
 
+// Remove PII fields from case row (external_id, contact_id) for all case API responses.
+// external_id is used internally for contact routing but must never appear in JSON.
+// Reply routing uses case.channel + case.id; operator identity derives from session,
+// never from contact fields. Never expose external_id or contact_id to API callers,
+// including contact-facing agent (that is handled via case-tools.js gating).
+function caseListProjection(c) {
+  if (!c) return null
+  const { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type } = c
+  return { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type }
+}
+
 export function registerCases(app, deps) {
   const {
     store, wrap, esc, str, clampLimit, offsetOf, actingOperator, authed, OPERATOR,
@@ -41,7 +52,7 @@ export function registerCases(app, deps) {
       const ref = String(req.query.ref).slice(0, 50)
       const found = await store.getCaseByRef(ref)
       const casesWithFill = found ? [{ ...found, fill_rate: computeFillRate(found.report) }] : []
-      return res.json({ cases: casesWithFill, total: casesWithFill.length, limit: casesWithFill.length, offset: 0 })
+      return res.json({ cases: casesWithFill.map(c => caseListProjection({ ...c })), total: casesWithFill.length, limit: casesWithFill.length, offset: 0 })
     }
     const q = req.query.q ? String(req.query.q).slice(0, 200).toLowerCase() : ''
     const limit = clampLimit(req.query.limit, 50)
@@ -50,6 +61,8 @@ export function registerCases(app, deps) {
     if (q) {
       // Search across case fields + all report field values. Fetch the full set
       // (capped at 10000) then filter in Node so report JSON is reachable.
+      // Search uses external_id for operator convenience (matching on contact id),
+      // but external_id is NOT returned in the response (PII gate in caseListProjection).
       const all = await store.listCases(where, { limit: 10000, offset: 0 })
       const filtered = all.filter(c => {
         const hay = [c.ref, c.subject, c.summary, c.external_id, c.channel].join(' ').toLowerCase()
@@ -64,7 +77,7 @@ export function registerCases(app, deps) {
       total = await store.countCases(where)
     }
     const casesWithFill = cases.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
-    res.json({ cases: casesWithFill, total, limit, offset })
+    res.json({ cases: casesWithFill.map(c => caseListProjection(c)), total, limit, offset })
   }))
 
   // Create a case manually from the dashboard (non-AI intake flow).
@@ -99,7 +112,8 @@ export function registerCases(app, deps) {
       await store.updateCase(c.id, { tags: newTags }, op)
     }
     await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'case created via dashboard manual intake', data: { by: op.id } })
-    res.status(201).json(await store.getCase(c.id))
+    const createdCase = await store.getCase(c.id)
+    res.status(201).json(caseListProjection({ ...createdCase, fill_rate: computeFillRate(createdCase.report) }))
   }))
 
   // CSV export: GET before /:id so express does not capture 'export.csv' as an id.
@@ -184,7 +198,7 @@ export function registerCases(app, deps) {
     const case_type_source = c.case_type && c.case_type !== 'unset'
       ? (caseTypeAction ? caseTypeAction.actor : 'agent')
       : null
-    res.json({ case: c, events, events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
+    res.json({ case: caseListProjection(c), events, events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
   }))
 
   // Submit structured report fields for a case (non-AI intake or operator correction).

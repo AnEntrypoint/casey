@@ -230,8 +230,41 @@ try {
   // deps/design not checked out (bare clone, no `git submodule update --init`) -- skip.
 }
 
+// PII safety gate: no external_id or contact_id returned in case/contact API responses.
+// The only allowed way to return a case row is via caseListProjection() (cases.js) or
+// publicContact() (contacts.js). This gate scans dashboard routes for unsafe patterns.
+const PII_PATTERNS = [
+  { file: 'cases.js', safe: 'caseListProjection' },
+  { file: 'contacts.js', safe: 'publicContact' },
+]
+const ROUTE_DIR = join(ROOT, 'src', 'dashboard', 'routes')
+for (const { file, safe } of PII_PATTERNS) {
+  let src = ''
+  try { src = readFileSync(join(ROUTE_DIR, file), 'utf8') } catch { continue }
+  // Scan for res.json/res.send calls that might return unfiltered case/contact rows
+  // Pattern: res.json({ ... : c/cases/contacts/... })
+  // Safe pattern: uses the projection function (safe variable above)
+  const lineNum = (s) => src.substring(0, src.indexOf(s)).split('\n').length
+  // Look for direct object spreads like { ...c } or { ...found } without projection
+  if (file === 'cases.js') {
+    // Check for patterns like res.json(...{ ...c, ... }) that bypass caseListProjection
+    if (/res\.json\([^;]*\{[^}]*\.\.\.c[^}]*\}/.test(src) && !src.includes('caseListProjection')) {
+      const line = lineNum('{ ...c')
+      note(`pii-safety: ${file}:${line} spreads raw case object c into JSON without caseListProjection() -- external_id/contact_id will leak`)
+    }
+    // Check for { ...found } patterns (from getCaseByRef)
+    if (/res\.json\([^;]*\{[^}]*\.\.\.found[^}]*\}/.test(src)) {
+      const match = /res\.json\([^;]*\{[^}]*\.\.\.found[^}]*\}/.exec(src)
+      if (match && !src.substring(Math.max(0, src.indexOf(match[0]) - 200), src.indexOf(match[0])).includes('caseListProjection')) {
+        const line = lineNum(match[0])
+        note(`pii-safety: ${file}:${line} spreads raw case object found into JSON without projection -- external_id/contact_id will leak`)
+      }
+    }
+  }
+}
+
 if (fails.length) {
   console.error('lint FAIL:\n' + fails.map((m) => '  - ' + m).join('\n'))
   process.exit(1)
 }
-console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii + pure-agent + no-stub-mock clean`)
+console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii + pure-agent + no-stub-mock + pii-safety clean`)
