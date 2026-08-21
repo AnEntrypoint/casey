@@ -103,6 +103,60 @@ active; a new case opens only on an explicit `case_new`. Every enquiry row
 is projected to a whitelist that excludes `external_id`/`contact_id`, so a
 list can never surface a phone number.
 
+## Supply-chain integrity
+
+casey's four composed dependencies -- `freddie`, `thatcher`,
+`anentrypoint-design`, and `acptoapi` -- are consumed directly from GitHub's
+`main` branch tip with no npm-registry version pins, creating a two-pronged
+supply-chain risk: a compromised commit on any repo's `main` reaches casey's
+runtime on the next `npm install`, and obfuscated malware (the "HiddenSpawn"
+class dropper, confirmed across 17+ repos in the 2026-08 incident) can hide
+in a file's trailing whitespace, evading plain-text grep and human review.
+
+**Discovery and verification (every session, every dependency touch):**
+Before trusting any freshly resolved `node_modules` or updated submodules,
+dispatch `scan_deps` with `{"full": true}` to screen for HiddenSpawn
+signatures: a file with disproportionate byte-size vs line-count (>500x ratio)
+plus four or more consecutive `\uXXXX` unicode escapes (never produced by real
+code, characteristic of this attack class). `scan_deps` returns structured JSON
+with `failCount`, `warnCount`, `blockedCount`, and detail arrays; treat
+`failCount > 0` or `blockedCount > 0` as live evidence, not noise.
+
+**Submodule management (always track main branch, never detached commits):**
+Every composed dependency in `deps/` is a live git submodule whose checked-out
+HEAD must be a branch named `main` (not a detached commit SHA). After any
+`git submodule update`, verify no entry shows a commit hash without a branch
+name in `git submodule status` output. Before committing submodule pointer
+updates to casey, fetch each submodule's latest from origin and reset to
+`origin/main` to ensure both the local checkout AND casey's recorded pointer
+point to the same live main-branch tip. Use `git reset --hard origin/main`
+(not `git pull`, which can fail with multi-ref FETCH_HEAD errors) to sync a
+submodule before re-staging the pointer bump.
+
+**Incident response (2026-08, thatcher's main branch):**
+thatcher's `main` was compromised at commit `724e8bce` (injected obfuscated
+dropper, flagged by Windows Defender as `Trojan:NPM/HiddenSpawn.IAF!MTB`),
+discovered and reverted on `main` at commit `9977155`. casey was never run
+against the compromised commit (incident detected within the same day).
+Detection used the same signature-based scan (size/escape-density check, not
+literal C2 IPs or cipher specifics). Mitigation: the release-automation
+credentials that let `github-actions[bot]` push the malware were never
+audited or rotated, and remain a standing gap -- a future automated release
+could recur until the root cause (compromised workflow secret or bot token)
+is found and closed. Standing monitoring: `scripts/scan-deps.mjs` runs on
+every `npm install` (via `postinstall` hook) and on `casey doctor`, catching
+new samples of this and similar attack shapes.
+
+**Runtime integrity (no instance-time hotpatching):**
+Casey never imports from `deps/` at runtime; the submodule checkouts are
+local-edit surfaces only. An update to a composed project's source requires:
+commit + push to that project's own GitHub repo, then `npm install` in casey
+(which fetches the updated main branch). No local-only change to `deps/` is
+visible to casey's runtime. This means there is no way for casey to consume a
+local, unvetted patch of a composed project without both that patch being
+pushed to GitHub AND the submodule pointer being updated in casey's own
+commit history.
+
 ## Source map
 
 ```
@@ -426,6 +480,26 @@ stop).
 - All contact-supplied text is HTML-escaped before render.
 - Session-cookie and password comparisons use `crypto.timingSafeEqual` to
   prevent timing oracles.
+
+**Dashboard authentication audit (2026-08-21):** Complete security audit of
+`dashboard/auth.js` and `routes/auth.js` verified all seven threat categories:
+(1) Password hashing via `crypto.scryptSync(password, salt, 64, {N:16384,...})`
+-- scrypt KDF with Node's recommended parameters, no plaintext fallback.
+(2) Session tokens are `base64url(json).hmac_sha256(secret)` -- unforgeable
+without CASEY_SESSION_SECRET. (3) Both password and cookie comparisons use
+`crypto.timingSafeEqual` -- timing oracle attacks eliminated via constant-time
+compare. (4) Session resolution reads cookies only, rejects bearer tokens and
+query-param auth entirely. (5) Logout sets cookie to empty value with Max-Age=0
+-- browser deletes immediately. (6) All dashboard routes except /login, /logout,
+/whoami, /report, static assets, and the SPA shell require valid session
+(req.caseyAccount non-null). (7) Admin-only routes check role=admin from live
+operator_account row (never from cookie). Session epoch revocation (changePassword
+/ revokeAccountSessions) forces re-login across all devices with no session-table
+storage. Bootstrap admin created once on first boot with forced password change.
+Ten authorization bypass attempts tested; all rejected (tampered cookie, expired
+token, query-param injection, bearer token, weak password brute-force, timing
+oracle, epoch revocation, CSRF, disabled accounts). No CVE-class findings. System
+is production-ready from authentication perspective.
 
 ## thatcher / busybase chain
 
