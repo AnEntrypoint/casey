@@ -156,7 +156,7 @@ export function registerOperations(app, deps) {
   // classification, not a cached snapshot.
   app.get('/api/health/cases', wrap(async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const { classifyCaseHealth, DEFAULT_THRESHOLDS } = await import('../../case-health.js')
+    const { classifyCaseHealth } = await import('../../case-health.js')
     const { tagList } = await import('../../timestamp.js')
     const now = Date.now()
     // Read live operator-tuned thresholds, same path /api/attention uses
@@ -185,19 +185,20 @@ export function registerOperations(app, deps) {
       errors: 0,
     }
     try {
-      // If the casey instance has stored the last sweep summary (recordSweepSummary),
-      // surface it here. This is best-effort; a missing summary never breaks the endpoint.
-      if (store._lastSweepSummary) {
-        const summary = store._lastSweepSummary
+      // Read the last sweep summary via store.getFleetHealth() (case-store.js line 504).
+      // This is best-effort; a missing summary never breaks the endpoint.
+      const fleetHealth = await store.getFleetHealth(1)
+      if (fleetHealth?.latest) {
+        const summary = fleetHealth.latest
         sweepStatus = {
-          ok: !summary.errors || summary.errors.length === 0,
-          last_run_at: summary.timestamp || null,
+          ok: !summary.degraded,
+          last_run_at: summary.ts || null,
           interval_ms: 15 * 60 * 1000,
-          next_run_at: summary.timestamp ? summary.timestamp + (15 * 60 * 1000) : null,
+          next_run_at: summary.ts ? summary.ts + (15 * 60 * 1000) : null,
           scanned: summary.scanned || 0,
           flagged: summary.flagged || 0,
           cleared: summary.cleared || 0,
-          errors: summary.errors ? summary.errors.length : 0,
+          errors: summary.errors ? (Array.isArray(summary.errors) ? summary.errors.length : 0) : 0,
         }
       }
     } catch { /* best-effort; a missing or corrupt summary never breaks this endpoint */ }
