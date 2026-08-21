@@ -74,6 +74,7 @@ body { background: var(--bg); color: var(--fg); }
   display: inline-flex; align-items: center; justify-content: center;
 }
 .ds-dialog-x:hover, .ds-dialog-close:hover { background: var(--bg-3, var(--hover)); color: var(--fg); }
+.ds-dialog-x:focus-visible, .ds-dialog-close:focus-visible { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-dialog-body h3 { margin: var(--space-3) 0 var(--space-1); font-size: var(--fs-sm); }
 .ds-dialog-body p { margin: var(--space-1) 0; color: var(--fg-2, var(--muted)); }
 .ds-dialog-body .ds-lede, .ds-dialog-body .lede { color: var(--fg); }
@@ -236,6 +237,7 @@ body { background: var(--bg); color: var(--fg); }
    casey-local override needed here. */
 .ds-case-filters-search { position: relative; flex: 2 1 220px; }
 .ds-mine-toggle { background: transparent; border: 0; padding: 0; cursor: pointer; display: inline-flex; }
+.ds-mine-toggle:focus-visible { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 
 .ds-case-list-scroll { overflow-y: auto; }
 .ds-case-list-plain, .ds-case-list-empty { display: flex; flex-direction: column; }
@@ -255,7 +257,7 @@ body { background: var(--bg); color: var(--fg); }
    tell "the row I'm about to open with Enter" apart from "the row currently
    open in the detail pane" when they differ. */
 .case-row.kbd-focused { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: -2px; }
-.case-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; transition: outline-offset var(--dur-snap) var(--ease); }
+.case-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
 .case-row-body { flex: 1; min-width: 0; }
 .case-row-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; row-gap: var(--space-1); min-height: 24px; }
 .case-row-ref { font-weight: 600; font-size: var(--fs-sm, var(--fs-body)); }
@@ -263,6 +265,7 @@ body { background: var(--bg); color: var(--fg); }
 .case-row-sub { display: flex; align-items: center; gap: var(--space-2); row-gap: var(--space-1-75, var(--space-2)); font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-top: var(--space-2); flex-wrap: wrap; }
 .ds-guardrail-toggle-btn { background: none; border: none; color: var(--accent-ink, var(--accent)); font-size: var(--fs-pico, var(--fs-micro)); cursor: pointer; padding: 0; margin-top: var(--space-1-75, var(--space-2)); display: block; text-decoration: underline; text-underline-offset: 2px; transition: color var(--dur-snap) var(--ease); }
 .ds-guardrail-toggle-btn:hover { color: var(--accent); }
+.ds-guardrail-toggle-btn:focus-visible { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-guardrail-expanded { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 
 .ds-pagination { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
@@ -343,6 +346,7 @@ body { background: var(--bg); color: var(--fg); }
    .ds-account-trigger class this rule used to target -- style the class the
    SDK actually emits. */
 .ds-account-trigger, .ds-dropdown-trigger { display: inline-flex; align-items: center; gap: var(--space-2); background: transparent; border: 1px solid var(--border); border-radius: var(--r-md, var(--r-1)); padding: var(--space-1) var(--space-3); cursor: pointer; color: var(--fg); font-size: var(--fs-sm); }
+.ds-account-trigger:focus-visible, .ds-dropdown-trigger:focus-visible { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-notif-trigger { position: relative; display: inline-flex; }
 
 /* ---- related-reports cluster row / case-id pill grid --------------------- */
@@ -370,6 +374,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-map-filters, .map-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .ds-map-overlays { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .ds-chip-btn { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; }
+.ds-chip-btn:focus-visible { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-map-unresolved-note { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin: var(--space-2) 0; }
 .ds-map-unresolved-list { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
 .ds-map-unresolved-row {
@@ -378,10 +383,16 @@ body { background: var(--bg); color: var(--fg); }
   padding: var(--space-1) var(--space-2); border-radius: var(--r-1);
 }
 .ds-map-unresolved-row:hover { background: var(--bg-2, var(--panel-1)); }
+.ds-map-unresolved-row:focus-visible { outline: 2px solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-muted { color: var(--fg-3, var(--muted)); }
 .leaflet-popup-content { font-size: var(--fs-nano, var(--fs-micro)); }
 .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg-2, var(--panel-1)); color: var(--fg); }
 .leaflet-container { background: var(--bg-2, var(--panel-1)); }
+
+/* ---- map marker icons and popups (map-leaflet.js) ----------------------- */
+.ds-map-marker-icon { display: flex; align-items: center; justify-content: center; }
+.ds-map-marker-dot { width: 14px; height: 14px; border-radius: var(--r-pill); border: 2px solid rgba(255, 255, 255, 0.8); box-shadow: 0 0 2px rgba(0, 0, 0, 0.5); }
+.ds-map-popup-status { color: var(--fg-2); }
 
 @container (max-width: 640px) {
   .ds-map-wrap, .map-wrap, .ds-map-canvas { height: min(55vh, 420px); }
@@ -457,6 +468,6 @@ body { background: var(--bg); color: var(--fg); }
 /* prefers-reduced-motion guard for any casey-specific animation not already
    covered by the SDK's own guard. */
 @media (prefers-reduced-motion: reduce) {
-  .ds-fill-bar .ds-fill-fill, .ds-step-line, .casey-progress-line, .casey-rep-editable,
+  .ds-fill-bar .ds-fill-fill, .ds-step-line, .ds-dist-bar-fill, .casey-progress-line, .casey-rep-editable,
   .case-row, .tcase, .ds-handoff-banner, .ds-guardrail-toggle-btn, .casey-meta-toggle { transition: none; animation: none; }
 }
