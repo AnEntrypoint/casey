@@ -245,10 +245,10 @@ The timeout stack is four independent layers. Each layer has its own deadline; a
 
 **Coordination rules:**
 ```
-Hard deadline (120s) >= Soft deadline (25s) ✓           -- tone changes partway through wait
-Hard deadline >= Per-attempt timeout (120s) ✓          -- retries fit within hard budget
-Per-attempt >= Per-link timeout (20s) ✓                -- full chain walk completes per attempt
-Per-link >= Readiness/discovery timeouts ✓             -- inner probes complete before outer
+Hard deadline (120s) >= Soft deadline (25s) [x]        -- tone changes partway through wait
+Hard deadline >= Per-attempt timeout (120s) [x]       -- retries fit within hard budget
+Per-attempt >= Per-link timeout (20s) [x]             -- full chain walk completes per attempt
+Per-link >= Readiness/discovery timeouts [x]          -- inner probes complete before outer
 Chain-link (20s) * max retries (3) + buffer            -- allows multiple complete chain walks
 ```
 
