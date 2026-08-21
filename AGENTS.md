@@ -213,6 +213,8 @@ from the name alone.
 | `CASEY_DRAIN_DEADLINE_MS` vs `CASEY_DRAIN_TURN_TIMEOUT_MS` | Two distinct drain timeouts -- the former bounds the supervisor's reload-time drain of the whole worker; the latter bounds `casey.js`'s own in-process `drain()` await used for shutdown/test determinism. |
 | `CASEY_RESUME_MAX_REDRIVES`, `CASEY_RESUME_SPACING_MS`, `CASEY_RESUME_MAX_AGE_MS` | Bound the boot-time stuck-turn resume sweep so it cannot starve a genuinely new contact's message by exhausting provider rate limits, and so a stuck message isn't retried forever across restarts once it's aged past usefulness. |
 | `CASEY_DRAIN_POLL_INTERVAL_MS` | Background poll that drains LLM-down-queued turns once the provider recovers, independent of any new inbound arriving on the same conversation -- without it a queued contact can wait indefinitely even after the backend is healthy again. |
+| `CASEY_SWEEP_INTERVAL_MS` | Health-guardrail sweep runs on this interval (default 15*60e3 / 15 minutes). Opt-in: a non-positive value disables the sweep entirely (sweepIntervalMs<=0). The sweep detects stale/stuck/abandoned cases, machine violations, and team coverage gaps. |
+| `CASEY_HEALTH_BREACH_WINDOW_MS` | Coverage-gap detection window (default 60*60e3 / 1 hour). A team alert fires when at least one breaching case exists AND zero operator replies landed in this window. |
 | `CASEY_RATE_LIMIT_MSGS`/`WINDOW_MS`, `CASEY_GLOBAL_RATE_LIMIT_MSGS`/`WINDOW_MS` | An over-cap message is dropped silently (no reply, no synthetic "slow down" text), matching the no-fallback-text discipline. Per-contact and aggregate-across-all-contacts limits are independent. |
 | `CASEY_TURN_HARD_DEADLINE_MS`, `CASEY_TURN_SOFT_DEADLINE_MS` | The hard deadline bounds total retry budget for a live first-attempt turn only (never a background resume); the soft deadline only picks which of two fallback strings to send once the hard deadline closes out a degraded turn. Pace these together with `ACPTOAPI_AUTO_CHAIN_CAP`/`ACPTOAPI_CHAIN_LINK_TIMEOUT_MS` below -- a wide candidate pool with slow-but-working reasoning models needs both room to wait and room to finish the walk inside the outer deadline. |
 | `ACPTOAPI_AUTO_CHAIN_CAP` | Caps candidate models per `auto` chain build. Too high risks not finishing the walk inside the turn deadline; too low risks exhausting the pool on backed-off providers before reaching a healthy one. |
@@ -277,6 +279,15 @@ T+20s:  "Sorry, I'm having trouble right now" sent to contact (soft deadline exc
 - `GET /api/health` returns degraded:true if recent turns were slow (rolling window, MIN_SAMPLES_FOR_DEGRADED=2)
 - `GET /api/turns/degraded` lists all degraded turns across all cases (queryable by structured data)
 - `GET /api/queue` shows pending queue depth and dead-lettered count
+- `GET /api/health/cases` returns live case-level health signals (breaches per case + sweep status)
+
+## Case health guardrails and sweep
+
+The periodic guardrail sweep (`case-sweep.js`, `casey.startSweep()`) runs every `CASEY_SWEEP_INTERVAL_MS` (default 15 min) and detects health guardrail violations on every open case. Every newly-entered breach produces an observation event + a health:* tag on the case.
+
+**Breach types:** stale (48h), stage_stuck (per-stage maxDwell), handoff_needed (30 min), unanswered_handoff_escalated (8h), incomplete_critical, abandoned_intake (12h), never_closed (7d), unsentDraft (1h). Team coverage gaps fire once per rising edge when at least one breaching case exists AND zero operator replies landed in `CASEY_HEALTH_BREACH_WINDOW_MS` (default 1h).
+
+**Sweep mechanics:** Re-entrancy guard prevents overlapping passes; observations appended BEFORE tag writes (prevents silent loss on retry); write-failure throttle (15 min) prevents spam on persistent failures; optimistic locking with expectedVersion handles concurrent writes correctly; error abort after 100 errors/pass.
 
 ## Supervised runtime (hot reload + crash restart)
 
