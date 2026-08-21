@@ -23,17 +23,19 @@ function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function mapMarkerIcon(color) {
+function mapMarkerIcon(statusTok) {
+    // statusTok is the token name (e.g., '--sky', '--amber') from STATUS_TOKEN
+    // Set it as a CSS variable on the marker div so CSS can use var()
     return window.L.divIcon({
-        className: '',
-        html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,.8);box-shadow:0 0 2px rgba(0,0,0,.5)"></div>`,
+        className: 'ds-map-marker-icon',
+        html: `<div class="ds-map-marker-dot" data-status-token="${statusTok}"></div>`,
         iconSize: [14, 14],
     });
 }
 
 function mapPopupHtml(p) {
     const counts = [p.affected_count != null ? p.affected_count + ' affected' : '', p.dead_count != null ? p.dead_count + ' dead' : ''].filter(Boolean).join(', ');
-    return `<div><b>${esc(p.ref)}</b> <span style="color:var(--fg-2)">${esc(p.status)}</span><br>`
+    return `<div><b>${esc(p.ref)}</b> <span class="ds-map-popup-status">${esc(p.status)}</span><br>`
         + (p.species ? esc(p.species) + '<br>' : '')
         + (p.case_type && p.case_type !== 'unset' ? esc(p.case_type) + '<br>' : '')
         + (p.location ? esc(p.location) + '<br>' : '')
@@ -60,7 +62,7 @@ function renderMapMarkers(mapState, filters) {
     const filtered = applyMapFilters(mapState.pins, filters);
     const layer = window.L.markerClusterGroup({ maxClusterRadius: 40 });
     for (const p of filtered) {
-        const m = window.L.marker([p.lat, p.lon], { icon: mapMarkerIcon(statusColor(p.status)) });
+        const m = window.L.marker([p.lat, p.lon], { icon: mapMarkerIcon(STATUS_TOKEN[p.status] || '--fg-3') });
         m.bindPopup(mapPopupHtml(p));
         m.on('popupopen', () => {
             const el = document.querySelector(`[data-open-ref="${p.id}"]`);

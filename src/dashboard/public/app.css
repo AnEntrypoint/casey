@@ -391,7 +391,16 @@ body { background: var(--bg); color: var(--fg); }
 
 /* ---- map marker icons and popups (map-leaflet.js) ----------------------- */
 .ds-map-marker-icon { display: flex; align-items: center; justify-content: center; }
-.ds-map-marker-dot { width: 14px; height: 14px; border-radius: var(--r-pill); border: 2px solid rgba(255, 255, 255, 0.8); box-shadow: 0 0 2px rgba(0, 0, 0, 0.5); }
+.ds-map-marker-dot {
+  width: 14px; height: 14px; border-radius: var(--r-pill);
+  border: 2px solid color-mix(in oklab, var(--paper) 80%, transparent);
+  box-shadow: 0 0 2px color-mix(in oklab, var(--ink) 50%, transparent);
+}
+.ds-map-marker-dot[data-status-token="--sky"] { background: var(--sky); }
+.ds-map-marker-dot[data-status-token="--amber"] { background: var(--amber); }
+.ds-map-marker-dot[data-status-token="--green"] { background: var(--green); }
+.ds-map-marker-dot[data-status-token="--purple-2"] { background: var(--purple-2); }
+.ds-map-marker-dot[data-status-token="--fg-3"] { background: var(--fg-3); }
 .ds-map-popup-status { color: var(--fg-2); }
 
 @container (max-width: 640px) {
