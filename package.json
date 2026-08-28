@@ -20,14 +20,14 @@
     "auto-update": "node scripts/auto-update.mjs"
   },
   "dependencies": {
-    "acptoapi": "github:AnEntrypoint/acptoapi#main",
-    "anentrypoint-design": "github:AnEntrypoint/Design#main",
+    "acptoapi": "file:deps/acptoapi",
+    "anentrypoint-design": "file:deps/design",
     "express": "^4.19.2",
-    "freddie": "github:AnEntrypoint/freddie#main",
+    "freddie": "file:deps/freddie",
     "js-yaml": "^4.3.1",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
-    "thatcher": "github:AnEntrypoint/thatcher#main",
+    "thatcher": "file:deps/thatcher",
     "xstate": "^5.32.0"
   }
 }
