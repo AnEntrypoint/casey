@@ -4,7 +4,7 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
-import { Dialog } from '../../components/dialog-shell.js';
+import { Dialog, confirmDialog } from '../../components/dialog-shell.js';
 import { state, schedule } from '../../state.js';
 import { toast } from '../../toasts.js';
 const h = webjsx.createElement;
@@ -16,9 +16,9 @@ export function ShareDialog({ key } = {}) {
     const open = !!c;
     const close = () => { state._shareDialogFor = null; schedule(); };
     const url = c ? (location.origin + '/report?ref=' + encodeURIComponent(c.ref)) : '';
-    const copy = () => {
-        try { navigator.clipboard.writeText(url); toast('Link copied'); }
-        catch { prompt('Copy this link:', url); }
+    const copy = async () => {
+        try { await navigator.clipboard.writeText(url); toast('Link copied'); }
+        catch { await confirmDialog({ title: 'Copy this link', inputLabel: 'Link', inputDefault: url, confirmLabel: 'Done' }); }
         close();
     };
     return Dialog({

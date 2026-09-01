@@ -10,6 +10,7 @@ import { state, schedule, appendTimelineEvents, setTimelineSearch } from '../../
 import { fetchCaseEvents, postFlagReply } from '../../api.js';
 import { rel, fmtTime } from '../../format.js';
 import { eventIcon, eventTone } from '../../icons-map.js';
+import { confirmDialog } from '../../components/dialog-shell.js';
 const h = webjsx.createElement;
 
 // "Flag this reply" is pillar 8's live-feedback loop for prompt tuning: an
@@ -19,7 +20,7 @@ const h = webjsx.createElement;
 // outbound (casey's own sent replies) can be flagged -- flagging an inbound
 // contact message or an internal action/observation makes no sense here.
 async function flagReply(caseId, e) {
-    const reason = window.prompt('What was wrong with this reply? (optional)', '') || '';
+    const reason = (await confirmDialog({ title: 'Flag this reply', inputLabel: 'What was wrong with this reply? (optional)' })) || '';
     try {
         await postFlagReply(caseId, e.id, reason);
         e._flagged = true;

@@ -11,6 +11,7 @@ import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { postIntake, postNote } from '../../api.js';
 import { SOURCE_LABEL } from '../../icons-map.js';
+import { confirmDialog } from '../../components/dialog-shell.js';
 const h = webjsx.createElement;
 
 const REPORT_FIELD_MAXLEN = 2000;
@@ -56,7 +57,7 @@ export function ReportField({ caseId, k, label, value, source, notes, onSaved, k
     };
 
     const addNote = async () => {
-        const text = (prompt('Note for: ' + label) || '').trim();
+        const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Note for: ' + label })) || '').trim();
         if (!text) return;
         try {
             await postNote(caseId, text, k);
