@@ -7,7 +7,7 @@
 // intentionally small and dependency-free (Node's built-in crypto only, no
 // bcrypt/express-session): scrypt for password hashing (a real, slow KDF, not
 // a bare hash), and a stateless HMAC-signed session cookie so no server-side
-// session store is needed -- the store (data/app.db) stays the one durable
+// session store is needed -- the store (data/db.sqlite) stays the one durable
 // boundary, matching casey's existing hot-reload design (AGENTS.md).
 //
 // Bootstrap: a fresh deployment has no accounts, so nobody could ever log in.
