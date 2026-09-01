@@ -58,7 +58,7 @@ export function SkillsOverlay({ open, operatorId, onClose, onAllDone } = {}) {
         open, onClose,
         id: 'skills',
         title: 'Getting the hang of it',
-        footer: Btn({ onClick: onClose }, 'Close'),
+        footer: Btn({ onClick: onClose, children: 'Close' }),
         children: [
             Lede({ children: 'A short checklist of the three moves that make a shift fast. Tick each one as you learn it -- this is just for you, kept on this device, and it will not nag you again once you finish or close it.' }),
             h('ul', { key: 'list', class: 'ds-skills-list', role: 'group', 'aria-label': 'Skills checklist' },
