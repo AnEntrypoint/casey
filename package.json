@@ -16,7 +16,8 @@
     "scan-deps": "node scripts/scan-deps.mjs",
     "check-submodules": "node scripts/check-submodules.mjs",
     "install-hooks": "node scripts/install-hooks.mjs",
-    "postinstall": "node scripts/install-hooks.mjs && node scripts/scan-deps.mjs || true",
+    "link-deps": "node scripts/link-deps.mjs",
+    "postinstall": "node scripts/link-deps.mjs && node scripts/install-hooks.mjs && node scripts/scan-deps.mjs || true",
     "auto-update": "node scripts/auto-update.mjs"
   },
   "dependencies": {
