@@ -30,11 +30,24 @@ export function registerModalBody(name, renderFn) { modalBodies[name] = renderFn
 function modalTitle(name) {
   return { settings: 'Settings', stats: 'Stats', help: 'Help', onboarding: 'Quick start', skills: 'Getting the hang of it' }[name] || name;
 }
+// Content-heavy dialogs (a wide data table, a multi-section form) need the
+// Dialog's wide variant -- see dialog-shell.js's own Dialog({wide}) doc,
+// which already named settings/stats as the intended cases; this registry
+// was the only thing not actually passing it.
+const WIDE_MODALS = new Set(['settings', 'stats']);
+// help/onboarding/skills each call Dialog(...) themselves (their own title/
+// footer/id needs), unlike settings/stats which return plain content meant
+// to be wrapped once here -- wrapping an already-self-wrapped body in a
+// second outer Dialog produced two stacked backdrops+panels (confirmed live:
+// opening onboarding rendered both a "Quick start" and a nested "Quick start
+// - three things" dialog on top of each other).
+const SELF_WRAPPED_MODALS = new Set(['help', 'onboarding', 'skills']);
 function ModalMount() {
   const name = state.activeModal;
   if (!name || name === 'confirm-logout-everywhere') return null;
   const body = modalBodies[name] ? modalBodies[name]() : h('p', {}, 'Loading...');
-  return Dialog({ open: true, title: modalTitle(name), onClose: closeModal, children: body });
+  if (SELF_WRAPPED_MODALS.has(name)) return body;
+  return Dialog({ open: true, title: modalTitle(name), onClose: closeModal, children: body, wide: WIDE_MODALS.has(name) });
 }
 
 // Content-swap panel registry (Metrics/Clusters/Distribution/Geo/Map/
