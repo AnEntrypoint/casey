@@ -40,8 +40,8 @@ export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
         title: 'Welcome to casey',
         wide: true,
         footer: h('div', { class: 'ds-dialog-foot-row' },
-            onShowOnboarding ? Btn({ variant: 'ghost', onClick: onShowOnboarding }, 'Show me the quick start again') : null,
-            Btn({ variant: 'primary', onClick: onClose }, 'Got it')
+            onShowOnboarding ? Btn({ variant: 'ghost', onClick: onShowOnboarding, children: 'Show me the quick start again' }) : null,
+            Btn({ variant: 'primary', onClick: onClose, children: 'Got it' })
         ),
         children: [
             Lede({ children: 'casey watches your messages on WhatsApp and Discord and helps you answer them. Here is what this screen shows you, in plain words.' }),

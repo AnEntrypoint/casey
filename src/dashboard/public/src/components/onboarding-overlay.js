@@ -30,7 +30,7 @@ export function OnboardingOverlay({ open, onClose } = {}) {
         open, onClose,
         id: 'onboarding',
         title: 'Quick start - three things',
-        footer: Btn({ variant: 'primary', onClick: onClose }, 'Start working'),
+        footer: Btn({ variant: 'primary', onClick: onClose, children: 'Start working' }),
         children: [
             Lede({ children: 'A new shift starts here. These three steps are all you need to begin.' }),
             h('ol', { key: 'steps', class: 'ds-onboard-steps' },
