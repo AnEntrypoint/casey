@@ -387,26 +387,50 @@ required: the pointer bump keeps `deps/freddie` in sync for the next
 
 ### Kit consumption strategy (fleet-wide)
 
-Node-resolved consumers (casey, freddie) declare `anentrypoint-design` as a
+**casey itself is the exception, not the pattern below.** casey declares its
+four composed deps (`freddie`, `thatcher`, `acptoapi`, `anentrypoint-design`)
+as local `file:deps/<name>` npm refs, not `github:` specs -- a fresh clone's
+`npm install` otherwise stalls npm's git-dep preparation for these repos even
+when the trees are already mounted as submodules (see the `chore(deps):
+resolve the 6 submodule deps via local file refs` commit). This means casey's
+own `npm install` resolves each composed dep straight from its already-
+checked-out `deps/<name>` submodule, so `deps/` is no longer purely an
+editable-local-clone-with-a-separate-runtime-fetch as the rest of this
+Architecture section describes for other Node-resolved consumers -- for
+casey specifically, editing `deps/<name>` in place and running `npm install`
+IS enough to pick up the change locally, no push required first. A push to
+`deps/<name>`'s own repo is still required before any OTHER consumer (a
+fresh clone, CI, a different machine) sees the fix, since only casey's own
+`node_modules` resolves against the local submodule checkout.
+
+Every other Node-resolved consumer of `anentrypoint-design` -- `freddie`
+itself, and any future non-casey consumer -- declares it as a
 `github:AnEntrypoint/Design#main` npm dependency, so `npm install` fetches
 the package directly from GitHub's `main` branch tip rather than the npm
-registry -- casey resolves it out of `node_modules` and serves its `dist/`
-directly, same as before, only the fetch source moved. `freddie`, `thatcher`,
-and `acptoapi` use the same `github:owner/repo#main` spec for the same
-reason: `npm install` remains the only mechanism that can populate
-`node_modules` for a package a Node process directly `import`s, but the
-resolution source is now each project's own GitHub repository instead of the
-npm registry -- there is no way to CDN-serve a package into Node's module
-resolver, so `github:` is the closest real equivalent of "always latest from
-GitHub" for a server-side dependency. Two consumers are deliberately excluded
-from this strategy and must stay excluded: `gmsniff` (must run air-gapped,
-zero external-origin runtime fetches -- never give it a CDN load or runtime
-dependency) and `agentgui` (vendors the built kit locally for offline
-operation and UI stability). Accepted tradeoff: a push to any of these four
-repos' `main` branch can change casey's runtime behavior or dashboard UI with
-no commit in casey, and with no version pin to roll back to (a `github:` spec
-has no npm-published version history) -- if a broken build lands on `main` in
-any of the four repos, casey's next `npm install` picks it up immediately.
+registry. `freddie`'s own composed deps (`thatcher`, `acptoapi`, `plugsdk`)
+use the same `github:owner/repo#main` spec for the same reason: `npm
+install` remains the only mechanism that can populate `node_modules` for a
+package a Node process directly `import`s, but the resolution source is each
+project's own GitHub repository instead of the npm registry -- there is no
+way to CDN-serve a package into Node's module resolver, so `github:` is the
+closest real equivalent of "always latest from GitHub" for a server-side
+dependency. Two consumers are deliberately excluded from this strategy and
+must stay excluded: `gmsniff` (must run air-gapped, zero external-origin
+runtime fetches -- never give it a CDN load or runtime dependency) and
+`agentgui` (vendors the built kit locally for offline operation and UI
+stability). Accepted tradeoff for every `github:`-spec consumer: a push to
+any of the four repos' `main` branch can change that consumer's runtime
+behavior or dashboard UI with no commit of its own, and with no version pin
+to roll back to (a `github:` spec has no npm-published version history) --
+if a broken build lands on `main` in any of the four repos, that consumer's
+next `npm install` picks it up immediately. casey does not carry this
+specific tradeoff for its own four composed deps (a `file:` ref only moves
+when casey's own submodule pointer is bumped and committed), but inherits
+the equivalent risk one level down: an untrusted `deps/<name>` checkout
+(a bad `git submodule update`, an unreviewed pointer bump) is trusted
+immediately on the next `npm install`, with no separate fetch step to catch
+it -- this is exactly why `scan_deps`/`scan-deps.mjs` runs on every
+`npm install` and `casey doctor` (see Supply-chain integrity above).
 
 ## Environment
 
