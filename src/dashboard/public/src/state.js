@@ -9,6 +9,15 @@
 // mutator any of those consumer modules imports is present here so no
 // downstream view breaks on integration.
 
+// BLUF: where things are happening is the single most operationally
+// important fact, so the map -- not the case list -- is the default home
+// view (see views/map-command-center.js). Persisted per-viewer, same
+// try/catch-localStorage shape as setTheme/setSimpleMode below, so an
+// operator who prefers the list-first workflow keeps that choice.
+function readHomeView() {
+  try { return localStorage.casey_home_view === 'cases' ? 'cases' : 'map'; } catch { return 'map'; }
+}
+
 export const state = {
   // auth / config
   authed: false, currentUser: null, config: null,
@@ -17,6 +26,8 @@ export const state = {
   // filters
   filt: { q: '', status: '', channel: '', source: '', mine: false },
   mineOnly: false, inboxMode: false, simpleMode: false, theme: 'dark',
+  // 'map'|'cases' -- which view MainContent() renders when no panel is open
+  homeView: readHomeView(),
   // pagination
   page: 1, pageSize: 50,
   bulkSelected: new Set(),
@@ -72,6 +83,12 @@ export function setAttention(rows) { state.attention = rows; schedule(); }
 export function setFilt(partial) { Object.assign(state.filt, partial); state.page = 1; schedule(); }
 export function setMineOnly(v) { state.mineOnly = !!v; state.filt.mine = !!v; state.page = 1; schedule(); }
 export function setInboxMode(v) { state.inboxMode = !!v; schedule(); }
+export function setHomeView(v) {
+  state.homeView = v === 'cases' ? 'cases' : 'map';
+  state.activePanel = null; state.activeModal = null;
+  try { localStorage.casey_home_view = state.homeView; } catch { /* localStorage unavailable */ }
+  schedule();
+}
 export function setSimpleMode(v) { state.simpleMode = !!v; try { localStorage.casey_simple = v ? '1' : ''; } catch { /* localStorage unavailable */ } schedule(); }
 export function setTheme(t) { state.theme = t; try { localStorage.casey_theme = t; } catch { /* localStorage unavailable */ } schedule(); }
 export function setPage(p) { state.page = Math.max(1, p | 0); schedule(); }

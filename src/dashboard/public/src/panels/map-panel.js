@@ -51,8 +51,12 @@ function onMountCanvas(el) {
     refresh();
 }
 
-export function MapPanel() {
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: () => { closePanel(); } });
+// embedded=true (the map-first command-center home view, see
+// views/map-command-center.js) drops the "Back to cases" affordance --
+// there is nothing to go back to, the map itself is home. embedded=false
+// (the legacy Reports & Admin nav entry, PanelSwap) keeps it.
+export function MapPanel({ embedded = false } = {}) {
+    const back = embedded ? null : Btn({ variant: 'ghost', children: 'Back to cases', onClick: () => { closePanel(); } });
     const legend = h('div', { class: 'ds-map-legend' }, ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
         h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), k.replace(/_/g, ' '))));
 

@@ -66,7 +66,14 @@ async function reloadCases() {
 
 export function CaseListDetailLayout() {
   const hasActive = state.activeId != null;
-  return h('div', { class: 'app-two-pane' + (hasActive ? ' has-active' : '') },
+  // .grow is the design SDK's own opt-in: .app-main > * defaults to
+  // flex:none (content-sized) so a document-flow child (hero, panel) keeps
+  // its natural height; a full-region flex child re-asserts flex:1 1 auto
+  // via .grow's higher specificity (app-shell/topbar.css). Without it this
+  // pane sized to its own content's min-width instead of filling .app-main
+  // -- found live while building the map-first home view (same .app-two-
+  // pane class), confirmed the case list carries the identical gap.
+  return h('div', { class: 'app-two-pane grow' + (hasActive ? ' has-active' : '') },
     h('div', { class: 'case-list-pane', key: 'list' },
       CaseListView({
         onOpenIntake: promptNewCase,
