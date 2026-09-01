@@ -12,6 +12,7 @@ import * as api from '../api.js';
 import { toast } from '../toasts.js';
 import { CaseListView } from './case-list-view.js';
 import { CaseDetailView } from './case-detail-view.js';
+import { confirmDialog } from '../components/dialog-shell.js';
 const h = webjsx.createElement;
 
 function closeCase() {
@@ -30,7 +31,7 @@ function openCase(id) {
 }
 
 async function promptNewCase() {
-  const subject = (prompt('New case -- what is it about? (e.g. "sick cattle near Musina")') || '').trim();
+  const subject = ((await confirmDialog({ title: 'New case', inputLabel: 'What is it about? (e.g. "sick cattle near Musina")' })) || '').trim();
   if (!subject) return;
   try {
     const created = await api.createCase({ subject });
@@ -41,14 +42,14 @@ async function promptNewCase() {
 }
 
 async function promptTag(id) {
-  const tag = (prompt('Add a tag') || '').trim();
+  const tag = ((await confirmDialog({ title: 'Add a tag', inputLabel: 'Tag' })) || '').trim();
   if (!tag) return;
   try { await api.postBulk([id], 'tag', { tag }); toast('Tagged', 'ok'); await reloadCases(); }
   catch (e) { toast('Could not tag: ' + (e.message || ''), 'err'); }
 }
 
 async function promptNote(id) {
-  const text = (prompt('Add a note') || '').trim();
+  const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Note' })) || '').trim();
   if (!text) return;
   try { await api.postNote(id, text); toast('Note saved', 'ok'); }
   catch (e) { toast('Could not save note: ' + (e.message || ''), 'err'); }

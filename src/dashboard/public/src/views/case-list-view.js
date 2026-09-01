@@ -15,6 +15,7 @@ import { InboxPanel } from './case-list/inbox-panel.js';
 import { BulkBar } from './case-list/bulk-bar.js';
 import { Pagination } from './case-list/pagination.js';
 import { VirtualizedCaseList, PlainCaseList, VIRTUALIZE_THRESHOLD } from './case-list/virtualized-list.js';
+import { confirmDialog } from '../components/dialog-shell.js';
 const { Heading } = ds.components;
 const h = ds.h;
 
@@ -41,8 +42,8 @@ export function visibleCases() {
   return state.allCases.filter(matchesClientFilt);
 }
 
-function promptSaveView() {
-  const name = (prompt('Name this view (e.g. "my urgent", "Musina handoffs"):') || '').trim();
+async function promptSaveView() {
+  const name = ((await confirmDialog({ title: 'Save this view', inputLabel: 'Name this view (e.g. "my urgent", "Musina handoffs"):' })) || '').trim();
   if (!name) return;
   const r = saveCurrentView(name);
   if (!r.ok) { toast(r.error, 'err'); return; }

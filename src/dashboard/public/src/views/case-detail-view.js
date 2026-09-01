@@ -26,6 +26,7 @@ import { SiteHistoryPanel, loadSiteHistory } from './case-detail/site-history.js
 import { SplitDialogTrigger, SplitDialog } from './case-detail/split-dialog.js';
 import { SnoozeDialog, openSnoozeDialog } from './case-detail/snooze-dialog.js';
 import { ShareDialog, openShareDialog } from './case-detail/share-dialog.js';
+import { confirmDialog } from '../components/dialog-shell.js';
 const h = webjsx.createElement;
 
 let _loadedFor = null;
@@ -92,7 +93,7 @@ export function CaseDetailView({ onClose, onOpenCase, key } = {}) {
         h('div', { class: 'casey-timeline-actions' },
             SplitDialogTrigger({ caseId: id }),
             Btn({ size: 'sm', variant: 'ghost', children: '+ Note', onClick: async () => {
-                const text = (prompt('Add a note to this case') || '').trim();
+                const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Add a note to this case' })) || '').trim();
                 if (!text) return;
                 try { await postNote(id, text); toast('note saved', 'ok'); await reload(id); }
                 catch (e) { toast(await failMsg(e, 'note failed'), 'err'); }

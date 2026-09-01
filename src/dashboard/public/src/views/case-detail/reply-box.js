@@ -11,6 +11,7 @@ import { Dropdown } from '/design/src/components/overlay-primitives.js';
 import { state, schedule } from '../../state.js';
 import { toast, undoToast, replyUndoToast, failMsg } from '../../toasts.js';
 import { api, postDraftApprove, postDraftDiscard } from '../../api.js';
+import { confirmDialog } from '../../components/dialog-shell.js';
 const h = webjsx.createElement;
 
 const REPLY_MAXLEN = 4096;
@@ -91,7 +92,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
                     } catch (e) { toast(await failMsg(e, 'approve failed'), 'err'); }
                 } }),
                 Btn({ size: 'sm', variant: 'ghost', children: 'Discard', onClick: async () => {
-                    if (!confirm('Discard this draft? It will not be sent. The case stays flagged for a human.')) return;
+                    if (await confirmDialog({ title: 'Discard this draft?', message: 'It will not be sent. The case stays flagged for a human.', confirmLabel: 'Discard', danger: true }) === null) return;
                     try { await postDraftDiscard(c.id); toast('draft discarded', 'ok'); if (onReload) await onReload(c.id); }
                     catch (e) { toast(await failMsg(e, 'discard failed'), 'err'); }
                 } })

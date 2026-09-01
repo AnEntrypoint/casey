@@ -85,7 +85,7 @@ export function Dialog({ open, title, onClose, children, wide = false, id, foote
 // action). Resolves the input string ('' if none given) on confirm, or
 // null on cancel/escape. Uses raw DOM (not webjsx) since it is a one-shot
 // imperative overlay, matching the legacy showDialog()'s own shape.
-export function confirmDialog({ title, message, inputLabel, inputPlaceholder, confirmLabel = 'Confirm', danger = false }) {
+export function confirmDialog({ title, message, inputLabel, inputPlaceholder, inputDefault, confirmLabel = 'Confirm', danger = false }) {
   return new Promise((resolve) => {
     const backdrop = document.createElement('div');
     backdrop.className = 'ds-dialog-backdrop';
@@ -116,6 +116,7 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, co
       input = document.createElement('input');
       input.type = 'text';
       input.placeholder = inputPlaceholder || '';
+      if (inputDefault !== undefined) input.value = inputDefault;
       input.className = 'ds-dialog-input';
       lbl.appendChild(input);
       panel.appendChild(lbl);
@@ -139,6 +140,6 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, co
     cancelBtn.onclick = () => close(null);
     backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(null); });
     backdrop.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
-    setTimeout(() => (input || okBtn).focus(), 60);
+    setTimeout(() => { (input || okBtn).focus(); if (input && inputDefault !== undefined) input.select(); }, 60);
   });
 }
