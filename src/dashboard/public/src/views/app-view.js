@@ -18,6 +18,7 @@ import { ToastTray } from '../components/toast-tray.js';
 import { LoginGate } from './login-gate.js';
 import { Dialog } from '../components/dialog-shell.js';
 import { CaseListDetailLayout } from './case-list-detail-layout.js';
+import { MapCommandCenter } from './map-command-center.js';
 const h = webjsx.createElement;
 
 // The single modal-rendering code path: every activeModal value maps to a
@@ -60,14 +61,15 @@ function PanelSwap() {
   const name = state.activePanel;
   const body = panelBodies[name] ? panelBodies[name]() : h('p', {}, 'This panel is not available yet.');
   return h('div', { class: 'ds-panel-swap' },
-    IconButton({ icon: Icon('chevron-left'), title: 'Back to cases', onClick: backToCases }),
+    IconButton({ icon: Icon('chevron-left'), title: state.homeView === 'cases' ? 'Back to cases' : 'Back to map', onClick: backToCases }),
     h('div', { class: 'ds-panel-swap-body' }, body)
   );
 }
 
 function MainContent() {
   if (state.activePanel) return PanelSwap();
-  return CaseListDetailLayout();
+  if (state.homeView === 'cases') return CaseListDetailLayout();
+  return MapCommandCenter();
 }
 
 export function App() {

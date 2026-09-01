@@ -3,7 +3,7 @@
 // -- consumed by app-view.js.
 
 import { Icon } from 'ds/components/shell.js';
-import { state, setInboxMode } from '../state.js';
+import { state, setInboxMode, setHomeView } from '../state.js';
 import { openPanel, openModal, closePanel } from '../state.js';
 import * as api from '../api.js';
 import { toast } from '../toasts.js';
@@ -45,6 +45,11 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0, refreshAll } = {
     {
       group: 'Primary',
       items: [
+        // BLUF home-view switch: where things are happening (the map) is
+        // the default landing view, not buried in Reports & Admin -- see
+        // state.js's homeView/setHomeView and views/map-command-center.js.
+        { key: 'home_map', glyph: Icon('globe', { size: 15 }), label: 'Map', onClick: () => setHomeView('map'), active: state.homeView === 'map' && !state.activePanel, ariaLabel: 'Map view (home)' },
+        { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: () => setHomeView('cases'), active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },
         { key: 'new_case', glyph: Icon('plus', { size: 15 }), label: 'New case', onClick: openIntakeNew, ariaLabel: 'Add a case manually' },
         { key: 'export', glyph: Icon('download', { size: 15 }), label: 'Export', href: '/api/cases/export.csv' },
         { key: 'sweep', glyph: Icon('refresh', { size: 15 }), label: 'Sweep now', onClick: runSweep, ariaLabel: 'Run health-guardrail sweep now' },
@@ -61,7 +66,6 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0, refreshAll } = {
         { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: () => openPanel('clusters'), active: state.activePanel === 'clusters', count: clustersCount },
         { key: 'distribution', glyph: Icon('grid', { size: 15 }), label: 'Distribution', onClick: () => openPanel('distribution'), active: state.activePanel === 'distribution' },
         { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: () => openPanel('geo'), active: state.activePanel === 'geo' },
-        { key: 'map', glyph: Icon('folder', { size: 15 }), label: 'Map', onClick: () => openPanel('map'), active: state.activePanel === 'map' },
         { key: 'activity', glyph: Icon('thread', { size: 15 }), label: 'Activity', onClick: () => openPanel('activity'), active: state.activePanel === 'activity' },
         { key: 'handover', glyph: Icon('external-link', { size: 15 }), label: 'Shift handover', onClick: () => openPanel('handover'), active: state.activePanel === 'handover' },
         { key: 'offline', glyph: Icon('warn', { size: 15 }), label: 'Missed while offline', onClick: () => openPanel('offline'), active: state.activePanel === 'offline', count: offlineCount, color: offlineCount ? 'var(--warn)' : undefined },
