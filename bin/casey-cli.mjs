@@ -350,9 +350,17 @@ async function main() {
     console.log(alertHook
       ? ok(`breach alerts on${process.env.CASEY_ALERT_WEBHOOK ? ' CASEY_ALERT_WEBHOOK' : ' CASEY_HANDOFF_WEBHOOK (fallback)'}`)
       : dim('  CASEY_ALERT_WEBHOOK unset - sweep breaches surface in the inbox but do not push an alert (optional)'))
-    // data dir -- where the live case store lives (cwd-bound)
+    // data dir -- where the live case store lives (cwd-bound). The actual
+    // filename is db.sqlite, not app.db: thatcher's own databasePath option
+    // only ever contributes its DIRECTORY to busybase (databasePathToDir()
+    // in thatcher's index.js strips the filename component entirely), and
+    // busybase's own embedded.js hardcodes `${dir}/db.sqlite` as the real
+    // file it opens -- confirmed by inspecting the live process's open file
+    // descriptors, not by reading a doc. app.db is never created; checking
+    // for it here always reported "no case data yet" even with real data on
+    // disk.
     const dataDir = path.join(process.cwd(), 'data')
-    const dbFile = path.join(dataDir, 'app.db')
+    const dbFile = path.join(dataDir, 'db.sqlite')
     console.log(existsSync(dbFile)
       ? ok(`case data at ${dbFile}`)
       : dim(`  no case data yet (will be created at ${dbFile})`))

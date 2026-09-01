@@ -806,8 +806,11 @@ there is no signal on this call distinguishing the two.
 - No automated test suite. Verification is manual/live against a real
   running `casey up` instance. Do not add a test file or mock-heavy unit
   suite back in.
-- thatcher's sqlite handle is cwd-bound (primes `getDatabase()` from
-  `<cwd>/data/app.db` at init; re-importing the accessor forks a second
-  handle).
+- thatcher's sqlite handle is cwd-bound and primed at init. The real file is
+  `<cwd>/data/db.sqlite`, not `app.db`: thatcher's own `databasePath` option
+  only contributes its directory (`databasePathToDir()` strips any filename),
+  and busybase (the libsql-backed store thatcher delegates to) hardcodes
+  `db.sqlite` as the file it actually opens, regardless of what filename
+  thatcher's option named. Re-importing the accessor forks a second handle.
 
 @.gm/next-step.md

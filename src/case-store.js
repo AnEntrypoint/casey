@@ -75,12 +75,15 @@ export class CaseStore {
     this.configPath = opts.config
       || (process.env.CASEY_CONFIG_DIR ? path.resolve(process.env.CASEY_CONFIG_DIR, 'thatcher.config.yml') : null)
       || path.resolve(process.cwd(), 'thatcher.config.yml')
-    // The DB lives at <cwd>/data/app.db and is cwd-bound: thatcher primes its
-    // better-sqlite3 handle by calling getDatabase() argless during init
-    // (index.js initDatabase -> database-core.migrate), which resolves
-    // <cwd>/data/app.db and caches it; importing getDatabase ourselves to
-    // pre-seed a different path forks thatcher's module graph into a second
-    // handle (see file header), so the ONLY safe relocation is the process cwd.
+    // The DB lives at <cwd>/data/db.sqlite and is cwd-bound: thatcher's own
+    // `databasePath` option (index.js normalizeOptions) only ever contributes
+    // its DIRECTORY -- databasePathToDir() strips any filename component --
+    // and busybase (the real libsql-backed store thatcher delegates to,
+    // embedded.js) hardcodes `${dir}/db.sqlite` as the file it actually opens
+    // via createClient(), regardless of what filename thatcher's option
+    // named. Importing thatcher's db accessor ourselves to pre-seed a
+    // different path forks its module graph into a second handle (see file
+    // header), so the ONLY safe relocation is the process cwd.
     // test.js therefore runs from an isolated temp cwd so a run never wipes a
     // live ./data. dataDir is exposed for diagnostics (doctor/up print it).
     this.dataDir = path.resolve(process.cwd(), 'data')

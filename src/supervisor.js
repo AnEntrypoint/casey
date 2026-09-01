@@ -9,7 +9,7 @@
 // itself. The machine answers "is event E legal from state S, and what does it
 // lead to?"; the supervisor performs the effect and advances its own state value.
 //
-// Durable boundary: the worker holds the sqlite store (cwd-bound app.db). A reload
+// Durable boundary: the worker holds the sqlite store (cwd-bound db.sqlite). A reload
 // or crash respawns the worker, which REOPENS the same file -- so persisted case
 // data survives every restart (WAL-checkpointed by the worker's graceful drain).
 // The handoff is SEQUENTIAL (old worker fully exits before the new one opens the
@@ -65,7 +65,7 @@ function reloadWatchPaths() {
   // worker too, else the running build silently diverges. Watched by DEFAULT,
   // existence-guarded by armWatcher's fs.existsSync -- a bare clone (no sibling)
   // simply skips it with a warning, never crashes. (thatcher is an npm dep with no
-  // local source tree to watch; its app.db is the durable boundary, reopened per
+  // local source tree to watch; its db.sqlite is the durable boundary, reopened per
   // worker -- nothing to hot-reload there.)
   const freddieSrc = path.resolve(__dirname, '..', '..', 'freddie', 'src')
   paths.push(freddieSrc)
@@ -77,7 +77,7 @@ function reloadWatchPaths() {
 }
 
 // A source file change worth a reload: .js/.mjs only, ignore the spool, dotfiles,
-// node_modules, and the sqlite store itself (the worker writes app.db constantly --
+// node_modules, and the sqlite store itself (the worker writes db.sqlite constantly --
 // watching it would reload-storm forever).
 function isReloadableChange(file) {
   if (!file) return false
