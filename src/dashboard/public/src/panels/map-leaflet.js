@@ -177,7 +177,14 @@ async function renderMapLastReports(mapState) {
 // the webjsx chrome (map-panel.js) can render <Select> options.
 export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     if (!canvas) return null;
-    const j = await fetchMapCases(days).catch(() => null);
+    // fetchMapCases -> qs() expects a params OBJECT (Object.entries(params)) --
+    // passing the bare `days` string here (qs()'s `params || {}` guard never
+    // fires since a non-empty string is truthy) made Object.entries iterate
+    // the STRING's characters instead, sending ?0=<first digit> and silently
+    // dropping the days filter entirely (the server's /api/map/cases only
+    // reads req.query.days -- confirmed live: the days dropdown had zero
+    // effect on which pins loaded).
+    const j = await fetchMapCases({ days }).catch(() => null);
     if (!j) { if (callbacks && callbacks.onError) callbacks.onError('Could not load the map.'); return mapStateRef.current; }
     if (!mapStateRef.current) {
         canvas.innerHTML = '';
