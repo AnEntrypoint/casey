@@ -1,0 +1,126 @@
+# config/uhh/report-fields.yml -- Ubuntu Herd Health (UHH) domain config for
+# this casey incarnation. Field vocabulary matches src/packs/animal-health.js's
+# observationForms.sick_or_dead_animal shape (the same domain, declared once
+# there for the provenance subsystem, mirrored here for the live agent
+# conversation's own case_report tool -- see AGENTS.md's Configuration
+# architecture section for why these two are separate, parallel declarations).
+
+entity_label: report
+enquiry_headline_fields: [species, location]
+tool_name: case_report
+tool_description: >-
+  Record what you have learned about a sick or dead animal, one field at a
+  time, as the reporter describes it. Pass ONLY the fields you actually
+  learned this turn -- they merge into the running report, so you never lose
+  earlier facts and never need to repeat a field the reporter already gave.
+  The reporter is usually a field worker relaying what they saw on someone
+  else's farm, not the animals' owner -- ask only what they can see or
+  relay. Leave a field out if you do not know it yet; do not guess.
+
+fields:
+  - key: species
+    description: "Animal type: cattle, goat, sheep, poultry, pig, or other."
+    critical_for_visit: true
+    display_label: Animal type
+    section: Visit critical
+  - key: symptoms
+    description: "What was seen: signs of illness, injury, or cause of death, in the reporter's own words."
+    critical_for_visit: true
+    display_label: Symptoms
+    section: Visit critical
+  - key: age_bracket
+    description: "Rough age of the affected animal(s) -- young/calf, adult, old -- if mentioned."
+    display_label: Age
+    section: Report detail
+  - key: affected_count
+    description: "How many animals are affected, if more than one."
+    display_label: Affected count
+    section: Report detail
+  - key: herd_total
+    description: "Total size of the herd/flock this animal belongs to, if known."
+    display_label: Herd size
+    section: Report detail
+  - key: dead_count
+    description: "How many have died, if any."
+    display_label: Dead count
+    section: Report detail
+  - key: onset
+    description: "When it started and whether it's getting worse."
+    display_label: When it started
+    section: Report detail
+  - key: treatment_history
+    description: "Anything already tried or given (medicine, isolation, a vet call), if mentioned."
+    display_label: Already tried
+    section: Report detail
+  - key: suspected_disease
+    description: "ONLY if the reporter names a specific suspected condition (e.g. foot and mouth, Newcastle disease, anthrax, rabies) -- never infer or guess a disease from symptoms alone."
+    never_inferred: true
+    never_inferred_guard_pattern: "never infer or guess"
+    display_label: Suspected disease
+    section: Report detail
+  - key: location
+    description: "Where: farm/homestead name, area, or landmark -- as the reporter describes it."
+    critical_for_visit: true
+    display_label: Location
+    section: Visit critical
+  - key: condition_status
+    description: "Current state: sick and alive, recovering, dead, or unknown, if mentioned."
+    display_label: Status
+    section: Report detail
+  - key: nearby_cases
+    description: "Whether the reporter mentions other sick/dead animals nearby, on this farm or a neighbouring one."
+    display_label: Nearby cases
+    section: Report detail
+  - key: environment_change
+    description: "Any recent change the reporter mentions: new animals brought in, feed change, weather, water source."
+    display_label: Recent changes
+    section: Report detail
+  - key: photos
+    description: "Note that the reporter sent a photo (set to a short description, e.g. 'photo of lesion'). Each call ADDS a new photo note -- if more than one photo arrives, call again with a description of the new one; earlier descriptions are kept, never overwritten."
+    append: true
+    display_label: Photos
+    section: Notes & media
+  - key: audio
+    description: "Note that the reporter sent a voice note, if relevant detail was in it beyond what's already recorded."
+    append: true
+    display_label: Audio notes
+    section: Notes & media
+  - key: notes
+    description: "Anything else worth recording."
+    display_label: Other notes
+    section: Notes & media
+  - key: reported_by_proxy
+    description: "If someone other than the animals' owner is reporting on their behalf (e.g. a field worker, a neighbour), who that is."
+    display_label: Reported by
+    section: Follow-up
+  - key: reported_by_proxy_relation
+    description: "How the reporting person is linked to the owner: field worker, neighbour, family, etc."
+    display_label: Reporter's link to owner
+    section: Follow-up
+
+geo_fields:
+  - key: lat
+    description: "Latitude of the farm/site, if the reporter shares GPS or a place you can identify with confidence."
+  - key: lon
+    description: "Longitude, alongside lat."
+
+# Dashboard shell shape (report-shape.js's DASHBOARD_UI, threaded through
+# /api/config) -- see app-view.js/nav-config.js for consumers. Absent
+# entirely, every consumer falls back to casey's own hardcoded literals;
+# this is the UHH incarnation's own branding layer.
+dashboard_ui:
+  brand: UHH
+  leaf: Reports
+  # default_view is additive -- see main.js's boot() and AGENTS.md's
+  # Configuration architecture section. 'map' lands the operator on the
+  # outbreak map instead of the case list; any other/absent value keeps
+  # today's case-list-first landing unchanged.
+  default_view: map
+  nav:
+    relabel:
+      new_case: New report
+      geo: Hotspots
+      map: Outbreak map
+    group_labels:
+      Primary: Primary
+      "Reports & Admin": Surveillance & Admin

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="UHH">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="apple-touch-icon" href="/icon.svg">
+<title>UHH - reports</title>
+<!-- 247420.css is the single scope-prefixed bundle (colors_and_type.css +
+     app-shell.css + every overlay-primitives component sheet, concatenated
+     at build time under the .ds-247420 scope the #app mount root already
+     carries) -- linking the two unprefixed source files instead left every
+     overlay-primitives rule (Dropdown/Popover/Tooltip/.ds-popover position,
+     ApprovalPrompt, etc.) entirely unloaded: live-witnessed as the account
+     menu's dropdown rendering full-width and pinned to the viewport bottom
+     instead of anchored near its trigger, because .ds-popover had no
+     position:absolute rule to apply its own inline left/top style against. -->
+<link rel="stylesheet" href="/design/dist/247420.css">
+<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="/vendor/leaflet.markercluster/MarkerCluster.css">
+<link rel="stylesheet" href="/vendor/leaflet.markercluster/MarkerCluster.Default.css">
+<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="/src/views/case-detail.css">
+<link rel="stylesheet" href="/src/panels/dispatch-picker.css">
+<script type="importmap">
+{ "imports": {
+  "webjsx": "/design/vendor/webjsx/index.js",
+  "webjsx/": "/design/vendor/webjsx/",
+  "ds/": "/design/src/"
+} }
+</script>
+</head>
+<body class="ds-247420" data-accent="green">
+<!-- overlay-primitives (Dropdown/MenuButton/Tooltip/Popover) always portal
+     their popover element straight onto document.body (design SDK
+     roving-menu.js), never inside #app -- so the SDK's own scoped rules
+     (.ds-247420 .ds-popover { position:absolute; ... }) never matched
+     without the scope class ALSO present on body: live-witnessed as the
+     account menu's dropdown rendering full-width and pinned to the
+     viewport bottom instead of positioned near its trigger. The #app div
+     keeps its own copy too since plenty of non-portaled component CSS
+     still keys off an ancestor a couple of nesting doors closer than body. -->
+<script src="/vendor/leaflet/leaflet.js"></script>
+<script src="/vendor/leaflet.markercluster/leaflet.markercluster.js"></script>
+<div id="app" class="ds-247420 ds-app-surface"></div>
+<script type="module" src="/src/main.js"></script>
+<script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{})</script>
+</body></html>

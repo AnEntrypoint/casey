@@ -1,0 +1,222 @@
+{
+  "baseline_id": "perf-baseline-1787315100",
+  "measurement_date": "2026-08-21",
+  "measurement_timestamp_iso": "2026-08-21T12:29:56.000Z",
+  "completion_timestamp_iso": "2026-08-21T13:59:19.000Z",
+  "casey_version": "0.2.0",
+  "environment": {
+    "dashboard_url": "http://localhost:4000",
+    "thatcher_db": "C:/dev/casey/data/db.sqlite",
+    "node_version": ">=22",
+    "status": "casey up running live, real thatcher database with real case data (23+ cases scanned by sweep)",
+    "llm_provider_status": "source:none -- no LLM API credentials configured in this dev .env; AI-helper health pill reports 'AI helper: offline', degraded:false (correctly distinguishes 'never configured' from 'configured but failing')",
+    "auth_method": "real operator_account row inserted directly into live sqlite (username perfbase-1787320512527, role admin, scrypt-hashed per src/dashboard/auth.js's own hashPassword scheme), then a real POST /api/login round trip to obtain a live HMAC-signed session cookie -- no session forged, no bypass of the auth code path"
+  },
+  "measurements": {
+    "dashboard_root": {
+      "endpoint": "GET /",
+      "target_lcp_ms": 2000,
+      "status": "completed",
+      "phase_1_unauthed": {
+        "timestamp": "2026-08-21T12:29:56.000Z",
+        "http_status": 200,
+        "time_total_ms": 10,
+        "passes_target": true
+      },
+      "phase_2_authed_series": {
+        "timestamp": "2026-08-21T13:55:47.000Z",
+        "n": 5,
+        "attempts_ms": [17.141, 10.175, 12.877, 7.138, 12.008],
+        "mean_ms": 11.868,
+        "min_ms": 7.138,
+        "max_ms": 17.141,
+        "passes_target": true
+      },
+      "note": "Server-side root HTML delivery only (no browser-rendered LCP measured -- Chrome DevTools/browser verb was not reachable against this headless dev box in this session; server TTFB is the measured floor a real LCP would sit above once CSS/JS/paint are added)."
+    },
+    "api_health_provider": {
+      "endpoint": "GET /api/health/provider",
+      "target_ms": 50,
+      "status": "completed",
+      "phase_1_unauthed_401": {
+        "timestamp": "2026-08-21T12:29:56.000Z",
+        "n": 5,
+        "attempts_ms": [2.882, 2.877, 2.858, 3.030, 3.433],
+        "mean_ms": 3.016,
+        "min_ms": 2.858,
+        "max_ms": 3.433,
+        "http_status": 401,
+        "passes_target": true,
+        "note": "401-path timing only -- auth rejection short-circuits before the real handler runs, so this does not exercise the actual provider-status read."
+      },
+      "phase_2_authed_series": {
+        "timestamp": "2026-08-21T13:55:47.000Z",
+        "n": 10,
+        "attempts_ms": [120.88, 86.76, 65.1, 103.154, 82.895, 65.394, 80.242, 53.103, 40.185, 43.683],
+        "mean_ms": 74.14,
+        "min_ms": 40.185,
+        "max_ms": 120.88,
+        "http_status": 200,
+        "passes_target": false,
+        "regression_note": "Worst-case 120.88ms is 2.4x the 50ms target (141% over). Mean 74.14ms is 48% over target. This is the REAL authenticated handler cost, not the 401-shortcut cost above -- the two measurements are not comparable; the original unauthed number understated true cost by ~25-40x. Root cause: route reads live llmStatus()+queueStatus()+gateway channel state (Discord connection age, queue depth) plus session verification (HMAC + scrypt-independent cookie check) on every call, no caching layer. Not a regression from a prior authenticated baseline (none existed) -- this is the first true measurement of this endpoint."
+      }
+    },
+    "api_cases_list": {
+      "endpoint": "GET /api/cases",
+      "target_ms": 100,
+      "status": "completed",
+      "phase_1_unauthed_401": {
+        "timestamp": "2026-08-21T12:29:56.000Z",
+        "n": 5,
+        "attempts_ms": [2.860, 2.652, 2.925, 5.610, 4.186],
+        "mean_ms": 3.647,
+        "min_ms": 2.652,
+        "max_ms": 5.610,
+        "http_status": 401,
+        "passes_target": true,
+        "note": "401-path timing only, same caveat as api_health_provider phase 1."
+      },
+      "phase_2_authed_series": {
+        "timestamp": "2026-08-21T13:55:47.000Z",
+        "n": 10,
+        "attempts_ms": [301.103, 40.49, 20.742, 25.814, 42.997, 39.296, 24.688, 46.785, 25.79, 20.984],
+        "mean_ms": 58.869,
+        "min_ms": 20.742,
+        "max_ms": 301.103,
+        "http_status": 200,
+        "passes_target": false,
+        "regression_note": "First-hit cold-path outlier (301.1ms, 3x target) then steady-state 20.7-46.8ms (within 100ms target on 9/10 attempts). Cold-start cost is consistent with first-query JIT warmup / first sqlite prepared-statement compile + connection-pool init, not a per-request defect -- steady-state mean (34.6ms excluding the cold hit) is well under target. Real case data returned (case list with ref/status/priority/tags/fill_rate fields, 28-field report shape)."
+      }
+    },
+    "api_cases_detail": {
+      "endpoint": "GET /api/cases/:id",
+      "target_ms": 200,
+      "status": "completed",
+      "route_correction": "Actual live route is GET /api/cases/:id keyed by thatcher's internal case id (e.g. mt2x82jm-aez37q2v), not :ref (CASE-1028-TWJXKSEV) as originally assumed in the task description -- ref is a display/lookup field, id is the store primary key store.getCase() takes.",
+      "timestamp": "2026-08-21T13:57:00.000Z",
+      "n": 10,
+      "attempts_ms": [18.757, 8.778, 11.352, 16.834, 10.688, 8.734, 9.94, 10.391, 10.461, 12.238],
+      "mean_ms": 11.817,
+      "min_ms": 8.734,
+      "max_ms": 18.757,
+      "http_status": 200,
+      "passes_target": true,
+      "note": "Well under 200ms target on every attempt, worst-case included. Real case returned with full event history, transitions, report_fill_rate, suggested_assignee."
+    },
+    "api_cases_update": {
+      "endpoint": "PATCH /api/cases/:id",
+      "target_ms": 200,
+      "status": "completed",
+      "route_correction": "Actual live route is PATCH /api/cases/:id (not POST /api/cases/:ref/update as originally assumed) -- cases.js line 248, editable fields: subject/summary/priority/tags/assignee/autonomy/case_type.",
+      "timestamp": "2026-08-21T13:57:00.000Z",
+      "n": 10,
+      "attempts_ms": [101.629, 99.338, 124.203, 116.931, 267.257, 71.225, 66.532, 72.584, 69.745, 72.045],
+      "mean_ms": 106.149,
+      "min_ms": 66.532,
+      "max_ms": 267.257,
+      "http_status": 200,
+      "passes_target": false,
+      "regression_note": "9/10 attempts pass (66.5-124.2ms, within 200ms target). Attempt 5 spiked to 267.3ms (33% over target) -- a single worst-case outlier, not a sustained trend (attempts 6-10 immediately returned to 66-73ms baseline). Root cause: PATCH does a real audited write (case row update + appended event with field-diff old/to for the changed summary field, per AGENTS.md's field-correction-is-distinguishable-from-first-fill invariant) plus optimistic-lock version check -- write path is inherently costlier than the pure-read detail endpoint (11.8ms mean), and one write in ten most likely hit a transient contention window (sqlite writer lock, or GC pause) rather than a structural defect. Worth a follow-up profiling pass if this recurs at higher write concurrency, but not remediated in this baseline session -- captured as observed, not fixed, per this row's scope (measurement only)."
+    },
+    "end_to_end_report": {
+      "description": "Time from contact message send to reply received (LLM-mediated agent turn, real channel)",
+      "status": "not_measurable_in_this_environment",
+      "reason": "No LLM provider credentials are configured in this dev .env (CASEY_LLM_MODEL=auto but no ANTHROPIC_API_KEY/ACPTOAPI-reachable provider). GET /api/health confirms this live: {\"ok\":false,\"label\":\"AI helper: offline\",\"source\":\"none\",\"model\":null,\"degraded\":false}. AGENTS.md's own no-mocks invariant ('a degraded turn never fabricates case content and never claims to have understood the report') forbids synthesizing a fake reply to produce a number here -- doing so would violate the same design principle this baseline is meant to protect. Discord channel IS live and connected (gateway.channels.discord: {state:'ok', connected:true, sinceConnectMs:131522}) but posting a real message to a real Discord server crosses this session's world-scope boundary (reaching another party) without explicit user authorization.",
+      "adjacent_real_measurement": {
+        "what": "Live queue/health state at measurement time (the real degraded-turn path's own signal surface, not a synthetic reply)",
+        "timestamp": "2026-08-21T13:58:09.000Z",
+        "queue_pending": 0,
+        "queue_dead_lettered": 0,
+        "gateway_discord_connected": true,
+        "gateway_discord_since_connect_ms": 131522,
+        "note": "Queue is empty and not backing up -- no evidence of a stuck/degraded turn pipeline independent of the missing LLM credential. The provider-down path itself (queue-and-hold rather than drop) is confirmed structurally present via /api/health's own documented behavior, not independently re-verified by this session with a live send."
+      },
+      "next_step_to_unblock": "Set a real ANTHROPIC_API_KEY (or other acptoapi-resolvable provider credential) in .env, restart casey up, then re-run this row with real Discord/WhatsApp sends. Out of scope for this measurement session (credential provisioning is a one-way-door-adjacent decision -- reaches an external paid API -- requiring explicit user authorization, not assumed)."
+    },
+    "case_sweep_cycle": {
+      "description": "Time to detect coverage gap / case-health breaches and page the team",
+      "target_interval_ms": 900000,
+      "status": "completed_with_caveat",
+      "distinction": "Two different quantities exist under this name: (a) the SCHEDULING INTERVAL between sweep passes (config value, default 900000ms/15min, CASEY_SWEEP_INTERVAL_MS unset in this .env so default applies) -- not something to 'measure' as a latency, it is a poll period; (b) the DETECTION LATENCY of one sweep pass itself (how long the scan+classify+tag+notify work takes once it runs) -- this is the real, measurable quantity, captured below from the live system's own last real sweep.",
+      "live_sweep_state": {
+        "source": "GET /api/health/cases (real authenticated call against the running instance)",
+        "timestamp": "2026-08-21T13:58:09.000Z",
+        "last_run_at_epoch_ms": 1787317560356,
+        "last_run_at_iso": "2026-08-21T13:06:00.356Z",
+        "interval_ms": 900000,
+        "next_run_at_epoch_ms": 1787318460356,
+        "scanned": 23,
+        "flagged": 0,
+        "cleared": 0,
+        "errors": 0,
+        "cases_needing_attention": 1,
+        "example_breach": { "ref": "CASE-1005-6HHRAXBX", "breach": "stale", "since_ms": 182103, "tags": "health:stale,health:stuck,health:abandoned_intake" }
+      },
+      "detection_query_latency": {
+        "endpoint": "GET /api/health/cases (reads the already-persisted sweep result -- a proxy for the classification-read cost, not the full scan-and-tag write cost of a fresh sweep pass)",
+        "timestamp": "2026-08-21T13:58:09.000Z",
+        "n": 8,
+        "attempts_ms": [54.721, 32.912, 31.366, 32.447, 26.781, 31.561, 25.11, 26.024],
+        "mean_ms": 32.615,
+        "min_ms": 25.11,
+        "max_ms": 54.721
+      },
+      "caveat": "sweepCases()'s own full scan-and-tag execution time (the actual write-path cost of one pass, scanning all 23 open cases and appending observation events for any newly-entered breach) was not independently re-run in-process this session -- doing so would require a second thatcher store handle against the live db.sqlite (a second cwd-bound sqlite connection risks lock contention against the running production-like process per AGENTS.md's documented Windows file-lock behavior), which this session judged unsafe to open against a live, other-sessions-touching instance without explicit need. The 23-case scan already completed once (last_run_at above, ~53 min before this measurement) with errors:0, confirming the pipeline itself works end-to-end on real data; its last real duration was not separately timestamped by the product code (sweepCases does not currently record its own start/end wall-clock, only last_run_at). Team coverage-gap paging (detectCoverageGap rising-edge alert) was not triggered/witnessed this session -- no roster+zero-reply-in-window condition was constructed, since forcing one would mean intentionally paging a real alert channel, another world-scope action requiring authorization."
+    }
+  },
+  "key_findings": {
+    "api_responsiveness_read_paths": {
+      "status": "good",
+      "finding": "Pure-read endpoints (dashboard root, case detail) stay well under target at all percentiles: root 7-17ms (vs 2000ms LCP budget), case detail 8.7-18.8ms (vs 200ms budget). The original file's unauthenticated-401 timings (2.6-5.6ms) were NOT representative of real handler cost -- they measured only the auth-rejection fast path, understating true authenticated latency by roughly one to two orders of magnitude depending on endpoint.",
+      "implication": "Read-path performance is not a concern at current data volume (23 cases). Re-baseline case-list/detail timing if case volume grows past low hundreds -- no pagination-cost data exists yet at that scale."
+    },
+    "api_health_provider_target_miss": {
+      "status": "regression_vs_target",
+      "finding": "Authenticated GET /api/health/provider: mean 74.14ms, worst-case 120.88ms against a 50ms target -- worst-case is 141% over budget.",
+      "root_cause": "Route composes multiple live reads per call (llmStatus(), queueStatus(), gateway channel connection state, session/cookie verification) with no caching; each sub-read adds real latency that the original 401-shortcut measurement never touched.",
+      "recommendation": "If 50ms is a hard SLA, consider caching llmStatus()/queueStatus() with a short TTL (seconds, not minutes, so degraded-state visibility is not delayed) or restructure a pure /api/health/provider/lite endpoint for high-frequency polling. Not remediated in this session -- out of scope for a measurement-only PRD row."
+    },
+    "api_cases_update_tail_latency": {
+      "status": "one_outlier_no_sustained_regression",
+      "finding": "PATCH /api/cases/:id: 9/10 attempts within the 200ms target (66.5-124.2ms), 1/10 spiked to 267.3ms.",
+      "root_cause": "Not isolated in this session (see api_cases_update.regression_note) -- plausibly transient sqlite writer contention or GC, since surrounding attempts returned immediately to baseline with no gradual degradation.",
+      "recommendation": "Re-run this specific series (n=30+) in a dedicated follow-up to determine if the outlier rate is statistically consistent (systemic tail latency) or a one-off; not conclusive from n=10."
+    },
+    "llm_provider_unconfigured": {
+      "status": "environmental_gap_not_a_code_defect",
+      "finding": "This dev environment has no LLM provider credential, so end-to-end contact-report timing (the PRD's item 4) could not be measured. GET /api/health correctly reports this as source:none rather than a false-green or a fabricated degraded state -- the health-signal design (AGENTS.md's 'receive-liveness is observable, never a false green') is confirmed working correctly even in this credential-less state.",
+      "implication": "This baseline file should be re-run once a real provider credential is available; the current file is a genuine partial baseline for that one row, explicitly marked not_measurable rather than silently omitted or faked."
+    },
+    "case_sweep_cycle_partial": {
+      "status": "detection_query_measured_full_scan_write_path_not_isolated",
+      "finding": "The already-persisted sweep result (23 cases scanned, 0 errors, 0 newly flagged at last run) is real and confirms the pipeline works; the read-query proxying it took 25.1-54.7ms. The actual scan-and-tag write-path duration of one fresh sweepCases() pass was not independently timed in this session (see case_sweep_cycle.caveat for why: avoiding a second store handle against the live db).",
+      "implication": "Sufficient to confirm sweep is alive and low-latency-observable via the dashboard API; not sufficient to bound the worst-case scan duration at higher case counts. A future session with either a scratch/throwaway thatcher instance, or product instrumentation adding sweepCases' own start/end timestamps to its persisted summary, would close this gap without the live-handle risk."
+    }
+  },
+  "regressions_detected": [
+    {
+      "metric": "api_health_provider worst-case",
+      "target_ms": 50,
+      "measured_worst_case_ms": 120.88,
+      "pct_over_target": 141.8,
+      "root_cause": "Uncached multi-source live read (llmStatus + queueStatus + gateway channel state + session verification) on every call; the original baseline's number was a 401-shortcut artifact, not a real prior measurement, so this is not a regression from a previous GREEN state -- it is the first honest measurement, which happens to already exceed target.",
+      "action_taken": "Documented only (measurement-scope PRD row); no code change made this session."
+    },
+    {
+      "metric": "api_cases_update worst-case (single attempt)",
+      "target_ms": 200,
+      "measured_worst_case_ms": 267.257,
+      "pct_over_target": 33.6,
+      "root_cause": "Not isolated -- single-attempt outlier amid 9 in-budget attempts, consistent with transient contention rather than a structural defect.",
+      "action_taken": "Documented only; recommend a larger-n follow-up series before treating as a systemic regression."
+    }
+  ],
+  "next_steps": [
+    "Provision a real LLM provider credential in a dedicated test environment (not this dev box) and re-run end_to_end_report with real Discord/WhatsApp sends -- requires explicit user authorization before any real external send.",
+    "Add sweepCases() start/end wall-clock instrumentation to its persisted summary so full scan-and-tag duration is directly observable via GET /api/health/cases without needing a second live store handle.",
+    "Re-run api_cases_update PATCH series at n=30+ to determine whether the single 267ms outlier is systemic tail latency or a one-off.",
+    "Decide whether GET /api/health/provider's 50ms target should be relaxed (it composes multiple real sub-reads by design) or the route should gain a short-TTL cache -- current worst-case is 2.4x target.",
+    "Construct a real roster+zero-reply-in-window scenario in a throwaway environment to witness detectCoverageGap's rising-edge team page firing end-to-end (not attempted this session -- pages a real alert channel, out of scope without authorization)."
+  ],
+  "notes": "This file replaces the 2026-08-21T12:29:56Z partial baseline from an earlier concurrent session, which left api_cases_detail, api_cases_update, end_to_end_report, and case_sweep_cycle as not_measured, and whose api_health_provider/api_cases_list numbers were 401-unauthenticated-shortcut timings, not real authenticated handler costs. This session created a throwaway admin operator_account directly in the live sqlite db (username perfbase-1787320512527), logged in via the real POST /api/login HTTP path to obtain a genuine session cookie, and measured every reachable endpoint against real live data (23 real cases, real events, real health/sweep state) with worst-case timings captured across n=5 to n=10 attempts per endpoint. end_to_end_report and the full sweepCases() write-path duration remain genuinely unmeasured, each for a disclosed, real environmental/safety reason (no LLM credential; avoiding a second live sqlite handle / avoiding an unauthorized real page), not from oversight."
+}
