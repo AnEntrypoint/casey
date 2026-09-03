@@ -4,9 +4,6 @@
 [submodule "deps/thatcher"]
 	path = deps/thatcher
 	url = https://github.com/AnEntrypoint/thatcher
-[submodule "deps/acptoapi"]
-	path = deps/acptoapi
-	url = https://github.com/AnEntrypoint/acptoapi
 [submodule "deps/design"]
 	path = deps/design
 	url = https://github.com/AnEntrypoint/design
