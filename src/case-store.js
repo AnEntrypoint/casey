@@ -21,7 +21,12 @@ import { randomBytes } from 'node:crypto'
 import { DEFAULT_THRESHOLDS } from './case-health.js'
 import { mergeThresholds } from './thresholds.js'
 import fs from 'node:fs'
-import yaml from 'js-yaml'
+import { load as yamlLoadRaw, YAML11_SCHEMA } from 'js-yaml'
+// js-yaml v5 dropped YAML 1.1 merge-key (<<) resolution from its default
+// schema -- thatcher.config.yml's entity fields rely on <<: *system_fields
+// to inject id/created_at/created_by/updated_at, so every config load must
+// opt back into YAML11_SCHEMA or those fields silently vanish.
+const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
 import { DERIVED_ONLY_FIELDS, writeGuardViolation } from './store/guards.js'
@@ -106,7 +111,7 @@ export class CaseStore {
     if (!fs.existsSync(this.configPath)) throw new Error(`casey config not found: ${this.configPath}`)
     // Parse + validate the config before booting thatcher so a malformed config
     // fails fast with a clear message instead of a cryptic runtime error later.
-    const cfg = yaml.load(fs.readFileSync(this.configPath, 'utf8'))
+    const cfg = yamlLoad(fs.readFileSync(this.configPath, 'utf8'))
     this._wf = this._validateConfig(cfg)
     this._fieldEnums = this._parseFieldEnums(cfg)
     // The lifecycle is now a real xstate machine built from the same graph: it,
@@ -128,7 +133,7 @@ export class CaseStore {
   // `init()` runs, without creating ./data or a live store. Pure read.
   validateConfig() {
     if (!fs.existsSync(this.configPath)) throw new Error(`casey config not found: ${this.configPath}`)
-    return this._validateConfig(yaml.load(fs.readFileSync(this.configPath, 'utf8')))
+    return this._validateConfig(yamlLoad(fs.readFileSync(this.configPath, 'utf8')))
   }
 
   // Validate the config and return the parsed workflow stage graph. Throws a

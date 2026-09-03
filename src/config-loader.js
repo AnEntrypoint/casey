@@ -16,7 +16,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
-import yaml from 'js-yaml'
+import { load as yamlLoadRaw, YAML11_SCHEMA } from 'js-yaml'
+// js-yaml v5 dropped YAML 1.1 merge-key (<<) resolution from its default
+// schema -- thatcher.config.yml's entity fields rely on <<: *system_fields
+// to inject id/created_at/created_by/updated_at, so every config load must
+// opt back into YAML11_SCHEMA or those fields silently vanish.
+const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DEFAULT_CONFIG_DIR = path.resolve(__dirname, '..', 'config', 'default')
@@ -51,7 +56,7 @@ export function loadDomainConfig() {
 
   const reportFieldsPath = path.join(dir, 'report-fields.yml')
   if (!fs.existsSync(reportFieldsPath)) throw new Error(`report-fields.yml not found in config dir: ${dir}`)
-  const reportFields = yaml.load(fs.readFileSync(reportFieldsPath, 'utf8'))
+  const reportFields = yamlLoad(fs.readFileSync(reportFieldsPath, 'utf8'))
   if (!reportFields || !Array.isArray(reportFields.fields)) throw new Error(`report-fields.yml malformed: missing fields[] array (${reportFieldsPath})`)
 
   const personaPath = path.join(dir, 'persona.cjs')
@@ -90,7 +95,7 @@ export function readThatcherFieldEnum(entity, field) {
     try {
       const dir = process.env.CASEY_CONFIG_DIR ? path.resolve(process.env.CASEY_CONFIG_DIR) : process.cwd()
       const cfgPath = path.join(dir, 'thatcher.config.yml')
-      thatcherEnumCache = fs.existsSync(cfgPath) ? yaml.load(fs.readFileSync(cfgPath, 'utf8')) : {}
+      thatcherEnumCache = fs.existsSync(cfgPath) ? yamlLoad(fs.readFileSync(cfgPath, 'utf8')) : {}
     } catch { thatcherEnumCache = {} }
   }
   const options = thatcherEnumCache?.entities?.[entity]?.fields?.[field]?.options
