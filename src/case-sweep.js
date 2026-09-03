@@ -1,0 +1,226 @@
+// case-sweep.js  --  the periodic guardrail pass.
+//
+// classifyCaseHealth says what is wrong with one case at one instant; the sweep
+// applies that across every open case and makes it OBSERVABLE and IDEMPOTENT:
+// - desired health tags are recomputed from scratch each pass (execute-and-
+//     inhibit -- never conditionally skip, always diff the full set), so a tag is
+//     added when a breach starts and CLEARED when it resolves;
+// - exactly one observation is appended when a breach is newly entered, never
+//     re-spammed on subsequent passes while it persists;
+// - only health:* tags are touched -- agent/operator tags (needs-human, merged,
+//     split, ...) are preserved, never clobbered.
+// A leaked or runaway sweep is itself an over-time failure, so the scheduler that
+// drives this (casey.js) owns the interval and clears it on stop.
+
+import { classifyCaseHealth, healthTag, ALL_HEALTH_TAGS, DEFAULT_THRESHOLDS } from './case-health.js'
+// tsMs moved to timestamp.js (one shared implementation, was independently
+// duplicated here/attn.js/case-health.js).
+import { tsMs, tagList } from './timestamp.js'
+
+const HEALTH_SET = new Set(ALL_HEALTH_TAGS)
+
+// caseId -> last-attempted-ms, for breaches whose updateCaseQuiet write keeps
+// failing (a persistently locked/broken row). Without this, the observation +
+// notifyBreach page above re-fires every sweep interval indefinitely while the
+// write never succeeds (currentHealth is only ever updated on a SUCCESSFUL
+// write, so "added" never shrinks) -- an unbounded duplicate/page storm rather
+// than the intended "at worst one visible duplicate on retry". Gate re-attempts
+// to once per this interval regardless of sweep cadence.
+const writeFailureRetryAt = new Map()
+const WRITE_FAILURE_RETRY_MS = 15 * 60_000
+
+// Coverage gap: a TEAM-level signal distinct from a per-case breach. The per-case
+// path pages when one case breaches; this fires when the WHOLE roster is idle while
+// breaches pile up -- nobody is covering, so the team-lead must be paged even though
+// each individual case is already (separately) flagged. The condition is deliberately
+// conservative: at least one open case carries a health:* breach tag AND zero operator
+// replies (outbound, actor=operator) landed anywhere in the coverage window. A roster
+// of zero is treated as "no one is expected to cover", so an unstaffed deployment does
+// not page on every quiet hour -- the gap needs someone who SHOULD be replying.
+// "Replies-in-window" counts operator outbound ON THE BREACHING CASES ONLY: a reply to
+// some unrelated open case is not the team covering the breaches that are piling up, so
+// only a reply touching a flagged case clears the gap.
+// Pure (inputs, now): the caller owns the page + the once-only dedup.
+function detectCoverageGap(cases, eventsByCaseId, roster = [], now = Date.now(), { windowMs = 60 * 60 * 1000 } = {}) {
+  const get = id => (eventsByCaseId?.get?.(id)) || (eventsByCaseId ? eventsByCaseId[id] : null) || []
+  let openBreaches = 0
+  let repliesInWindow = 0
+  const windowStart = now - windowMs
+  for (const c of cases || []) {
+    if (c.status === 'closed' || c.status === 'resolved') continue
+    const tags = tagList(c)
+    if (!tags.some(t => HEALTH_SET.has(t))) continue   // only breaching cases bear on the gap
+    openBreaches++
+    for (const e of get(c.id)) {
+      if (e.kind === 'outbound' && e.actor === 'operator') {
+        const m = tsMs(e.created_at ?? e.ts)
+        if (Number.isFinite(m) && m >= windowStart) repliesInWindow++
+      }
+    }
+  }
+  const rosterSize = Array.isArray(roster) ? roster.length : 0
+  const gap = rosterSize > 0 && openBreaches > 0 && repliesInWindow === 0
+  return {
+    gap, open_breaches: openBreaches, replies_in_window: repliesInWindow,
+    roster_size: rosterSize, window_ms: windowMs,
+    reason: gap
+      ? `${openBreaches} open case(s) need attention and no one on the team of ${rosterSize} has replied in the last ${Math.round(windowMs / 60000)} minutes`
+      : '',
+  }
+}
+
+// Run one full pass. Pure-ish: all mutation goes through the store, `now` is
+// injected. Returns a summary { scanned, flagged, cleared, breaches:{type:count} }.
+export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_THRESHOLDS, { log = null, notifyBreach = null } = {}) {
+  const summary = { scanned: 0, flagged: 0, cleared: 0, breaches: {}, errors: [] }
+  // Prefer the live workflow's open-stage set over case-health.js's literal
+  // fallback, so a stage added/renamed in thatcher.config.yml is picked up with
+  // no code edit here.
+  const openStatuses = typeof store.getOpenStatuses === 'function' ? new Set(store.getOpenStatuses()) : null
+  const effThresholds = openStatuses ? { ...thresholds, openStatuses } : thresholds
+  // activeWorkStatuses/visitCritical, when present on `thresholds` (see
+  // thresholds.js mergeThresholds), ride straight through -- classifyCaseHealth
+  // reads them off effThresholds with its own literal fallback, same pattern as
+  // openStatuses above.
+  // Only open cases can be unhealthy; a closed case is finished. Filtered
+  // server-side to the open-stage set (same pattern findOpenCase already uses,
+  // case-store.js) rather than fetching every historical case and discarding
+  // closed/system rows in JS -- an unfiltered fetch grows with TOTAL case
+  // count forever (cases are append-only, never deleted), not open-case count,
+  // so every 15-minute sweep pass was doing strictly more work than it needed
+  // to as the table grew. The in-loop skip below stays as defense-in-depth:
+  // the system pseudo-cases may still carry an "open" status value and must
+  // still be excluded.
+  const sweepOpenStatuses = typeof store.getOpenStatuses === 'function' ? store.getOpenStatuses() : null
+  const cases = await store.listCases(sweepOpenStatuses ? { status: { $in: sweepOpenStatuses } } : {}, { limit: 10000 })
+  // A case table that has grown past this fetch cap would silently leave some
+  // open cases unclassified every pass, with zero prior warning -- log loud so
+  // an operator can raise the limit before a stuck/abandoned case goes dark.
+  if (cases.length >= 10000) log?.warn?.('[sweep] hit case-fetch cap; some cases may be unclassified', { fetched: cases.length })
+  // A case that closes while its health-tag write is still failing leaves its
+  // writeFailureRetryAt entry permanently orphaned -- the map is only ever
+  // pruned on a SUCCESSFUL write, and a closed case never reaches that write
+  // again. Prune against this pass's open-case set so the map stays bounded
+  // by open-case count, not lifetime case count.
+  const openIds = new Set(cases.map(c => c.id))
+  for (const id of writeFailureRetryAt.keys()) if (!openIds.has(id)) writeFailureRetryAt.delete(id)
+  for (const c of cases) {
+    // The settings/fleet-health/shift singleton pseudo-cases (channel:'system',
+    // created by CaseStore's internal bookkeeping) are not farmer reports -- they
+    // have no report, no real contact, and no operator ever replies to them, so
+    // classifyCaseHealth's staleness/abandonment rules would misfire on them and
+    // notifyBreach would page the on-call team about a case that does not exist.
+    if (c.status === 'closed' || c.channel === 'system') continue
+    summary.scanned++
+    let breaches
+    try { breaches = classifyCaseHealth(c, now, effThresholds) }
+    catch (e) {
+      log?.warn?.('[sweep] classify failed', { caseId: c.id, error: e.message })
+      summary.errors.push({ caseId: c.id, error: e.message, phase: 'classify' })
+      // The abort check below (post-classify) never runs for a classify-phase
+      // failure -- this `continue` skips straight past it back to the loop
+      // head every time, so a systemic classify bug (e.g. malformed rows
+      // across thousands of cases) never tripped the documented safety halt.
+      // Duplicated here so BOTH failure paths (classify and the existing
+      // post-classify check, which still covers reconcile-phase failures)
+      // are actually guarded.
+      if (summary.errors.length > 100) {
+        log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: 'too many errors, sweep halted for safety' })
+        summary.errors.push({ phase: 'aborted', reason: 'too many errors, sweep halted for safety' })
+        break
+      }
+      continue
+    }
+    if (summary.errors.length > 100) {
+      log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: 'too many errors, sweep halted for safety' })
+      summary.errors.push({ phase: 'aborted', reason: 'too many errors, sweep halted for safety' })
+      break
+    }
+    const desired = new Set(breaches.map(b => healthTag(b.breach)))
+
+    const current = tagList(c)
+    const currentHealth = new Set(current.filter(t => HEALTH_SET.has(t)))
+    // Preserve every non-health tag exactly; reconcile only the health:* set.
+    const keep = current.filter(t => !HEALTH_SET.has(t))
+    const nextTags = [...keep, ...desired]
+
+    const added = [...desired].filter(t => !currentHealth.has(t))
+    const removed = [...currentHealth].filter(t => !desired.has(t))
+    if (!added.length && !removed.length) continue   // nothing changed for this case
+
+    // A prior pass already tried (and failed) to persist this exact change
+    // recently -- skip re-appending/re-paging until the retry interval elapses,
+    // so a persistently failing write degrades to bounded periodic retries
+    // instead of an unbounded per-sweep-interval spam.
+    const retryAt = writeFailureRetryAt.get(c.id)
+    if (retryAt && now < retryAt) continue
+
+    try {
+      // Append the observation(s) BEFORE writing the health tags. The tag is the
+      // dedup key ("one observation per newly-entered breach"), so if the tag
+      // write succeeded but the observation failed, the next pass would see the
+      // tag already present and never append -- a silently missing observation.
+      // Doing the event first means a partial failure costs at worst a visible
+      // duplicate observation on retry, never a silent loss (P9).
+      for (const b of breaches) {
+        if (added.includes(healthTag(b.breach))) {
+          await store.appendEvent(c.id, {
+            kind: 'observation', actor: 'system', touch: false,
+            text: `GUARDRAIL [${b.breach}]: ${b.detail}. Needs attention.`,
+            data: { guardrail: b.breach, since_ms: b.since_ms },
+          })
+          summary.breaches[b.breach] = (summary.breaches[b.breach] || 0) + 1
+          if (notifyBreach) {
+            try { await notifyBreach(c.id, b.breach, b.detail) }
+            catch (ne) { log?.warn?.('[sweep] notifyBreach failed', { caseId: c.id, breach: b.breach, error: ne.message }) }
+          }
+        }
+      }
+      // Quiet update: setting health tags must NOT touch last_event_at, or the
+      // sweep would make every stale case it flags look freshly active. Guarded
+      // by expectedVersion (when the installed thatcher supports it) so a
+      // concurrent turn's tag write (e.g. handler.js adding 'needs-human'
+      // mid-sweep) cannot be silently clobbered by this stale read-modify-write
+      // -- on a version conflict, re-read the case and re-derive nextTags from
+      // its FRESH tags (the health:* add/remove diff is unaffected, since
+      // `desired`/`added`/`removed` were computed from `breaches`, not from the
+      // stale `current` read) and retry exactly once before giving up loud.
+      let writeTags = nextTags
+      let expectedVersion = c._version
+      let conflictRetried = false
+      for (;;) {
+        try {
+          await store.updateCaseQuiet(c.id, { tags: writeTags.join(',') }, undefined, { expectedVersion })
+          break
+        } catch (e) {
+          if (e.code !== 'conflict' || conflictRetried) throw e
+          conflictRetried = true
+          const fresh = await store.getCase(c.id)
+          if (!fresh) break
+          // Re-classify against the fresh row, not the stale `desired` computed
+          // before the concurrent write -- the conflicting writer may itself have
+          // changed a health-relevant field (e.g. an agent turn updating the
+          // report mid-sweep), so reusing the original classification could
+          // re-add a since-resolved breach or miss a newly-true one.
+          const freshBreaches = classifyCaseHealth(fresh, now, effThresholds)
+          const freshDesired = new Set(freshBreaches.map(b => healthTag(b.breach)))
+          const freshCurrent = tagList(fresh)
+          const freshKeep = freshCurrent.filter(t => !HEALTH_SET.has(t))
+          writeTags = [...freshKeep, ...freshDesired]
+          expectedVersion = fresh._version
+        }
+      }
+      writeFailureRetryAt.delete(c.id)
+      summary.flagged += added.length
+      summary.cleared += removed.length
+    } catch (e) {
+      log?.warn?.('[sweep] reconcile failed', { caseId: c.id, error: e.message })
+      summary.errors.push({ caseId: c.id, error: e.message })
+      writeFailureRetryAt.set(c.id, now + WRITE_FAILURE_RETRY_MS)
+    }
+  }
+  log?.info?.('[sweep] pass complete', summary)
+  return summary
+}
+
+export { detectCoverageGap }

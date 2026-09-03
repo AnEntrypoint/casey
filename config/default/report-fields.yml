@@ -1,0 +1,95 @@
+# casey/config/default/report-fields.yml -- the generic IT/facilities helpdesk
+# demo report field vocabulary. This is the default domain casey boots into
+# when CASEY_CONFIG_DIR is unset -- deliberately NOT animal-health-specific,
+# to serve as a clean, generic reference config a new deployer can copy and
+# adapt (see docs/config-package.md for the full contract).
+
+entity_label: ticket
+enquiry_headline_fields: [category, location]
+tool_name: case_report
+tool_description: >-
+  Record what you have learned about a helpdesk ticket, one field at a time,
+  as the employee describes it. Pass ONLY the fields you actually learned
+  this turn -- they merge into the running ticket, so you never lose earlier
+  facts and never need to repeat a field the employee already gave. This is
+  how IT sees a structured, organised ticket without the employee being
+  interrogated. Leave a field out if you do not know it yet; do not guess.
+
+fields:
+  - key: category
+    description: "What kind of issue: hardware, software, access, facilities, network, other."
+    critical_for_visit: true
+    display_label: Category
+    section: Visit critical
+  - key: description
+    description: "What's wrong, in the employee's own words: what they see, what they were doing, what broke."
+    critical_for_visit: true
+    display_label: Description
+    section: Visit critical
+  - key: urgency
+    description: "How urgent, ONLY if the employee states it or it's obvious from the description (e.g. 'I can't work at all' vs 'minor annoyance'). Leave out if unclear; do not guess."
+    display_label: Urgency
+    section: Issue detail
+  - key: device_or_asset
+    description: "The affected device/asset: laptop model, asset tag, room name, printer name, etc."
+    display_label: Device / asset
+    section: Issue detail
+  - key: location
+    description: "Where: office, building, floor, room number, or remote/home."
+    critical_for_visit: true
+    display_label: Location
+    section: Visit critical
+  - key: affected_count
+    description: "How many people are affected, if more than just the reporter (e.g. 'whole team', 'just me')."
+    display_label: How many affected
+    section: Issue detail
+  - key: onset
+    description: "When it started and whether it's getting worse."
+    display_label: When it started
+    section: Issue detail
+  - key: blocking_work
+    description: "Whether this is stopping the employee from working, ONLY if they say so or it's clearly implied. Leave out if not discussed; do not guess."
+    never_inferred: true
+    never_inferred_guard_pattern: "ONLY if they say so"
+    display_label: Blocking work?
+    section: Issue detail
+  - key: prior_workarounds
+    description: "Anything the employee already tried (restart, reinstall, different cable, etc.), if mentioned."
+    display_label: Already tried
+    section: Issue detail
+  - key: recent_changes
+    description: "Any recent change the employee mentions: new software install, update, move, config change."
+    display_label: Recent changes
+    section: Issue detail
+  - key: preferred_contact_time
+    description: "When IT can reach them, if they mention a preference."
+    display_label: Preferred contact time
+    section: Follow-up
+  - key: requester_available
+    description: "Whether the employee will be at their desk/reachable for IT to follow up."
+    critical_for_visit: true
+    display_label: Reachable for follow-up?
+    section: Visit critical
+  - key: photos
+    description: "Note that the employee sent a photo (set to a short description, e.g. 'photo of error screen'). Each call ADDS a new photo note -- if more than one photo arrives, call again with a description of the new one; earlier descriptions are kept, never overwritten."
+    append: true
+    display_label: Photos
+    section: Notes & media
+  - key: notes
+    description: "Anything else worth recording for IT."
+    display_label: Other notes
+    section: Notes & media
+  - key: reported_by_proxy
+    description: "If someone other than the affected employee is reporting on their behalf (e.g. a manager, a colleague), who that is."
+    display_label: Reported by
+    section: Follow-up
+  - key: reported_by_proxy_relation
+    description: "How the reporting person is linked to the affected employee: manager, colleague, IT liaison, etc."
+    display_label: Reporter's link to employee
+    section: Follow-up
+
+geo_fields:
+  - key: lat
+    description: "Latitude of the office/site, if relevant for a multi-site organisation and the employee names a place you can identify. Leave out if the organisation is single-site or the place cannot be identified."
+  - key: lon
+    description: "Longitude, alongside lat."
