@@ -1,0 +1,122 @@
+node_modules/
+data/
+*.log
+
+# channel tokens, dashboard secret -- scaffolded by `casey init`, never
+# committed (holds live WhatsApp/Discord credentials and CASEY_SESSION_SECRET)
+.env
+
+# scratchpad files a session writes at the repo root for local exploration
+# (adversarial test harnesses, verification probes) -- never committed, per
+# the no-standing-test-file convention; a session that wants to keep one
+# reusable across sessions should relocate it under a real committed path
+# deliberately, not rely on it surviving untracked at the root.
+scratch-*.mjs
+scratch-*.log
+.scratch_audit/
+
+# stray crash dumps (e.g. MSYS bash.exe.stackdump on Windows) -- never source
+*.stackdump
+
+# operator secrets -- scaffolded by `casey init`, never committed
+
+# editor / agent session state. Ignore everything under .claude EXCEPT the
+# reusable project workflows, which are source and should be tracked. (git will
+# not descend into an excluded dir, so we exclude .claude/* by glob -- not the
+# dir itself -- then re-include the workflows path.)
+.claude/*
+!.claude/workflows/
+
+# gm-plugkit runtime working state is ignored per-entry below. The org-wide
+# gm cleanup (commit 76bb45f) removed .gm/prd.yml and other plan/runtime
+# state from git tracking entirely -- these three were left untracked with no
+# matching ignore entry, so `git status --porcelain` kept showing .gm/ dirty
+# on every session; added to close that gap left by the cleanup.
+.gm/prd.yml
+.gm/claim-audit-fired
+.gm/memories/.flat-export-done
+# >>> plugkit managed
+.gm/exec-spool/
+.gm/gm-fired-*
+.gm/needs-gm
+.gm/lastskill
+.gm/turn-state.json
+.gm/turn-state.json.corrupted-*
+.gm/residual-check-fired
+.gm/bootstrap-status.json
+.gm/bootstrap-error.json
+.gm/rslearn-counter.json
+.gm/trajectory-drafts/
+.gm/ingest-drafts/
+.gm/prd-state.json
+.gm/subagent-*.json
+.gm/browser-profile/
+.gm/browser-profile-*/
+.gm/browser-state/
+.gm/browser-chrome-profile-default/
+.gm/build-tool-ignores.md
+.gm/last-prompt.txt
+.gm/hooks/
+.gm/no-memorize-this-turn
+.gm/prd.paused.yml
+.gm/rs-learn.db
+.gm/rs-learn.db-shm
+.gm/rs-learn.db-wal
+.gm/gm.db
+.gm/gm.db-shm
+.gm/gm.db-wal
+.gm/learning-state.md
+.gm/git-block-counter.json
+.gm/next-step.md
+.gm/constraints.md
+.gm/instructions/
+.gm/last-instruction-ts
+.gm/last-dispatch-ts
+.gm/boot*.err
+.gm/boot*.out
+.gm/diag-*.out
+.gm/audit-iter-*.md
+.gm/silent-abort-forensics.json
+.gm/*.png
+.gm/witness/
+.gm/long-gap-retry-state
+.gm/exec-spool/.gm-plugkit-stale.json
+.gm/memories/*.md.tmp-*
+.gm/disciplines/codeinsight/
+.gm/disciplines/codeinsight-vec/
+.gm/disciplines/codeinsight-manifest/
+.gm/disciplines/AGENTS.md/
+.gm/disciplines/AGENTS.md-vec/
+.gm/disciplines/default/
+.gm/disciplines/default-vec/
+.gm/disciplines/rs-learn_graph_edges/
+.gm/disciplines/rs-learn_graph_edges_by_dst/
+.gm/disciplines/rs-learn_graph_edges_by_src/
+.gm/disciplines/rs-learn_router/
+.gm/.embed-generation*
+.gm/config-source-cache-*
+.gm/.gm-continue-count
+# <<< plugkit managed
+.gm/pw-sock-*/
+.gm/*.mjs
+.gm/*.err
+.gm/witness-*.txt
+
+# gm-plugkit's shared cross-project "agentplug" daemon (2026-07 architecture)
+# keeps its own runtime key-value state at the repo root, not under .gm/ --
+# same transient-runtime-state class as the .gm/exec-spool/ entries above.
+.agentplug-kv/
+.agentplug/
+
+# gm-plugkit tool-verb scratch clones/workspaces (codesearch/browser/bulk-browse
+# sub-clones of unrelated repos, transient work dirs) spawned at the repo root by
+# concurrent tool dispatches sharing this cwd -- never casey's own content.
+.flatspace-clone/
+.scratch_tmp/
+bbwork/
+
+# this repo has no lockfile committed yet; ignore stray npm lock
+package-lock.json
+*.zip
+kimi-debug-session_*
+config.bat
