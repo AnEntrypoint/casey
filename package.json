@@ -23,9 +23,9 @@
   "dependencies": {
     "acptoapi": "file:deps/acptoapi",
     "anentrypoint-design": "file:deps/design",
-    "express": "^4.19.2",
+    "express": "^5.2.1",
     "freddie": "file:deps/freddie",
-    "js-yaml": "^4.3.1",
+    "js-yaml": "^5.4.1",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "thatcher": "file:deps/thatcher",
