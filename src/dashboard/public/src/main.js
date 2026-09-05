@@ -155,7 +155,11 @@ async function loadCases() {
 async function refreshAttention() {
   try {
     const a = await api.fetchAttention();
-    const rows = Array.isArray(a) ? a : (a && a.rows) || [];
+    // /api/attention's real response shape is {count,total,...,cases:[...]}
+    // (routes/operations.js) -- this previously read a.rows, a field that
+    // route never returns, so state.attention silently stayed [] forever and
+    // the inbox badge/map attention feed never populated from a live fetch.
+    const rows = Array.isArray(a) ? a : (a && a.cases) || [];
     state.attention = rows;
     setInboxBadge(rows.length);
     schedule();
