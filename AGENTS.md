@@ -686,9 +686,13 @@ stop).
   operator_account, scrypt-hashed, stateless HMAC-signed session cookie). No
   route accepts a bearer token or a `?token=` query param. The only ungated
   routes are `/design`, `/vendor/*` (static assets, no case data),
-  `/api/login`, `/api/logout`, `/api/whoami`, and the public `/report` form
-  (gated by knowledge of a case ref, not auth). Admin-only routes
-  additionally require `role: 'admin'`.
+  `/api/login`, `/api/logout`, `/api/whoami`, `/api/ready` (orchestrator/LB
+  liveness probe -- a boolean + a short error string, no case data),
+  `/api/branding` (dashboard_ui.brand/leaf only -- the two display strings
+  the post-login shell already renders, so login-gate.js can show real
+  branding before a session exists; never the full `/api/config` shape), and
+  the public `/report` form (gated by knowledge of a case ref, not auth).
+  Admin-only routes additionally require `role: 'admin'`.
 - All contact-supplied text is HTML-escaped before render.
 - Session-cookie and password comparisons use `crypto.timingSafeEqual` to
   prevent timing oracles.
