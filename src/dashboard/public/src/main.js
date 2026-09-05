@@ -226,7 +226,18 @@ initRouteSync((r) => { if (r.caseId) state.activeId = r.caseId; if (r.inbox !== 
 
 (async () => {
   await checkSession();
-  if (!state.authed) { render(); return; }
+  if (!state.authed) {
+    // Pre-login branding: state.config is otherwise only populated post-
+    // login (loadCaseyConfig(), which needs an authed /api/config call) --
+    // fetch the small ungated subset so login-gate.js can show a deployment's
+    // real brand/leaf instead of the literal 'casey' fallback. Overwritten
+    // in full by loadCaseyConfig() once a real session exists; never blocks
+    // rendering the login form.
+    const b = await api.fetchBranding();
+    if (b && (b.brand || b.leaf)) setConfig({ dashboard_ui: b });
+    render();
+    return;
+  }
   await boot();
   render();
   maybeShowOnboarding();
