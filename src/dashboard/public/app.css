@@ -393,6 +393,17 @@ body { background: var(--bg); color: var(--fg); }
 .ds-map-legend .sw, .map-legend .sw,
 .ds-map-legend-sw { display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill); margin-right: var(--space-1); vertical-align: middle; }
 .ds-map-legend-item { display: inline-flex; align-items: center; text-transform: capitalize; }
+/* Second legend row entry documenting the marker BORDER channel (location
+   provenance) -- a plain background swatch can't show a dashed border at
+   9px, so this one is unfilled with a visible dashed ring instead. */
+.ds-map-legend-sw-dashed { background: transparent; border: 2px dashed var(--fg-3, var(--muted)); }
+
+/* ---- map BLUF summary strip + attention feed (map-panel.js) ------------- */
+.ds-map-summary { margin-bottom: var(--space-2); }
+.ds-map-updated { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin: 0 0 var(--space-2); }
+.ds-map-attention-feed { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-1); margin-bottom: var(--space-3); }
+.ds-map-attention-feed .tcase { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); border-radius: 0; }
+.ds-map-attention-feed .tcase:last-child { border-bottom: none; }
 .ds-map-filters, .map-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .ds-map-overlays { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .ds-chip-btn { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; }
