@@ -202,11 +202,18 @@ async function boot() {
     if (decoded) applyView(decoded);
   }
   applyRouteToState();
-  // dashboard_ui.default_view:'map' lands the operator on the map instead of
-  // the case list -- additive and config-gated (absent -- today's exact
-  // case-list-first landing). Never overrides an explicit deep link: only
-  // fires when the route carried no case/view/inbox token of its own.
-  if (state.config?.dashboard_ui?.default_view === 'map' && !hv.caseId && !hv.view && !hv.inbox && !state.activePanel) {
+  const noDeepLink = !hv.caseId && !hv.view && !hv.inbox && !state.activePanel;
+  // A secretary's job is the follow-up queue (HERD-HEALTH-ROADMAP.md Phase
+  // 2) -- land them there by default, ahead of the deployment-wide
+  // dashboard_ui.default_view, since it is more specific to what this role
+  // actually needs "need to know" every time they open the dashboard.
+  // Never overrides an explicit deep link. No-op for every other role.
+  if (state.currentUser?.role === 'secretary' && noDeepLink) {
+    openPanel('secretary');
+  } else if (state.config?.dashboard_ui?.default_view === 'map' && noDeepLink) {
+    // dashboard_ui.default_view:'map' lands the operator on the map instead
+    // of the case list -- additive and config-gated (absent -- today's
+    // exact case-list-first landing).
     openPanel('map');
   }
   if (!state.inboxMode) await loadCases();
