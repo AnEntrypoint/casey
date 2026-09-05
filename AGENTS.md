@@ -338,9 +338,15 @@ node bin/casey.js up        # gateway + dashboard (default http://localhost:4000
 npm run lint                # dependency-free preflight (syntax+config+package+ascii); the CI gate
 ```
 
-CI (`.github/workflows/ci.yml`) runs `npm run lint` on every push and PR. It
-is dependency-free on purpose -- it does not need the `anentrypoint-design`
-npm dependency installed, so it stays green in a bare clone. It carries a
+**There is currently no CI workflow in this repo** -- `.github/` does not
+exist in the tree, so nothing runs `npm run lint` automatically on push or
+PR. Until a workflow is added back, `npm run lint` is a LOCAL gate that a
+human or agent must run by hand before pushing; treat a green local lint as
+the substitute for the pipeline this section used to describe, and say so
+explicitly rather than claiming a pipeline witnessed the change. The lint
+itself is dependency-free on purpose -- it does not need the
+`anentrypoint-design` npm dependency installed, so it stays green in a bare
+clone. It carries a
 pure-llm grep-gate (`gateway-hooks.js`/`casey.js` must never import a
 deterministic intent/extraction module) and a no-stub-mock grep-gate
 (`src/`, `bin/`, `plugins/` must never reference a mock adapter or stub
