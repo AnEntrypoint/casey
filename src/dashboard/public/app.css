@@ -475,8 +475,23 @@ body { background: var(--bg); color: var(--fg); }
 .case-row.kbd-focused { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
 .case-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
 .case-row-body { flex: 1; min-width: 0; }
-.case-row-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; row-gap: var(--space-1); min-height: 24px; }
-.case-row-ref { font-weight: 600; font-size: var(--fs-sm, var(--fs-body)); }
+/* One block per element, deliberately. .case-row-top and .case-row-ref were
+   each declared twice, ~80 lines apart: once here from before the case-list
+   BLUF restructure, and again below it where the ref was demoted from the
+   row's lead to its secondary line. The later block won on colour and
+   font-size but could not undo `font-weight: 600` declared up here, so the
+   demoted ref rendered small, muted AND still bold -- half-demoted, which is
+   not a look anyone chose. The intended values now live in one place. */
+.case-row-top {
+  display: flex; align-items: center; gap: var(--space-2);
+  flex-wrap: wrap; row-gap: var(--space-1); min-height: 24px;
+  margin-top: var(--space-1);
+}
+.case-row-ref {
+  font-weight: 400;
+  font-size: var(--fs-nano, var(--fs-micro));
+  color: var(--fg-2, var(--muted));
+}
 .case-row-when { margin-left: auto; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
 .case-row-sub { display: flex; align-items: center; gap: var(--space-2); row-gap: var(--space-1-75, var(--space-2)); font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-top: var(--space-2); flex-wrap: wrap; }
 .ds-guardrail-toggle-btn { background: none; border: none; color: var(--accent-ink, var(--accent)); font-size: var(--fs-pico, var(--fs-micro)); cursor: pointer; padding: 0; margin-top: var(--space-1-75, var(--space-2)); display: block; text-decoration: underline; text-underline-offset: 2px; transition: color var(--dur-snap) var(--ease); }
@@ -560,8 +575,9 @@ body { background: var(--bg); color: var(--fg); }
   font-size: var(--fs-sm, var(--fs-body)); font-weight: 600; color: var(--fg);
   line-height: 1.35; overflow-wrap: anywhere;
 }
-.case-row-top { margin-top: var(--space-1); }
-.case-row-ref { color: var(--fg-2, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
+/* .case-row-top and .case-row-ref are declared once, up with the rest of the
+   row's geometry -- see the note there for why the second copy that used to
+   sit here was a bug rather than a convenience. */
 
 /* Urgency stripe, from map-model.js's urgencyBand -- the same ladder and the
    same three colours the queue rows above and the map's pins use, so one case
@@ -637,8 +653,8 @@ body { background: var(--bg); color: var(--fg); }
    renders as a bare .ds-dropdown-trigger button instead of the custom
    .ds-account-trigger class this rule used to target -- style the class the
    SDK actually emits. */
-.ds-account-trigger, .ds-dropdown-trigger { display: inline-flex; align-items: center; gap: var(--space-2); background: transparent; border: 1px solid var(--border); border-radius: var(--r-md, var(--r-1)); padding: var(--space-1) var(--space-3); cursor: pointer; color: var(--fg); font-size: var(--fs-sm); }
-.ds-account-trigger:focus-visible, .ds-dropdown-trigger:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+.ds-dropdown-trigger { display: inline-flex; align-items: center; gap: var(--space-2); background: transparent; border: 1px solid var(--border); border-radius: var(--r-md, var(--r-1)); padding: var(--space-1) var(--space-3); cursor: pointer; color: var(--fg); font-size: var(--fs-sm); }
+.ds-dropdown-trigger:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 /* The alerts trigger is now the SDK's own .ds-dropdown-trigger (styled above)
    carrying an icon plus the word -- the .ds-notif-trigger wrapper and its
    positioned danger Badge are gone with the icon-only bell. */
