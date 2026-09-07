@@ -36,6 +36,7 @@
 
 import express from 'express'
 import path from 'node:path'
+import zlib from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 import { VISIT_CRITICAL } from '../case-health.js'
@@ -134,6 +135,94 @@ function printableReport(title, bodyHtml, extraCss = '') {
 // a latent bug the shared version fixes, since store.list*'s returned rows must never
 // be mutated regardless of whether data happened to already be parsed).
 
+// Response compression -- the single biggest lever on the rural link this
+// deployment targets, and it was entirely absent. Measured on the real
+// map-first landing (uhh, 21 cases / 7 geocoded pins, cold cache): 140
+// same-origin requests carrying 2,504,822 bytes, none of it compressed,
+// before a single basemap tile is drawn. Express ships no compression of its
+// own, so a request that sent `Accept-Encoding: gzip` got the raw bytes back
+// with no Content-Encoding at all -- confirmed live, byte-identical response
+// sizes with and without the header.
+//
+// Hand-rolled over node:zlib rather than adding the `compression` package:
+// casey's supply-chain posture (AGENTS.md) is to not take a dependency it can
+// write in a few lines, and nothing here needs configuring beyond a
+// content-type test.
+//
+// Streaming, not buffer-then-compress: a route that writes progressively (the
+// CSV export) must keep streaming rather than being held whole in memory.
+const COMPRESSIBLE_TYPE = /^(?:text\/|application\/(?:json|javascript|manifest\+json|xml)|image\/svg\+xml)/i
+// Under this, the gzip header and trailer plus a round of CPU cost more than
+// they save, and a sub-kilobyte body is one packet either way.
+const COMPRESS_MIN_BYTES = 1024
+
+function compressResponses(req, res, next) {
+  const accept = String(req.headers['accept-encoding'] || '')
+  const encoding = /\bgzip\b/i.test(accept) ? 'gzip' : (/\bdeflate\b/i.test(accept) ? 'deflate' : null)
+  if (!encoding || req.method === 'HEAD') return next()
+
+  const rawWrite = res.write.bind(res)
+  const rawEnd = res.end.bind(res)
+  let stream = null
+  let started = false
+
+  const eligible = () => {
+    if (res.headersSent) return false
+    // 200 only, deliberately: a 206 range response must keep its byte offsets
+    // meaningful, and a 304 has no body to compress in the first place.
+    if (res.statusCode !== 200) return false
+    if (res.getHeader('Content-Encoding')) return false
+    if (!COMPRESSIBLE_TYPE.test(String(res.getHeader('Content-Type') || ''))) return false
+    const declared = Number(res.getHeader('Content-Length'))
+    if (Number.isFinite(declared) && declared < COMPRESS_MIN_BYTES) return false
+    return true
+  }
+
+  const begin = () => {
+    if (started) return
+    started = true
+    // Vary is set whether or not THIS response ends up compressed: a shared
+    // cache keyed without it would happily hand a gzipped body to the next
+    // client that did not ask for one.
+    res.setHeader('Vary', 'Accept-Encoding')
+    if (!eligible()) return
+    res.setHeader('Content-Encoding', encoding)
+    // The declared length describes the ORIGINAL body. Left in place it is
+    // both wrong and shorter than what actually goes out, which truncates the
+    // response at the client.
+    res.removeHeader('Content-Length')
+    stream = encoding === 'gzip' ? zlib.createGzip() : zlib.createDeflate()
+    stream.on('data', (chunk) => { rawWrite(chunk) })
+    stream.on('end', () => { rawEnd() })
+    stream.on('error', () => { rawEnd() })
+  }
+
+  const toBuffer = (chunk, enc) => (Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), typeof enc === 'string' ? enc : 'utf8'))
+
+  res.write = function (chunk, enc, cb) {
+    begin()
+    if (!stream) return rawWrite(chunk, enc, cb)
+    if (chunk != null && typeof chunk !== 'function') stream.write(toBuffer(chunk, enc))
+    if (typeof chunk === 'function') chunk()
+    else if (typeof enc === 'function') enc()
+    else if (typeof cb === 'function') cb()
+    return true
+  }
+
+  res.end = function (chunk, enc, cb) {
+    begin()
+    if (!stream) return rawEnd(chunk, enc, cb)
+    if (chunk != null && typeof chunk !== 'function') stream.end(toBuffer(chunk, enc))
+    else stream.end()
+    if (typeof chunk === 'function') chunk()
+    else if (typeof enc === 'function') enc()
+    else if (typeof cb === 'function') cb()
+    return res
+  }
+
+  next()
+}
+
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
 export function createDashboard(store, { port = 4000, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null, queueStatus = null, alertWebhookUrl = null } = {}) {
   if (!store) throw new Error('createDashboard requires a store instance')
@@ -151,6 +240,9 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   // this must know their own real proxy chain depth.
   const trustProxyHops = Number(process.env.CASEY_TRUST_PROXY_HOPS)
   if (Number.isFinite(trustProxyHops) && trustProxyHops > 0) app.set('trust proxy', trustProxyHops)
+  // First in the chain, so it wraps every downstream response -- the API
+  // routes, the SPA shell, and the /design + /vendor static mounts alike.
+  app.use(compressResponses)
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
 
