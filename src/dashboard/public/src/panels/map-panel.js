@@ -27,6 +27,13 @@ let error = null;
 // looking view over-promise real-time completeness) -- set on every
 // successful load, read by lastUpdatedNote() below.
 let lastUpdatedAt = null;
+// Overlay disclosure state for the map-first home view. Module-scoped, not
+// per-render, so toggling one survives the poll-driven re-render that
+// schedule() fires underneath it. The attention queue starts OPEN (it is the
+// bottom line -- who needs a person now); the options drawer starts CLOSED,
+// so a first-time user sees a map and a list, never a control panel.
+let showQueue = true;
+let showControls = false;
 
 function refresh() {
     error = null;
@@ -173,12 +180,57 @@ export function MapPanel({ embedded = false } = {}) {
             p.location ? ` (${p.location})` : '',
             p.symptoms ? ' -- ' + p.symptoms : '')));
 
-    return Panel({ title: 'Map', children: [
-        back, summaryStrip(), lastUpdatedNote, attentionFeed(),
-        filterRow, overlayRow, legend,
-        error ? Alert({ kind: 'error', children: error }) : null,
-        canvas,
+    const unresolvedBlock = [
         unresolvedNote ? h('div', { class: 'ds-map-unresolved-note' }, unresolvedNote) : null,
         unresolvedList,
-    ]});
+    ];
+
+    // Non-embedded (the legacy "Map" nav entry reached via PanelSwap) keeps the
+    // original stacked document order -- it is a secondary, scrollable page, so
+    // reading top-to-bottom is right there and there is no pane height to fill.
+    if (!embedded) {
+        return Panel({ title: 'Map', children: [
+            back, summaryStrip(), lastUpdatedNote, attentionFeed(),
+            filterRow, overlayRow, legend,
+            error ? Alert({ kind: 'error', children: error }) : null,
+            canvas, ...unresolvedBlock,
+        ]});
+    }
+
+    // Embedded = the map-first home view. BLUF means the map is not the eighth
+    // thing on a scrolling page, it IS the page: the canvas is the full-bleed
+    // ground plane and every control floats over it, so "where is this
+    // happening" needs zero scrolling and zero clicks. Anything that would
+    // push the map down the document is either overlaid or folded away.
+    //
+    // What stays permanently visible is deliberately short, because the
+    // audience is mixed computer literacy: the map, the four headline counts,
+    // and the worst-first queue of who needs a person. Everything an operator
+    // does NOT need to answer "what is going on right now" -- the four
+    // filters, the four overlay toggles, the colour legend, the
+    // no-location list -- lives behind one clearly-labelled button, so a
+    // first-time user is never asked to parse a wall of controls.
+    const controlsOpen = showControls;
+    return h('div', { class: 'ds-map-shell' },
+        canvas,
+        h('div', { class: 'ds-map-overlay ds-map-overlay-top' },
+            summaryStrip(),
+            lastUpdatedNote),
+        h('div', { class: 'ds-map-overlay ds-map-overlay-queue' + (showQueue ? '' : ' is-collapsed') },
+            h('button', {
+                type: 'button', class: 'ds-map-overlay-toggle',
+                'aria-expanded': String(showQueue),
+                onclick: () => { showQueue = !showQueue; schedule(); },
+            }, showQueue ? 'Hide the list' : 'Show what needs attention'),
+            showQueue ? attentionFeed() : null),
+        h('div', { class: 'ds-map-overlay ds-map-overlay-controls' },
+            h('button', {
+                type: 'button', class: 'ds-map-overlay-toggle',
+                'aria-expanded': String(controlsOpen),
+                onclick: () => { showControls = !showControls; schedule(); },
+            }, controlsOpen ? 'Close map options' : 'Map options'),
+            controlsOpen
+                ? h('div', { class: 'ds-map-controls-body' }, filterRow, overlayRow, legend, ...unresolvedBlock)
+                : null),
+        error ? h('div', { class: 'ds-map-overlay ds-map-overlay-error' }, Alert({ kind: 'error', children: error })) : null);
 }

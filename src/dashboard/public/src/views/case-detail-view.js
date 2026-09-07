@@ -62,9 +62,15 @@ export function CaseDetailView({ onClose, onOpenCase, key } = {}) {
     const id = state.activeId;
     if (!id) return h('div', { key, class: 'casey-detail-empty' },
         Icon('paw', { size: 32 }),
-        h('h2', { class: 'casey-detail-empty-title' }, 'No case selected'),
-        h('p', { class: 'casey-hint' }, 'Select a case to observe, edit, reply, or override its workflow stage.'),
-        h('p', { class: 'casey-hint casey-empty-kbd-hint' }, h('span', { class: 'ds-kbd' }, 'j'), '/', h('span', { class: 'ds-kbd' }, 'k'), ' to move through the list, ', h('span', { class: 'ds-kbd' }, 'Enter'), ' to open the highlighted case.'));
+        // Plain instruction first, keyboard shortcuts second and explicitly
+        // marked optional: this pane is the first thing a new operator reads
+        // on the map-first home view, and "j/k to move through the list" is
+        // meaningless to the field/secretarial staff this dashboard is for.
+        // The shortcuts still earn their place for daily desk users, so they
+        // are demoted rather than removed.
+        h('h2', { class: 'casey-detail-empty-title' }, 'No report open yet'),
+        h('p', { class: 'casey-hint' }, 'Tap a pin on the map, or a report in the list, to read it and reply.'),
+        h('p', { class: 'casey-hint casey-empty-kbd-hint' }, 'Keyboard (optional): ', h('span', { class: 'ds-kbd' }, 'j'), '/', h('span', { class: 'ds-kbd' }, 'k'), ' moves through the list, ', h('span', { class: 'ds-kbd' }, 'Enter'), ' opens it.'));
 
     if (_loadedFor !== id && !state.caseDetailLoading) loadCaseDetail(id);
 

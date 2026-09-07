@@ -218,6 +218,26 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     const statuses = [...new Set(mapState.pins.map((p) => p.status))].sort();
     if (callbacks && callbacks.onOptions) callbacks.onOptions({ species, types, statuses });
     renderMapMarkers(mapState, filters);
+    // Frame the map on the reports themselves, once, on first load. The
+    // constructor's center/zoom above is a fixed [-28.5,25]@5 that shows most
+    // of southern Africa regardless of where anything actually is -- measured
+    // live, a dataset entirely inside South Africa opened centred over Angola
+    // and Zambia, so the BLUF question ("what is going on where") needed a
+    // manual pan and zoom before it could be answered at all.
+    //
+    // First load ONLY (didAutoFit), never on refilter/refresh: re-fitting on
+    // every poll would yank the viewport out from under an operator who has
+    // deliberately panned or zoomed somewhere. maxZoom keeps a single lone
+    // report from slamming to street level, where surrounding context is lost.
+    if (!mapState.didAutoFit) {
+        const located = (mapState.pins || []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+        if (located.length) {
+            mapState.didAutoFit = true;
+            try {
+                mapState.map.fitBounds(window.L.latLngBounds(located.map((p) => [p.lat, p.lon])), { padding: [40, 40], maxZoom: 11 });
+            } catch { /* a degenerate bounds box must never break the panel */ }
+        }
+    }
     if (callbacks && callbacks.onSummary) {
         callbacks.onSummary({
             unresolvedCount: j.unresolved_count || 0,
