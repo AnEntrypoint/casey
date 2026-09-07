@@ -7,11 +7,10 @@
 import * as webjsx from 'webjsx';
 import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton, Btn } from 'ds/components/shell.js';
 import { state, setFilt, closeModal, openModal } from '../state.js';
-import { buildSideSections, buildActionItems, backToCases, panelTitle } from './nav-config.js';
+import { buildSideSections, buildActionItems, backToCases, panelTitle, openQueue } from './nav-config.js';
 import { HealthPills } from '../components/health-pills.js';
 import { AccountMenu, LogoutEverywhereConfirmDialog } from '../components/account-menu.js';
 import { NotificationsCenter } from '../components/notifications-center.js';
-import { QuickStartBadge } from '../components/quick-start-badge.js';
 import { HandoffBanner } from '../components/handoff-banner.js';
 import { ConnectionBanner } from '../components/connection-banner.js';
 import { ToastTray } from '../components/toast-tray.js';
@@ -138,20 +137,62 @@ function ActionRow() {
   }));
 }
 
+// THE FRAME'S BOTTOM LINE, and therefore the first thing in the chrome.
+//
+// A persistent frame exists to answer two questions instantly -- "is anything
+// wrong" and "where do I go" -- and then get out of the way. For this
+// deployment the answer to the first one is a single number: how many reports
+// are waiting for a person right now. That number used to be rendered three
+// times and led with none of them: as a bare unlabelled orange badge in this
+// same row (components/quick-start-badge.js, now deleted), as a clause buried
+// in the status line at the bottom of the page, and as a count in the browser
+// tab title. A number with no noun beside it is not information -- on a phone
+// it is an orange dot -- and none of the three was clickable, so the frame
+// stated the operator's job and then offered no way to start it.
+//
+// It renders at zero too, deliberately, unlike the exception-only health
+// pills beside it: "nothing is waiting" is an answer to the frame's own
+// question, not an absence of one, and a control that appears and disappears
+// is one an operator never learns the position of. It is a real button with a
+// real destination (the worst-first queue -- the same place the Map nav item
+// goes), sized for a thumb, with the word carried in the label rather than a
+// hover-only title that does not exist on touch.
+function AttentionLead() {
+  const n = (state.attention || []).length;
+  const label = n === 0 ? 'Nothing needs a person' : (n + (n === 1 ? ' needs a person' : ' need a person'));
+  return h('button', {
+    type: 'button',
+    class: 'ds-attn-lead' + (n ? ' is-waiting' : ''),
+    title: 'Open the queue of reports that need a person',
+    onclick: openQueue,
+  }, label);
+}
+
 // The status bar used to render as chrome around nothing (Status({left:[],
 // right:[]})). In an operational console this is where "can I trust what I am
-// looking at" belongs, so it carries the two facts that answer it: how much is
-// loaded, and whether the connection is still live.
+// looking at" belongs, so it carries the facts that answer it: how much is
+// loaded, whether casey is still hearing the field, and whether this browser
+// is still talking to the dashboard.
+//
+// The attention count is NOT one of them any more -- it is a fact about the
+// work, not about whether the screen can be trusted, and it now leads the top
+// chrome (AttentionLead above) instead of trailing the bottom of the page in a
+// second copy.
+//
+// "Receiving reports" is the quiet half of the one signal that matters most in
+// a surveillance deployment: when the channel is deaf, nothing on this screen
+// looks broken and reports simply stop arriving. The loud half is a red pill
+// (health-pills.js's receivingPill), and exactly one of the two is ever on
+// screen, so they can never disagree. Absent when no channel is configured at
+// all -- claiming either way would be inventing a fact.
 function StatusBar() {
   const total = state.allCasesTotal || (state.allCases || []).length;
-  const attn = (state.attention || []).length;
-  const left = [
-    h('span', { key: 'c' }, `${total} report(s) loaded`),
-    attn ? h('span', { key: 'a' }, `${attn} need a person`) : null,
-  ].filter(Boolean);
+  const gw = state.health.ai && state.health.ai.gateway;
+  const left = [h('span', { key: 'c' }, `${total} report(s) loaded`)];
   const right = [
+    gw && gw.ok ? h('span', { key: 'rx' }, 'Receiving reports') : null,
     h('span', { key: 'conn' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected'),
-  ];
+  ].filter(Boolean);
   return Status({ left, right });
 }
 
@@ -177,10 +218,16 @@ export function App() {
     brand, leaf,
     items: [], themeToggle: false,
   });
+  // Ordered bottom-line-first: the answer, then the exceptions, then the
+  // verbs, then the account. The health pills sit second because when one is
+  // present it is the reason the operator should stop and read; when nothing
+  // is wrong they render nothing at all and the group collapses, so the
+  // healthy chrome is the lead plus the verbs and nothing else.
+  const pills = HealthPills();
   const crumbRight = [
+    AttentionLead(),
+    pills.length ? h('div', { class: 'ds-health-pill-group' }, pills) : null,
     ActionRow(),
-    QuickStartBadge(),
-    h('div', { class: 'ds-health-pill-group' }, HealthPills()),
     NotificationsCenter(),
     IconButton({ icon: Icon('help'), title: 'What does this screen mean?', onClick: () => openModal('help') }),
     AccountMenu(),

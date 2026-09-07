@@ -41,7 +41,10 @@ function InboxRow(e) {
   const mine = owner && state.currentUser && owner === state.currentUser.username;
   const otherClaim = owner && !mine;
   const active = e.id === state.activeId;
-  const band = urgencyBand(Number(e.score));
+  // Every row here scored above zero to be in this list at all, so a row that
+  // somehow arrives without a usable score still belongs in the queue -- it
+  // lands in the lowest band rather than losing its stripe entirely.
+  const band = urgencyBand(Number(e.score)) || 1;
   const open = () => { setActiveId(e.id); pushHash({ caseId: e.id }); };
 
   return h('div', {

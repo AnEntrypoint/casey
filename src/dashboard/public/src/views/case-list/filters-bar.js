@@ -1,26 +1,37 @@
-// Search + status/channel/source filters + Mine toggle + saved-views Dropdown
-// + FilterPills quick-stage strip (ux-case-list-sort-group-controls,
-// ux-filter-dropdown-truncation, ux-search-hint-and-history).
+// The controls that change the question, in two tiers.
+//
+// Tier 1 (SearchBar + StagePills) is always visible: typing a ref or a place,
+// and one-tap stage narrowing. Tier 2 (MoreFilters) sits behind a worded
+// disclosure in case-list-view.js -- channel, intake source, saved views.
+//
+// Two controls were removed rather than restyled:
+//   - the "all stages" Select. It drove setFilt({status}) exactly as StagePills
+//     does, rendered immediately above it, so the same question had two answers
+//     stacked on top of each other. The pills win: one tap, always visible, no
+//     dropdown to open on a phone.
+//   - the Mine toggle. It became a counted chip in case-list-view.js's head,
+//     because a control that also states how many it will show you is strictly
+//     better than one that makes you apply it to find out.
+//
+// The recent-search affordance was a Dropdown whose entire trigger was
+// `class: 'ds-search-history-hint sr-only'` -- visually hidden, so on a touch
+// screen it did not exist at all. It is real, tappable chips now.
 
 import * as ds from '/design/dist/247420.js';
-import { state, setFilt, setMineOnly } from '../../state.js';
+import { state, setFilt } from '../../state.js';
 import { stageLabel, stageTone } from '../../format.js';
-import { pushRecentSearch } from '../../saved-views.js';
-const { SearchInput, Select, Chip, Dropdown, Btn, FilterPills } = ds.components;
+import { pushRecentSearch, loadRecentSearches } from '../../saved-views.js';
+const { SearchInput, Select, Dropdown, Btn, FilterPills } = ds.components;
 const h = ds.h;
 
 // Truncate a long option label to a fixed budget so a Select never blows out
-// the filter bar width (ux-filter-dropdown-truncation); the full value stays
-// the real title attribute for a hover/screen-reader read.
+// the filter bar width; the full value stays the real title attribute for a
+// hover/screen-reader read.
 function truncateLabel(label, max = 28) {
   const s = String(label || '');
   return s.length > max ? s.slice(0, max - 1) + '...' : s;
 }
 
-function statusOptions() {
-  const stages = [...new Set(state.allCases.map((c) => c.status))].sort();
-  return stages.map((s) => ({ value: s, label: truncateLabel(stageLabel(s)) }));
-}
 function channelOptions() {
   const channels = [...new Set(state.allCases.map((c) => c.channel).filter(Boolean))].sort();
   return channels.map((c) => ({ value: c, label: truncateLabel(c) }));
@@ -31,36 +42,62 @@ const SOURCE_OPTIONS = [
   { value: 'public_form', label: 'Public form' },
 ];
 
-function searchHint() {
-  if (!state.recentSearches.length || state.filt.q) return null;
-  const items = state.recentSearches.map((q) => ({ id: q, label: q }));
-  return Dropdown({
-    ariaLabel: 'Recent searches',
-    trigger: () => h('span', { class: 'ds-search-history-hint sr-only' }, 'recent searches'),
-    items,
-    onSelect: (id) => { setFilt({ q: id }); pushRecentSearch(id); },
-  });
+// The ring buffer saved-views.js keeps in localStorage, read from there rather
+// than from state.recentSearches. pushRecentSearch() has always WRITTEN that
+// buffer on every search submit, but nothing in the SPA ever called
+// loadRecentSearches() or setRecentSearches(), so state.recentSearches was []
+// for the life of every page -- the whole feature was written-only, and the
+// control that consumed it could never have rendered even if it had been
+// visible. Cached per page so a 5s poll's re-render is not a storage read.
+let recentCache = null;
+function recent() {
+  if (recentCache === null) recentCache = loadRecentSearches();
+  return recentCache;
+}
+function remember(q) { pushRecentSearch(q); recentCache = null; }
+
+// Real chips, not a screen-reader-only dropdown. Only while the box is empty:
+// once the operator is typing, their own text is the subject of the control
+// and a row of old searches under it is just noise to tap past.
+function recentSearches() {
+  const arr = recent();
+  if (!arr.length || state.filt.q) return null;
+  return h('div', { class: 'ds-recent-searches' },
+    h('span', { key: 'lab', class: 'ds-recent-label' }, 'Recent:'),
+    ...arr.slice(0, 5).map((q) => h('button', {
+      key: 'r-' + q, type: 'button', class: 'ds-recent-chip', title: q,
+      onclick: () => { setFilt({ q }); remember(q); },
+    }, q)));
 }
 
-export function FiltersBar({ onOpenSavedViews, onSaveView, searchInputRef }) {
-  const resultCount = state.allCases.length + ' result' + (state.allCases.length === 1 ? '' : 's');
+// resultCount comes from the caller, which is the only place that knows how
+// many rows actually survive every filter. It used to be state.allCases.length
+// -- the count BEFORE filtering -- so the number beside the search box was the
+// one number on screen guaranteed not to describe the list under it.
+//
+// The placeholder no longer offers "contact": /api/cases is a PII-free
+// projection with no external_id or contact_id in it, so a phone number was
+// never searchable here and offering it taught the operator to expect a result
+// that could not arrive.
+export function SearchBar({ resultCount = 0 } = {}) {
+  const countLabel = resultCount + ' result' + (resultCount === 1 ? '' : 's');
   return h('div', { class: 'ds-case-filters-bar', role: 'search' },
     h('div', { key: 'search', class: 'ds-case-filters-search' },
       SearchInput({
         value: state.filt.q,
-        placeholder: 'Search ref, subject, contact... ( / )',
+        placeholder: 'Search a reference or what it is about ( / )',
         label: 'Search cases',
-        resultCount,
+        resultCount: countLabel,
         onInput: (v) => setFilt({ q: v }),
-        onSubmit: (v) => { if (v) pushRecentSearch(v); },
-      }),
-      searchHint()
+        onSubmit: (v) => { if (v) remember(v); },
+      })
     ),
-    Select({
-      key: 'status', value: state.filt.status, placeholder: 'all stages',
-      title: 'Filter by workflow stage', ariaLabel: 'Filter by stage',
-      options: statusOptions(), onChange: (v) => setFilt({ status: v }),
-    }),
+    recentSearches()
+  );
+}
+
+export function MoreFilters({ onOpenSavedViews, onSaveView }) {
+  return h('div', { class: 'ds-case-more-filters' },
     Select({
       key: 'channel', value: state.filt.channel, placeholder: 'all channels',
       title: 'Filter by channel', ariaLabel: 'Filter by channel',
@@ -71,11 +108,6 @@ export function FiltersBar({ onOpenSavedViews, onSaveView, searchInputRef }) {
       title: 'Filter by intake source', ariaLabel: 'Filter by intake source',
       options: SOURCE_OPTIONS, onChange: (v) => setFilt({ source: v }),
     }),
-    h('button', {
-      key: 'mine-btn', type: 'button', class: 'ds-mine-toggle', 'aria-pressed': state.mineOnly ? 'true' : 'false',
-      title: 'Show only the cases you have claimed',
-      onclick: () => setMineOnly(!state.mineOnly),
-    }, Chip({ tone: state.mineOnly ? 'accent' : '', children: 'Mine' })),
     Dropdown({
       key: 'views',
       ariaLabel: 'Saved views',
@@ -93,9 +125,8 @@ export function FiltersBar({ onOpenSavedViews, onSaveView, searchInputRef }) {
   );
 }
 
-// Quick-stage FilterPills strip beneath the search/select row -- a faster
-// single-click path to the same status filter the Select above also drives.
-// deps/design's FilterPills now takes a per-option `tone`, so this calls it
+// Quick-stage strip: the single, always-visible answer to "which stage".
+// deps/design's FilterPills takes a per-option `tone`, so this calls it
 // directly instead of hand-rolling the pill markup.
 export function StagePills() {
   const stages = [...new Set(state.allCases.map((c) => c.status))].sort();

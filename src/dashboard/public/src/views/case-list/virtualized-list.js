@@ -20,9 +20,13 @@ const OVERSCAN = 6;         // extra rows rendered above/below the viewport
 const scrollTops = new Map();
 const CONTAINER_KEY = 'case-list';
 
+// Empty is not this module's question any more. It used to answer it with one
+// sentence -- "No cases match your filter." -- for four different situations,
+// including the one where nothing had been loaded at all and the one where
+// Focus mode had deliberately stopped the list loading. case-list-view.js's
+// listBody() now says which of them happened, and never calls either renderer
+// with an empty list.
 export function VirtualizedCaseList({ cases, containerHeight = 560, expandedGuardrails, onToggleGuardrails }) {
-  if (!cases.length) return h('div', { class: 'ds-case-list-empty empty' }, 'No cases match your filter.');
-
   const total = cases.length;
   const totalHeight = total * ROW_HEIGHT;
 
@@ -69,7 +73,6 @@ export function VirtualizedCaseList({ cases, containerHeight = 560, expandedGuar
 // the list is small enough that virtualization overhead isn't worth it (a
 // short list renders every row directly -- no scroll-window bookkeeping).
 export function PlainCaseList({ cases, expandedGuardrails, onToggleGuardrails }) {
-  if (!cases.length) return h('div', { class: 'ds-case-list-empty empty' }, 'No cases match your filter.');
   return h('div', { class: 'ds-case-list-plain', role: 'list', 'aria-label': 'Cases' },
     ...cases.map((c) => CaseRow({ c, expandedGuardrails: expandedGuardrails === c.id, onToggleGuardrails })));
 }

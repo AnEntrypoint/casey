@@ -362,7 +362,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-skills-item.is-done .ds-skills-label { color: var(--fg-2, var(--muted)); text-decoration: line-through; }
 
 /* ---- health pills (health-pills.js) ------------------------------------ */
-.ds-health-pills, .ds-health-pill { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.ds-health-pill { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
 /* Degraded-state detail is a popover under the pill, never inline topbar
    content -- see health-pills.js's pillWithDetail(). */
 .ds-health-pill-has-detail { position: relative; }
@@ -379,8 +379,9 @@ body { background: var(--bg); color: var(--fg); }
   box-shadow: var(--shadow-2);
 }
 .ds-health-pill-group { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.ds-pill-with-spark { display: inline-flex; align-items: center; gap: var(--space-1); }
-.ds-sparkline { vertical-align: middle; color: var(--fg-3, var(--muted)); margin-left: var(--space-2); }
+/* .ds-pill-with-spark and .ds-sparkline are gone with the guardrails
+   sparkline (health-pills.js). .ds-pill-with-spark had already had no emitter
+   anywhere in the tree before that; .ds-health-pills (the plural) likewise. */
 
 .ds-metrics-exports { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 .ds-secretary-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
@@ -475,11 +476,8 @@ body { background: var(--bg); color: var(--fg); }
 .ds-fill-bar .ds-fill-fill { display: block; height: 100%; background: var(--green-2, var(--green)); transition: width var(--dur-slow) var(--ease); }
 @media (prefers-reduced-motion: reduce) { .ds-fill-bar .ds-fill-fill { transition: none; } }
 
-/* ---- case list / inbox / row / bulk-bar / pagination ------------------- */
+/* ---- case list / inbox / row / bulk-bar -------------------------------- */
 .case-list-view { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; }
-.case-list-head { display: flex; align-items: baseline; gap: var(--space-4, var(--space-3)); }
-.case-list-head h1 { font-weight: 700; }
-.ds-case-counts { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
 .ds-case-filters-bar { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 
 /* Stage quick-filter pill color distinction rides entirely on the SDK's own
@@ -487,8 +485,6 @@ body { background: var(--bg); color: var(--fg); }
    (format.js's stageTone() already emits these real SDK tone names) -- no
    casey-local override needed here. */
 .ds-case-filters-search { position: relative; flex: 2 1 220px; }
-.ds-mine-toggle { background: transparent; border: 0; padding: 0; cursor: pointer; display: inline-flex; }
-.ds-mine-toggle:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 
 .ds-case-list-scroll { overflow-y: auto; }
 .ds-case-list-spine { position: relative; }
@@ -520,10 +516,6 @@ body { background: var(--bg); color: var(--fg); }
 .ds-guardrail-toggle-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-guardrail-expanded { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 
-.ds-pagination { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
-.ds-pagination-single { justify-content: flex-end; }
-.ds-pagination-jump { flex: 1; text-align: center; }
-
 .ds-bulk-bar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-2) var(--space-3); background: var(--bg-2); border-radius: var(--r-md, var(--r-1)); }
 .ds-bulk-count { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
 
@@ -547,6 +539,81 @@ body { background: var(--bg); color: var(--fg); }
 .tcase.claimed-other { opacity: .62; }
 
 @media (prefers-reduced-motion: reduce) { .case-row, .tcase { transition: none; } }
+
+/* ---- BLUF restructure of the case-list home view ------------------------
+   Added as one block by the case-list BLUF pass. Nothing here touches the map
+   shell, the rail, the legend, the markers or the ds-map-* / casey-linked-*
+   regions of this file; it styles the case-list home view only, and it reuses
+   .ds-fchip / .ds-fchips / .ds-fchip-clear / .ds-queue-more from the map rail
+   above rather than restating them, because the case list is now applying the
+   same two ideas those classes exist for: a count that IS its own filter, and
+   a cap that names its true total on the control that lifts it. */
+
+/* The queue is the first block in the view now, so it carries the weight the
+   deleted <h1> brand used to take. */
+.case-list-view > .triage { border: 1px solid var(--border); }
+.ds-app-surface .triage-head h2, .triage-head h2 { margin: 0; font-size: var(--fs-sm); font-weight: 700; }
+
+/* The list's own section head: what this section is, and how much of it is
+   actually loaded, stated BEFORE the rows instead of under them. */
+.ds-cl-section-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--space-3); flex-wrap: wrap;
+  padding-top: var(--space-2); border-top: 1px solid var(--border);
+}
+.ds-app-surface h2.ds-cl-section-title, .ds-cl-section-title { margin: 0; font-size: var(--fs-sm); font-weight: 700; }
+.ds-cl-range { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted)); }
+/* The match count only exists while a filter is on, and it is a different fact
+   from the cap beside it, so it is toned as the live one of the two. */
+.ds-cl-match { font-size: var(--fs-nano, var(--fs-micro)); color: var(--accent-ink, var(--accent)); font-weight: 600; }
+
+/* Tier-2 filters. Same disclosure idiom as the map rail's "Map options", so
+   the two home views hide their rarely-reached controls the same way. */
+.ds-cl-more { border-top: 0; }
+.ds-case-more-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+
+/* Recent searches as real, tappable chips. The control they replace was a
+   Dropdown whose whole trigger carried sr-only, i.e. a control that did not
+   exist for anyone working on a touch screen. */
+.ds-recent-searches { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.ds-recent-label { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.ds-recent-chip {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-pill, var(--r-1));
+  color: var(--fg); font: inherit; font-size: var(--fs-nano); cursor: pointer;
+  padding: var(--space-1) var(--space-3); min-height: 2.25rem; max-width: 18ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ds-recent-chip:hover { background: var(--bg-3, var(--border)); }
+.ds-recent-chip:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+
+/* The row's lead line: what makes this one worth touching, first and largest.
+   The ref, the stage and the timestamp moved to the line under it. */
+.case-row-lead {
+  font-size: var(--fs-sm, var(--fs-body)); font-weight: 600; color: var(--fg);
+  line-height: 1.35; overflow-wrap: anywhere;
+}
+.case-row-top { margin-top: var(--space-1); }
+.case-row-ref { color: var(--fg-2, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
+
+/* Urgency stripe, from map-model.js's urgencyBand -- the same ladder and the
+   same three colours the queue rows above and the map's pins use, so one case
+   cannot read as urgent here and routine there. Written with :not() rather
+   than relying on source order so .active/.selected keep their accent stripe
+   regardless of where this block sits in the file. */
+.case-row:not(.active):not(.selected).band-3 { box-shadow: inset 3px 0 0 var(--danger); }
+.case-row:not(.active):not(.selected).band-2 { box-shadow: inset 3px 0 0 var(--warn, var(--accent)); }
+.case-row:not(.active):not(.selected).band-1 { box-shadow: inset 3px 0 0 var(--border); }
+
+/* Phone: the section head stacks rather than pushing the range off the edge,
+   and the chips keep a full-size tap target. */
+@container (max-width: 900px) {
+  .ds-cl-section-head { flex-direction: column; align-items: flex-start; gap: var(--space-1); }
+  /* The two count chips are the primary filters on a phone, so they take the
+     full row and the same 2.75rem target the rail's own disclosure summary
+     uses -- 2.25rem is a comfortable mouse target and a poor thumb one. */
+  .case-list-view .ds-fchip { flex: 1 1 auto; justify-content: center; min-height: 2.75rem; }
+  .ds-recent-chip { min-height: 2.75rem; }
+}
 
 /* ---- handoff alert banner: loud, sticky, dismiss-per-case --------------- */
 /* The SDK's Alert(kind:'warn') only tints its icon (--alert-tone: --amber)
@@ -604,7 +671,10 @@ body { background: var(--bg); color: var(--fg); }
    SDK actually emits. */
 .ds-account-trigger, .ds-dropdown-trigger { display: inline-flex; align-items: center; gap: var(--space-2); background: transparent; border: 1px solid var(--border); border-radius: var(--r-md, var(--r-1)); padding: var(--space-1) var(--space-3); cursor: pointer; color: var(--fg); font-size: var(--fs-sm); }
 .ds-account-trigger:focus-visible, .ds-dropdown-trigger:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
-.ds-notif-trigger { position: relative; display: inline-flex; }
+/* The alerts trigger is now the SDK's own .ds-dropdown-trigger (styled above)
+   carrying an icon plus the word -- the .ds-notif-trigger wrapper and its
+   positioned danger Badge are gone with the icon-only bell. */
+.ds-notif-count.is-active { color: var(--danger, var(--warn)); font-weight: 600; }
 
 /* ---- related-reports cluster row / case-id pill grid --------------------- */
 .ds-cluster-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--border-soft, var(--border)); }
@@ -614,8 +684,30 @@ body { background: var(--bg); color: var(--fg); }
    edge across rows instead of wrapping raggedly at whatever count fits. */
 .ds-cluster-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-2); margin-top: var(--space-2); }
 
-/* ---- new-case quick-start badge ------------------------------------------ */
-.ds-quick-start-badge { display: inline-flex; align-items: center; }
+/* ---- the frame's bottom line: "N need a person" (app-view.js AttentionLead)
+   Replaces the .ds-quick-start-badge rule, whose module (quick-start-badge.js)
+   is deleted: that badge was a bare unlabelled number with no click target.
+   This control is the one the whole frame leads with, so it is the LAST thing
+   to give way on a narrow screen -- it is deliberately absent from the
+   @container rule above that hides the rare verbs, and it carries a 44px
+   minimum height because the audience taps it with a thumb. Two states, told
+   by weight and colour together rather than colour alone: waiting, and clear.
+   ------------------------------------------------------------------------- */
+.ds-attn-lead {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--r-md, var(--r-1));
+  background: transparent; color: var(--fg-2, var(--muted));
+  font: inherit; font-size: var(--fs-sm); cursor: pointer;
+  white-space: nowrap;
+}
+.ds-attn-lead:hover { background: var(--bg-2); color: var(--fg); }
+.ds-attn-lead:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+.ds-attn-lead.is-waiting {
+  color: var(--warn); border-color: var(--warn); font-weight: 700;
+  background: color-mix(in oklab, var(--warn) 12%, transparent);
+}
+.ds-attn-lead.is-waiting:hover { background: color-mix(in oklab, var(--warn) 20%, transparent); color: var(--warn); }
 
 /* ---- map legend + Leaflet overrides (no SDK equivalent for a tile-map) ---
    The canvas is sized by its pane (.ds-map-shell above), never by a viewport
