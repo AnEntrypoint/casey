@@ -149,8 +149,29 @@ export function dispatchForCase(mapState, caseId) {
     return openDispatchPicker(mapState, caseId, p ? p.lat : null, p ? p.lon : null);
 }
 
+// What the rendered marker layer is a function of. Rebuilding the layer tears
+// down and recreates every marker, which COLLAPSES the marker-cluster groups
+// the operator is currently reading and drops their expansion state -- so a
+// rebuild that would produce a pixel-identical result is not free, it is
+// actively disruptive. Selection is deliberately absent: setSelectedCase
+// repaints the two affected markers in place precisely so selecting does not
+// cost a rebuild.
+function markerSignature(mapState, filters, urgency) {
+    const f = filters || {};
+    return [f.species || '', f.type || '', f.status || '', f.band || '', mapState.showClusters ? 1 : 0]
+        .concat((mapState.pins || []).map((p) => `${p.id}:${p.status}:${p.lat}:${p.lon}:${p.location_source}:${urgency.get(p.id) || 0}`))
+        .join('|');
+}
+
 function renderMapMarkers(mapState, filters) {
     const { map } = mapState;
+    // Computed before anything is torn down: this is what makes a periodic
+    // refresh of the pins affordable at all. Without it, polling the map data
+    // to keep a surveillance view current would collapse the operator's
+    // clusters on every tick even when not one report had changed.
+    const sig = markerSignature(mapState, filters, urgencyByCaseId());
+    if (mapState.markerLayer && sig === mapState.markerSig) return;
+    mapState.markerSig = sig;
     if (mapState.markerLayer) map.removeLayer(mapState.markerLayer);
     if (mapState.clusterLines) map.removeLayer(mapState.clusterLines);
     // The SAME predicate the rail applies (map-model.js). Before this the two

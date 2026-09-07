@@ -22,7 +22,7 @@ import { MetricsPanel } from './panels/metrics-panel.js';
 import { ClustersPanel } from './panels/clusters-panel.js';
 import { DistributionPanel } from './panels/distribution-panel.js';
 import { GeoPanel } from './panels/geo-panel.js';
-import { visibleQueueRows, mapDebugSnapshot } from './panels/map-panel.js';
+import { visibleQueueRows, mapDebugSnapshot, refreshMapData } from './panels/map-panel.js';
 import { ActivityPanel } from './panels/activity-panel.js';
 import { HandoverPanel } from './panels/handover-panel.js';
 import { OfflinePanel } from './panels/offline-panel.js';
@@ -272,16 +272,35 @@ initRouteSync((r) => {
   maybeShowOnboarding();
 })();
 
-// Background polls: 5s full-list, 15s health, 30s attention, 60s degraded-
-// turns (feeds notifications-center only, cheap and infrequent). Focus mode
-// suppresses the expensive 5s list poll (a phone runs the cheap attention +
-// health polls only).
-const _casesIv = setInterval(() => { if (!state.inboxMode) loadCases(); }, 5000);
+// Background polls: 5s full-list, 15s health, 30s attention + map pins, 60s
+// degraded-turns (feeds notifications-center only, cheap and infrequent).
+// Focus mode suppresses the expensive 5s list poll (a phone runs the cheap
+// attention + health polls only).
+//
+// The 5s list poll is ALSO suppressed while the map home view is showing, and
+// that is the single biggest bandwidth item on this dashboard: measured over a
+// 62s idle window on the map landing, /api/cases was 133,140 B/min -- 82.4% of
+// all poll traffic -- for a list state.allCases that the map view never reads.
+// Only the case-list side does. On the rural, metered link this deployment
+// targets, that was most of an idle hour's ~8.7 MB being spent on a screen the
+// operator is not looking at.
+//
+// The pins take its place on a 30s tick, matching attention (the two feed the
+// same rail and drifting them apart is how the map and the queue come to
+// disagree). They were previously never refreshed at all -- fetched once by
+// loadMap() and then left, so on a surveillance map a new report could stay
+// unplotted for an entire shift while a list nobody was reading refreshed 720
+// times an hour. Net effect is still far less traffic, spent on the surface
+// actually in front of the operator.
+const onMapHome = () => !state.activePanel && state.homeView === 'map';
+const _casesIv = setInterval(() => { if (!state.inboxMode && !onMapHome()) loadCases(); }, 5000);
 const _healthIv = setInterval(refreshHealth, 15000);
 const _attnIv = setInterval(refreshAttention, 30000);
+const _mapIv = setInterval(() => { if (onMapHome()) refreshMapData(); }, 30000);
 const _degradedIv = setInterval(refreshDegradedTurns, 60000);
 window.addEventListener('beforeunload', () => {
-  clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv); clearInterval(_degradedIv);
+  clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv);
+  clearInterval(_mapIv); clearInterval(_degradedIv);
 });
 
 // Read-only diagnostic hook. The bug class this layout keeps producing is the

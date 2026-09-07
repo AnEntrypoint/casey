@@ -129,6 +129,18 @@ function refresh() {
     }).finally(() => { inFlight = false; });
 }
 
+// The map's own pins were the ONE thing on this dashboard never refreshed.
+// /api/map/cases was fetched once by loadMap() and never again, so on a
+// surveillance map that is now the landing view, the pins were as old as the
+// operator's login -- while a case list the map view does not even read was
+// re-fetched every 5 seconds. A new report could sit unplotted for a whole
+// shift. Exported so main.js can poll it only while the map is actually on
+// screen; the marker-signature guard in map-leaflet.js is what makes a
+// repeated call cheap, and the inFlight guard below still collapses overlaps.
+export function refreshMapData() {
+    refresh();
+}
+
 function agoText(ms) {
     const s = Math.round((Date.now() - ms) / 1000);
     if (s < 10) return 'just now';
