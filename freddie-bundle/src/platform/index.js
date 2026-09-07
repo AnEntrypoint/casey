@@ -21,7 +21,14 @@
 import { setAgentContext } from '../../../src/agent/run-turn.js'
 
 export const name = 'casey-platform'
-export const inject = ['webServer']
+// 'agents' alongside 'webServer': this plugin hands its own ctx to
+// setAgentContext(), and src/agent/run-turn.js reaches ctx.agents.create() on
+// it for every inbound turn. Cordis gates property access on the declared
+// inject list, so without 'agents' here the FIRST live turn throws "cannot get
+// property agents without inject" -- witnessed against a real booted tree.
+// Declaring it also correctly defers this plugin's mount until the agents
+// service is actually available.
+export const inject = ['webServer', 'agents']
 
 /**
  * @param ctx - Cordis context (ctx.webServer required)

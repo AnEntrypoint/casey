@@ -125,7 +125,16 @@ export async function runTurn({
   toolCtx = null,
   timeoutMs = 30000,
   provider = 'acptoapi',
-  model,
+  // Default from the same env the acptoapi adapter itself falls back to
+  // (freddie-bundle/src/llm-acptoapi/adapter.js's getModel). hooks/handler.js
+  // does not pass a model -- it never had to, since the old casey-owned loop
+  // resolved it inside callLLM -- so leaving this undefined made freddie's
+  // agent layer reject EVERY turn with "agent has no provider/model" before
+  // the adapter was ever consulted (witnessed live against a booted tree).
+  // Resolving it here keeps that single knob (CASEY_LLM_MODEL) authoritative
+  // and lets a comma-separated fallback chain through untouched -- the
+  // adapter, not the agent layer, is what understands chain syntax.
+  model = process.env.CASEY_LLM_MODEL || process.env.FREDDIE_LLM_MODEL || null,
 } = {}) {
   // Resolve enabledToolsets/disabledToolsets into a real tool-name allowlist.
   // enabledToolsets:['cases'] means every case_* tool name; disabledToolsets
