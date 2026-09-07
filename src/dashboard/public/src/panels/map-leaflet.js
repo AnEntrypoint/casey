@@ -38,14 +38,27 @@ function mapMarkerIcon(statusTok, locationSource) {
     });
 }
 
-// location_source -> a short, honest label for the popup. 'unset' (a case
-// predating this field) says nothing rather than implying a false certainty
-// either way.
-const LOCATION_SOURCE_LABEL = { gps: 'exact GPS', estimated: 'estimated, unconfirmed', confirmed: 'estimated, confirmed by worker' };
+// location_source -> a short, honest label for the popup/legend. 'unset' (a
+// case predating this field) says nothing rather than implying a false
+// certainty either way. Exported so map-panel.js's legend can document this
+// visual channel (marker border treatment) the same way it already documents
+// status color -- both are encoded on every pin but only status had a legend
+// entry before.
+export const LOCATION_SOURCE_LABEL = { gps: 'exact GPS', estimated: 'estimated, unconfirmed', confirmed: 'estimated, confirmed by worker' };
 
-function mapPopupHtml(p) {
+function mapPopupHtml(p, clusterInfo) {
     const counts = [p.affected_count != null ? p.affected_count + ' affected' : '', p.dead_count != null ? p.dead_count + ' dead' : ''].filter(Boolean).join(', ');
     const locSrcLabel = LOCATION_SOURCE_LABEL[p.location_source];
+    // clusterInfo (mapState.clusters[p.cluster], from clusters.js buildClusters
+    // via /api/map/cases) was already computed server-side and reached the
+    // client, but nothing rendered it -- a clicked pin gave no hint it was
+    // part of a wider, possibly-related group of reports (Ushahidi's
+    // cluster-summary pattern: "what's going on here", not just a bare pin).
+    const linkedNote = clusterInfo && clusterInfo.count > 1
+        ? `<span title="Reports nearby that may be the same or a related situation">linked to ${clusterInfo.count - 1} other report(s)`
+          + (clusterInfo.reported_disease_names && clusterInfo.reported_disease_names.length ? ': ' + esc(clusterInfo.reported_disease_names.join(', ')) : '')
+          + '</span><br>'
+        : '';
     return `<div><b>${esc(p.ref)}</b> <span class="ds-map-popup-status">${esc(p.status)}</span><br>`
         + (p.species ? esc(p.species) + '<br>' : '')
         + (p.case_type && p.case_type !== 'unset' ? esc(p.case_type) + '<br>' : '')
@@ -55,6 +68,7 @@ function mapPopupHtml(p) {
         + (counts ? esc(counts) + '<br>' : '')
         + (p.onset ? 'onset: ' + esc(p.onset) + '<br>' : '')
         + (p.assignee && p.assignee !== 'agent' ? 'assigned: ' + esc(p.assignee) + '<br>' : '')
+        + linkedNote
         + `<a href="#" data-open-ref="${esc(p.id)}">Open case</a>`
         + ` | <a href="#" data-dispatch-ref="${esc(p.id)}" title="Suggest a field worker for this case -- never messages them directly, they hear about it on their own next reply-in">Dispatch a worker</a></div>`;
 }
@@ -75,7 +89,8 @@ function renderMapMarkers(mapState, filters) {
     const layer = window.L.markerClusterGroup({ maxClusterRadius: 40 });
     for (const p of filtered) {
         const m = window.L.marker([p.lat, p.lon], { icon: mapMarkerIcon(STATUS_TOKEN[p.status] || '--fg-3', p.location_source) });
-        m.bindPopup(mapPopupHtml(p));
+        const clusterInfo = p.cluster != null ? mapState.clusters[p.cluster] : null;
+        m.bindPopup(mapPopupHtml(p, clusterInfo));
         m.on('popupopen', () => {
             const el = document.querySelector(`[data-open-ref="${p.id}"]`);
             if (el) el.onclick = (e) => { e.preventDefault(); setActiveId(p.id); };
