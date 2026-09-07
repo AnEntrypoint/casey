@@ -32,6 +32,7 @@ import { urgencyByCaseId, pinMatches, rowMatches, isToday, filterIsActive, URGEN
 import {
     loadMap, toggleClusters, refilterMarkers, toggleCoverage, toggleWorkers, toggleLastReports, STATUS_TOKEN,
     focusCaseOnMap, setSelectedCase, resetMapView, LOCATION_SOURCE_LABEL,
+    clusterNoteForCase, dispatchForCase,
 } from './map-leaflet.js';
 import { GeoPanel } from './geo-panel.js';
 import { ClustersPanel } from './clusters-panel.js';
@@ -402,6 +403,14 @@ function onMountCanvas(el) {
 // or nothing on grey -- so say which happened. The distinction matters on a
 // rural link, where the tiles are the thing most likely to be unreachable
 // while the API is fine.
+//
+// Ordered by what the operator most needs to know, and only ever ONE note,
+// because the canvas is allowed exactly two occupants (this and the legend)
+// and a stack of alerts over a situational-awareness map is the floating-panel
+// anti-pattern this layout exists to avoid. A data failure outranks an empty
+// result, which outranks a missing backdrop -- a basemap outage is the least
+// harmful of the three because every report is still plotted and still
+// clickable on top of the grey.
 function mapStateNote() {
     if (error) return { kind: 'error', text: error };
     if (!loadedOnce) return null;
@@ -413,8 +422,35 @@ function mapStateNote() {
     }
     const visible = pins.filter((p) => pinMatches(p, state.mapFilter, urgencyByCaseId(), currentExtent()));
     if (!visible.length) return { kind: 'info', text: 'No reports match the filters you have on.' };
+    if (mapStateRef.current && mapStateRef.current.tilesFailing) {
+        return { kind: 'warn', text: 'The map background is not loading -- the reports below are still correct and still up to date, only the map picture behind them is missing.' };
+    }
     return null;
 }
+
+// How long before "Updated 4m ago" stops being a reassurance and starts being
+// a claim the page cannot support. The map data refreshes on a poll; when that
+// poll dies the timestamp simply keeps ageing, and an operator reading a
+// worst-first triage queue has no way to tell a quiet morning from a page that
+// stopped listening an hour ago. Stale data on screen is labelled stale.
+const STALE_AFTER_MS = 3 * 60e3;
+
+function isStale() {
+    return lastUpdatedAt != null && (Date.now() - lastUpdatedAt) > STALE_AFTER_MS;
+}
+
+// The staleness label is the one thing on this panel that has to change while
+// NOTHING else is happening -- if the polls are dead there is no other event
+// left to trigger a render, which is exactly the situation being reported. So
+// it gets its own low-frequency ticker, and that ticker re-renders only on the
+// fresh -> stale EDGE rather than every tick, so a healthy page pays nothing.
+let wasStale = false;
+setInterval(() => {
+    const now = isStale();
+    if (now === wasStale) return;
+    wasStale = now;
+    schedule();
+}, 30e3);
 
 export function MapPanel() {
     const note = mapStateNote();
@@ -458,8 +494,17 @@ function railModeTabs() {
 
 export function MapRail() {
     const mode = RAIL_MODES[state.railMode] || RAIL_MODES.queue;
+    // Says which of the two it is, in words, rather than leaving a quietly
+    // ageing "Updated 41m ago" to be read as if it were current.
+    const stale = isStale();
     const lastUpdatedNote = lastUpdatedAt
-        ? h('div', { class: 'ds-map-updated' }, 'Updated ' + agoText(lastUpdatedAt))
+        ? h('div', {
+            class: 'ds-map-updated' + (stale ? ' is-stale' : ''),
+            role: stale ? 'status' : null,
+            title: stale
+                ? 'This view has stopped refreshing. Reload the page to get the current picture.'
+                : null,
+        }, (stale ? 'Not refreshing -- last updated ' : 'Updated ') + agoText(lastUpdatedAt))
         : null;
     return h('div', { class: 'ds-map-rail' },
         h('div', { class: 'ds-rail-head' },
@@ -475,6 +520,30 @@ export function MapRail() {
                 h('summary', {}, 'Map options'),
                 h('div', { class: 'ds-rail-disclosure-body' }, mapFilterRow(), mapOverlayRow())),
             ...mapUnresolvedDisclosure()));
+}
+
+// ---- what the pin popup used to be the only home for ---------------------
+
+// The pin popup is gone (see map-leaflet.js), so the two things it ALONE could
+// reach are surfaced here, bound to the live map instance, for the case detail
+// in the rail to render. A facade on purpose: the case detail asks by case id
+// and never learns that a Leaflet instance, a pin list or a cluster index
+// exist -- so it stays renderable on the case-list side of the app, where no
+// map is mounted at all and both of these correctly resolve to "nothing".
+export function clusterNoteFor(caseId) {
+    return clusterNoteForCase(mapStateRef.current, caseId);
+}
+
+// Null when there is no live map: the picker ranks workers by distance from
+// the case and reads its roster from the worker overlay, neither of which
+// exists without one. The caller hides the action rather than offering a
+// control that cannot work.
+export function canDispatchFor(caseId) {
+    return !!(mapStateRef.current && (mapStateRef.current.pins || []).some((p) => p.id === caseId));
+}
+
+export function dispatchWorkerFor(caseId) {
+    return dispatchForCase(mapStateRef.current, caseId);
 }
 
 // Read-only snapshot for diagnosing the class of bug this whole restructure

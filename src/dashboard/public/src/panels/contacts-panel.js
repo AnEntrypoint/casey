@@ -7,7 +7,7 @@ import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
-import { state, schedule, closePanel } from '../state.js';
+import { state, schedule } from '../state.js';
 import { fetchContacts, postContactTier, postContactErase } from '../api.js';
 import { fmtTime } from '../format.js';
 import { toast } from '../toasts.js';
@@ -63,7 +63,6 @@ async function erase(c) {
 
 export function ContactsPanel() {
     ensureLoaded();
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     const isAdmin = state.currentUser && state.currentUser.role === 'admin';
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading reporters' });
@@ -88,5 +87,5 @@ export function ContactsPanel() {
             }),
         });
     }
-    return Panel({ title: 'Reporters', children: [back, body] });
+    return Panel({ children: [body] });
 }

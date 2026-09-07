@@ -234,10 +234,27 @@ body { background: var(--bg); color: var(--fg); }
 .ds-queue-more:hover { background: var(--bg-2); }
 .ds-queue-more:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
 
-/* ---- panel-swap chrome (content-swap panels: back affordance) ---------- */
-.ds-panel-swap { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
-.ds-panel-swap-head { display: flex; align-items: center; gap: var(--space-2); }
-.ds-panel-swap-body { min-height: 0; }
+/* ---- panel-swap chrome: a content-swap panel is a full PAGE ------------
+   ONE treatment for all seven non-spatial panels (app-view.js's PanelSwap):
+   a head carrying the worded escape and the page's own name, over a body
+   that scrolls under it. The head is STICKY because these are long reading
+   surfaces -- a contacts or activity list runs well past a 390px phone's
+   fold, and the head holds the only way back, so scrolling it off screen
+   would strand the operator exactly the way the untitled placeholder shell
+   used to. Wraps rather than squeezing: on a narrow screen the escape keeps
+   its full label on the first line and the title takes the second. */
+.ds-panel-swap { display: flex; flex-direction: column; min-height: 0; }
+.ds-panel-swap-head {
+  position: sticky; top: 0; z-index: var(--z-raised);
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg); border-bottom: 1px solid var(--border);
+}
+.ds-app-surface h1.ds-panel-swap-title, .ds-panel-swap-title {
+  margin: 0; min-width: 0; font-size: var(--fs-lg); font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.ds-panel-swap-body { min-height: 0; padding: var(--space-4); }
 
 /* ---- topbar action row (the verbs that used to sit in the nav) --------- */
 .ds-action-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
@@ -641,12 +658,27 @@ body { background: var(--bg); color: var(--fg); }
 .ds-map-unresolved-row:hover { background: var(--bg-2); }
 .ds-map-unresolved-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-muted { color: var(--fg-3, var(--muted)); }
-.leaflet-popup-content { font-size: var(--fs-nano, var(--fs-micro)); }
-.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg-2); color: var(--fg); }
+/* No .leaflet-popup rules: a pin click selects the case into the rail and no
+   popup is ever opened (map-leaflet.js). Theming an element nothing emits is
+   how a stylesheet accumulates rules nobody dares delete later. */
 .leaflet-container { background: var(--bg-2); }
+/* "Not refreshing" is a warning, not a caption, so it stops reading like the
+   ordinary timestamp it sits in place of. */
+.ds-map-updated.is-stale { color: var(--warn, var(--amber)); font-weight: 600; }
 
-/* ---- map marker icons and popups (map-leaflet.js) ----------------------- */
+/* ---- map marker icons (map-leaflet.js) --------------------------------- */
 .ds-map-marker-icon { display: flex; align-items: center; justify-content: center; }
+/* Leaflet gives a marker tabIndex=0 and role="button" when its `keyboard`
+   option is on (the default, kept deliberately), and map-leaflet.js supplies
+   the `alt` that names it -- so a pin is a real focusable control. It still
+   needs a visible focus ring, or a keyboard operator tabbing the pin field has
+   a focus position they cannot see. Matches the ring the rail's own rows and
+   chip buttons already use. */
+.ds-map-marker-icon:focus-visible {
+  outline: var(--focus-w, 3px) solid var(--focus-color, var(--accent));
+  outline-offset: 3px;
+  border-radius: var(--r-pill);
+}
 .ds-map-marker-dot {
   width: 14px; height: 14px; border-radius: var(--r-pill);
   border: 2px solid color-mix(in oklab, var(--paper) 80%, transparent);
@@ -716,9 +748,15 @@ body { background: var(--bg); color: var(--fg); }
   box-shadow: 0 0 0 2px var(--danger);
   margin-right: var(--space-2);
 }
-.ds-map-popup-status { color: var(--fg-2); }
-.ds-map-popup-location-source { color: var(--fg-2); font-size: 0.9em; }
-.ds-map-popup-location-source[data-location-source="estimated"] { color: var(--amber); }
+/* The cluster linkage, re-homed from the deleted pin popup into the case
+   detail in the rail (case-detail-view.js). It answers "what is going on
+   here" rather than "what is this pin", so it reads as context under the
+   header rather than as another field of the report. */
+.casey-linked-reports {
+  font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted));
+  padding: var(--space-1) var(--space-2); margin-bottom: var(--space-2);
+  border-left: 3px solid var(--amber); background: var(--bg-2); border-radius: var(--r-1);
+}
 
 @container (max-width: 640px) {
   .ds-map-filters, .ds-map-overlays { gap: var(--space-1); }

@@ -195,3 +195,27 @@ export function buildActionItems(opts = {}) {
 }
 
 export function backToCases() { closePanel(); }
+
+// The title a content-swap panel page carries, taken from the nav item the
+// operator clicked to get there rather than from a second title table. Every
+// registered panel name IS its nav item key (metrics/distribution/activity/
+// handover/offline/team/contacts/secretary, plus geo/clusters on the case-list
+// side), so one lookup covers all of them with no per-panel branch -- and a
+// deployer's dashboard_ui.nav.relabel renames the page and the nav item
+// together instead of leaving the page titled something the nav no longer says.
+//
+// Deliberately reads the RAW sections, not buildSideSections(): a role floor or
+// a deployer hide removes the item from the nav, but a deep link to that panel
+// still renders, and an unnamed page is worse than a page named by a control
+// this operator cannot see. Null for a name no nav item claims -- the caller
+// decides what an unregistered panel is called.
+export function panelTitle(name) {
+  if (!name) return null;
+  const relabel = state.config?.dashboard_ui?.nav?.relabel || {};
+  for (const sec of rawSideSections()) {
+    for (const it of sec.items) {
+      if (it.key === name) return relabel[name] || it.label;
+    }
+  }
+  return null;
+}

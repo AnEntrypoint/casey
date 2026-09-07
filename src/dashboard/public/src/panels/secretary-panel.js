@@ -17,7 +17,7 @@ import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
-import { state, schedule, closePanel, setActiveId } from '../state.js';
+import { state, schedule, setActiveId } from '../state.js';
 import { fetchSecretaryQueue } from '../api.js';
 import { fmtDur, fmtTime } from '../format.js';
 
@@ -68,7 +68,6 @@ function placeSection(group) {
 
 export function SecretaryPanel() {
     ensureLoaded();
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading follow-up queue' });
     else if (error) body = Alert({ kind: 'error', children: 'Secretary queue error: ' + error });
@@ -81,5 +80,5 @@ export function SecretaryPanel() {
             body = h('div', {}, ...places.map(placeSection));
         }
     }
-    return Panel({ title: 'Follow-up calls', right: filterBar(), children: [back, body] });
+    return Panel({ children: [filterBar(), body] });
 }

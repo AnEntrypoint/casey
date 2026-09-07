@@ -112,11 +112,24 @@ export function clearMapFilter() {
 }
 // Bounds change on every frame of a drag; the caller debounces, and this
 // no-ops an identical box so a settle-time duplicate does not re-render.
+//
+// The re-render is NOT conditional on the inView filter being on, and that is
+// the whole point. The rail's "in this view" chip states a COUNT derived from
+// the live bounds whether or not the filter is applied (map-panel.js's
+// filterChips), so gating the re-render on `inView` meant that with the filter
+// off -- its default -- panning the map left that number frozen at whatever the
+// last unrelated render happened to compute. The chip then read "in this view
+// 12" over a viewport holding three, which is precisely the map-and-rail-
+// disagree failure map-model.js exists to prevent, arriving through a missed
+// notification instead of a duplicated derivation.
+//
+// The cost is one rail re-render per SETTLED pan (the caller debounces at
+// 150ms and an identical box no-ops above), not one per drag frame.
 export function setMapExtent(bounds) {
   const prev = state.mapExtent;
   if (prev && bounds && prev.equals && prev.equals(bounds)) return;
   state.mapExtent = bounds;
-  if (state.mapFilter.inView) schedule();
+  schedule();
 }
 export function setRailMode(mode) { state.railMode = mode || 'queue'; schedule(); }
 // Listeners fire BEFORE schedule() on purpose: the map pane is about to be
