@@ -118,7 +118,12 @@ function attentionFeed() {
 function onMountCanvas(el) {
     if (!el) return;
     if (mapStateRef.current && mapStateRef.current.map.getContainer() === el) return;
-    if (mapStateRef.current) { mapStateRef.current.map.remove(); mapStateRef.current = null; }
+    if (mapStateRef.current) {
+        // Stop observing before the container goes away, or the ResizeObserver
+        // outlives its element on every poll-driven canvas swap.
+        try { mapStateRef.current.sizeObserver?.disconnect(); } catch { /* already gone */ }
+        mapStateRef.current.map.remove(); mapStateRef.current = null;
+    }
     refresh();
 }
 
@@ -126,21 +131,12 @@ function onMountCanvas(el) {
 // views/map-command-center.js) drops the "Back to cases" affordance --
 // there is nothing to go back to, the map itself is home. embedded=false
 // (the legacy Reports & Admin nav entry, PanelSwap) keeps it.
-export function MapPanel({ embedded = false } = {}) {
-    const back = embedded ? null : Btn({ variant: 'ghost', children: 'Back to cases', onClick: () => { closePanel(); } });
-    // Legend documents BOTH visual channels a pin encodes -- fill color
-    // (status, as before) and border style (location_source, previously
-    // undocumented anywhere despite being rendered on every marker/popup;
-    // see LOCATION_SOURCE_LABEL's own header comment in map-leaflet.js).
-    const legend = h('div', { class: 'ds-map-legend' },
-        ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
-            h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), k.replace(/_/g, ' '))),
-        h('span', { key: 'loc-estimated', class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-dashed' }), LOCATION_SOURCE_LABEL.estimated));
-    const lastUpdatedNote = lastUpdatedAt
-        ? h('div', { class: 'ds-map-updated' }, 'Updated ' + agoText(lastUpdatedAt))
-        : null;
-
-    const filterRow = h('div', { class: 'ds-map-filters' },
+// Filters, overlay toggles and the no-location disclosure are module-level
+// functions, not locals of MapPanel, because BOTH surfaces need them now: the
+// legacy stacked page renders them inline, and MapRail renders the same nodes
+// docked in the rail. One definition, two mount points.
+function mapFilterRow() {
+    return h('div', { class: 'ds-map-filters' },
         Select({
             key: 'sp', placeholder: 'all species', value: filters.species,
             options: options.species, onChange: (v) => { filters.species = v; refilterMarkers(mapStateRef.current, filters); schedule(); },
@@ -155,89 +151,123 @@ export function MapPanel({ embedded = false } = {}) {
         }),
         Select({
             key: 'dy', value: filters.days,
-            options: [{ value: '0', label: 'all time' }, { value: '7', label: 'last 7 days' }, { value: '30', label: 'last 30 days' }, { value: '90', label: 'last 90 days' }],
+            options: [{ value: '0', label: 'All time' }, { value: '7', label: 'This week' }, { value: '30', label: 'This month' }],
             onChange: (v) => { filters.days = v; refresh(); },
         }));
+}
 
-    const overlayRow = h('div', { class: 'ds-map-overlays' },
+function mapOverlayRow() {
+    return h('div', { class: 'ds-map-overlays' },
         Chip({ key: 'cl', tone: mapStateRef.current && mapStateRef.current.showClusters ? 'accent' : '', children: h('button', { type: 'button', class: 'ds-chip-btn', onclick: () => { toggleClusters(mapStateRef.current, filters); schedule(); } }, 'Clusters') }),
         Chip({ key: 'cov', tone: mapStateRef.current && mapStateRef.current.showCoverage ? 'accent' : '', children: h('button', { type: 'button', class: 'ds-chip-btn', onclick: async () => { await toggleCoverage(mapStateRef.current); schedule(); } }, 'Coverage') }),
         Chip({ key: 'wk', tone: mapStateRef.current && mapStateRef.current.showWorkers ? 'accent' : '', children: h('button', { type: 'button', class: 'ds-chip-btn', onclick: async () => { await toggleWorkers(mapStateRef.current); schedule(); } }, 'Workers') }),
         Chip({ key: 'lr', tone: mapStateRef.current && mapStateRef.current.showLastReports ? 'accent' : '', children: h('button', { type: 'button', class: 'ds-chip-btn', onclick: async () => { await toggleLastReports(mapStateRef.current); schedule(); } }, 'Last reported') }));
+}
 
-    const canvas = h('div', {
-        id: 'ds-map-canvas', class: 'ds-map-canvas',
-        // webjsx has no ref callback; use a mount-once pattern via a
-        // MutationObserver-free approach: schedule() re-invokes this view,
-        // and onMountCanvas is idempotent (mounted guard), so calling it
-        // every render is safe and only truly mounts Leaflet once.
-    });
-    queueMicrotask(() => onMountCanvas(document.getElementById('ds-map-canvas')));
-
-    const unresolvedNote = summary.unresolvedCount
-        ? `${summary.unresolvedCount} case(s) have no placeable location yet (no GPS, and location text did not match a known area) -- not shown on the map.`
+function mapUnresolvedNoteText() {
+    return summary.unresolvedCount
+        ? `${summary.unresolvedCount} report(s) have no placeable location yet (no GPS, and the location text did not match a known area) -- they are not shown on the map.`
           + (summary.truncated ? ` Showing the most recent ${summary.cap} of ${summary.totalConsidered} considered.` : '')
         : (summary.truncated ? `Showing the most recent ${summary.cap} of ${summary.totalConsidered} considered.` : '');
+}
 
-    const unresolvedList = h('div', { class: 'ds-map-unresolved-list' }, ...(summary.unresolved || []).map((p, i) =>
+function mapUnresolvedList() {
+    return h('div', { class: 'ds-map-unresolved-list' }, ...(summary.unresolved || []).map((p, i) =>
         h('div', { key: i, class: 'ds-map-unresolved-row' },
             h('a', { href: '#', onclick: (e) => { e.preventDefault(); setActiveId(p.id); } }, h('b', {}, p.ref)),
             ' ', h('span', { class: 'ds-muted' }, p.status),
             p.species ? ' -- ' + p.species : '',
             p.location ? ` (${p.location})` : '',
             p.symptoms ? ' -- ' + p.symptoms : '')));
+}
 
-    const unresolvedBlock = [
-        unresolvedNote ? h('div', { class: 'ds-map-unresolved-note' }, unresolvedNote) : null,
-        unresolvedList,
-    ];
+// Collapsed, never dropped: a report with no placeable coordinate is a
+// surveillance blind spot, not noise, so it stays one labelled click away with
+// its count on the summary line.
+function mapUnresolvedDisclosure() {
+    if (!summary.unresolvedCount && !summary.truncated) return [];
+    return [h('details', { class: 'ds-rail-disclosure' },
+        h('summary', {}, `Reports with no location (${summary.unresolvedCount || 0})`),
+        h('div', { class: 'ds-rail-disclosure-body' },
+            h('div', { class: 'ds-map-unresolved-note' }, mapUnresolvedNoteText()),
+            mapUnresolvedList()))];
+}
+
+function mapLegend() {
+    // Legend documents BOTH visual channels a pin encodes -- fill color
+    // (status) and border style (location_source); see LOCATION_SOURCE_LABEL's
+    // own header comment in map-leaflet.js.
+    return h('div', { class: 'ds-map-legend' },
+        ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
+            h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), k.replace(/_/g, ' '))),
+        h('span', { key: 'loc-estimated', class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-dashed' }), LOCATION_SOURCE_LABEL.estimated));
+}
+
+function mapCanvas() {
+    const canvas = h('div', { id: 'ds-map-canvas', class: 'ds-map-canvas' });
+    // webjsx has no ref callback; onMountCanvas is idempotent (it guards on the
+    // LIVE Leaflet container), so calling it every render is safe.
+    queueMicrotask(() => onMountCanvas(document.getElementById('ds-map-canvas')));
+    return canvas;
+}
+
+export function MapPanel({ embedded = false } = {}) {
+    const canvas = mapCanvas();
+    const legend = mapLegend();
+    const lastUpdatedNote = lastUpdatedAt
+        ? h('div', { class: 'ds-map-updated' }, 'Updated ' + agoText(lastUpdatedAt))
+        : null;
 
     // Non-embedded (the legacy "Map" nav entry reached via PanelSwap) keeps the
     // original stacked document order -- it is a secondary, scrollable page, so
     // reading top-to-bottom is right there and there is no pane height to fill.
     if (!embedded) {
         return Panel({ title: 'Map', children: [
-            back, summaryStrip(), lastUpdatedNote, attentionFeed(),
-            filterRow, overlayRow, legend,
+            Btn({ variant: 'ghost', children: 'Back to cases', onClick: () => { closePanel(); } }),
+            summaryStrip(), lastUpdatedNote, attentionFeed(),
+            mapFilterRow(), mapOverlayRow(), legend,
             error ? Alert({ kind: 'error', children: error }) : null,
-            canvas, ...unresolvedBlock,
+            canvas,
+            h('div', { class: 'ds-map-unresolved-note' }, mapUnresolvedNoteText()),
+            mapUnresolvedList(),
         ]});
     }
 
-    // Embedded = the map-first home view. BLUF means the map is not the eighth
-    // thing on a scrolling page, it IS the page: the canvas is the full-bleed
-    // ground plane and every control floats over it, so "where is this
-    // happening" needs zero scrolling and zero clicks. Anything that would
-    // push the map down the document is either overlaid or folded away.
+    // Embedded = the map-first home view. The canvas is the WHOLE pane and the
+    // only things allowed to sit on it are the legend and the error alert.
+    // Everything else -- counts, the worst-first queue, filters, overlays, the
+    // no-location list -- is docked in the rail (MapRail below), not floated
+    // over the map.
     //
-    // What stays permanently visible is deliberately short, because the
-    // audience is mixed computer literacy: the map, the four headline counts,
-    // and the worst-first queue of who needs a person. Everything an operator
-    // does NOT need to answer "what is going on right now" -- the four
-    // filters, the four overlay toggles, the colour legend, the
-    // no-location list -- lives behind one clearly-labelled button, so a
-    // first-time user is never asked to parse a wall of controls.
-    const controlsOpen = showControls;
+    // Floating them was the previous iteration and it was wrong in a way that
+    // is specific to this domain: researching shipped map-intelligence
+    // consoles surfaced Map UI Patterns' rule that situational-awareness work
+    // must not cover data with floating panels, and the measurable version of
+    // that here was pins fitted underneath the attention queue -- on screen,
+    // but behind an opaque card. A docked rail removes the failure by
+    // construction instead of compensating for it with fit padding.
     return h('div', { class: 'ds-map-shell' },
         canvas,
-        h('div', { class: 'ds-map-overlay ds-map-overlay-top' },
-            summaryStrip(),
-            lastUpdatedNote),
-        h('div', { class: 'ds-map-overlay ds-map-overlay-queue' + (showQueue ? '' : ' is-collapsed') },
-            h('button', {
-                type: 'button', class: 'ds-map-overlay-toggle',
-                'aria-expanded': String(showQueue),
-                onclick: () => { showQueue = !showQueue; schedule(); },
-            }, showQueue ? 'Hide the list' : 'Show what needs attention'),
-            showQueue ? attentionFeed() : null),
-        h('div', { class: 'ds-map-overlay ds-map-overlay-controls' },
-            h('button', {
-                type: 'button', class: 'ds-map-overlay-toggle',
-                'aria-expanded': String(controlsOpen),
-                onclick: () => { showControls = !showControls; schedule(); },
-            }, controlsOpen ? 'Close map options' : 'Map options'),
-            controlsOpen
-                ? h('div', { class: 'ds-map-controls-body' }, filterRow, overlayRow, legend, ...unresolvedBlock)
-                : null),
-        error ? h('div', { class: 'ds-map-overlay ds-map-overlay-error' }, Alert({ kind: 'error', children: error })) : null);
+        h('div', { class: 'ds-map-chrome' }, legend),
+        error ? h('div', { class: 'ds-map-overlay-error', role: 'alert' }, Alert({ kind: 'error', children: error })) : null);
+}
+
+// The rail's contents when no case is open. Rendered by
+// views/map-command-center.js into the SAME pane CaseDetailView uses, so the
+// queue and the case detail are one rail with push-navigation rather than two
+// columns competing for width -- at 1366px a third docked column left the map
+// under 400px, and the detail pane was otherwise sitting empty saying "no
+// report open yet" while the queue covered the map it was pointing at.
+export function MapRail() {
+    const lastUpdatedNote = lastUpdatedAt
+        ? h('div', { class: 'ds-map-updated' }, 'Updated ' + agoText(lastUpdatedAt))
+        : null;
+    return h('div', { class: 'ds-map-rail' },
+        h('div', { class: 'ds-rail-head' }, lastUpdatedNote, summaryStrip()),
+        h('div', { class: 'ds-rail-body' },
+            attentionFeed(),
+            h('details', { class: 'ds-rail-disclosure' },
+                h('summary', {}, 'Map options'),
+                h('div', { class: 'ds-rail-disclosure-body' }, mapFilterRow(), mapOverlayRow())),
+            ...mapUnresolvedDisclosure()));
 }

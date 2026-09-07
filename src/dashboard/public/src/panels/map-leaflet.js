@@ -211,6 +211,21 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
         };
     }
     const mapState = mapStateRef.current;
+    // Leaflet caches its container size and only recomputes on a WINDOW
+    // resize. In this shell the canvas resizes without one -- the rail swaps
+    // between the queue and a case detail, the pane's flex basis changes, the
+    // phone breakpoint flips -- and a stale cached size renders as grey seams
+    // where tiles were never requested. Observe the element itself.
+    if (!mapState.sizeObserver && typeof ResizeObserver === 'function') {
+        try {
+            const el = mapState.map.getContainer();
+            mapState.sizeObserver = new ResizeObserver(() => {
+                try { mapState.map.invalidateSize({ animate: false }); } catch { /* container torn down mid-observe */ }
+            });
+            mapState.sizeObserver.observe(el);
+        } catch { /* observation is an optimisation, never a hard requirement */ }
+    }
+
     mapState.pins = j.pins || [];
     mapState.clusters = j.clusters || [];
     const species = [...new Set(mapState.pins.map((p) => p.species).filter(Boolean))].sort();
@@ -279,7 +294,10 @@ function overlayFitPadding(canvas) {
         const base = shell.getBoundingClientRect();
         if (!base.width || !base.height) return FALLBACK;
         let top = 0, right = 0, bottom = 0, left = 0;
-        for (const el of shell.querySelectorAll('.ds-map-overlay')) {
+        // Both chrome families: the docked-rail era leaves only the legend and
+        // the error alert on the canvas, but the selector covers any future
+        // on-canvas element without needing to be revisited.
+        for (const el of shell.querySelectorAll('.ds-map-chrome > *, .ds-map-overlay')) {
             const r = el.getBoundingClientRect();
             if (!r.width || !r.height) continue;
             // Only the edge an overlay is actually anchored to is padded: an
