@@ -108,11 +108,27 @@ export function CaseDetailView({ onClose, onOpenCase, key } = {}) {
         CaseHeader({ c, suggestedAssignee: suggested_assignee, onReload: reload, onOpenShare: openShareDialog, onOpenSnooze: openSnoozeDialog }),
         LinkedReportsNote({ caseId: id }),
         CaseProgress({ status: c.status }),
+        // ORDER IS THE ARGUMENT HERE: read the evidence, then act, then the
+        // surfaces you rarely touch. Measured before this change, on a real
+        // case: the pane ran 3740px and the two things an operator actually
+        // opens a case to DO -- move it forward, and answer the person who
+        // reported it -- sat at 3091px and 3173px, underneath a 751px field-
+        // editing form. That is roughly three and a half screens of scrolling
+        // past a form you seldom use, on the 390px phone the AHT staff in this
+        // deployment actually carry, to reach the two controls you always use.
+        //
+        // The report itself stays ABOVE the actions deliberately, and that is
+        // not an oversight: replying to an animal-disease report before
+        // reading it is worse than scrolling, so the evidence keeps its place
+        // and only the rarely-used editors move down past the actions.
         ReportSections({ c, events, onSaved: () => reload(id) }),
-        ResearchNotesPanel({ case: c }),
-        FieldsEditor({ c, caseTypeSource: case_type_source, onSaved: () => reload(id) }),
         Transitions({ c, transitions, onReload: reload }),
         ReplyBox({ c, events, onReload: reload }),
+        // Corrections and supporting context: real, but not why the case was
+        // opened. FieldsEditor is the big one and is now below the fold rather
+        // than in front of it.
+        FieldsEditor({ c, caseTypeSource: case_type_source, onSaved: () => reload(id) }),
+        ResearchNotesPanel({ case: c }),
         DedupPanel({ caseId: id, onReload: reload }),
         SiteHistoryPanel({ onOpenCase }),
         h('div', { class: 'casey-timeline-actions' },
