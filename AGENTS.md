@@ -153,76 +153,133 @@ what casey's own code actually imports at runtime.
 
 | Layer | Project | Submodule path | Role |
 |-------|---------|-----------------|------|
-| Agent + channels | `freddie` | `deps/freddie` | Agent harness + Gateway with WhatsApp/Discord adapters, tools, sessions. |
-| LLM provider chain | `acptoapi` | `deps/acptoapi` | Model resolution, chain fallback, sampler backoff. Reached through freddie's bridge, never called directly by casey. |
+| Agent runtime | `freddie` | `deps/freddie` | Real agent loop, tool registry, LLM seam, and local web server -- a Cordis plugin tree (`@freddie/cordis`), not an npm-importable flat package. freddie IS the agent for casey (see "freddie integration" below); casey's own transport (WhatsApp/Discord) and case tools mount into freddie's tree as Cordis plugins rather than freddie exposing a messaging-bot API of its own. |
+| LLM provider chain | `acptoapi` | `deps/acptoapi` | Model resolution, chain fallback, sampler backoff. Reached through casey's own `freddie-bundle/src/llm-acptoapi` adapter (a real freddie `LlmAdapter` implementation registered on `ctx.llm`), never called directly by casey's app code. |
 | System of record | `thatcher` (deps `busybase`) | `deps/thatcher` | Config-driven CRUD + workflow + RBAC + audit. Holds `case` / `event` / `contact` and the lifecycle state machine. |
 | UI | `anentrypoint-design` | `deps/design` | webjsx + ripple-ui design system theming the dashboard. |
 
 Editing a composed project: work directly in its `deps/<project>` checkout,
 commit and push from inside that submodule's own repo, then bump the
 submodule pointer in casey (`git add deps/<project> && git commit`) so the
-fix is recorded here too. All four composed projects -- `freddie`,
-`thatcher`, `anentrypoint-design`, and `acptoapi` -- are declared in
-`package.json` via npm's `github:owner/repo#main` dependency spec (e.g.
-`github:AnEntrypoint/freddie#main`), so `npm install` fetches each package
-directly from its GitHub repo's `main` branch tip rather than resolving a
-published version from the npm registry. There is no npm-registry version
-pin left anywhere in this fleet, including `acptoapi`: it previously carried
-a real caret range (`^1.0.x`) as a deliberate stability floor on the LLM
-provider chain, but now floats with the other three -- a broken push to
-`acptoapi`'s `main` reaches casey's next `npm install` exactly as fast as a
-fix does, with no version ceiling to fall back to. A fix pushed upstream to
-any of the four repos' `main` branch reaches casey's npm-resolved runtime
-copy on the next `npm install`, no version-bump commit required for the
-*runtime* dependency -- the submodule pointer bump is a separate, additional
-step for keeping `deps/` in sync, not a replacement for `npm install`. A
-local fix to any composed project still requires a push to its own repo
-before `npm install` in casey picks up the runtime copy -- editing
-`deps/<project>` in place does not change what casey imports; there is no
-instant local-edit-to-live-box loop through `deps/`.
+fix is recorded here too. `thatcher`, `anentrypoint-design`, and `acptoapi`
+are declared in `package.json` via a `file:deps/<name>` dependency spec
+(`npm install` resolves them straight from the local submodule checkout, no
+GitHub fetch, no npm registry). `freddie` is NOT declared in `package.json`
+at all -- see "freddie integration" below for why it needs a different
+resolution path entirely.
 
 `deps/` is submodules only, never a vendor tree -- nothing under `deps/` is
-committed as casey's own source, and casey's code never imports from
-`deps/`. Run `git submodule update --init --recursive` after a fresh clone
-to populate `deps/`; a bare clone of casey without that step has empty
-`deps/*` directories but is otherwise fully functional (npm install still
-resolves every composed project from the registry).
+committed as casey's own source. `thatcher`/`design`/`acptoapi` are never
+imported directly either; `scripts/link-deps.mjs` symlinks (Windows:
+junctions) `node_modules/<name>` straight at `deps/<name>` so casey's code
+resolves them by bare specifier. Run `git submodule update --init
+--recursive` after a fresh clone to populate `deps/`.
 
-**Layering mandate: agentic harness -> freddie, CRM code -> thatcher, casey
-is setup + configuration.** freddie's `tool_choice` forced value (e.g.
-`'required'`) applies on iteration 0 only, then reverts to model choice --
-this is what makes forcing the first tool call safe (loop termination stays
-reachable). freddie's coder-agent cwd note ("use Bash/Read/Write") is opt-in
-via an explicit `cwd` param and must never leak into a contact-facing
-agent's prompt.
+**freddie integration: freddie IS the agent for casey, not an npm dependency
+casey calls into.** Upstream freddie's `main` was rewritten from a flat
+"agent harness + Gateway with WhatsApp/Discord adapters" package into a
+Cordis-based plugin-tree app (`@freddie/cordis`, ~220 tiny
+`@freddie/freddie-*` packages, a `pnpm` workspace) with NO messaging-bot
+primitives of its own left -- no `Gateway`, `bootHost`, `runTurn`,
+`WhatsappAdapter`/`DiscordAdapter`. casey does not replace freddie with its
+own turn-runner; instead, freddie's real `boot()` (`@freddie/freddie-app-boot`)
+assembles the WHOLE running app -- transport included, not just the LLM
+turn loop -- with casey's own plugins mounted alongside freddie's
+`@freddie/freddie-base` bundle:
 
-**pi tool surface -- what casey uses and why the rest is excluded.** casey's
-contact-facing agent turn enables `enabledToolsets: ['cases']` only, so the
-agent reaches nothing but casey's own `case_*` tools. Because freddie's
-`enabledToolsets` gates at the toolset-category level (not per-tool), the
-tier-gated tools' full JSON-schema descriptions were still being serialized
-into every reporter-tier request -- dead weight on the far more common tier.
-`hooks/handler.js` additionally passes `disabledToolsets:
-reporterTierExcludedToolNames()` for a reporter-tier turn, which filters by
-tool name (despite the toolset-sounding parameter name) so those schemas
-never enter the request payload; the excluded-name list is derived from the
-live toolset at call time, so a newly added tool is automatically covered.
-`bash`/`read`/`write`/`edit`/`grep`/`browser`/`terminal`/`delegate`/`skill*`
-are forbidden to a contact-facing agent by the security invariant.
-`web_search`/`web_fetch` are excluded because casey never geocodes or looks
-anything up on the model's behalf -- the agent uses its own world knowledge.
-Three `creative`-toolset tools (`transcription`, `vision`, `tts`) are
-dispatched by casey's own deterministic code, never the agent, each opt-in
-and fail-open (see the Environment table). Any future mission-aligned pi
-tool is added the same way -- deterministic dispatch by name, never widened
-into the agent's toolset.
+- `freddie-bundle/boot.js::bootCasey()` composes `@freddie/freddie-base`'s
+  own `cordis.patch.yml` rows with casey's own (`freddie-bundle/cordis.patch.yml`)
+  into one flattened patch array, then calls freddie's real `boot()`.
+- `freddie-bundle/src/case-tools/index.js` -- casey's 18 `case_*` tools,
+  reusing `src/case-tools.js`'s existing definitions/handlers unchanged,
+  wrapped as real freddie `defineTool()` calls registered on `ctx.tools`
+  (`schema-adapt.js` mechanically translates casey's plain-JSON-Schema
+  parameter shape into freddie's own implicit property-map DSL).
+- `freddie-bundle/src/llm-acptoapi/index.js` -- a real freddie `LlmAdapter`
+  subclass wrapping acptoapi's own `chat`/`chatChain`/`buildAutoChain`
+  in-process, registered on `ctx.llm` under the `acptoapi` provider route
+  (mirrors freddie's own `llm-deepseek` package's registration pattern).
+- `freddie-bundle/src/platform/index.js` -- wires casey's own WhatsApp
+  webhook (`src/adapters/whatsapp.js`) onto freddie's real
+  `ctx.webServer.register()` (the one standing listening-socket seam in
+  freddie's tree, reusing its single dashboard port rather than opening a
+  second one) and casey's own Discord adapter (`src/adapters/discord.js`,
+  an outbound gateway-websocket client needing no listening socket at all).
+- `src/agent/run-turn.js` -- the thin adapter `hooks/handler.js` still calls
+  as `runTurn(...)` (unchanged call signature, so casey's ~850-line
+  guaranteed-delivery/rate-limit/dedup orchestration needed no rewrite): it
+  creates/reuses a real freddie `Agent` per case (`ctx.agents.create()`),
+  submits the inbound via `agent.followup(createUserMessage(...))`, awaits
+  `agent.whenIdle()`, and reads the reply back from `agent.session.events`
+  -- the exact pattern freddie's own `packages/bundle/headless` example uses
+  end to end.
 
-casey registers its own case toolset (`plugins/case-tools/plugin.js`) into
-that host -- application-agnostic; the store, field/enum/projection
-vocabulary, and role model arrive via a per-turn `toolCtx` and
-`plugins.case` config. CRM querying lives in thatcher: `list()` supports
-operator where-objects (`{field:{$gte,$lte,$in}}`, `$or`), array tie-broken
-sort, and opt-in row-access scoping.
+**SECURITY (the load-bearing replacement for the old `enabledToolsets`
+contract): freddie's `ctx.tools` is ONE GLOBAL registry shared by every
+mounted plugin, including `@freddie/freddie-base`'s own real
+bash/write/edit/file/credential tools -- there is no toolset-category
+filter at the freddie layer the way the old freddie's `enabledToolsets`
+provided.** `freddie-bundle/src/case-tools/tool-allowlist.js::installToolAllowlist(agentCtx,
+allowedNames)` is the real enforcement boundary, installed per-agent via
+`ctx.agents.create()`'s `setup(agentCtx)` callback (never globally, so a
+per-turn allowlist never leaks across concurrent conversations). Two
+independent gates, defense in depth, both live-verified: (1) the
+`system-prompt/assemble` waterfall hides every non-allowlisted tool's
+schema from the prompt the model sees; (2) the `tools/pre-execute` waterfall
+denies dispatch of any non-allowlisted tool by name even if the model
+somehow names one outside its own visible schema (a hallucinated/leaked
+name). `src/agent/run-turn.js`'s `runTurn()` derives the allowed-name set
+from `enabledToolsets`/`disabledToolsets` (kept as `hooks/handler.js`'s
+existing call-site params) against `buildCaseToolset(null)`'s real tool
+names -- the same reporter-tier/field_worker-tier exclusion logic as before,
+just enforced through freddie's real waterfalls instead of a
+freddie-provided toolset filter.
+
+`src/case-tools.js` remains the single source of truth for tool
+names/descriptions/parameter-schemas/handler logic -- application-agnostic;
+the store, field/enum/projection vocabulary, and role model arrive via a
+per-turn `toolCtx`, now published through
+`src/agent/run-turn.js::getCurrentToolCtx(sessionKey)` (a mutable cell keyed
+by the case's session id, read by each tool's `execute(args, exec)` at
+dispatch time via `exec.agent.id`) rather than a `plugins.case` config
+object. CRM querying lives in thatcher: `list()` supports operator
+where-objects (`{field:{$gte,$lte,$in}}`, `$or`), array tie-broken sort, and
+opt-in row-access scoping.
+
+**Resolving freddie's own packages: `pnpm install` inside `deps/freddie`,
+then `scripts/link-deps.mjs` junctions each `@freddie/*` package into
+casey's `node_modules`.** freddie's own package manifests use `workspace:^`
+cross-deps that plain `npm install` cannot resolve at all (`EUNSUPPORTEDPROTOCOL`)
+-- freddie is a real `pnpm` workspace (`deps/freddie/pnpm-workspace.yaml`,
+`pnpm-lock.yaml`), and each of its ~220 packages already carries its OWN
+correctly-pnpm-linked `node_modules` once `pnpm install` runs there once.
+`scripts/install-freddie-deps.mjs` (wired into `postinstall`, before
+`link-deps.mjs`) runs that `pnpm install`, degrading to a loud warning
+(never a hard failure) when the submodule isn't checked out or `pnpm` isn't
+installed. `scripts/link-deps.mjs` then scans `deps/freddie/{packages,vendor,native}`
+to any depth for a real `@freddie/*` `package.json` and symlinks
+`node_modules/@freddie/<pkg-name>` straight at it (Windows: NTFS junction,
+not a plain directory symlink -- the latter needs elevated
+privileges/Developer Mode, EPERM otherwise). Casey needs `pnpm` on the
+machine for a fresh clone to resolve freddie at all; there is currently no
+fallback path that avoids this.
+
+**`scripts/scan-deps.mjs` deliberately EXCLUDES `deps/freddie`'s own
+`node_modules` from its supply-chain walk** (confirmed live: an unbounded
+walk through freddie's ~220-package pnpm-linked tree did not finish in 90+
+seconds on Windows, versus ~2s for casey's own flat `node_modules` -- pnpm's
+per-package isolated linking plus Windows junction/symlink overhead is
+orders of magnitude slower to traverse than a normal hoisted npm install).
+The walk skips every symlink/junction entry point under `node_modules`
+entirely rather than descending into a foreign repo's own dependency tree
+(the same discipline already applied to `thatcher`/`acptoapi`/`design`'s
+`node_modules/<name>` junctions). `deps/freddie`'s own GIT-TRACKED SOURCE is
+NOT exempt from scanning just because its `node_modules` is -- `scan-deps.mjs`
+walks it explicitly via `walkFreddieSource()`, git-tracked-only (same shape
+as `walkSource(ROOT)` for casey's own source), so freddie's source is never
+silently excluded entirely. The one-time `pnpm install` cost (~4 min on a
+cold cache) is separately bounded and does not run on every `casey doctor`
+call, only `postinstall`.
 
 **Worker identity = the channel author; a worker selects a case before
 data-dumping into it.** A worker negotiates/selects a case which binds
@@ -233,12 +290,15 @@ list can never surface a phone number.
 ## Supply-chain integrity
 
 casey's four composed dependencies -- `freddie`, `thatcher`,
-`anentrypoint-design`, and `acptoapi` -- are consumed directly from GitHub's
-`main` branch tip with no npm-registry version pins, creating a two-pronged
-supply-chain risk: a compromised commit on any repo's `main` reaches casey's
-runtime on the next `npm install`, and obfuscated malware (the "HiddenSpawn"
-class dropper, confirmed across 17+ repos in the 2026-08 incident) can hide
-in a file's trailing whitespace, evading plain-text grep and human review.
+`anentrypoint-design`, and `acptoapi` -- are consumed directly from each
+project's own `main` branch tip with no npm-registry version pins, creating
+a two-pronged supply-chain risk: a compromised commit on any repo's `main`
+reaches casey's runtime on the next `npm install`/`pnpm install` (freddie's
+own resolution mechanism now differs from the other three, see "freddie
+integration" above, but the same risk shape applies), and obfuscated
+malware (the "HiddenSpawn" class dropper, confirmed across 17+ repos in the
+2026-08 incident) can hide in a file's trailing whitespace, evading
+plain-text grep and human review.
 
 **Discovery and verification (every session, every dependency touch):**
 Before trusting any freshly resolved `node_modules` or updated submodules,
@@ -296,11 +356,14 @@ commit history.
 thatcher.config.yml        entities + case workflow (system of record; generic demo by default, see Configuration architecture)
 config/default/            bundled default config package (report-fields.yml, persona.cjs) -- the generic IT-helpdesk demo
 bin/casey.js               CLI: init / doctor / up / dashboard / cases / show / report
-plugins/case-tools/        freddie plugin registering case_* tools (auto-discovered)
+freddie-bundle/            casey's own Cordis plugins mounted into freddie's real boot() -- case-tools (defineTool wraps src/case-tools.js), llm-acptoapi (a real LlmAdapter), platform (WhatsApp/Discord wiring onto ctx.webServer), tool-allowlist (the security enforcement boundary)
 src/
   config-loader.js         resolves CASEY_CONFIG_DIR (or config/default/) -- report-fields.yml + persona.cjs, synchronous
   store/report-shape.js    single choke point deriving REPORT_KEYS/CRITICAL_FIELDS/APPEND_FIELDS/REPORT_SECTIONS/etc from the loaded config
-  casey.js                 top-level assembly: store + host + gateway + adapters + logger
+  casey.js                 top-level assembly: store + adapters + freddie boot (freddie-bundle/boot.js) + gateway shim + logger
+  agent/run-turn.js        runTurn() adapter driving freddie's real Agent (ctx.agents.create/followup/whenIdle) instead of a casey-owned loop
+  agent/acptoapi-bridge.js casey-side acptoapi bridge (media-tools.js/llm.js's own resolveCallLLM path -- NOT the freddie-bundle/src/llm-acptoapi one freddie's agent loop uses)
+  adapters/                casey-owned WhatsApp/Discord transport (freddie's new architecture has none), wired into freddie's ctx.webServer by freddie-bundle/src/platform
   case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, optimistic-lock report merge
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
   provenance-wire.js       additive bridge from case_report into the provenance subsystem (src/core/, src/packs/)
@@ -331,7 +394,7 @@ conversation over Discord/WhatsApp or the dashboard.
 ## Dev workflow
 
 ```sh
-npm install                 # every composed project resolves from npm, no siblings needed
+npm install                 # thatcher/acptoapi/design resolve from deps/ junctions; freddie needs pnpm (see "freddie integration" above)
 node bin/casey.js init      # scaffold a .env (channel tokens, dashboard secret)
 node bin/casey.js doctor    # green/red preflight: deps, channels, port, token
 node bin/casey.js up        # gateway + dashboard (default http://localhost:4000)
@@ -361,7 +424,11 @@ hot-reload watch is the separate sibling path `../freddie/src` (outside the
 repo, existence-guarded, skipped with a warning when absent), not
 `deps/freddie` -- editing `deps/freddie` does not trigger a hot reload by
 default. To hot-reload edits made inside the `deps/freddie` submodule, add
-its path explicitly via `CASEY_RELOAD_PATHS=./deps/freddie/src`.
+its path explicitly via `CASEY_RELOAD_PATHS=./deps/freddie/src`. Freddie's
+own `@freddie/cordis-plugin-hmr` row (mounted by `@freddie/freddie-base`)
+also exists inside its Cordis tree, but casey does not enable it -- editing
+`deps/freddie`'s own source still requires a full `casey up` restart, not a
+live plugin-tree reload.
 
 `npm run check-submodules` (also run inside `casey doctor` when `deps/` is
 populated) is a read-only report on every `deps/*` checkout: fails loud if
@@ -369,32 +436,41 @@ any submodule is on a branch other than `main`, has uncommitted changes, or
 is behind `origin/main`. It never mutates git state -- fixing a reported
 problem is the fetch+reset sequence in "Supply-chain integrity" below.
 
-**Editing and pushing a composed dependency -- worked example (`deps/freddie`,
-same shape for `deps/thatcher`/`deps/acptoapi`/`deps/design`):**
+**Editing and pushing a composed dependency -- worked example (`deps/thatcher`,
+same shape for `deps/acptoapi`/`deps/design`):**
 
 ```sh
-cd deps/freddie
+cd deps/thatcher
 # ... make the fix ...
 git add -A
 git commit -m "fix: whatever the fix is"
-git push origin main            # freddie's own GitHub repo, not casey's
+git push origin main            # thatcher's own GitHub repo, not casey's
 
 cd ../..                        # back to casey root
-git add deps/freddie
-git commit -m "chore(deps): bump freddie submodule pointer"
+git add deps/thatcher
+git commit -m "chore(deps): bump thatcher submodule pointer"
 npm install                     # casey's runtime node_modules now has the fix
 ```
 
 The submodule-pointer commit in casey and the `npm install` are both
-required: the pointer bump keeps `deps/freddie` in sync for the next
+required: the pointer bump keeps `deps/thatcher` in sync for the next
 `git submodule update`, but casey's own runtime code never imports from
 `deps/` (see Architecture above) -- only `npm install` refreshes what
-`node_modules/freddie` actually resolves to.
+`node_modules/thatcher` actually resolves to.
+
+**`deps/freddie` follows a DIFFERENT shape** (see "freddie integration"
+above): after pushing a fix to freddie's own repo and bumping casey's
+`deps/freddie` pointer, run `pnpm install` inside `deps/freddie` (not
+`npm install` at casey's root -- freddie's own packages use `workspace:^`
+specs npm cannot resolve), then `node scripts/link-deps.mjs` from casey's
+root to refresh the `node_modules/@freddie/*` junctions. `scripts/install-freddie-deps.mjs`
+(wired into casey's own `postinstall`) already does the `pnpm install` step
+automatically on a fresh `npm install` at casey's root.
 
 ### Kit consumption strategy (fleet-wide)
 
-**casey itself is the exception, not the pattern below.** casey declares its
-four composed deps (`freddie`, `thatcher`, `acptoapi`, `anentrypoint-design`)
+**casey itself is the exception, not the pattern below.** casey declares
+three of its four composed deps (`thatcher`, `acptoapi`, `anentrypoint-design`)
 as local `file:deps/<name>` npm refs, not `github:` specs -- a fresh clone's
 `npm install` otherwise stalls npm's git-dep preparation for these repos even
 when the trees are already mounted as submodules (see the `chore(deps):
@@ -409,33 +485,34 @@ IS enough to pick up the change locally, no push required first. A push to
 fresh clone, CI, a different machine) sees the fix, since only casey's own
 `node_modules` resolves against the local submodule checkout.
 
-Every other Node-resolved consumer of `anentrypoint-design` -- `freddie`
-itself, and any future non-casey consumer -- declares it as a
-`github:AnEntrypoint/Design#main` npm dependency, so `npm install` fetches
-the package directly from GitHub's `main` branch tip rather than the npm
-registry. `freddie`'s own composed deps (`thatcher`, `acptoapi`, `plugsdk`)
-use the same `github:owner/repo#main` spec for the same reason: `npm
-install` remains the only mechanism that can populate `node_modules` for a
-package a Node process directly `import`s, but the resolution source is each
-project's own GitHub repository instead of the npm registry -- there is no
-way to CDN-serve a package into Node's module resolver, so `github:` is the
+Every other Node-resolved consumer of `anentrypoint-design` -- and any
+future non-casey consumer -- declares it as a `github:AnEntrypoint/Design#main`
+npm dependency, so `npm install` fetches the package directly from GitHub's
+`main` branch tip rather than the npm registry: `npm install` remains the
+only mechanism that can populate `node_modules` for a package a Node
+process directly `import`s, but the resolution source is each project's own
+GitHub repository instead of the npm registry -- there is no way to
+CDN-serve a package into Node's module resolver, so `github:` is the
 closest real equivalent of "always latest from GitHub" for a server-side
-dependency. Two consumers are deliberately excluded from this strategy and
+dependency. `freddie` no longer fits this pattern at all -- it is now a
+`pnpm` workspace resolving its own deps via its own lockfile, not an
+npm-importable package any consumer (including its own former self)
+declares as a `github:`/`file:` spec (see "freddie integration" above). Two
+consumers are deliberately excluded from the `github:`-spec strategy and
 must stay excluded: `gmsniff` (must run air-gapped, zero external-origin
 runtime fetches -- never give it a CDN load or runtime dependency) and
 `agentgui` (vendors the built kit locally for offline operation and UI
 stability). Accepted tradeoff for every `github:`-spec consumer: a push to
-any of the four repos' `main` branch can change that consumer's runtime
-behavior or dashboard UI with no commit of its own, and with no version pin
-to roll back to (a `github:` spec has no npm-published version history) --
-if a broken build lands on `main` in any of the four repos, that consumer's
-next `npm install` picks it up immediately. casey does not carry this
-specific tradeoff for its own four composed deps (a `file:` ref only moves
-when casey's own submodule pointer is bumped and committed), but inherits
-the equivalent risk one level down: an untrusted `deps/<name>` checkout
-(a bad `git submodule update`, an unreviewed pointer bump) is trusted
-immediately on the next `npm install`, with no separate fetch step to catch
-it -- this is exactly why `scan_deps`/`scan-deps.mjs` runs on every
+`main` can change that consumer's runtime behavior or dashboard UI with no
+commit of its own, and with no version pin to roll back to (a `github:`
+spec has no npm-published version history) -- if a broken build lands on
+`main`, that consumer's next `npm install` picks it up immediately. casey
+does not carry this specific tradeoff for its `file:`-spec deps (a `file:`
+ref only moves when casey's own submodule pointer is bumped and committed),
+but inherits the equivalent risk one level down: an untrusted `deps/<name>`
+checkout (a bad `git submodule update`, an unreviewed pointer bump) is
+trusted immediately on the next `npm install`, with no separate fetch step
+to catch it -- this is exactly why `scan_deps`/`scan-deps.mjs` runs on every
 `npm install` and `casey doctor` (see Supply-chain integrity above).
 
 ## Environment

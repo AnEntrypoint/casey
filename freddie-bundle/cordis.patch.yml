@@ -1,0 +1,38 @@
+# casey's own patch layer, applied over @freddie/freddie-base's own
+# insert rows (see src/casey.js's boot() call, which composes
+# [...freddie-base's own patches, ...this file] as one flattened patch array).
+#
+# SECURITY (AGENTS.md "pi tool surface"): freddie-base bundles real
+# bash/write/edit/file/credential tools in the SAME global ctx.tools registry
+# casey's own case_* tools register into -- there is no toolset-category
+# separation at the freddie layer. installToolAllowlist
+# (src/case-tools/tool-allowlist.js), installed per-agent via
+# ctx.agents.create()'s setup() callback (see src/agent/run-turn.js), is the
+# real enforcement boundary: every contact-facing turn's agent only ever
+# sees/can-execute case_* tool names, regardless of what freddie-base itself
+# registers globally. This composition file cannot exclude freddie-base's
+# tool-registering rows without losing the LLM/agent-loop plumbing casey
+# needs from the same bundle -- see that file's own header comment for the
+# full rationale.
+
+- insert:
+    # freddie-base does not itself insert a webServer row (that lives in the
+    # freddie-web-app bundle alongside the whole browser SPA/client UI casey
+    # does not want) -- insert the plain standalone Service directly, with a
+    # literal host/port config instead of web-app's own webStartup CLI-args
+    # provider dependency casey has no use for.
+    - id: casey-webserver
+      name: '@freddie/freddie-host-webserver'
+      config:
+        host: !!js process.env.CASEY_DASHBOARD_HOST || '127.0.0.1'
+        port: !!js Number(process.env.PORT) || 4000
+
+    - id: casey-case-tools
+      name: ./src/case-tools/index.js
+
+    - id: casey-llm-acptoapi
+      name: ./src/llm-acptoapi/index.js
+
+    - id: casey-platform
+      name: ./src/platform/index.js
+      inject: [webServer]

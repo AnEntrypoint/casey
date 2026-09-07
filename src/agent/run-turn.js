@@ -1,132 +1,177 @@
-// Casey's own turn-execution loop, replacing freddie's runTurn (freddie's
-// agent-loop surface was removed in a later upstream rewrite -- see
-// AGENTS.md's freddie-port PRD rows). Deliberately minimal: only the subset
-// of freddie's real machine_builder.js/turn_driver.js behavior casey's own
-// call sites (hooks/handler.js, hooks/reply-judge.js) actually exercise --
-// no approval gating, no compaction, no per-tool budgets, no classifier, no
-// crash-resume step journaling. Every casey call site passes toolCtx with no
-// approvalMode, so that whole subsystem is dead weight for this consumer.
-import { getEnabledToolSchemas, dispatchTool } from './tool-registry.js'
+// Casey's runTurn, now a thin adapter driving freddie's REAL agent loop
+// (packages/core/agent-loop's ReactLoopAgent, reached via ctx.agents) instead
+// of a casey-owned tool loop -- freddie must be the agent for casey (user
+// directive). This module keeps runTurn's existing call signature/return
+// shape exactly (hooks/handler.js's ~850-line guaranteed-delivery/rate-limit/
+// dedup orchestration is unchanged and still calls this function the same
+// way), but the body now creates or resumes a freddie Agent per case,
+// submits the message via agent.followup(), awaits agent.whenIdle(), and
+// reads the reply back from the session's event log -- the exact pattern
+// freddie's own packages/bundle/headless/src/index.js uses end to end.
+//
+// The live freddie Context is provided by freddie-bundle/src/platform's
+// boot() call (see src/casey.js) via setAgentContext() below -- this module
+// has no Cordis context of its own, since casey's process boots freddie's
+// tree once and every inbound turn reaches into that same tree.
+import { createUserMessage } from '@freddie/freddie-llm'
+import { SessionId } from '@freddie/freddie-session'
+import { installToolAllowlist } from '../../freddie-bundle/src/case-tools/tool-allowlist.js'
 
-const DEFAULT_MAX_ITERATIONS = 90
-const DEFAULT_TIMEOUT_MS = 30000
+let _ctx = null
+export function setAgentContext(ctx) {
+  _ctx = ctx
+}
+
+function requireCtx() {
+  if (!_ctx) throw new Error('runTurn: freddie agent context not set -- casey.js must call setAgentContext() during boot before any inbound turn')
+  return _ctx
+}
+
+// One live agent per sessionKey (casey's `case:<id>`), so a conversation's
+// context/tool-visibility setup happens once and every later turn reuses the
+// same running agent rather than re-creating it. Cleared on dispose (process
+// shutdown) only -- casey's own case lifecycle (open/closed) does not map to
+// agent disposal, matching freddie's own session-per-conversation model.
+//
+// currentToolCtx is a per-sessionKey MUTABLE CELL, not a per-agent constant:
+// casey's case_* tool handlers need the LIVE toolCtx (author/tier/store/
+// activeCaseBinding/dedupeCache) for the turn currently in flight, which
+// differs on every runTurn() call even though the agent itself is reused.
+// case-tools/index.js's plugin reads this cell (via getToolCtx()) at EACH
+// tool dispatch, not once at agent-creation time -- installToolAllowlist's
+// own setup() only runs once per agent, so the allowlist itself is fixed at
+// creation (tier changes would need a fresh agent, which casey does not
+// currently do since tier is stable per-contact in practice).
+const liveAgents = new Map()
+const currentToolCtx = new Map()
+
+async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames) {
+  const ctx = requireCtx()
+  const existing = liveAgents.get(sessionKey)
+  if (existing) return existing
+  const { agent } = await ctx.agents.create({
+    sessionId: SessionId(sessionKey),
+    agentOptions: { provider, model },
+    // SECURITY (AGENTS.md "pi tool surface"): freddie's own base bundle
+    // registers real bash/write/edit/file/credential tools alongside
+    // casey's case_* tools in the SAME global ctx.tools registry -- there
+    // is no toolset-category filter at the freddie layer. installToolAllowlist
+    // hooks both system-prompt/assemble (hides every non-allowlisted tool's
+    // schema from the model) and tools/pre-execute (denies dispatch of any
+    // non-allowlisted tool by name even if the model somehow names one) --
+    // defense in depth, scoped to THIS agent's context only via setup().
+    // setup()'s return value (if any) must be a {commit()} object or
+    // undefined -- installToolAllowlist returns a disposer function, which
+    // is neither, so it must not be returned here directly.
+    setup: (agentCtx) => { installToolAllowlist(agentCtx, enabledToolNames) },
+  })
+  liveAgents.set(sessionKey, agent)
+  return agent
+}
+
+// Extract the assistant's final reply text plus every tool_calls/tool-result
+// pair since `firstSeq`, in casey's own {role, content, tool_calls}/{role,
+// tool_call_id, content} shape -- hooks/handler.js's mutatingActionsThisAttempt
+// and sanitizeOutboundRef scan `result.messages` for exactly this shape.
+function summarizeSince(agent, firstSeq) {
+  const messages = []
+  let result = ''
+  let sawTurnEnd = false
+  let errorReason = null
+  for (const event of agent.session.events) {
+    if (event.seq < firstSeq) continue
+    if (event.type === 'assistant/message') {
+      const blocks = event.data.message.content
+      const text = blocks.filter(b => b.type === 'text').map(b => b.text).join('')
+      const toolCalls = blocks
+        .filter(b => b.type === 'tool-call')
+        .map(b => ({ id: b.id, name: b.name, arguments: (() => { try { return JSON.parse(b.arguments) } catch { return {} } })() }))
+      if (text) result = text
+      messages.push({ role: 'assistant', content: text, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) })
+      continue
+    }
+    if (event.type === 'user/message' && event.data?.source?.kind === 'tool') {
+      const block = event.data.content?.[0]
+      if (block?.type === 'tool-result') {
+        messages.push({ role: 'tool', tool_call_id: block.toolCallId, content: typeof block.content === 'string' ? block.content : JSON.stringify(block.content) })
+      }
+      continue
+    }
+    if (event.type === 'turn/end') {
+      sawTurnEnd = true
+      if (event.data?.reason?.kind === 'error') errorReason = event.data.reason.error?.message || 'agent turn error'
+      if (event.data?.reason?.kind === 'aborted') errorReason = 'agent turn aborted'
+    }
+  }
+  return { result, messages, error: sawTurnEnd ? errorReason : 'turn did not complete', iterations: messages.filter(m => m.role === 'assistant').length }
+}
 
 /**
- * runTurn({prompt, messages, sessionKey, callLLM, tool_choice, enabledToolsets,
- *          disabledToolsets, toolCtx, timeoutMs, maxIterations})
- * -> {result, error, messages, iterations}
+ * runTurn({prompt, messages, sessionKey, tool_choice, enabledToolsets,
+ *          disabledToolsets, toolCtx, timeoutMs}) -> {result, error, messages, iterations}
  *
- * Loop: call callLLM({messages, tools, tool_choice}) -> if tool_calls present,
- * dispatch each via dispatchTool(name, args, toolCtx), append
- * {role:'assistant', tool_calls} then one {role:'tool', tool_call_id, content}
- * per call, loop back to the LLM -> stop on no tool_calls, iteration budget,
- * or wall-clock timeout. tool_choice applies on iteration 0 only, exactly
- * matching freddie's documented behavior (a fixed forced tool_choice on every
- * iteration makes the "stop on no tool_calls" transition unreachable).
+ * `messages`/`callLLM`/`tool_choice` from the old casey-owned loop no longer
+ * apply here (freddie's own agent-loop owns message history and the
+ * tool_choice/iteration policy internally) -- kept as accepted-but-unused
+ * params so hooks/handler.js's call site needs no change. `enabledToolsets`/
+ * `disabledToolsets` are translated into an explicit tool NAME allowlist
+ * (freddie has no toolset-category concept of its own).
  */
 export async function runTurn({
   prompt,
-  messages = [],
-  callLLM,
-  tool_choice,
+  sessionKey,
   enabledToolsets = [],
   disabledToolsets = [],
   toolCtx = null,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-  maxIterations = DEFAULT_MAX_ITERATIONS,
+  timeoutMs = 30000,
+  provider = 'acptoapi',
+  model,
 } = {}) {
-  if (typeof callLLM !== 'function') throw new Error('runTurn: callLLM function required')
+  // Resolve enabledToolsets/disabledToolsets into a real tool-name allowlist.
+  // enabledToolsets:['cases'] means every case_* tool name; disabledToolsets
+  // further excludes specific names (reporter-tier field_worker-gated tools) --
+  // matches the exact semantics hooks/handler.js's call site already assumes.
+  const { buildCaseToolset } = await import('../case-tools.js')
+  const allNames = buildCaseToolset(null).map(t => t.name)
+  const disabledSet = new Set(disabledToolsets)
+  const enabledToolNames = enabledToolsets.includes('cases')
+    ? allNames.filter(n => !disabledSet.has(n))
+    : []
 
-  const deadline = Date.now() + timeoutMs
-  let transcript = [...messages, { role: 'user', content: prompt }]
-  let iterations = 0
-  let result = null
-  let error = null
+  const agent = await getOrCreateAgent(sessionKey, provider, model, enabledToolNames)
+  // Publish this turn's toolCtx BEFORE followup() so case-tools/index.js's
+  // getToolCtx() thunk (read at each tool dispatch during this turn) sees
+  // the current call's author/tier/store/activeCaseBinding, not a stale one
+  // from a prior turn on the same reused agent.
+  currentToolCtx.set(sessionKey, toolCtx || {})
+  await agent.whenIdle()
+  const firstSeq = agent.session.seq
 
-  const schemas = getEnabledToolSchemas({ enabledToolsets, disabledToolsets })
+  agent.followup(createUserMessage({ content: [{ type: 'text', text: prompt }], source: { kind: 'user' } }))
 
-  while (true) {
-    const remaining = deadline - Date.now()
-    if (remaining <= 0) {
-      error = 'timeout'
-      transcript = pairDanglingToolCalls(transcript, 'timeout: tool_call not dispatched')
-      break
-    }
-    if (iterations >= maxIterations) {
-      error = 'iteration budget exhausted'
-      transcript = pairDanglingToolCalls(transcript, 'iteration budget exhausted: tool_call not dispatched')
-      break
-    }
+  let timedOut = false
+  await Promise.race([
+    agent.whenIdle(),
+    new Promise((resolve) => setTimeout(() => { timedOut = true; resolve() }, timeoutMs)),
+  ])
 
-    const tc = iterations === 0 ? tool_choice : undefined
-    let out
-    try {
-      out = await withTimeout(
-        callLLM({ messages: transcript, tools: schemas, tool_choice: tc }),
-        remaining,
-      )
-    } catch (e) {
-      error = String(e?.message || e)
-      break
-    }
-
-    const toolCalls = Array.isArray(out?.tool_calls) ? out.tool_calls : []
-    if (toolCalls.length === 0) {
-      result = out?.content || ''
-      transcript = [...transcript, { role: 'assistant', content: out?.content || '' }]
-      break
-    }
-
-    transcript = [...transcript, { role: 'assistant', content: out?.content || '', tool_calls: toolCalls }]
-
-    for (const call of toolCalls) {
-      const tname = call.name || call.function?.name
-      const targs = call.arguments || call.function?.arguments || {}
-      const tcid = call.id || call.tool_call_id
-      const raw = await dispatchTool(tname, targs, toolCtx || {})
-      // A tool handler's return value is JSON-stringified here (the handler
-      // itself never stringifies its own return) -- matches freddie's
-      // documented contract and casey's own hooks/handler.js, which parses
-      // every tool-role message's content back out with JSON.parse.
-      const content = typeof raw === 'string' ? raw : JSON.stringify(raw)
-      transcript.push({ role: 'tool', tool_call_id: tcid, content })
-    }
-
-    iterations += 1
+  if (timedOut) {
+    return { result: null, error: 'timeout', messages: [], iterations: 0 }
   }
-
-  return { result, error, messages: transcript, iterations }
+  return summarizeSince(agent, firstSeq)
 }
 
-async function withTimeout(promise, ms) {
-  let timer
-  try {
-    return await Promise.race([
-      promise,
-      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('llm call timeout')), ms) }),
-    ])
-  } finally {
-    clearTimeout(timer)
-  }
+export function disposeAgent(sessionKey) {
+  const agent = liveAgents.get(sessionKey)
+  liveAgents.delete(sessionKey)
+  currentToolCtx.delete(sessionKey)
+  return agent
 }
 
-// A turn that ends (timeout/budget) with a dangling assistant tool_calls
-// message and no paired tool-role result leaves a transcript a later LLM
-// replay would reject. Pair every undispatched call with a synthetic error
-// result, matching freddie's own pairDanglingToolCalls behavior.
-function pairDanglingToolCalls(transcript, reason) {
-  const last = transcript[transcript.length - 1]
-  if (!last || last.role !== 'assistant' || !Array.isArray(last.tool_calls) || !last.tool_calls.length) return transcript
-  const dispatched = new Set()
-  for (const m of transcript) {
-    if (m.role === 'tool' && m.tool_call_id) dispatched.add(m.tool_call_id)
-  }
-  const extra = []
-  for (const call of last.tool_calls) {
-    const tcid = call.id || call.tool_call_id
-    if (tcid && !dispatched.has(tcid)) {
-      extra.push({ role: 'tool', tool_call_id: tcid, content: JSON.stringify({ error: reason }) })
-    }
-  }
-  return extra.length ? [...transcript, ...extra] : transcript
+// Read by case-tools/index.js's execute() wrapper at each tool dispatch. The
+// live agent's own session id IS the sessionKey runTurn() was called with
+// (SessionId() is an identity brand, not a transform), so exec.agent.id
+// round-trips back to the same key currentToolCtx was set under.
+export function getCurrentToolCtx(sessionKey) {
+  return currentToolCtx.get(sessionKey) || {}
 }

@@ -25,7 +25,7 @@
 // install decided to hoist a shared copy.
 //
 // Run: node scripts/link-deps.mjs   (wired into postinstall)
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -34,6 +34,30 @@ const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'))
 
 let linked = 0
 let alreadyCorrect = 0
+
+function linkOne(name, targetAbs) {
+  const linkPath = join(repoRoot, 'node_modules', name)
+  const relTarget = relative(dirname(linkPath), targetAbs)
+  const st = lstatSync(linkPath, { throwIfNoEntry: false })
+  if (st) {
+    if (st.isSymbolicLink()) {
+      // Junction targets are stored absolute; a plain symlink's target may be
+      // relative -- resolve against the link's own directory either way (a
+      // no-op for an already-absolute junction target) before comparing.
+      const current = resolve(dirname(linkPath), readlinkSync(linkPath))
+      if (current === targetAbs) { alreadyCorrect++; return }
+    }
+    rmSync(linkPath, { recursive: true, force: true })
+  }
+  mkdirSync(dirname(linkPath), { recursive: true })
+  // 'junction' (not 'dir'): a plain directory symlink requires elevated
+  // privileges/Developer Mode on Windows (EPERM otherwise); an NTFS junction
+  // needs neither and Node's fs.symlinkSync supports it as a distinct type.
+  // junction targets must be absolute (not relative) -- unlike a symlink.
+  symlinkSync(targetAbs, linkPath, 'junction')
+  console.log(`[link-deps] node_modules/${name} -> ${relTarget}`)
+  linked++
+}
 
 for (const [name, spec] of Object.entries(pkg.dependencies || {})) {
   const m = /^file:(.+)$/.exec(spec)
@@ -46,26 +70,63 @@ for (const [name, spec] of Object.entries(pkg.dependencies || {})) {
     console.warn(`[link-deps] skip ${name}: ${targetAbs} does not exist (submodule not checked out?)`)
     continue
   }
+  linkOne(name, targetAbs)
+}
 
-  const linkPath = join(repoRoot, 'node_modules', name)
-  const relTarget = relative(dirname(linkPath), targetAbs)
-
-  const st = lstatSync(linkPath, { throwIfNoEntry: false })
-  if (st) {
-    if (st.isSymbolicLink()) {
-      // readlink comparison, not realpath -- a stale relative link pointing at
-      // the right absolute target under a different relative spelling is still
-      // correct; only replace when it actually resolves elsewhere.
-      const current = resolve(dirname(linkPath), readlinkSync(linkPath))
-      if (current === targetAbs) { alreadyCorrect++; continue }
+// Every individual @freddie/freddie-* package casey (or freddie-base's own
+// patch rows) imports by bare specifier -- freddie's new architecture is a
+// pnpm workspace of ~200+ tiny packages (packages/<group>/<name>/), each with
+// its OWN pnpm-resolved node_modules already correctly linking its siblings
+// (confirmed live: `pnpm install` inside deps/freddie resolves the whole
+// workspace; casey never runs pnpm itself). A plain `npm install` cannot
+// resolve these packages' own `workspace:^` cross-deps at all -- casey does
+// not need it to, since each package already carries its own working
+// node_modules from freddie's own `pnpm install`. This block only needs to
+// make each package's bare NAME resolvable as a top-level import from
+// CASEY's code (freddie-bundle/boot.js, the case-tools/llm-acptoapi/platform
+// plugins) -- scan every packages/<group>/<name>/package.json under
+// deps/freddie and symlink node_modules/@freddie/<pkg-name> straight at it.
+// packages/<group>/<name>/, vendor/<name>/ (the vendored @freddie/cordis
+// runtime + cordis-plugin-* + schemastery), and native/<name>/ (native
+// addons apps/cli depends on) each hold their own real @freddie/* package.json
+// at a different nesting depth -- walk each root to a bounded depth (3
+// levels covers every real layout observed) rather than hardcoding one
+// group/name shape.
+function scanFreddiePackages(rootDir, maxDepth) {
+  const found = []
+  function walk(dir, depth) {
+    if (depth > maxDepth) return
+    const pkgJsonPath = join(dir, 'package.json')
+    if (existsSync(pkgJsonPath)) {
+      let pkgName
+      try { pkgName = JSON.parse(readFileSync(pkgJsonPath, 'utf8')).name } catch { pkgName = null }
+      if (pkgName && pkgName.startsWith('@freddie/')) { found.push([pkgName, dir]); return }
     }
-    rmSync(linkPath, { recursive: true, force: true })
+    let entries
+    try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === 'node_modules') continue
+      walk(join(dir, entry.name), depth + 1)
+    }
   }
+  walk(rootDir, 0)
+  return found
+}
 
-  mkdirSync(dirname(linkPath), { recursive: true })
-  symlinkSync(relTarget, linkPath, 'dir')
-  console.log(`[link-deps] node_modules/${name} -> ${relTarget}`)
-  linked++
+const freddieRoot = resolve(repoRoot, 'deps/freddie')
+if (existsSync(freddieRoot)) {
+  let freddieLinked = 0
+  for (const sub of ['packages', 'vendor', 'native']) {
+    const subDir = join(freddieRoot, sub)
+    if (!existsSync(subDir)) continue
+    for (const [pkgName, pkgDir] of scanFreddiePackages(subDir, 3)) {
+      linkOne(pkgName, pkgDir)
+      freddieLinked++
+    }
+  }
+  console.log(`[link-deps] ${freddieLinked} @freddie/* packages scanned from deps/freddie`)
+} else {
+  console.warn('[link-deps] skip @freddie/* packages: deps/freddie does not exist (submodule not checked out?)')
 }
 
 console.log(`[link-deps] ${linked} linked, ${alreadyCorrect} already correct`)
