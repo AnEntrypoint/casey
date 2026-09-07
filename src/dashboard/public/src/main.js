@@ -297,5 +297,10 @@ window.__caseyDebug = () => ({
   casesLoaded: (state.allCases || []).length,
   inboxMode: state.inboxMode,
   activeModal: state.activeModal,
-  hash: location.hash,
+  // Shape only, never the hash itself: a #case=<id> token would put a real
+  // case identifier into a diagnostic blob that gets pasted into bug reports.
+  // Whether a deep link is present is the diagnostic value; which case it names
+  // is not.
+  routeTokens: (location.hash || '').replace(/^#/, '').split('&').filter(Boolean)
+    .map((t) => t.split('=')[0]),
 });
