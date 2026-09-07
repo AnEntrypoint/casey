@@ -46,6 +46,18 @@ export function toggleInboxMode() { setInboxMode(!state.inboxMode); }
 // unmounted the map to show a table -- so the operator asked "where are the
 // hotspots" and the UI removed the only thing that can show where. These land
 // on the map home view with the rollup docked in the rail beside it.
+// The design SDK renders every nav item as <a href="#">, so the anchor's
+// DEFAULT action runs after our handler and rewrites the URL to bare "#" --
+// which wiped the #home=... token setHomeViewRoute had just written, measured
+// live: the view changed but location.hash came back empty, so the one thing
+// this routing exists for (sending a colleague a link to what you are looking
+// at) silently did nothing. Every handler that touches the route has to stop
+// the anchor first. It also stops the page jumping to the top on each click.
+function navClick(e, fn) {
+  if (e && typeof e.preventDefault === 'function') e.preventDefault();
+  fn();
+}
+
 function openOnMap(mode) {
   closePanel();
   setHomeViewRoute('map');
@@ -70,10 +82,10 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
     {
       group: 'Primary',
       items: [
-        { key: 'home_map', glyph: Icon('globe', { size: 15 }), label: 'Map', onClick: () => { closePanel(); setHomeViewRoute('map'); setRailMode('queue'); }, active: onMapHome && state.railMode === 'queue', ariaLabel: 'Map view (home)' },
-        { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: () => openOnMap('geo'), active: onMapHome && state.railMode === 'geo' },
-        { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: () => openOnMap('clusters'), active: onMapHome && state.railMode === 'clusters', count: clustersCount },
-        { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: () => { closePanel(); setHomeViewRoute('cases'); }, active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },
+        { key: 'home_map', glyph: Icon('globe', { size: 15 }), label: 'Map', onClick: (e) => navClick(e, () => { closePanel(); setHomeViewRoute('map'); setRailMode('queue'); }), active: onMapHome && state.railMode === 'queue', ariaLabel: 'Map view (home)' },
+        { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: (e) => navClick(e, () => openOnMap('geo')), active: onMapHome && state.railMode === 'geo' },
+        { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: (e) => navClick(e, () => openOnMap('clusters')), active: onMapHome && state.railMode === 'clusters', count: clustersCount },
+        { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: (e) => navClick(e, () => { closePanel(); setHomeViewRoute('cases'); }), active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },
       ],
     },
     {
