@@ -331,7 +331,32 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     if (!j) { if (callbacks && callbacks.onError) callbacks.onError('Could not load the reports. The map could not reach this dashboard\'s own server, so what you see may be out of date.'); return mapStateRef.current; }
     if (!mapStateRef.current) {
         canvas.innerHTML = '';
-        const map = window.L.map(canvas, { center: [-28.5, 25], zoom: 5 });
+        const map = window.L.map(canvas);
+        // FRAME FIRST, THEN ADD TILES. The map used to be constructed at a
+        // fixed [-28.5,25]@z5 and only fitted to the reports afterwards, so
+        // every landing paid for two or three COMPLETE tile pyramids -- z5,
+        // then z6, then often z7 during the settle -- when only the last one
+        // is ever looked at. Measured at ~220 KB for a single pyramid, on a
+        // link this deployment assumes is metered and slow.
+        //
+        // The pin payload is already in hand here (it is awaited above), so
+        // the destination view is knowable BEFORE a single tile is requested.
+        // A tileLayer only starts fetching once it is added to a map that has
+        // a view, so adding it after the fit means the discarded zoom levels
+        // are never requested at all.
+        const located0 = (j.pins || []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+        if (located0.length) {
+            // A plain 24px padding, not the overlay-aware measurement: the
+            // chrome is not mounted yet at construction time. The rAF pass
+            // below still refines against the real overlays once layout has
+            // settled -- it just no longer has three pyramids behind it.
+            try {
+                map.fitBounds(window.L.latLngBounds(located0.map((p) => [p.lat, p.lon])), { maxZoom: 11, padding: [24, 24], animate: false });
+            } catch { map.setView([-28.5, 25], 5); }
+        } else {
+            // No placeable report: southern Africa, the same view as before.
+            map.setView([-28.5, 25], 5);
+        }
         const tiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '(c) OpenStreetMap contributors' });
         tiles.addTo(map);
         mapStateRef.current = {
