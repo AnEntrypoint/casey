@@ -114,15 +114,30 @@ body { background: var(--bg); color: var(--fg); }
 .ds-map-overlay-toggle:hover { background: var(--bg-2); }
 .ds-map-overlay-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ds-map-overlay-error { top: var(--space-3); left: 50%; transform: translateX(-50%); }
-/* Phone: the detail pane already takes over via .has-active, so the map keeps
-   the full pane. Overlays go full-width and the queue is capped harder so it
-   never swallows the map on a short screen. */
+/* Phone. Three things go wrong here if left to the desktop rules, all
+   measured live at 390x844: the column stack gives the map shell only a few
+   hundred px so the queue overlay covers the entire map; the controls button
+   docked to the bottom lands on top of that queue; and the stat pills get
+   pushed out of the visible strip entirely.
+   Fixed by giving the map a real share of the viewport first, then stacking
+   the overlays top-down (stats, then controls) with the queue as the only
+   bottom-anchored sheet. */
 @container (max-width: 900px) {
-  .ds-map-overlay-queue,
-  .ds-map-overlay-controls { left: var(--space-2); right: var(--space-2); width: auto; }
-  .ds-map-overlay-controls { top: auto; bottom: calc(var(--space-3) + 2.75rem); align-items: stretch; }
-  .ds-map-overlay-queue .ds-map-attention-feed { max-height: 30vh; }
+  /* With nothing open, the detail pane spent half a phone screen saying "no
+     report open yet" while the map it is telling you to tap was a strip. The
+     .has-active rule already gives it the full screen once a case IS open. */
+  .app-two-pane-map:not(.has-active) > .case-detail-pane { display: none; }
+  .app-two-pane-map > .case-list-pane { flex: 1 1 auto; min-height: 0; }
+  .ds-map-shell { min-height: 60vh; }
   .ds-map-overlay-top { left: var(--space-2); right: var(--space-2); top: var(--space-2); }
+  /* Stays top-right, below the stat pills -- NOT bottom-docked, which put it
+     inside the queue list. The offset clears TWO wrapped rows of pills plus
+     the "updated" stamp: at 390px the four counts wrap 2x2, and a one-row
+     offset landed the button on top of the "no location yet" pill. */
+  .ds-map-overlay-controls { right: var(--space-2); left: auto; top: calc(var(--space-2) + 7.75rem); width: min(280px, calc(100% - 2 * var(--space-2))); }
+  .ds-map-overlay-queue { left: var(--space-2); right: var(--space-2); bottom: var(--space-2); width: auto; }
+  /* Hard cap: a phone-height sheet must never eat the map behind it. */
+  .ds-map-overlay-queue .ds-map-attention-feed { max-height: 26vh; }
 }
 
 /* ---- panel-swap chrome (the 10 content-swap panels: back affordance) --- */
