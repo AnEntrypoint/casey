@@ -1,17 +1,25 @@
 // MapCommandCenter -- the map-first home view (BLUF: the single most
 // operationally important thing -- where is this happening -- is what an
 // operator sees the instant the dashboard loads, not a nav item three
-// levels deep). Same two-pane shell as CaseListDetailLayout (map instead
-// of the case list on the left; the shared openCase/closeCase keep
-// state.activeId, the URL hash, and the case-detail pane all in sync
-// regardless of which pane opened the case), so clicking a map marker
-// shows that case immediately -- no round trip through "Back to cases"
-// first. See nav-config.js for the Map/Cases home-view switch and
-// state.js's setHomeView/homeView for the persisted per-viewer default.
+// levels deep).
+//
+// TWO children, not three: the map pane, and ONE rail. The rail shows the
+// worst-first queue when nothing is open and the case detail when something
+// is, with an explicit "Back to the list" between them. That is the whole
+// structural idea, and it replaces an earlier arrangement where the queue
+// floated over the map while the detail pane sat beside it saying "no report
+// open yet" -- which wasted a whole column to say nothing AND covered the map
+// it was telling you to tap. A third docked column is not an option either:
+// at 1366px it leaves the map under 400px, so the map stops being the point.
+//
+// openCase/closeCase (case-list-detail-layout.js) already own state.activeId
+// and the URL hash, so clicking a map marker, clicking a queue row, and
+// deep-linking all converge on the same state with nothing new added here.
 
 import * as webjsx from 'webjsx';
+import { Btn } from 'ds/components/shell.js';
 import { state } from '../state.js';
-import { MapPanel } from '../panels/map-panel.js';
+import { MapPanel, MapRail } from '../panels/map-panel.js';
 import { CaseDetailView } from './case-detail-view.js';
 import { openCase, closeCase } from './case-list-detail-layout.js';
 
@@ -26,8 +34,15 @@ export function MapCommandCenter() {
     h('div', { class: 'case-list-pane', key: 'map' },
       MapPanel({ embedded: true })
     ),
-    h('div', { class: 'case-detail-pane', key: 'detail' },
-      CaseDetailView({ onClose: closeCase, onOpenCase: openCase, key: 'detail-view' })
+    h('div', { class: 'case-detail-pane', key: 'rail' },
+      hasActive
+        // A worded back control, not a bare glyph: this is the only way back to
+        // the list on a phone, where the rail covers the map entirely.
+        ? h('div', { class: 'ds-rail-stack' },
+            h('div', { class: 'ds-rail-back' },
+              Btn({ variant: 'ghost', children: 'Back to the list', onClick: () => closeCase() })),
+            CaseDetailView({ onClose: closeCase, onOpenCase: openCase, key: 'detail-view' }))
+        : MapRail()
     )
   );
 }

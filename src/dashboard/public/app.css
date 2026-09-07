@@ -33,117 +33,98 @@ body { background: var(--bg); color: var(--fg); }
 }
 
 /* ---- map-first home view (BLUF, map-command-center.js) -- the map is the
-   dominant pane here, opposite of the case-list split above where the list
-   is a fixed-width rail and detail takes the rest. Same class names so both
-   layouts share the mobile-stack/has-active rules above unchanged.
-   Ratio-based, not a fixed detail width: a flat 420px ate 61% of a modest
-   ~1050px-wide laptop viewport (measured live), leaving the map smaller
-   than the pane it's supposed to dominate. flex-grow ratio 1.6:1 keeps the
-   map consistently ~60%+ of the width at any size; max-width caps the
-   detail pane from ballooning past a comfortable form-reading width on a
-   large monitor, handing that reclaimed space back to the map instead. */
-.app-two-pane-map > .case-list-pane { flex: 1.6 1 0; min-width: 0; }
-.app-two-pane-map > .case-detail-pane { flex: 1 1 0; min-width: 260px; max-width: 460px; }
-@container (max-width: 900px) {
-  .app-two-pane-map > .case-detail-pane { flex: 1 1 auto; max-width: none; }
-}
+   dominant pane, and the second pane is ONE rail that shows the worst-first
+   queue when nothing is open and the case detail when something is (see
+   map-command-center.js's own header for why that is one rail and not two
+   columns). Same class names as the case-list split above so both layouts
+   share its mobile-stack/has-active rules unchanged. */
 /* The map pane must NOT scroll: .app-two-pane's generic `overflow:auto` is
    what let the canvas sit below the fold under the stat/feed/filter stack.
-   Here the shell fills the pane exactly and each overlay does its own
+   Here the shell fills the pane exactly and the rail beside it does its own
    scrolling, so the map itself is always the full ground plane. */
-.app-two-pane-map > .case-list-pane { overflow: hidden; display: flex; min-height: 0; }
+.app-two-pane-map > .case-list-pane { overflow: hidden; display: flex; min-height: 0; flex: 1 1 0; }
+/* The rail is DOCKED -- an in-flow pane with an opaque background and a single
+   hairline, never a floating rounded card over the canvas. A floating card
+   leaves a strip of map you can see but cannot reliably click, reads as
+   dismissible, and (the measurable failure) hides pins behind itself. */
+.app-two-pane-map > .case-detail-pane {
+  flex: 0 0 clamp(300px, 26vw, 400px); max-width: clamp(300px, 26vw, 400px);
+  min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg); border-left: 1px solid var(--border);
+}
+/* Phone: the two panes stack, and the map must keep a real share of the
+   screen. Without a floor the map shell (whose canvas is absolutely
+   positioned, so it has no intrinsic height) collapses to a sliver while the
+   rail's tall content takes everything -- the same below-the-fold bug this
+   whole view exists to fix, just rotated. The rail then scrolls beneath it.
+   dvh, not vh, so a mobile browser's collapsing address bar does not leave a
+   gap under the rail. */
+@container (max-width: 900px) {
+  .app-two-pane-map > .case-list-pane { flex: 0 0 auto; min-height: 55dvh; }
+  .app-two-pane-map > .case-detail-pane {
+    flex: 1 1 auto; max-width: none;
+    border-left: none; border-top: 1px solid var(--border);
+  }
+}
 
-/* ---- map-first shell: canvas is the ground plane, chrome floats on it ---- */
+/* ---- map-first shell: the canvas IS the pane -------------------------- */
 .ds-map-shell { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
 /* Beats the generic `.ds-map-canvas { height: min(70vh,640px) }` above: in
-   this layout the canvas is sized by the pane, not by a viewport fraction. */
+   this layout the canvas is sized by the pane, not by a viewport fraction.
+   Painted with a ground colour so the box exists before tiles land. */
 .ds-map-shell > .ds-map-canvas {
   position: absolute; inset: 0; height: auto; width: auto;
-  border: none; border-radius: 0; z-index: var(--z-base);
+  border: none; border-radius: 0; z-index: var(--z-base); background: var(--bg-2);
 }
-.ds-map-overlay { position: absolute; z-index: var(--z-raised); max-width: calc(100% - 2 * var(--space-3)); }
-.ds-map-overlay-top { top: var(--space-3); left: var(--space-3); right: var(--space-3); pointer-events: none; }
-/* Compact the shared stat cards down to map-pill scale -- the full
-   metrics-panel tile is far too tall to float over a map without burying it. */
-.ds-map-overlay-top .ds-stats-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
-.ds-map-overlay-top .ds-stat-card {
-  pointer-events: auto; padding: var(--space-1) var(--space-3); min-width: 0;
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: var(--r-pill); box-shadow: var(--shadow-1);
+/* One pointer-transparent chrome layer. WITHOUT pointer-events:none an inset:0
+   wrapper swallows every drag and the map reads as frozen; children opt back
+   in individually. */
+.ds-map-chrome { position: absolute; inset: 0; z-index: var(--z-raised); pointer-events: none; }
+.ds-map-chrome > * { pointer-events: auto; }
+/* The legend is the ONE thing allowed to sit on the canvas besides the error
+   alert -- it is the key to every symbol on screen, so hiding it behind a
+   toggle would mean the map cannot be read without a click. */
+.ds-map-chrome > .ds-map-legend {
+  position: absolute; left: var(--space-3); bottom: var(--space-3);
+  max-width: 260px; max-height: 40%; overflow-y: auto; margin: 0;
+  background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow-1);
 }
-.ds-map-overlay-top .ds-stat-label { font-size: var(--fs-nano); letter-spacing: .04em; }
-.ds-map-overlay-top .ds-stat-value { font-size: var(--fs-lg); line-height: 1.15; }
-.ds-map-overlay-top .ds-stat-sub { display: none; }
-.ds-map-overlay-top .ds-map-updated {
-  pointer-events: auto; display: inline-block; margin-top: var(--space-2);
-  padding: var(--space-hair) var(--space-2); border-radius: var(--r-pill);
-  background: var(--bg); border: 1px solid var(--border);
-  font-size: var(--fs-nano); color: var(--fg-2);
+.ds-map-overlay-error {
+  position: absolute; z-index: var(--z-raised); top: var(--space-3);
+  left: 50%; transform: translateX(-50%); max-width: calc(100% - 2 * var(--space-4));
 }
-/* Worst-first queue: the bottom line, so it is docked open by default. */
-.ds-map-overlay-queue {
-  left: var(--space-3); bottom: var(--space-3); width: min(360px, calc(100% - 2 * var(--space-3)));
-  display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start;
+
+/* ---- the rail ---------------------------------------------------------- */
+.ds-map-rail, .ds-rail-stack { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
+.ds-rail-head {
+  position: sticky; top: 0; z-index: var(--z-raised); background: var(--bg);
+  border-bottom: 1px solid var(--border); padding: var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-2);
 }
-.ds-map-overlay-queue .ds-map-attention-feed {
-  width: 100%; max-height: min(38vh, 300px); margin: 0;
-  background: var(--bg); box-shadow: var(--shadow-2);
+/* The only scrolling region in the rail. overscroll-contain stops a flick at
+   the list's end from scrolling the page behind it on a phone. */
+.ds-rail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.ds-rail-back { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
+.ds-rail-disclosure { border-top: 1px solid var(--border); }
+/* A real word with a real hit target, never a bare chevron. */
+.ds-rail-disclosure > summary {
+  cursor: pointer; padding: var(--space-3); font-weight: 600;
+  font-size: var(--fs-micro); min-height: 2.75rem; display: flex; align-items: center;
 }
-.ds-map-overlay-controls {
-  right: var(--space-3); top: calc(var(--space-3) + 3.25rem);
-  width: min(320px, calc(100% - 2 * var(--space-3)));
-  display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-end;
-}
-.ds-map-controls-body {
-  width: 100%; max-height: min(60vh, 460px); overflow-y: auto;
-  padding: var(--space-3); background: var(--bg);
-  border: 1px solid var(--border); border-radius: var(--r-1);
-  box-shadow: var(--shadow-2);
-}
-/* Deliberately a full-word button, not an icon: an unlabelled funnel/gear
-   glyph is exactly the affordance a low-computer-literacy user cannot decode. */
-.ds-map-overlay-toggle {
-  pointer-events: auto; cursor: pointer;
-  padding: var(--space-2) var(--space-3);
-  background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--r-pill);
-  font: inherit; font-size: var(--fs-micro); font-weight: 600;
-  box-shadow: var(--shadow-1);
-  min-height: 2.25rem;
-}
-.ds-map-overlay-toggle:hover { background: var(--bg-2); }
-.ds-map-overlay-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.ds-map-overlay-error { top: var(--space-3); left: 50%; transform: translateX(-50%); }
-/* Phone. Three things go wrong here if left to the desktop rules, all
-   measured live at 390x844: the column stack gives the map shell only a few
-   hundred px so the queue overlay covers the entire map; the controls button
-   docked to the bottom lands on top of that queue; and the stat pills get
-   pushed out of the visible strip entirely.
-   Fixed by giving the map a real share of the viewport first, then stacking
-   the overlays top-down (stats, then controls) with the queue as the only
-   bottom-anchored sheet. */
-@container (max-width: 900px) {
-  /* With nothing open, the detail pane spent half a phone screen saying "no
-     report open yet" while the map it is telling you to tap was a strip. The
-     .has-active rule already gives it the full screen once a case IS open. */
-  .app-two-pane-map:not(.has-active) > .case-detail-pane { display: none; }
-  .app-two-pane-map > .case-list-pane { flex: 1 1 auto; min-height: 0; }
-  .ds-map-shell { min-height: 60vh; }
-  .ds-map-overlay-top { left: var(--space-2); right: var(--space-2); top: var(--space-2); }
-  /* Stays top-right, below the stat pills -- NOT bottom-docked, which put it
-     inside the queue list. The offset clears TWO wrapped rows of pills plus
-     the "updated" stamp: at 390px the four counts wrap 2x2, and a one-row
-     offset landed the button on top of the "no location yet" pill. */
-  .ds-map-overlay-controls { right: var(--space-2); left: auto; top: calc(var(--space-2) + 7.75rem); width: min(280px, calc(100% - 2 * var(--space-2))); }
-  .ds-map-overlay-queue { left: var(--space-2); right: var(--space-2); bottom: var(--space-2); width: auto; }
-  /* Hard cap: a phone-height sheet must never eat the map behind it. */
-  .ds-map-overlay-queue .ds-map-attention-feed { max-height: 26vh; }
-  /* Whole-row touch target. The desktop map feed tightens .tcase's padding to
-     fit more reports in the overlay; on a phone that produced rows well under
-     the ~44px minimum a thumb can reliably hit, on the single most-used
-     control in the view. */
-  .ds-map-overlay-queue .ds-map-attention-feed .tcase { min-height: 3.5rem; padding: var(--space-3); }
-}
+.ds-rail-disclosure > summary:hover { background: var(--bg-2); }
+.ds-rail-disclosure > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ds-rail-disclosure-body { padding: var(--space-3); border-top: 1px solid var(--border); }
+/* Counts read as a row of compact cards inside the rail head, not a KPI band
+   above the map where they would push it down the page again. */
+.ds-rail-head .ds-stats-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
+.ds-rail-head .ds-stat-card { padding: var(--space-1) var(--space-2); min-width: 0; flex: 1 1 auto; }
+.ds-rail-head .ds-stat-label { font-size: var(--fs-nano); }
+.ds-rail-head .ds-stat-value { font-size: var(--fs-lg); line-height: 1.15; }
+.ds-rail-head .ds-stat-sub { display: none; }
+.ds-rail-head .ds-map-updated { font-size: var(--fs-nano); color: var(--fg-2); }
+/* Whole-row tap target on the queue -- the most-used control in the view. */
+.ds-rail-body .ds-map-attention-feed { border: none; margin: 0; max-height: none; }
+.ds-rail-body .ds-map-attention-feed .tcase { min-height: 4rem; padding: var(--space-3); }
 
 /* ---- panel-swap chrome (the 10 content-swap panels: back affordance) --- */
 .ds-panel-swap { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
