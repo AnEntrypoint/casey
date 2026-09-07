@@ -71,21 +71,21 @@ export class RawLog {
     return map
   }
 
-  get(id) { return this._load().get(id) || null }
-
   // All observations for a given subject, in append order -- the trace-back
-  // any aggregate must support (aggregation-drillable).
+  // any aggregate must support (aggregation-drillable). With append(), the
+  // only two methods this class still needs: get()/all()/count() and an
+  // invalidateCache() written for an ad-hoc drill script were removed as
+  // unreachable in the 2026-09-07 sweep, along with the event-log wrapper
+  // that was their last caller.
   bySubject(subjectId) {
     return [...this._load().values()].filter(o => o.subjectId === subjectId)
   }
 
-  all() { return [...this._load().values()] }
-
-  count() { return this._load().size }
-
+  // The ONLY way the skipped-corrupt-line count above can ever reach a human.
+  // It has no caller today, which means a truncated JSONL line is detected and
+  // skipped correctly but never surfaced -- deliberately kept (rather than
+  // deleted with the rest of the dead accessors) because deleting it would
+  // make the documented "corruption is reported, not swallowed" property
+  // unimplementable. Wire it into `casey doctor` rather than removing it.
   corruptLineCount() { return this._load().__corruptLines || 0 }
-
-  // Force a fresh reload from disk (used by the failure-drill witness and
-  // any caller that wrote to the file outside this instance).
-  invalidateCache() { this._cache = null }
 }

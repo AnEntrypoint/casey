@@ -5,12 +5,11 @@
 // facade -- everything here is a thin HTTP wrapper over CaseStore methods.
 //
 // deps: store, wrap, esc, str, clampLimit, offsetOf, actingOperator, authed,
-//   OPERATOR, AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
+//   AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
 //   computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
-//   rankAttention, getRoster, sendReply, printableReportRow, printableReport,
-//   printableReportTable, fmtTimeSAST, fmtPhone27
+//   getRoster, sendReply, UNCLAIMED_ASSIGNEE
 import { tagList } from '../../timestamp.js'
-import { mergeTag } from '../../hooks/heuristics.js'
+import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 
 // Remove PII fields from case row (external_id, contact_id) for all case API responses.
 // external_id is used internally for contact routing but must never appear in JSON.
@@ -25,7 +24,7 @@ function caseListProjection(c) {
 
 export function registerCases(app, deps) {
   const {
-    store, wrap, esc, str, clampLimit, offsetOf, actingOperator, authed, OPERATOR,
+    store, wrap, esc, str, clampLimit, offsetOf, actingOperator, authed,
     AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
     computeFillRate, csvCell, parseJsonArraySafe, isOpenCase, getRoster,
     sendReply, parseEventData, UNCLAIMED_ASSIGNEE,
@@ -286,7 +285,7 @@ export function registerCases(app, deps) {
     // Best-effort operator-identity learning: an edit is a real working-area
     // signal. Not awaited on the response path -- learning must never slow or
     // fail an operator's actual edit.
-    if (op.id && op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, updated).catch(() => {})
+    store.learnOperatorActivity(op.id, updated).catch(() => {})
     // An autonomy change is a first-class audited event carrying {from,to,by,reason}
     // so the timeline can render it as a distinct chip (like a transition), not a
     // generic edit that drops the prior value. Other field edits keep the action row.
@@ -334,7 +333,7 @@ export function registerCases(app, deps) {
     }
     await store.transition(req.params.id, to, { user: op, reason: reason || 'operator override' })
     const after = await store.getCase(req.params.id)
-    if (op.id && op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, after).catch(() => {})
+    store.learnOperatorActivity(op.id, after).catch(() => {})
     res.json(after)
   }))
 
@@ -394,18 +393,16 @@ export function registerCases(app, deps) {
         if (action === 'claim') {
           const claimed = await store.updateCase(id, { assignee: op.id }, op, withVersion)
           await store.appendEvent(id, { kind: 'action', actor: 'operator', text: `Claimed by ${op.name || op.id}`, data: { claimed_by: op.id, bulk: true } })
-          if (op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, claimed || c).catch(() => {})
+          store.learnOperatorActivity(op.id, claimed || c).catch(() => {})
         } else if (action === 'transition') {
           const legal = store.availableTransitions(c, op)
           if (to !== c.status && !legal.includes(to)) { results.push({ id, ok: false, error: `cannot transition to '${to}'` }); continue }
           await store.transition(id, to, { user: op, reason: 'operator bulk action' })
-          if (op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, c).catch(() => {})
+          store.learnOperatorActivity(op.id, c).catch(() => {})
         } else if (action === 'tag') {
-          const tags = tagList(c)
-          if (!tags.includes(tag)) await store.updateCase(id, { tags: [...tags, tag].join(',') }, op, withVersion)
+          if (!tagList(c).includes(tag)) await store.updateCase(id, { tags: mergeTag(c.tags, tag) }, op, withVersion)
         } else if (action === 'untag') {
-          const tags = tagList(c)
-          if (tags.includes(tag)) await store.updateCase(id, { tags: tags.filter(t => t !== tag).join(',') }, op, withVersion)
+          if (tagList(c).includes(tag)) await store.updateCase(id, { tags: dropTag(c.tags, tag) }, op, withVersion)
         } else if (action === 'note') {
           await store.appendEvent(id, { kind: 'note', actor: 'operator', text: noteText, data: { by: op.id, bulk: true } })
         } else if (action === 'draft_approve') {
@@ -424,16 +421,14 @@ export function registerCases(app, deps) {
           }
           await store.appendEvent(id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id, bulk: true } })
           if (delivered) {
-            const tags = tagList(c)
-            await store.updateCase(id, { tags: tags.filter(t => t !== 'draft-pending' && t !== 'needs-human').join(',') }, op)
+            await store.updateCase(id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
           } else {
             results.push({ id, ok: false, error: 'send failed' }); continue
           }
         } else if (action === 'draft_discard') {
           const draft = await pendingDraft(c)
           if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
-          const tags = tagList(c)
-          await store.updateCase(id, { tags: tags.filter(t => t !== 'draft-pending').join(',') }, op)
+          await store.updateCase(id, { tags: dropTag(c.tags, 'draft-pending') }, op)
           await store.appendEvent(id, { kind: 'observation', actor: 'operator', text: 'DRAFT DISCARDED: operator bulk discard.', data: { by: op.id, bulk: true } })
         }
         results.push({ id, ok: true })
@@ -738,7 +733,7 @@ export function registerCases(app, deps) {
     }
     await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id } })
     // A personal reply is the strongest working-area signal casey has.
-    if (op.id !== OPERATOR.id) store.learnOperatorActivity(op.id, c).catch(() => {})
+    store.learnOperatorActivity(op.id, c).catch(() => {})
     // The operator personally answered, so the "wants a human" flag is satisfied
     // -- but only once the message actually reached the contact. Clear it then,
     // or the triage inbox keeps this case pinned at the top forever.
@@ -795,8 +790,7 @@ export function registerCases(app, deps) {
     const op = actingOperator(req)
     await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id } })
     if (delivered) {
-      const tags = tagList(c)
-      await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending' && t !== 'needs-human').join(',') }, op)
+      await store.updateCase(c.id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
     }
     res.json({ ok: delivered, sent: !!sendReply, delivered })
   }))
@@ -814,8 +808,7 @@ export function registerCases(app, deps) {
     const rawReason = str(res, req.body, 'reason', { required: false }); if (rawReason === undefined) return
     const reason = rawReason.trim() || 'operator discarded'
     const op = actingOperator(req)
-    const tags = tagList(c)
-    await store.updateCase(c.id, { tags: tags.filter(t => t !== 'draft-pending').join(',') }, op)
+    await store.updateCase(c.id, { tags: dropTag(c.tags, 'draft-pending') }, op)
     await store.appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `DRAFT DISCARDED: ${reason}.`, data: { by: op.id } })
     res.json({ ok: true })
   }))

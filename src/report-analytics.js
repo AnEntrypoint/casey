@@ -8,6 +8,7 @@
 
 import { buildOverview, firstResponseMs, median, evData } from './overview.js'
 import { isOpenCase } from './format.js'
+import { tsMs } from './timestamp.js'
 
 const DAY = 24 * 3600 * 1000
 
@@ -210,7 +211,12 @@ export function buildClosureCompleteness(cases, eventsByCaseId, now = Date.now()
       if (e.kind !== 'transition') continue
       const d = evData(e)
       const to = String(d.to || '')
-      const ts = Date.parse(e.created_at)
+      // thatcher stamps created_at as unix SECONDS in a digit STRING (live:
+      // "1788821199"); Date.parse returns NaN on that, so the guard below used
+      // to skip EVERY transition event and this whole report was permanently
+      // all-zero. tsMs is the shared digit-string-aware parser every other
+      // consumer already uses (attn.js, case-health.js, degraded-turns.js).
+      const ts = tsMs(e.created_at)
       if (!Number.isFinite(ts)) continue
       if (to === 'resolved' && resolvedAt == null) resolvedAt = ts
       if (to === 'closed' && resolvedAt != null && closedAt == null && ts >= resolvedAt) closedAt = ts

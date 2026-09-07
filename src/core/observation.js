@@ -128,4 +128,3 @@ export function withSyncedAt(observation, syncedAt) {
   return Object.freeze({ ...observation, syncedAt })
 }
 
-export { TIME_FIELDS }

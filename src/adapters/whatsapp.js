@@ -3,10 +3,9 @@
 // was removed in a later upstream rewrite; casey now owns this code
 // directly -- see AGENTS.md's freddie-port PRD rows and the WhatsApp HMAC
 // verification security invariant).
-import express from 'express'
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { fetchWithTimeout, timingSafeEqualStr, verifyWebhookOr401, verifiedSend, emitWithDetachedMedia } from './webhook-platform-base.js'
+import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMedia } from './webhook-platform-base.js'
 
 // Outbound send/media-upload bound: see DiscordAdapter.send's identical
 // constant for the failure this closes -- a bare, unbounded fetch() can leave
@@ -26,10 +25,13 @@ export class WhatsappAdapter extends EventEmitter {
     // (not optional) when WhatsApp credentials are configured -- see AGENTS.md
     // Security invariants.
     this.appSecret = opts.appSecret || process.env.WHATSAPP_APP_SECRET || ''
-    this.port = opts.port ?? Number(process.env.WHATSAPP_WEBHOOK_PORT || 0)
-    this.path = opts.path || process.env.WHATSAPP_WEBHOOK_PATH || '/webhook'
+    // The webhook path freddie's ctx.webServer registers this adapter on
+    // (freddie-bundle/src/platform). This adapter owns no listening socket of
+    // its own -- freddie's boot() assembles the whole transport and the
+    // webhook shares the single dashboard port (AGENTS.md, "freddie
+    // integration"), so there is no WHATSAPP_WEBHOOK_PORT.
+    this.path = opts.path || process.env.WHATSAPP_WEBHOOK_PATH || '/webhooks/whatsapp'
     this.api = opts.api || 'https://graph.facebook.com/v20.0'
-    this._server = null
   }
   getRequiredEnv() { return ['WHATSAPP_API_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID'] }
 
@@ -59,75 +61,11 @@ export class WhatsappAdapter extends EventEmitter {
     return { buffer, mimeType: meta.mime_type || res.headers.get('content-type') || '' }
   }
 
-  async start() {
-    if (!this.token || !this.phoneId) throw new Error('WhatsappAdapter: WHATSAPP_API_TOKEN + WHATSAPP_PHONE_NUMBER_ID required')
-    if (!this.verifyToken) throw new Error('WhatsappAdapter: WHATSAPP_VERIFY_TOKEN required')
-    const app = express()
-    // Capture the raw body so the signature can be verified over exact bytes.
-    app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf } }))
-
-    app.get(this.path, (req, res) => {
-      if (timingSafeEqualStr(String(req.query['hub.verify_token'] || ''), this.verifyToken)) return res.send(req.query['hub.challenge'])
-      res.sendStatus(403)
-    })
-    app.post(this.path, (req, res) => {
-      if (!verifyWebhookOr401(req, res, (r) => this._verifySignature(r))) return
-      // Ack BEFORE any media fetch, not after: Meta retries a webhook that
-      // doesn't get a prompt 2xx, and a media download is a two-hop fetch
-      // that can legitimately take up to ~20s (two 10s per-hop timeouts).
-      // Building the plain-text events synchronously (cheap, no I/O) then
-      // acking immediately, with the media hydration running detached
-      // afterward, means a slow/hung Meta media response can never cause
-      // Meta to see an unacked webhook and redeliver it.
-      const entries = req.body?.entry || []
-      const events = []
-      for (const e of entries) for (const c of (e.changes || [])) {
-        const msgs = c.value?.messages || []
-        for (const m of msgs) {
-          const event = {
-            from: m.from,
-            text: m.text?.body || '',
-            // surface the platform message id for dedup, and the message type
-            // so media-only messages are recognisable upstream.
-            id: m.id,
-            raw: { ...m, id: m.id, type: m.type },
-          }
-          const mediaObj = m.image || m.audio || m.document || m.video
-          if (mediaObj?.id) {
-            const type = m.image ? 'image' : m.audio ? 'audio' : m.document ? 'document' : 'video'
-            event._pendingMedia = { mediaObj, type }
-          }
-          events.push(event)
-        }
-      }
-      res.json({ ok: true })
-      // Hydrate media and emit, detached from the ack above. A message with
-      // no media emits immediately; one with media emits once the download
-      // (or its failure) resolves, without gating res.json.
-      for (const event of events) {
-        const pending = event._pendingMedia
-        delete event._pendingMedia
-        emitWithDetachedMedia(
-          (e) => this.emit('message', e),
-          event,
-          !!pending,
-          async () => {
-            const { buffer, mimeType } = await this._downloadMedia(pending.mediaObj.id)
-            return { type: pending.type, mimeType, buffer }
-          },
-          (err) => {
-            // Never let a failed/slow media fetch block the pipeline -- note
-            // media as present-but-unfetched so it still proceeds.
-            console.error('WhatsappAdapter: media download failed', err)
-            return { type: pending.type, mimeType: pending.mediaObj.mime_type || '', buffer: null, error: String(err?.message || err) }
-          },
-        )
-      }
-    })
-    await new Promise(r => { this._server = app.listen(this.port, () => r()) })
-    this.port = this._server.address().port
+  // Meta's GET verification handshake. Returns the challenge string to echo
+  // back, or null when the token does not match (the caller answers 403).
+  verifyChallenge(verifyToken, challenge) {
+    return timingSafeEqualStr(String(verifyToken || ''), this.verifyToken) ? String(challenge || '') : null
   }
-  async stop() { if (this._server) await new Promise(r => this._server.close(() => r())) }
 
   // Upload raw media bytes to the Cloud API and return the resulting media id.
   // WhatsApp will not send an audio/image message from bytes inline -- it must
@@ -167,3 +105,56 @@ export class WhatsappAdapter extends EventEmitter {
     return post({ text: { body: reply.text } })
   }
 }
+
+// Parse one verified webhook POST body into events and emit them.
+//
+// SYNCHRONOUS on purpose, and the caller must ack (200) as soon as this
+// RETURNS, not once the emitted work settles: Meta redelivers a webhook that
+// does not get a prompt 2xx, and a media download is a two-hop fetch that can
+// legitimately take ~20s (two 10s per-hop timeouts). Building the plain-text
+// events here is cheap and does no I/O; media hydration runs detached via
+// emitWithDetachedMedia, so a slow or hung Meta media response can never make
+// Meta see an unacked webhook and redeliver it.
+//
+// This lives here, beside the adapter that owns _downloadMedia and the media
+// field vocabulary, rather than in the freddie-bundle platform plugin that
+// calls it -- there used to be two copies (this one, driving an express app
+// this adapter no longer owns, and a second inside the plugin) and the copy
+// on the live path had already drifted off emitWithDetachedMedia.
+export function dispatchWhatsappWebhookBody(adapter, body) {
+  const events = []
+  for (const e of (body?.entry || [])) for (const c of (e.changes || [])) {
+    for (const m of (c.value?.messages || [])) {
+      const event = {
+        from: m.from,
+        text: m.text?.body || '',
+        // surface the platform message id for dedup, and the message type
+        // so media-only messages are recognisable upstream.
+        id: m.id,
+        raw: { ...m, id: m.id, type: m.type },
+      }
+      const mediaObj = m.image || m.audio || m.document || m.video
+      const type = m.image ? 'image' : m.audio ? 'audio' : m.document ? 'document' : m.video ? 'video' : null
+      events.push({ event, pending: mediaObj?.id ? { mediaObj, type } : null })
+    }
+  }
+  for (const { event, pending } of events) {
+    emitWithDetachedMedia(
+      (ev) => adapter.emit('message', ev),
+      event,
+      !!pending,
+      async () => {
+        const { buffer, mimeType } = await adapter._downloadMedia(pending.mediaObj.id)
+        return { type: pending.type, mimeType, buffer }
+      },
+      (err) => {
+        // Never let a failed/slow media fetch block the pipeline -- note
+        // media as present-but-unfetched so it still proceeds.
+        console.error('WhatsappAdapter: media download failed', err)
+        return { type: pending.type, mimeType: pending.mediaObj.mime_type || '', buffer: null, error: String(err?.message || err) }
+      },
+    )
+  }
+  return events.length
+}
+

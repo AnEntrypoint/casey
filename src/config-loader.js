@@ -69,15 +69,6 @@ export function loadDomainConfig() {
   return cached
 }
 
-// Test/reload hook -- clears the module-level cache. Not called in normal
-// operation (config is process-lifetime-fixed by design); exists so a
-// doctor-style revalidation can force a fresh read without a process restart.
-export function _resetConfigCache() { cached = null }
-
-export function configDirInUse() {
-  return process.env.CASEY_CONFIG_DIR ? path.resolve(process.env.CASEY_CONFIG_DIR) : DEFAULT_CONFIG_DIR
-}
-
 let thatcherEnumCache = null
 
 // Reads a thatcher.config.yml entity.field enum's options[] -- used to seed

@@ -2,10 +2,19 @@
 
 This file collects the non-code design decisions and open deployment
 questions for the additive ground-truth/provenance layer described in
-AGENTS.md's "Provenance subsystem" section. Code lives in `src/core/`,
-`src/engine/`, `src/packs/`. This file is where the surrounding policy,
+AGENTS.md's "Provenance subsystem" section. Code lives in `src/core/` and
+`src/packs/`. This file is where the surrounding policy,
 research, and operational questions live -- items that are real, named,
 and load-bearing for an actual deployment, but are not code.
+
+Two audits (2026-08-11, 2026-09-07) removed every tier of this subsystem that
+had no live caller -- `src/engine/` entirely, plus `aggregate.js`,
+`interpretation.js`, `event-log.js`, `escrow-export.js`, `quality-flags.js`,
+`reputation.js` and `subject.js` under `src/core/`. Where a section below
+describes one of those by filename, read it as the SHAPE a future
+implementation should take, not as code that exists today; the live modules
+are `provenance.js`, `observation.js`, `raw-log.js`, `write-path.js` and
+`pack-schema.js`, reached only via `src/provenance-wire.js`.
 
 ## Domain grounding (research notes)
 
@@ -96,12 +105,13 @@ new chain -- it slots into the one casey already assumes.
 
 ## Data-quality monitoring and correction protocol
 
-- **Monitoring.** `src/core/quality-flags.js` computes missing_gps / stale /
-  unverified / conflicting flags per Observation, live, as a pure function
-  -- an admin data-quality dashboard panel would aggregate these flags
-  (rate of missing evidence, rate unverified, sync lag via
-  `aggregate.js recency()`) the same way every other casey dashboard panel
-  aggregates over the event log, additive to the existing dashboard.
+- **Monitoring.** A data-quality tier would compute missing_gps / stale /
+  unverified / conflicting flags per Observation as a pure function over the
+  raw log, and an admin data-quality dashboard panel would aggregate them
+  (rate of missing evidence, rate unverified, sync lag) the same way every
+  other casey dashboard panel aggregates, additive to the existing dashboard.
+  Wire it to a real caller from day one -- the previous unreferenced
+  `core/quality-flags.js` was removed for exactly that reason.
 - **Correction protocol.** A correction is a new Observation with
   `correctsId` + `correctionReason` set (`src/core/observation.js`) --
   never a silent overwrite, never a delete. An operator or field worker
@@ -162,7 +172,7 @@ new chain -- it slots into the one casey already assumes.
   changes, and treat a time-series discontinuity that coincides with a
   definition-version change as a definitional artifact, not an outbreak.
 - **Coverage is the deepest threat to ground truth, not data error.**
-  `src/core/aggregate.js`'s `withCoverage`/`sparseMark` exist because
+  A coverage/sparse-marking tier is needed because
   reporting bias (cases cluster where reporters are, not where disease is)
   cannot be fixed by better provenance tagging -- it needs an honest,
   always-shown coverage denominator. Every rate/prevalence view this
@@ -198,7 +208,7 @@ than an improvisation:
   record, not a new field type.
 - **Recency, not completeness.** A dashboard reading data from a
   partially-synced fleet of devices must show "last synced X ago"
-  (`aggregate.js recency()`) rather than implying the aggregate reflects
+  (a recency derivation over the raw log) rather than implying the aggregate reflects
   every report that exists -- a delayed sync is honest lag, not silently
   hidden.
 

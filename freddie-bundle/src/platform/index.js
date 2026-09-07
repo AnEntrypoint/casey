@@ -19,6 +19,8 @@
 // WhatsApp webhook route + the shared message->handleInbound dispatch --
 // purely transport glue, ignorant of casey's case-store/domain logic.
 import { setAgentContext } from '../../../src/agent/run-turn.js'
+import { dispatchWhatsappWebhookBody } from '../../../src/adapters/whatsapp.js'
+import { verifyWebhookOr401 } from '../../../src/adapters/webhook-platform-base.js'
 
 export const name = 'casey-platform'
 // 'agents' alongside 'webServer': this plugin hands its own ctx to
@@ -47,17 +49,16 @@ export async function apply(ctx) {
 
   const whatsapp = adapters.whatsapp
   if (whatsapp) {
-    const path = process.env.WHATSAPP_WEBHOOK_PATH || '/webhooks/whatsapp'
     if (!whatsapp.token || !whatsapp.phoneId) throw new Error('WhatsappAdapter: WHATSAPP_API_TOKEN + WHATSAPP_PHONE_NUMBER_ID required')
     if (!whatsapp.verifyToken) throw new Error('WhatsappAdapter: WHATSAPP_VERIFY_TOKEN required')
-    // WhatsappAdapter.start() normally opens its OWN express server+port
-    // (src/adapters/whatsapp.js); it is never called here -- instead its
-    // webhook verify/receive logic is driven directly through
-    // ctx.webServer.register, reusing freddie's single dashboard port.
-    // adapter.send() (outbound REST call) is unaffected either way.
+    // The adapter owns no listening socket: its webhook verify/receive logic
+    // is driven through ctx.webServer.register, reusing freddie's single
+    // dashboard port. adapter.send() (outbound REST) is unaffected.
+    // The path comes from the adapter itself so there is one answer to "where
+    // does Meta POST", not a second env read with its own default here.
     ctx.webServer.register({
       kind: 'exact',
-      path,
+      path: whatsapp.path,
       handler: (req, res) => webhookHandler(whatsapp, req, res),
     })
     whatsapp.on('message', (m) => {
@@ -73,62 +74,38 @@ export async function apply(ctx) {
   }
 }
 
-// Adapts WhatsappAdapter's express-server-owned webhook logic (GET verify
-// challenge, POST signature-verified receive) to freddie's own raw
-// (req, res) webServer handler contract -- same verification/parsing
-// behavior as src/adapters/whatsapp.js's start(), just not owning its own
-// express app.
+// Adapts the Cloud API webhook contract (GET verify challenge, POST
+// signature-verified receive) to freddie's raw (req, res) webServer handler
+// shape. Verification and parsing/emission both live on the adapter
+// (src/adapters/whatsapp.js); this function is transport plumbing only --
+// read the body, hand it over, ack.
 async function webhookHandler(adapter, req, res) {
   if (req.method === 'GET') {
     const url = new URL(req.url, 'http://localhost')
-    const verifyToken = url.searchParams.get('hub.verify_token') || ''
-    const challenge = url.searchParams.get('hub.challenge') || ''
-    const { timingSafeEqualStr } = await import('../../../src/adapters/webhook-platform-base.js')
-    if (timingSafeEqualStr(verifyToken, adapter.verifyToken)) {
-      res.writeHead(200, { 'content-type': 'text/plain' })
-      res.end(challenge)
-    } else {
-      res.writeHead(403)
-      res.end()
-    }
+    const challenge = adapter.verifyChallenge(url.searchParams.get('hub.verify_token'), url.searchParams.get('hub.challenge'))
+    if (challenge === null) { res.writeHead(403); res.end(); return }
+    res.writeHead(200, { 'content-type': 'text/plain' })
+    res.end(challenge)
     return
   }
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
   const rawBody = Buffer.concat(chunks)
-  const fakeReq = {
+  // verifyWebhookOr401 and _verifySignature both speak express's
+  // req.get()/req.rawBody and res.sendStatus() shape, which freddie's raw
+  // node req/res does not have -- adapt rather than fork the verifier.
+  const asExpressReq = {
     get: (h) => req.headers[h.toLowerCase()],
     rawBody,
     body: JSON.parse(rawBody.toString('utf8') || '{}'),
   }
-  const fakeRes = {
+  const asExpressRes = {
     sendStatus: (code) => { res.writeHead(code); res.end() },
     json: (obj) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)) },
   }
-  const { verifyWebhookOr401 } = await import('../../../src/adapters/webhook-platform-base.js')
-  if (!verifyWebhookOr401(fakeReq, fakeRes, (r) => adapter._verifySignature(r))) return
-  // Reuse the adapter's own event-building/media-hydration logic verbatim by
-  // calling its internal handler shape: adapter._verifySignature already ran
-  // above, so build events the same way WhatsappAdapter's own POST route does.
-  dispatchWhatsappEntries(adapter, fakeReq.body)
-  fakeRes.json({ ok: true })
-}
-
-function dispatchWhatsappEntries(adapter, body) {
-  const entries = body?.entry || []
-  for (const e of entries) for (const c of (e.changes || [])) {
-    const msgs = c.value?.messages || []
-    for (const m of msgs) {
-      const event = { from: m.from, text: m.text?.body || '', id: m.id, raw: { ...m, id: m.id, type: m.type } }
-      const mediaObj = m.image || m.audio || m.document || m.video
-      if (!mediaObj?.id) { adapter.emit('message', event); continue }
-      const type = m.image ? 'image' : m.audio ? 'audio' : m.document ? 'document' : 'video'
-      adapter._downloadMedia(mediaObj.id)
-        .then(({ buffer, mimeType }) => adapter.emit('message', { ...event, media: { type, mimeType, buffer } }))
-        .catch((err) => {
-          console.error('WhatsappAdapter: media download failed', err)
-          adapter.emit('message', { ...event, media: { type, mimeType: mediaObj.mime_type || '', buffer: null, error: String(err?.message || err) } })
-        })
-    }
-  }
+  if (!verifyWebhookOr401(asExpressReq, asExpressRes, (r) => adapter._verifySignature(r))) return
+  // Emission is detached inside dispatchWhatsappWebhookBody, so this returns
+  // before any media download -- ack immediately, or Meta redelivers.
+  dispatchWhatsappWebhookBody(adapter, asExpressReq.body)
+  asExpressRes.json({ ok: true })
 }

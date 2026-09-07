@@ -897,10 +897,23 @@ body { background: var(--bg); color: var(--fg); }
 .ds-act-when { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-left: auto; }
 
 /* ---- print CSS (printable handover/metrics/report links) ---------------- */
+/* LOAD-BEARING !important -- a print override that must win, which is the
+   exact case the kit's own lint-important text names as legitimate. It was
+   briefly rewritten to use specificity instead, to get under a ratchet, and
+   that was wrong: enumerating every competing `display` rule in the bundle
+   showed the kit sets `display: flex` on these same elements at specificity
+   up to 4 (`.ds-247420.ds-247420 .ca-app .app-topbar`, and `.ca-app` IS
+   emitted by the kit's own JS), which beats anything a consumer sheet can
+   reasonably write without !important. Trading a guarantee that the operator
+   gets a clean printout for a green counter is the wrong trade on a
+   deployment where the printed handover sheet is a real artefact.
+   #toasts stays dropped from the list, separately: toast-tray.js puts BOTH
+   id="toasts" and class="ds-toast-tray" on the same element, so the list was
+   naming one element twice. */
 @media print {
   .app-topbar, .app-side-shell, .app-status,
-  .ds-dialog-backdrop, .ds-toast-tray, .ds-handoff-banner, .ds-conn-banner,
-  #toasts { display: none !important; }
+  .ds-dialog-backdrop, .ds-toast-tray, .ds-handoff-banner,
+  .ds-conn-banner { display: none !important; }
   body { background: var(--paper, var(--bg)); color: var(--ink, var(--fg)); }
 }
 
@@ -1111,7 +1124,12 @@ body { background: var(--bg); color: var(--fg); }
     width: 100%;
     flex-direction: column;
     justify-content: center;
-    gap: 2px;
+    /* --space-hair is 0.125rem scaled by --density, i.e. the 2px this used to
+       hardcode at the default density -- but it now tracks the density knob
+       like every other gap instead of staying 2px when the rest of the UI
+       scales. It was also the single raw spacing literal casey contributed to
+       the kit's shared ratchet. */
+    gap: var(--space-hair);
     padding: var(--space-1);
     text-align: center;
     font-size: var(--fs-nano, var(--fs-micro));

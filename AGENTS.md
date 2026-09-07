@@ -205,6 +205,18 @@ turn loop -- with casey's own plugins mounted alongside freddie's
   freddie's tree, reusing its single dashboard port rather than opening a
   second one) and casey's own Discord adapter (`src/adapters/discord.js`,
   an outbound gateway-websocket client needing no listening socket at all).
+  `WhatsappAdapter` therefore owns NO listening socket and has no `start()`:
+  it kept a full express app plus a `WHATSAPP_WEBHOOK_PORT` for a server
+  nothing ever launched, while this plugin carried a second, drifted copy of
+  the entry-parsing/media-hydration logic that had lost the shared
+  `emitWithDetachedMedia` helper. Both were collapsed (2026-09-07) into
+  `whatsapp.js`'s exported `dispatchWhatsappWebhookBody(adapter, body)`, which
+  this plugin calls; the plugin is now transport plumbing only (read body,
+  verify, dispatch, ack). The webhook path is `adapter.path`
+  (`WHATSAPP_WEBHOOK_PATH`, default `/webhooks/whatsapp`) -- one answer to
+  "where does Meta POST", not an env read in each file with different
+  defaults. Dispatch is synchronous and media hydration is detached, so the
+  caller MUST ack as soon as it returns or Meta redelivers.
 - `src/agent/run-turn.js` -- the thin adapter `hooks/handler.js` still calls
   as `runTurn(...)` (unchanged call signature, so casey's ~850-line
   guaranteed-delivery/rate-limit/dedup orchestration needed no rewrite): it
@@ -687,7 +699,10 @@ T+20s:  "Sorry, I'm having trouble right now" sent to contact (soft deadline exc
 **Health monitoring:**
 - `GET /api/health` returns degraded:true if recent turns were slow (rolling window, MIN_SAMPLES_FOR_DEGRADED=2)
 - `GET /api/turns/degraded` lists all degraded turns across all cases (queryable by structured data)
-- `GET /api/queue` shows pending queue depth and dead-lettered count
+- `GET /api/health/provider` shows pending queue depth and dead-lettered count
+  (`queued_turn_count`/`dead_lettered_count`, from `casey.queueStatus()`). There
+  is no `/api/queue` route; this line named one until 2026-09-07, and a live
+  authed request for it 404s.
 - `GET /api/health/cases` returns live case-level health signals (breaches per case + sweep status)
 
 ## Case health guardrails and sweep
@@ -909,7 +924,7 @@ numeric-seconds strings (e.g. `"1782977388"`); parse row timestamps with the
 digit-string-aware helpers (`attn.js` tsMs / `case-health.js` ms /
 `format.js` toDate), never bare `Date.parse`.
 
-## Provenance subsystem (src/core/, src/engine/, src/packs/)
+## Provenance subsystem (src/core/, src/packs/)
 
 An additive ground-truth/provenance layer sits alongside casey's existing
 thatcher-backed case/event architecture (untouched by this layer). It exists
@@ -931,8 +946,20 @@ merely forbidden. `aggregate.js`, `interpretation.js`, and
 `engine/rule-engine.js` (an aggregation layer, a model-estimate layer, and a
 rule evaluator, respectively) were designed as further tiers on top of the
 raw log but were never wired to a real caller -- confirmed dead code via
-`casey-maximize-quality`'s 2026-08-11 audit and removed. Only `raw-log.js`,
-`write-path.js`, and their direct dependencies (`observation.js`,
+`casey-maximize-quality`'s 2026-08-11 audit and removed. The same audit shape
+repeated on 2026-09-07 (`uhh-sweep-server`) and removed a second unreferenced
+tier left behind by the first: `core/event-log.js` (a pass-through wrapper
+naming RawLog "the event log", plus a `rebuildProjection` one-liner),
+`core/escrow-export.js` (a JSONL escrow dump reading that wrapper),
+`core/quality-flags.js`, `core/reputation.js`, `core/subject.js`,
+`core/pack-loader.js` (a versioned-migration `PackRegistry` whose multi-hop
+resolver was a hardcoded `return false`), and `packs/water-point.js` (a
+second-domain pack whose own header called it an "acceptance test" that
+nothing ever loaded). Also removed: `src/provider-health.js`
+(`ProviderHealthTracker`), whose only would-be consumer,
+`GET /api/health/provider`, had already been rewired away from it and
+carries a comment saying why. Only `raw-log.js`, `write-path.js`,
+`pack-schema.js`, and their direct dependencies (`observation.js`,
 `provenance.js`) are live, reached from the agent path via
 `case-tools.js` -> `provenance-wire.js` -> `write-path.js`. Reintroduce an
 aggregation/estimate/rule-evaluation tier only wired to a real caller from
@@ -946,11 +973,28 @@ day one, not as unreferenced scaffolding.
 **Config packs are declarative data only.** A pack's `unknownAllowed` field
 cannot be set to `false` -- a pack that tries is rejected at validation, so
 "unknown is always reachable" is structurally enforced, not conventional.
-`src/packs/animal-health.js` and `src/packs/water-point.js` (a genuinely
-unrelated domain) both validate through the identical engine functions with
-zero domain-specific branching in `core/`/`engine/` -- proof the boundary
-holds. `scripts/lint.mjs`'s `trust-boundary` gate forbids any
-`src/packs/*.js` file from importing `src/core/` or `src/engine/`.
+That enforcement is real only because `provenance-wire.js` calls
+`core/pack-schema.js`'s `loadPack(animalHealthPack)` at MODULE LOAD, the same
+throw-at-import discipline as `hooks/prompt.js`'s
+`selfCheckLoadBearingPromptContent` and `case-tools.js`'s
+`selfCheckLoadBearingToolDescriptions`. Until 2026-09-07 nothing called
+`validatePack`/`loadPack` from a live path at all, so the sentence above
+described an intention rather than a mechanism; keep that call site, it is
+the whole gate. Live-witnessed both directions: a pack with
+`unknownAllowed: false` on one field throws at import with the field named;
+the shipped pack imports clean and `recordProvenanceObservation` still writes.
+`scripts/lint.mjs`'s `trust-boundary` gate forbids any `src/packs/*.js` file
+from importing `src/core/`.
+
+**Only part of a pack is evaluated.** `provenance-wire.js` reads exactly
+`observationForms.<form>.fields` (as the allowlist of which `case_report`
+fields become provenance-tagged findings), plus `id` and `version` for the
+stamp. `rules`, `views`, `roles` and `strings` are declared in
+`animal-health.js` and schema-checked by `pack-schema.js`, but nothing
+evaluates them -- the rule evaluator that would have read `rules` is one of
+the dead tiers removed above. They are a documented target shape for a future
+deployment pack, never live behaviour; do not describe a pack rule as
+something casey acts on.
 
 **Wired into the live agent conversation** (`src/provenance-wire.js`):
 `case_report` still writes directly to thatcher's `case.report` JSON blob

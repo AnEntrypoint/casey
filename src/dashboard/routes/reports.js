@@ -7,6 +7,7 @@
 //   csvCell, fmtTimeSAST, printableReportRow, printableReportTable,
 //   printableReport, computeFillRate
 import { tagList } from '../../timestamp.js'
+import { evData } from '../../safe.js'
 
 export function registerReports(app, deps) {
   const {
@@ -180,7 +181,6 @@ export function registerReports(app, deps) {
   // event cannot leak the contact number into a compliance export. Read-only.
   app.get('/api/audit.csv', wrap(async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const { evData } = await import('../../overview.js')
     const days = reportDays(req)
     const sinceSec = Math.floor((Date.now() - days * 24 * 3600 * 1000) / 1000)
     const actorEnum = typeof store.getFieldEnum === 'function' && store.getFieldEnum('event.actor', []).length
@@ -355,8 +355,7 @@ export function registerReports(app, deps) {
       const events = await store.listEvents(c.id, { limit: 500 })
       const flags = events.filter(e => e.kind === 'observation' && e.text?.startsWith('FLAGGED REPLY'))
       for (const f of flags) {
-        let data = {}
-        try { data = typeof f.data === 'string' ? JSON.parse(f.data) : (f.data || {}) } catch { data = {} }
+        const data = evData(f)
         items.push({
           case_id: c.id, ref: c.ref, channel: c.channel,
           flagged_text: data.flagged_text || '', reason: data.reason || '',

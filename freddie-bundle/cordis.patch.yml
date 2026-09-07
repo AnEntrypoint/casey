@@ -2,7 +2,9 @@
 # insert rows (see src/casey.js's boot() call, which composes
 # [...freddie-base's own patches, ...this file] as one flattened patch array).
 #
-# SECURITY (AGENTS.md "pi tool surface"): freddie-base bundles real
+# SECURITY (AGENTS.md, "freddie integration" section, the paragraph headed
+# "the load-bearing replacement for the old enabledToolsets contract"):
+# freddie-base bundles real
 # bash/write/edit/file/credential tools in the SAME global ctx.tools registry
 # casey's own case_* tools register into -- there is no toolset-category
 # separation at the freddie layer. installToolAllowlist

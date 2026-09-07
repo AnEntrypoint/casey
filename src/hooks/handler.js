@@ -237,7 +237,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       return { to: replyTo, text: '', platform, error: 'store_not_ready' }
     }
     const msgId = messageId(msg)
-    if (!msgId) log?.warn?.('[casey] inbound message missing id; dedup guarantee not applied', { channel, external_id })
+    // Channel only, never external_id -- it is the contact's phone number
+    // (PII), and the same rule is spelled out again at the findOrCreateCase
+    // catch below. This line used to be the one exception in the whole file.
+    if (!msgId) log?.warn?.('[casey] inbound message missing id; dedup guarantee not applied', { channel })
 
     let caseRow, created
     try {
@@ -1437,6 +1440,31 @@ export function conversationKey(msg) {
   return container || author || 'unknown'
 }
 
+// The inverse of conversationKey: decompose a stored external_id back into its
+// container and author. The container is the FIRST colon-separated segment and
+// the author the LAST, deliberately, because a corrupted key can carry the same
+// container repeated many times.
+//
+// This is one function because it used to be three, and the same SEVERE
+// COMPOUNDING-KEY BUG had to be found and fixed twice, independently, in two
+// copy-pasted copies inside casey.js (resumePendingTurns and
+// _drainQueuedTurnsBody). That bug: a redrive passed the whole combined
+// external_id back in as `msg.from`, so conversationKey (which builds
+// `container:from`) recombined it into `container:container:author` on that
+// redrive's own next write, growing by one duplicated segment every sweep pass.
+// Live-witnessed: real production external_ids had accumulated the SAME channel
+// id 30+ times, colon-joined, after weeks of nightly resume sweeps.
+// conversationKey was never at fault -- it always emits a clean two-part key;
+// the call sites were feeding its output back in as raw input. Taking the LAST
+// segment as the author both fixes it going forward and self-heals an already
+// corrupted key on its next successful resume, since the freshly split-and-
+// rejoined key collapses back to a clean two-part container:author with no
+// separate migration. Keep this in ONE place.
+export function splitExternalId(externalId) {
+  const parts = String(externalId || '').split(':')
+  return { container: parts[0], author: parts[parts.length - 1] }
+}
+
 // Where a reply is DELIVERED: the channel/chat container (Discord posts to
 // /channels/{channel}/messages; an author id 404s). Falls back to the sender for a
 // 1:1 chat. Distinct from conversationKey, which is the per-contact case identity.
@@ -1453,7 +1481,7 @@ export function replyTarget(msg) {
 // unchanged.
 export function caseDeliveryTarget(caseRow) {
   const ext = String(caseRow?.external_id || '')
-  if ((caseRow?.channel || '') === 'discord' && ext.includes(':')) return ext.slice(0, ext.indexOf(':'))
+  if ((caseRow?.channel || '') === 'discord' && ext.includes(':')) return splitExternalId(ext).container
   return ext
 }
 

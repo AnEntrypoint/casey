@@ -35,8 +35,8 @@
 
 import { readFileSync, readdirSync, statSync, lstatSync, realpathSync, existsSync } from 'node:fs'
 import { join, extname } from 'node:path'
-import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { filterGitignored } from './lib/git-ignored.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const NODE_MODULES = join(ROOT, 'node_modules')
@@ -60,26 +60,6 @@ function walkSource(dir, out = []) {
     else if (['.js', '.mjs', '.cjs'].includes(extname(p))) out.push(p)
   }
   return out
-}
-
-// Matches lint.mjs's filterGitignored: ask git which candidates it would
-// ignore rather than hardcoding a skip list, dependency-free fallback intact.
-function filterGitignored(paths) {
-  try {
-    const rel = paths.map((p) => p.slice(ROOT.length).replace(/\\/g, '/'))
-    const out = execFileSync('git', ['check-ignore', '--stdin'], {
-      cwd: ROOT, input: rel.join('\n'), stdio: ['pipe', 'pipe', 'pipe'],
-    }).toString()
-    const ignored = new Set(out.split('\n').filter(Boolean))
-    return paths.filter((_, i) => !ignored.has(rel[i]))
-  } catch (e) {
-    if (e.status === 1 && e.stdout != null) {
-      const ignored = new Set(String(e.stdout).split('\n').filter(Boolean))
-      const rel = paths.map((p) => p.slice(ROOT.length).replace(/\\/g, '/'))
-      return paths.filter((_, i) => !ignored.has(rel[i]))
-    }
-    return paths
-  }
 }
 
 // Bytes-per-line above this on an ordinary hand-written JS/config file is
@@ -209,29 +189,13 @@ function scanFile(path) {
 // own source, so freddie's source is never silently excluded entirely.
 function walkFreddieSource(freddieRoot) {
   if (!existsSync(freddieRoot)) return []
-  const found = walkSource(freddieRoot)
-  // filterGitignored's cwd is ROOT (casey's own root) elsewhere in this
-  // file; freddie's own .gitignore lives in its own repo, so filtering must
-  // run with cwd=freddieRoot against paths relative to THAT root.
-  try {
-    const rel = found.map((p) => p.slice(freddieRoot.length).replace(/\\/g, '/'))
-    const out = execFileSync('git', ['check-ignore', '--stdin'], {
-      cwd: freddieRoot, input: rel.join('\n'), stdio: ['pipe', 'pipe', 'pipe'],
-    }).toString()
-    const ignored = new Set(out.split('\n').filter(Boolean))
-    return found.filter((_, i) => !ignored.has(rel[i]))
-  } catch (e) {
-    if (e.status === 1 && e.stdout != null) {
-      const rel = found.map((p) => p.slice(freddieRoot.length).replace(/\\/g, '/'))
-      const ignored = new Set(String(e.stdout).split('\n').filter(Boolean))
-      return found.filter((_, i) => !ignored.has(rel[i]))
-    }
-    return found
-  }
+  // freddie's own .gitignore lives in its own repo, so the ignore filter runs
+  // against THAT root, not casey's.
+  return filterGitignored(walkSource(freddieRoot), freddieRoot)
 }
 
 function main() {
-  const sourceFiles = filterGitignored(walkSource(ROOT))
+  const sourceFiles = filterGitignored(walkSource(ROOT), ROOT)
   const freddieSourceFiles = walkFreddieSource(join(ROOT, 'deps', 'freddie'))
   const depFiles = existsSync(NODE_MODULES) ? walk(NODE_MODULES) : []
   const nodeModulesTruncated = depFiles.length >= MAX_FILES

@@ -37,8 +37,9 @@
 import express from 'express'
 import path from 'node:path'
 import zlib from 'node:zlib'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { VISIT_CRITICAL } from '../case-health.js'
 import { REPORT_KEY_ORDER, UNCLAIMED_ASSIGNEE } from '../case-store.js'
 import { DASHBOARD_UI } from '../store/report-shape.js'
@@ -99,8 +100,45 @@ const LEAFLET_DIR = resolvePackageDir('leaflet', 'leaflet', 'dist')
 const MARKERCLUSTER_DIR = resolvePackageDir('leaflet.markercluster', 'leaflet.markercluster', 'dist')
 const PUBLIC_DIR = path.resolve(__dirname, 'public')
 
-const OPERATOR = { id: 'dashboard-operator', role: 'operator' }
 const PAGE_MAX = 200
+
+// Identifies the exact set of shell bytes this process is serving. The service
+// worker's cache name is built from it, so a cache filled for one build can
+// never answer a request under another -- see the /sw.js route for the full
+// invalidation argument.
+//
+// Size + mtime rather than content hashing: mtime is the same signal
+// src/supervisor.js already recycles the worker on, so the process that
+// recomputes this id is exactly the process a source edit restarts, and the
+// two cannot disagree. The cost of mtime's coarser granularity is one
+// unnecessary re-download after a checkout that rewrites timestamps without
+// changing bytes; the cost of the opposite mistake is an operator running a
+// shell that no longer matches its API. The bias goes this way on purpose.
+//
+// Bounded by construction: it walks public/ (the first-party tree, ~130 small
+// files) and then stats exactly the vendored bundles index.html links. It does
+// not walk the design package, which is thousands of files this page never asks
+// for.
+function shellBuildId(publicDir, vendoredFiles) {
+  const h = createHash('sha256')
+  const walk = (dir, rel) => {
+    const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
+    for (const e of entries) {
+      const abs = path.join(dir, e.name)
+      if (e.isDirectory()) { walk(abs, rel + e.name + '/'); continue }
+      const st = statSync(abs)
+      h.update(rel + e.name + ':' + st.size + ':' + Math.round(st.mtimeMs) + '\n')
+    }
+  }
+  try { walk(publicDir, '') } catch { h.update('public-dir-unreadable\n') }
+  for (const f of vendoredFiles) {
+    try {
+      const st = statSync(f)
+      h.update(path.basename(f) + ':' + st.size + ':' + Math.round(st.mtimeMs) + '\n')
+    } catch { h.update(path.basename(f) + ':absent\n') }
+  }
+  return h.digest('hex').slice(0, 16)
+}
 
 // Shared print CSS + row/tbl table-builder lambdas for casey's printable HTML
 // report generators (/api/report.html, /api/handover?format=html, and the
@@ -240,11 +278,74 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   // this must know their own real proxy chain depth.
   const trustProxyHops = Number(process.env.CASEY_TRUST_PROXY_HOPS)
   if (Number.isFinite(trustProxyHops) && trustProxyHops > 0) app.set('trust proxy', trustProxyHops)
+  // Computed once per boot, not per request: the supervisor forks a fresh
+  // worker whenever a watched source file's mtime moves, so boot IS the moment
+  // the shell can have changed.
+  const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [
+    path.join(DESIGN_DIR, 'dist', '247420.css'),
+    path.join(DESIGN_DIR, 'dist', '247420.js'),
+    path.join(LEAFLET_DIR, 'leaflet.js'),
+    path.join(LEAFLET_DIR, 'leaflet.css'),
+    path.join(MARKERCLUSTER_DIR, 'leaflet.markercluster.js'),
+  ])
   // First in the chain, so it wraps every downstream response -- the API
   // routes, the SPA shell, and the /design + /vendor static mounts alike.
   app.use(compressResponses)
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
+
+  // Registered HERE, ahead of registerAuth, and that position is the whole
+  // point: routes/auth.js's gate is an app.use() installed inside
+  // registerAuth, so anything mounted before it is unconditionally public
+  // without needing a new exemption added to that gate's allowlist. The
+  // logged-out login gate pulls the same module graph the dashboard does, so
+  // this file has to be reachable with no session, exactly like /sw.js and
+  // /icon.svg (which get there via the allowlist instead).
+  //
+  // WHAT IT IS: six case-list modules import `* as ds` from the design SDK's
+  // prebuilt bundle, /design/dist/247420.js -- 745,191 raw / 355,065 gzipped
+  // bytes and one more serial round trip -- and between them use exactly two
+  // things off it, `ds.h` and `ds.components`, naming nine components. All
+  // nine live in three source modules the page already loads through
+  // index.html's `ds/` import map, so the bundle was a strict superset of
+  // bytes already in flight. index.html remaps the bundle specifier here.
+  //
+  // Measured on this deployment (21 cases, cold cache, gzip on): 138
+  // same-origin requests / 948,256 bytes before, of which the bundle was
+  // 355,065 -- 37 percent of the page, on a link where the operator is
+  // paying per megabyte.
+  //
+  // Served as a string from here rather than as a file under public/ for the
+  // same reason /sw.js and /offline.html are: those are the routes that must
+  // answer before a session exists, and they already live together in this
+  // file. A `components` name that is NOT re-exported below must fail loudly
+  // -- an undefined component renders as nothing, which on a triage queue
+  // means a row that silently loses its status chip.
+  const DESIGN_SDK_SHIM = `
+import * as webjsx from 'webjsx'
+import * as shell from 'ds/components/shell.js'
+import * as content from 'ds/components/content.js'
+import * as overlay from 'ds/components/overlay-primitives.js'
+
+export const h = webjsx.createElement
+
+const surface = { ...shell, ...content, ...overlay }
+export const components = new Proxy(surface, {
+  get(target, key) {
+    if (typeof key !== 'string' || key in target) return target[key]
+    if (key === 'then' || key === 'default' || key === '__esModule') return undefined
+    throw new Error('design-sdk-shim: components.' + key + ' is not exported by '
+      + 'shell.js, content.js or overlay-primitives.js. Import it from its own ds/ '
+      + 'module and re-export it here (server.js DESIGN_SDK_SHIM) -- do not point '
+      + 'the import map back at /design/dist/247420.js, that is 355 KB gzipped.')
+  },
+})
+`
+  app.get('/design-sdk-shim.js', (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.send(DESIGN_SDK_SHIM)
+  })
 
   // /api/login, /api/logout, and the public /report contact form are the only
   // routes reachable with no session -- every other /api route and the SPA
@@ -252,9 +353,17 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   // account-management routes to the 'admin' role.
   const authed = (req) => !!req.caseyAccount
   const isAdmin = (req) => req.caseyAccount?.role === 'admin'
+  // Fails closed. Every call site sits on a route registered AFTER
+  // registerAuth's session gate, so a missing account here is impossible
+  // rather than merely unusual -- and the previous behaviour (returning a
+  // synthetic { id: 'dashboard-operator' } identity) would have ASSERTED an
+  // operator identity that no session ever authenticated, against the
+  // "operator identity is learned, never asserted" invariant, and written it
+  // into audit/claim/activity rows. A loud 500 on an unreachable path beats a
+  // fabricated author on a real one.
   const actingOperator = (req) => {
     const acct = req.caseyAccount
-    if (!acct) return OPERATOR
+    if (!acct) throw new Error('actingOperator called with no authenticated session -- a gated route was registered before the session gate')
     return { id: acct.username, name: acct.display_name || acct.username, role: acct.role || 'operator' }
   }
   // Same {id, name} shape the old CASEY_OPERATORS roster returned, sourced
@@ -356,7 +465,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     markLogin, getAccount, listAccounts, createAccount, setAccountDisabled,
     deleteAccount, changePassword, revokeAccountSessions,
     esc, wrap, str, clampLimit, offsetOf,
-    authed, isAdmin, actingOperator, getRoster, OPERATOR,
+    authed, isAdmin, actingOperator, getRoster,
     AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
     computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
     UNCLAIMED_ASSIGNEE,
@@ -383,38 +492,173 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   // consume it -- absent, byte-identical to casey's own literal branding.
   const PWA_BRAND = DASHBOARD_UI?.brand || 'casey'
   const PWA_ICON_LETTER = PWA_BRAND.charAt(0).toUpperCase()
-  const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="32" fill="#3b6ea5"/><text x="96" y="136" font-family="system-ui,sans-serif" font-size="120" font-weight="700" fill="#fff" text-anchor="middle">${PWA_ICON_LETTER}</text></svg>`
-  app.get('/icon.svg', (_req, res) => res.type('image/svg+xml').send(PWA_ICON_SVG))
-  app.get('/manifest.json', (_req, res) => res.json({
-    name: PWA_BRAND, short_name: PWA_BRAND, start_url: '/', display: 'standalone',
-    background_color: '#0f1115', theme_color: '#3b6ea5',
-    description: 'Animal-disease surveillance case management',
-    icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
-  }))
-  // Service worker: cache-first for app shell assets, network-first for API, offline.html fallback.
+  // index.html's own <meta name="theme-color"> is the single source for the
+  // brand colour. It had drifted: the page declared #E88427 while this
+  // manifest and the generated icon both hardcoded #3b6ea5, so the browser
+  // chrome, the installed app's task-switcher entry and the home-screen icon
+  // were three different colours for one product. Reading the page's own tag
+  // makes that divergence unrepresentable rather than merely fixed once.
+  const readThemeColor = () => {
+    try {
+      const m = /<meta\s+name="theme-color"\s+content="([^"]+)"/i.exec(readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8'))
+      if (m) return m[1]
+    } catch { /* a deployer replacing index.html keeps casey's own colour */ }
+    return '#3b6ea5'
+  }
+  const PWA_THEME_COLOR = readThemeColor()
+  // White-on-brand is the single most common way a palette ships an unreadable
+  // mark, and this one is a live example: the design kit's own measurements
+  // (colors_and_type.css, herd preset) put white on #E88427 at 2.71:1 -- under
+  // even the 3:1 UI floor -- and black on the same orange at 7.76:1. So the
+  // letter's ink is picked from the fill's luminance rather than assumed white.
+  const readableInkOn = (hex) => {
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex))
+    if (!m) return '#fff'
+    const n = parseInt(m[1], 16)
+    const lin = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+      const s = v / 255
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+    })
+    const L = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? '#000' : '#fff'
+  }
+  const PWA_ICON_INK = readableInkOn(PWA_THEME_COLOR)
+  const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="32" fill="${PWA_THEME_COLOR}"/><text x="96" y="136" font-family="system-ui,sans-serif" font-size="120" font-weight="700" fill="${PWA_ICON_INK}" text-anchor="middle">${PWA_ICON_LETTER}</text></svg>`
+  app.get('/icon.svg', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache')
+    res.type('image/svg+xml').send(PWA_ICON_SVG)
+  })
+  app.get('/manifest.json', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache')
+    res.json({
+      name: PWA_BRAND, short_name: PWA_BRAND, start_url: '/', display: 'standalone',
+      // The splash screen paints background_color before the page's own CSS
+      // exists. It used to be #0f1115, a near-black, on a deployment whose
+      // first paint is the brand's white ground -- so every launch of the
+      // installed app opened with the dark flash that index.html's own
+      // data-theme comment says was deliberately engineered away.
+      background_color: '#ffffff', theme_color: PWA_THEME_COLOR,
+      // No hardcoded description. The old one read "Animal-disease
+      // surveillance case management" in a codebase whose whole point is that
+      // the domain comes from config (AGENTS.md, Configuration architecture)
+      // and which ships an IT-helpdesk demo by default. A deployer that wants
+      // one sets dashboard_ui.description; otherwise the field is simply
+      // absent, which is valid and honest.
+      ...(DASHBOARD_UI?.description ? { description: DASHBOARD_UI.description } : {}),
+      icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
+    })
+  })
+  // SERVICE WORKER. The previous version's header comment claimed "cache-first
+  // for app shell assets"; the code underneath was unconditionally
+  // network-first for everything and precached exactly two files
+  // ('/offline.html', '/icon.svg'), so no shell asset was ever cache-first and
+  // the app did not work offline in any sense beyond showing an apology page.
+  // The comment is now true because the code is.
+  //
+  // WHY CACHE-FIRST IS SAFE HERE, on a surveillance dashboard where a stale
+  // shell would be a safety problem rather than a cosmetic one:
+  //
+  //  1. Nothing under /api/ is ever cached. Every fact an operator READS --
+  //     case rows, the map, health, the queue -- comes from the network on
+  //     every request or fails loudly with the 503 offline envelope. Only
+  //     code, CSS and fonts are cached.
+  //  2. The cache NAME carries SHELL_BUILD_ID, derived from the size and
+  //     mtime of every file under public/ plus the design and leaflet bundles
+  //     this page links. A changed shell is a different cache, so a cache
+  //     built for one build is structurally incapable of serving another --
+  //     this is version-scoping, not expiry, and it needs no clock.
+  //  3. That id is baked into this script's bytes, and /sw.js is served
+  //     no-cache, so the browser's own update check (it refetches sw.js on
+  //     navigation) sees different bytes, installs the new worker, and
+  //     activate deletes every cache that is not the current one. Worst case
+  //     an operator is one navigation behind a deploy, never more.
+  //  4. mtime is the same signal casey's supervisor already reloads the
+  //     worker on (AGENTS.md, Supervised runtime), so the two agree by
+  //     construction: the process that recomputes this id is the process a
+  //     source edit restarts.
+  //
+  // skipWaiting is kept deliberately: on this link a deploy that waits for
+  // every tab to close could take days to reach an operator, and the mixed
+  // -version window it opens is bounded by point 2 -- the new worker serves a
+  // whole consistent build or nothing from it.
+  //
+  // Third-party requests (OpenStreetMap tiles) are passed straight through.
+  // Caching them would help offline, but a tile cache is unbounded by nature
+  // and this is a device with a metered link and a small disk; that is a
+  // separate decision with its own eviction policy, not a side effect here.
   app.get('/sw.js', (_req, res) => {
     res.setHeader('Content-Type', 'application/javascript')
     res.setHeader('Cache-Control', 'no-cache')
     res.send(`
-const CACHE='casey-v1'
-const SHELL=['/offline.html','/icon.svg']
-self.addEventListener('install',e=>{ e.waitUntil(caches.open(CACHE).then(c=>c.addAll(SHELL))); self.skipWaiting() })
-self.addEventListener('activate',e=>{ e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))); self.clients.claim() })
-self.addEventListener('fetch',e=>{
-  const u=e.request.url
-  if(u.includes('/api/')){ e.respondWith(fetch(e.request).catch(()=>new Response(JSON.stringify({error:'offline'}),{status:503,headers:{'content-type':'application/json'}}))); return }
-  e.respondWith(fetch(e.request).catch(()=>caches.match('/offline.html')))
+const VERSION = '${SHELL_BUILD_ID}'
+const CACHE = 'casey-shell-' + VERSION
+// Above the fold on the map-first landing. Everything else same-origin joins
+// the same versioned cache the first time it is asked for, so the operator
+// never pays for a module this deployment does not actually open.
+const PRECACHE = [
+  '/', '/offline.html', '/icon.svg', '/manifest.json', '/app.css',
+  '/design/dist/247420.css',
+  '/vendor/ubuntu/ubuntu-400.woff2', '/vendor/ubuntu/ubuntu-700.woff2',
+  '/vendor/leaflet/leaflet.css', '/vendor/leaflet/leaflet.js',
+]
+
+// cache: 'reload' matters. Without it the precache for a NEW build could be
+// filled from the browser's own HTTP cache entry for the OLD one, which would
+// quietly defeat the whole version-scoping scheme.
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => Promise.all(PRECACHE.map((u) =>
+    fetch(new Request(u, { cache: 'reload' }))
+      .then((r) => (r && r.ok ? c.put(u, r) : null))
+      .catch(() => null)))))
+  self.skipWaiting()
+})
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(caches.keys()
+    .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    .then(() => self.clients.claim()))
+})
+
+self.addEventListener('fetch', (e) => {
+  const req = e.request
+  if (req.method !== 'GET') return
+  const url = new URL(req.url)
+  if (url.origin !== self.location.origin) return
+  // A range request is a partial body; storing or replaying one is wrong.
+  if (req.headers.has('range')) return
+  // Never cached, ever: this is the live case data.
+  if (url.pathname.startsWith('/api/')) {
+    e.respondWith(fetch(req).catch(() => new Response(
+      JSON.stringify({ error: 'offline' }),
+      { status: 503, headers: { 'content-type': 'application/json' } })))
+    return
+  }
+  // The update check must reach the network or the worker can never be replaced.
+  if (url.pathname === '/sw.js') return
+  e.respondWith(caches.open(CACHE).then((c) => c.match(req, { ignoreVary: true }).then((hit) => {
+    if (hit) return hit
+    return fetch(req).then((res) => {
+      if (res && res.status === 200 && res.type === 'basic') c.put(req, res.clone())
+      return res
+    }).catch(() => (req.mode === 'navigate' ? c.match('/offline.html') : Response.error()))
+  })))
 })
 `)
   })
+  // Reached only when the shell itself has never been cached AND the link is
+  // down -- i.e. a first-ever visit with no connection. Brand and ground track
+  // the real dashboard (it used to be hardcoded "casey" on a near-black page,
+  // which for a deployer with their own brand was a different product's
+  // apology screen).
   app.get('/offline.html', (_req, res) => {
-    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>casey - offline</title>
-<style>body{font-family:sans-serif;background:#0f1115;color:#cdd3de;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:20px}
-.card{max-width:360px}.card h1{font-size:1.4em;margin:0 0 8px}p{color:#8b95a6;line-height:1.5;margin:0 0 16px}
-a{color:#3b6ea5;text-decoration:none;border:1px solid #3b6ea5;border-radius:6px;padding:8px 18px;display:inline-block}a:hover{background:#1e2a3a}</style>
+    res.setHeader('Cache-Control', 'no-cache')
+    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(PWA_BRAND)} - offline</title>
+<style>body{font-family:system-ui,sans-serif;background:#ffffff;color:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:20px}
+.card{max-width:360px}.card h1{font-size:1.4em;margin:0 0 8px}p{color:#555c66;line-height:1.5;margin:0 0 16px}
+a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};text-decoration:none;border:1px solid ${PWA_THEME_COLOR};border-radius:6px;padding:8px 18px;display:inline-block}</style>
 </head><body><div class="card">
-<h1>casey</h1>
-<p>You are offline. Please check your connection and try again.</p>
+<h1>${esc(PWA_BRAND)}</h1>
+<p>You are offline. Reports already on this device are not shown here -- reconnect to see the live queue.</p>
 <a href="/">Try again</a>
 </div></body></html>`)
   })
@@ -426,7 +670,32 @@ a{color:#3b6ea5;text-decoration:none;border:1px solid #3b6ea5;border-radius:6px;
   // (workflow stages, case_type/priority enums, tz) from /api/config and its
   // session identity from /api/whoami at load time, so the static files are
   // byte-identical in content to what the inline template used to render.
-  app.use(express.static(PUBLIC_DIR, { index: 'index.html' }))
+  //
+  // CACHING POLICY, stated rather than inherited. express.static's default
+  // maxAge of 0 was already emitting `Cache-Control: public, max-age=0`; this
+  // makes the same policy explicit and says why it is not a longer one.
+  //
+  // Not one URL in this tree carries a content hash -- every module imports
+  // its siblings by a stable path, and there is no build step that could
+  // rewrite them -- so any max-age above zero is a bet that no deploy will
+  // change a file inside the window. On a case-triage dashboard the losing
+  // side of that bet is an operator running a shell against an API it no
+  // longer matches, which is a safety property rather than a slow page. The
+  // HTTP layer therefore stays correctness-first: store it, but revalidate
+  // before every reuse. express.static's ETag keeps each revalidation a 304
+  // with no body (measured: a repeat load moved 1,536 bytes, not 948,256).
+  //
+  // Round trips are what actually hurt on the 2000 ms-RTT link this
+  // deployment targets, and 138 conditional GETs is ~46 s of them. Removing
+  // those is the SERVICE WORKER's job, not this header's: its cache is keyed
+  // by SHELL_BUILD_ID, so it can answer with no revalidation at all and still
+  // never outlive a deploy. Both layers are needed -- this one is the floor
+  // for a first visit, a browser with no service-worker support, and the
+  // window before the worker has installed.
+  app.use(express.static(PUBLIC_DIR, {
+    index: 'index.html',
+    setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache') },
+  }))
 
   // Error middleware MUST be registered last -- express only routes an error
   // to middleware defined AFTER the point where it was thrown/passed via

@@ -4,8 +4,17 @@
 // case-tools.js REPORT_KEYS -- those keep running the live agent
 // conversation exactly as today. This pack is the new provenance
 // subsystem's parallel declarative description of the same domain
-// vocabulary, proving the engine (core/pack-schema.js, core/pack-loader.js)
-// can represent it with no animal-health-specific code anywhere in core/.
+// vocabulary, proving the engine (core/pack-schema.js) can represent it with
+// no animal-health-specific code anywhere in core/.
+//
+// Only `observationForms.sick_or_dead_animal.fields` is read at runtime, by
+// provenance-wire.js, as the allowlist deciding which case_report fields
+// become provenance-tagged findings. The whole pack is validated at that same
+// module load via core/pack-schema.js's loadPack(). `rules`, `views`, `roles`
+// and `strings` are declared and schema-checked but NOT evaluated by anything
+// -- the rule evaluator that would have read `rules` was removed as dead code
+// (see AGENTS.md's Provenance subsystem section); treat them as a documented
+// target shape for a future deployment pack, never as live behaviour.
 
 export const animalHealthPack = {
   id: 'animal-health',

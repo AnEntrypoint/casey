@@ -23,38 +23,6 @@ const { persona } = loadDomainConfig()
 // matching every other env-tunable constant in this codebase.
 const LOCATION_STALE_MS = Number(process.env.CASEY_LOCATION_STALE_MS) || 3 * 3600e3
 
-// Phased-rollout cohort gate: deterministically buckets a contact into "on" or
-// "off" for a prompt-tuning experiment, so a revised instruction can be staged
-// to a percentage of contacts before going to everyone, without redeploying
-// per-cohort code. CASEY_PROMPT_COHORT_PERCENT (0-100, default 100 = everyone
-// sees the current prompt unchanged) is the rollout dial; CASEY_PROMPT_VARIANT
-// is a free-text label an operator sets when actually running an experiment
-// (e.g. "top-two-v2") -- caseSystemPrompt below reads inCohort() to decide
-// whether to apply a variant-specific instruction block. With no variant env
-// set, inCohort() is never consulted and every contact gets the single
-// current prompt -- this is dormant infrastructure until a real experiment is
-// configured, not a live A/B split by default.
-//
-// Deterministic (same contact always lands in the same bucket across turns,
-// restarts, and processes -- no shared state, no I/O) via a simple string
-// hash of the contact's own external_id, not Math.random(): a percentage
-// rollout that reshuffled cohort membership every turn would make a contact's
-// experience inconsistent mid-conversation, and a raw random draw can't be
-// reasoned about or debugged after the fact the way a pure function of a
-// stable id can.
-function cohortBucket(externalId) {
-  const s = String(externalId || '')
-  let h = 0
-  for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0 }
-  return Math.abs(h) % 100
-}
-const PROMPT_COHORT_PERCENT = Math.min(100, Math.max(0, Number(process.env.CASEY_PROMPT_COHORT_PERCENT ?? 100) || 0))
-const PROMPT_VARIANT = process.env.CASEY_PROMPT_VARIANT || ''
-export function inCohort(externalId) {
-  if (!PROMPT_VARIANT) return false
-  return cohortBucket(externalId) < PROMPT_COHORT_PERCENT
-}
-
 // Build the system context the agent sees for a given case + recent timeline.
 //
 // The contact may be elderly, may not read well, and may not speak English as a
