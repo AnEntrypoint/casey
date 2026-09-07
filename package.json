@@ -24,11 +24,11 @@
     "acptoapi": "file:deps/acptoapi",
     "anentrypoint-design": "file:deps/design",
     "express": "^5.2.1",
-    "freddie": "file:deps/freddie",
     "js-yaml": "^5.4.1",
     "leaflet": "^1.9.4",
     "leaflet.markercluster": "^1.5.3",
     "thatcher": "file:deps/thatcher",
+    "ws": "^8.18.0",
     "xstate": "^5.32.0"
   }
 }

@@ -118,13 +118,19 @@ async function main() {
     console.error('[worker] WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')
   }
   const channels = requested.filter(ch => (ch === 'whatsapp' ? (hasCreds(ch) && !!process.env.WHATSAPP_APP_SECRET) : hasCreds(ch)))
-  // Loud, non-fatal warning (unlike WHATSAPP_APP_SECRET above, which refuses to
-  // serve): an unset WHATSAPP_VERIFY_TOKEN falls back to freddie's own literal
-  // 'freddie' default for the webhook handshake token, which is guessable by
-  // anyone who has read freddie's source. Warn so an operator notices and sets
-  // a real token, rather than silently running the handshake on a public default.
+  // casey's own WhatsappAdapter (src/adapters/whatsapp.js) requires
+  // WHATSAPP_VERIFY_TOKEN and throws at start() when unset -- no silent
+  // guessable-default fallback. Refuse the same way WHATSAPP_APP_SECRET is
+  // refused above, rather than letting the adapter crash start() later.
   if (channels.includes('whatsapp') && !process.env.WHATSAPP_VERIFY_TOKEN) {
-    console.error('[worker] WHATSAPP_VERIFY_TOKEN is unset - webhook verification will use freddie\'s default token (set WHATSAPP_VERIFY_TOKEN to a real secret)')
+    const idx = channels.indexOf('whatsapp')
+    if (idx !== -1 && flags.channels) {
+      if (forked) ipcSend(process, WORKER_MSG.FATAL, { reason: 'WHATSAPP_VERIFY_TOKEN required to serve WhatsApp' })
+      console.error('[worker] WHATSAPP_VERIFY_TOKEN is required to enable WhatsApp - refusing to serve without it')
+      process.exit(1)
+    }
+    if (idx !== -1) channels.splice(idx, 1)
+    console.error('[worker] WhatsApp creds present but WHATSAPP_VERIFY_TOKEN unset - skipping WhatsApp (set the token to enable it)')
   }
   if (!channels.length) {
     // No serving surface: fatal, not a silent idle. The supervisor treats a FATAL

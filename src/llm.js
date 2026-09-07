@@ -57,18 +57,13 @@ function bridgeBackend(bridge, model) {
 // words (the dashboard health row, the CLI banner).
 export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {}) {
   if (!probe) return { callLLM: null, source: 'none' }
-  let freddie
+  let bridge
   try {
-    freddie = await import('freddie')
+    bridge = await import('./agent/acptoapi-bridge.js')
   } catch {
     return { callLLM: null, source: 'none' }
   }
-  // freddie publicly re-exports the acptoapi bridge as acptoapi*; older builds
-  // without the re-export honestly report no backend (source: 'none').
-  if (typeof freddie.acptoapiReachable !== 'function' || typeof freddie.acptoapiCallLLM !== 'function') {
-    return { callLLM: null, source: 'none' }
-  }
-  // freddie's isReachable() only probes the auto-chain's top-3 ranked links
+  // isReachable() only probes the auto-chain's top-3 ranked links
   // (REACHABILITY_PROBE_CHAIN_LINK_CAP), which for an 'auto' model resolve to
   // whichever provider currently ranks highest by static SWE-bench score.
   // When that one top-ranked provider is rate-limited by concurrent boot-time
@@ -82,25 +77,24 @@ export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {
   // and more accurate liveness signal than isReachable()'s own narrow probe.
   // Fall through to it only on the narrow probe's negative, so the common
   // case (top-ranked provider healthy) still pays just the cheap probe.
-  let reachable = await freddie.acptoapiReachable(undefined, model).catch(() => false)
+  let reachable = await bridge.isReachable(undefined, model).catch(() => false)
   if (!reachable) {
-    // acptoapiCallLLM's own bound is ACPTOAPI_TIMEOUT_MS (default 240000ms) --
-    // far too wide for a liveness probe. Without an explicit race, the
-    // narrow-probe-negative case (the uncommon, unhealthy case this fallback
-    // exists for) can hang a live inbound turn up to 4 minutes instead of
-    // failing fast to source:'none', contradicting this path's own cheap-probe
-    // intent when it matters most.
+    // callLLM's own bound is ACPTOAPI_TIMEOUT_MS (default 240000ms) -- far too
+    // wide for a liveness probe. Without an explicit race, the narrow-probe-
+    // negative case (the uncommon, unhealthy case this fallback exists for)
+    // can hang a live inbound turn up to 4 minutes instead of failing fast to
+    // source:'none', contradicting this path's own cheap-probe intent when it
+    // matters most.
     const FALLBACK_PROBE_TIMEOUT_MS = Number(process.env.CASEY_LLM_FALLBACK_PROBE_TIMEOUT_MS) || 45000
     try {
       const r = await Promise.race([
-        freddie.acptoapiCallLLM({ model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 }),
+        bridge.callLLM({ model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('fallback probe timeout')), FALLBACK_PROBE_TIMEOUT_MS))
       ])
       reachable = !!(r && (r.content != null || r.tool_calls))
     } catch { reachable = false }
   }
   if (!reachable) return { callLLM: null, source: 'none' }
-  const bridge = { callLLM: freddie.acptoapiCallLLM, getAcptoapiUrl: freddie.getAcptoapiUrl }
   return { callLLM: bridgeBackend(bridge, model), source: 'acptoapi', model, url: bridge.getAcptoapiUrl() }
 }
 

@@ -9,7 +9,7 @@
 // enrichment) now lives in a sibling hooks/*.js file, wired as ordinary ES
 // module imports below.
 
-import { runTurn } from 'freddie'
+import { runTurn } from '../agent/run-turn.js'
 import { fmtTimeSAST } from '../format.js'
 import { tagList } from '../timestamp.js'
 import { reporterTierExcludedToolNames } from '../case-tools.js'
