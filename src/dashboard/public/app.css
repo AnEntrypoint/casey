@@ -927,3 +927,325 @@ body { background: var(--bg); color: var(--fg); }
   .ds-fill-bar .ds-fill-fill, .ds-step-line, .ds-dist-bar-fill, .casey-progress-line, .casey-rep-editable,
   .case-row, .tcase, .ds-handoff-banner, .ds-guardrail-toggle-btn, .casey-meta-toggle { transition: none; animation: none; }
 }
+
+/* ==========================================================================
+   BRAND THEME -- palette, Ubuntu, inline header + mobile icon grid, full-bleed
+   map. Everything below is deployment branding layered OVER the design SDK,
+   deliberately in casey's own sheet rather than in the design submodule: the
+   SDK's own bundle documents a named-preset contract for brand themes, but a
+   preset there would impose this orange on every other consumer of the kit.
+   app.css loads AFTER design/dist/247420.css, so equal specificity wins here.
+   ========================================================================== */
+
+/* ---- Ubuntu, self-hosted ------------------------------------------------
+   Self-hosted rather than linked from fonts.googleapis.com on purpose. This
+   deployment is rural, metered and intermittently connected: a webfont on a
+   third-party origin adds a second DNS + TLS handshake and a render-blocking
+   round trip on a link measured at 2000ms RTT, and it cannot be served by the
+   service worker that already caches this app's own assets. Two weights only
+   (400 body, 700 headings) -- the 500 was fetched and then dropped because
+   "headings bold" needs exactly these two, and it was 30KB for nothing.
+   font-display:swap so text paints immediately in the fallback and reflows,
+   which on a slow link is the difference between a readable screen and a
+   blank one. */
+@font-face {
+  font-family: 'Ubuntu';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/vendor/ubuntu/ubuntu-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Ubuntu';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/vendor/ubuntu/ubuntu-700.woff2') format('woff2');
+}
+
+/* ---- palette -------------------------------------------------------------
+   The five brand colours, held once as raw tokens and then mapped onto the
+   SDK's semantic names. The SDK derives --ff-display/--ff-narrow/--ff-body
+   from --ff-sans, so setting the one cascades to all four.
+
+   WHAT IS DELIBERATELY NOT REPAINTED: the map's status hues (--sky,
+   --amber, --purple-2, --green). A pin's fill is a data encoding, not
+   chrome -- map-leaflet.js's STATUS_TOKEN maps six statuses onto six
+   tokens, and collapsing any two into the brand orange would make two
+   different statuses render identically on a disease-surveillance map. The
+   brand takes --accent and --danger; the status ramp keeps its own
+   distinct hues and is verified against the new white ground. */
+/* The brand's COLOURS are not here. They live in the design kit's canonical
+   token layer as the named presets [data-theme="herd"] (light) and
+   [data-theme="herd-ink"] (dark), selected by index.html and the theme
+   toggle -- see deps/design/colors_and_type.css, which carries the measured
+   WCAG ratios that decided each one.
+
+   That is not ceremony: casey's own `npm run lint` runs the kit's
+   lint-tokens gate over this very file and rejects a raw colour literal in a
+   consumer sheet, because a brand pasted into a consumer stylesheet cannot be
+   themed, cannot be dark-paired, and cannot be audited for contrast. The kit
+   documents a named-preset contract for exactly this case and ships
+   [data-theme="thebird"] as the precedent. A preset is opt-in, so adding
+   "herd" changes nothing for any other consumer of the kit.
+
+   What stays here is the deployment's TYPOGRAPHY and the aliases that name
+   the brand's button/link contract in the palette's own vocabulary -- all
+   token references, no literals. */
+.ds-247420 {
+  --ff-sans: 'Ubuntu', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* The kit's own body rule is `.ds-247420 body { font-family: var(--ff-body) }`,
+     which requires body to be a DESCENDANT of the scope class -- but body IS
+     the element carrying it, so that selector has never matched anything here.
+     Measured live: computed body font-family came back "Times New Roman", i.e.
+     the whole dashboard's body copy has been rendering in the browser's
+     default serif, with only headings picking up the kit's face (those match,
+     being real descendants). Setting it on the scope element itself is what
+     makes the brand's Ubuntu actually reach the text an operator reads. */
+  font-family: var(--ff-sans);
+
+  --btn-primary-bg: var(--accent);
+  --btn-primary-hover: color-mix(in oklab, var(--accent) 86%, var(--ink));
+  --btn-accent-bg: var(--danger);
+  --btn-accent-hover: var(--flame);
+  --btn-outline-border: var(--fg-3);
+  /* The palette named #FFFFFF here. It is var(--accent-fg) instead, which the
+     herd preset resolves to black: white on the brand orange measures 2.71:1
+     and fails even the 3:1 floor for large UI text, while black on the same
+     orange is 7.76:1. The fill is exactly the brand colour; only the label
+     changed. */
+  --btn-text: var(--accent-fg);
+  --link-color: var(--accent-ink);
+  --link-hover: var(--flame);
+}
+
+/* Headings bold, per the brand. Weight only -- the SDK owns the sizes, and
+   restating those here would fork the type scale. */
+.ds-247420 h1, .ds-247420 h2, .ds-247420 h3,
+.ds-247420 h4, .ds-247420 h5, .ds-247420 h6 { font-weight: 700; }
+
+/* The brand's own button and link colours, applied to the primitives casey
+   actually renders. Scoped to the app so a deployer's own embedded content
+   is not repainted. */
+.ds-247420 a { color: var(--link-color); }
+.ds-247420 a:hover { color: var(--link-hover); }
+.ds-247420 .ds-btn-primary,
+.ds-247420 button[data-variant="primary"] {
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-bg);
+  color: var(--btn-text);
+}
+.ds-247420 .ds-btn-primary:hover,
+.ds-247420 button[data-variant="primary"]:hover {
+  background: var(--btn-primary-hover);
+  border-color: var(--btn-primary-hover);
+}
+
+/* ---- the top header: neat, inline, one row ------------------------------
+   The crumb's right-hand cluster is the app's real toolbar -- the attention
+   lead, the exception pills, the verbs, alerts, help and the account. It had
+   grown into a mixed run of full-width text buttons and bare icons at
+   different heights, wrapping onto a second line at narrow desktop widths.
+   One row, one control height, one gap, aligned to the baseline of the crumb
+   beside it. Nothing here changes WHICH controls are present, only that they
+   line up. */
+.ds-247420 .ds-appbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.ds-247420 .ds-appbar > * { flex: 0 0 auto; }
+/* One height for every control in the row, whatever primitive drew it.
+   The SDK's Btn emits .btn / .btn-primary / .btn-ghost (unprefixed), not
+   .ds-btn -- naming the wrong one here is a rule that silently matches
+   nothing, so these are the classes atoms.js actually renders. */
+.ds-247420 .ds-appbar .btn,
+.ds-247420 .ds-appbar .btn-primary,
+.ds-247420 .ds-appbar .btn-ghost,
+.ds-247420 .ds-appbar .ds-attn-lead,
+.ds-247420 .ds-appbar .ds-action-link,
+.ds-247420 .ds-appbar .ds-icon-btn {
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+/* An action carries its glyph beside its word on desktop; the glyph is what
+   survives into the mobile grid below, so it is emitted always and hidden
+   never -- a control whose icon only exists at one breakpoint is a control
+   that has to be re-learned at the other. */
+.ds-247420 .ds-appbar .ds-action-glyph { display: inline-flex; flex: 0 0 auto; }
+
+/* ---- mobile: the header becomes an icon grid ----------------------------
+   Below the phone breakpoint the same controls render as a grid of square
+   icon tiles. Labels are not deleted -- they stay in the accessible name and
+   as a caption under each glyph, because this deployment's operators include
+   low-computer-literacy field and secretarial staff for whom a bare glyph is
+   a guess. Tiles are 44px+ so they are thumb-targets, and the rare verbs
+   (Export, Sweep now, Refresh) come BACK at this size: they were previously
+   display:none on a phone, so three actions simply did not exist there, and
+   a grid has room for them where a single wrapping row did not. */
+@media (max-width: 900px) {
+  /* The appbar sits in the crumb's right-hand slot, which is a flex item that
+     shrinks to its content. Measured at 390px: the grid container came back
+     131.775px wide, so `repeat(auto-fit, minmax(4.25rem, 1fr))` resolved to a
+     SINGLE column and the "icon grid" was really a vertical stack of seven
+     full-width rows. Letting the crumb wrap and giving the bar its own full
+     row is what makes auto-fit actually have room to lay out columns. */
+  /* The bar is wrapped by the crumb's own `span.crumb-right`, which is a
+     `display:block; flex:0 0 auto` item -- so sizing the BAR did nothing; it
+     inherited the 132px its wrapper had collapsed to and auto-fit resolved to
+     a single column, i.e. a vertical stack of seven full-width rows that also
+     squeezed the map below it to 231px tall. The wrapper is the thing that
+     has to claim the row. */
+  .ds-247420 .app-crumb { flex-wrap: wrap; }
+  .ds-247420 .app-crumb > * { min-width: 0; }
+  .ds-247420 .app-crumb > .crumb-right {
+    flex: 1 0 100%;
+    width: 100%;
+    display: block;
+  }
+  .ds-247420 .ds-appbar {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(4rem, 1fr));
+    gap: var(--space-1);
+    width: 100%;
+  }
+  .ds-247420 .ds-appbar > * { flex: none; width: 100%; }
+  .ds-247420 .ds-appbar .btn,
+  .ds-247420 .ds-appbar .btn-primary,
+  .ds-247420 .ds-appbar .btn-ghost,
+  .ds-247420 .ds-appbar .ds-attn-lead,
+  .ds-247420 .ds-appbar .ds-action-link,
+  .ds-247420 .ds-appbar .ds-icon-btn {
+    height: auto;
+    min-height: 3.25rem;
+    width: 100%;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: var(--space-1);
+    text-align: center;
+    font-size: var(--fs-nano, var(--fs-micro));
+    line-height: 1.1;
+  }
+  .ds-247420 .ds-appbar .ds-action-glyph { display: block; }
+  /* The rare verbs are hidden on a narrow DESKTOP row (the pre-existing
+     @container rule) but belong in the grid, where space is no longer the
+     constraint. */
+  .ds-247420 .ds-appbar .ds-action-rare,
+  .ds-247420 .ds-appbar .ds-action-link { display: flex; }
+  .ds-247420 .ds-appbar .ds-action-row {
+    display: contents;
+  }
+}
+
+/* ---- the map as a full-bleed background (desktop) -----------------------
+   On desktop the map stops being a pane inside the layout and becomes the
+   page's ground: fixed to the viewport, behind everything, with the chrome
+   and the rail floating over it. This is the full-map pattern the reference
+   consoles use (Liveuamap, Watch Duty, FlightRadar24 all render the map
+   edge-to-edge and dock the UI on top of it) and it is what makes the map
+   the answer to "what is going on where" rather than a widget beside it.
+
+   The canvas is fixed at z-index 0 and everything else is lifted above it.
+   Leaflet is told about the resize by the ResizeObserver already wired in
+   map-leaflet.js, so the container going from a flex pane to the viewport
+   does not leave it rendering at a stale size.
+
+   Floating chrome over a light basemap needs its own ground or the text sits
+   on map detail and becomes unreadable -- hence the translucent fill plus a
+   blur, with a solid fallback first for engines without backdrop-filter. */
+@media (min-width: 901px) {
+  /* --z-base, deliberately NOT --z-below. --z-below is -1, which would put
+     the canvas behind the root element's own background and paint the map
+     out of existence entirely. Base is the ground floor; everything else
+     here is lifted above it by a named rung. Giving the canvas a z-index
+     also creates a stacking context, which is what contains Leaflet's own
+     internal pane values (400-1000) so they cannot punch through the app
+     chrome above. */
+  /* A transformed ancestor becomes the containing block for a fixed-position
+     descendant, so `inset: 0` stops meaning "the viewport". Measured by
+     walking the canvas's ancestor chain live: .app-two-pane-map carries a
+     transform, and with it in place the "fullscreen" canvas resolved to
+     208,61 at 1222x813 inside a 1440x900 window -- the content region, not
+     the screen. Dropping the transform for this one view is what actually
+     makes the map full-bleed; it is scoped to desktop map-home, so no other
+     layout or animation loses it. */
+  .ds-app-root.is-map-home .app-two-pane-map { transform: none; }
+  .ds-app-root.is-map-home .ds-map-shell > .ds-map-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-base);
+  }
+  /* The pane the canvas used to fill keeps its place in the flex row but
+     claims no width, so the rail sits where it always did and the fixed
+     canvas shows through everywhere else. */
+  .ds-app-root.is-map-home .app-two-pane-map > .case-list-pane {
+    flex: 1 1 auto;
+    min-width: 0;
+    pointer-events: none;
+  }
+  .ds-app-root.is-map-home .ds-map-shell { pointer-events: none; }
+  .ds-app-root.is-map-home .ds-map-shell > .ds-map-canvas,
+  .ds-app-root.is-map-home .ds-map-shell > .ds-map-chrome,
+  .ds-app-root.is-map-home .ds-map-shell > .ds-map-overlay-error { pointer-events: auto; }
+
+  /* Everything that is not the map floats above it. */
+  .ds-app-root.is-map-home .app-shell-topbar,
+  .ds-app-root.is-map-home .app-topbar,
+  .ds-app-root.is-map-home .app-crumb,
+  .ds-app-root.is-map-home .app-shell-side,
+  .ds-app-root.is-map-home .app-side-shell,
+  .ds-app-root.is-map-home .app-status,
+  .ds-app-root.is-map-home .ds-conn-banner,
+  .ds-app-root.is-map-home .ds-handoff-banner { position: relative; z-index: var(--z-header); }
+  .ds-app-root.is-map-home .app-two-pane-map > .case-detail-pane { position: relative; z-index: var(--z-raised); }
+  .ds-app-root.is-map-home .ds-map-shell > .ds-map-chrome,
+  .ds-app-root.is-map-home .ds-map-shell > .ds-map-overlay-error { z-index: var(--z-raised); }
+
+  .ds-app-root.is-map-home .app-shell-topbar,
+  .ds-app-root.is-map-home .app-topbar,
+  .ds-app-root.is-map-home .app-crumb,
+  .ds-app-root.is-map-home .app-shell-side,
+  .ds-app-root.is-map-home .app-side-shell,
+  .ds-app-root.is-map-home .app-status,
+  .ds-app-root.is-map-home .app-two-pane-map > .case-detail-pane {
+    background: var(--bg);
+    background: color-mix(in oklab, var(--bg) 88%, transparent);
+  }
+  @supports (backdrop-filter: blur(8px)) {
+    .ds-app-root.is-map-home .app-shell-topbar,
+    .ds-app-root.is-map-home .app-topbar,
+    .ds-app-root.is-map-home .app-crumb,
+    .ds-app-root.is-map-home .app-shell-side,
+    .ds-app-root.is-map-home .app-side-shell,
+    .ds-app-root.is-map-home .app-status,
+    .ds-app-root.is-map-home .app-two-pane-map > .case-detail-pane {
+      backdrop-filter: blur(8px);
+    }
+  }
+}
+
+/* ---- mobile: the map keeps its block, the icon grid sits over it ---------
+   Explicitly NOT full-bleed here. The phone already shows one pane at a time
+   behind the map/list toggle, so the map is effectively fullscreen inside its
+   own block already, and fixing it to the viewport would put it underneath
+   the list pane as well -- paying for a background nobody can see. The header
+   grid is what floats, above the map, at a z-index over the Leaflet panes
+   (Leaflet's own controls sit at 400-1000, hence the value here). */
+@media (max-width: 900px) {
+  .ds-app-root.is-map-home .ds-map-shell > .ds-map-canvas { position: absolute; inset: 0; }
+  .ds-app-root.is-map-home .app-crumb,
+  .ds-app-root.is-map-home .app-shell-topbar,
+  .ds-app-root.is-map-home .app-topbar {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-header);
+    background: var(--bg);
+  }
+  .ds-247420 .ds-appbar { position: relative; z-index: var(--z-raised); }
+}
