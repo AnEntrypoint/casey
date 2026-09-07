@@ -32,9 +32,20 @@ export function applyTheme(t) {
   setTheme(t);
 }
 
+// The deployment's themes are the brand presets, not the kit's stock
+// paper/ink. Anyone who used this dashboard before the rebrand has a
+// localStorage value naming a stock theme, and honouring it verbatim means a
+// returning operator never sees the brand at all -- witnessed exactly that:
+// a saved 'ink' won over the brand and the page came back with the kit's
+// stock indigo accent (#BCBEFF) instead of the brand orange. Map the legacy
+// values onto their brand equivalents rather than dropping the preference,
+// so a user who chose dark stays dark.
+const LEGACY_THEME = { paper: 'herd', light: 'herd', ink: 'herd-ink', dark: 'herd-ink' };
+
 export function initTheme() {
   const saved = (() => { try { return localStorage.casey_theme; } catch { return null; } })();
-  applyTheme(saved || (matchMedia('(prefers-color-scheme: light)').matches ? 'paper' : 'ink'));
+  const migrated = saved ? (LEGACY_THEME[saved] || saved) : null;
+  applyTheme(migrated || (matchMedia('(prefers-color-scheme: dark)').matches ? 'herd-ink' : 'herd'));
 }
 
 function openLogoutEverywhereConfirm() { openModal('confirm-logout-everywhere'); }
@@ -67,7 +78,7 @@ export function LogoutEverywhereConfirmDialog() {
 
 export function AccountMenu() {
   const items = [
-    { id: 'theme', label: state.theme === 'paper' ? 'Switch to dark theme' : 'Switch to light theme', glyph: Icon(state.theme === 'paper' ? 'moon' : 'sun', { size: 14 }) },
+    { id: 'theme', label: state.theme === 'herd' ? 'Switch to dark theme' : 'Switch to light theme', glyph: Icon(state.theme === 'herd' ? 'moon' : 'sun', { size: 14 }) },
     { id: 'simple', label: state.simpleMode ? 'Turn off plain-language mode' : 'Turn on plain-language mode', glyph: Icon('smile', { size: 14 }) },
     { id: 'help', label: 'Help', glyph: Icon('help', { size: 14 }) },
     { separator: true },
@@ -75,7 +86,7 @@ export function AccountMenu() {
     { id: 'logout-everywhere', label: 'Log out everywhere else', danger: true },
   ];
   const onSelect = (id) => {
-    if (id === 'theme') applyTheme(state.theme === 'paper' ? 'ink' : 'paper');
+    if (id === 'theme') applyTheme(state.theme === 'herd' ? 'herd-ink' : 'herd');
     else if (id === 'simple') setSimpleMode(!state.simpleMode);
     else if (id === 'help') openModal('help');
     else if (id === 'logout') doLogout();

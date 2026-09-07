@@ -4,8 +4,16 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="UHH">
-<meta name="theme-color" content="#0f1115">
+<meta name="theme-color" content="#E88427">
 <link rel="manifest" href="/manifest.json">
+<!-- Self-hosted Ubuntu (see app.css's @font-face block for why this is not a
+     fonts.googleapis.com link). Preloaded because both weights are used
+     above the fold -- the header and every heading -- and on the rural link
+     this deployment targets, discovering them only when app.css is parsed
+     costs an extra serial round trip at ~2s RTT. crossorigin is required on
+     a font preload even same-origin, or the browser fetches it twice. -->
+<link rel="preload" href="/vendor/ubuntu/ubuntu-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/vendor/ubuntu/ubuntu-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="apple-touch-icon" href="/icon.svg">
 <title>UHH - reports</title>
@@ -33,7 +41,17 @@
 } }
 </script>
 </head>
-<body class="ds-247420" data-accent="green">
+<!-- data-accent is deliberately ABSENT. The SDK scopes its accent presets as
+     .ds-247420[data-theme="X"][data-accent="Y"] -- specificity 0,3,0 -- which
+     outranks the brand palette's own .ds-247420[data-theme="X"] block in
+     app.css (0,2,0) no matter that app.css loads later. Leaving
+     data-accent="green" on would therefore have silently repainted --accent
+     back to the SDK's green in dark mode while light mode went orange. With
+     no attribute, no preset rule matches and the brand token stands.
+     data-theme is stamped here as well as by account-menu.js's initTheme, so
+     the first paint is already the brand's light ground rather than a dark
+     flash that resolves a moment later. -->
+<body class="ds-247420" data-theme="herd">
 <!-- overlay-primitives (Dropdown/MenuButton/Tooltip/Popover) always portal
      their popover element straight onto document.body (design SDK
      roving-menu.js), never inside #app -- so the SDK's own scoped rules
@@ -45,7 +63,7 @@
      still keys off an ancestor a couple of nesting doors closer than body. -->
 <script src="/vendor/leaflet/leaflet.js"></script>
 <script src="/vendor/leaflet.markercluster/leaflet.markercluster.js"></script>
-<div id="app" class="ds-247420 ds-app-surface"></div>
+<div id="app" class="ds-247420 ds-app-surface" data-theme="herd"></div>
 <script type="module" src="/src/main.js"></script>
 <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{})</script>
 </body></html>

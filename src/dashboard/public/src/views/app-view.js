@@ -117,21 +117,41 @@ function PanelSwap() {
 function ActionRow() {
   const items = buildActionItems({});
   if (!items.length) return null;
+  // Each verb renders its glyph BESIDE its word, always, at every width. The
+  // glyph is what the mobile icon grid is built out of (app.css), and a
+  // control whose icon appears only on a phone is one an operator has to
+  // learn twice.
+  //
+  // The explicit aria-label is load-bearing, not belt-and-braces: the SDK's
+  // Btn derives an accessible name from `children` ONLY when children is a
+  // string (atoms.js: `typeof children === 'string'`). Passing [glyph, label]
+  // makes it an array, so without this every verb in the header would render
+  // as an unnamed button -- the same defect as the map pins announcing eight
+  // identical "button"s.
+  const face = (it) => [
+    h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, it.glyph),
+    h('span', { key: 'l', class: 'ds-action-label' }, it.label),
+  ];
   return h('div', { class: 'ds-action-row' }, ...items.map((it) => {
     if (it.href) {
       // A real anchor, not a JS click -- Export has to actually download.
-      return h('a', { key: it.key, class: 'ds-action-link', href: it.href, title: it.ariaLabel || it.label }, it.label);
+      return h('a', {
+        key: it.key, class: 'ds-action-link', href: it.href,
+        title: it.ariaLabel || it.label, 'aria-label': it.ariaLabel || it.label,
+      }, ...face(it));
     }
     // Anything that is neither the primary action nor a mode toggle is desk
     // work (Sweep now, Refresh) and gives way first on a narrow screen -- see
-    // the .ds-action-rare rule in app.css.
+    // the .ds-action-rare rule in app.css. In the mobile grid they come back:
+    // space is no longer the constraint there.
     const rare = !it.primary && it.active === undefined;
     return h('span', { key: it.key, class: rare ? 'ds-action-rare' : 'ds-action-common' },
       Btn({
         variant: it.primary ? 'primary' : 'ghost',
-        children: it.label,
+        children: face(it),
         onClick: it.onClick,
         title: it.ariaLabel || it.label,
+        'aria-label': it.ariaLabel || it.label,
         'aria-pressed': it.active === undefined ? undefined : (it.active ? 'true' : 'false'),
       }));
   }));
@@ -160,12 +180,19 @@ function ActionRow() {
 function AttentionLead() {
   const n = (state.attention || []).length;
   const label = n === 0 ? 'Nothing needs a person' : (n + (n === 1 ? ' needs a person' : ' need a person'));
+  // Carries a glyph like every other control in the row so it survives into
+  // the mobile icon grid as a tile rather than a lone run of words. The label
+  // stays visible under the glyph there -- this is the frame's bottom line
+  // and the one control that must not become a guess.
   return h('button', {
     type: 'button',
     class: 'ds-attn-lead' + (n ? ' is-waiting' : ''),
     title: 'Open the queue of reports that need a person',
+    'aria-label': label + ' -- open the queue',
     onclick: openQueue,
-  }, label);
+  },
+    h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('activity', { size: 15 })),
+    h('span', { key: 'l', class: 'ds-action-label' }, label));
 }
 
 // The status bar used to render as chrome around nothing (Status({left:[],
@@ -242,7 +269,15 @@ export function App() {
   // looking at Reporters -- the one piece of shell that exists to say where you
   // are, saying somewhere else. Same lookup as the page's own heading, so the
   // two can never disagree.
-  const crumb = Crumb({ trail: [brand], leaf: state.activePanel ? panelPageTitle(state.activePanel) : leaf, right: crumbRight });
+  // One wrapper so the whole cluster is a single addressable toolbar rather
+  // than a loose run of siblings the crumb lays out however they happen to
+  // fall. Desktop: one inline row, one control height, no wrapping. Phone:
+  // the same children as a grid of icon tiles (app.css .ds-appbar).
+  const crumb = Crumb({
+    trail: [brand],
+    leaf: state.activePanel ? panelPageTitle(state.activePanel) : leaf,
+    right: [h('div', { key: 'appbar', class: 'ds-appbar' }, ...crumbRight)],
+  });
   const status = StatusBar();
 
   // is-map-home marks the one view whose whole point is the size of the map,
