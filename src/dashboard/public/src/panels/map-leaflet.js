@@ -4,7 +4,8 @@
 // app.js: marker clustering, cluster-link overlay, coverage overlay, worker
 // overlay, last-reports overlay, dispatch picker, popups.
 
-import { setActiveId } from '../state.js';
+import { setActiveId, setMapExtent } from '../state.js';
+import { urgencyByCaseId, pinMatches } from '../map-model.js';
 import { fmtDur } from '../format.js';
 import { fetchMapCases, fetchMapWorkers, fetchMapLastReports, fetchOperatorIdentities } from '../api.js';
 import { openDispatchPicker } from './dispatch-picker.js';
@@ -23,18 +24,33 @@ function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function mapMarkerIcon(statusTok, locationSource) {
-    // statusTok is the token name (e.g., '--sky', '--amber') from STATUS_TOKEN
-    // Set it as a CSS variable on the marker div so CSS can use var(). Color
-    // (status) stays the primary signal; location_source ('gps'/'estimated'/
-    // 'confirmed'/'unset') is a secondary border treatment via a data
-    // attribute (app.css), so an operator sees at a glance whether a pin is
-    // a surveyed-exact position or still the agent's own unconfirmed guess,
-    // without the two dimensions competing for the same fill color.
+// Three independent channels on one pin, deliberately kept in three different
+// visual dimensions so none of them has to compete for the same one:
+//   fill colour     -> status        (new/triaging/in_progress/waiting/...)
+//   border style    -> where the coordinate came from (gps vs the agent's own
+//                      unconfirmed estimate)
+//   size + ring     -> urgency, from attn.js's worst-first score
+//
+// Urgency is the channel this map was missing entirely. The rail ranked rows
+// by score while the map coloured pins by status, so an operator reading a
+// field of green dots could not tell which one was breaching -- the map
+// answered "where is this happening" and had no answer at all for "which of
+// these needs me now", which is the other half of the same question.
+//
+// It is encoded as SIZE and a RING, never as a fourth fill colour: fill is
+// already spoken for, and size/geometry survive a colourblind viewer and both
+// themes, where a hue-only severity ramp does not.
+const URGENCY_SIZE = { 0: 14, 1: 14, 2: 18, 3: 22 };
+
+function mapMarkerIcon(statusTok, locationSource, urgency, selected) {
+    const u = urgency || 0;
+    const size = URGENCY_SIZE[u] || 14;
     return window.L.divIcon({
         className: 'ds-map-marker-icon',
-        html: `<div class="ds-map-marker-dot" data-status-token="${statusTok}" data-location-source="${locationSource || 'unset'}"></div>`,
-        iconSize: [14, 14],
+        html: `<div class="ds-map-marker-dot" data-status-token="${statusTok}"`
+            + ` data-location-source="${locationSource || 'unset'}"`
+            + ` data-urgency="${u}"${selected ? ' data-selected="1"' : ''}></div>`,
+        iconSize: [size, size],
     });
 }
 
@@ -73,22 +89,28 @@ function mapPopupHtml(p, clusterInfo) {
         + ` | <a href="#" data-dispatch-ref="${esc(p.id)}" title="Suggest a field worker for this case -- never messages them directly, they hear about it on their own next reply-in">Dispatch a worker</a></div>`;
 }
 
-function applyMapFilters(pins, filters) {
-    const sp = filters.species || '', ty = filters.type || '', st = filters.status || '';
-    return pins.filter((p) =>
-        (!sp || String(p.species || '').toLowerCase().includes(sp.toLowerCase()))
-        && (!ty || p.case_type === ty)
-        && (!st || p.status === st));
-}
-
 function renderMapMarkers(mapState, filters) {
     const { map } = mapState;
     if (mapState.markerLayer) map.removeLayer(mapState.markerLayer);
     if (mapState.clusterLines) map.removeLayer(mapState.clusterLines);
-    const filtered = applyMapFilters(mapState.pins, filters);
+    // The SAME predicate the rail applies (map-model.js). Before this the two
+    // filtered independently and could show different sets of the same cases.
+    // The extent filter is deliberately not applied to the markers -- narrowing
+    // the map to what is already on the map is a no-op, and it would fight the
+    // operator's own pan; `inView` narrows the LIST only.
+    const urgency = urgencyByCaseId();
+    const filtered = mapState.pins.filter((p) => pinMatches(p, filters, urgency, null));
     const layer = window.L.markerClusterGroup({ maxClusterRadius: 40 });
+    mapState.markerById = new Map();
     for (const p of filtered) {
-        const m = window.L.marker([p.lat, p.lon], { icon: mapMarkerIcon(STATUS_TOKEN[p.status] || '--fg-3', p.location_source) });
+        const u = urgency.get(p.id) || 0;
+        const m = window.L.marker([p.lat, p.lon], {
+            icon: mapMarkerIcon(STATUS_TOKEN[p.status] || '--fg-3', p.location_source, u, mapState.selectedId === p.id),
+            // Worst-first has to survive marker overlap too: without this, a
+            // breaching pin can be painted under a routine one that simply
+            // happens to sit later in the list.
+            zIndexOffset: u * 1000,
+        });
         const clusterInfo = p.cluster != null ? mapState.clusters[p.cluster] : null;
         m.bindPopup(mapPopupHtml(p, clusterInfo));
         m.on('popupopen', () => {
@@ -97,6 +119,7 @@ function renderMapMarkers(mapState, filters) {
             const dEl = document.querySelector(`[data-dispatch-ref="${p.id}"]`);
             if (dEl) dEl.onclick = (e) => { e.preventDefault(); openDispatchPicker(mapState, p.id, p.lat, p.lon); };
         });
+        mapState.markerById.set(p.id, m);
         layer.addLayer(m);
     }
     map.addLayer(layer);
@@ -207,8 +230,24 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
         window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '(c) OpenStreetMap contributors' }).addTo(map);
         mapStateRef.current = {
             map, markerLayer: null, clusterLines: null, coverageLayer: null, workersLayer: null, lastReportsLayer: null,
+            markerById: new Map(), selectedId: null,
             pins: [], clusters: [], workers: [], showCoverage: false, showClusters: false, showWorkers: false, showLastReports: false,
         };
+        // Publish the viewport so the rail can narrow to what is actually on
+        // screen (mapuipatterns' extent-driven-content pattern). Without this
+        // the map was a picture, not a control: an operator could zoom into one
+        // district and still be reading a list covering the whole country.
+        // Debounced -- moveend also fires at the end of every inertia glide, and
+        // a re-render per frame of a drag is not free with 2000 pins.
+        let extentTimer = null;
+        const publishExtent = () => {
+            if (extentTimer) clearTimeout(extentTimer);
+            extentTimer = setTimeout(() => {
+                try { setMapExtent(map.getBounds()); } catch { /* torn down mid-move */ }
+            }, 150);
+        };
+        map.on('moveend', publishExtent);
+        map.on('zoomend', publishExtent);
     }
     const mapState = mapStateRef.current;
     // Leaflet caches its container size and only recomputes on a WINDOW
@@ -219,8 +258,30 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     if (!mapState.sizeObserver && typeof ResizeObserver === 'function') {
         try {
             const el = mapState.map.getContainer();
-            mapState.sizeObserver = new ResizeObserver(() => {
-                try { mapState.map.invalidateSize({ animate: false }); } catch { /* container torn down mid-observe */ }
+            mapState.sizeObserver = new ResizeObserver((entries) => {
+                const box = entries && entries[0] && entries[0].contentRect;
+                const hidden = box && (box.width === 0 || box.height === 0);
+                try {
+                    if (hidden) {
+                        // The phone's map/list toggle hides this pane with
+                        // display:none, so the container really does go to
+                        // 0x0. Calling invalidateSize against a zero box makes
+                        // Leaflet recompute its centre from a degenerate
+                        // rectangle -- measured live: switching map -> list ->
+                        // map came back at a DIFFERENT centre and zoom, so the
+                        // operator lost the district they had navigated to
+                        // just by glancing at the list. Remember the real view
+                        // instead and skip the resize entirely while hidden.
+                        mapState.hiddenView = { center: mapState.map.getCenter(), zoom: mapState.map.getZoom() };
+                        return;
+                    }
+                    mapState.map.invalidateSize({ animate: false });
+                    if (mapState.hiddenView) {
+                        const { center, zoom } = mapState.hiddenView;
+                        mapState.hiddenView = null;
+                        mapState.map.setView(center, zoom, { animate: false });
+                    }
+                } catch { /* container torn down mid-observe */ }
             });
             mapState.sizeObserver.observe(el);
         } catch { /* observation is an optimisation, never a hard requirement */ }
@@ -328,6 +389,33 @@ function overlayFitPadding(canvas) {
 // map, which is precisely the disorientation a low-computer-literacy operator
 // cannot recover from. No-op when the case has no placeable location (the
 // "no location yet" count on the strip), so the map simply stays put.
+// Which pin is the case currently open in the rail. Before this there was no
+// selected state at all: focusing moved the viewport and then nothing on the
+// map said which of the pins now in front of you was the one you had opened.
+//
+// Repaints the two affected markers in place rather than re-rendering the
+// layer -- a full re-render on every selection would rebuild up to 2000
+// markers and collapse the marker-cluster groups the operator is looking at.
+export function setSelectedCase(mapState, id) {
+    if (!mapState) return;
+    const prev = mapState.selectedId;
+    if (prev === id) return;
+    mapState.selectedId = id;
+    for (const target of [prev, id]) {
+        if (target == null) continue;
+        const m = mapState.markerById && mapState.markerById.get(target);
+        if (!m) continue;
+        // getElement() is null while the marker is inside a collapsed cluster
+        // or otherwise unrendered; the attribute is applied on its next render
+        // from mapState.selectedId, so there is nothing to do here.
+        const el = m.getElement && m.getElement();
+        const dot = el && el.querySelector('.ds-map-marker-dot');
+        if (!dot) continue;
+        if (target === id) dot.setAttribute('data-selected', '1');
+        else dot.removeAttribute('data-selected');
+    }
+}
+
 export function focusCaseOnMap(mapState, id) {
   if (!mapState || !mapState.map) return false;
   const p = (mapState.pins || []).find((x) => x.id === id);

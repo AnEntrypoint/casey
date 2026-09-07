@@ -28,9 +28,13 @@ function mixOf(p) {
         .map(([s, n]) => `${s} x${n}`).join(', ') || '--';
 }
 
-export function GeoPanel() {
+// railed=true renders the table alone, for the map view's rail (see
+// map-panel.js MapRail). Hotspots answers a WHERE question, so swapping the
+// map out to show it as a full-page table was answering "where" by unmounting
+// the only thing that can show where. In the rail the numbers sit beside the
+// map instead of replacing it, and the panel keeps every column it had.
+export function GeoPanel({ railed = false } = {}) {
     ensureLoaded();
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading hotspots' });
     else if (error) body = Alert({ kind: 'error', children: 'Hotspots error: ' + error });
@@ -43,5 +47,7 @@ export function GeoPanel() {
             })
             : Alert({ kind: 'info', children: 'No location data yet.' });
     }
+    if (railed) return body;
+    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     return Panel({ title: 'Hotspots', children: [back, body] });
 }

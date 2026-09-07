@@ -5,9 +5,9 @@
 // #view-root placeholder mounted in main until they land.
 
 import * as webjsx from 'webjsx';
-import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton } from 'ds/components/shell.js';
+import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton, Btn } from 'ds/components/shell.js';
 import { state, setFilt, closeModal, openModal } from '../state.js';
-import { buildSideSections, backToCases } from './nav-config.js';
+import { buildSideSections, buildActionItems, backToCases } from './nav-config.js';
 import { HealthPills } from '../components/health-pills.js';
 import { AccountMenu, LogoutEverywhereConfirmDialog } from '../components/account-menu.js';
 import { NotificationsCenter } from '../components/notifications-center.js';
@@ -57,13 +57,70 @@ function ModalMount() {
 // placeholder with a back-to-cases affordance rather than a dead click.
 const panelBodies = {};
 export function registerPanelBody(name, renderFn) { panelBodies[name] = renderFn; }
+// One treatment for every content-swap panel, so none of them inherits a
+// placeholder shell. The back control carries a real word rather than a bare
+// chevron whose only text was a tooltip -- map-command-center.js already
+// rejected a bare glyph for exactly this audience ("a worded back control, not
+// a bare glyph"), and this is the same operator on the same screen.
+//
+// The not-available fallback keeps that control too. It previously rendered a
+// lone sentence with no way back, so an unregistered panel was a dead end an
+// operator could only escape by reloading the page.
 function PanelSwap() {
   const name = state.activePanel;
-  const body = panelBodies[name] ? panelBodies[name]() : h('p', {}, 'This panel is not available yet.');
+  const known = !!panelBodies[name];
+  const body = known
+    ? panelBodies[name]()
+    : h('p', {}, 'This screen is not available in this deployment.');
+  const backLabel = state.homeView === 'cases' ? 'Back to cases' : 'Back to the map';
   return h('div', { class: 'ds-panel-swap' },
-    IconButton({ icon: Icon('chevron-left'), title: state.homeView === 'cases' ? 'Back to cases' : 'Back to map', onClick: backToCases }),
+    h('div', { class: 'ds-panel-swap-head' },
+      Btn({ variant: 'ghost', children: backLabel, onClick: backToCases })),
     h('div', { class: 'ds-panel-swap-body' }, body)
   );
+}
+
+// The five verbs that used to occupy the top of the destination nav. `focus`
+// is a toggle, `new_case` is the one primary action, and the rest are rare
+// enough to sit quietly at the end of the row rather than above the map.
+function ActionRow() {
+  const items = buildActionItems({});
+  if (!items.length) return null;
+  return h('div', { class: 'ds-action-row' }, ...items.map((it) => {
+    if (it.href) {
+      // A real anchor, not a JS click -- Export has to actually download.
+      return h('a', { key: it.key, class: 'ds-action-link', href: it.href, title: it.ariaLabel || it.label }, it.label);
+    }
+    // Anything that is neither the primary action nor a mode toggle is desk
+    // work (Sweep now, Refresh) and gives way first on a narrow screen -- see
+    // the .ds-action-rare rule in app.css.
+    const rare = !it.primary && it.active === undefined;
+    return h('span', { key: it.key, class: rare ? 'ds-action-rare' : 'ds-action-common' },
+      Btn({
+        variant: it.primary ? 'primary' : 'ghost',
+        children: it.label,
+        onClick: it.onClick,
+        title: it.ariaLabel || it.label,
+        'aria-pressed': it.active === undefined ? undefined : (it.active ? 'true' : 'false'),
+      }));
+  }));
+}
+
+// The status bar used to render as chrome around nothing (Status({left:[],
+// right:[]})). In an operational console this is where "can I trust what I am
+// looking at" belongs, so it carries the two facts that answer it: how much is
+// loaded, and whether the connection is still live.
+function StatusBar() {
+  const total = state.allCasesTotal || (state.allCases || []).length;
+  const attn = (state.attention || []).length;
+  const left = [
+    h('span', { key: 'c' }, `${total} report(s) loaded`),
+    attn ? h('span', { key: 'a' }, `${attn} need a person`) : null,
+  ].filter(Boolean);
+  const right = [
+    h('span', { key: 'conn' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected'),
+  ];
+  return Status({ left, right });
 }
 
 function MainContent() {
@@ -89,6 +146,7 @@ export function App() {
     items: [], themeToggle: false,
   });
   const crumbRight = [
+    ActionRow(),
     QuickStartBadge(),
     h('div', { class: 'ds-health-pill-group' }, HealthPills()),
     NotificationsCenter(),
@@ -100,9 +158,15 @@ export function App() {
   // mode on the assumption the crumb already carries it (app-shell/topbar.css);
   // omitting it here left the titlebar with no brand at all.
   const crumb = Crumb({ trail: [brand], leaf, right: crumbRight });
-  const status = Status({ left: [], right: [] });
+  const status = StatusBar();
 
-  return h('div', { class: 'ds-app-root' },
+  // is-map-home marks the one view whose whole point is the size of the map,
+  // so the CSS can buy the map its width back from the chrome around it (see
+  // app.css). Measured at 1440x900 before this: the map held 49% of the width
+  // against the ~78% the operational consoles this layout is modelled on give
+  // it, and the difference was entirely nav width plus main-region padding.
+  const mapHome = state.homeView === 'map' && !state.activePanel;
+  return h('div', { class: 'ds-app-root' + (mapHome ? ' is-map-home' : '') },
     ConnectionBanner(),
     HandoffBanner(),
     AppShell({ topbar, crumb, side, status, main: [MainContent()] }),

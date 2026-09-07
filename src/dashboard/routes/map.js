@@ -70,6 +70,12 @@ export function registerMap(app, deps) {
         assignee: c.assignee || null, priority: c.priority,
         cluster: clusterByRef.has(c.ref) ? clusterByRef.get(c.ref) : null,
         last_event_at: c.last_event_at,
+        // When the report came in, so the map view's "new today" filter can be
+        // computed from the pins themselves rather than from a second, separately
+        // paged list that would answer a different question. A timestamp is
+        // aggregate-safe -- it names no contact -- so it does not widen this
+        // endpoint's PII-free projection.
+        created_at: c.created_at,
         // gps = the contact read out exact coordinates; estimated = the
         // agent's own guess from a place name, not yet confirmed with them;
         // confirmed = an estimate they agreed to or refined; unset = a case

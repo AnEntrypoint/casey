@@ -28,6 +28,21 @@ export const state = {
   mineOnly: false, inboxMode: false, simpleMode: false, theme: 'dark',
   // 'map'|'cases' -- which view MainContent() renders when no panel is open
   homeView: readHomeView(),
+  // The one filter object the map markers AND the rail queue both read (see
+  // map-model.js). Two independently-derived filters were how the two halves
+  // of this view came to disagree about the same cases.
+  mapFilter: { species: '', type: '', status: '', days: '0', band: null, inView: false },
+  // Live Leaflet bounds, republished on moveend so the rail can narrow to what
+  // is actually on screen. Null until the map has loaded.
+  mapExtent: null,
+  // What the rail shows when no case is open: the worst-first queue, or one of
+  // the two spatial rollups that used to unmount the map to show a table.
+  railMode: 'queue',
+  // Phone only: which of the two panes is showing. Above the breakpoint both
+  // are visible and this is ignored. Not persisted -- an operator who opens
+  // the dashboard is asking "what is going on where", so a phone starts on the
+  // map every time rather than resuming yesterday's list.
+  mobilePane: 'map',
   // pagination
   page: 1, pageSize: 50,
   bulkSelected: new Set(),
@@ -68,7 +83,60 @@ export function schedule() { _schedule(); }
 
 export function setAuthed(authed, user) { state.authed = !!authed; state.currentUser = user || null; schedule(); }
 export function setConfig(cfg) { state.config = cfg; schedule(); }
-export function setActiveId(id) { state.activeId = id; state.focusedIndex = -1; schedule(); }
+// "A case became active" has exactly one owner, here. Before this, six call
+// sites each remembered (or forgot) to also move the map: the attention feed
+// called setActiveId AND focusCaseOnMap, while the pin popup, the unresolved
+// list, the last-reports overlay, the case list and a hash deep link all set
+// the id alone and left the map wherever it was -- so on most of the ways a
+// selection actually happens, the view stopped answering "where". Subscribers
+// register once; no caller has to remember anything.
+const activeIdListeners = new Set();
+export function onActiveIdChange(fn) {
+  activeIdListeners.add(fn);
+  return () => activeIdListeners.delete(fn);
+}
+export function setActiveId(id) {
+  state.activeId = id;
+  state.focusedIndex = -1;
+  // Listeners run before schedule() so the map has already been told where to
+  // go by the time the re-render paints the rail beside it.
+  for (const fn of activeIdListeners) {
+    try { fn(id); } catch { /* a listener must never break selection itself */ }
+  }
+  schedule();
+}
+export function setMapFilter(partial) { Object.assign(state.mapFilter, partial); schedule(); }
+export function clearMapFilter() {
+  Object.assign(state.mapFilter, { species: '', type: '', status: '', band: null, inView: false });
+  schedule();
+}
+// Bounds change on every frame of a drag; the caller debounces, and this
+// no-ops an identical box so a settle-time duplicate does not re-render.
+export function setMapExtent(bounds) {
+  const prev = state.mapExtent;
+  if (prev && bounds && prev.equals && prev.equals(bounds)) return;
+  state.mapExtent = bounds;
+  if (state.mapFilter.inView) schedule();
+}
+export function setRailMode(mode) { state.railMode = mode || 'queue'; schedule(); }
+// Listeners fire BEFORE schedule() on purpose: the map pane is about to be
+// shown or hidden with display:none, and the map has to read its own centre
+// and zoom while the container still has a real size. Reading them afterwards
+// gets a view Leaflet has already recomputed against a 0x0 box.
+const mobilePaneListeners = new Set();
+export function onMobilePaneChange(fn) {
+  mobilePaneListeners.add(fn);
+  return () => mobilePaneListeners.delete(fn);
+}
+export function setMobilePane(p) {
+  const next = p === 'list' ? 'list' : 'map';
+  if (state.mobilePane === next) return;
+  state.mobilePane = next;
+  for (const fn of mobilePaneListeners) {
+    try { fn(next); } catch { /* a listener must never break the toggle */ }
+  }
+  schedule();
+}
 export function setCases(rows, total) {
   state.allCases = rows;
   state.allCasesTotal = total != null ? total : rows.length;
@@ -79,7 +147,28 @@ export function patchCase(id, patch) {
   if (i !== -1) Object.assign(state.allCases[i], patch);
   schedule();
 }
-export function setAttention(rows) { state.attention = rows; schedule(); }
+// Attention is the source of the map's urgency channel as well as the rail's
+// queue, and the two are refreshed by different mechanisms: the rail is
+// re-rendered by schedule() on every change, while the map's markers are
+// imperative Leaflet objects built once and left alone. So a change here has
+// to be PUBLISHED, not just written -- witnessed live, without this the map
+// built its markers before the first /api/attention response arrived and every
+// pin stayed at urgency 0 forever, while the rail beside it correctly showed
+// 16 cases needing a person. Exactly the map-and-rail-disagree failure the
+// shared model exists to prevent, arriving through timing instead of through
+// duplicated logic.
+const attentionListeners = new Set();
+export function onAttentionChange(fn) {
+  attentionListeners.add(fn);
+  return () => attentionListeners.delete(fn);
+}
+export function setAttention(rows) {
+  state.attention = rows;
+  for (const fn of attentionListeners) {
+    try { fn(rows); } catch { /* a listener must never break the refresh */ }
+  }
+  schedule();
+}
 export function setFilt(partial) { Object.assign(state.filt, partial); state.page = 1; schedule(); }
 export function setMineOnly(v) { state.mineOnly = !!v; state.filt.mine = !!v; state.page = 1; schedule(); }
 export function setInboxMode(v) { state.inboxMode = !!v; schedule(); }

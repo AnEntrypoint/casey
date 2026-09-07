@@ -52,20 +52,66 @@ body { background: var(--bg); color: var(--fg); }
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg); border-left: 1px solid var(--border);
 }
-/* Phone: the two panes stack, and the map must keep a real share of the
-   screen. Without a floor the map shell (whose canvas is absolutely
-   positioned, so it has no intrinsic height) collapses to a sliver while the
-   rail's tall content takes everything -- the same below-the-fold bug this
-   whole view exists to fix, just rotated. The rail then scrolls beneath it.
-   dvh, not vh, so a mobile browser's collapsing address bar does not leave a
-   gap under the rail. */
+/* The map/list toggle is phone-only chrome: above the breakpoint both panes
+   are on screen, so a control for choosing between them would be a control for
+   nothing.
+   Two-class selector on purpose. The element also carries .ds-seg (it IS a
+   segmented control), and .ds-seg's `display:inline-flex` is declared later in
+   this file at equal specificity, so a bare `.ds-pane-toggle{display:none}`
+   LOSES the cascade -- measured live at 1440x900: the toggle rendered, and
+   because it is a flex child of the row that holds the map and the rail, it
+   took 175px of horizontal space and squeezed the map down to 40% of the
+   viewport. The control that exists only for phones was making the desktop map
+   smaller. */
+.app-two-pane-map > .ds-pane-toggle { display: none; }
+
+/* Phone: ONE pane at a time, not a split. An earlier version stacked them with
+   the map floored at 55dvh, which gives a 844px-tall phone half a map -- too
+   small to read a rural pin field -- AND a cramped list, rather than a usable
+   one of either. Measuring the canonical operational console at this width
+   (USGS's earthquake map, 390x844) showed the same conclusion in shipped form:
+   it collapses to one pane behind a list/map toggle.
+
+   display:none on the hidden pane does NOT remount Leaflet -- the canvas
+   element persists, so map-panel.js's live-container guard leaves it alone and
+   the ResizeObserver in map-leaflet.js calls invalidateSize when it comes back.
+   Viewport and layers survive the switch. */
 @container (max-width: 900px) {
-  .app-two-pane-map > .case-list-pane { flex: 0 0 auto; min-height: 55dvh; }
-  .app-two-pane-map > .case-detail-pane {
-    flex: 1 1 auto; max-width: none;
-    border-left: none; border-top: 1px solid var(--border);
+  .app-two-pane-map > .ds-pane-toggle {
+    display: flex; margin: var(--space-2) var(--space-3); align-self: flex-start; flex: 0 0 auto;
   }
+  .ds-pane-toggle .ds-seg-btn { min-height: 2.75rem; padding: var(--space-2) var(--space-5); }
+  .app-two-pane-map { flex-direction: column; }
+  .app-two-pane-map > .case-list-pane,
+  .app-two-pane-map > .case-detail-pane { flex: 1 1 auto; min-height: 0; max-width: none; }
+  .app-two-pane-map > .case-detail-pane { border-left: none; }
+  .app-two-pane-map.m-map > .case-detail-pane { display: none; }
+  .app-two-pane-map.m-list > .case-list-pane { display: none; }
+  /* An open case still takes over the whole screen with its own worded back
+     control (.has-active, above) -- the toggle is never the only way out of a
+     case, and the case never hides behind the map/list choice. */
+  .app-two-pane-map.has-active > .ds-pane-toggle { display: none; }
+  .app-two-pane-map.has-active.m-map > .case-detail-pane { display: flex; }
 }
+
+/* ---- buy the map its width back from the chrome (is-map-home) ----------
+   Measured live at 1440x900 before these two rules: the canvas held 702 of
+   1440px, 49% of the width, against the ~78% the operational consoles this
+   layout follows give their map (USGS's earthquake console docks its map to
+   the whole residual area beside a 320px list). The entire difference was the
+   256px design-SDK sidebar plus the main region's own padding -- roughly 110px
+   of gutter on a view whose one job is to show a map.
+
+   Scoped to the map home view only: on the case list, the standard sidebar
+   width and the main region's padding are exactly right, and this must not
+   quietly restyle the whole app.
+
+   The nav stays visible rather than collapsing to an icon rail: the audience
+   is mixed-literacy field/AHT staff (the reason the rail's back control is a
+   worded button and not a chevron), and a nav of unlabelled glyphs would trade
+   map width for exactly the legibility this deployment cannot spend. */
+.ds-app-root.is-map-home { --sidebar-width: 208px; }
+.ds-app-root.is-map-home .app-main { padding: 0; }
 
 /* ---- map-first shell: the canvas IS the pane -------------------------- */
 .ds-map-shell { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
@@ -114,21 +160,85 @@ body { background: var(--bg); color: var(--fg); }
 .ds-rail-disclosure > summary:hover { background: var(--bg-2); }
 .ds-rail-disclosure > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .ds-rail-disclosure-body { padding: var(--space-3); border-top: 1px solid var(--border); }
-/* Counts read as a row of compact cards inside the rail head, not a KPI band
-   above the map where they would push it down the page again. */
-.ds-rail-head .ds-stats-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
-.ds-rail-head .ds-stat-card { padding: var(--space-1) var(--space-2); min-width: 0; flex: 1 1 auto; }
-.ds-rail-head .ds-stat-label { font-size: var(--fs-nano); }
-.ds-rail-head .ds-stat-value { font-size: var(--fs-lg); line-height: 1.15; }
-.ds-rail-head .ds-stat-sub { display: none; }
-.ds-rail-head .ds-map-updated { font-size: var(--fs-nano); color: var(--fg-2); }
+.ds-rail-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.ds-app-surface h2.ds-rail-title, .ds-rail-title { margin: 0; font-size: var(--fs-sm); font-weight: 700; }
+.ds-rail-head .ds-map-updated { font-size: var(--fs-nano); color: var(--fg-2); margin: 0; }
+
+/* Segmented control -- the time window in the rail head, and the map/list
+   switch on a phone. One always-visible control rather than a dropdown: the
+   three choices are the whole vocabulary, so hiding two of them behind a click
+   buys nothing and costs the operator the ability to see which is on. */
+.ds-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-1); overflow: hidden; }
+.ds-seg-btn {
+  flex: 1 1 auto; background: var(--bg); border: 0; border-right: 1px solid var(--border);
+  color: var(--fg-2, var(--muted)); font: inherit; font-size: var(--fs-nano);
+  padding: var(--space-2) var(--space-3); cursor: pointer; min-height: 2.25rem; white-space: nowrap;
+}
+.ds-seg-btn:last-child { border-right: 0; }
+.ds-seg-btn:hover { background: var(--bg-2); color: var(--fg); }
+.ds-seg-btn.is-on { background: var(--accent); color: var(--accent-fg, var(--paper)); font-weight: 600; }
+.ds-seg-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
+
+/* Filter chips: the count IS the control. These replaced four inert stat
+   tiles whose subtitle literally said "see below" -- a number the operator
+   could read but not act on, which is the opposite of leading with the bottom
+   line. Each one filters the map and the rail together. */
+.ds-fchips { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.ds-fchip {
+  display: inline-flex; align-items: baseline; gap: var(--space-1);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-pill, var(--r-1));
+  padding: var(--space-1) var(--space-3); cursor: pointer; color: var(--fg);
+  font: inherit; font-size: var(--fs-nano); min-height: 2.25rem;
+}
+.ds-fchip:hover { background: var(--bg-3, var(--border)); }
+.ds-fchip.is-on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg, var(--paper)); }
+/* A zero still renders -- "nothing needs a person" is information, and hiding
+   the chip would make the absence look like a missing feature. It just stops
+   inviting a click that would filter to nothing. */
+.ds-fchip.is-empty { opacity: .55; }
+.ds-fchip:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+.ds-fchip-n { font-size: var(--fs-sm); font-weight: 700; }
+.ds-fchip-l { color: inherit; }
+.ds-fchip-clear {
+  background: none; border: 0; color: var(--accent-ink, var(--accent)); font: inherit;
+  font-size: var(--fs-nano); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+  padding: var(--space-1);
+}
+.ds-fchip-clear:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+
 /* Whole-row tap target on the queue -- the most-used control in the view. */
 .ds-rail-body .ds-map-attention-feed { border: none; margin: 0; max-height: none; }
 .ds-rail-body .ds-map-attention-feed .tcase { min-height: 4rem; padding: var(--space-3); }
+/* Names the true total next to the control that reveals it, so a capped list
+   can never silently disagree with the count above it. */
+.ds-queue-more {
+  display: block; width: 100%; background: none; border: 0; border-top: 1px solid var(--border);
+  color: var(--accent-ink, var(--accent)); font: inherit; font-size: var(--fs-nano);
+  padding: var(--space-3); cursor: pointer; text-align: left; min-height: 2.75rem;
+}
+.ds-queue-more:hover { background: var(--bg-2); }
+.ds-queue-more:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
 
-/* ---- panel-swap chrome (the 10 content-swap panels: back affordance) --- */
+/* ---- panel-swap chrome (content-swap panels: back affordance) ---------- */
 .ds-panel-swap { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
+.ds-panel-swap-head { display: flex; align-items: center; gap: var(--space-2); }
 .ds-panel-swap-body { min-height: 0; }
+
+/* ---- topbar action row (the verbs that used to sit in the nav) --------- */
+.ds-action-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.ds-action-link {
+  display: inline-flex; align-items: center; color: var(--fg-2, var(--muted));
+  font-size: var(--fs-sm); text-decoration: none; padding: var(--space-1) var(--space-2);
+  border-radius: var(--r-0, var(--r-sm));
+}
+.ds-action-link:hover { background: var(--bg-2); color: var(--fg); text-decoration: underline; }
+.ds-action-link:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+/* On a narrow screen the rare verbs give way first -- the map and the queue
+   are what a phone operator came for, and Export/Sweep/Refresh are desk work.
+   They stay reachable on any screen wide enough to do them. */
+@container (max-width: 900px) {
+  .ds-action-row .ds-action-link, .ds-action-row .ds-action-rare { display: none; }
+}
 
 /* ---- casey-local Dialog primitive (dialog-shell.js) --------------------
    Not an SDK component -- the SDK's own VideoLightbox/full-screen backdrop
@@ -475,15 +585,18 @@ body { background: var(--bg); color: var(--fg); }
 /* ---- new-case quick-start badge ------------------------------------------ */
 .ds-quick-start-badge { display: inline-flex; align-items: center; }
 
-/* ---- map legend + Leaflet overrides (no SDK equivalent for a tile-map) --- */
-.ds-map-wrap, .map-wrap, .ds-map-canvas { height: min(70vh, 640px); border-radius: var(--r-lg, var(--r-1)); overflow: hidden; border: 1px solid var(--border); }
-.ds-map-legend, .map-legend {
+/* ---- map legend + Leaflet overrides (no SDK equivalent for a tile-map) ---
+   The canvas is sized by its pane (.ds-map-shell above), never by a viewport
+   fraction. The `height: min(70vh,640px)` that used to live here sized the
+   legacy stacked map page, which is gone; so are the .ds-map-wrap/.map-wrap
+   and .map-legend/.map-filters aliases, which no module emitted any more. */
+.ds-map-canvas { overflow: hidden; }
+.ds-map-legend {
   display: flex; gap: var(--space-3); flex-wrap: wrap;
   font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted));
   margin: var(--space-2) 0; padding: var(--space-2) var(--space-3);
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-1);
 }
-.ds-map-legend .sw, .map-legend .sw,
 .ds-map-legend-sw { display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill); margin-right: var(--space-1); vertical-align: middle; }
 .ds-map-legend-item { display: inline-flex; align-items: center; text-transform: capitalize; }
 /* Second legend row entry documenting the marker BORDER channel (location
@@ -491,13 +604,15 @@ body { background: var(--bg); color: var(--fg); }
    9px, so this one is unfilled with a visible dashed ring instead. */
 .ds-map-legend-sw-dashed { background: transparent; border: 2px dashed var(--fg-3, var(--muted)); }
 
-/* ---- map BLUF summary strip + attention feed (map-panel.js) ------------- */
-.ds-map-summary { margin-bottom: var(--space-2); }
+/* ---- attention feed + map controls (map-panel.js) ----------------------- */
 .ds-map-updated { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin: 0 0 var(--space-2); }
-.ds-map-attention-feed { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--r-1); margin-bottom: var(--space-3); }
+/* No max-height: the feed lives in the rail, which does its own scrolling.
+   A second scroll region nested inside it produced two competing scrollbars
+   and made the "show all" control unreachable on a short viewport. */
+.ds-map-attention-feed { display: flex; flex-direction: column; }
 .ds-map-attention-feed .tcase { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); border-radius: 0; }
 .ds-map-attention-feed .tcase:last-child { border-bottom: none; }
-.ds-map-filters, .map-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
+.ds-map-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .ds-map-overlays { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .ds-chip-btn { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; }
 .ds-chip-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
@@ -537,14 +652,57 @@ body { background: var(--bg); color: var(--fg); }
   border-style: dashed;
   border-color: color-mix(in oklab, var(--paper) 50%, transparent);
 }
+
+/* Urgency -- the third channel, from attn.js's worst-first score. Deliberately
+   SIZE and a RING rather than a fourth fill colour: fill already carries
+   status, and a hue-only severity ramp is invisible to a colourblind operator
+   and fragile across the two themes. Size and ring geometry are neither.
+   The map used to encode status only, so a field of green dots gave no clue
+   which one was breaching -- the rail knew, the map did not, and the two
+   halves of the same screen answered different questions. */
+.ds-map-marker-dot[data-urgency="2"] {
+  width: 18px; height: 18px;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--warn, var(--amber)) 75%, transparent),
+              0 0 3px color-mix(in oklab, var(--ink) 50%, transparent);
+}
+.ds-map-marker-dot[data-urgency="3"] {
+  width: 22px; height: 22px;
+  box-shadow: 0 0 0 3px var(--danger),
+              0 0 6px color-mix(in oklab, var(--danger) 60%, transparent);
+  animation: ds-map-urgent-pulse 2s ease-in-out infinite;
+}
+/* The pin for the case currently open in the rail. Without this, focusing the
+   map moved the viewport and then nothing said which of the pins in front of
+   you was the one you had just opened. */
+.ds-map-marker-dot[data-selected="1"] {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+@keyframes ds-map-urgent-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--danger), 0 0 6px color-mix(in oklab, var(--danger) 60%, transparent); }
+  50%      { box-shadow: 0 0 0 5px color-mix(in oklab, var(--danger) 55%, transparent), 0 0 10px color-mix(in oklab, var(--danger) 40%, transparent); }
+}
+/* Reduced motion drops the pulse but KEEPS the ring and the size: the
+   animation is emphasis, the geometry is the information. */
+@media (prefers-reduced-motion: reduce) {
+  .ds-map-marker-dot[data-urgency="3"] { animation: none; }
+}
+/* Legend swatch for the urgency channel -- same ring idiom at swatch scale. */
+.ds-map-legend-sw-urgent {
+  background: var(--fg-3, var(--muted));
+  box-shadow: 0 0 0 2px var(--danger);
+  margin-right: var(--space-2);
+}
 .ds-map-popup-status { color: var(--fg-2); }
 .ds-map-popup-location-source { color: var(--fg-2); font-size: 0.9em; }
 .ds-map-popup-location-source[data-location-source="estimated"] { color: var(--amber); }
 
 @container (max-width: 640px) {
-  .ds-map-wrap, .map-wrap, .ds-map-canvas { height: min(55vh, 420px); }
   .ds-map-filters, .ds-map-overlays { gap: var(--space-1); }
-  .ds-map-legend { font-size: var(--fs-micro, var(--fs-nano)); gap: var(--space-2); }
+  /* The legend is the only chrome on the canvas, so on a small phone it is the
+     only thing that can cover a pin -- cap it harder here than the 40% the
+     desktop rule allows. */
+  .ds-map-legend { font-size: var(--fs-micro, var(--fs-nano)); gap: var(--space-2); max-width: 60%; max-height: 30%; }
 }
 
 /* ---- case-detail empty state -------------------------------------------- */

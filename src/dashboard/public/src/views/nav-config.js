@@ -3,8 +3,9 @@
 // -- consumed by app-view.js.
 
 import { Icon } from 'ds/components/shell.js';
-import { state, setInboxMode, setHomeView } from '../state.js';
+import { state, setInboxMode, setRailMode } from '../state.js';
 import { openPanel, openModal, closePanel } from '../state.js';
+import { setHomeViewRoute } from '../route.js';
 import * as api from '../api.js';
 import { toast } from '../toasts.js';
 
@@ -40,35 +41,51 @@ export function toggleInboxMode() { setInboxMode(!state.inboxMode); }
 // relabeled. Casey's own default/uhh declare no dashboard_ui, so
 // applyNavConfig (below) is a no-op and every item/group renders exactly as
 // before this existed.
-function rawSideSections({ clustersCount = 0, offlineCount = 0, refreshAll } = {}) {
+// Opens one of the two spatial rollups ON the map rather than instead of it.
+// Both answer a WHERE question, and both used to be full-page swaps that
+// unmounted the map to show a table -- so the operator asked "where are the
+// hotspots" and the UI removed the only thing that can show where. These land
+// on the map home view with the rollup docked in the rail beside it.
+function openOnMap(mode) {
+  closePanel();
+  setHomeViewRoute('map');
+  setRailMode(mode);
+}
+
+// DESTINATIONS ONLY. Five verbs (New case, Export, Sweep now, Focus, Refresh)
+// used to sit in this list above the fold, which made the two actual
+// destinations impossible to pick out at a glance -- a verb in a list of
+// places is a category error, and three of those five are rare admin actions
+// holding the most valuable nav real estate. They now live in the topbar
+// action row (buildActionItems below), keeping their keys so a deployer's
+// dashboard_ui.nav hide/relabel and the per-role floor still bind to them.
+//
+// Grouping follows Esri's own guidance for operational dashboards (keep the
+// element count low, most essential first): the map and the things you reach
+// ON the map lead, the list view sits with them, and everything analytical is
+// one group below.
+function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
+  const onMapHome = state.homeView === 'map' && !state.activePanel;
   return [
     {
       group: 'Primary',
       items: [
-        // BLUF home-view switch: where things are happening (the map) is
-        // the default landing view, not buried in Reports & Admin -- see
-        // state.js's homeView/setHomeView and views/map-command-center.js.
-        { key: 'home_map', glyph: Icon('globe', { size: 15 }), label: 'Map', onClick: () => setHomeView('map'), active: state.homeView === 'map' && !state.activePanel, ariaLabel: 'Map view (home)' },
-        { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: () => setHomeView('cases'), active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },
-        { key: 'new_case', glyph: Icon('plus', { size: 15 }), label: 'New case', onClick: openIntakeNew, ariaLabel: 'Add a case manually' },
-        { key: 'export', glyph: Icon('download', { size: 15 }), label: 'Export', href: '/api/cases/export.csv' },
-        { key: 'sweep', glyph: Icon('refresh', { size: 15 }), label: 'Sweep now', onClick: runSweep, ariaLabel: 'Run health-guardrail sweep now' },
-        { key: 'focus', glyph: Icon('activity', { size: 15 }), label: 'Focus', onClick: toggleInboxMode, active: state.inboxMode },
-        { key: 'refresh', glyph: Icon('refresh', { size: 15 }), label: 'Refresh', onClick: refreshAll || _refreshAll },
+        { key: 'home_map', glyph: Icon('globe', { size: 15 }), label: 'Map', onClick: () => { closePanel(); setHomeViewRoute('map'); setRailMode('queue'); }, active: onMapHome && state.railMode === 'queue', ariaLabel: 'Map view (home)' },
+        { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: () => openOnMap('geo'), active: onMapHome && state.railMode === 'geo' },
+        { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: () => openOnMap('clusters'), active: onMapHome && state.railMode === 'clusters', count: clustersCount },
+        { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: () => { closePanel(); setHomeViewRoute('cases'); }, active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },
       ],
     },
     {
       group: 'Reports & Admin',
       items: [
         { key: 'stats', glyph: Icon('activity', { size: 15 }), label: 'Stats', onClick: () => openModal('stats') },
-        { key: 'settings', glyph: Icon('settings', { size: 15 }), label: 'Settings', onClick: () => openModal('settings') },
         { key: 'metrics', glyph: Icon('page', { size: 15 }), label: 'Metrics', onClick: () => openPanel('metrics'), active: state.activePanel === 'metrics' },
-        { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: () => openPanel('clusters'), active: state.activePanel === 'clusters', count: clustersCount },
         { key: 'distribution', glyph: Icon('grid', { size: 15 }), label: 'Distribution', onClick: () => openPanel('distribution'), active: state.activePanel === 'distribution' },
-        { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: () => openPanel('geo'), active: state.activePanel === 'geo' },
         { key: 'activity', glyph: Icon('thread', { size: 15 }), label: 'Activity', onClick: () => openPanel('activity'), active: state.activePanel === 'activity' },
         { key: 'handover', glyph: Icon('external-link', { size: 15 }), label: 'Shift handover', onClick: () => openPanel('handover'), active: state.activePanel === 'handover' },
         { key: 'offline', glyph: Icon('warn', { size: 15 }), label: 'Missed while offline', onClick: () => openPanel('offline'), active: state.activePanel === 'offline', count: offlineCount, color: offlineCount ? 'var(--warn)' : undefined },
+        { key: 'settings', glyph: Icon('settings', { size: 15 }), label: 'Settings', onClick: () => openModal('settings') },
       ],
     },
     {
@@ -79,10 +96,21 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0, refreshAll } = {
         { key: 'secretary', glyph: Icon('external-link', { size: 15 }), label: 'Follow-up calls', onClick: () => openPanel('secretary'), active: state.activePanel === 'secretary' },
       ],
     },
-    {
-      group: 'Account',
-      items: [],
-    },
+  ];
+}
+
+// The five verbs, as an ordered list for the topbar. `primary: true` marks the
+// one that gets a real button; the rest are overflow-menu candidates. Same
+// keys as before, run through the same role floor and the same deployer
+// config, so nothing a deployer configured stops working because a control
+// moved house.
+function rawActionItems({ refreshAll } = {}) {
+  return [
+    { key: 'new_case', glyph: Icon('plus', { size: 15 }), label: 'New case', onClick: openIntakeNew, ariaLabel: 'Add a case manually', primary: true },
+    { key: 'focus', glyph: Icon('activity', { size: 15 }), label: 'Focus', onClick: toggleInboxMode, active: state.inboxMode, ariaLabel: 'Show only what needs attention' },
+    { key: 'export', glyph: Icon('download', { size: 15 }), label: 'Export', href: '/api/cases/export.csv' },
+    { key: 'sweep', glyph: Icon('refresh', { size: 15 }), label: 'Sweep now', onClick: runSweep, ariaLabel: 'Run health-guardrail sweep now' },
+    { key: 'refresh', glyph: Icon('refresh', { size: 15 }), label: 'Refresh', onClick: refreshAll || _refreshAll },
   ];
 }
 
@@ -104,11 +132,16 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0, refreshAll } = {
 const ROLE_HIDE = {
   secretary: ['sweep', 'settings', 'metrics', 'distribution', 'team'],
 };
+// The 'Account' survivor special-case that used to live in both filters below
+// is gone with the always-empty 'Account' group it existed to protect: a group
+// that never had an item still rendered its header, and both filters then
+// carried branch logic to keep that emptiness alive. The account controls have
+// always actually lived in the topbar's AccountMenu.
 function applyRoleScope(sections, role) {
   const hide = new Set(ROLE_HIDE[role] || []);
   if (!hide.size) return sections;
   return sections
-    .filter(sec => sec.items.filter(it => !hide.has(it.key)).length > 0 || sec.group === 'Account')
+    .filter(sec => sec.items.filter(it => !hide.has(it.key)).length > 0)
     .map(sec => ({ ...sec, items: sec.items.filter(it => !hide.has(it.key)) }));
 }
 
@@ -118,23 +151,35 @@ function applyNavConfig(sections, navConfig) {
   const relabel = navConfig.relabel || {};
   const groupLabels = navConfig.group_labels || {};
   return sections
-    // The 'Account' survivor check (below) must match rawSideSections()'s
-    // own ORIGINAL group name, not a config-relabeled one -- an adversarial
-    // review caught that filtering on the already-renamed `sec.group` meant
-    // a group_labels entry targeting 'Account' (e.g. {Account: 'Profile'})
-    // would make the check `sec.group === 'Account'` false and silently
-    // drop the permanent placeholder group. Filter BEFORE renaming so the
-    // survivor check always sees the true original name.
-    .filter(sec => sec.items.filter(it => !hide.has(it.key)).length > 0 || sec.group === 'Account')
+    // Filter BEFORE renaming, so a group_labels entry can never change which
+    // groups survive -- an emptied group is dropped on its item count alone.
+    .filter(sec => sec.items.filter(it => !hide.has(it.key)).length > 0)
     .map(sec => ({
       group: groupLabels[sec.group] || sec.group,
       items: sec.items.filter(it => !hide.has(it.key)).map(it => relabel[it.key] ? { ...it, label: relabel[it.key] } : it),
     }));
 }
 
+// Actions run through the identical hide/relabel pass as the nav items did
+// when they lived there. A control that moved from the nav to the topbar must
+// not quietly escape a deployer's config or a role's floor -- the secretary
+// floor hides 'sweep', and it still does.
+function applyItemConfig(items, role, navConfig) {
+  const roleHide = new Set(ROLE_HIDE[role] || []);
+  const hide = new Set((navConfig && navConfig.hide) || []);
+  const relabel = (navConfig && navConfig.relabel) || {};
+  return items
+    .filter(it => !roleHide.has(it.key) && !hide.has(it.key))
+    .map(it => (relabel[it.key] ? { ...it, label: relabel[it.key] } : it));
+}
+
 export function buildSideSections(opts = {}) {
   const roleScoped = applyRoleScope(rawSideSections(opts), state.currentUser?.role);
   return applyNavConfig(roleScoped, state.config?.dashboard_ui?.nav);
+}
+
+export function buildActionItems(opts = {}) {
+  return applyItemConfig(rawActionItems(opts), state.currentUser?.role, state.config?.dashboard_ui?.nav);
 }
 
 export function backToCases() { closePanel(); }

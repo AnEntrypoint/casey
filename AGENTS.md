@@ -385,7 +385,43 @@ src/
   gateway-hooks.js/hooks/handler.js   makeCaseHandler: STOP/HUMAN short-circuit, LLM-down queue gate, or one runTurn tool loop
   llm.js                   model call wiring; self-healing backend that re-resolves a recovered provider
   dashboard/server.js      express API + anentrypoint-design SPA; map/reporters/accounts routes
+  dashboard/public/src/map-model.js   the ONE model the map and the rail both read: the urgency ladder (attn.js score -> band) and the shared filter predicate
 ```
+
+### Dashboard structure: the map is a home view, not a panel
+
+The dashboard has two HOME VIEWS (`state.homeView`, `'map'|'cases'`) and a set
+of content-swap PANELS (`state.activePanel`). The distinction is load-bearing
+and was got wrong once in a way worth naming, because the failure is invisible
+from the code alone: `dashboard_ui.default_view: 'map'` used to call
+`openPanel('map')`, which set `activePanel` and therefore rendered the
+PanelSwap path -- a legacy stacked map page -- so the deployment that actually
+configures a map-first landing (`uhh`) never landed on the map-first command
+centre at all. The layout was shipped and bypassed. `default_view` sets the
+home view; there is no `'map'` panel any more, and only one map surface exists.
+
+- `views/map-command-center.js` -- the map home view: the map pane plus ONE
+  rail. The rail shows the worst-first queue (or a spatial rollup) when nothing
+  is open, and the case detail when something is.
+- `panels/map-panel.js` -- the map shell and the rail. The canvas is the whole
+  pane; only the legend and an error/empty note may sit on it. Counts, filters,
+  overlays and the queue are docked in the rail, never floated over the map
+  (mapuipatterns' rule for situational-awareness domains: do not cover
+  potentially important data with floating panels).
+- `panels/map-leaflet.js` -- the imperative Leaflet driver. A pin encodes three
+  independent channels in three different visual dimensions, deliberately:
+  fill colour = status, border style = where the coordinate came from,
+  size + ring = urgency from `attn.js`'s score. Urgency is size-and-geometry
+  rather than a fourth fill colour so it survives a colourblind viewer and both
+  themes.
+- Hotspots (`geo`) and Related reports (`clusters`) are spatial answers, so on
+  the map side they render in the RAIL with the map still mounted beside them
+  (`state.railMode`), rather than unmounting the map to show a table. Both are
+  still registered panels for the case-list side.
+- `state.setActiveId` is the single publisher of "a case became active"
+  (`onActiveIdChange`); the map subscribes. Assigning `state.activeId` directly
+  skips that notification and is why opening a case used to leave the map
+  wherever it happened to be -- do not reintroduce a direct assignment.
 
 There is no automated test suite. Verification is manual/live: run `casey up`
 against real freddie/thatcher/a real LLM provider and exercise the actual
@@ -394,7 +430,15 @@ conversation over Discord/WhatsApp or the dashboard.
 ## Dev workflow
 
 ```sh
-npm install                 # thatcher/acptoapi/design resolve from deps/ junctions; freddie needs pnpm (see "freddie integration" above)
+# NOTE: a bare `npm install` at this repo's root currently CRASHES once the
+# node_modules/@freddie/* junctions exist -- @npmcli/arborist throws "Cannot
+# read properties of null (reading 'package')" while loading the actual tree
+# across the 220 junctions link-deps.mjs creates. Confirmed by bisect: move
+# node_modules/@freddie aside and npm install succeeds; restore it and the
+# crash returns. It is not a resolution failure, but it is a hard stop, so use
+# the two scripts directly until it is fixed:
+node scripts/install-freddie-deps.mjs   # pnpm install inside deps/freddie
+node scripts/link-deps.mjs              # junction thatcher/acptoapi/design + every @freddie/* package
 node bin/casey.js init      # scaffold a .env (channel tokens, dashboard secret)
 node bin/casey.js doctor    # green/red preflight: deps, channels, port, token
 node bin/casey.js up        # gateway + dashboard (default http://localhost:4000)
@@ -757,7 +801,24 @@ stop).
   source of truth.** No lookup table, no server-side geocoding -- a
   coordinate is either the worker's real GPS or the model's own place
   estimate from its own world knowledge. A case with no coordinate lands in
-  an `unresolved` bucket rather than being dropped.
+  an `unresolved` bucket rather than being dropped, and no spatial filter may
+  be what makes it disappear: a case with no position is not "outside the
+  viewport", it is nowhere, so the extent filter never applies to it.
+- **The map and the queue must not be able to disagree about the same case.**
+  They are two views of one dataset on one screen, so both the urgency ladder
+  and the filter predicate live once in `dashboard/public/src/map-model.js` and
+  are imported by both. Every time these were derived twice, the two halves
+  drifted and said different things at the same moment -- the map showed status
+  while the rail showed urgency; the rail head counted 14 while the list under
+  it showed 5. Do not add a second local copy of either derivation.
+- **A cap on a list is stated in the UI, with the true total beside it.** A
+  silently truncated triage queue in a disease-surveillance deployment means
+  report 6 is invisible and nothing says it exists -- that is a safety
+  property, not a cosmetic one.
+- **An empty map says WHY it is empty.** "Nothing has happened yet", "your
+  filter hid everything", and "everything is missing a location" are three
+  different facts, and rendering all three as a blank map tells the operator
+  none of them.
 - **Management aggregates are aggregate-only and never emit `external_id`,**
   including from nested fields (e.g. a delivered-reply event's `data.to`).
 
