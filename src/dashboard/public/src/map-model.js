@@ -46,9 +46,14 @@ export function urgencyByCaseId() {
 // state.mapFilter is the single filter object. `days` is the only field that
 // changes what the SERVER returns (fetchMapCases({days})); every other field
 // narrows what is already loaded, on both surfaces at once.
-export function defaultMapFilter() {
-  return { species: '', type: '', status: '', days: '0', band: null, inView: false };
-}
+//
+// The filter's DEFAULT SHAPE is state.js's defaultMapFilter(), not a second
+// copy here. A duplicate of it used to live in this file, exported and
+// imported by nobody, while state.js built the same object inline -- two
+// definitions of one thing, in the module whose entire purpose is that there
+// is only ever one. It is defined next to the state it initialises because
+// this module already imports `state`, so defining it here and importing it
+// there would close an import cycle.
 
 // A pin (from /api/map/cases) and an attention row describe the same case with
 // different field sets, so the predicate takes what it needs explicitly rather

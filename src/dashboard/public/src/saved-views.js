@@ -3,7 +3,6 @@
 // ring buffer (ux-search-hint-and-history).
 
 import { state, setFilt, setInboxMode } from './state.js';
-import { pushHash } from './route.js';
 
 export function currentView() {
   const f = state.filt;
@@ -28,10 +27,6 @@ export function applyView(v) {
   setInboxMode(!!v.focus);
 }
 
-export function writeViewToHash(v) {
-  const enc = encodeView(v);
-  if (enc) pushHash({ view: enc });
-}
 
 function loadNamedViews() {
   try { const o = JSON.parse(localStorage.casey_views || '{}'); return (o && typeof o === 'object') ? o : {}; }
@@ -39,21 +34,12 @@ function loadNamedViews() {
 }
 function saveNamedViews(m) { try { localStorage.casey_views = JSON.stringify(m); } catch { /* storage unavailable */ } }
 
-export function listNamedViews() {
-  const m = loadNamedViews();
-  return Object.keys(m).sort().map(name => ({ name, view: m[name] }));
-}
 export function saveNamedView(name, view) {
   if (!name || name.length > 60) return false;
   const m = loadNamedViews();
   m[name] = view;
   saveNamedViews(m);
   return true;
-}
-export function deleteNamedView(name) {
-  const m = loadNamedViews();
-  delete m[name];
-  saveNamedViews(m);
 }
 export function getNamedView(name) {
   const m = loadNamedViews();

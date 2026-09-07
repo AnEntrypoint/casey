@@ -8,9 +8,9 @@
 // a single delegated focusin/focusout listener on the pane root.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
-import { Btn, IconButton, Icon } from '/design/src/components/shell.js';
+import { Btn, Icon } from '/design/src/components/shell.js';
 import { Skeleton } from '/design/src/components/content.js';
-import { state, schedule, setCaseDetail, setCaseDetailLoading, setCaseDetailError, setEditing, setRunConfig } from '../state.js';
+import { state, setCaseDetail, setCaseDetailLoading, setCaseDetailError, setEditing, setRunConfig } from '../state.js';
 import { fetchCase, fetchRunConfig, postNote } from '../api.js';
 import { toast, failMsg } from '../toasts.js';
 import { CaseHeader } from './case-detail/header.js';

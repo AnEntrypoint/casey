@@ -5,7 +5,7 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Table } from '/design/src/components/content.js';
-import { state, schedule, setSiteHistory } from '../../state.js';
+import { state, setSiteHistory } from '../../state.js';
 import { fetchSiteHistory } from '../../api.js';
 import { rel } from '../../format.js';
 const h = webjsx.createElement;

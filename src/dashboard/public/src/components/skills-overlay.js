@@ -33,11 +33,6 @@ export function saveSkills(operatorId, o) {
 export function skillsDone(o) { return SKILLS.every((s) => o[s.id]); }
 export function skillsDismissed(operatorId) { return loadSkills(operatorId).__dismissed === true; }
 
-export function dismissSkills(operatorId) {
-    const m = loadSkills(operatorId);
-    m.__dismissed = true;
-    saveSkills(operatorId, m);
-}
 
 /**
  * @param {Object} props

@@ -9,7 +9,7 @@ import { Btn } from '/design/src/components/shell.js';
 import { TextField, Alert } from '/design/src/components/content.js';
 import { Dropdown } from '/design/src/components/overlay-primitives.js';
 import { state, schedule } from '../../state.js';
-import { toast, undoToast, replyUndoToast, failMsg } from '../../toasts.js';
+import { toast, replyUndoToast, failMsg } from '../../toasts.js';
 import { api, postDraftApprove, postDraftDiscard } from '../../api.js';
 import { confirmDialog } from '../../components/dialog-shell.js';
 const h = webjsx.createElement;

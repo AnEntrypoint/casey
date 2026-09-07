@@ -433,48 +433,16 @@ body { background: var(--bg); color: var(--fg); }
 .ds-settings-actions { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-2); }
 .ds-settings-state { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
 
-/* ---- draft banner accent stripe (assisted-mode held AI draft) ---------- */
-.draft-banner, .ds-draft-banner {
-  margin-top: var(--space-4); padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--warn, var(--amber));
-  background: var(--warn-bg, color-mix(in oklab, var(--amber) 10%, var(--bg)));
-  border-radius: var(--r-md, var(--r-1));
-}
-.draft-banner .draft-lab, .ds-draft-banner .ds-draft-label { font-size: var(--fs-sm); font-weight: 600; color: var(--warn, var(--amber)); margin-bottom: var(--space-2); }
-.draft-banner .draft-acts, .ds-draft-banner .ds-draft-actions { display: flex; gap: var(--space-2); }
-
-/* ---- health-chip / stage-tone colors (per-case health breach chips) ---- */
-.health-chip, .ds-breach-chip {
-  display: inline-block;
-  background: color-mix(in oklab, var(--amber) 20%, var(--bg));
-  color: var(--danger);
-  border: 1px solid color-mix(in oklab, var(--amber) 40%, transparent);
-  border-radius: var(--r-pill, var(--r-1));
-  padding: var(--space-hair) var(--space-3, var(--space-2));
-  font-size: var(--fs-nano, var(--fs-micro));
-  font-weight: 600;
-}
-:root[data-theme="light"] .health-chip { background: color-mix(in oklab, var(--amber) 14%, var(--bg)); }
-
-/* ---- step indicator geometry (case-detail progress) -------------------- */
-.ds-step-bar { display: flex; align-items: center; gap: var(--space-1); margin: 0 0 var(--space-3); font-size: var(--fs-micro); color: var(--fg-2, var(--muted)); }
-.ds-step-dot {
-  width: 22px; height: 22px; border-radius: var(--r-pill);
-  display: flex; align-items: center; justify-content: center;
-  font-size: var(--fs-micro); font-weight: 700;
-  background: var(--bg-3, var(--border)); color: var(--fg-2, var(--muted));
-  flex-shrink: 0;
-}
-.ds-step-dot.is-active { background: var(--accent); color: var(--accent-fg, var(--paper)); }
-.ds-step-dot.is-done { background: var(--accent); color: var(--accent-fg, var(--paper)); opacity: .6; }
-.ds-step-line { flex: 1; height: 2px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); transition: background var(--dur-base) var(--ease); }
-.ds-step-line.is-done { background: var(--accent); opacity: .5; }
-
-/* ---- fill bar (visit-critical readiness meter) -------------------------- */
-.ds-fill-bar { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); font-size: var(--fs-micro); color: var(--fg-2, var(--muted)); }
-.ds-fill-bar .ds-fill-track { flex: 1; height: 6px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); overflow: hidden; }
-.ds-fill-bar .ds-fill-fill { display: block; height: 100%; background: var(--green-2, var(--green)); transition: width var(--dur-slow) var(--ease); }
-@media (prefers-reduced-motion: reduce) { .ds-fill-bar .ds-fill-fill { transition: none; } }
+/* Four rule blocks were removed from here, all verified to have no emitter
+   anywhere in the client tree: the draft banner (.draft-banner/.ds-draft-*),
+   the health/breach chip (.health-chip/.ds-breach-chip), the step indicator
+   (.ds-step-*) and the visit-critical fill bar (.ds-fill-*).
+   The step indicator is the instructive one: case-detail DOES render a
+   progress indicator, but progress.js emits .casey-progress-* -- so this was
+   a superseded earlier implementation kept alive only by its stylesheet.
+   Each block also carried TWO names for the same element (an unprefixed
+   legacy class and a ds- alias) and neither was ever emitted, which is the
+   tell that they were written defensively rather than against real markup. */
 
 /* ---- case list / inbox / row / bulk-bar -------------------------------- */
 .case-list-view { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; }
@@ -914,8 +882,7 @@ body { background: var(--bg); color: var(--fg); }
 
 /* ---- print CSS (printable handover/metrics/report links) ---------------- */
 @media print {
-  .ds-app-surface .app-shell-side, .ds-app-root .app-shell-side, .app-topbar, .app-side-shell, .app-status,
-  .ds-app-surface .app-shell-topbar, .ds-app-surface .app-shell-status,
+  .app-topbar, .app-side-shell, .app-status,
   .ds-dialog-backdrop, .ds-toast-tray, .ds-handoff-banner, .ds-conn-banner,
   #toasts { display: none !important; }
   body { background: var(--paper, var(--bg)); color: var(--ink, var(--fg)); }
@@ -924,7 +891,7 @@ body { background: var(--bg); color: var(--fg); }
 /* prefers-reduced-motion guard for any casey-specific animation not already
    covered by the SDK's own guard. */
 @media (prefers-reduced-motion: reduce) {
-  .ds-fill-bar .ds-fill-fill, .ds-step-line, .ds-dist-bar-fill, .casey-progress-line, .casey-rep-editable,
+  .ds-dist-bar-fill, .casey-progress-line, .casey-rep-editable,
   .case-row, .tcase, .ds-handoff-banner, .ds-guardrail-toggle-btn, .casey-meta-toggle { transition: none; animation: none; }
 }
 
@@ -1030,17 +997,19 @@ body { background: var(--bg); color: var(--fg); }
    is not repainted. */
 .ds-247420 a { color: var(--link-color); }
 .ds-247420 a:hover { color: var(--link-hover); }
-.ds-247420 .ds-btn-primary,
-.ds-247420 button[data-variant="primary"] {
-  background: var(--btn-primary-bg);
-  border-color: var(--btn-primary-bg);
-  color: var(--btn-text);
-}
-.ds-247420 .ds-btn-primary:hover,
-.ds-247420 button[data-variant="primary"]:hover {
-  background: var(--btn-primary-hover);
-  border-color: var(--btn-primary-hover);
-}
+
+/* NO primary-button override here, deliberately. One was written and then
+   removed the same day, and it is worth recording why so it is not written
+   again: it targeted `.ds-btn-primary` and `button[data-variant="primary"]`,
+   and the kit emits NEITHER (Btn renders `.btn-primary` and sets no
+   data-variant attribute), so the rule matched nothing at all. The button
+   was correctly branded the whole time anyway, because the kit's own
+   `.ds-247420 .btn-primary { background: var(--accent); color: var(--accent-fg) }`
+   reads the very tokens the herd preset sets. Restating a token-driven rule
+   in a consumer sheet buys nothing when it works and hides the mistake when
+   it does not -- the live witness showed a correct orange button with a
+   black label and would have looked identical with the rule deleted, which
+   is exactly what made it invisible. */
 
 /* ---- the top header: neat, inline, one row ------------------------------
    The crumb's right-hand cluster is the app's real toolbar -- the attention
@@ -1195,10 +1164,8 @@ body { background: var(--bg); color: var(--fg); }
   .ds-app-root.is-map-home .ds-map-shell > .ds-map-overlay-error { pointer-events: auto; }
 
   /* Everything that is not the map floats above it. */
-  .ds-app-root.is-map-home .app-shell-topbar,
   .ds-app-root.is-map-home .app-topbar,
   .ds-app-root.is-map-home .app-crumb,
-  .ds-app-root.is-map-home .app-shell-side,
   .ds-app-root.is-map-home .app-side-shell,
   .ds-app-root.is-map-home .app-status,
   .ds-app-root.is-map-home .ds-conn-banner,
@@ -1206,11 +1173,8 @@ body { background: var(--bg); color: var(--fg); }
   .ds-app-root.is-map-home .app-two-pane-map > .case-detail-pane { position: relative; z-index: var(--z-raised); }
   .ds-app-root.is-map-home .ds-map-shell > .ds-map-chrome,
   .ds-app-root.is-map-home .ds-map-shell > .ds-map-overlay-error { z-index: var(--z-raised); }
-
-  .ds-app-root.is-map-home .app-shell-topbar,
   .ds-app-root.is-map-home .app-topbar,
   .ds-app-root.is-map-home .app-crumb,
-  .ds-app-root.is-map-home .app-shell-side,
   .ds-app-root.is-map-home .app-side-shell,
   .ds-app-root.is-map-home .app-status,
   .ds-app-root.is-map-home .app-two-pane-map > .case-detail-pane {
@@ -1218,10 +1182,8 @@ body { background: var(--bg); color: var(--fg); }
     background: color-mix(in oklab, var(--bg) 88%, transparent);
   }
   @supports (backdrop-filter: blur(8px)) {
-    .ds-app-root.is-map-home .app-shell-topbar,
     .ds-app-root.is-map-home .app-topbar,
     .ds-app-root.is-map-home .app-crumb,
-    .ds-app-root.is-map-home .app-shell-side,
     .ds-app-root.is-map-home .app-side-shell,
     .ds-app-root.is-map-home .app-status,
     .ds-app-root.is-map-home .app-two-pane-map > .case-detail-pane {
@@ -1240,7 +1202,6 @@ body { background: var(--bg); color: var(--fg); }
 @media (max-width: 900px) {
   .ds-app-root.is-map-home .ds-map-shell > .ds-map-canvas { position: absolute; inset: 0; }
   .ds-app-root.is-map-home .app-crumb,
-  .ds-app-root.is-map-home .app-shell-topbar,
   .ds-app-root.is-map-home .app-topbar {
     position: sticky;
     top: 0;
