@@ -7,7 +7,7 @@
 // needed.
 
 import * as webjsx from 'webjsx';
-import { state, schedule } from '../state.js';
+import { state, schedule, setActiveId } from '../state.js';
 import * as api from '../api.js';
 import { toast } from '../toasts.js';
 import { CaseListView } from './case-list-view.js';
@@ -15,8 +15,13 @@ import { CaseDetailView } from './case-detail-view.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 const h = webjsx.createElement;
 
+// Both go through setActiveId rather than assigning state.activeId directly:
+// that mutator is where "a case became active" is published (state.js's
+// onActiveIdChange), and the map subscribes to it. Assigning the field here
+// skipped the notification, which is why opening a case from the case list
+// used to leave the map sitting wherever it happened to be.
 function closeCase() {
-  state.activeId = null;
+  setActiveId(null);
   try {
     const url = new URL(location.href);
     if (url.hash.startsWith('#case=')) history.replaceState(null, '', location.pathname + location.search);
@@ -25,7 +30,7 @@ function closeCase() {
 }
 
 function openCase(id) {
-  state.activeId = id;
+  setActiveId(id);
   try { location.hash = 'case=' + encodeURIComponent(id); } catch { /* hash sync best-effort */ }
   schedule();
 }

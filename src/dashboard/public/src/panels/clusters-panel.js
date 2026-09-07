@@ -44,9 +44,14 @@ function clusterRow(c, i) {
             }))));
 }
 
-export function ClustersPanel() {
+// railed=true renders the groups alone, for the map view's rail. Same reason
+// as GeoPanel: a cluster is "these reports are near each other and look
+// alike", which is a spatial claim -- and the map already draws the links
+// between members (map-leaflet.js's cluster polylines). Showing the list in
+// the rail lets the two agree on screen instead of living in two unrelated
+// presentations that can drift apart.
+export function ClustersPanel({ railed = false } = {}) {
     ensureLoaded();
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading related-case groups' });
     else if (error) body = Alert({ kind: 'error', children: 'Related-reports error: ' + error });
@@ -56,5 +61,7 @@ export function ClustersPanel() {
             ? h('div', {}, ...cl.map(clusterRow))
             : Alert({ kind: 'info', children: 'No related-looking groups right now.' });
     }
+    if (railed) return body;
+    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     return Panel({ title: 'Related reports', children: [back, body] });
 }

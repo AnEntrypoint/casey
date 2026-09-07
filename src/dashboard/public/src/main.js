@@ -4,7 +4,7 @@
 // route.js. Nothing else lives here.
 
 import { mountKit } from 'ds/bootstrap.js';
-import { state, setSchedule, setConfig, setHealth, setDegradedTurns, openModal, closeModal, openPanel } from './state.js';
+import { state, setSchedule, setConfig, setHealth, setDegradedTurns, openModal, closeModal, openPanel, setHomeView, setActiveId, setAttention } from './state.js';
 import { App, registerModalBody, registerPanelBody } from './views/app-view.js';
 import { checkSession } from './auth.js';
 import { installGlobalKeyboard, registerKeyboardHandlers } from './keyboard.js';
@@ -22,7 +22,7 @@ import { MetricsPanel } from './panels/metrics-panel.js';
 import { ClustersPanel } from './panels/clusters-panel.js';
 import { DistributionPanel } from './panels/distribution-panel.js';
 import { GeoPanel } from './panels/geo-panel.js';
-import { MapPanel } from './panels/map-panel.js';
+import { visibleQueueRows, mapDebugSnapshot } from './panels/map-panel.js';
 import { ActivityPanel } from './panels/activity-panel.js';
 import { HandoverPanel } from './panels/handover-panel.js';
 import { OfflinePanel } from './panels/offline-panel.js';
@@ -40,13 +40,23 @@ setSchedule(schedule);
 
 initTheme();
 
-// Content-swap panels (11) -- each is a working surface an operator reads/
-// acts on for a stretch; registered once here per architecture spec section 4.
+// Content-swap panels -- each is a working surface an operator reads/acts on
+// for a stretch; registered once here per architecture spec section 4.
+//
+// 'map' is deliberately NOT among them any more. It used to be, and boot()
+// below routed the map-first deployment into it, which meant a real uhh
+// operator's landing page was the legacy stacked map panel rather than the
+// map-first command centre -- the whole restructure was shipped and then
+// bypassed. The map is a home view now (state.homeView), not a panel.
+//
+// 'clusters' and 'geo' stay registered because both are still reachable as
+// full pages from the case-list side of the app; on the map side they render
+// in the rail instead, so the map is never unmounted to answer a question
+// about where something is (see map-panel.js's RAIL_MODES).
 registerPanelBody('metrics', MetricsPanel);
 registerPanelBody('clusters', ClustersPanel);
 registerPanelBody('distribution', DistributionPanel);
 registerPanelBody('geo', GeoPanel);
-registerPanelBody('map', MapPanel);
 registerPanelBody('activity', ActivityPanel);
 registerPanelBody('handover', HandoverPanel);
 registerPanelBody('offline', OfflinePanel);
@@ -74,8 +84,13 @@ registerOpenIntakeNew(promptNewCase);
 // openHighlighted/claim/newCase), wired against the shared state + the
 // list/detail layout's own open/close helpers -- j/k walk the currently
 // visible (filtered) case list, matching the legacy app.js triage flow.
+// j/k walk whatever list is actually on screen. Bound unconditionally to
+// state.allCases, they walked the case list even when the operator was looking
+// at the map's worst-first queue -- so on the default landing view the triage
+// keys moved a highlight nobody could see.
 function visibleRows() {
-  return state.allCases || [];
+  const onMapHome = !state.activePanel && state.homeView === 'map';
+  return (onMapHome ? visibleQueueRows() : state.allCases) || [];
 }
 function moveFocus(delta) {
   const rows = visibleRows();
@@ -160,9 +175,11 @@ async function refreshAttention() {
     // route never returns, so state.attention silently stayed [] forever and
     // the inbox badge/map attention feed never populated from a live fetch.
     const rows = Array.isArray(a) ? a : (a && a.cases) || [];
-    state.attention = rows;
+    // setAttention, not a direct assignment: the map subscribes to this to pick
+    // up the urgency channel (state.js's onAttentionChange). Writing the field
+    // here bypassed that and left every pin at urgency 0.
+    setAttention(rows);
     setInboxBadge(rows.length);
-    schedule();
   } catch { /* best-effort */ }
 }
 
@@ -211,10 +228,14 @@ async function boot() {
   if (state.currentUser?.role === 'secretary' && noDeepLink) {
     openPanel('secretary');
   } else if (state.config?.dashboard_ui?.default_view === 'map' && noDeepLink) {
-    // dashboard_ui.default_view:'map' lands the operator on the map instead
-    // of the case list -- additive and config-gated (absent -- today's
-    // exact case-list-first landing).
-    openPanel('map');
+    // dashboard_ui.default_view:'map' lands the operator on the map instead of
+    // the case list. This sets the HOME VIEW; it used to call openPanel('map'),
+    // which set state.activePanel and therefore rendered PanelSwap -- the
+    // legacy stacked map page -- so on the one deployment that actually
+    // configures this (uhh), the map-first command centre was never what an
+    // operator landed on. The map-first layout existed and was unreachable by
+    // default.
+    setHomeView('map');
   }
   if (!state.inboxMode) await loadCases();
   await refreshHealth();
@@ -222,7 +243,15 @@ async function boot() {
   await refreshDegradedTurns();
 }
 
-initRouteSync((r) => { if (r.caseId) state.activeId = r.caseId; if (r.inbox !== undefined) state.inboxMode = r.inbox; schedule(); });
+// setActiveId, not a direct field assignment: a hash change is one of the six
+// ways a case becomes active, and it has to publish that like the other five
+// so the map follows a back/forward navigation instead of staying put.
+initRouteSync((r) => {
+  if (r.home) setHomeView(r.home);
+  if (r.caseId) setActiveId(r.caseId);
+  if (r.inbox !== undefined) state.inboxMode = r.inbox;
+  schedule();
+});
 
 (async () => {
   await checkSession();
@@ -253,4 +282,20 @@ const _attnIv = setInterval(refreshAttention, 30000);
 const _degradedIv = setInterval(refreshDegradedTurns, 60000);
 window.addEventListener('beforeunload', () => {
   clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv); clearInterval(_degradedIv);
+});
+
+// Read-only diagnostic hook. The bug class this layout keeps producing is the
+// two halves of the view disagreeing about the same cases -- the chip says 14,
+// the list shows 5; the queue selects a case, the map stays put -- and none of
+// it is answerable from a screenshot. Counts and view state only, never a ref,
+// subject or contact identifier, so it stays inside the same PII-free
+// projection discipline as every other operator-facing surface.
+window.__caseyDebug = () => ({
+  ...mapDebugSnapshot(),
+  authed: state.authed,
+  role: state.currentUser?.role || null,
+  casesLoaded: (state.allCases || []).length,
+  inboxMode: state.inboxMode,
+  activeModal: state.activeModal,
+  hash: location.hash,
 });
