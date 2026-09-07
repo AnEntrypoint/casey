@@ -13,6 +13,7 @@ import { state, schedule, closePanel, setActiveId } from '../state.js';
 import { toDate } from '../format.js';
 import {
     loadMap, toggleClusters, refilterMarkers, toggleCoverage, toggleWorkers, toggleLastReports, STATUS_TOKEN,
+    focusCaseOnMap,
     LOCATION_SOURCE_LABEL,
 } from './map-leaflet.js';
 
@@ -87,9 +88,15 @@ function attentionFeed() {
         return h('div', { class: 'triage' }, h('div', { class: 'calm' }, 'Nothing needs attention right now.'));
     }
     const heat = (score) => (score >= 80 ? 'heat-3' : score >= 40 ? 'heat-2' : 'heat-1');
+    // Selecting from the queue also MOVES THE MAP to that report. Without this
+    // the two halves of the view disagree: the operator picks the worst case
+    // off the list, the detail pane changes, and the map still shows wherever
+    // it happened to be -- so "where is this happening", the whole point of the
+    // view, goes unanswered on the one interaction most likely to be used.
+    const pick = (id) => { setActiveId(id); focusCaseOnMap(mapStateRef.current, id); };
     return h('div', { class: 'ds-map-attention-feed' }, ...rows.map((c) => h('div', {
-        key: c.id, class: 'tcase ' + heat(c.score), onclick: () => setActiveId(c.id),
-        role: 'button', tabindex: '0', onkeydown: (e) => { if (e.key === 'Enter') setActiveId(c.id); },
+        key: c.id, class: 'tcase ' + heat(c.score), onclick: () => pick(c.id),
+        role: 'button', tabindex: '0', onkeydown: (e) => { if (e.key === 'Enter') pick(c.id); },
     },
         h('div', { class: 'tcase-why' }, h('b', {}, c.ref), ' ', c.reason || ''),
         h('div', { class: 'tcase-meta' }, c.subject || ''))));

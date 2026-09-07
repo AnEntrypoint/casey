@@ -233,9 +233,24 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
         const located = (mapState.pins || []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
         if (located.length) {
             mapState.didAutoFit = true;
-            try {
-                mapState.map.fitBounds(window.L.latLngBounds(located.map((p) => [p.lat, p.lon])), { padding: [40, 40], maxZoom: 11 });
-            } catch { /* a degenerate bounds box must never break the panel */ }
+            const bounds = window.L.latLngBounds(located.map((p) => [p.lat, p.lon]));
+            // Deferred a frame on purpose. loadMap runs in the same tick the
+            // panel's webjsx pass mounts the overlays, so measuring them here
+            // returns zero-size rects and overlayFitPadding silently degrades
+            // to its 24px floor -- which is exactly the bug it exists to
+            // prevent (witnessed: 2 of 6 pins fitted underneath the queue).
+            // One rAF lets layout settle so the measurement is real.
+            const fit = () => {
+                // Resolve the shell from the map's OWN live container, never the
+                // `canvas` captured above: a poll-driven webjsx re-render can
+                // swap that element out between loadMap starting and this
+                // callback running, and a detached node's closest() returns
+                // null -- which silently degraded the padding to its floor and
+                // fitted 2 of 6 pins underneath the queue.
+                try { mapState.map.fitBounds(bounds, { maxZoom: 11, ...overlayFitPadding(mapState.map.getContainer()) }); }
+                catch { /* a degenerate bounds box must never break the panel */ }
+            };
+            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(fit)); else fit();
         }
     }
     if (callbacks && callbacks.onSummary) {
@@ -246,6 +261,63 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
         });
     }
     return mapState;
+}
+
+// In the map-first shell the chrome does not sit BESIDE the canvas, it sits ON
+// it -- so the canvas rect overstates the visible map. Fitting to the raw rect
+// centres a cluster underneath the attention queue or the stat pills, which
+// looks exactly like "the map opened somewhere else": the pins are on screen,
+// just behind an opaque panel. Rather than hardcode guesses that would go stale
+// the moment an overlay is collapsed (both of ours are toggleable) or the
+// layout reflows on a phone, measure the overlays that are ACTUALLY mounted
+// right now and convert each one's intrusion into Leaflet's corner padding.
+function overlayFitPadding(canvas) {
+    const FALLBACK = { paddingTopLeft: [24, 24], paddingBottomRight: [24, 24] };
+    try {
+        const shell = canvas && canvas.closest ? canvas.closest('.ds-map-shell') : null;
+        if (!shell) return FALLBACK;
+        const base = shell.getBoundingClientRect();
+        if (!base.width || !base.height) return FALLBACK;
+        let top = 0, right = 0, bottom = 0, left = 0;
+        for (const el of shell.querySelectorAll('.ds-map-overlay')) {
+            const r = el.getBoundingClientRect();
+            if (!r.width || !r.height) continue;
+            // Only the edge an overlay is actually anchored to is padded: an
+            // element hugging the top contributes its height to `top`, not its
+            // width to `left`, otherwise a wide top strip would squeeze the fit
+            // horizontally for no reason.
+            const dTop = r.top - base.top, dBottom = base.bottom - r.bottom;
+            const dLeft = r.left - base.left, dRight = base.right - r.right;
+            const vertical = Math.min(dTop, dBottom) <= Math.min(dLeft, dRight);
+            if (vertical) { if (dTop <= dBottom) top = Math.max(top, dTop + r.height); else bottom = Math.max(bottom, dBottom + r.height); }
+            else if (dLeft <= dRight) left = Math.max(left, dLeft + r.width);
+            else right = Math.max(right, dRight + r.width);
+        }
+        // Never let chrome claim more than 40% of an axis -- on a small phone
+        // the overlays can exceed the canvas, and an over-padded fitBounds
+        // throws or collapses to a nonsense zoom.
+        const capX = base.width * 0.4, capY = base.height * 0.4;
+        return {
+            paddingTopLeft: [Math.min(Math.max(left, 24), capX), Math.min(Math.max(top, 24), capY)],
+            paddingBottomRight: [Math.min(Math.max(right, 24), capX), Math.min(Math.max(bottom, 24), capY)],
+        };
+    } catch { return FALLBACK; }
+}
+
+// Move the map to one case, used when the attention queue (or any list) picks a
+// report -- see map-panel.js's attentionFeed(). Cap the zoom: landing at max
+// zoom on a rural point with no surrounding landmarks reads as a broken blank
+// map, which is precisely the disorientation a low-computer-literacy operator
+// cannot recover from. No-op when the case has no placeable location (the
+// "no location yet" count on the strip), so the map simply stays put.
+export function focusCaseOnMap(mapState, id) {
+  if (!mapState || !mapState.map) return false;
+  const p = (mapState.pins || []).find((x) => x.id === id);
+  if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return false;
+  try {
+    mapState.map.setView([p.lat, p.lon], Math.min(Math.max(mapState.map.getZoom() || 0, 9), 13), { animate: true });
+  } catch { return false; }
+  return true;
 }
 
 export function toggleClusters(mapState, filters) { mapState.showClusters = !mapState.showClusters; renderMapMarkers(mapState, filters); }
