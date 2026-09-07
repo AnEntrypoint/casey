@@ -47,8 +47,12 @@ body { background: var(--bg); color: var(--fg); }
    hairline, never a floating rounded card over the canvas. A floating card
    leaves a strip of map you can see but cannot reliably click, reads as
    dismissible, and (the measurable failure) hides pins behind itself. */
+/* 320px floor, not 300: nothing measured across the shipped situational-
+   awareness consoles docks a rail narrower than that (USGS 320, Watch Duty 375,
+   Liveuamap 395), and below it the worst-first rows start wrapping their
+   reason text into three lines. */
 .app-two-pane-map > .case-detail-pane {
-  flex: 0 0 clamp(300px, 26vw, 400px); max-width: clamp(300px, 26vw, 400px);
+  flex: 0 0 clamp(320px, 26vw, 400px); max-width: clamp(320px, 26vw, 400px);
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg); border-left: 1px solid var(--border);
 }
@@ -178,6 +182,17 @@ body { background: var(--bg); color: var(--fg); }
 .ds-seg-btn:hover { background: var(--bg-2); color: var(--fg); }
 .ds-seg-btn.is-on { background: var(--accent); color: var(--accent-fg, var(--paper)); font-weight: 600; }
 .ds-seg-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
+
+.ds-rail-controls { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.ds-rail-controls .ds-seg { flex: 1 1 auto; }
+.ds-rail-reset {
+  flex: 0 0 auto; background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--r-1); color: var(--fg-2, var(--muted)); font: inherit;
+  font-size: var(--fs-nano); padding: var(--space-2) var(--space-3);
+  cursor: pointer; min-height: 2.25rem; white-space: nowrap;
+}
+.ds-rail-reset:hover { background: var(--bg-3, var(--border)); color: var(--fg); }
+.ds-rail-reset:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 
 /* Filter chips: the count IS the control. These replaced four inert stat
    tiles whose subtitle literally said "see below" -- a number the operator
@@ -641,6 +656,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-map-marker-dot[data-status-token="--amber"], .ds-map-legend-sw[data-status-token="--amber"] { background: var(--amber); }
 .ds-map-marker-dot[data-status-token="--green"], .ds-map-legend-sw[data-status-token="--green"] { background: var(--green); }
 .ds-map-marker-dot[data-status-token="--purple-2"], .ds-map-legend-sw[data-status-token="--purple-2"] { background: var(--purple-2); }
+.ds-map-marker-dot[data-status-token="--accent"], .ds-map-legend-sw[data-status-token="--accent"] { background: var(--accent); }
 .ds-map-marker-dot[data-status-token="--fg-3"], .ds-map-legend-sw[data-status-token="--fg-3"] { background: var(--fg-3); }
 /* Location provenance -- fill color (above) stays the status signal;
    border treatment carries whether the pin is a surveyed-exact position or
@@ -669,7 +685,14 @@ body { background: var(--bg); color: var(--fg); }
   width: 22px; height: 22px;
   box-shadow: 0 0 0 3px var(--danger),
               0 0 6px color-mix(in oklab, var(--danger) 60%, transparent);
-  animation: ds-map-urgent-pulse 2s ease-in-out infinite;
+  /* Bounded, not infinite. WCAG 2.2.2 engages on anything that moves for more
+     than five seconds without a pause control, so the ring runs three 2s cycles
+     (~6s) and stops. At 0.5Hz it is also far under SC 2.3.1's three-flashes-a-
+     second threshold, and a scale+opacity ease is not an opposing luminance
+     pair, so it is not a "flash" at all. The SIZE and the RING are the
+     information; the motion is only the arrival cue, and an arrival cue that
+     never stops is just noise an operator learns to ignore. */
+  animation: ds-map-urgent-pulse 2s ease-in-out 3;
 }
 /* The pin for the case currently open in the rail. Without this, focusing the
    map moved the viewport and then nothing said which of the pins in front of

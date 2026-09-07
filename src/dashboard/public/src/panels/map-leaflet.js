@@ -10,7 +10,36 @@ import { fmtDur } from '../format.js';
 import { fetchMapCases, fetchMapWorkers, fetchMapLastReports, fetchOperatorIdentities } from '../api.js';
 import { openDispatchPicker } from './dispatch-picker.js';
 
-export const STATUS_TOKEN = { new: '--sky', triaging: '--amber', in_progress: '--green', waiting: '--purple-2', resolved: '--fg-3', closed: '--fg-3' };
+// GREEN APPEARS ON EXACTLY ONE STATE, AND IT MEANS DONE.
+//
+// It used to mean `in_progress`, which put a green dot on an OPEN case: a fresh
+// mass-mortality report (blue "new") read CALMER on the map than one somebody
+// was already handling. On a disease-surveillance map green is the one colour
+// an operator reads without thinking, and it was saying all-clear over an
+// active outbreak. `resolved` and `closed` also both rendered `--fg-3`, so a
+// genuinely-finished case was indistinguishable from an archived one and both
+// were near-invisible against a grey basemap in dark mode.
+//
+// Every open state is now warm-or-cool but never green; the two terminal states
+// are green (finished) and grey (archived).
+//
+// This is the safety half of a larger finding. Research across shipped
+// situational-awareness consoles (HealthMap, Liveuamap, Palantir -- see
+// .gm/research/osint-map-ui-brief.md) found that NONE of them spend the colour
+// channel on workflow status at all: HealthMap gives colour to noteworthiness
+// and size to geographic scope, Liveuamap gives colour to actor and ships a
+// "show patterns instead of colours" toggle. Moving colour onto severity is
+// tracked as its own row (colour-channel-carries-severity-not-status) because
+// it needs a severity notion casey does not have yet; this commit only removes
+// the false all-clear.
+export const STATUS_TOKEN = {
+    new: '--sky',
+    triaging: '--amber',
+    in_progress: '--purple-2',
+    waiting: '--accent',
+    resolved: '--green',
+    closed: '--fg-3',
+};
 
 function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || name;
@@ -322,6 +351,12 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
         if (located.length) {
             mapState.didAutoFit = true;
             const bounds = window.L.latLngBounds(located.map((p) => [p.lat, p.lon]));
+            // Kept, not discarded. These bounds were computed once for the
+            // first-load fit and then thrown away, which left an operator who
+            // had zoomed into one district with no way back to "everything"
+            // short of reloading the page -- and a reload costs the map payload
+            // and a fresh round of tiles on a link that charges by the megabyte.
+            mapState.allBounds = bounds;
             // Deferred a frame on purpose. loadMap runs in the same tick the
             // panel's webjsx pass mounts the overlays, so measuring them here
             // returns zero-size rects and overlayFitPadding silently degrades
@@ -436,6 +471,20 @@ export function focusCaseOnMap(mapState, id) {
     mapState.map.setView([p.lat, p.lon], Math.min(Math.max(mapState.map.getZoom() || 0, 9), 13), { animate: true });
   } catch { return false; }
   return true;
+}
+
+// Back to every report, using the same bounds and the same overlay-aware
+// padding the first-load fit used, so "show everything" lands exactly where
+// the map opened rather than somewhere subtly different.
+export function resetMapView(mapState) {
+    if (!mapState || !mapState.map || !mapState.allBounds) return false;
+    try {
+        mapState.map.fitBounds(mapState.allBounds, {
+            maxZoom: 11,
+            ...overlayFitPadding(mapState.map.getContainer()),
+        });
+    } catch { return false; }
+    return true;
 }
 
 export function toggleClusters(mapState, filters) { mapState.showClusters = !mapState.showClusters; renderMapMarkers(mapState, filters); }

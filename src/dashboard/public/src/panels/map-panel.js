@@ -31,7 +31,7 @@ import {
 import { urgencyByCaseId, pinMatches, rowMatches, isToday, filterIsActive, URGENCY_BAND_LABEL } from '../map-model.js';
 import {
     loadMap, toggleClusters, refilterMarkers, toggleCoverage, toggleWorkers, toggleLastReports, STATUS_TOKEN,
-    focusCaseOnMap, setSelectedCase, LOCATION_SOURCE_LABEL,
+    focusCaseOnMap, setSelectedCase, resetMapView, LOCATION_SOURCE_LABEL,
 } from './map-leaflet.js';
 import { GeoPanel } from './geo-panel.js';
 import { ClustersPanel } from './clusters-panel.js';
@@ -161,12 +161,22 @@ function currentExtent() {
 // is already loaded, which is why it is not grouped with them.
 function timeControl() {
     const opts = [{ v: '0', label: 'All time' }, { v: '7', label: 'This week' }, { v: '30', label: 'This month' }];
-    return h('div', { class: 'ds-seg', role: 'group', 'aria-label': 'Time window' },
-        ...opts.map((o) => h('button', {
-            key: o.v, type: 'button', class: 'ds-seg-btn' + (state.mapFilter.days === o.v ? ' is-on' : ''),
-            'aria-pressed': state.mapFilter.days === o.v ? 'true' : 'false',
-            onclick: () => { if (state.mapFilter.days === o.v) return; setMapFilter({ days: o.v }); refresh(); },
-        }, o.label)));
+    return h('div', { class: 'ds-rail-controls' },
+        h('div', { class: 'ds-seg', role: 'group', 'aria-label': 'Time window' },
+            ...opts.map((o) => h('button', {
+                key: o.v, type: 'button', class: 'ds-seg-btn' + (state.mapFilter.days === o.v ? ' is-on' : ''),
+                'aria-pressed': state.mapFilter.days === o.v ? 'true' : 'false',
+                onclick: () => { if (state.mapFilter.days === o.v) return; setMapFilter({ days: o.v }); refresh(); },
+            }, o.label))),
+        // In the rail, not on the canvas: only the legend and the state note are
+        // allowed to sit over the map. An operator who has zoomed into one
+        // district previously had no way back to the whole picture except a page
+        // reload, which re-buys the map payload and every tile.
+        h('button', {
+            key: 'reset', type: 'button', class: 'ds-rail-reset',
+            title: 'Move the map back to show every report',
+            onclick: () => { resetMapView(mapStateRef.current); },
+        }, 'Show all'));
 }
 
 // At most three, and every one of them DOES something. The previous version
