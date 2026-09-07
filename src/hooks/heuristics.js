@@ -441,9 +441,12 @@ export function mergeTag(tags, tag) {
   return list.join(',')
 }
 
-// Inverse of mergeTag: remove a tag, leaving the rest intact and order-stable.
-export function dropTag(tags, tag) {
-  return tagList({ tags }).filter(t => t !== tag).join(',')
+// Inverse of mergeTag: remove one or more tags, leaving the rest intact and
+// order-stable. Variadic because the dashboard's draft/reply paths clear two
+// related tags together ('draft-pending' + 'needs-human', 'needs-human' +
+// 'ai-offline') and used to hand-roll the same filter inline for each.
+export function dropTag(tags, ...names) {
+  return tagList({ tags }).filter(t => !names.includes(t)).join(',')
 }
 
 // Single source of truth for what the agent may do, per case autonomy mode.

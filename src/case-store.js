@@ -33,6 +33,7 @@ import { DERIVED_ONLY_FIELDS, writeGuardViolation } from './store/guards.js'
 import { REPORT_KEYS, REPORT_KEY_ORDER, APPEND_FIELDS } from './store/report-shape.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 import { tagList } from './timestamp.js'
+import { evData } from './safe.js'
 
 // Principals casey acts as. role:agent satisfies normal requires_role gates.
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
@@ -320,31 +321,28 @@ export class CaseStore {
     return this._tProxy
   }
 
-  // thatcher (npm latest, currently >=1.0.37, well past the v1.0.13 fix floor)
-  // create() now returns the locally-constructed record carrying the real genId
-  // it stored in the TEXT id column -- confirmed live against the installed
-  // node_modules/thatcher/src/lib/busybase-store.js create() (returns `record`
-  // with `id: data.id || genId()`, never a rowid), and re-verified end-to-end
-  // via a direct t.create()+t.get()-by-returned-id round trip against a fresh
-  // embedded store. The uniqueWhere-list-and-pick-newest reload this function
-  // used to need (because an older thatcher returned a rowid alias instead) is
-  // dead weight now; trust the create() return directly. uniqueWhere is kept as
-  // a parameter (unused) so every existing call site stays unchanged -- this is
-  // a pure internal simplification, not a signature change.
-  async _createReload(entity, data, user, _uniqueWhere) {
-    return this.t.create(entity, data, user)
-  }
+  // thatcher's create() returns the locally-constructed record carrying the
+  // real genId it stored in the TEXT id column -- confirmed live against the
+  // installed node_modules/thatcher/src/lib/busybase-store.js create() (returns
+  // `record` with `id: data.id || genId()`, never a rowid), and re-verified
+  // end-to-end via a direct t.create()+t.get()-by-returned-id round trip against
+  // a fresh embedded store. An older thatcher returned a rowid alias instead, so
+  // creates used to go through a _createReload(entity, data, user, uniqueWhere)
+  // wrapper that listed by uniqueWhere and picked the newest row. That reload is
+  // dead weight now: the wrapper had become a pass-through to t.create() with an
+  // unread 4th argument every call site still built, so it is gone and the four
+  // creates below call this.t.create() directly.
 
   // ---- contacts -----------------------------------------------------------
 
   async findOrCreateContact({ channel, external_id, display_name, handle }) {
     const [existing] = await this.t.list('contact', { channel, external_id }, { limit: 1 })
     if (existing) return existing
-    return this._createReload('contact', {
+    return this.t.create('contact', {
       channel, external_id,
       display_name: display_name || handle || external_id,
       handle: handle || '',
-    }, SYSTEM_USER, { channel, external_id })
+    }, SYSTEM_USER)
   }
 
   // Locked variant for callers OUTSIDE findOrCreateCase's own lock (which already
@@ -423,13 +421,19 @@ export class CaseStore {
   // live value; absent any, callers fall back to DEFAULT_THRESHOLDS. Storing the
   // change as an event makes every tuning auditable for free -- no schema change,
   // no new entity, and a full history of who tightened what and when.
-  async _settingsCaseId() {
+  // Shared by every settings singleton below (thresholds, fleet-health,
+  // shift): one 'system'-channel case per settings key, found-or-created on
+  // demand. Was written out three times verbatim, differing only in the two
+  // string literals.
+  async _systemSingletonCaseId(key, displayName) {
     const { case: c } = await this.findOrCreateCase({
-      channel: 'system', external_id: 'settings:thresholds',
-      contact: { display_name: 'settings' },
+      channel: 'system', external_id: `settings:${key}`,
+      contact: { display_name: displayName },
     })
     return c.id
   }
+
+  async _settingsCaseId() { return this._systemSingletonCaseId('thresholds', 'settings') }
 
   // Returns the latest persisted thresholds patch object, or null if none set.
   // Validation/merge over defaults is the caller's concern (src/thresholds.js).
@@ -479,13 +483,7 @@ export class CaseStore {
   // append-only-observation pattern as thresholds and the runtime-event log: each
   // SCHEDULED sweep persists its summary as one audited observation, so the trend
   // over time is auditable for free -- no schema change, no new entity.
-  async _fleetHealthCaseId() {
-    const { case: c } = await this.findOrCreateCase({
-      channel: 'system', external_id: 'settings:fleet-health',
-      contact: { display_name: 'fleet-health' },
-    })
-    return c.id
-  }
+  async _fleetHealthCaseId() { return this._systemSingletonCaseId('fleet-health', 'fleet-health') }
 
   // Persist a sweep summary as a new audited observation. `summary` is the object
   // sweepCases returns ({scanned, flagged, cleared, breaches, errors, ...}); we add
@@ -536,13 +534,7 @@ export class CaseStore {
   // observation, and the handover digest reads the newest to scope "since last
   // shift". Scoped by timestamp, not operator id, so a rotating field team shares
   // one shift line regardless of who clicks.
-  async _shiftCaseId() {
-    const { case: c } = await this.findOrCreateCase({
-      channel: 'system', external_id: 'settings:shift',
-      contact: { display_name: 'shift' },
-    })
-    return c.id
-  }
+  async _shiftCaseId() { return this._systemSingletonCaseId('shift', 'shift') }
 
   // Stamp a new shift marker. Returns { ts, by }.
   async startShift(user, now = Date.now()) {
@@ -570,7 +562,7 @@ export class CaseStore {
       if (!m) continue
       const ts = parseInt(m[1], 10)
       if (!Number.isFinite(ts)) continue
-      const by = (typeof ev.data === 'string' ? (() => { try { return JSON.parse(ev.data) } catch { return null } })() : ev.data)?.by || null
+      const by = evData(ev).by || null
       return { ts, by }
     }
     return null
@@ -601,13 +593,13 @@ export class CaseStore {
       // exists (same conversation, same reporter) rather than re-reading the
       // contact row a second time.
       const currentOpen = await this.findOpenCase({ channel, external_id })
-      return this._createReload('case', {
+      return this.t.create('case', {
         ref, channel, external_id, contact_id: contact_id || '',
         subject, summary: '', priority: 'normal', tags: '',
         assignee: UNCLAIMED_ASSIGNEE, autonomy: 'auto', status: 'new', last_event_at: nowIso(),
         author_key: deriveAuthorKey(external_id),
         reporter_tier: currentOpen?.reporter_tier || 'reporter',
-      }, AGENT_USER, { ref })
+      }, AGENT_USER)
     })
   }
 
@@ -986,7 +978,7 @@ export class CaseStore {
       : null
 
     const ref = await this._nextRef()
-    const created = await this._createReload('case', {
+    const created = await this.t.create('case', {
       ref,
       channel, external_id,
       contact_id: contactRow?.id || '',
@@ -1005,7 +997,7 @@ export class CaseStore {
       // case with no contact defaults to 'reporter' (the lower-privilege
       // default, matching the fail-closed discipline used for tier elsewhere).
       reporter_tier: contactRow?.tier || 'reporter',
-    }, AGENT_USER, { ref })
+    }, AGENT_USER)
     return { case: created, created: true }
   }
 
@@ -1117,8 +1109,7 @@ export class CaseStore {
         let c = await this.getCase(c0.id)
         if (!c) return
         for (let attempt = 0; attempt <= ERASE_RETRY_LIMIT; attempt++) {
-          let report
-          try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+          const { value: report } = this._parseReport(c.report, c.id)
           const hadPII = PII_REPORT_FIELDS.some(k => report[k] != null && report[k] !== '')
           if (!hadPII) return
           for (const k of PII_REPORT_FIELDS) report[k] = null
@@ -1385,7 +1376,7 @@ export class CaseStore {
       for (const id of ids) if (!byId.has(id)) return { error: `event ${id} is not on case ${src.ref}` }
       if (ids.length >= all.length) return { error: 'cannot split out every event -- that would empty the source case' }
       const ref = await this._nextRef()
-      const created = await this._createReload('case', {
+      const created = await this.t.create('case', {
         ref, channel: src.channel, external_id: src.external_id,
         contact_id: src.contact_id || '', subject: (subject && String(subject).trim()) || `Split from ${src.ref}`,
         summary: '', report: '', priority: src.priority || 'normal',
@@ -1393,7 +1384,7 @@ export class CaseStore {
         status: 'new', last_event_at: nowIso(),
         author_key: deriveAuthorKey(src.external_id),
         reporter_tier: src.reporter_tier || 'reporter',
-      }, AGENT_USER, { ref })
+      }, AGENT_USER)
       for (const id of ids) await this.updateEvent(id, { case_id: created.id })
       await this.appendEvent(created.id, {
         kind: 'note', actor: user.role === 'agent' ? 'agent' : 'operator',

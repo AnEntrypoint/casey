@@ -52,7 +52,7 @@ const LIST_KEYS = { visitCritical: { maxItems: 32, maxItemLen: 64 } }
 // default enum) so a deployment's own custom case_type values just work.
 const MAX_CASE_TYPE_KEY_LEN = 40
 
-export const SCALAR_KEYS = Object.keys(SCALAR_BOUNDS)
+const SCALAR_KEYS = Object.keys(SCALAR_BOUNDS)
 export const THRESHOLD_KEYS = [...SCALAR_KEYS, 'stageMaxDwellMs', 'byCaseType', ...Object.keys(LIST_KEYS)]
 
 function clampInt(v, [min, max]) {

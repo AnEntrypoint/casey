@@ -99,11 +99,8 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
     // resolved-only-ever-carries-never_closed invariant below. openStatuses
     // includes 'resolved' (it is not 'closed'), so this branch is otherwise
     // reachable for it before that invariant's own status check runs.
-    if (status === 'resolved') {
-      out.push({ breach: 'timestamp_corrupt', since_ms: 0, detail: 'case timestamps missing or corrupted; unable to assess staleness' })
-      return out
-    }
     out.push({ breach: 'timestamp_corrupt', since_ms: 0, detail: 'case timestamps missing or corrupted; unable to assess staleness' })
+    if (status === 'resolved') return out
     // Every check below this point is gated on a valid `idle` duration (now -
     // touched), which is unavailable here -- but MISSING_CRITICAL is a pure
     // report-shape check with no duration dependency, so it must still run: a
@@ -202,18 +199,14 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
     out.push({ breach: 'incomplete_critical', since_ms: idle, detail: `in ${status} for ${hours(idle)} but visit-critical facts still missing` })
   }
 
-  // CONTACT_DEGRADATION: the contact has had sustained turn failures in recent history.
-  // Conservative pattern (multiple failures required, not just one) to avoid false positives.
-  // Thresholds control the window and minimum count.
-  const degradationWindowMs = thresholds?.degradationWindowMs ?? (3600e3)  // default 1 hour
-  const degradationMinCount = thresholds?.degradationMinCount ?? 3        // default 3+ failures
-  if (Number.isFinite(touched) && idle < degradationWindowMs) {
-    // Check if contact has recent degraded turns (caller would need to pass this info)
-    // For now, this is a placeholder that case-sweep.js will populate when it has event data
-    if (thresholds?.contactDegradationCount != null && thresholds.contactDegradationCount >= degradationMinCount) {
-      out.push({ breach: 'contact_degradation', since_ms: 0, detail: `${thresholds.contactDegradationCount} turn failures recently; contact may be flaky` })
-    }
-  }
+  // A 'contact_degradation' breach (sustained turn failures for one contact)
+  // used to be sketched here, gated on thresholds.contactDegradationCount --
+  // a key thresholds.js never produces and case-sweep.js never passed, so the
+  // branch was permanently false and its own comment said it was a placeholder
+  // "case-sweep.js will populate". Removed 2026-09-07. The real per-contact
+  // failure data does exist (degraded-turns.js, behind /api/turns/degraded);
+  // if this breach is wanted, feed that into classifyCaseHealth's inputs and
+  // add the tag back to ALL_HEALTH_TAGS in the same change, not before.
 
   return out
 }
@@ -227,7 +220,7 @@ function hours(msVal) {
 
 // Stable tag name for a breach, so the sweep can set/clear them idempotently.
 export function healthTag(breach) { return 'health:' + breach }
-export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'unanswered_handoff_escalated', 'unsent_draft', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt', 'contact_degradation'].map(healthTag)
+export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'unanswered_handoff_escalated', 'unsent_draft', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt'].map(healthTag)
 
 // Worker check-in baseline: every field_worker should check in at least once per
 // configurable window (default 7 days). Returns a list of workers who are past the

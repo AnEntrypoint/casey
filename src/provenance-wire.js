@@ -24,11 +24,21 @@
 // GPS-vs-estimate flag through case_report's own schema to upgrade this.
 
 import { animalHealthPack } from './packs/animal-health.js'
+import { loadPack } from './core/pack-schema.js'
 import { mkValue } from './core/provenance.js'
 import { writeObservation } from './core/write-path.js'
 import { RawLog } from './core/raw-log.js'
 
-const PACK_FIELD_MAP = animalHealthPack.observationForms.sick_or_dead_animal.fields
+// Structural regression guard, same discipline as hooks/prompt.js's
+// selfCheckLoadBearingPromptContent and case-tools.js's
+// selfCheckLoadBearingToolDescriptions: run at module load, throw loud. This
+// is the ONE call site that makes core/pack-schema.js's honesty floor real
+// rather than documentary -- a pack edit that sets unknownAllowed:false, names
+// an undeclared codelist, or breaks the subject-type graph fails at boot with
+// the full diagnostic instead of silently reaching a live conversation.
+const PACK = loadPack(animalHealthPack)
+
+const PACK_FIELD_MAP = PACK.observationForms.sick_or_dead_animal.fields
 
 let _rawLog = null
 function getRawLog(dataDir) {
@@ -48,7 +58,7 @@ function getRawLog(dataDir) {
 // last_report_* propagation).
 export async function recordProvenanceObservation({ dataDir, caseId, author, incoming, hasLatLon, lat, lon, recordedAtMs = Date.now() }) {
   const findings = {}
-  const mk = (value) => mkValue({ value, provenance: 'reported', recordedAt: recordedAtMs, recordedBy: author || 'unknown', packVersion: animalHealthPack.version })
+  const mk = (value) => mkValue({ value, provenance: 'reported', recordedAt: recordedAtMs, recordedBy: author || 'unknown', packVersion: PACK.version })
   for (const [field, value] of Object.entries(incoming || {})) {
     if (value == null || String(value).trim() === '') continue
     // incoming.location is the free-text place description (case_report's `location`
@@ -72,7 +82,7 @@ export async function recordProvenanceObservation({ dataDir, caseId, author, inc
     observerRole: 'reporter',
     reportedAt: new Date(recordedAtMs).toISOString(),
     findings,
-    packId: animalHealthPack.id,
-    packVersion: animalHealthPack.version,
+    packId: PACK.id,
+    packVersion: PACK.version,
   })
 }

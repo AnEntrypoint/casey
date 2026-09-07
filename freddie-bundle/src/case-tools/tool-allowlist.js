@@ -2,8 +2,9 @@
 // casey's old enabledToolsets/disabledToolsets contract (freddie has no
 // toolset-category concept; ctx.tools is one global registry shared by
 // every plugin, including freddie's own base bundle's bash/write/edit/
-// file/credential tools -- see AGENTS.md's "pi tool surface" security
-// invariant this preserves).
+// file/credential tools -- see AGENTS.md's "freddie integration" section,
+// the paragraph headed "the load-bearing replacement for the old
+// enabledToolsets contract", which this preserves).
 //
 // Two independent gates, defense in depth:
 //   1. `system-prompt/assemble` waterfall -- hides every non-allowlisted

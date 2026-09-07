@@ -26,7 +26,8 @@ import { tagList } from './timestamp.js'
 import { sweepCases } from './case-sweep.js'
 import { ALL_HEALTH_TAGS } from './case-health.js'
 import { mergeTag } from './hooks/heuristics.js'
-import { caseDeliveryTarget } from './hooks/handler.js'
+import { caseDeliveryTarget, splitExternalId } from './hooks/handler.js'
+import { disposeAgent } from './agent/run-turn.js'
 
 const CASE_HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
@@ -186,7 +187,20 @@ export class Casey {
     //    the channel adapter and sends -- the same path the dashboard uses for
     //    operator replies. Null-safe: agent transitions and opted-out contacts
     //    are skipped inside the notifier.
-    this.store.onTransition = makeTransitionNotifier(this.store, this.sendReply.bind(this), { log: this.log })
+    // Composed, not replaced: the contact-notify hook plus a live-agent
+    // eviction. src/agent/run-turn.js keeps ONE freddie Agent per `case:<id>`
+    // in a module-level Map and nothing ever removed an entry, so a
+    // long-running worker retained one session object per case it had ever
+    // conversed with, for the life of the process. A resolved/closed case will
+    // not take another turn, so its agent is dropped here; if the case is
+    // reopened, getOrCreateAgent() simply builds a fresh one, which is the same
+    // state a supervisor hot-reload already produces routinely. Eviction is a
+    // synchronous Map delete and runs first so a notifier failure cannot skip it.
+    const notifyOnTransition = makeTransitionNotifier(this.store, this.sendReply.bind(this), { log: this.log })
+    this.store.onTransition = async (ev) => {
+      if (ev?.caseRow?.id && !isOpenCase({ status: ev.to })) disposeAgent(`case:${ev.caseRow.id}`)
+      return notifyOnTransition(ev)
+    }
     return this
   }
 
@@ -358,7 +372,7 @@ export class Casey {
   // fits this simpler shape rather than Discord's.
   async _makeWhatsappAdapter() {
     const { WhatsappAdapter } = await import('./adapters/whatsapp.js')
-    return new WhatsappAdapter({ port: this.opts.whatsappPort || 0 })
+    return new WhatsappAdapter()
   }
 
   // Wrap gateway.handleInbound so every invocation is tracked + awaitable.
@@ -802,36 +816,17 @@ export class Casey {
           await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-attempted:${pending.id}` })
         } catch (e) { this.log?.warn?.('[casey] resume marker failed', { caseId: c.id, error: e.message }); continue }
         const platform = c.channel
-        // Same channel_id split as drainQueuedTurns below: external_id is the
-        // CASE IDENTITY (conversationKey's "container:author" shape on a
-        // multi-author channel), not a valid Discord channel snowflake on its
-        // own -- replyTarget() reads msg.raw.channel_id directly, so passing
-        // the combined external_id through unsplit sent every resumed reply
-        // on a multi-author Discord channel to Discord as an invalid channel
-        // id (400 Invalid Form Body, NUMBER_TYPE_COERCE), silently never
-        // reaching the contact even when the LLM call itself succeeded.
-        const parts = c.external_id.split(':')
-        const container = parts[0]
-        // SEVERE COMPOUNDING-KEY BUG, fixed here: msg.from must be the bare
-        // AUTHOR id only -- passing the whole combined external_id back in as
-        // `from` (as this line used to) makes conversationKey() (which
-        // computes `container:from`) recombine it into
-        // `container:container:author` on THIS redrive's own next write,
-        // growing by one duplicated container segment on every single
-        // resume-sweep pass. Live-witnessed: real production external_ids for
-        // this channel's cases had accumulated the SAME channel id 30+ times,
-        // colon-joined, after weeks of nightly resume sweeps silently
-        // corrupting them one redrive at a time -- conversationKey() itself
-        // was never the bug (it always emits a clean two-part key), the bug
-        // was this call site feeding its own prior output back in as raw
-        // input. The real author is always the LAST colon-separated segment,
-        // regardless of how many duplicated container segments already
-        // accumulated in front of it -- taking the last part both fixes the
-        // bug going forward AND self-heals existing corrupted keys on their
-        // very next successful resume (the freshly split-and-rejoined key
-        // this redrive writes collapses back to a clean two-part
-        // container:author, no separate one-off migration needed).
-        const author = parts[parts.length - 1]
+        // external_id is the CASE IDENTITY (conversationKey's container:author
+        // shape on a multi-author channel), not a valid Discord channel snowflake
+        // on its own -- replyTarget() reads msg.raw.channel_id directly, so
+        // passing the combined external_id through unsplit sent every resumed
+        // reply on a multi-author Discord channel to Discord as an invalid
+        // channel id (400 Invalid Form Body, NUMBER_TYPE_COERCE), silently never
+        // reaching the contact even when the LLM call itself succeeded. The
+        // compounding-key history behind taking the LAST segment as the author
+        // lives on splitExternalId itself (hooks/handler.js) -- read it there
+        // before changing either call site.
+        const { container, author } = splitExternalId(c.external_id)
         const msg = {
           from: author,
           text: pending.ev.text || '',
@@ -990,9 +985,7 @@ export class Casey {
           // ever-growing container:container:...:author on every redrive. Taking
           // the last segment also self-heals an already-corrupted multi-segment
           // key back to a clean two-part one on this redrive's own write.
-          const qParts = c.external_id.split(':')
-          const container = qParts[0]
-          const author = qParts[qParts.length - 1]
+          const { container, author } = splitExternalId(c.external_id)
           const msg = { from: author, text: ev.text || '', platform: c.channel, resume: true, queuedRedrive: true, raw: { channel_id: container, id, author: {} } }
           try {
             const res = await handle.call(this.gateway, c.channel, msg)

@@ -10,6 +10,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { filterGitignored } from './lib/git-ignored.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const fails = []
@@ -26,33 +27,7 @@ function walk(dir, out = []) {
   return out
 }
 
-// Untracked scratch workspaces (gm-plugkit tool-verb clones, session
-// scratchpads) live at the repo root under gitignored names not on the
-// hardcoded skip list above -- ask git which of walk()'s candidates it
-// would actually ignore, rather than growing that list by hand forever.
-// Falls back to the unfiltered list if git is unavailable (bare-clone CI
-// without git on PATH), matching this script's dependency-free contract.
-function filterGitignored(paths) {
-  try {
-    const rel = paths.map((p) => p.slice(ROOT.length).replace(/\\/g, '/'))
-    const out = execFileSync('git', ['check-ignore', '--stdin'], {
-      cwd: ROOT, input: rel.join('\n'), stdio: ['pipe', 'pipe', 'pipe'],
-    }).toString()
-    const ignored = new Set(out.split('\n').filter(Boolean))
-    return paths.filter((_, i) => !ignored.has(rel[i]))
-  } catch (e) {
-    // git check-ignore exits 1 (not an error) when NOTHING is ignored --
-    // only fall back on a genuine invocation failure (git missing/not a repo).
-    if (e.status === 1 && e.stdout != null) {
-      const ignored = new Set(String(e.stdout).split('\n').filter(Boolean))
-      const rel = paths.map((p) => p.slice(ROOT.length).replace(/\\/g, '/'))
-      return paths.filter((_, i) => !ignored.has(rel[i]))
-    }
-    return paths
-  }
-}
-
-const all = filterGitignored(walk(ROOT))
+const all = filterGitignored(walk(ROOT), ROOT)
 const jsFiles = all.filter((p) => ['.js', '.mjs'].includes(extname(p)))
 
 // 1. JS syntax: node --check every JS/MJS file.
@@ -165,36 +140,27 @@ for (const dir of STUB_MOCK_SCAN_DIRS) {
   }
 }
 
-// Trust-boundary dependency arrows (core -> engine -> packs/clients, one way
-// only): the new provenance subsystem's src/core/, src/engine/, src/packs/
-// directories may only import DOWNWARD. A packs/ file importing from core/
-// or engine/ (packs must be data-shaped, referencing the engine only via
-// runtime injection, never a static import) or an engine/ file importing
-// upward from packs/ would let a config change silently reach into engine
+// Trust-boundary dependency arrow (core -> packs, one way only): a
+// src/packs/*.js file is declarative data and may never statically import
+// src/core/. A pack that imports engine code is code wearing a config
+// costume, and a config change could then silently reach into core
 // internals -- exactly the "can this change fabricate a number" question
-// this boundary exists to keep answerable by directory alone.
-const BOUNDARY_DIRS = { core: 'src/core', engine: 'src/engine', packs: 'src/packs' }
-const FORBIDDEN_IMPORTS = {
-  // packs/ is declarative data -- it must never import ANYTHING from core/
-  // or engine/ (a pack that imports engine code is code wearing a config
-  // costume, the exact anti-pattern item 16 forbids).
-  packs: ['src/core', 'src/engine', './core', './engine', '../core', '../engine'],
-}
-for (const [dirKey, relDir] of Object.entries(BOUNDARY_DIRS)) {
-  const forbidden = FORBIDDEN_IMPORTS[dirKey]
-  if (!forbidden) continue
-  let files = []
-  try { files = walk(join(ROOT, relDir)).filter((p) => ['.js', '.mjs'].includes(extname(p))) } catch { continue }
-  for (const f of files) {
-    let src = ''
-    try { src = readFileSync(f, 'utf8') } catch { continue }
-    const importRe = /(?:from\s+['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"])/g
-    let m
-    while ((m = importRe.exec(src))) {
-      const spec = m[1] || m[2]
-      if (forbidden.some((bad) => spec.includes(bad))) {
-        note(`trust-boundary: ${f.replace(ROOT, '')} imports "${spec}" -- ${dirKey}/ may never import engine/core (one-way dependency arrow: core -> engine -> packs/clients)`)
-      }
+// this boundary exists to keep answerable by directory alone. src/engine/
+// was removed as unreachable code (see AGENTS.md's Provenance subsystem
+// section); this gate previously walked it and a src/core/ entry that
+// declared no forbidden list, both of which were no-ops.
+const PACKS_FORBIDDEN_IMPORTS = ['src/core', './core', '../core']
+let packFiles = []
+try { packFiles = walk(join(ROOT, 'src/packs')).filter((p) => ['.js', '.mjs'].includes(extname(p))) } catch { packFiles = [] }
+for (const f of packFiles) {
+  let src = ''
+  try { src = readFileSync(f, 'utf8') } catch { continue }
+  const importRe = /(?:from\s+['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"])/g
+  let m
+  while ((m = importRe.exec(src))) {
+    const spec = m[1] || m[2]
+    if (PACKS_FORBIDDEN_IMPORTS.some((bad) => spec.includes(bad))) {
+      note(`trust-boundary: ${f.replace(ROOT, '')} imports "${spec}" -- src/packs/ is declarative data and may never import src/core/`)
     }
   }
 }
@@ -218,6 +184,22 @@ try {
     ...process.env,
     DS_LINT_EXTRA_CSS_FILES: cssFiles.join(','),
     DS_LINT_EXTRA_JS_DIRS: join(DASHBOARD_PUBLIC, 'src'),
+    // This dashboard's own `!important` budget, counted separately from the
+    // kit's frozen baseline (deps/design's ratchetOrThrow splits the two
+    // corpora, so a consumer's sheet can never buy the kit slack it did not
+    // earn -- and vice versa: tightening the kit no longer breaks us).
+    //
+    // The one declaration is app.css's
+    //   @media print { .app-topbar, ... { display: none !important } }
+    // which keeps the app chrome off the operator's printed handover sheet.
+    // It cannot be done with specificity instead: the kit sets display:flex
+    // on those same elements at specificity up to 4
+    // (.ds-247420.ds-247420 .ca-app .app-topbar, and .ca-app is emitted by
+    // the kit's own JS), so a consumer sheet cannot beat it without the flag.
+    // Verified by enumerating every competing `display` declaration in
+    // dist/247420.css before keeping it. This is a budget to drive to 0, not
+    // an allowance to spend.
+    DS_LINT_EXTRA_IMPORTANT_BASELINE: '1',
   }
   for (const script of ['lint-tokens.mjs', 'lint-inline-css.mjs']) {
     try {

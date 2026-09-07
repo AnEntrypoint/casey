@@ -87,9 +87,9 @@ WHATSAPP_PHONE_NUMBER_ID=
 WHATSAPP_APP_SECRET=
 # Webhook verification handshake token (set in the Meta developer console):
 WHATSAPP_VERIFY_TOKEN=
-# Fix the public-facing webhook port/path (useful behind a reverse proxy or ngrok):
-#WHATSAPP_WEBHOOK_PORT=4001
-#WHATSAPP_WEBHOOK_PATH=/whatsapp
+# Fix the public-facing webhook path (useful behind a reverse proxy or ngrok).
+# There is no separate webhook PORT: the webhook shares the dashboard port.
+#WHATSAPP_WEBHOOK_PATH=/webhooks/whatsapp
 
 # Public URL of this casey instance (optional). When set, the agent mentions it
 # to the contact on first message so they can fill in more details via the web form:
@@ -324,22 +324,6 @@ async function main() {
     }
     // public URL (optional but useful)
     console.log(process.env.CASEY_PUBLIC_URL ? ok(`CASEY_PUBLIC_URL set (${process.env.CASEY_PUBLIC_URL})`) : dim('  CASEY_PUBLIC_URL unset - contacts will not receive a web form link (optional)'))
-    // prompt-tuning cohort gate (hooks/prompt.js inCohort()) -- a malformed
-    // percentage silently clamps at runtime rather than crashing, so flag it
-    // here the same way every other config surface is validated, per the
-    // existing doctor pattern (thatcher config, channel creds, proxy hops).
-    if (process.env.CASEY_PROMPT_COHORT_PERCENT !== undefined) {
-      const raw = process.env.CASEY_PROMPT_COHORT_PERCENT
-      const n = Number(raw)
-      if (!Number.isFinite(n) || n < 0 || n > 100) {
-        console.log(bad(`CASEY_PROMPT_COHORT_PERCENT="${raw}" is not a number 0-100 - it will silently clamp at runtime; fix it to the intended rollout percentage`))
-        problems++
-      } else if (!process.env.CASEY_PROMPT_VARIANT) {
-        console.log(warn(`CASEY_PROMPT_COHORT_PERCENT=${n} is set but CASEY_PROMPT_VARIANT is empty - the cohort gate has nothing to gate and every contact gets the unchanged default prompt`))
-      } else {
-        console.log(ok(`prompt cohort gate: variant "${process.env.CASEY_PROMPT_VARIANT}" rolling out to ${n}% of contacts`))
-      }
-    }
     // host timezone -- casey always renders absolute times in SAST regardless of
     // the host clock, so a non-SAST host is fine (not a problem), but flag it so
     // an operator reading raw OS timestamps elsewhere knows the offset.
@@ -373,7 +357,7 @@ async function main() {
   }
 
   if (cmd === 'up') {
-    if (flags.help) { console.log('casey up [--channels discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise] [--no-auto-update]\n  Start the gateway (all configured channels) and the dashboard.\n  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,\n  reopening the same case store so nothing is lost. AUTO-UPDATE is on by default -- it pulls\n  from origin on an interval (git pull --ff-only, safe: it never clobbers local edits) so a\n  pushed fix deploys with no manual restart. --no-reload disables the file watcher; --no-auto-update\n  (or CASEY_AUTO_UPDATE=0) disables the origin pull; --no-supervise runs the legacy single-process\n  path for debugging.'); return }
+    if (flags.help) { console.log('casey up [--channels discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise] [--no-auto-update]\n  Start the gateway (all configured channels) and the dashboard.\n  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,\n  reopening the same case store so nothing is lost. AUTO-UPDATE is on by default -- it fetches\n  from origin on an interval and fast-forwards (git fetch + merge --ff-only, safe: it never\n  clobbers local edits and refuses to move a diverged tree) so a pushed fix deploys with no\n  manual restart. --no-reload disables the file watcher; --no-auto-update\n  (or CASEY_AUTO_UPDATE=0) disables the origin pull; --no-supervise runs the legacy single-process\n  path for debugging.'); return }
     const requested = (flags.channels || 'discord,whatsapp').split(',').map(s => s.trim()).filter(Boolean)
     // Security invariant (AGENTS.md): WhatsApp must NOT serve without
     // WHATSAPP_APP_SECRET -- without it freddie cannot HMAC-verify inbound

@@ -1,13 +1,12 @@
 // degraded-turns.js -- turn failure tracking and observability
 //
 // Captures failed turns (timeout, provider down, retry exhausted, LLM refusal)
-// and provides aggregation/query for the /api/turns/degraded endpoint.
+// and provides the degradation-rate aggregate /api/health reports.
 //
 // Write-shape contract (must match GET /api/turns/degraded, operations.js, and
 // the direct appendEvent call sites in hooks/handler.js -- there is exactly one
 // convention, not two): kind:'observation', actor:'system', data.degraded_turn
-// === true (boolean, not a string), data.reason, plus contact_id/turn_ts here
-// for the per-contact rollup queryDegradedTurns() below. `data` is passed as a
+// === true (boolean, not a string), data.reason, plus contact_id/turn_ts. `data` is passed as a
 // plain object -- case-store.js's appendEvent() already does the ONE
 // JSON.stringify on write (case-store.js line ~1408); stringifying here too
 // double-encodes it, so a read-edge JSON.parse (safe.js evData()) yields a
@@ -60,90 +59,6 @@ export async function recordDegradedTurn(store, { caseId, contactId, reason, tur
   }
 }
 
-// Query degraded turns for the /api/turns/degraded endpoint
-// Aggregates recent failures with per-contact rollup
-export async function queryDegradedTurns(store, { hours = 24, limit = 100 } = {}) {
-  if (!store || typeof store.listAllEvents !== 'function') {
-    return { turns: [], summary: { total: 0, last_failure_at: null, failures_in_last_hour: 0, by_reason: {} } }
-  }
-
-  const now = Date.now()
-  const windowMs = hours * 3600000
-  const thresholdMs = now - windowMs
-  const lastHourMs = now - 3600000
-
-  try {
-    // Cross-case fetch: listEvents(caseId, ...) is scoped to ONE case (it
-    // builds a where:{case_id} clause) -- passing null does not mean "every
-    // case", it means "case_id === null", which matches nothing. listAllEvents
-    // is the real cross-case query (case-store.js), pre-filtered server-side
-    // to the observation/system rows this convention actually writes so the
-    // over-fetch stays bounded the same way /api/turns/degraded's own route
-    // already does.
-    const { rows: allEvents } = await store.listAllEvents({ kind: 'observation', actor: 'system' }, { limit: 50000 }).catch(() => ({ rows: [] }))
-
-    const degradedEvents = []
-    const byReason = {}
-    let lastFailureAt = null
-    let lastHourCount = 0
-
-    for (const event of allEvents) {
-      // created_at is thatcher's unix-SECONDS convention (case-store.js
-      // appendEvent), not ISO -- tsMs is the shared digit-string-aware
-      // parser (timestamp.js); a bare `new Date(seconds).getTime()` here
-      // previously misread every timestamp by a factor of 1000.
-      const createdMs = tsMs(event.created_at)
-      if (!Number.isFinite(createdMs) || createdMs < thresholdMs) continue
-
-      const data = evData(event)
-      if (data.degraded_turn !== true) continue
-
-      degradedEvents.push({ event, createdMs, data })
-
-      const reason = data.reason || 'unknown'
-      byReason[reason] = (byReason[reason] || 0) + 1
-
-      if (lastFailureAt == null || createdMs > lastFailureAt) lastFailureAt = createdMs
-      if (createdMs > lastHourMs) lastHourCount += 1
-    }
-
-    // Group by contact and reason, keeping most recent
-    const byContact = new Map()
-    for (const { event, createdMs, data } of degradedEvents) {
-      const contactId = data.contact_id || 'unknown'
-      const reason = data.reason || 'unknown'
-      const key = `${contactId}:${reason}`
-
-      if (!byContact.has(key)) {
-        byContact.set(key, { contact_id: contactId, reason, count: 0, last_at: event.created_at, last_at_ms: createdMs })
-      }
-      const entry = byContact.get(key)
-      entry.count += 1
-      if (createdMs > entry.last_at_ms) {
-        entry.last_at = event.created_at
-        entry.last_at_ms = createdMs
-      }
-    }
-
-    const turns = Array.from(byContact.values())
-      .sort((a, b) => b.last_at_ms - a.last_at_ms)
-      .slice(0, limit)
-      .map(({ last_at_ms, ...rest }) => rest)
-
-    return {
-      turns,
-      summary: {
-        total: degradedEvents.length,
-        last_failure_at: lastFailureAt,
-        failures_in_last_hour: lastHourCount,
-        by_reason: byReason,
-      },
-    }
-  } catch (e) {
-    return { turns: [], summary: { total: 0, last_failure_at: null, failures_in_last_hour: 0, by_reason: {} } }
-  }
-}
-
 // Calculate degradation rate: (degraded_turns_last_hour / total_turns_last_hour) * 100
 export async function calculateDegradationRate(store, { hours = 1 } = {}) {
   if (!store || typeof store.listAllEvents !== 'function') return { rate: 0, degraded_count: 0, total_count: 0 }
@@ -154,7 +69,7 @@ export async function calculateDegradationRate(store, { hours = 1 } = {}) {
     const thresholdMs = now - windowMs
 
     // Two separate cross-case fetches, each pre-filtered server-side to the
-    // rows this calculation actually needs (mirrors queryDegradedTurns' own
+    // rows this calculation actually needs (mirrors /api/turns/degraded's own
     // listAllEvents usage) rather than one unfiltered 50k-row pull scanned
     // twice in JS.
     const [{ rows: observations }, { rows: outbounds }] = await Promise.all([
