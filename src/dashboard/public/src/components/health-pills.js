@@ -6,8 +6,28 @@
 import * as webjsx from 'webjsx';
 import { Pill, Dot } from 'ds/components/shell.js';
 import { Alert } from 'ds/components/content.js';
-import { state } from '../state.js';
+import { state, schedule } from '../state.js';
 const h = webjsx.createElement;
+
+// Detail is DISCLOSED, not permanent -- see the note above HealthPills().
+const expandedDetail = new Set();
+
+// Wraps a pill + its degraded-state Alert so the Alert becomes a popover
+// under the pill instead of inline topbar content. `alertNode` null (healthy)
+// renders the bare pill with no button affordance, so a clean system stays
+// visually quiet.
+function pillWithDetail(key, pillNode, alertNode) {
+  if (!alertNode) return h('div', { class: 'ds-health-pill', key }, pillNode);
+  const open = expandedDetail.has(key);
+  return h('div', { class: 'ds-health-pill ds-health-pill-has-detail', key },
+    h('button', {
+      type: 'button', class: 'ds-health-pill-trigger',
+      'aria-expanded': String(open),
+      title: open ? 'Hide details' : 'Show details',
+      onclick: () => { if (open) expandedDetail.delete(key); else expandedDetail.add(key); schedule(); },
+    }, pillNode),
+    open ? h('div', { class: 'ds-health-pill-detail' }, alertNode) : null);
+}
 
 function sparkline(vals, w, h2) {
   if (!vals || vals.length < 2) return null;
@@ -32,7 +52,7 @@ function aiPill() {
   }
   if (hl.alert_webhook && hl.alert_webhook.configured && hl.alert_webhook.ok === false) extra += ' Alert webhook is failing to send.';
   const detail = (deaf ? gw.detail : hl.detail) + (hl.model ? (' (' + hl.model + ')') : '') + extra;
-  return h('div', { class: 'ds-health-pill', key: 'ai' },
+  return pillWithDetail('ai',
     Pill({ tone: ok ? 'accent' : '', children: [Dot({ tone: ok ? 'on' : 'off' }), ' ', label] }),
     !ok ? Alert({ kind: deaf ? 'error' : 'warn', children: detail }) : null
   );
@@ -43,7 +63,7 @@ function runtimePill() {
   if (!r || r.supervised === false) return null;
   const ok = r.state === 'healthy' || r.state === 'standalone';
   const warn = r.state === 'restarting' || r.state === 'booting';
-  return h('div', { class: 'ds-health-pill', key: 'rt' },
+  return pillWithDetail('rt',
     Pill({ tone: ok ? 'accent' : '', children: [Dot({ tone: ok ? 'on' : (warn ? 'warn' : 'off') }), ' ', r.label || ('Runtime: ' + (r.state || 'unknown'))] }),
     !ok && !warn ? Alert({ kind: 'error', children: 'Restarts since boot: ' + (r.restarts || 0) + (r.lastCrashReason ? (' - last: ' + r.lastCrashReason) : '') }) : null
   );
@@ -56,7 +76,7 @@ function guardrailsPill() {
   const label = fh.degraded ? 'Guardrails: degraded' : (flagged > 0 ? ('Guardrails: ' + flagged + ' flagged') : 'Guardrails: clean');
   const ok = !fh.degraded && flagged === 0;
   const warn = !fh.degraded && flagged > 0;
-  return h('div', { class: 'ds-health-pill', key: 'gr' },
+  return pillWithDetail('gr',
     Pill({ tone: ok ? 'accent' : '', children: [Dot({ tone: ok ? 'on' : (warn ? 'warn' : 'off') }), ' ', label, sparkline((fh.history || []).map(p => (p.flagged != null ? p.flagged : (p.data && p.data.flagged) || 0)), 36, 12)].filter(Boolean) }),
     !ok && !warn ? Alert({ kind: 'error', children: 'Last sweep scanned ' + (fh.latest.scanned || 0) + ', flagged ' + flagged + '. Investigate stuck/stale cases.' }) : null
   );
@@ -65,3 +85,4 @@ function guardrailsPill() {
 export function HealthPills() {
   return [aiPill(), runtimePill(), guardrailsPill()].filter(Boolean);
 }
+

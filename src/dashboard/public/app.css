@@ -47,6 +47,83 @@ body { background: var(--bg); color: var(--fg); }
 @container (max-width: 900px) {
   .app-two-pane-map > .case-detail-pane { flex: 1 1 auto; max-width: none; }
 }
+/* The map pane must NOT scroll: .app-two-pane's generic `overflow:auto` is
+   what let the canvas sit below the fold under the stat/feed/filter stack.
+   Here the shell fills the pane exactly and each overlay does its own
+   scrolling, so the map itself is always the full ground plane. */
+.app-two-pane-map > .case-list-pane { overflow: hidden; display: flex; min-height: 0; }
+
+/* ---- map-first shell: canvas is the ground plane, chrome floats on it ---- */
+.ds-map-shell { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
+/* Beats the generic `.ds-map-canvas { height: min(70vh,640px) }` above: in
+   this layout the canvas is sized by the pane, not by a viewport fraction. */
+.ds-map-shell > .ds-map-canvas {
+  position: absolute; inset: 0; height: auto; width: auto;
+  border: none; border-radius: 0; z-index: var(--z-base);
+}
+.ds-map-overlay { position: absolute; z-index: var(--z-raised); max-width: calc(100% - 2 * var(--space-3)); }
+.ds-map-overlay-top { top: var(--space-3); left: var(--space-3); right: var(--space-3); pointer-events: none; }
+/* Compact the shared stat cards down to map-pill scale -- the full
+   metrics-panel tile is far too tall to float over a map without burying it. */
+.ds-map-overlay-top .ds-stats-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; }
+.ds-map-overlay-top .ds-stat-card {
+  pointer-events: auto; padding: var(--space-1) var(--space-3); min-width: 0;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--r-pill); box-shadow: var(--shadow-1);
+}
+.ds-map-overlay-top .ds-stat-label { font-size: var(--fs-nano); letter-spacing: .04em; }
+.ds-map-overlay-top .ds-stat-value { font-size: var(--fs-lg); line-height: 1.15; }
+.ds-map-overlay-top .ds-stat-sub { display: none; }
+.ds-map-overlay-top .ds-map-updated {
+  pointer-events: auto; display: inline-block; margin-top: var(--space-2);
+  padding: var(--space-hair) var(--space-2); border-radius: var(--r-pill);
+  background: var(--bg); border: 1px solid var(--border);
+  font-size: var(--fs-nano); color: var(--fg-2);
+}
+/* Worst-first queue: the bottom line, so it is docked open by default. */
+.ds-map-overlay-queue {
+  left: var(--space-3); bottom: var(--space-3); width: min(360px, calc(100% - 2 * var(--space-3)));
+  display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start;
+}
+.ds-map-overlay-queue .ds-map-attention-feed {
+  width: 100%; max-height: min(38vh, 300px); margin: 0;
+  background: var(--bg); box-shadow: var(--shadow-2);
+}
+.ds-map-overlay-controls {
+  right: var(--space-3); top: calc(var(--space-3) + 3.25rem);
+  width: min(320px, calc(100% - 2 * var(--space-3)));
+  display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-end;
+}
+.ds-map-controls-body {
+  width: 100%; max-height: min(60vh, 460px); overflow-y: auto;
+  padding: var(--space-3); background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--r-1);
+  box-shadow: var(--shadow-2);
+}
+/* Deliberately a full-word button, not an icon: an unlabelled funnel/gear
+   glyph is exactly the affordance a low-computer-literacy user cannot decode. */
+.ds-map-overlay-toggle {
+  pointer-events: auto; cursor: pointer;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+  font: inherit; font-size: var(--fs-micro); font-weight: 600;
+  box-shadow: var(--shadow-1);
+  min-height: 2.25rem;
+}
+.ds-map-overlay-toggle:hover { background: var(--bg-2); }
+.ds-map-overlay-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ds-map-overlay-error { top: var(--space-3); left: 50%; transform: translateX(-50%); }
+/* Phone: the detail pane already takes over via .has-active, so the map keeps
+   the full pane. Overlays go full-width and the queue is capped harder so it
+   never swallows the map on a short screen. */
+@container (max-width: 900px) {
+  .ds-map-overlay-queue,
+  .ds-map-overlay-controls { left: var(--space-2); right: var(--space-2); width: auto; }
+  .ds-map-overlay-controls { top: auto; bottom: calc(var(--space-3) + 2.75rem); align-items: stretch; }
+  .ds-map-overlay-queue .ds-map-attention-feed { max-height: 30vh; }
+  .ds-map-overlay-top { left: var(--space-2); right: var(--space-2); top: var(--space-2); }
+}
 
 /* ---- panel-swap chrome (the 10 content-swap panels: back affordance) --- */
 .ds-panel-swap { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); }
@@ -143,6 +220,21 @@ body { background: var(--bg); color: var(--fg); }
 
 /* ---- health pills (health-pills.js) ------------------------------------ */
 .ds-health-pills, .ds-health-pill { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+/* Degraded-state detail is a popover under the pill, never inline topbar
+   content -- see health-pills.js's pillWithDetail(). */
+.ds-health-pill-has-detail { position: relative; }
+.ds-health-pill-trigger {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  color: inherit; cursor: pointer; display: inline-flex; align-items: center;
+}
+.ds-health-pill-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-pill); }
+.ds-health-pill-detail {
+  position: absolute; top: calc(100% + var(--space-2)); right: 0; z-index: var(--z-dropdown);
+  width: max-content; max-width: min(380px, 80vw);
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--r-1); padding: var(--space-2);
+  box-shadow: var(--shadow-2);
+}
 .ds-health-pill-group { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .ds-pill-with-spark { display: inline-flex; align-items: center; gap: var(--space-1); }
 .ds-sparkline { vertical-align: middle; color: var(--fg-3, var(--muted)); margin-left: var(--space-2); }
@@ -388,7 +480,7 @@ body { background: var(--bg); color: var(--fg); }
   display: flex; gap: var(--space-3); flex-wrap: wrap;
   font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted));
   margin: var(--space-2) 0; padding: var(--space-2) var(--space-3);
-  background: var(--bg-2, var(--panel-1)); border: 1px solid var(--border); border-radius: var(--r-1);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-1);
 }
 .ds-map-legend .sw, .map-legend .sw,
 .ds-map-legend-sw { display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill); margin-right: var(--space-1); vertical-align: middle; }
@@ -415,12 +507,12 @@ body { background: var(--bg); color: var(--fg); }
   font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted));
   padding: var(--space-1) var(--space-2); border-radius: var(--r-1);
 }
-.ds-map-unresolved-row:hover { background: var(--bg-2, var(--panel-1)); }
+.ds-map-unresolved-row:hover { background: var(--bg-2); }
 .ds-map-unresolved-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-muted { color: var(--fg-3, var(--muted)); }
 .leaflet-popup-content { font-size: var(--fs-nano, var(--fs-micro)); }
-.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg-2, var(--panel-1)); color: var(--fg); }
-.leaflet-container { background: var(--bg-2, var(--panel-1)); }
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--bg-2); color: var(--fg); }
+.leaflet-container { background: var(--bg-2); }
 
 /* ---- map marker icons and popups (map-leaflet.js) ----------------------- */
 .ds-map-marker-icon { display: flex; align-items: center; justify-content: center; }
