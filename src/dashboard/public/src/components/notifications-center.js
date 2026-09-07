@@ -6,7 +6,7 @@
 
 import * as webjsx from 'webjsx';
 import { Dropdown } from 'ds/components/overlay-primitives.js';
-import { IconButton, Badge, Icon } from 'ds/components/shell.js';
+import { Icon } from 'ds/components/shell.js';
 import { state } from '../state.js';
 import { openCaseRoute } from '../route.js';
 const h = webjsx.createElement;
@@ -52,11 +52,25 @@ export function NotificationsCenter() {
   items.push({ separator: true });
   if (alerts.length) items.push({ id: 'snooze-all', label: 'Snooze all for 1 hour' });
   return Dropdown({
-    ariaLabel: 'Notifications',
-    trigger: () => h('span', { class: 'ds-notif-trigger' },
-      IconButton({ icon: Icon('megaphone'), title: 'Notifications' }),
-      alerts.length ? Badge({ tone: 'danger', size: 'sm', children: String(alerts.length) }) : null
-    ),
+    ariaLabel: 'Alerts',
+    // A megaphone glyph with a red number beside it named itself only in a
+    // `title` attribute, and a title is a hover affordance -- it does not
+    // exist on the phones this deployment's field and secretarial staff work
+    // from, so on the screen that matters the control was an unlabelled
+    // picture. The word rides in the trigger now.
+    //
+    // Returns an ARRAY, not a vnode with children: Dropdown's own
+    // trigger-rewrap reads children back via `child.children`, which webjsx
+    // never populates (it stores them under `child.props.children`), so any
+    // trigger vnode carrying real children renders as an empty button. The
+    // array branch wraps the content into Dropdown's own
+    // `.ds-dropdown-trigger` and never hits that path -- the identical fix
+    // account-menu.js already carries, with the identical reason.
+    trigger: () => [
+      Icon('megaphone', { size: 16 }),
+      h('span', { class: alerts.length ? 'ds-notif-count is-active' : 'ds-notif-count' },
+        alerts.length ? ('Alerts (' + alerts.length + ')') : 'Alerts'),
+    ],
     items,
     onSelect: (id) => {
       if (id === 'snooze-all') { alerts.forEach(a => snoozeAlert(a.id)); return; }

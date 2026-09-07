@@ -7,7 +7,7 @@
 // needed.
 
 import * as webjsx from 'webjsx';
-import { state, schedule, setActiveId } from '../state.js';
+import { state, schedule, setActiveId, setCases } from '../state.js';
 import * as api from '../api.js';
 import { toast } from '../toasts.js';
 import { CaseListView } from './case-list-view.js';
@@ -60,12 +60,16 @@ async function promptNote(id) {
   catch (e) { toast('Could not save note: ' + (e.message || ''), 'err'); }
 }
 
+// setCases, not a bare field assignment: /api/cases has always returned the
+// server's own `total` alongside the page it sends, and nothing in the SPA ever
+// stored it, so state.allCasesTotal sat at 0 forever and the case list could
+// not state how much of the deployment it was actually showing. Publishing it
+// here is what lets the list head name the cap honestly.
 async function reloadCases() {
   try {
     const rows = await api.fetchCases();
     const list = Array.isArray(rows) ? rows : (rows && rows.cases) || [];
-    state.allCases = list;
-    schedule();
+    setCases(list, rows && typeof rows.total === 'number' ? rows.total : list.length);
   } catch { /* connection banner already surfaces the failure */ }
 }
 
@@ -81,7 +85,6 @@ export function CaseListDetailLayout() {
   return h('div', { class: 'app-two-pane grow' + (hasActive ? ' has-active' : '') },
     h('div', { class: 'case-list-pane', key: 'list' },
       CaseListView({
-        onOpenIntake: promptNewCase,
         onPromptTag: promptTag,
         onPromptNote: promptNote,
         onReloadCases: reloadCases,

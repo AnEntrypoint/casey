@@ -64,6 +64,13 @@ function openOnMap(mode) {
   setRailMode(mode);
 }
 
+// The worst-first queue: the map home with the queue in the rail. Exported
+// because it is now reached from two places that must land in the same
+// spot -- the Map nav item, and the frame's own "N need a person" lead
+// control (app-view.js's AttentionLead). A second local copy of this three-
+// call sequence is exactly how the map and the queue came to disagree before.
+export function openQueue() { openOnMap('queue'); }
+
 // DESTINATIONS ONLY. Five verbs (New case, Export, Sweep now, Focus, Refresh)
 // used to sit in this list above the fold, which made the two actual
 // destinations impossible to pick out at a glance -- a verb in a list of
@@ -80,9 +87,18 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
   const onMapHome = state.homeView === 'map' && !state.activePanel;
   return [
     {
-      group: 'Primary',
+      // Not 'Primary'. A group header is a word an operator reads on every
+      // screen, and 'Primary' names this group's RANK in the list rather than
+      // anything in it -- meaningless to a field or secretarial user reading
+      // it on a phone, and untranslated by the one deployer who relabels this
+      // nav (uhh's dashboard_ui.nav.group_labels renames 'Reports & Admin' and
+      // leaves this one exactly as shipped, so the shipped word is what real
+      // operators actually see). 'Day-to-day' names when you use it, which is
+      // the only thing a group header can usefully say. Still overridable via
+      // group_labels like every other group.
+      group: 'Day-to-day',
       items: [
-        { key: 'home_map', glyph: Icon('globe', { size: 15 }), label: 'Map', onClick: (e) => navClick(e, () => { closePanel(); setHomeViewRoute('map'); setRailMode('queue'); }), active: onMapHome && state.railMode === 'queue', ariaLabel: 'Map view (home)' },
+        { key: 'home_map', glyph: Icon('globe', { size: 15 }), label: 'Map', onClick: (e) => navClick(e, openQueue), active: onMapHome && state.railMode === 'queue', ariaLabel: 'Map view (home)' },
         { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: (e) => navClick(e, () => openOnMap('geo')), active: onMapHome && state.railMode === 'geo' },
         { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: (e) => navClick(e, () => openOnMap('clusters')), active: onMapHome && state.railMode === 'clusters', count: clustersCount },
         { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: (e) => navClick(e, () => { closePanel(); setHomeViewRoute('cases'); }), active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },

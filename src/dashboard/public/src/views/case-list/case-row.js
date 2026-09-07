@@ -1,18 +1,47 @@
-// Single case list row. Checkbox for bulk-select; guardrail boilerplate is
-// collapsed into a single Chip that expands the full list on click
-// (ux-case-list-guardrail-boilerplate-collapse); health/intake tags render
-// as distinct visual layers from operator/owner tags
-// (ux-internal-tags-visual-layer-separation).
+// One row of the full report list.
+//
+// The row LEADS with what makes it urgent. It used to lead with an id and a
+// timestamp -- ref, priority, stage, owner, "3h ago" -- and buried what the
+// report was actually about on the second line behind the channel name. An
+// operator scanning a duty roster needs "a person was asked for and no one has
+// replied" first and "CASE-1268" second, not the other way round.
+//
+// The urgency itself is NOT derived here. It is looked up from the same
+// server-ranked attention list (attn.js's score + plain reason) the queue above
+// reads, banded through map-model.js's urgencyBand -- the one shared ladder the
+// map's pins use too. The dot this row used to paint came from format.js's
+// attn() instead, a third, unrelated predicate (autonomy observe/assisted, or a
+// needs-human tag) that could and did mark a row urgent that the queue above it
+// did not list at all.
+//
+// Checkbox for bulk-select; guardrail boilerplate is collapsed into a single
+// Chip that expands the full list on click; health/intake tags render as
+// distinct visual layers from operator/owner tags.
 
 import * as ds from '/design/dist/247420.js';
 import { state, toggleBulkSelect, setActiveId } from '../../state.js';
-import { rel, fmtTime, tagList, attn, stageLabel, stageTone, healthLabel } from '../../format.js';
+import { rel, fmtTime, tagList, stageLabel, stageTone, healthLabel } from '../../format.js';
+import { urgencyBand, URGENCY_BAND_LABEL } from '../../map-model.js';
 import { pushHash } from '../../route.js';
 const { Chip, Pill } = ds.components;
 const h = ds.h;
 
 const HEALTH_TAG_PREFIX = 'health:';
 const INTERNAL_TAGS = new Set(['needs-human', 'draft-pending', 'unsent_draft', 'ai-offline', 'degraded-turn-seen']);
+
+// id -> attention row, rebuilt only when setAttention() swaps the array in.
+// Built per row instead would be quadratic over a 200-row page; keyed on array
+// identity rather than a timestamp so a re-render with unchanged data is free.
+let attnIndex = { src: null, byId: new Map() };
+function attentionFor(id) {
+  const src = state.attention || [];
+  if (attnIndex.src !== src) {
+    const byId = new Map();
+    for (const a of src) if (a && a.id != null) byId.set(a.id, a);
+    attnIndex = { src, byId };
+  }
+  return attnIndex.byId.get(id) || null;
+}
 
 function guardrailTags(c) {
   return tagList(c).filter((t) => t.startsWith(HEALTH_TAG_PREFIX) || INTERNAL_TAGS.has(t));
@@ -26,7 +55,7 @@ function intakeSourceTag(c) {
   return null;
 }
 
-function GuardrailChip({ c, expanded, onToggle }) {
+function GuardrailChip({ c, expanded }) {
   const tags = guardrailTags(c);
   if (!tags.length) return null;
   if (!expanded) {
@@ -49,7 +78,7 @@ function fillPill(rfr) {
   });
 }
 
-export function CaseRow({ c, expandedGuardrails, onToggleGuardrails, onOpenIntake }) {
+export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
   const selected = state.bulkSelected.has(c.id);
   const active = c.id === state.activeId;
   // j/k keyboard triage (main.js moveFocus) walks the list via state._focusRowId
@@ -57,17 +86,29 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails, onOpenIntak
   // (openHighlighted) and 'c' (claim) both already act on the correct row,
   // so the state was right, the row just never painted which one that was.
   const kbdFocused = c.id === state._focusRowId;
-  const needsAttn = attn(c);
   const src = intakeSourceTag(c);
   const owner = c.assignee && c.assignee !== 'agent' ? c.assignee : '';
   const mine = owner && state.currentUser && owner === state.currentUser.username;
 
+  const a = attentionFor(c.id);
+  const band = a ? urgencyBand(Number(a.score)) : 0;
+  const subject = c.subject || '(no subject)';
+  // The lead line answers "why should I touch this one". When the guardrails
+  // are chasing the case that is their own plain-English reason; otherwise it
+  // is what the report is about, which is still a better opening than its id.
+  const lead = a && a.reason ? a.reason : subject;
+
   const open = () => { setActiveId(c.id); pushHash({ caseId: c.id }); };
 
   return h('div', {
-    key: c.id, class: 'case-row' + (active ? ' active' : '') + (selected ? ' selected' : '') + (kbdFocused ? ' kbd-focused' : ''),
+    key: c.id,
+    class: 'case-row' + (band ? ' band-' + band : '')
+      + (active ? ' active' : '') + (selected ? ' selected' : '') + (kbdFocused ? ' kbd-focused' : ''),
     'data-id': c.id, role: 'listitem', tabindex: '0',
     'aria-selected': selected ? 'true' : 'false',
+    // The stripe is a colour; this is the same fact in words, for a screen
+    // reader and for anyone who cannot separate the two warm bands.
+    'aria-label': c.ref + ': ' + (band ? (URGENCY_BAND_LABEL[band] + ' -- ') : '') + lead,
     onclick: (e) => { if (e.target.closest && e.target.closest('.case-row-cb')) return; open(); },
     onkeydown: (e) => { if (e.key === 'Enter') open(); },
   },
@@ -78,19 +119,25 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails, onOpenIntak
       onclick: (e) => { e.stopPropagation(); toggleBulkSelect(c.id, e.target.checked); },
     }),
     h('div', { key: 'body', class: 'case-row-body' },
+      h('div', { key: 'lead', class: 'case-row-lead' }, lead),
       h('div', { key: 'top', class: 'case-row-top' },
-        needsAttn ? h('span', { key: 'dot', class: 'ds-dot ds-dot-warn', role: 'img', 'aria-label': 'needs attention (autonomy: ' + c.autonomy + ')' }) : null,
         h('span', { key: 'ref', class: 'case-row-ref' }, c.ref),
-        Chip({ key: 'pri', tone: c.priority === 'urgent' || c.priority === 'high' ? 'warn' : 'neutral', size: 'sm', children: c.priority }),
         Chip({ key: 'stage', tone: stageTone(c.status), size: 'sm', children: stageLabel(c.status) }),
+        // Only when it is actually raised: a "normal" chip on every row is
+        // noise that makes the raised ones harder to spot.
+        c.priority === 'urgent' || c.priority === 'high'
+          ? Chip({ key: 'pri', tone: 'warn', size: 'sm', children: c.priority })
+          : null,
         owner ? Chip({ key: 'own', tone: mine ? 'accent' : '', size: 'sm', children: mine ? 'you' : owner }) : null,
         h('span', { key: 'when', class: 'case-row-when', title: fmtTime(c.updated_at || c.created_at) }, rel(c.updated_at || c.created_at))
       ),
       h('div', { key: 'sub', class: 'case-row-sub' },
         src ? Chip({ key: 'src', tone: src.tone, size: 'sm', tag: true, children: src.label }) : null,
-        h('span', { key: 'meta' }, c.channel + ' - ' + (c.subject || '(no subject)')),
+        // The subject still shows when the lead line was given to the reason,
+        // so no row ever hides what the report is actually about.
+        h('span', { key: 'meta' }, lead === subject ? c.channel : c.channel + ' - ' + subject),
         fillPill(c.fill_rate),
-        GuardrailChip({ c, expanded: expandedGuardrails, onToggle: onToggleGuardrails })
+        GuardrailChip({ c, expanded: expandedGuardrails })
       ),
       guardrailTags(c).length
         ? h('button', {
