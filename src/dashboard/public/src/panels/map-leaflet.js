@@ -4,7 +4,7 @@
 // app.js: marker clustering, cluster-link overlay, coverage overlay, worker
 // overlay, last-reports overlay, dispatch picker, popups.
 
-import { setActiveId, setMapExtent } from '../state.js';
+import { setActiveId, setMapExtent, schedule } from '../state.js';
 import { urgencyByCaseId, pinMatches } from '../map-model.js';
 import { fmtDur } from '../format.js';
 import { fetchMapCases, fetchMapWorkers, fetchMapLastReports, fetchOperatorIdentities } from '../api.js';
@@ -43,10 +43,6 @@ export const STATUS_TOKEN = {
 
 function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || name;
-}
-
-function statusColor(status) {
-    return cssVar(STATUS_TOKEN[status] || '--fg-3');
 }
 
 function esc(s) {
@@ -103,31 +99,54 @@ function mapMarkerIcon(statusTok, locationSource, urgency, selected) {
 // entry before.
 export const LOCATION_SOURCE_LABEL = { gps: 'exact GPS', estimated: 'estimated, unconfirmed', confirmed: 'estimated, confirmed by worker' };
 
-function mapPopupHtml(p, clusterInfo) {
-    const counts = [p.affected_count != null ? p.affected_count + ' affected' : '', p.dead_count != null ? p.dead_count + ' dead' : ''].filter(Boolean).join(', ');
-    const locSrcLabel = LOCATION_SOURCE_LABEL[p.location_source];
-    // clusterInfo (mapState.clusters[p.cluster], from clusters.js buildClusters
-    // via /api/map/cases) was already computed server-side and reached the
-    // client, but nothing rendered it -- a clicked pin gave no hint it was
-    // part of a wider, possibly-related group of reports (Ushahidi's
-    // cluster-summary pattern: "what's going on here", not just a bare pin).
-    const linkedNote = clusterInfo && clusterInfo.count > 1
-        ? `<span title="Reports nearby that may be the same or a related situation">linked to ${clusterInfo.count - 1} other report(s)`
-          + (clusterInfo.reported_disease_names && clusterInfo.reported_disease_names.length ? ': ' + esc(clusterInfo.reported_disease_names.join(', ')) : '')
-          + '</span><br>'
-        : '';
-    return `<div><b>${esc(p.ref)}</b> <span class="ds-map-popup-status">${esc(p.status)}</span><br>`
-        + (p.species ? esc(p.species) + '<br>' : '')
-        + (p.case_type && p.case_type !== 'unset' ? esc(p.case_type) + '<br>' : '')
-        + (p.location ? esc(p.location) + '<br>' : '')
-        + (locSrcLabel ? `<span class="ds-map-popup-location-source" data-location-source="${esc(p.location_source)}" title="Where this map pin's coordinate came from">pin: ${esc(locSrcLabel)}</span><br>` : '')
-        + (p.symptoms ? '<span title="As reported/observed">symptoms: ' + esc(p.symptoms) + '</span><br>' : '')
-        + (counts ? esc(counts) + '<br>' : '')
-        + (p.onset ? 'onset: ' + esc(p.onset) + '<br>' : '')
-        + (p.assignee && p.assignee !== 'agent' ? 'assigned: ' + esc(p.assignee) + '<br>' : '')
-        + linkedNote
-        + `<a href="#" data-open-ref="${esc(p.id)}">Open case</a>`
-        + ` | <a href="#" data-dispatch-ref="${esc(p.id)}" title="Suggest a field worker for this case -- never messages them directly, they hear about it on their own next reply-in">Dispatch a worker</a></div>`;
+// A pin click SELECTS the case; it does not open a popup. There is no
+// mapPopupHtml any more, deliberately.
+//
+// Measured on the reference consoles (.gm/research/osint-map-ui-brief.md):
+// Liveuamap has literally zero popups -- .leaflet-popup is absent from its DOM
+// and .popup-box is display:none -- and a marker click instead selects the
+// matching rail card, scrolls the rail to it, and pushes a permalink. Watch
+// Duty and FlightRadar24 both route selection into a route change feeding a
+// docked panel. The reason is structural, not stylistic: a popup is an opaque
+// rectangle anchored to the exact pin you are investigating, so it covers the
+// neighbouring pins -- the immediate spatial context that tells an operator
+// whether this is one sick animal or the edge of an outbreak. In a
+// situational-awareness domain that is the one thing that must not be
+// occluded (mapuipatterns' full-map rule, the same rule that put the queue in
+// a docked rail rather than floating it over the canvas).
+//
+// Nothing the popup uniquely carried was dropped. Its descriptive fields
+// (ref, status, species, type, location, provenance, symptoms, counts, onset,
+// assignee) are all in the case detail the rail now shows on selection. Its
+// two ACTIONS had no other entry point in the app at all, so both are
+// re-homed rather than deleted, via the two accessors below:
+// clusterNoteForCase and dispatchForCase, rendered by the case detail.
+
+// The cluster linkage (mapState.clusters[p.cluster], computed server-side by
+// clusters.js buildClusters and shipped in /api/map/cases) answers "what is
+// going on HERE" rather than "what is this one pin" -- Ushahidi's
+// cluster-summary pattern. It reached the client and, before the popup
+// existed, nothing rendered it at all.
+export function clusterNoteForCase(mapState, caseId) {
+    if (!mapState) return null;
+    const p = (mapState.pins || []).find((x) => x.id === caseId);
+    if (!p || p.cluster == null) return null;
+    const info = mapState.clusters ? mapState.clusters[p.cluster] : null;
+    if (!info || !(info.count > 1)) return null;
+    return {
+        others: info.count - 1,
+        diseases: (info.reported_disease_names || []).filter(Boolean),
+    };
+}
+
+// Resolves the case's own coordinate so the picker can rank workers by
+// distance, exactly as the popup's link did. A case with no placeable
+// coordinate still dispatches -- it just ranks unsorted rather than refusing,
+// since "no GPS yet" is a routine state here, not an error.
+export function dispatchForCase(mapState, caseId) {
+    if (!mapState) return;
+    const p = (mapState.pins || []).find((x) => x.id === caseId);
+    return openDispatchPicker(mapState, caseId, p ? p.lat : null, p ? p.lon : null);
 }
 
 function renderMapMarkers(mapState, filters) {
@@ -151,15 +170,36 @@ function renderMapMarkers(mapState, filters) {
             // breaching pin can be painted under a routine one that simply
             // happens to sit later in the list.
             zIndexOffset: u * 1000,
+            // Leaflet's own marker keyboard handling is left ON (the default):
+            // it makes the marker focusable and fires this same click handler
+            // on Enter, so a keyboard operator selects a pin the same way a
+            // pointer does. Witnessed live: the icon element comes back with
+            // role="button" and tabindex="0".
+            //
+            // `title` is set here rather than `alt` deliberately. Leaflet's
+            // Marker._initIcon applies `alt` ONLY when the icon element is an
+            // IMG; ours is a divIcon, so an `alt` option is silently dropped --
+            // measured, not assumed (the first witness of this change came back
+            // with alt null on a marker that did have role and tabindex).
+            title: `${p.ref} -- ${p.status}`,
         });
-        const clusterInfo = p.cluster != null ? mapState.clusters[p.cluster] : null;
-        m.bindPopup(mapPopupHtml(p, clusterInfo));
-        m.on('popupopen', () => {
-            const el = document.querySelector(`[data-open-ref="${p.id}"]`);
-            if (el) el.onclick = (e) => { e.preventDefault(); setActiveId(p.id); };
-            const dEl = document.querySelector(`[data-dispatch-ref="${p.id}"]`);
-            if (dEl) dEl.onclick = (e) => { e.preventDefault(); openDispatchPicker(mapState, p.id, p.lat, p.lon); };
+        // The accessible NAME, set on the element Leaflet actually focuses.
+        // Without it a screen reader announces eight identical "button"s and
+        // the pin field is unusable non-visually -- role and tabindex alone
+        // make a control reachable, not identifiable. Constrained values only,
+        // same discipline as the icon attributes: ref and status are
+        // store-owned enums/identifiers, never contact-authored text.
+        m.on('add', () => {
+            const el = m.getElement();
+            if (el) el.setAttribute('aria-label', `Report ${p.ref}, ${p.status}`);
         });
+        // Select, never pop up. This is the queue-row click and the pin click
+        // converging on ONE publisher (state.setActiveId), which is also what
+        // moves the map, marks the pin selected, and updates the URL -- see the
+        // onActiveIdChange subscription in map-panel.js. Before this, a pin
+        // click opened an overlay that covered the neighbouring pins and put a
+        // second "Open case" click between the operator and the report.
+        m.on('click', () => setActiveId(p.id));
         mapState.markerById.set(p.id, m);
         layer.addLayer(m);
     }
@@ -264,16 +304,47 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     // reads req.query.days -- confirmed live: the days dropdown had zero
     // effect on which pins loaded).
     const j = await fetchMapCases({ days }).catch(() => null);
-    if (!j) { if (callbacks && callbacks.onError) callbacks.onError('Could not load the map.'); return mapStateRef.current; }
+    // Names the DATA specifically. "Could not load the map" was true of a
+    // basemap outage too, and the two need different actions from the
+    // operator -- see the tile-health publisher below.
+    if (!j) { if (callbacks && callbacks.onError) callbacks.onError('Could not load the reports. The map could not reach this dashboard\'s own server, so what you see may be out of date.'); return mapStateRef.current; }
     if (!mapStateRef.current) {
         canvas.innerHTML = '';
         const map = window.L.map(canvas, { center: [-28.5, 25], zoom: 5 });
-        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '(c) OpenStreetMap contributors' }).addTo(map);
+        const tiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '(c) OpenStreetMap contributors' });
+        tiles.addTo(map);
         mapStateRef.current = {
             map, markerLayer: null, clusterLines: null, coverageLayer: null, workersLayer: null, lastReportsLayer: null,
-            markerById: new Map(), selectedId: null,
+            markerById: new Map(), selectedId: null, tilesFailing: false,
             pins: [], clusters: [], workers: [], showCoverage: false, showClusters: false, showWorkers: false, showLastReports: false,
         };
+        // A basemap failure and a data failure are the SAME picture -- pins on
+        // grey, or nothing on grey -- and the panel used to render one string
+        // for both. On the rural link this deployment targets they are not
+        // equally likely and they do not have the same answer: the API is
+        // same-origin and small, while the tiles are a third-party CDN pulling
+        // an order of magnitude more bytes, so the tiles are what actually
+        // goes missing. Telling an operator "could not load the map" when the
+        // reports loaded fine and only the backdrop is missing sends them to
+        // check the wrong thing.
+        //
+        // Judged on a RUN of failures, never a single one: one 404 is normal
+        // (a tile that genuinely does not exist at that zoom over open sea),
+        // and any successful tile clears the count, so a transient blip on a
+        // flaky link never latches the warning on.
+        const TILE_FAIL_RUN = 4;
+        let tileFails = 0;
+        const publishTileHealth = (failing) => {
+            const ms = mapStateRef.current;
+            if (!ms || ms.tilesFailing === failing) return;
+            ms.tilesFailing = failing;
+            // The panel is webjsx-rendered and these events arrive outside any
+            // render pass, so the flag has to be PUBLISHED to be seen -- the
+            // same reason setAttention notifies rather than merely assigning.
+            schedule();
+        };
+        tiles.on('tileerror', () => { tileFails += 1; if (tileFails >= TILE_FAIL_RUN) publishTileHealth(true); });
+        tiles.on('tileload', () => { tileFails = 0; publishTileHealth(false); });
         // Publish the viewport so the rail can narrow to what is actually on
         // screen (mapuipatterns' extent-driven-content pattern). Without this
         // the map was a picture, not a control: an operator could zoom into one
@@ -492,4 +563,3 @@ export function refilterMarkers(mapState, filters) { renderMapMarkers(mapState, 
 export async function toggleCoverage(mapState) { mapState.showCoverage = !mapState.showCoverage; await renderMapCoverage(mapState); }
 export async function toggleWorkers(mapState) { mapState.showWorkers = !mapState.showWorkers; await renderMapWorkers(mapState); }
 export async function toggleLastReports(mapState) { mapState.showLastReports = !mapState.showLastReports; await renderMapLastReports(mapState); }
-export { statusColor };

@@ -5,8 +5,8 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
-import { Btn, Lede } from '/design/src/components/shell/atoms.js';
-import { state, schedule, closePanel } from '../state.js';
+import { Lede } from '/design/src/components/shell/atoms.js';
+import { state, schedule } from '../state.js';
 import { fetchDistribution } from '../api.js';
 
 const h = webjsx.createElement;
@@ -34,7 +34,6 @@ function barRows(rows, max) {
 
 export function DistributionPanel() {
     ensureLoaded();
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading distribution' });
     else if (error) body = Alert({ kind: 'error', children: 'Distribution error: ' + error });
@@ -51,5 +50,5 @@ export function DistributionPanel() {
                 symptoms.length ? Section({ title: 'Symptoms', children: [barRows(symptoms, maxSym)] }) : null);
         }
     }
-    return Panel({ title: 'Distribution', children: [back, body] });
+    return Panel({ children: [body] });
 }

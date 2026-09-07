@@ -6,7 +6,7 @@ import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
-import { state, schedule, closePanel } from '../state.js';
+import { state, schedule } from '../state.js';
 import { fetchOverview, fetchReportJson, fetchSlaAtRiskByType } from '../api.js';
 import { fmtDur } from '../format.js';
 
@@ -82,7 +82,6 @@ function byTypeTable(report) {
 
 export function MetricsPanel() {
     ensureLoaded();
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     const exportLinks = h('div', { class: 'ds-metrics-exports' },
         Btn({ href: '/api/report.csv?days=14', variant: 'ghost', size: 'sm', children: 'Export CSV' }),
         Btn({ href: '/api/report.html?days=14', variant: 'ghost', size: 'sm', children: 'Export HTML' }),
@@ -97,5 +96,5 @@ export function MetricsPanel() {
             risk ? atRiskByType(risk) : null,
             report ? byTypeTable(report) : null);
     }
-    return Panel({ title: 'Metrics', right: exportLinks, children: [back, body] });
+    return Panel({ children: [exportLinks, body] });
 }

@@ -5,7 +5,7 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
-import { state, schedule, closePanel, setActiveId } from '../state.js';
+import { state, schedule, setActiveId } from '../state.js';
 import { fetchHandover, postStartShift } from '../api.js';
 import { fmtTime } from '../format.js';
 import { toast } from '../toasts.js';
@@ -72,7 +72,6 @@ function handoverBody(j) {
 
 export function HandoverPanel() {
     ensureLoaded();
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     const actions = h('div', { class: 'ds-ho-actions' },
         Btn({ variant: 'primary', children: starting ? 'Starting...' : 'Start shift', disabled: starting, onClick: startShift }),
         ' ',
@@ -81,5 +80,5 @@ export function HandoverPanel() {
     if (loading && !loaded) body = Spinner({ label: 'loading handover digest' });
     else if (error) body = Alert({ kind: 'error', children: 'Handover error: ' + error });
     else body = state._handover ? handoverBody(state._handover) : Alert({ kind: 'warn', children: 'Could not load the handover digest.' });
-    return Panel({ title: 'Shift handover', right: actions, children: [back, body] });
+    return Panel({ children: [actions, body] });
 }

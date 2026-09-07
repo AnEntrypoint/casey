@@ -7,7 +7,7 @@
 import * as webjsx from 'webjsx';
 import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton, Btn } from 'ds/components/shell.js';
 import { state, setFilt, closeModal, openModal } from '../state.js';
-import { buildSideSections, buildActionItems, backToCases } from './nav-config.js';
+import { buildSideSections, buildActionItems, backToCases, panelTitle } from './nav-config.js';
 import { HealthPills } from '../components/health-pills.js';
 import { AccountMenu, LogoutEverywhereConfirmDialog } from '../components/account-menu.js';
 import { NotificationsCenter } from '../components/notifications-center.js';
@@ -57,15 +57,46 @@ function ModalMount() {
 // placeholder with a back-to-cases affordance rather than a dead click.
 const panelBodies = {};
 export function registerPanelBody(name, renderFn) { panelBodies[name] = renderFn; }
-// One treatment for every content-swap panel, so none of them inherits a
-// placeholder shell. The back control carries a real word rather than a bare
-// chevron whose only text was a tooltip -- map-command-center.js already
-// rejected a bare glyph for exactly this audience ("a worded back control, not
-// a bare glyph"), and this is the same operator on the same screen.
+// ONE treatment for every content-swap panel: a full-swap page with real
+// chrome -- a named heading and a worded way back -- never an overlay sheet
+// over a retained map, and never a bare body inheriting a placeholder shell.
 //
-// The not-available fallback keeps that control too. It previously rendered a
+// Why full-swap rather than a sheet over the map: all seven of these are
+// NON-SPATIAL working surfaces (metrics, distribution, activity, handover,
+// offline, team, contacts, secretary), so a map behind them answers nothing
+// they ask, while a sheet floating over live pins is precisely the thing
+// mapuipatterns bars in situational-awareness domains -- covering potentially
+// important data with a floating panel. At 390px a sheet covers the map
+// completely anyway, so the "retained" map is fiction on the screen where the
+// audience actually works. The two panels that ARE spatial answers (geo,
+// clusters) never come through here on the map side at all: they render in the
+// rail with the map still mounted (state.railMode).
+//
+// The head is one row for every panel with no per-panel branch: the escape
+// first, the page's own name second. The back control carries a real word,
+// never a bare chevron whose only text is a tooltip -- map-command-center.js
+// rejected exactly that for exactly this audience ("a worded back control, not
+// a bare glyph"). The name comes from nav-config's panelTitle(), i.e. from the
+// nav item the operator clicked, so the page is never titled something the
+// control that opened it does not say.
+//
+// The not-available fallback gets the identical head. It previously rendered a
 // lone sentence with no way back, so an unregistered panel was a dead end an
 // operator could only escape by reloading the page.
+//
+// THE CONTRACT FOR A REGISTERED PANEL: render the BODY only. Do not give a
+// panel its own page title or its own back control -- this head is both, for
+// all of them. Every one of the seven used to carry a private copy
+// (`Panel({title:'Reporters'})` plus a `Btn('Back to cases')` as its first
+// child), which is what "seven pages inheriting a placeholder shell" actually
+// looked like on screen: two back controls disagreeing about where back was
+// (this head correctly said "Back to the map"; the body's copy said "Back to
+// cases" from the map home view), and a hardcoded English title that ignored
+// the deployer's own dashboard_ui.nav.relabel -- live-witnessed on uhh, whose
+// nav says "Trends over time" while the page under it said "Metrics".
+// A panel page always has a name, even when nothing is registered under it --
+// an untitled page is one an operator cannot describe when they call for help.
+function panelPageTitle(name) { return panelTitle(name) || 'Screen not available'; }
 function PanelSwap() {
   const name = state.activePanel;
   const known = !!panelBodies[name];
@@ -75,7 +106,8 @@ function PanelSwap() {
   const backLabel = state.homeView === 'cases' ? 'Back to cases' : 'Back to the map';
   return h('div', { class: 'ds-panel-swap' },
     h('div', { class: 'ds-panel-swap-head' },
-      Btn({ variant: 'ghost', children: backLabel, onClick: backToCases })),
+      Btn({ variant: 'ghost', children: backLabel, onClick: backToCases }),
+      h('h1', { class: 'ds-panel-swap-title' }, panelPageTitle(name))),
     h('div', { class: 'ds-panel-swap-body' }, body)
   );
 }
@@ -157,7 +189,13 @@ export function App() {
   // the design system hides the topbar's own standalone .brand in merged
   // mode on the assumption the crumb already carries it (app-shell/topbar.css);
   // omitting it here left the titlebar with no brand at all.
-  const crumb = Crumb({ trail: [brand], leaf, right: crumbRight });
+  // The breadcrumb names the page the operator is actually on. A content-swap
+  // panel is a full page, so leaving the leaf at the deployment's own "Cases"
+  // label meant the chrome overhead read "casey / Cases" while the operator was
+  // looking at Reporters -- the one piece of shell that exists to say where you
+  // are, saying somewhere else. Same lookup as the page's own heading, so the
+  // two can never disagree.
+  const crumb = Crumb({ trail: [brand], leaf: state.activePanel ? panelPageTitle(state.activePanel) : leaf, right: crumbRight });
   const status = StatusBar();
 
   // is-map-home marks the one view whose whole point is the size of the map,

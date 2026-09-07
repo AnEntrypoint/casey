@@ -6,9 +6,9 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Select } from '/design/src/components/content/fields.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
-import { Btn, Chip } from '/design/src/components/shell/atoms.js';
+import { Chip } from '/design/src/components/shell/atoms.js';
 import { Icon } from '/design/src/components/shell.js';
-import { state, schedule, closePanel, setActiveId } from '../state.js';
+import { state, schedule, setActiveId } from '../state.js';
 import { fetchActivity } from '../api.js';
 import { fmtTime, rel } from '../format.js';
 import { eventIcon, eventTone } from '../icons-map.js';
@@ -60,7 +60,6 @@ function ensureLoaded() { if (!started) { started = true; load(); } }
 
 export function ActivityPanel() {
     ensureLoaded();
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
     const filterRow = h('div', { class: 'ds-activity-filters' },
         Select({
             key: 'k', placeholder: 'all kinds', value: filters.kind,
@@ -81,5 +80,5 @@ export function ActivityPanel() {
             ? h('div', { class: 'ds-activity-list' }, ...ev.map((e, i) => ActivityRow(e, i)))
             : Alert({ kind: 'info', children: 'Nothing matches these filters.' });
     }
-    return Panel({ title: 'Activity', children: [back, filterRow, body] });
+    return Panel({ children: [filterRow, body] });
 }

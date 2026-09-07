@@ -27,6 +27,7 @@ import { SplitDialogTrigger, SplitDialog } from './case-detail/split-dialog.js';
 import { SnoozeDialog, openSnoozeDialog } from './case-detail/snooze-dialog.js';
 import { ShareDialog, openShareDialog } from './case-detail/share-dialog.js';
 import { confirmDialog } from '../components/dialog-shell.js';
+import { clusterNoteFor, canDispatchFor, dispatchWorkerFor } from '../panels/map-panel.js';
 const h = webjsx.createElement;
 
 let _loadedFor = null;
@@ -50,6 +51,23 @@ export async function loadCaseDetail(id) {
 }
 
 async function reload(id) { await loadCaseDetail(id || state.activeId); }
+
+// "What is going on HERE", not "what is this one pin". The cluster linkage is
+// computed server-side (clusters.js buildClusters, shipped in /api/map/cases)
+// and used to be visible only inside the map pin's popup; the popup is gone
+// (see map-leaflet.js) and this is its new home, where it sits beside the rest
+// of the case rather than on top of the neighbouring pins. Renders nothing
+// when there is no live map or the case stands alone -- on the case-list side
+// of the app that is always, and silence is the correct output there.
+function LinkedReportsNote({ caseId }) {
+    const note = clusterNoteFor(caseId);
+    if (!note) return null;
+    const names = note.diseases.length ? ': ' + note.diseases.join(', ') : '';
+    return h('div', {
+        class: 'casey-linked-reports',
+        title: 'Reports nearby that may be the same or a related situation',
+    }, `Linked to ${note.others} other report(s) nearby${names}`);
+}
 
 function pauseWhileEditing(el) {
     if (!el || el._caseyEditGuard) return;
@@ -88,6 +106,7 @@ export function CaseDetailView({ onClose, onOpenCase, key } = {}) {
     return h('div', { key, class: 'casey-detail-pane', tabindex: '-1', ref: pauseWhileEditing },
         h('button', { type: 'button', class: 'casey-back-btn', onclick: onClose }, Icon('chevron-left', { size: 14 }), ' cases'),
         CaseHeader({ c, suggestedAssignee: suggested_assignee, onReload: reload, onOpenShare: openShareDialog, onOpenSnooze: openSnoozeDialog }),
+        LinkedReportsNote({ caseId: id }),
         CaseProgress({ status: c.status }),
         ReportSections({ c, events, onSaved: () => reload(id) }),
         ResearchNotesPanel({ case: c }),
@@ -98,6 +117,20 @@ export function CaseDetailView({ onClose, onOpenCase, key } = {}) {
         SiteHistoryPanel({ onOpenCase }),
         h('div', { class: 'casey-timeline-actions' },
             SplitDialogTrigger({ caseId: id }),
+            // The pin popup was this action's ONLY entry point in the whole
+            // app, so removing the popup without re-homing it would have
+            // silently deleted a capability. Offered only when a live map
+            // actually has this case plotted -- the picker ranks workers by
+            // distance from the case and reads its roster from the worker
+            // overlay, so without a map there is nothing to rank and nothing
+            // to pick from.
+            canDispatchFor(id)
+                ? Btn({
+                    size: 'sm', variant: 'ghost', children: 'Dispatch a worker',
+                    title: 'Suggest a field worker for this case -- casey never messages them directly, they hear about it on their own next reply-in',
+                    onClick: () => dispatchWorkerFor(id),
+                })
+                : null,
             Btn({ size: 'sm', variant: 'ghost', children: '+ Note', onClick: async () => {
                 const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Add a note to this case' })) || '').trim();
                 if (!text) return;
