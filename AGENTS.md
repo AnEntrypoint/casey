@@ -480,6 +480,22 @@ any submodule is on a branch other than `main`, has uncommitted changes, or
 is behind `origin/main`. It never mutates git state -- fixing a reported
 problem is the fetch+reset sequence in "Supply-chain integrity" below.
 
+**A dirty submodule reported right after an install used to be a mode-only
+artifact, and no longer is.** pnpm's bin-linking chmodded `deps/freddie`'s
+`packages/examples/acp-demo/src/bin.js` and `vendor/cordis/bin.js`, and an
+npm reify chmodded `deps/acptoapi`'s `bin/acptoapi.js` and
+`bin/acptoapi-tui.js`, from 0644 to 0755 on every install -- zero
+insertions, zero deletions, mode only -- so `check-submodules` (and
+therefore `casey doctor`) went red immediately after the repo's own
+documented install step, for a reason that had nothing to do with
+supply-chain drift. Fixed upstream by recording 0755 in each of those two
+repos' own index (freddie `7b5b9537`, acptoapi `b972911`), which makes the
+installer's chmod a no-op rather than a diff. It was deliberately NOT fixed
+by excluding those paths from `check-submodules`, which would also have
+masked a real mode change. If a `deps/*` checkout ever reports dirty after
+an install again, treat it as a real change to look at, not as this
+known-benign artifact.
+
 **Editing and pushing a composed dependency -- worked example (`deps/thatcher`,
 same shape for `deps/acptoapi`/`deps/design`):**
 
