@@ -18,6 +18,24 @@ function readHomeView() {
   try { return localStorage.casey_home_view === 'cases' ? 'cases' : 'map'; } catch { return 'map'; }
 }
 
+// The map filter's default shape, defined ONCE, here.
+//
+// It used to exist twice: as an inline object literal in the state below, and
+// again as map-model.js's own exported defaultMapFilter(). That is the exact
+// duplication map-model.js's header forbids in its own words ("Neither is
+// allowed a local copy; that is the whole point"), and the copy in map-model
+// was dead -- nothing imported it -- so the two could have drifted silently
+// with only the unused one being wrong.
+//
+// It lives in state.js rather than map-model.js because of a real constraint,
+// not preference: map-model.js already imports `state` from here, so having
+// state.js import the default back from map-model.js would close an import
+// cycle and evaluate this initializer before map-model's export existed.
+// Owning it where the state is owned keeps one definition and no cycle.
+export function defaultMapFilter() {
+  return { species: '', type: '', status: '', days: '0', band: null, inView: false };
+}
+
 export const state = {
   // auth / config
   authed: false, currentUser: null, config: null,
@@ -31,7 +49,7 @@ export const state = {
   // The one filter object the map markers AND the rail queue both read (see
   // map-model.js). Two independently-derived filters were how the two halves
   // of this view came to disagree about the same cases.
-  mapFilter: { species: '', type: '', status: '', days: '0', band: null, inView: false },
+  mapFilter: defaultMapFilter(),
   // Live Leaflet bounds, republished on moveend so the rail can narrow to what
   // is actually on screen. Null until the map has loaded.
   mapExtent: null,
@@ -155,11 +173,6 @@ export function setCases(rows, total) {
   state.allCasesTotal = total != null ? total : rows.length;
   schedule();
 }
-export function patchCase(id, patch) {
-  const i = state.allCases.findIndex((c) => c.id === id);
-  if (i !== -1) Object.assign(state.allCases[i], patch);
-  schedule();
-}
 // Attention is the source of the map's urgency channel as well as the rail's
 // queue, and the two are refreshed by different mechanisms: the rail is
 // re-rendered by schedule() on every change, while the map's markers are
@@ -193,8 +206,6 @@ export function setHomeView(v) {
 }
 export function setSimpleMode(v) { state.simpleMode = !!v; try { localStorage.casey_simple = v ? '1' : ''; } catch { /* localStorage unavailable */ } schedule(); }
 export function setTheme(t) { state.theme = t; try { localStorage.casey_theme = t; } catch { /* localStorage unavailable */ } schedule(); }
-export function setPage(p) { state.page = Math.max(1, p | 0); schedule(); }
-export function setPageSize(n) { state.pageSize = Math.max(10, n | 0); state.page = 1; schedule(); }
 
 export function toggleBulkSelect(id, on) {
   const shouldAdd = on !== undefined ? !!on : !state.bulkSelected.has(id);
@@ -202,18 +213,12 @@ export function toggleBulkSelect(id, on) {
   schedule();
 }
 export function clearBulkSelect() { state.bulkSelected.clear(); schedule(); }
-export function setBulkSelected(ids) { state.bulkSelected = new Set(ids); schedule(); }
-export function setBulkSelectMany(ids, on) {
-  for (const id of ids) { if (on) state.bulkSelected.add(id); else state.bulkSelected.delete(id); }
-  schedule();
-}
 
 export function openPanel(name) { state.activePanel = name; state.activeModal = null; schedule(); }
 export function closePanel() { state.activePanel = null; schedule(); }
 export function openModal(name) { state.activeModal = name; schedule(); }
 export function closeModal() { state.activeModal = null; schedule(); }
 
-export function pushToast(t) { state.toasts.push(t); schedule(); }
 export function removeToast(id) {
   const i = state.toasts.findIndex((t) => t.id === id);
   if (i !== -1) state.toasts.splice(i, 1);
@@ -221,16 +226,9 @@ export function removeToast(id) {
 }
 export function setConnLost(v) { if (state.connLost !== !!v) { state.connLost = !!v; schedule(); } }
 export function setHealth(patch) { Object.assign(state.health, patch); schedule(); }
-export function setSavedViews(v) { state.savedViews = v; schedule(); }
 export function setRecentSearches(arr) { state.recentSearches = arr; schedule(); }
-export function dismissHandoff(id) { state.handoffDismissed.add(id); schedule(); }
 export function setHandoffQueue(q) { state.handoffQueue = q; schedule(); }
-export function pushHandoff(c) { state.handoffQueue.push(c); schedule(); }
-export function clearHandoff(id) { state.handoffQueue = state.handoffQueue.filter((q) => q.id !== id); schedule(); }
 export function setDegradedTurns(rows) { state.degradedTurns = rows; schedule(); }
-export function setLoading(v) { state.loading = !!v; schedule(); }
-export function setLoadingCases(v) { state.loadingCases = !!v; schedule(); }
-export function setFocusedIndex(i) { state.focusedIndex = i; schedule(); }
 export function setOfflineQueueCount(n) { state.offlineQueueCount = n; schedule(); }
 
 // -- case-detail transient state (used by case-detail-view.js and children) --
@@ -250,16 +248,11 @@ export function setCaseDetailError(err) {
   schedule();
 }
 export function setRunConfig(cfg) { state.runConfig = cfg; schedule(); }
-export function patchCaseDetailCase(patch) {
-  if (state.caseDetail && state.caseDetail.case) Object.assign(state.caseDetail.case, patch);
-  schedule();
-}
 export function appendTimelineEvents(events) {
   if (state.caseDetail) state.caseDetail.events = (state.caseDetail.events || []).concat(events);
   schedule();
 }
 export function setTimelineSearch(q) { state.timelineSearch = q; schedule(); }
-export function setEditingReport(v) { state.caseDetailEditingReport = v; schedule(); }
 export function setEditing(v) { state.editing = v; schedule(); }
 export function setDuplicateSuggestions(rows) { state.duplicateSuggestions = rows; schedule(); }
 export function setSiteHistory(rows) { state.siteHistory = rows; schedule(); }

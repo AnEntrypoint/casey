@@ -6,11 +6,12 @@
 // app-view.js/case-list-view.js/activity-panel.js for the same pattern) --
 // absent (casey's own default, uhh) it stays the literal 'casey'.
 
-import * as webjsx from '/design/vendor/webjsx/index.js';
-import { Lede } from '/design/src/components/shell.js';
+// This module is now pure text: the TodoHint COMPONENT that used to live here
+// was exported and rendered by nobody (header.js has always imported only
+// todoHintText and wrapped it in its own Lede), so it went, and with it the
+// last need for webjsx and the design kit in this file.
 import { ageHoursOf } from '../../format.js';
 import { state } from '../../state.js';
-const h = webjsx.createElement;
 
 function tagList(c) { return String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean); }
 
@@ -34,8 +35,4 @@ export function todoHintText(c) {
     if (c.status === 'waiting') return 'Waiting on the person to reply. Nothing to do until they answer.';
     if (c.status === 'new' || c.status === 'triaging') return `A new message came in. ${brand} is sorting it out.`;
     return `${brand} is handling this one on its own. Step in only if you need to.`;
-}
-
-export function TodoHint({ case: c, key } = {}) {
-    return h('div', { key, class: 'casey-todo-hint' }, Lede({ children: todoHintText(c) }));
 }

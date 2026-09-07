@@ -11,8 +11,8 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Section, Spinner, Alert } from '/design/src/components/content.js';
-import { Btn, Icon } from '/design/src/components/shell.js';
-import { state, schedule } from '../../state.js';
+import { Icon } from '/design/src/components/shell.js';
+import { schedule } from '../../state.js';
 import { fetchRunNotes } from '../../api.js';
 const h = webjsx.createElement;
 

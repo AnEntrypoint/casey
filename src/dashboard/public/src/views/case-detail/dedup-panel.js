@@ -5,7 +5,6 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
-import { Alert } from '/design/src/components/content.js';
 import { TextField } from '/design/src/components/content.js';
 import { Dialog } from '../../components/dialog-shell.js';
 import { state, schedule, setDuplicateSuggestions } from '../../state.js';

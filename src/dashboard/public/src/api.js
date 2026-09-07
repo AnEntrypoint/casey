@@ -127,7 +127,6 @@ export const postSplit = (id, bodyOrEventIds, subject, reason) => {
   const body = (subject !== undefined) ? { event_ids: bodyOrEventIds, subject, reason } : bodyOrEventIds;
   return post('/api/cases/' + encodeURIComponent(id) + '/split', body);
 };
-export const postUndo = (id) => post('/api/cases/' + encodeURIComponent(id) + '/undo', {});
 export const postDraftApprove = (id, text) => post('/api/cases/' + encodeURIComponent(id) + '/draft/approve', text != null && typeof text !== 'object' ? { text } : (text || {}));
 export const postDraftDiscard = (id) => post('/api/cases/' + encodeURIComponent(id) + '/draft/discard', {});
 export const fetchSuggestions = (id) => json('/api/cases/' + encodeURIComponent(id) + '/suggestions');
@@ -169,9 +168,6 @@ export const postContactTier = (id, tier) => post('/api/contacts/' + encodeURICo
 export const postContactErase = (id, reason) => post('/api/contacts/' + encodeURIComponent(id) + '/erase', { reason });
 
 // --- accounts (admin) ---
-export const fetchAccounts = () => json('/api/accounts');
-export const postAccount = (body) => post('/api/accounts', body);
-export const deleteAccount = (id) => del('/api/accounts/' + encodeURIComponent(id));
 
 // --- degraded turns ---
 export const fetchDegradedTurns = (params) => json('/api/turns/degraded' + qs(params));

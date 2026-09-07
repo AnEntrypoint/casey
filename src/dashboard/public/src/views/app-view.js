@@ -6,7 +6,7 @@
 
 import * as webjsx from 'webjsx';
 import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton, Btn } from 'ds/components/shell.js';
-import { state, setFilt, closeModal, openModal } from '../state.js';
+import { state, closeModal, openModal } from '../state.js';
 import { buildSideSections, buildActionItems, backToCases, panelTitle, openQueue } from './nav-config.js';
 import { HealthPills } from '../components/health-pills.js';
 import { AccountMenu, LogoutEverywhereConfirmDialog } from '../components/account-menu.js';
