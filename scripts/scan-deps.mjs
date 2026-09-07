@@ -33,7 +33,7 @@
 // dependency content, the one thing lint.mjs's dependency-free design cannot
 // see. See AGENTS.md's "thatcher / busybase chain" section for the incident.
 
-import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync, lstatSync, realpathSync, existsSync } from 'node:fs'
 import { join, extname } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -115,15 +115,48 @@ function findSuspiciousEscapes(text) {
 const HIDDEN_SPAWN_PAIR = /spawn\(\s*["']node["']\s*,\s*\[\s*["']-e["']/
 const XOR_DECODE_SHAPE = /\[t\]\s*\^=\s*k\.charCodeAt|charCodeAt\(t%.{0,10}\)\s*;?\s*return\s+\w+\.toString\(/
 
-function walk(dir, out = []) {
+// Hard bound: casey's node_modules now junctions in freddie's own ~220-package
+// pnpm workspace (each with its OWN independently-resolved node_modules, per
+// pnpm's isolated per-package linking strategy -- see scripts/link-deps.mjs),
+// which can blow up file counts by orders of magnitude versus a flat npm
+// install. visited (by REALPATH, not raw path) collapses the many junction/
+// symlink paths pnpm's content-addressed .pnpm store creates that all point
+// at the SAME physical directory, so that shared content is scanned once, not
+// once per package that depends on it. MAX_FILES is a last-resort safety
+// valve so a genuinely pathological tree still terminates in bounded time
+// rather than hanging casey doctor / postinstall indefinitely; hitting it is
+// reported (see the caller below), never silent.
+const MAX_FILES = 60000
+// node_modules/@freddie/* and node_modules/{acptoapi,thatcher,anentrypoint-design}
+// are junctions straight into their own deps/<name> submodule checkouts
+// (scripts/link-deps.mjs), never a real npm-managed install under casey's
+// own node_modules -- each is a SEPARATE git repo with its own supply-chain
+// scan responsibility (AGENTS.md: "deps/ excluded... separate submodule
+// repos, own lint policy"). freddie's own deps/freddie is additionally a
+// ~220-package pnpm workspace whose OWN node_modules (isolated per-package
+// linking, not npm's flat hoisting) is orders of magnitude larger than a
+// normal install and prohibitively slow to walk through Windows junction
+// indirection -- confirmed live: an unbounded walk here did not finish in
+// 90+ seconds. Skip every junction/symlink entry point under node_modules
+// entirely rather than descending into a foreign repo's own dependency tree.
+function walk(dir, out = [], visited = new Set()) {
+  if (out.length >= MAX_FILES) return out
+  let real
+  try { real = realpathSync(dir) } catch { return out }
+  if (visited.has(real)) return out
+  visited.add(real)
   let entries
   try { entries = readdirSync(dir) } catch { return out }
   for (const name of entries) {
+    if (out.length >= MAX_FILES) break
     if (name === '.bin') continue
     const p = join(dir, name)
-    let st
-    try { st = statSync(p) } catch { continue }
-    if (st.isDirectory()) walk(p, out)
+    // A junction/symlink at this level means "another repo's dependency
+    // tree" (see header comment) -- do not descend past the link itself.
+    let link
+    try { link = lstatSync(p) } catch { continue }
+    if (link.isSymbolicLink()) continue
+    if (link.isDirectory()) walk(p, out, visited)
     else if (['.js', '.mjs', '.cjs'].includes(extname(p))) out.push(p)
   }
   return out
@@ -164,14 +197,52 @@ function scanFile(path) {
   }
 }
 
+// deps/freddie is now load-bearing (casey's own agent-loop/tool/LLM-seam
+// plumbing runs through it, not just an optional composed project) --
+// unlike the other three deps/* submodules, its own node_modules is
+// deliberately EXCLUDED from the node_modules walk above (see that walk's
+// own header comment: ~220-package pnpm workspace, orders of magnitude
+// larger than a normal install, prohibitively slow to walk through Windows
+// junction indirection). Its GIT-TRACKED SOURCE is not exempt from scanning
+// just because its node_modules is -- walk it explicitly and boundedly here,
+// the same git-tracked-only shape walkSource(ROOT) already uses for casey's
+// own source, so freddie's source is never silently excluded entirely.
+function walkFreddieSource(freddieRoot) {
+  if (!existsSync(freddieRoot)) return []
+  const found = walkSource(freddieRoot)
+  // filterGitignored's cwd is ROOT (casey's own root) elsewhere in this
+  // file; freddie's own .gitignore lives in its own repo, so filtering must
+  // run with cwd=freddieRoot against paths relative to THAT root.
+  try {
+    const rel = found.map((p) => p.slice(freddieRoot.length).replace(/\\/g, '/'))
+    const out = execFileSync('git', ['check-ignore', '--stdin'], {
+      cwd: freddieRoot, input: rel.join('\n'), stdio: ['pipe', 'pipe', 'pipe'],
+    }).toString()
+    const ignored = new Set(out.split('\n').filter(Boolean))
+    return found.filter((_, i) => !ignored.has(rel[i]))
+  } catch (e) {
+    if (e.status === 1 && e.stdout != null) {
+      const rel = found.map((p) => p.slice(freddieRoot.length).replace(/\\/g, '/'))
+      const ignored = new Set(String(e.stdout).split('\n').filter(Boolean))
+      return found.filter((_, i) => !ignored.has(rel[i]))
+    }
+    return found
+  }
+}
+
 function main() {
   const sourceFiles = filterGitignored(walkSource(ROOT))
+  const freddieSourceFiles = walkFreddieSource(join(ROOT, 'deps', 'freddie'))
   const depFiles = existsSync(NODE_MODULES) ? walk(NODE_MODULES) : []
+  const nodeModulesTruncated = depFiles.length >= MAX_FILES
+  if (nodeModulesTruncated) {
+    console.log(`scan-deps: node_modules walk hit its ${MAX_FILES}-file bound -- some content was not scanned (disclosed, not silent; see MAX_FILES in scripts/scan-deps.mjs)`)
+  }
   if (!sourceFiles.length && !depFiles.length) {
     console.log('scan-deps: no node_modules present and no git-tracked source found -- nothing to scan (run npm install first)')
     return 0
   }
-  const files = [...sourceFiles, ...depFiles]
+  const files = [...sourceFiles, ...freddieSourceFiles, ...depFiles]
   const findings = []
   const blocked = []
   for (const f of files) {
@@ -183,7 +254,7 @@ function main() {
   const failing = findings.filter(f => f.severity === 'fail')
   const warnings = findings.filter(f => f.severity === 'warn')
   if (!findings.length && !blocked.length) {
-    console.log(`scan-deps OK: ${files.length} files scanned (${sourceFiles.length} own source + ${depFiles.length} in node_modules), no HiddenSpawn-pattern matches`)
+    console.log(`scan-deps OK: ${files.length} files scanned (${sourceFiles.length} own source + ${freddieSourceFiles.length} deps/freddie source + ${depFiles.length} in node_modules), no HiddenSpawn-pattern matches`)
     return 0
   }
   if (blocked.length) {
@@ -203,7 +274,6 @@ function main() {
     return 1
   }
   return 0
-  return 1
 }
 
 process.exit(main())

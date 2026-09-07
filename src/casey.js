@@ -1,17 +1,23 @@
-// casey.js  --  top-level assembly. Boots the case store, registers casey's
-// freddie plugin (case-tools), wires a freddie Gateway with the chosen channel
-// adapters + casey's case hooks, and exposes start/stop.
+// casey.js  --  top-level assembly. Boots the case store, builds the
+// channel adapters (casey's own, src/adapters/) and casey's case-aware
+// inbound handler (gateway-hooks.js), then boots freddie's real Cordis tree
+// (freddie-bundle/boot.js) -- freddie IS the agent for casey now: its own
+// AgentLoop/ctx.tools/ctx.llm/ctx.webServer drive every turn, with casey's
+// case-tools/llm-acptoapi/platform plugins mounted alongside freddie-base.
+// this.gateway is a thin {handleInbound, start, stop} shim over the same
+// adapters/handler, kept for every downstream call site (resume sweep,
+// drain queue) that pre-dates the freddie port.
 //
 // Channels:
-//   whatsapp  --  freddie's Meta Graph webhook adapter (real)
-//   discord  --  freddie's adapter + our WS receive (real simulation)
+//   whatsapp  --  casey's own WhatsApp Cloud API webhook adapter, wired into
+//                 freddie's ctx.webServer by the casey-platform Cordis plugin
+//   discord   --  casey's own Discord gateway-websocket adapter (outbound
+//                 client, no listening socket needed)
 
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Gateway } from './gateway.js'
-import { bootHost } from './agent/tool-registry.js'
-import { registerMediaTools } from './agent/media-tools.js'
+import { bootCasey } from '../freddie-bundle/boot.js'
 import { createCaseStore } from './case-store.js'
 import { setCaseStore, resetCaseStore } from './case-runtime.js'
 import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier, breachNotifier } from './gateway-hooks.js'
@@ -41,24 +47,21 @@ async function rosterFromAccounts(store) {
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const CASEY_PLUGINS = path.resolve(__dirname, '..', 'plugins')
 // A deployer package (e.g. serpent) can register its OWN casey-toolset
-// plugins -- tools that need to be visible under enabledToolsets:['cases']
-// (the contact-facing agent's hardcoded, deliberately narrow toolset, see
-// this file's init() below) without casey itself knowing anything about
-// that domain's tools. CASEY_EXTRA_PLUGINS_DIR is a deployer-set env var
-// (same discipline as CASEY_CONFIG_DIR: never contact-influenced, only ever
-// set by whoever starts the process), pointing at an additional plugin root
-// bootHost discovers alongside casey's own plugins/ -- additive, never a
-// replacement. Absent, behavior is byte-identical to before this existed.
-// Validated eagerly (unlike freddie's own scanPluginDir, which silently
-// skips a nonexistent root with zero error) so a deployer's typo'd path
-// fails loud at boot -- matching CASEY_CONFIG_DIR's own fail-fast behavior
-// (loadDomainConfig() throws on a missing dir) -- a real defect an
-// independent adversarial review caught: without this check, a mistyped
-// CASEY_EXTRA_PLUGINS_DIR silently registers zero of the deployer's own
-// tools with no signal why.
-const CASEY_EXTRA_PLUGINS = (() => {
+// Cordis plugins -- real ctx.tools.register(defineTool(...)) tools that need
+// to be visible to the contact-facing agent's tool allowlist (see
+// freddie-bundle/src/case-tools/tool-allowlist.js) without casey itself
+// knowing anything about that domain's tools. CASEY_EXTRA_PLUGINS_DIR is a
+// deployer-set env var (same discipline as CASEY_CONFIG_DIR: never
+// contact-influenced, only ever set by whoever starts the process), pointing
+// at a directory of plugin.js files (same {name, inject, apply(ctx)}
+// contract as casey's own freddie-bundle plugins) inserted as additional
+// patch rows alongside casey's own three -- additive, never a replacement.
+// Absent, behavior is byte-identical to before this existed. Validated
+// eagerly so a deployer's typo'd path fails loud at boot, matching
+// CASEY_CONFIG_DIR's own fail-fast behavior (loadDomainConfig() throws on a
+// missing dir).
+const CASEY_EXTRA_PLUGINS_DIR = (() => {
   if (!process.env.CASEY_EXTRA_PLUGINS_DIR) return null
   const dir = path.resolve(process.env.CASEY_EXTRA_PLUGINS_DIR)
   if (!fs.existsSync(dir)) throw new Error(`CASEY_EXTRA_PLUGINS_DIR not found: ${dir}`)
@@ -109,27 +112,12 @@ export class Casey {
     await this.store.init()
     setCaseStore(this.store)
 
-    // 2) boot casey's own tool host with casey's plugin root (+ a deployer's
-    //    own extra plugin root, if CASEY_EXTRA_PLUGINS_DIR is set) so case_*
-    //    tools register. bootHost is memoised. registerMediaTools registers
-    //    casey's own transcription/vision/tts tools under toolset 'creative'
-    //    -- never agent-callable, dispatched only by hooks/media.js.
-    registerMediaTools()
-    await bootHost(CASEY_EXTRA_PLUGINS ? [CASEY_PLUGINS, CASEY_EXTRA_PLUGINS] : [CASEY_PLUGINS])
-
-    // 3) build adapters for the requested channels.
-    const platforms = {}
-    for (const ch of this.channels) platforms[ch] = await this._makeAdapter(ch)
-    this.adapters = platforms
-
-    // 4) gateway. casey REPLACES handleInbound with its case-aware handler
-    //    (see gateway-hooks.js) rather than layering hooks around freddie's
-    //    context-free turn. We then wrap it to track in-flight turns so a caller
-    //    can await them (freddie fires inbound handling without awaiting).
-    // casey replaces gateway.handleInbound entirely, so the gateway never uses a
-    // callLLM of its own -- the case handler owns the LLM decision (P4: one layer,
-    // one capability). Passing it to the gateway too was dead coupling.
-    this.gateway = new Gateway({ platforms })
+    // 2) build casey's case-aware inbound handler (see gateway-hooks.js) --
+    //    freddie's own agent loop is the turn's actual LLM/tool-orchestration
+    //    engine now (src/agent/run-turn.js), so the handler no longer takes a
+    //    callLLM of its own to hand a gateway -- the case handler still owns
+    //    the LLM decision (P4: one layer, one capability), it just reaches
+    //    freddie's real agent instead of a casey-owned loop.
     const handler = makeCaseHandler(this.store, {
       callLLM: this.opts.callLLM || null,
       // Live backend health so the handler can QUEUE an inbound (instead of a
@@ -152,8 +140,47 @@ export class Casey {
     this._notifyEscalation = this.opts.notifyEscalation
       || breachNotifier(process.env.CASEY_ESCALATE_WEBHOOK, this.log)
       || this._notifyBreach
-    this.gateway.handleInbound = handler.bind(this.gateway)
+
+    // 3) build adapters for the requested channels (casey's own DM/mention
+    //    filtering, follow-up window, and receive-liveness tracking --
+    //    unchanged from before the freddie port, see _makeDiscordAdapter).
+    const platforms = {}
+    for (const ch of this.channels) platforms[ch] = await this._makeAdapter(ch)
+    this.adapters = platforms
+
+    // 4) boot freddie's real Cordis tree (freddie-bundle/boot.js): mounts
+    //    @freddie/freddie-base's LLM/agent-loop/session/tool plumbing, then
+    //    casey's own case-tools/llm-acptoapi/platform plugins, which wire the
+    //    already-built adapters above to the wrapped handler below.
+    //
+    // this.gateway keeps the SAME {handleInbound, start, stop} shape the old
+    // freddie Gateway exposed -- every downstream call site below (resume
+    // sweep, drain queue, start/stop, drain()) reaches through this.gateway
+    // unchanged; only its construction moved from `new Gateway(...)` to
+    // freddie's own boot() assembling the whole transport+agent-loop tree.
+    const boundHandler = handler.bind(this)
+    this.gateway = {
+      handleInbound: (platform, msg) => boundHandler(platform, msg),
+      // WhatsApp's own start() (an express-server listen) is never called --
+      // its webhook route is registered directly on freddie's ctx.webServer
+      // by casey-platform's apply() instead. Discord's start() (the real
+      // gateway WebSocket connect) still needs calling explicitly here.
+      start: async () => {
+        for (const a of Object.values(this.adapters)) {
+          if (a.platform !== 'whatsapp') await a.start?.()
+        }
+      },
+      stop: async () => {
+        for (const a of Object.values(this.adapters)) await a.stop?.()
+      },
+    }
     this._wrapInflight()
+    this.freddieCtx = await bootCasey({
+      channels: this.channels,
+      handleInbound: (platform, msg) => this.gateway.handleInbound(platform, msg),
+      adapters: this.adapters,
+      extraPluginsDir: CASEY_EXTRA_PLUGINS_DIR,
+    })
 
     // 5) proactive contact notes on OPERATOR stage changes. sendReply resolves
     //    the channel adapter and sends -- the same path the dashboard uses for
