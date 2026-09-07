@@ -42,13 +42,25 @@ function esc(s) {
 // themes, where a hue-only severity ramp does not.
 const URGENCY_SIZE = { 0: 14, 1: 14, 2: 18, 3: 22 };
 
+// Every value interpolated into this HTML string is constrained to a known set
+// before it gets here, never merely escaped. statusTok is a STATUS_TOKEN lookup
+// so it is one of five literals; urgency is a number this module computed; and
+// location_source is whitelisted below rather than passed through, because it
+// arrives from the store and an unrecognised value would otherwise be written
+// straight into an attribute. Nothing on a pin is contact-authored text, and
+// this keeps it that way by construction -- the CSS only matches the known
+// values anyway, so an unknown one has no rendering to lose.
+const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed', 'unset']);
+
 function mapMarkerIcon(statusTok, locationSource, urgency, selected) {
     const u = urgency || 0;
     const size = URGENCY_SIZE[u] || 14;
+    const loc = LOCATION_SOURCE_VALUES.has(locationSource) ? locationSource : 'unset';
+    const tok = Object.values(STATUS_TOKEN).includes(statusTok) ? statusTok : '--fg-3';
     return window.L.divIcon({
         className: 'ds-map-marker-icon',
-        html: `<div class="ds-map-marker-dot" data-status-token="${statusTok}"`
-            + ` data-location-source="${locationSource || 'unset'}"`
+        html: `<div class="ds-map-marker-dot" data-status-token="${tok}"`
+            + ` data-location-source="${loc}"`
             + ` data-urgency="${u}"${selected ? ' data-selected="1"' : ''}></div>`,
         iconSize: [size, size],
     });
