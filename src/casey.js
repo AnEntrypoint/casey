@@ -8,9 +8,10 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-const pathToFileUrl = (p) => pathToFileURL(p).href
-import { Gateway, bootHost } from 'freddie'
+import { fileURLToPath } from 'node:url'
+import { Gateway } from './gateway.js'
+import { bootHost } from './agent/tool-registry.js'
+import { registerMediaTools } from './agent/media-tools.js'
 import { createCaseStore } from './case-store.js'
 import { setCaseStore, resetCaseStore } from './case-runtime.js'
 import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier, breachNotifier } from './gateway-hooks.js'
@@ -63,10 +64,6 @@ const CASEY_EXTRA_PLUGINS = (() => {
   if (!fs.existsSync(dir)) throw new Error(`CASEY_EXTRA_PLUGINS_DIR not found: ${dir}`)
   return dir
 })()
-// freddie's package "exports" map blocks subpath imports, so we reach its
-// platform adapter classes by absolute path under node_modules.
-const FREDDIE_ROOT = path.resolve(__dirname, '..', 'node_modules', 'freddie')
-const freddieFile = (rel) => pathToFileUrl(path.join(FREDDIE_ROOT, rel))
 
 // Guardrail breaches severe enough to alert the team during a sweep. The rest
 // (stale/stuck/timestamp_corrupt) still tag the case for the inbox but do not page.
@@ -112,10 +109,12 @@ export class Casey {
     await this.store.init()
     setCaseStore(this.store)
 
-    // 2) boot freddie host with casey's plugin root (+ a deployer's own
-    //    extra plugin root, if CASEY_EXTRA_PLUGINS_DIR is set) so case_* tools
-    //    register. bootHost is memoised; doing it here means freddie's later
-    //    internal bootHost() calls reuse this fully-loaded host.
+    // 2) boot casey's own tool host with casey's plugin root (+ a deployer's
+    //    own extra plugin root, if CASEY_EXTRA_PLUGINS_DIR is set) so case_*
+    //    tools register. bootHost is memoised. registerMediaTools registers
+    //    casey's own transcription/vision/tts tools under toolset 'creative'
+    //    -- never agent-callable, dispatched only by hooks/media.js.
+    registerMediaTools()
     await bootHost(CASEY_EXTRA_PLUGINS ? [CASEY_PLUGINS, CASEY_EXTRA_PLUGINS] : [CASEY_PLUGINS])
 
     // 3) build adapters for the requested channels.
@@ -207,7 +206,7 @@ export class Casey {
   // this method as the template for a future realtime-socket channel.
   async _makeDiscordAdapter() {
     {
-      const { DiscordAdapter } = await import(freddieFile('plugins/platform/platform-discord/handler.js'))
+      const { DiscordAdapter } = await import('./adapters/discord.js')
       const a = new DiscordAdapter({ log: this.log })
       // Filter guild channel messages to only DMs (guild_id absent), @mentions
       // of the bot, or plain follow-ups from an author mid-conversation with
@@ -331,7 +330,7 @@ export class Casey {
   // A future webhook-driven channel (e.g. SMS via a carrier webhook) likely
   // fits this simpler shape rather than Discord's.
   async _makeWhatsappAdapter() {
-    const { WhatsappAdapter } = await import(freddieFile('plugins/platform/platform-whatsapp/handler.js'))
+    const { WhatsappAdapter } = await import('./adapters/whatsapp.js')
     return new WhatsappAdapter({ port: this.opts.whatsappPort || 0 })
   }
 

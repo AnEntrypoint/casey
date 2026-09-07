@@ -188,7 +188,7 @@ async function main() {
     // .env presence
     console.log(existsSync(path.join(ROOT, '.env')) ? ok('.env present') : warn(`.env missing - run ${cyan('casey init')} (channels can still come from the environment)`))
     // dependencies resolve
-    for (const dep of ['thatcher', 'freddie', 'express']) {
+    for (const dep of ['thatcher', 'acptoapi', 'express']) {
       try { await import(dep); console.log(ok(`dependency ${dep} resolves`)) }
       catch { console.log(bad(`dependency ${dep} does not resolve - run npm install`)); problems++ }
     }
@@ -282,12 +282,13 @@ async function main() {
       console.log(bad('WHATSAPP_APP_SECRET is required to enable WhatsApp (verify inbound webhook signatures)'))
       problems++
     }
-    // Unlike WHATSAPP_APP_SECRET, an unset WHATSAPP_VERIFY_TOKEN does not block
-    // serving -- freddie falls back to its own literal 'freddie' default webhook
-    // handshake token, which is guessable by anyone who has read freddie's
-    // source. Warn (not a hard problem) so an operator sets a real one.
+    // casey's own WhatsappAdapter (src/adapters/whatsapp.js) requires
+    // WHATSAPP_VERIFY_TOKEN and throws at start() when unset -- no silent
+    // guessable-default fallback (the old freddie adapter's 'freddie' literal
+    // default is gone). A hard problem, not just a warning.
     if (hasCreds('whatsapp') && !process.env.WHATSAPP_VERIFY_TOKEN) {
-      console.log(warn('WHATSAPP_VERIFY_TOKEN unset - webhook verification will use freddie\'s default token (set WHATSAPP_VERIFY_TOKEN to a real secret)'))
+      console.log(bad('WHATSAPP_VERIFY_TOKEN is unset - webhook verification will fail to start (set WHATSAPP_VERIFY_TOKEN to a real secret)'))
+      problems++
     }
     if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected - casey cannot start without at least one of discord/whatsapp configured'))
     // thatcher config -- same CASEY_CONFIG_DIR > cwd precedence as

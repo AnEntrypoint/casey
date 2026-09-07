@@ -49,9 +49,8 @@ export async function transcribeAudio(buffer, mimeType) {
     const ext = /ogg/.test(mimeType || '') ? 'ogg' : /mp3|mpeg/.test(mimeType || '') ? 'mp3' : 'wav'
     tmpPath = path.join(os.tmpdir(), `casey-voice-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`)
     fs.writeFileSync(tmpPath, buffer)
-    const { host } = await import('freddie')
-    const h = host()
-    const result = await withTimeout(h.pi.dispatchTool('transcription', { file_path: tmpPath }), MEDIA_TOOL_TIMEOUT_MS)
+    const { dispatchTool } = await import('../agent/tool-registry.js')
+    const result = await withTimeout(dispatchTool('transcription', { file_path: tmpPath }), MEDIA_TOOL_TIMEOUT_MS)
     const parsed = typeof result === 'string' ? JSON.parse(result) : result
     return typeof parsed?.text === 'string' ? parsed.text.trim() : ''
   } catch {
@@ -81,9 +80,8 @@ export async function describePhoto(buffer, mimeType) {
   try {
     const mime = /png/.test(mimeType || '') ? 'image/png' : /gif/.test(mimeType || '') ? 'image/gif' : /webp/.test(mimeType || '') ? 'image/webp' : 'image/jpeg'
     const dataUri = `data:${mime};base64,${buffer.toString('base64')}`
-    const { host } = await import('freddie')
-    const h = host()
-    const result = await withTimeout(h.pi.dispatchTool('vision', {
+    const { dispatchTool } = await import('../agent/tool-registry.js')
+    const result = await withTimeout(dispatchTool('vision', {
       image_url: dataUri,
       prompt: 'This is a photo of livestock a field worker sent while reporting a possible animal-health incident. Describe only what is visibly relevant to animal health: any visible signs of illness or injury (e.g. lesions, swelling, discharge, lameness, posture), the apparent species, and how many animals are visible. Do not speculate on a diagnosis.',
     }), MEDIA_TOOL_TIMEOUT_MS)
@@ -113,9 +111,8 @@ export async function synthesizeVoice(text) {
   if (!spoken) return null
   try {
     const provider = process.env.ELEVENLABS_API_KEY && !process.env.OPENAI_API_KEY ? 'elevenlabs' : 'openai'
-    const { host } = await import('freddie')
-    const h = host()
-    const result = await withTimeout(h.pi.dispatchTool('tts', { text: truncate(spoken, 600), provider }), MEDIA_TOOL_TIMEOUT_MS)
+    const { dispatchTool } = await import('../agent/tool-registry.js')
+    const result = await withTimeout(dispatchTool('tts', { text: truncate(spoken, 600), provider }), MEDIA_TOOL_TIMEOUT_MS)
     const parsed = typeof result === 'string' ? JSON.parse(result) : result
     if (!parsed?.audio_base64) return null
     return { data_base64: parsed.audio_base64, mime: parsed.contentType || 'audio/mpeg' }
