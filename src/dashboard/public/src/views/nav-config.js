@@ -93,6 +93,25 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0, refreshAll } = {
 // `relabel` is {key: newLabel}. `group_labels` is {oldGroupName: newGroupName}.
 // Absent config (casey's own default, uhh) -- returns the raw sections
 // unchanged.
+// Role-scoped nav: a secretary's job is the follow-up queue (2a/2b, see
+// HERD-HEALTH-ROADMAP.md Phase 2), not admin/analyst-grade tooling --
+// "need to know on every page" per the redesign request. Hidden items are
+// still reachable to an admin/operator; this is a per-role floor, applied
+// BEFORE the deployer's own dashboard_ui.nav hide/relabel (so a deployer
+// can hide further, never un-hide a role-level restriction by relabeling
+// around it). Absent role (no login yet, or a role this map doesn't name)
+// -- no-op, byte-identical to before this existed.
+const ROLE_HIDE = {
+  secretary: ['sweep', 'settings', 'metrics', 'distribution', 'team'],
+};
+function applyRoleScope(sections, role) {
+  const hide = new Set(ROLE_HIDE[role] || []);
+  if (!hide.size) return sections;
+  return sections
+    .filter(sec => sec.items.filter(it => !hide.has(it.key)).length > 0 || sec.group === 'Account')
+    .map(sec => ({ ...sec, items: sec.items.filter(it => !hide.has(it.key)) }));
+}
+
 function applyNavConfig(sections, navConfig) {
   if (!navConfig) return sections;
   const hide = new Set(navConfig.hide || []);
@@ -114,7 +133,8 @@ function applyNavConfig(sections, navConfig) {
 }
 
 export function buildSideSections(opts = {}) {
-  return applyNavConfig(rawSideSections(opts), state.config?.dashboard_ui?.nav);
+  const roleScoped = applyRoleScope(rawSideSections(opts), state.currentUser?.role);
+  return applyNavConfig(roleScoped, state.config?.dashboard_ui?.nav);
 }
 
 export function backToCases() { closePanel(); }

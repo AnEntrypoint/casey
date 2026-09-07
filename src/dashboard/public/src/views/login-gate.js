@@ -7,7 +7,7 @@ import * as webjsx from 'webjsx';
 import { Btn } from 'ds/components/shell.js';
 import { TextField } from 'ds/components/content.js';
 import { doLogin } from '../auth.js';
-import { schedule } from '../state.js';
+import { state, schedule } from '../state.js';
 import { runRefreshAll } from './nav-config.js';
 const h = webjsx.createElement;
 
@@ -32,9 +32,14 @@ async function submit(e) {
 }
 
 export function LoginGate() {
+  // dashboard_ui.brand (main.js fetches the ungated /api/branding subset
+  // before this ever renders, see main.js's pre-login branch) so a
+  // rebranded deployment (e.g. "Herd Health") never shows the literal
+  // 'casey' on the very first screen a user sees. Absent -- unchanged.
+  const brand = state.config?.dashboard_ui?.brand || 'casey';
   return h('div', { class: 'ds-login-gate' },
     h('form', { class: 'ds-login-form', onsubmit: submit },
-      h('h1', { class: 'ds-login-brand' }, 'casey'),
+      h('h1', { class: 'ds-login-brand' }, brand),
       TextField({ label: 'Username', value: local.username, onInput: (v) => { local.username = v; schedule(); }, name: 'username' }),
       TextField({ label: 'Password', type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'password' }),
       local.error ? h('div', { class: 'ds-login-error', role: 'alert' }, local.error) : null,

@@ -10,8 +10,10 @@ import { Select } from '/design/src/components/content/fields.js';
 import { Alert } from '/design/src/components/content/feedback.js';
 import { Chip, Btn } from '/design/src/components/shell/atoms.js';
 import { state, schedule, closePanel, setActiveId } from '../state.js';
+import { toDate } from '../format.js';
 import {
     loadMap, toggleClusters, refilterMarkers, toggleCoverage, toggleWorkers, toggleLastReports, STATUS_TOKEN,
+    LOCATION_SOURCE_LABEL,
 } from './map-leaflet.js';
 
 const h = webjsx.createElement;
@@ -21,14 +23,69 @@ let filters = { species: '', type: '', status: '', days: '0' };
 let options = { species: [], types: [], statuses: [] };
 let summary = { unresolvedCount: 0, unresolved: [], truncated: false, cap: 0, totalConsidered: 0 };
 let error = null;
+// BLUF "how fresh is this" stamp (WHO dashboard pattern: never let a live-
+// looking view over-promise real-time completeness) -- set on every
+// successful load, read by lastUpdatedNote() below.
+let lastUpdatedAt = null;
 
 function refresh() {
     error = null;
     loadMap(mapStateRef, document.getElementById('ds-map-canvas'), filters, filters.days, {
         onOptions: (o) => { options = o; schedule(); },
-        onSummary: (s) => { summary = s; schedule(); },
+        onSummary: (s) => { summary = s; lastUpdatedAt = Date.now(); schedule(); },
         onError: (msg) => { error = msg; schedule(); },
     });
+}
+
+function agoText(ms) {
+    const s = Math.round((Date.now() - ms) / 1000);
+    if (s < 10) return 'just now';
+    if (s < 60) return s + 's ago';
+    const m = Math.round(s / 60);
+    return m < 60 ? m + 'm ago' : Math.round(m / 60) + 'h ago';
+}
+
+// Stat-tile BLUF strip: the headline before any control -- how many need a
+// person right now, how many are new today, how many are on the map, and how
+// many have nowhere to plot yet. Reuses the SDK-less .ds-stats-grid/
+// .ds-stat-card pattern metrics-panel.js already established, so this reads
+// as the same visual language rather than a one-off widget.
+function summaryStrip() {
+    const attentionCount = (state.attention || []).length;
+    const today = new Date().toDateString();
+    const newToday = (state.allCases || []).filter((c) => {
+        const d = toDate(c.created_at);
+        return d && d.toDateString() === today;
+    }).length;
+    const onMap = summary.totalConsidered || (mapStateRef.current ? mapStateRef.current.pins.length : 0);
+    const tile = (label, value, sub) => h('div', { class: 'ds-stat-card' },
+        h('div', { class: 'ds-stat-label' }, label),
+        h('div', { class: 'ds-stat-value' }, String(value)),
+        sub ? h('div', { class: 'ds-stat-sub' }, sub) : null);
+    return h('div', { class: 'ds-stats-grid ds-map-summary' },
+        tile('Needs attention', attentionCount, attentionCount ? 'see below' : 'all caught up'),
+        tile('New today', newToday),
+        tile('On the map', onMap),
+        tile('No location yet', summary.unresolvedCount || 0));
+}
+
+// Docked attention feed: worst-first, plain-language reason (attn.js's own
+// caseHints ladder) -- casey already computes this for the operator inbox but
+// the map, the actual BLUF home view, never surfaced it. Reuses the .tcase
+// row shape (triage/inbox rows) so this reads as the same component, not a
+// new one-off list.
+function attentionFeed() {
+    const rows = (state.attention || []).slice(0, 5);
+    if (!rows.length) {
+        return h('div', { class: 'triage' }, h('div', { class: 'calm' }, 'Nothing needs attention right now.'));
+    }
+    const heat = (score) => (score >= 80 ? 'heat-3' : score >= 40 ? 'heat-2' : 'heat-1');
+    return h('div', { class: 'ds-map-attention-feed' }, ...rows.map((c) => h('div', {
+        key: c.id, class: 'tcase ' + heat(c.score), onclick: () => setActiveId(c.id),
+        role: 'button', tabindex: '0', onkeydown: (e) => { if (e.key === 'Enter') setActiveId(c.id); },
+    },
+        h('div', { class: 'tcase-why' }, h('b', {}, c.ref), ' ', c.reason || ''),
+        h('div', { class: 'tcase-meta' }, c.subject || ''))));
 }
 
 // The canvas div carries no webjsx `key`, so every re-render (a background
@@ -57,8 +114,17 @@ function onMountCanvas(el) {
 // (the legacy Reports & Admin nav entry, PanelSwap) keeps it.
 export function MapPanel({ embedded = false } = {}) {
     const back = embedded ? null : Btn({ variant: 'ghost', children: 'Back to cases', onClick: () => { closePanel(); } });
-    const legend = h('div', { class: 'ds-map-legend' }, ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
-        h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), k.replace(/_/g, ' '))));
+    // Legend documents BOTH visual channels a pin encodes -- fill color
+    // (status, as before) and border style (location_source, previously
+    // undocumented anywhere despite being rendered on every marker/popup;
+    // see LOCATION_SOURCE_LABEL's own header comment in map-leaflet.js).
+    const legend = h('div', { class: 'ds-map-legend' },
+        ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
+            h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), k.replace(/_/g, ' '))),
+        h('span', { key: 'loc-estimated', class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-dashed' }), LOCATION_SOURCE_LABEL.estimated));
+    const lastUpdatedNote = lastUpdatedAt
+        ? h('div', { class: 'ds-map-updated' }, 'Updated ' + agoText(lastUpdatedAt))
+        : null;
 
     const filterRow = h('div', { class: 'ds-map-filters' },
         Select({
@@ -108,7 +174,8 @@ export function MapPanel({ embedded = false } = {}) {
             p.symptoms ? ' -- ' + p.symptoms : '')));
 
     return Panel({ title: 'Map', children: [
-        back, filterRow, overlayRow, legend,
+        back, summaryStrip(), lastUpdatedNote, attentionFeed(),
+        filterRow, overlayRow, legend,
         error ? Alert({ kind: 'error', children: error }) : null,
         canvas,
         unresolvedNote ? h('div', { class: 'ds-map-unresolved-note' }, unresolvedNote) : null,

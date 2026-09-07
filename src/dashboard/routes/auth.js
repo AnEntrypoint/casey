@@ -11,6 +11,7 @@
 //   issueSession, verifySession, findAccountByUsername, verifyPassword,
 //   markLogin, getAccount, changePassword, esc, wrap
 import { mergeTag } from '../../hooks/heuristics.js'
+import { DASHBOARD_UI } from '../../store/report-shape.js'
 
 export function registerAuth(app, deps) {
   const {
@@ -382,6 +383,19 @@ export function registerAuth(app, deps) {
     if (!req.caseyAccount) return res.json({ authed: false })
     const a = req.caseyAccount
     res.json({ authed: true, username: a.username, display_name: a.display_name, role: a.role, must_change_password: a.must_change_password === '1' })
+  })
+  // Deliberately ungated, same reasoning as /api/whoami above: the login
+  // screen (login-gate.js) renders before any session exists, so a herd-
+  // health/rebranded deployment's "casey" -> "Herd Health" shell branding
+  // (DASHBOARD_UI.brand/leaf, see report-shape.js) never reached it before
+  // this route existed -- /api/config carries the full shape but is
+  // correctly gated (workflow stages/enums), so this exposes ONLY the two
+  // non-sensitive display strings a deployer already renders in the page
+  // title (server.js's PWA_BRAND) and the post-login topbar. Absent
+  // dashboard_ui (casey's own default, uhh) -- both fields are null and
+  // login-gate.js's own 'casey' fallback applies, unchanged.
+  app.get('/api/branding', (req, res) => {
+    res.json({ brand: DASHBOARD_UI?.brand || null, leaf: DASHBOARD_UI?.leaf || null })
   })
   // Forced password change: the ONE route a must_change_password account may
   // reach besides login/logout/whoami/change-password itself (gated below).

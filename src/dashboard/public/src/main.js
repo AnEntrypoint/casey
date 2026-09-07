@@ -155,7 +155,11 @@ async function loadCases() {
 async function refreshAttention() {
   try {
     const a = await api.fetchAttention();
-    const rows = Array.isArray(a) ? a : (a && a.rows) || [];
+    // /api/attention's real response shape is {count,total,...,cases:[...]}
+    // (routes/operations.js) -- this previously read a.rows, a field that
+    // route never returns, so state.attention silently stayed [] forever and
+    // the inbox badge/map attention feed never populated from a live fetch.
+    const rows = Array.isArray(a) ? a : (a && a.cases) || [];
     state.attention = rows;
     setInboxBadge(rows.length);
     schedule();
@@ -198,11 +202,18 @@ async function boot() {
     if (decoded) applyView(decoded);
   }
   applyRouteToState();
-  // dashboard_ui.default_view:'map' lands the operator on the map instead of
-  // the case list -- additive and config-gated (absent -- today's exact
-  // case-list-first landing). Never overrides an explicit deep link: only
-  // fires when the route carried no case/view/inbox token of its own.
-  if (state.config?.dashboard_ui?.default_view === 'map' && !hv.caseId && !hv.view && !hv.inbox && !state.activePanel) {
+  const noDeepLink = !hv.caseId && !hv.view && !hv.inbox && !state.activePanel;
+  // A secretary's job is the follow-up queue (HERD-HEALTH-ROADMAP.md Phase
+  // 2) -- land them there by default, ahead of the deployment-wide
+  // dashboard_ui.default_view, since it is more specific to what this role
+  // actually needs "need to know" every time they open the dashboard.
+  // Never overrides an explicit deep link. No-op for every other role.
+  if (state.currentUser?.role === 'secretary' && noDeepLink) {
+    openPanel('secretary');
+  } else if (state.config?.dashboard_ui?.default_view === 'map' && noDeepLink) {
+    // dashboard_ui.default_view:'map' lands the operator on the map instead
+    // of the case list -- additive and config-gated (absent -- today's
+    // exact case-list-first landing).
     openPanel('map');
   }
   if (!state.inboxMode) await loadCases();
@@ -215,7 +226,18 @@ initRouteSync((r) => { if (r.caseId) state.activeId = r.caseId; if (r.inbox !== 
 
 (async () => {
   await checkSession();
-  if (!state.authed) { render(); return; }
+  if (!state.authed) {
+    // Pre-login branding: state.config is otherwise only populated post-
+    // login (loadCaseyConfig(), which needs an authed /api/config call) --
+    // fetch the small ungated subset so login-gate.js can show a deployment's
+    // real brand/leaf instead of the literal 'casey' fallback. Overwritten
+    // in full by loadCaseyConfig() once a real session exists; never blocks
+    // rendering the login form.
+    const b = await api.fetchBranding();
+    if (b && (b.brand || b.leaf)) setConfig({ dashboard_ui: b });
+    render();
+    return;
+  }
   await boot();
   render();
   maybeShowOnboarding();

@@ -66,6 +66,13 @@ export const logoutEverywhere = () => post('/api/logout-everywhere');
 
 // --- config / health ---
 export const fetchConfig = () => json('/api/config');
+// Ungated (unlike fetchConfig) -- see routes/auth.js's /api/branding header
+// comment. Called pre-login so login-gate.js can show a deployment's real
+// brand/leaf instead of the literal 'casey' fallback. Never throws: a
+// network failure just leaves the fallback in place.
+export const fetchBranding = async () => {
+  try { const r = await api('/api/branding'); return r.ok ? await r.json() : null; } catch { return null; }
+};
 // Per-run config override -- only reachable on a deployment that mounted
 // CASEY_EXTRA_DASHBOARD_ROUTES (e.g. serpent). A plain casey/uhh deployment
 // has no /api/runs/:id/config route, so this always resolves null there
