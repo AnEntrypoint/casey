@@ -135,7 +135,14 @@ export function clusterNoteForCase(mapState, caseId) {
     if (!info || !(info.count > 1)) return null;
     return {
         others: info.count - 1,
-        diseases: (info.reported_disease_names || []).filter(Boolean),
+        // Named reportedDiseaseNames, not `diseases`. clusters.js exposes this
+        // as reported_disease_names precisely so no view can render it as a
+        // diagnosis, and shortening it here to `diseases` is how that
+        // protection gets lost one hop later -- which is exactly what happened
+        // to the case detail's linked-reports note, where the names arrived
+        // bare after a colon and read as fact. The value is a name the worker
+        // relayed from the farmer's own guess, never a lab result.
+        reportedDiseaseNames: (info.reported_disease_names || []).filter(Boolean),
     };
 }
 

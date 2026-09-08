@@ -62,10 +62,22 @@ async function reload(id) { await loadCaseDetail(id || state.activeId); }
 function LinkedReportsNote({ caseId }) {
     const note = clusterNoteFor(caseId);
     if (!note) return null;
-    const names = note.diseases.length ? ': ' + note.diseases.join(', ') : '';
+    // The names came after a bare colon -- "Linked to 3 other report(s)
+    // nearby: foot-and-mouth" -- which reads as a statement of what those
+    // cases ARE. They are not that. suspected_disease is a name the worker
+    // relayed from the farmer's own guess and never a lab result, which is
+    // why clusters.js is careful to expose it as reported_disease_names and
+    // why the clusters panel labels it "as reported:" with a tooltip saying
+    // so. This surface is the one an operator reads before dispatching
+    // somebody, so it needs the same qualification, in the same words.
+    const names = note.reportedDiseaseNames.length
+        ? ' -- as reported: ' + note.reportedDiseaseNames.join(', ')
+        : '';
     return h('div', {
         class: 'casey-linked-reports',
-        title: 'Reports nearby that may be the same or a related situation',
+        title: names
+            ? 'Reports nearby that may be the same or a related situation. The names were given by the worker or farmer, not confirmed by a lab.'
+            : 'Reports nearby that may be the same or a related situation',
     }, `Linked to ${note.others} other report(s) nearby${names}`);
 }
 
