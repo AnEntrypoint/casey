@@ -43,8 +43,18 @@ export function registerAuth(app, deps) {
         // field was absent from an old cookie) still matches an account whose
         // session_epoch has never been bumped (also 0), so upgrading to this
         // code does not force-logout every already-logged-in operator.
+        // status !== 'deleted' is load-bearing, not defensive noise. thatcher
+        // deletes are SOFT: the row stays with status='deleted'. listAccounts
+        // uses t.list, which filters those out, but getAccount above is t.get,
+        // which does NOT -- so without this clause a deleted operator kept a
+        // fully valid session. Live-witnessed before the fix: after
+        // deleteAccount, /api/login correctly returned 401 while the account's
+        // existing cookie still returned whoami 200 with role admin. Deleting
+        // an operator has to end their access now, not whenever their cookie
+        // happens to expire.
         const liveEpoch = Number(acct?.session_epoch) || 0
-        if (acct && acct.disabled !== '1' && claim.epoch === liveEpoch) req.caseyAccount = acct
+        const live = acct && acct.status !== 'deleted' && acct.disabled !== '1'
+        if (live && claim.epoch === liveEpoch) req.caseyAccount = acct
       }
     } catch { /* a broken/tampered cookie just means not-logged-in, never a crash */ }
     next()

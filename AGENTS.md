@@ -948,6 +948,23 @@ token, query-param injection, bearer token, weak password brute-force, timing
 oracle, epoch revocation, CSRF, disabled accounts). No CVE-class findings. System
 is production-ready from authentication perspective.
 
+**Correction to that audit (2026-09-08): its eleventh case was missing, and it
+failed.** The audit tested DISABLED accounts but never DELETED ones. thatcher
+deletes are SOFT -- the row stays with `status='deleted'` -- and while
+`listAccounts` uses `t.list`, which filters those out, the session middleware
+resolves through `getAccount`, which is `t.get` and does NOT. The middleware
+checked `disabled` and the session epoch but never `status`, so deleting an
+operator revoked nothing: live-witnessed, `/api/login` correctly returned 401
+while that account's existing cookie still returned `whoami` 200 with
+`role: admin`. A removed operator kept full access until their cookie happened
+to expire. Now closed by two independent gates -- the middleware refuses a
+`status='deleted'` account, and `deleteAccount` bumps `session_epoch` before
+removing the row so every outstanding token for it fails the epoch comparison.
+The general lesson is worth more than the fix: a soft-delete store means
+"deleted" is a FIELD, and every read path that authorises has to honour it;
+`t.get` and `t.list` do not agree about visibility, and only one of them was
+being used for the authorisation decision.
+
 ## thatcher / busybase chain
 
 casey consumes thatcher via a `github:AnEntrypoint/thatcher#main` dependency
