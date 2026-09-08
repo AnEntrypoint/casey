@@ -8,6 +8,7 @@ import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchOperatorWorkload } from '../api.js';
 import { fmtDur } from '../format.js';
 
@@ -21,14 +22,14 @@ function ensureLoaded() {
     fetchOperatorWorkload().then((j) => {
         state._team = j;
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'team view error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the team view', e); schedule(); });
 }
 
 export function TeamPanel() {
     ensureLoaded();
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading team workload' });
-    else if (error) body = Alert({ kind: 'error', children: 'Team-view error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const ops = (state._team && state._team.operators) || [];
         if (!ops.length) body = Alert({ kind: 'info', children: 'No operators on the roster yet. Workload shows up here once accounts are added.' });

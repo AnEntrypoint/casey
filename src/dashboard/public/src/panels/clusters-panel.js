@@ -8,6 +8,7 @@ import { Panel } from '/design/src/components/content/panel.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule, setActiveId } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchClusters } from '../api.js';
 
 const h = webjsx.createElement;
@@ -20,7 +21,7 @@ function ensureLoaded() {
     fetchClusters().then((j) => {
         state._clusters = j;
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'clusters error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the related reports', e); schedule(); });
 }
 
 function clusterRow(c, i) {
@@ -56,7 +57,7 @@ export function ClustersPanel({ railed = false } = {}) {
     ensureLoaded();
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading related-case groups' });
-    else if (error) body = Alert({ kind: 'error', children: 'Related-reports error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const cl = (state._clusters && state._clusters.clusters) || [];
         body = cl.length

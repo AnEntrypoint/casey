@@ -18,6 +18,7 @@ import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { state, schedule, setActiveId } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchSecretaryQueue } from '../api.js';
 import { fmtDur, fmtTime } from '../format.js';
 
@@ -30,7 +31,7 @@ function load() {
     fetchSecretaryQueue({ assignee: filter === 'all' ? undefined : filter }).then((j) => {
         state._secretary = j;
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'secretary queue error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the follow-up list', e); schedule(); });
 }
 
 function ensureLoaded() {
@@ -70,7 +71,7 @@ export function SecretaryPanel() {
     ensureLoaded();
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading follow-up queue' });
-    else if (error) body = Alert({ kind: 'error', children: 'Secretary queue error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const j = state._secretary;
         const places = (j && j.places) || [];

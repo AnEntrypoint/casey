@@ -6,6 +6,7 @@ import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule, setActiveId } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchHandover, postStartShift } from '../api.js';
 import { fmtTime } from '../format.js';
 import { toast } from '../toasts.js';
@@ -27,7 +28,7 @@ function ensureLoaded() {
     fetchHandover().then((j) => {
         state._handover = j;
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'handover error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the handover', e); schedule(); });
 }
 
 async function startShift() {
@@ -78,7 +79,7 @@ export function HandoverPanel() {
         h('a', { href: '/api/handover?format=html', class: 'ds-link', target: '_blank', rel: 'noopener' }, 'Printable'));
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading handover digest' });
-    else if (error) body = Alert({ kind: 'error', children: 'Handover error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else body = state._handover ? handoverBody(state._handover) : Alert({ kind: 'warn', children: 'Could not load the handover digest.' });
     return Panel({ children: [actions, body] });
 }

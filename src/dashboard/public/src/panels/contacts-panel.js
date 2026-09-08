@@ -8,6 +8,7 @@ import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchContacts, postContactTier, postContactErase } from '../api.js';
 import { fmtTime } from '../format.js';
 import { toast } from '../toasts.js';
@@ -24,7 +25,7 @@ function ensureLoaded() {
     fetchContacts().then((j) => {
         state._contacts = j;
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'reporters error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the reporters', e); schedule(); });
 }
 
 async function toggleTier(c) {
@@ -66,7 +67,7 @@ export function ContactsPanel() {
     const isAdmin = state.currentUser && state.currentUser.role === 'admin';
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading reporters' });
-    else if (error) body = Alert({ kind: 'error', children: 'Reporters error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const contacts = (state._contacts && state._contacts.contacts) || [];
         if (!contacts.length) body = Alert({ kind: 'info', children: 'No one has reported yet.' });
