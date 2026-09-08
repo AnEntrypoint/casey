@@ -253,7 +253,8 @@ AGENTS.md "Supervised runtime" for the full env-var set.
 | `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Enable WhatsApp (Meta Graph send). |
 | `WHATSAPP_VERIFY_TOKEN` | Webhook verification handshake token. |
 | `WHATSAPP_APP_SECRET` | When set, inbound webhooks are HMAC-SHA256 verified (`X-Hub-Signature-256`); forged posts are rejected. |
-| `WHATSAPP_WEBHOOK_PATH` | Path Meta POSTs to (default `/webhooks/whatsapp`). The webhook is served on the dashboard's own port -- there is no separate `WHATSAPP_WEBHOOK_PORT`. Meta needs a stable public URL; use a tunnel in dev. |
+| `WHATSAPP_WEBHOOK_PATH` | Path Meta POSTs to (default `/webhooks/whatsapp`). There is no `WHATSAPP_WEBHOOK_PORT`. |
+| `CASEY_WEBHOOK_HOST`, `CASEY_WEBHOOK_PORT` | Host/port of the freddie-tree web server carrying that webhook (default `127.0.0.1:4001`) -- a different socket from the dashboard's 4000. This is the port a WhatsApp deployment publishes to Meta as its callback URL, so Meta needs a stable public URL for it; use a tunnel in dev. |
 | `CASEY_SESSION_SECRET` | HMAC key signing the dashboard session cookie. The dashboard uses per-operator username/password login (no bearer token, no `?token=`); a fresh deployment with zero accounts auto-creates one admin with a random printed password. Random per process when unset, so a restart logs everyone out -- set it explicitly for sessions to survive a restart. |
 | `CASEY_COOKIE_SECURE=0` | Drop the `Secure` flag on the session cookie for a plain-HTTP dev/LAN deployment (Secure is on by default). |
 | `CASEY_TRANSCRIBE_VOICE_NOTES=1` | Opt-in: transcribe an inbound voice note and fold the text into the case (needs `OPENAI_API_KEY`). Off by default (external data egress). |
