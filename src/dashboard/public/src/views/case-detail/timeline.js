@@ -5,7 +5,7 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Icon, IconButton } from '/design/src/components/shell.js';
-import { SearchInput } from '/design/src/components/content.js';
+import { SearchInput, LogRow } from '/design/src/components/content.js';
 import { state, schedule, appendTimelineEvents, setTimelineSearch } from '../../state.js';
 import { fetchCaseEvents, postFlagReply } from '../../api.js';
 import { rel, fmtTime } from '../../format.js';
@@ -28,17 +28,28 @@ async function flagReply(caseId, e) {
     } catch { /* best-effort -- a failed flag just leaves the button clickable to retry */ }
 }
 
+// The row itself is the kit's LogRow: a timeline entry is a dense line with a
+// rail colour saying what kind of thing happened, and eight CSS rules here
+// used to reimplement exactly that. What stays casey's is the vocabulary
+// (eventIcon/eventTone) and the flag-a-bad-reply control.
+//
+// The per-kind class this used to emit (casey-ev--<kind>) was never styled by
+// anything; LogRow's data-kind is the same targeting hook without pretending
+// to be a style.
 function TimelineRow({ e, caseId, key } = {}) {
     const flagged = e._flagged || e.data?.flagged_reply;
-    return h('div', { key, class: 'casey-ev casey-ev--' + e.kind + ' casey-ev-tone--' + eventTone(e.kind) },
-        h('span', { class: 'casey-ev-icon' }, Icon(eventIcon(e.kind), { size: 13 })),
-        h('span', { class: 'casey-ev-k' }, e.kind, '/', e.actor),
-        h('span', { class: 'casey-ev-text' }, e.text || ''),
-        e.kind === 'outbound' && !flagged
+    return LogRow({
+        key, kind: e.kind, tone: eventTone(e.kind),
+        leading: Icon(eventIcon(e.kind), { size: 13 }),
+        label: e.kind + '/' + e.actor,
+        text: e.text || '',
+        trailing: e.kind === 'outbound' && !flagged
             ? IconButton({ icon: Icon('warn', { size: 12 }), title: 'Flag this reply as bad/off-target', onClick: () => flagReply(caseId, e) })
             : (e.kind === 'outbound' && flagged ? h('span', { class: 'casey-ev-flagged', title: 'Flagged for review' }, Icon('warn', { size: 12 })) : null),
-        h('span', { class: 'casey-ev-when', title: fmtTime(e.created_at) }, rel(e.created_at))
-    );
+        // Wrapped so the exact timestamp stays available on hover -- LogRow
+        // owns the meta slot's placement, not what the caller puts in it.
+        meta: h('span', { title: fmtTime(e.created_at) }, rel(e.created_at)),
+    });
 }
 
 export function Timeline({ caseId, events, eventsTotal, key } = {}) {

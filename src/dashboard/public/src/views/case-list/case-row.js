@@ -100,6 +100,20 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
 
   const open = () => { setActiveId(c.id); pushHash({ caseId: c.id }); };
 
+  // Deliberately NOT the kit's Row, and the reason is specific rather than
+  // stylistic, so it does not get re-litigated: Row aliases `selected` onto
+  // `active` for backward compatibility (isActive = active || selected), and
+  // this row needs the two to look DIFFERENT. There are three states here and
+  // an operator has to tell them apart at a glance -- `active` is the case
+  // currently open in the detail pane, `selected` is one of several ticked for
+  // a bulk action, and `kbd-focused` is the row j/k has highlighted and Enter
+  // would open. Collapsing the first two would make keyboard triage ambiguous
+  // exactly when several rows are ticked, which is when it matters.
+  //
+  // The timeline row DID move to the kit (LogRow), and the report field row
+  // too (DetailRow) -- those had no such conflict. This one waits for Row to
+  // separate the two props, which is a change to a shared primitive other
+  // consumers depend on, not something to force from here.
   return h('div', {
     key: c.id,
     class: 'case-row' + (band ? ' band-' + band : '')
