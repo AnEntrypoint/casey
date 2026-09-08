@@ -9,11 +9,12 @@ import { setHomeViewRoute } from '../route.js';
 import * as api from '../api.js';
 import { toast } from '../toasts.js';
 
-// intake-form-view.js is owned by a different builder (case-list/case-detail/
-// intake are explicitly out of scope for this shell build) -- this shell
-// wires the nav slot to a stable exported hook other agents' view module can
-// override once it lands, so the "New case" nav item is never a dead click.
-let _openIntakeNew = () => toast('New-case intake is not wired up yet.', 'err');
+// main.js registers case-list-detail-layout.js's promptNewCase() here at boot;
+// the indirection avoids a circular import (nav-config -> case-list-detail-
+// layout -> case-list-view -> filters-bar -> nav-config). The fallback only
+// fires if the New case control is pressed before boot has registered it,
+// which is why it says what happened rather than doing nothing.
+let _openIntakeNew = () => toast('The dashboard is still starting up. Try New case again in a moment.', 'err');
 export function registerOpenIntakeNew(fn) { _openIntakeNew = fn; }
 function openIntakeNew() { _openIntakeNew(); }
 
@@ -41,11 +42,7 @@ export function toggleInboxMode() { setInboxMode(!state.inboxMode); }
 // relabeled. Casey's own default/uhh declare no dashboard_ui, so
 // applyNavConfig (below) is a no-op and every item/group renders exactly as
 // before this existed.
-// Opens one of the two spatial rollups ON the map rather than instead of it.
-// Both answer a WHERE question, and both used to be full-page swaps that
-// unmounted the map to show a table -- so the operator asked "where are the
-// hotspots" and the UI removed the only thing that can show where. These land
-// on the map home view with the rollup docked in the rail beside it.
+
 // The design SDK renders every nav item as <a href="#">, so the anchor's
 // DEFAULT action runs after our handler and rewrites the URL to bare "#" --
 // which wiped the #home=... token setHomeViewRoute had just written, measured
@@ -58,6 +55,11 @@ function navClick(e, fn) {
   fn();
 }
 
+// Opens one of the two spatial rollups ON the map rather than instead of it.
+// Both answer a WHERE question, and both used to be full-page swaps that
+// unmounted the map to show a table -- so the operator asked "where are the
+// hotspots" and the UI removed the only thing that can show where. These land
+// on the map home view with the rollup docked in the rail beside it.
 function openOnMap(mode) {
   closePanel();
   setHomeViewRoute('map');

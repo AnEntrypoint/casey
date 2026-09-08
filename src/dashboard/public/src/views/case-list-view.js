@@ -59,11 +59,15 @@ import { tagList, isMine } from '../format.js';
 import * as api from '../api.js';
 import { toast } from '../toasts.js';
 import { saveCurrentView, applyNamedView } from '../saved-views.js';
-import { SearchBar, MoreFilters, StagePills } from './case-list/filters-bar.js';
+import { SearchBar, MoreFilters, StagePills, refreshSavedViews } from './case-list/filters-bar.js';
 import { InboxPanel } from './case-list/inbox-panel.js';
 import { BulkBar } from './case-list/bulk-bar.js';
 import { VirtualizedCaseList, PlainCaseList, VIRTUALIZE_THRESHOLD } from './case-list/virtualized-list.js';
 import { confirmDialog } from '../components/dialog-shell.js';
+// One definition of the counted filter chip, shared with the map home view --
+// see components/filter-chip.js for why a second local copy of the control is
+// the same class of defect as a second local copy of the predicate it applies.
+import { FilterChip, ClearChip } from '../components/filter-chip.js';
 const h = webjsx.createElement;
 
 // How many reports the server says exist, versus how many arrived. The list
@@ -169,7 +173,12 @@ async function promptSaveView() {
   if (!name) return;
   const r = saveCurrentView(name);
   if (!r.ok) { toast(r.error, 'err'); return; }
+  // Invalidate the menu's cache before the toast claims the save worked. Until
+  // this existed the menu read a state field nothing wrote, so the toast was
+  // the only evidence a view had been saved and the view itself never appeared.
+  refreshSavedViews();
   toast('Saved view "' + name + '"', 'ok');
+  schedule();
 }
 
 // Each chip states a count AND applies it. The count is taken over exactly the
@@ -181,12 +190,7 @@ function listChips() {
   const needCount = loaded.filter((c) => ids.has(c.id)).length;
   const mineCount = loaded.filter(isMine).length;
 
-  const chip = (key, label, count, on, onClick, title) => h('button', {
-    key, type: 'button', title,
-    class: 'ds-fchip' + (on ? ' is-on' : '') + (count === 0 ? ' is-empty' : ''),
-    'aria-pressed': on ? 'true' : 'false',
-    onclick: onClick,
-  }, h('span', { class: 'ds-fchip-n' }, String(count)), h('span', { class: 'ds-fchip-l' }, label));
+  const chip = (key, label, count, on, onClick, title) => FilterChip({ key, label, count, on, onClick, title });
 
   return h('div', { class: 'ds-fchips' },
     chip('attn', 'need a person', needCount, attentionOnly,
@@ -196,10 +200,7 @@ function listChips() {
       () => setMineOnly(!state.mineOnly),
       'Show only the reports you have claimed'),
     (attentionOnly || state.mineOnly)
-      ? h('button', {
-        key: 'clr', type: 'button', class: 'ds-fchip-clear',
-        onclick: () => { attentionOnly = false; setMineOnly(false); },
-      }, 'Clear')
+      ? ClearChip({ onClick: () => { attentionOnly = false; setMineOnly(false); } })
       : null);
 }
 

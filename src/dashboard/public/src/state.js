@@ -4,10 +4,12 @@
 // `setSchedule` to mountKit's own schedule() once, at boot; every mutator
 // below ends by calling schedule() so a state change always re-renders.
 //
-// This is the merged superset of the per-worktree state.js variants written
-// by the shell/case-list/case-detail/panels builders -- every field and
-// mutator any of those consumer modules imports is present here so no
-// downstream view breaks on integration.
+// A field belongs here only when more than one module reads it. A field no
+// module writes does not belong here at all: two of them (savedViews,
+// recentSearches) sat as permanently-empty arrays that consumers read INSTEAD
+// of the localStorage store those features actually keep, which is how the
+// saved-view menu and the recent-search chips came to be unable to render
+// anything at all.
 
 // BLUF: where things are happening is the single most operationally
 // important fact, so the map -- not the case list -- is the default home
@@ -84,8 +86,13 @@ export const state = {
   // link returns (auth.js's onConnectionRestored subscription).
   sessionRestored: false,
   health: { ai: null, runtime: null, guardrails: null },
-  savedViews: [],
-  recentSearches: [],
+  // savedViews and recentSearches used to live here as empty arrays that no
+  // module ever wrote. Both features keep their real store in localStorage
+  // (saved-views.js), and both consumers had been reading these never-written
+  // fields instead -- so a saved view toasted "saved" and never appeared in
+  // the menu, and the recent-search chips could not render. The state field
+  // was the bug in both cases, not the missing writer: there is one store,
+  // and views/case-list/filters-bar.js reads it.
   handoffDismissed: new Set(),
   handoffQueue: [],
   degradedTurns: [],
@@ -232,11 +239,13 @@ export function closePanel() { state.activePanel = null; schedule(); }
 export function openModal(name) { state.activeModal = name; schedule(); }
 export function closeModal() { state.activeModal = null; schedule(); }
 
-export function removeToast(id) {
-  const i = state.toasts.findIndex((t) => t.id === id);
-  if (i !== -1) state.toasts.splice(i, 1);
-  schedule();
-}
+// state.toasts is the queue; toasts.js owns every mutation of it (push,
+// dismiss, the auto-dismiss timers, the undo rows). A second splice-by-id
+// implementation used to live here as removeToast, exported alongside
+// toasts.js's own export of the same name -- two definitions of one operation
+// in two modules, with zero call sites between them, so neither was reachable
+// and either could have been "fixed" without the other. dismissToast in
+// toasts.js is the one that is actually called, and it is now the only one.
 export function setConnLost(v) {
   if (state.connLost === !!v) return;
   state.connLost = !!v;
@@ -251,7 +260,6 @@ export function setConnLost(v) {
 }
 export function setSessionRestored(v) { state.sessionRestored = !!v; schedule(); }
 export function setHealth(patch) { Object.assign(state.health, patch); schedule(); }
-export function setRecentSearches(arr) { state.recentSearches = arr; schedule(); }
 export function setHandoffQueue(q) { state.handoffQueue = q; schedule(); }
 export function setDegradedTurns(rows) { state.degradedTurns = rows; schedule(); }
 export function setOfflineQueueCount(n) { state.offlineQueueCount = n; schedule(); }

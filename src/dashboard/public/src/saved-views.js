@@ -9,10 +9,13 @@ export function currentView() {
   return { q: f.q || '', status: f.status || '', channel: f.channel || '', source: f.source || '', mine: !!f.mine, focus: !!state.inboxMode };
 }
 
-export function encodeView(v) {
-  try { return btoa(unescape(encodeURIComponent(JSON.stringify(v)))).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'); }
-  catch { return ''; }
-}
+// Reader only. There was an encodeView() beside this, exported and called by
+// nothing anywhere in the tree (checked against every js/html/json file under
+// deps/casey, freddie-bundle included, plus every dynamic-import and
+// string-keyed reach in the SPA) -- so no surface ever produced a #view= link
+// and the encoder was one half of a feature that was never wired up. The
+// decoder stays: main.js reads the token on boot, so a link that does exist
+// still opens the view it names.
 export function decodeView(s) {
   try {
     const b = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -44,6 +47,16 @@ export function saveNamedView(name, view) {
 export function getNamedView(name) {
   const m = loadNamedViews();
   return m[name] || null;
+}
+// The names to offer in the Saved views menu, read from the store that
+// saveNamedView actually writes. The menu used to list Object.keys of
+// state.savedViews -- a field state.js initialised to [] and NOTHING in the
+// SPA ever wrote -- so saving a view popped a toast saying it was saved and
+// the view then never appeared in the list it was saved into. Same shape of
+// write-only feature as the recent-search buffer that filters-bar.js already
+// had to repoint at this module.
+export function listNamedViews() {
+  return Object.keys(loadNamedViews()).sort();
 }
 
 // saveCurrentView/applyNamedView -- thin convenience wrappers over the

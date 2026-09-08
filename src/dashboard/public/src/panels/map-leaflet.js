@@ -310,11 +310,174 @@ async function renderMapLastReports(mapState) {
     } catch (e) { /* last-reported-location overlay is a soft add-on */ }
 }
 
-// initMap -- creates (once) the Leaflet map bound to `canvas`, fetches pins,
-// wires filter/overlay callbacks, and returns the live mapState. `filters`
-// is a live-read object {species,type,status,days}; `onFiltersPopulated`
-// is called once with the discovered species/type/status option lists so
-// the webjsx chrome (map-panel.js) can render <Select> options.
+// A fresh Leaflet map already framed on the reports it is about to show.
+//
+// FRAME FIRST, THEN ADD TILES. The map used to be constructed at a fixed
+// [-28.5,25]@z5 and only fitted to the reports afterwards, so every landing
+// paid for two or three COMPLETE tile pyramids -- z5, then z6, then often z7
+// during the settle -- when only the last one is ever looked at. Measured at
+// ~220 KB for a single pyramid, on a link this deployment assumes is metered
+// and slow. The pin payload is already in hand by the time this is called, so
+// the destination view is knowable BEFORE a single tile is requested, and a
+// tileLayer only starts fetching once it is added to a map that has a view.
+function createFramedMap(canvas, pins) {
+    canvas.innerHTML = '';
+    const map = window.L.map(canvas);
+    const located = (pins || []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+    if (!located.length) {
+        // No placeable report: southern Africa, the same view as before.
+        map.setView([-28.5, 25], 5);
+    } else {
+        // A plain 24px padding, not the overlay-aware measurement: the chrome
+        // is not mounted yet at construction time. The rAF pass in
+        // autoFitToReports still refines against the real overlays once layout
+        // has settled -- it just no longer has three pyramids behind it.
+        try {
+            map.fitBounds(window.L.latLngBounds(located.map((p) => [p.lat, p.lon])), { maxZoom: 11, padding: [24, 24], animate: false });
+        } catch { map.setView([-28.5, 25], 5); }
+    }
+    const tiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '(c) OpenStreetMap contributors' });
+    tiles.addTo(map);
+    return { map, tiles };
+}
+
+// A basemap failure and a data failure are the SAME picture -- pins on grey, or
+// nothing on grey -- and the panel used to render one string for both. On the
+// rural link this deployment targets they are not equally likely and they do
+// not have the same answer: the API is same-origin and small, while the tiles
+// are a third-party CDN pulling an order of magnitude more bytes, so the tiles
+// are what actually goes missing. Telling an operator "could not load the map"
+// when the reports loaded fine and only the backdrop is missing sends them to
+// check the wrong thing.
+//
+// Judged on a RUN of failures, never a single one: one 404 is normal (a tile
+// that genuinely does not exist at that zoom over open sea), and any successful
+// tile clears the count, so a transient blip on a flaky link never latches the
+// warning on.
+const TILE_FAIL_RUN = 4;
+function watchTileHealth(mapStateRef, tiles) {
+    let tileFails = 0;
+    const publish = (failing) => {
+        const ms = mapStateRef.current;
+        if (!ms || ms.tilesFailing === failing) return;
+        ms.tilesFailing = failing;
+        // The panel is webjsx-rendered and these events arrive outside any
+        // render pass, so the flag has to be PUBLISHED to be seen -- the same
+        // reason setAttention notifies rather than merely assigning.
+        schedule();
+    };
+    tiles.on('tileerror', () => { tileFails += 1; if (tileFails >= TILE_FAIL_RUN) publish(true); });
+    tiles.on('tileload', () => { tileFails = 0; publish(false); });
+}
+
+// Publish the viewport so the rail can narrow to what is actually on screen
+// (mapuipatterns' extent-driven-content pattern). Without this the map was a
+// picture, not a control: an operator could zoom into one district and still be
+// reading a list covering the whole country. Debounced -- moveend also fires at
+// the end of every inertia glide, and a re-render per frame of a drag is not
+// free with 2000 pins.
+function publishExtentOnMove(map) {
+    let timer = null;
+    const publish = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+            try { setMapExtent(map.getBounds()); } catch { /* torn down mid-move */ }
+        }, 150);
+    };
+    map.on('moveend', publish);
+    map.on('zoomend', publish);
+}
+
+// The phone's map/list toggle hides the map pane with display:none, so the
+// container really does go to 0x0. Calling invalidateSize against a zero box
+// makes Leaflet recompute its centre from a degenerate rectangle -- measured
+// live: switching map -> list -> map came back at a DIFFERENT centre and zoom,
+// so the operator lost the district they had navigated to just by glancing at
+// the list. Remember the real view instead and skip the resize while hidden.
+function onCanvasResized(mapState, entries) {
+    const box = entries && entries[0] && entries[0].contentRect;
+    const hidden = box && (box.width === 0 || box.height === 0);
+    try {
+        if (hidden) {
+            mapState.hiddenView = { center: mapState.map.getCenter(), zoom: mapState.map.getZoom() };
+            return;
+        }
+        mapState.map.invalidateSize({ animate: false });
+        if (mapState.hiddenView) {
+            const { center, zoom } = mapState.hiddenView;
+            mapState.hiddenView = null;
+            mapState.map.setView(center, zoom, { animate: false });
+        }
+    } catch { /* container torn down mid-observe */ }
+}
+
+// Leaflet caches its container size and only recomputes on a WINDOW resize. In
+// this shell the canvas resizes without one -- the rail swaps between the queue
+// and a case detail, the pane's flex basis changes, the phone breakpoint flips
+// -- and a stale cached size renders as grey seams where tiles were never
+// requested. Observe the element itself.
+function observeCanvasSize(mapState) {
+    if (mapState.sizeObserver || typeof ResizeObserver !== 'function') return;
+    try {
+        mapState.sizeObserver = new ResizeObserver((entries) => onCanvasResized(mapState, entries));
+        mapState.sizeObserver.observe(mapState.map.getContainer());
+    } catch { /* observation is an optimisation, never a hard requirement */ }
+}
+
+// Frame the map on the reports themselves, once, on first load. The
+// constructor's fallback view is a fixed [-28.5,25]@5 that shows most of
+// southern Africa regardless of where anything actually is -- measured live, a
+// dataset entirely inside South Africa opened centred over Angola and Zambia,
+// so the BLUF question ("what is going on where") needed a manual pan and zoom
+// before it could be answered at all.
+//
+// First load ONLY (didAutoFit), never on refilter/refresh: re-fitting on every
+// poll would yank the viewport out from under an operator who has deliberately
+// panned or zoomed somewhere. maxZoom keeps a single lone report from slamming
+// to street level, where surrounding context is lost.
+function autoFitToReports(mapState) {
+    if (mapState.didAutoFit) return;
+    const located = (mapState.pins || []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+    if (!located.length) return;
+    mapState.didAutoFit = true;
+    const bounds = window.L.latLngBounds(located.map((p) => [p.lat, p.lon]));
+    // Kept, not discarded. These bounds were computed once for the first-load
+    // fit and then thrown away, which left an operator who had zoomed into one
+    // district with no way back to "everything" short of reloading the page --
+    // and a reload costs the map payload and a fresh round of tiles on a link
+    // that charges by the megabyte.
+    mapState.allBounds = bounds;
+    // Deferred a frame on purpose. loadMap runs in the same tick the panel's
+    // webjsx pass mounts the overlays, so measuring them here returns zero-size
+    // rects and overlayFitPadding silently degrades to its 24px floor -- which
+    // is exactly the bug it exists to prevent (witnessed: 2 of 6 pins fitted
+    // underneath the queue). One rAF lets layout settle so the measurement is
+    // real, and the shell is resolved from the map's OWN live container: a
+    // poll-driven re-render can swap the canvas element out between loadMap
+    // starting and this callback running, and a detached node's closest()
+    // returns null.
+    const fit = () => {
+        try { mapState.map.fitBounds(bounds, { maxZoom: 11, ...overlayFitPadding(mapState.map.getContainer()) }); }
+        catch { /* a degenerate bounds box must never break the panel */ }
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(fit)); else fit();
+}
+
+// The option lists the rail's Select controls offer, taken from the pins that
+// actually loaded rather than from a fixed vocabulary -- a filter that offers a
+// species no report has is a control that can only ever empty the map.
+function filterOptionsFrom(pins) {
+    return {
+        species: [...new Set(pins.map((p) => p.species).filter(Boolean))].sort(),
+        types: [...new Set(pins.map((p) => p.case_type).filter((t) => t && t !== 'unset'))].sort(),
+        statuses: [...new Set(pins.map((p) => p.status))].sort(),
+    };
+}
+
+// Creates the Leaflet map on first call and reuses it afterwards, loads the
+// pins, and reports back through `callbacks` -- onOptions with the filter
+// vocabularies, onSummary with the counts the rail states, onError with a
+// sentence naming what failed. `filters` is the live-read state.mapFilter.
 export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     if (!canvas) return null;
     // fetchMapCases -> qs() expects a params OBJECT (Object.entries(params)) --
@@ -327,172 +490,29 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     const j = await fetchMapCases({ days }).catch(() => null);
     // Names the DATA specifically. "Could not load the map" was true of a
     // basemap outage too, and the two need different actions from the
-    // operator -- see the tile-health publisher below.
-    if (!j) { if (callbacks && callbacks.onError) callbacks.onError('Could not load the reports. The map could not reach this dashboard\'s own server, so what you see may be out of date.'); return mapStateRef.current; }
+    // operator -- see watchTileHealth above.
+    if (!j) {
+        if (callbacks && callbacks.onError) callbacks.onError('Could not load the reports. The map could not reach this dashboard\'s own server, so what you see may be out of date.');
+        return mapStateRef.current;
+    }
     if (!mapStateRef.current) {
-        canvas.innerHTML = '';
-        const map = window.L.map(canvas);
-        // FRAME FIRST, THEN ADD TILES. The map used to be constructed at a
-        // fixed [-28.5,25]@z5 and only fitted to the reports afterwards, so
-        // every landing paid for two or three COMPLETE tile pyramids -- z5,
-        // then z6, then often z7 during the settle -- when only the last one
-        // is ever looked at. Measured at ~220 KB for a single pyramid, on a
-        // link this deployment assumes is metered and slow.
-        //
-        // The pin payload is already in hand here (it is awaited above), so
-        // the destination view is knowable BEFORE a single tile is requested.
-        // A tileLayer only starts fetching once it is added to a map that has
-        // a view, so adding it after the fit means the discarded zoom levels
-        // are never requested at all.
-        const located0 = (j.pins || []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
-        if (located0.length) {
-            // A plain 24px padding, not the overlay-aware measurement: the
-            // chrome is not mounted yet at construction time. The rAF pass
-            // below still refines against the real overlays once layout has
-            // settled -- it just no longer has three pyramids behind it.
-            try {
-                map.fitBounds(window.L.latLngBounds(located0.map((p) => [p.lat, p.lon])), { maxZoom: 11, padding: [24, 24], animate: false });
-            } catch { map.setView([-28.5, 25], 5); }
-        } else {
-            // No placeable report: southern Africa, the same view as before.
-            map.setView([-28.5, 25], 5);
-        }
-        const tiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '(c) OpenStreetMap contributors' });
-        tiles.addTo(map);
+        const { map, tiles } = createFramedMap(canvas, j.pins);
         mapStateRef.current = {
             map, markerLayer: null, clusterLines: null, coverageLayer: null, workersLayer: null, lastReportsLayer: null,
             markerById: new Map(), selectedId: null, tilesFailing: false,
             pins: [], clusters: [], workers: [], showCoverage: false, showClusters: false, showWorkers: false, showLastReports: false,
         };
-        // A basemap failure and a data failure are the SAME picture -- pins on
-        // grey, or nothing on grey -- and the panel used to render one string
-        // for both. On the rural link this deployment targets they are not
-        // equally likely and they do not have the same answer: the API is
-        // same-origin and small, while the tiles are a third-party CDN pulling
-        // an order of magnitude more bytes, so the tiles are what actually
-        // goes missing. Telling an operator "could not load the map" when the
-        // reports loaded fine and only the backdrop is missing sends them to
-        // check the wrong thing.
-        //
-        // Judged on a RUN of failures, never a single one: one 404 is normal
-        // (a tile that genuinely does not exist at that zoom over open sea),
-        // and any successful tile clears the count, so a transient blip on a
-        // flaky link never latches the warning on.
-        const TILE_FAIL_RUN = 4;
-        let tileFails = 0;
-        const publishTileHealth = (failing) => {
-            const ms = mapStateRef.current;
-            if (!ms || ms.tilesFailing === failing) return;
-            ms.tilesFailing = failing;
-            // The panel is webjsx-rendered and these events arrive outside any
-            // render pass, so the flag has to be PUBLISHED to be seen -- the
-            // same reason setAttention notifies rather than merely assigning.
-            schedule();
-        };
-        tiles.on('tileerror', () => { tileFails += 1; if (tileFails >= TILE_FAIL_RUN) publishTileHealth(true); });
-        tiles.on('tileload', () => { tileFails = 0; publishTileHealth(false); });
-        // Publish the viewport so the rail can narrow to what is actually on
-        // screen (mapuipatterns' extent-driven-content pattern). Without this
-        // the map was a picture, not a control: an operator could zoom into one
-        // district and still be reading a list covering the whole country.
-        // Debounced -- moveend also fires at the end of every inertia glide, and
-        // a re-render per frame of a drag is not free with 2000 pins.
-        let extentTimer = null;
-        const publishExtent = () => {
-            if (extentTimer) clearTimeout(extentTimer);
-            extentTimer = setTimeout(() => {
-                try { setMapExtent(map.getBounds()); } catch { /* torn down mid-move */ }
-            }, 150);
-        };
-        map.on('moveend', publishExtent);
-        map.on('zoomend', publishExtent);
+        watchTileHealth(mapStateRef, tiles);
+        publishExtentOnMove(map);
     }
     const mapState = mapStateRef.current;
-    // Leaflet caches its container size and only recomputes on a WINDOW
-    // resize. In this shell the canvas resizes without one -- the rail swaps
-    // between the queue and a case detail, the pane's flex basis changes, the
-    // phone breakpoint flips -- and a stale cached size renders as grey seams
-    // where tiles were never requested. Observe the element itself.
-    if (!mapState.sizeObserver && typeof ResizeObserver === 'function') {
-        try {
-            const el = mapState.map.getContainer();
-            mapState.sizeObserver = new ResizeObserver((entries) => {
-                const box = entries && entries[0] && entries[0].contentRect;
-                const hidden = box && (box.width === 0 || box.height === 0);
-                try {
-                    if (hidden) {
-                        // The phone's map/list toggle hides this pane with
-                        // display:none, so the container really does go to
-                        // 0x0. Calling invalidateSize against a zero box makes
-                        // Leaflet recompute its centre from a degenerate
-                        // rectangle -- measured live: switching map -> list ->
-                        // map came back at a DIFFERENT centre and zoom, so the
-                        // operator lost the district they had navigated to
-                        // just by glancing at the list. Remember the real view
-                        // instead and skip the resize entirely while hidden.
-                        mapState.hiddenView = { center: mapState.map.getCenter(), zoom: mapState.map.getZoom() };
-                        return;
-                    }
-                    mapState.map.invalidateSize({ animate: false });
-                    if (mapState.hiddenView) {
-                        const { center, zoom } = mapState.hiddenView;
-                        mapState.hiddenView = null;
-                        mapState.map.setView(center, zoom, { animate: false });
-                    }
-                } catch { /* container torn down mid-observe */ }
-            });
-            mapState.sizeObserver.observe(el);
-        } catch { /* observation is an optimisation, never a hard requirement */ }
-    }
+    observeCanvasSize(mapState);
 
     mapState.pins = j.pins || [];
     mapState.clusters = j.clusters || [];
-    const species = [...new Set(mapState.pins.map((p) => p.species).filter(Boolean))].sort();
-    const types = [...new Set(mapState.pins.map((p) => p.case_type).filter((t) => t && t !== 'unset'))].sort();
-    const statuses = [...new Set(mapState.pins.map((p) => p.status))].sort();
-    if (callbacks && callbacks.onOptions) callbacks.onOptions({ species, types, statuses });
+    if (callbacks && callbacks.onOptions) callbacks.onOptions(filterOptionsFrom(mapState.pins));
     renderMapMarkers(mapState, filters);
-    // Frame the map on the reports themselves, once, on first load. The
-    // constructor's center/zoom above is a fixed [-28.5,25]@5 that shows most
-    // of southern Africa regardless of where anything actually is -- measured
-    // live, a dataset entirely inside South Africa opened centred over Angola
-    // and Zambia, so the BLUF question ("what is going on where") needed a
-    // manual pan and zoom before it could be answered at all.
-    //
-    // First load ONLY (didAutoFit), never on refilter/refresh: re-fitting on
-    // every poll would yank the viewport out from under an operator who has
-    // deliberately panned or zoomed somewhere. maxZoom keeps a single lone
-    // report from slamming to street level, where surrounding context is lost.
-    if (!mapState.didAutoFit) {
-        const located = (mapState.pins || []).filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
-        if (located.length) {
-            mapState.didAutoFit = true;
-            const bounds = window.L.latLngBounds(located.map((p) => [p.lat, p.lon]));
-            // Kept, not discarded. These bounds were computed once for the
-            // first-load fit and then thrown away, which left an operator who
-            // had zoomed into one district with no way back to "everything"
-            // short of reloading the page -- and a reload costs the map payload
-            // and a fresh round of tiles on a link that charges by the megabyte.
-            mapState.allBounds = bounds;
-            // Deferred a frame on purpose. loadMap runs in the same tick the
-            // panel's webjsx pass mounts the overlays, so measuring them here
-            // returns zero-size rects and overlayFitPadding silently degrades
-            // to its 24px floor -- which is exactly the bug it exists to
-            // prevent (witnessed: 2 of 6 pins fitted underneath the queue).
-            // One rAF lets layout settle so the measurement is real.
-            const fit = () => {
-                // Resolve the shell from the map's OWN live container, never the
-                // `canvas` captured above: a poll-driven webjsx re-render can
-                // swap that element out between loadMap starting and this
-                // callback running, and a detached node's closest() returns
-                // null -- which silently degraded the padding to its floor and
-                // fitted 2 of 6 pins underneath the queue.
-                try { mapState.map.fitBounds(bounds, { maxZoom: 11, ...overlayFitPadding(mapState.map.getContainer()) }); }
-                catch { /* a degenerate bounds box must never break the panel */ }
-            };
-            if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(fit)); else fit();
-        }
-    }
+    autoFitToReports(mapState);
     if (callbacks && callbacks.onSummary) {
         callbacks.onSummary({
             unresolvedCount: j.unresolved_count || 0,
@@ -547,12 +567,6 @@ function overlayFitPadding(canvas) {
     } catch { return FALLBACK; }
 }
 
-// Move the map to one case, used when the attention queue (or any list) picks a
-// report -- see map-panel.js's attentionFeed(). Cap the zoom: landing at max
-// zoom on a rural point with no surrounding landmarks reads as a broken blank
-// map, which is precisely the disorientation a low-computer-literacy operator
-// cannot recover from. No-op when the case has no placeable location (the
-// "no location yet" count on the strip), so the map simply stays put.
 // Which pin is the case currently open in the rail. Before this there was no
 // selected state at all: focusing moved the viewport and then nothing on the
 // map said which of the pins now in front of you was the one you had opened.
@@ -580,14 +594,20 @@ export function setSelectedCase(mapState, id) {
     }
 }
 
+// Move the map to one case, used when the attention queue (or any list) picks a
+// report -- see map-panel.js's onActiveIdChange subscription. Cap the zoom:
+// landing at max zoom on a rural point with no surrounding landmarks reads as a
+// broken blank map, which is precisely the disorientation a low-computer-
+// literacy operator cannot recover from. No-op when the case has no placeable
+// location (the "no location yet" count on the rail), so the map stays put.
 export function focusCaseOnMap(mapState, id) {
-  if (!mapState || !mapState.map) return false;
-  const p = (mapState.pins || []).find((x) => x.id === id);
-  if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return false;
-  try {
-    mapState.map.setView([p.lat, p.lon], Math.min(Math.max(mapState.map.getZoom() || 0, 9), 13), { animate: true });
-  } catch { return false; }
-  return true;
+    if (!mapState || !mapState.map) return false;
+    const p = (mapState.pins || []).find((x) => x.id === id);
+    if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lon)) return false;
+    try {
+        mapState.map.setView([p.lat, p.lon], Math.min(Math.max(mapState.map.getZoom() || 0, 9), 13), { animate: true });
+    } catch { return false; }
+    return true;
 }
 
 // Back to every report, using the same bounds and the same overlay-aware

@@ -1,12 +1,13 @@
-// Geo panel -- hotspots by area. Content-swap panel (state.activePanel ===
-// 'geo'). Table-based, per architecture spec section 1.
+// Hotspots by area: which places are producing reports, and what mix. Rendered
+// two ways -- docked in the map rail beside the pins (railed), and as a
+// content-swap page whose title and back control come from app-view.js's
+// PanelSwap head, not from here.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
-import { Btn } from '/design/src/components/shell/atoms.js';
-import { state, schedule, closePanel } from '../state.js';
+import { state, schedule } from '../state.js';
 import { fetchGeo } from '../api.js';
 import { fmtTime } from '../format.js';
 
@@ -48,6 +49,14 @@ export function GeoPanel({ railed = false } = {}) {
             : Alert({ kind: 'info', children: 'No location data yet.' });
     }
     if (railed) return body;
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
-    return Panel({ title: 'Hotspots', children: [back, body] });
+    // Body only, like every other registered panel. This module used to add its
+    // own 'Back to cases' button and its own 'Hotspots' title on top of the
+    // ones app-view.js's PanelSwap head already renders for every panel, so the
+    // page carried two back controls that disagreed about where back was -- the
+    // head correctly said "Back to the map" from the map home view while this
+    // one said "Back to cases" directly under it -- and two headings. The head
+    // also takes its title from the nav item the operator clicked, so a
+    // deployer's dashboard_ui.nav.relabel renames the page; this hardcoded
+    // 'Hotspots' ignored it.
+    return Panel({ children: [body] });
 }

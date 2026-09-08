@@ -1,8 +1,8 @@
-// Root App() view: login gate -> AppShell({topbar, side, main, status})
-// composition. Wires Topbar search, Side sections, main content router, and
-// the modal-mount slot (Settings/Stats/Help/Onboarding/Skills overlays
-// render here). Other agents' case-list/case-detail views attach into the
-// #view-root placeholder mounted in main until they land.
+// Root App() view: login gate -> AppShell({topbar, crumb, side, main, status})
+// composition. Owns the frame -- the attention lead, the health pills, the
+// action row, the account menu, the status bar -- plus the two mounts that
+// swap what is under it: MainContent (a home view or a content-swap panel) and
+// ModalMount (Settings/Stats/Help/Onboarding/Skills).
 
 import * as webjsx from 'webjsx';
 import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton, Btn } from 'ds/components/shell.js';
@@ -21,10 +21,9 @@ import { MapCommandCenter } from './map-command-center.js';
 const h = webjsx.createElement;
 
 // The single modal-rendering code path: every activeModal value maps to a
-// PanelComponent -> Dialog wrap here. Panel bodies (settings/stats/help/etc)
-// are owned by other builders' modules; this shell renders the shared
-// Dialog chrome and a placeholder body until those land, via a registry other
-// agents populate with registerModalBody().
+// body -> Dialog wrap here. main.js registers all five at boot; the registry
+// exists so this module does not import them and close an import cycle
+// through main.js.
 const modalBodies = {};
 export function registerModalBody(name, renderFn) { modalBodies[name] = renderFn; }
 function modalTitle(name) {
@@ -50,10 +49,13 @@ function ModalMount() {
   return Dialog({ open: true, title: modalTitle(name), onClose: closeModal, children: body, wide: WIDE_MODALS.has(name) });
 }
 
-// Content-swap panel registry (Metrics/Clusters/Distribution/Geo/Map/
-// Activity/Handover/Offline/Team/Contacts) -- other builders register their
-// panel render fn here; unregistered panels degrade to a "not available yet"
-// placeholder with a back-to-cases affordance rather than a dead click.
+// Content-swap panel registry, populated by main.js at boot. There is no
+// 'map' entry and there must not be one: the map is a HOME VIEW
+// (state.homeView), and the last time it was also a panel, dashboard_ui's
+// default_view called openPanel('map') and landed every map-first deployment
+// on the legacy stacked page instead of the command centre. A name with no
+// body registered still renders a titled page with a way back, never a dead
+// click.
 const panelBodies = {};
 export function registerPanelBody(name, renderFn) { panelBodies[name] = renderFn; }
 // ONE treatment for every content-swap panel: a full-swap page with real

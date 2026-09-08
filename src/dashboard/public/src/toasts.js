@@ -29,7 +29,6 @@ export function dismissToast(id) {
   state.toasts.splice(i, 1);
   schedule();
 }
-export const removeToast = dismissToast;
 export function toasts() { return state.toasts; }
 
 // Accepts either a raw fetch Response (legacy call shape, .json() not yet
