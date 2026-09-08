@@ -6,6 +6,7 @@
 // descriptions, parameter schemas and handler bodies are unchanged.
 
 import { normalizeLocation } from './location-normalize.js'
+import { parseReport } from './timestamp.js'
 import {
   defTool, str, ownsCase, slimCase, slimEvent, enquiryRow, haversineKm,
 } from './case-tools-shared.js'
@@ -71,8 +72,7 @@ export function buildLookupTools(store, { stageValues }) {
           // (case-store.js), never a gazetteer/alias table.
           const needle = normalizeLocation(location)
           rows = rows.filter(c => {
-            let loc = ''
-            try { loc = (c.report ? JSON.parse(c.report) : {}).location || '' } catch { loc = '' }
+            let loc = parseReport(c).location || ''
             return normalizeLocation(loc).includes(needle)
           }).slice(0, limit)
         }

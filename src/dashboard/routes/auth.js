@@ -13,6 +13,7 @@
 import { mergeTag } from '../../hooks/heuristics.js'
 import { DASHBOARD_UI, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
 import { BRAND } from '../brand.js'
+import { parseReport } from '../../timestamp.js'
 
 export function registerAuth(app, deps) {
   const {
@@ -154,8 +155,7 @@ export function registerAuth(app, deps) {
   // something they should have to download, and it named internal decisions to
   // the public besides.
   function publicFormHtml({ ref = '', caseRow = null, done = false, err = '' } = {}) {
-    let report = {}
-    try { report = caseRow?.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
+    let report = parseReport(caseRow)
     const vcTotal = PUBLIC_FIELDS.filter(f => f.critical).length
     const vcFilled = PUBLIC_FIELDS.filter(f => f.critical && report[f.key] != null && String(report[f.key]).trim() !== '').length
     const allFilled = vcTotal === 0 || vcFilled >= vcTotal

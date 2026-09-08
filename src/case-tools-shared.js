@@ -11,6 +11,7 @@
 
 import { readThatcherFieldEnum } from './config-loader.js'
 import { ENQUIRY_HEADLINE_FIELDS } from './store/report-shape.js'
+import { parseReport } from './timestamp.js'
 
 export const str = (description, extra = {}) => ({ type: 'string', description, ...extra })
 
@@ -131,8 +132,7 @@ export function slimCase(c) {
 // species list still reads naturally without exposing the rest.
 export function enquiryRow(c, distanceKm) {
   if (!c) return null
-  let report = {}
-  try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+  let report = parseReport(c)
   const headline = Object.fromEntries(ENQUIRY_HEADLINE_FIELDS.map(k => [k, report[k] || null]))
   return {
     id: c.id, ref: c.ref, status: c.status, priority: c.priority,

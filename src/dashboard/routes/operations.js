@@ -7,7 +7,7 @@
 // deps: store, wrap, authed, actingOperator, isOpenCase, rankAttention,
 //   getWebhookDeliveryStatus, SAST_TZ, llmStatus, runSweep, receiveStatus,
 //   runtimeStatus, queueStatus, alertWebhookUrl
-import { tagList } from '../../timestamp.js'
+import { tagList, parseReport } from '../../timestamp.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
 import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI } from '../../store/report-shape.js'
 import { mountRoutes } from './register.js'
@@ -393,8 +393,7 @@ export function getSecretaryQueue({ store, authed, isOpenCase, rankAttention }) 
     })
     const groups = new Map()
     for (const { c, score, reason, waitMs } of filtered) {
-      let report = {}
-      try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+      let report = parseReport(c)
       const place = normalizeLocation(report.location) || 'unresolved'
       if (!groups.has(place)) groups.set(place, [])
       groups.get(place).push({
