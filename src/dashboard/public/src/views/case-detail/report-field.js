@@ -6,7 +6,7 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Chip, Icon } from '/design/src/components/shell.js';
-import { TextField } from '/design/src/components/content.js';
+import { TextField, FillLines } from '/design/src/components/content.js';
 import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { postIntake, postNote } from '../../api.js';
@@ -18,7 +18,7 @@ const REPORT_FIELD_MAXLEN = 2000;
 
 function fieldEditKey(caseId, k) { return caseId + ':' + k; }
 
-export function ReportField({ caseId, k, label, value, source, notes, onSaved, key } = {}) {
+export function ReportField({ caseId, k, label, value, source, notes, multiline, onSaved, key } = {}) {
     const editKey = fieldEditKey(caseId, k);
     const editing = state._reportFieldEditing === editKey;
     const draftMap = state._reportFieldDrafts || (state._reportFieldDrafts = {});
@@ -80,7 +80,14 @@ export function ReportField({ caseId, k, label, value, source, notes, onSaved, k
             onclick: startEdit,
             onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); startEdit(); } }
         },
-            value ? value : h('span', { class: 'casey-rep-missing' }, 'not given yet'),
+            // On paper this page is often a form to complete by hand, so an
+            // empty field must not print the word "not given yet" into the
+            // space someone needs to write in. ds-print-blank hides it in
+            // print (the kit's own rule) and FillLines supplies the ruled
+            // writing space instead -- more lines where the config says the
+            // answer is a paragraph, one where it is a species or a count.
+            value ? value : h('span', { class: 'casey-rep-missing ds-print-blank' }, 'not given yet'),
+            value ? null : FillLines({ lines: multiline ? 3 : 1 }),
             Icon('pencil', { size: 12 }),
             source ? Chip({ size: 'sm', tone: source === 'ai' ? 'accent' : (source === 'manual' ? 'ok' : ''), children: SOURCE_LABEL[source] || source }) : null
         );

@@ -939,6 +939,17 @@ body { background: var(--bg); color: var(--fg); }
   .ds-dialog-backdrop, .ds-toast-tray, .ds-handoff-banner,
   .ds-conn-banner { display: none !important; }
   body { background: var(--paper, var(--bg)); color: var(--ink, var(--fg)); }
+  /* A printed report is a form somebody completes by hand in the field, so
+     the per-field editing affordances are chrome on paper: the click-to-edit
+     pencil and the "note" button would otherwise print into the very space
+     the writing lines provide. The kit already drops .btn/.btn-primary/
+     .btn-ghost in print, but this note button is a bare <button> of casey's
+     own and the pencil is an inline icon, so neither is covered there.
+     The blank-field placeholder and the ruled lines themselves are the kit's
+     (ds-print-blank / ds-fill-lines in deps/design's row-print.css) -- this
+     rule only removes what casey itself adds on top. */
+  .casey-rep-note-btn,
+  .casey-rep-editable svg { display: none; }
 }
 
 /* The one casey-local transition with no guard beside its own rule. Every
