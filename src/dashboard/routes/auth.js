@@ -301,10 +301,26 @@ export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, er
 }
 
 // The public /report form has no auth (the ref is the shared secret), so it
-// needs its own throttle: the 8-char ref and the SA phone-number space are
-// both brute-forceable in unlimited requests. Scoped to these two routes only
-// -- never touches the authed() /api surface. Sweeps stale buckets so the map
-// cannot grow unbounded under sustained traffic.
+// needs its own throttle. What that throttle is actually FOR is worth stating
+// accurately, because the two reasons this comment used to give have both
+// stopped being true and someone reading it could reasonably conclude the
+// limiter no longer earns its keep:
+//  - The ref is not brute-forceable. _nextRef mints CASE-<seq>-<8 chars of a
+//    32-symbol alphabet> from crypto.randomBytes, so the suffix alone is ~40
+//    bits; ten guesses a minute is not a threat to it.
+//  - The SA phone-number space no longer reaches anybody else's case. The
+//    phone branch of postReport below is scoped to channel 'web' and cannot
+//    bind to an agent-gathered conversation at all.
+// The reason it still matters is VOLUME, not guessing: every permitted request
+// can open a real case in a queue that human responders work, and burying the
+// genuine reports is the highest-impact attack on a surveillance system. That
+// bound is per-IP only -- there is no global cap here, unlike the messaging
+// path's CASEY_GLOBAL_RATE_LIMIT_MSGS -- and a tighter one is NOT a free win:
+// SA mobile carriers CGNAT heavily and CASEY_TRUST_PROXY_HOPS defaults unset,
+// so a whole district can share one req.ip and a narrow cap would mute real
+// reporters mid-outbreak. Scoped to these two routes only -- never touches the
+// authed() /api surface. Sweeps stale buckets so the map cannot grow unbounded
+// under sustained traffic.
 //
 // A factory rather than module-level state on purpose: the bucket map and the
 // sweep interval belong to one registerAuth call, exactly as they did when

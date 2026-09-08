@@ -103,7 +103,17 @@ export async function resumePendingTurnsBody({ store, log, gateway, adapters, ha
         const wasAttempted = attempted.has(id)
         const degraded = degradedCount.get(id) || 0
         if (wasAttempted && degraded === 0) continue           // silent non-degraded completion: leave it alone
-        const ageMs = nowMs - (Number(ev.created_at) || nowMs)
+        // tsMs, not a bare Number(). busybase hands created_at back as a numeric
+        // -SECONDS string, so Number() yielded a seconds count subtracted from a
+        // MILLISECONDS clock: every pending turn measured ~56 years old and every
+        // one of them tripped this ceiling on its very first boot. The sweep could
+        // therefore never resume anything -- it only ever dead-lettered, tagging
+        // the case resume-exhausted/needs-human with a message claiming a retry cap
+        // that had never been reached. A turn interrupted mid-flight (TURN-START
+        // written, no outbound) left the reporter in permanent silence. tsMs still
+        // returns NaN for an unreadable stamp, so `|| nowMs` keeps the original
+        // fail-safe: an unparseable timestamp ages 0 and is never capped.
+        const ageMs = nowMs - (tsMs(ev.created_at) || nowMs)
         if (degraded >= RESUME_DEGRADED_RETRY_CAP || ageMs >= RESUME_MAX_AGE_MS) { anyCapped = true; continue }  // exhausted retries or too old: stop trying
         // tsMs, not a bare >= on the raw column. busybase hands created_at
         // back as a numeric-SECONDS STRING, so this was comparing strings --
