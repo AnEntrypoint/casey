@@ -15,9 +15,22 @@ function countryCode() { return (state.config && state.config.country_code) || '
 // Row timestamps may arrive as numeric-seconds STRINGS from busybase
 // ("1782977388"). Never bare Date.parse -- accept a unix-seconds number/
 // string or an ISO string and normalize to a JS Date.
+// A bare digit value above this can only be milliseconds: as SECONDS it is the
+// year 5138. Kept byte-identical in meaning to src/format.js's own toDate --
+// the CLI and this SPA must render the same stored timestamp the same way.
+const MS_NOT_SECONDS = 1e11;
+
 export function toDate(v) {
   if (v == null || v === '') return null;
-  const d = (typeof v === 'number' || /^\d+$/.test(String(v))) ? new Date(Number(v) * 1000) : new Date(v);
+  if (!(typeof v === 'number' || /^\d+$/.test(String(v)))) {
+    const d = new Date(v);
+    return isNaN(d) ? null : d;
+  }
+  // Seconds is the convention; the guard is here because nothing enforces it and
+  // the failure renders rather than throwing -- a millisecond value multiplied
+  // again showed an operator the year 58656.
+  const n = Number(v);
+  const d = new Date(n >= MS_NOT_SECONDS ? n : n * 1000);
   return isNaN(d) ? null : d;
 }
 

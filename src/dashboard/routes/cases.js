@@ -787,8 +787,40 @@ export function postSplit({ store, authed, str, actingOperator }) {
   }
 }
 
+// THE TIMELINE IS THE AUDIT RECORD, so an `outbound` row on it means the
+// contact received the message -- it is what an operator reads a week later,
+// what /api/activity streams, and the only kind timeline.js offers "flag this
+// reply" on. Recording one unconditionally made that untrue in two real
+// situations: a `casey dashboard` console has no sendReply at all (see
+// casey-serve.js cmdDashboard) so nothing is ever sent, and a wired channel
+// can still refuse the send. Both used to leave a delivered-looking outbound
+// for a message that never reached anybody.
+//
+// An undelivered reply is recorded as an operator NOTE that says so in its own
+// first words, never as an outbound. Nothing is discarded: the operator's text
+// is kept verbatim in `data.text` as well as in the line, because what a human
+// chose to say is part of the record whether or not it left the building.
+// `data.to` is deliberately absent -- there is no recipient of a message that
+// was not sent.
+const UNDELIVERED_REPLY_REASONS = {
+  no_channel: 'this console is not attached to the messaging channels',
+  send_failed: 'the channel refused it',
+}
+function appendReplyEvent(store, c, text, op, { delivered, reason, extra = {} }) {
+  if (delivered) {
+    return store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id, ...extra } })
+  }
+  const why = UNDELIVERED_REPLY_REASONS[reason] || 'the send did not happen'
+  return store.appendEvent(c.id, {
+    kind: 'note', actor: 'operator', channel: c.channel,
+    text: `NOT SENT to the contact (${why}). Operator wrote: ${text}`,
+    data: { undelivered: true, reason, by: op.id, text, ...extra },
+  })
+}
+
 // Operator takes over the conversation: send a message to the contact on
-// their channel and record it as an outbound event.
+// their channel and record it as an outbound event -- or, when it did not
+// send, as an undelivered note (see appendReplyEvent above).
 export function postReply({ store, authed, str, actingOperator, sendReply, UNCLAIMED_ASSIGNEE }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -823,7 +855,7 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
         claimed = true
       }
     }
-    await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id } })
+    await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel' })
     // A personal reply is the strongest working-area signal casey has.
     store.learnOperatorActivity(op.id, c).catch(() => {})
     // The operator personally answered, so the "wants a human" flag is satisfied
@@ -840,7 +872,7 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
         await store.updateCase(c.id, { tags: keep.join(',') }, op)
       }
     }
-    res.json({ ok: delivered, sent: !!sendReply, delivered, claimed })
+    res.json({ ok: delivered, sent: !!sendReply, delivered, claimed, recorded: delivered ? 'outbound' : 'note' })
   }
 }
 
@@ -870,11 +902,14 @@ export function postDraftApprove({ store, authed, str, actingOperator, sendReply
       catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
     }
     const op = actingOperator(req)
-    await store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id } })
+    // Same rule as postReply: an approved draft that did not actually send is
+    // an undelivered note, not a delivered outbound. draft-pending/needs-human
+    // already only clear on a real delivery, so the case stays pinned too.
+    await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel', extra: { from_draft: true } })
     if (delivered) {
       await store.updateCase(c.id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
     }
-    res.json({ ok: delivered, sent: !!sendReply, delivered })
+    res.json({ ok: delivered, sent: !!sendReply, delivered, recorded: delivered ? 'outbound' : 'note' })
   }
 }
 

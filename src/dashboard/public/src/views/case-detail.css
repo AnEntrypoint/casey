@@ -113,8 +113,8 @@
    for a wide settings pane and wrong for a case rail: at a 645px rail that is
    a 258px column holding the word "Animals" while the value it labels gets
    what is left. Cap it in rem so the column tracks the label text rather than
-   the rail, and on a phone stack the two halves so the value gets the whole
-   width instead of a third of 375px. */
+   the rail. Stacking the two halves on a narrow column is the kit's job, not
+   this file's -- see app-shell/panel-row.css. */
 .casey-detail-pane .ds-detail-label{flex:0 0 auto;width:min(38%, 10rem)}
 .casey-detail-pane .ds-detail-val{min-width:0}
 /* Same argument for the kit's LogRow in the timeline: its label column has a
@@ -124,8 +124,13 @@
    entry body and dropping the label floor on a phone holds the row inside
    the rail; the desktop row is untouched. */
 .casey-detail-pane .ds-log-text{overflow-wrap:anywhere}
+/* The stacking half of this moved into the kit (app-shell/panel-row.css): a
+   40% label track collapsing in a narrow column is DetailRow's own geometry
+   failing, not this pane's, and every app rendering record fields into a rail
+   or a phone was going to write the same rule. What stays here is the part
+   that is genuinely casey's -- undoing the rem cap above, which is this
+   pane's own decision about the label column and belongs with it. */
 @container (max-width: 700px){
-  .casey-detail-pane .ds-detail-row{flex-direction:column;gap:var(--space-hair, 2px)}
   .casey-detail-pane .ds-detail-label{width:auto}
   .casey-detail-pane .ds-log-row{flex-wrap:wrap}
   .casey-detail-pane .ds-log-label{min-width:0}
@@ -217,4 +222,21 @@
    "is this element guarded". Each sheet now guards the classes it declares. */
 @media (prefers-reduced-motion: reduce){
   .casey-progress-line,.casey-rep-editable,.casey-meta-toggle{transition:none;animation:none}
+}
+
+/* Phone: one horizontal gutter for this surface too. Same compounding the
+   panel stack was just cleared of -- on a 375px phone .app-main gives 16px a
+   side, .casey-detail-pane added 32 and .casey-report another 16, so a case
+   read 225px wide inside 150px of gutter. The pane draws no edge of its own
+   (a bare flex column), so its horizontal padding only repeats the page inset
+   and goes to zero; .casey-report keeps an inset because it has a real border
+   to hold content off, at the smaller step a phone can afford. Vertical
+   padding is untouched on both -- that is rhythm, not gutter.
+   480px is the kit's own phone breakpoint (deps/design app-shell/responsive.css)
+   on purpose: the page collapses its gutters at ONE width, not in three
+   stages. Last in the file because both selectors are (0,1,0) and have to beat
+   their own base rules above on source order. */
+@media (max-width: 480px){
+  .casey-detail-pane{padding-left:0;padding-right:0}
+  .casey-report{padding-left:var(--space-2, 8px);padding-right:var(--space-2, 8px)}
 }

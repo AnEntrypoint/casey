@@ -39,9 +39,29 @@ export function isOpenCase(c) {
 // all-digit value is therefore seconds and is multiplied to ms; anything else is
 // handed to the Date string parser. NaN dates (corrupt rows) return null so a
 // caller can render a placeholder instead of crashing on toLocaleString.
+// A bare digit value above this can only be milliseconds: as SECONDS it is the
+// year 5138. Real case timestamps are nowhere near it, and a millisecond
+// timestamp today is ~1.79e12, an order of magnitude above.
+const MS_NOT_SECONDS = 1e11
+
 export function toDate(v) {
   if (v == null || v === '') return null
-  const d = (typeof v === 'number' || /^\d+$/.test(String(v))) ? new Date(Number(v) * 1000) : new Date(v)
+  if (!(typeof v === 'number' || /^\d+$/.test(String(v)))) {
+    const d = new Date(v)
+    return isNaN(d.getTime()) ? null : d
+  }
+  // Seconds is the convention every caller follows, and the millisecond call
+  // sites divide explicitly (reports.js's secs(), casey-store-commands.js's
+  // Math.floor(x / 1000)). This guard exists because that convention is hand
+  // maintained across seven call sites with nothing enforcing it, and getting it
+  // wrong here does not throw -- it renders. A millisecond value multiplied
+  // again put an operator-facing date in the year 58656. The seconds/millisecond
+  // confusion has already shipped twice in this codebase (the boot resume sweep
+  // measured every pending turn 56 years old and dead-lettered it;
+  // buildClosureCompleteness pinned itself at zero), so an eighth call site
+  // getting it wrong is a matter of time rather than a hypothetical.
+  const n = Number(v)
+  const d = new Date(n >= MS_NOT_SECONDS ? n : n * 1000)
   return isNaN(d.getTime()) ? null : d
 }
 

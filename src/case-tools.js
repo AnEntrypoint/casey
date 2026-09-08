@@ -103,24 +103,27 @@ function selfCheckLoadBearingToolDescriptions() {
 }
 
 // Every tool NOT in REPORT_ONLY_TOOLS is already runtime-gated to field_worker
-// tier by gateByTier (case-tools-gates.js) -- but freddie's runTurn still
-// serializes ALL 18 tools' full JSON-schema descriptions into every single
-// request regardless of tier, since enabledToolsets operates at the
-// toolset-category level ('cases' as a whole), not per-tool. For the
-// far-more-common reporter tier (the default per AGENTS.md's contact.tier
-// design), 14 of those 18 tool schemas
-// are pure dead weight on
-// every request -- they will only ever return the same
-// {unavailable:true,...} rejection at call time. freddie's own
-// getEnabledToolSchemas (toolsets.js) filters `disabledToolsets` by TOOL NAME
-// (despite the parameter's plural-toolset-sounding name), so passing this list
-// there excludes them from the request payload entirely rather than merely
-// rejecting them after the model already spent tokens reading their schemas
-// and (for a weak model) sometimes attempting to call them anyway. Derived
-// from the live toolset rather than hand-duplicated, so a newly added
-// query/mutation tool is automatically tier-gated at the request-size layer
-// the same way it already is at the handler layer, with nothing to keep in
-// sync by hand.
+// tier by gateByTier (case-tools-gates.js) -- but `enabledToolsets:['cases']`
+// alone names the toolset as a whole, not per-tool, so all 18 tools' full
+// JSON-schema descriptions would be assembled into every single request
+// regardless of tier. For the far-more-common reporter tier (the default per
+// AGENTS.md's contact.tier design), 14 of those 18 schemas are pure dead weight
+// -- they will only ever return the same {unavailable:true,...} rejection at
+// call time.
+//
+// The code that acts on this list is casey's OWN src/agent/run-turn.js (the
+// enabledToolNames derivation, around lines 139-148): it expands
+// enabledToolsets against buildCaseToolset(null)'s real tool names and
+// subtracts `disabledToolsets` by tool NAME, then hands the resulting allowlist
+// to freddie-bundle/src/case-tools/tool-allowlist.js's installToolAllowlist
+// (run-turn.js line 66) whose system-prompt/assemble waterfall is what actually
+// keeps a non-allowlisted tool's schema out of the prompt the model sees. So
+// the exclusion happens before the model ever spends tokens reading these
+// schemas and (for a weak model) sometimes attempting to call them anyway.
+// Derived from the live toolset rather than hand-duplicated, so a newly added
+// query/mutation tool is automatically tier-gated at the request-size layer the
+// same way it already is at the handler layer, with nothing to keep in sync by
+// hand.
 export function reporterTierExcludedToolNames() {
   return buildCaseToolset(null).map(t => t.name).filter(name => !REPORT_ONLY_TOOLS.has(name))
 }

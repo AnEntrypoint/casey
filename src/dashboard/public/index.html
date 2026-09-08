@@ -49,6 +49,13 @@
   "ds/": "/design/src/"
 } }
 </script>
+<!-- A <link rel="modulepreload"> for every module in the graph below is
+     INJECTED HERE by dashboard/server.js at boot, so view-source shows tags
+     this file does not contain. They are generated because a hand-written
+     list drifts the first time anyone adds an import; the map above is what
+     the generator resolves through, so editing it moves the preloads too.
+     Without them the browser discovers the graph one level per round trip
+     and the page stays white for the whole descent. -->
 </head>
 <!-- data-accent must stay ABSENT. The SDK scopes its accent presets as
      .ds-247420[data-theme="X"][data-accent="Y"] -- specificity 0,3,0 -- which

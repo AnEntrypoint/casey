@@ -2,9 +2,11 @@
 // (packages/core/agent-loop's ReactLoopAgent, reached via ctx.agents) instead
 // of a casey-owned tool loop -- freddie must be the agent for casey (user
 // directive). This module keeps runTurn's existing call signature/return
-// shape exactly (hooks/handler.js's ~850-line guaranteed-delivery/rate-limit/
-// dedup orchestration is unchanged and still calls this function the same
-// way), but the body now creates or resumes a freddie Agent per case,
+// shape exactly (casey's guaranteed-delivery/rate-limit/dedup orchestration --
+// hooks/handler.js plus the hooks/{inbound-turn,case-intake,turn-attempts,
+// turn-outcome,delivery}.js phases it sequences -- is unchanged and still calls
+// this function the same way, from hooks/turn-attempts.js's attempt loop), but
+// the body now creates or resumes a freddie Agent per case,
 // submits the message via agent.followup(), awaits agent.whenIdle(), and
 // reads the reply back from the session's event log -- the exact pattern
 // freddie's own packages/bundle/headless/src/index.js uses end to end.
@@ -71,8 +73,8 @@ async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames) {
 
 // Extract the assistant's final reply text plus every tool_calls/tool-result
 // pair since `firstSeq`, in casey's own {role, content, tool_calls}/{role,
-// tool_call_id, content} shape -- hooks/handler.js's mutatingActionsThisAttempt
-// and sanitizeOutboundRef scan `result.messages` for exactly this shape.
+// tool_call_id, content} shape -- hooks/turn-results.js's mutatingActions/
+// hadSuccessfulWrite/toolCaseRefs scan `result.messages` for exactly this shape.
 function summarizeSince(agent, firstSeq) {
   const messages = []
   let result = ''
@@ -113,7 +115,7 @@ function summarizeSince(agent, firstSeq) {
  * `messages`/`callLLM`/`tool_choice` from the old casey-owned loop no longer
  * apply here (freddie's own agent-loop owns message history and the
  * tool_choice/iteration policy internally) -- kept as accepted-but-unused
- * params so hooks/handler.js's call site needs no change. `enabledToolsets`/
+ * params so hooks/turn-attempts.js's call site needs no change. `enabledToolsets`/
  * `disabledToolsets` are translated into an explicit tool NAME allowlist
  * (freddie has no toolset-category concept of its own).
  */
@@ -126,7 +128,7 @@ export async function runTurn({
   timeoutMs = 30000,
   provider = 'acptoapi',
   // Default from the same env the acptoapi adapter itself falls back to
-  // (freddie-bundle/src/llm-acptoapi/adapter.js's getModel). hooks/handler.js
+  // (freddie-bundle/src/llm-acptoapi/adapter.js's getModel). hooks/turn-attempts.js
   // does not pass a model -- it never had to, since the old casey-owned loop
   // resolved it inside callLLM -- so leaving this undefined made freddie's
   // agent layer reject EVERY turn with "agent has no provider/model" before
@@ -139,7 +141,7 @@ export async function runTurn({
   // Resolve enabledToolsets/disabledToolsets into a real tool-name allowlist.
   // enabledToolsets:['cases'] means every case_* tool name; disabledToolsets
   // further excludes specific names (reporter-tier field_worker-gated tools) --
-  // matches the exact semantics hooks/handler.js's call site already assumes.
+  // matches the exact semantics hooks/turn-attempts.js's call site already assumes.
   const { buildCaseToolset } = await import('../case-tools.js')
   const allNames = buildCaseToolset(null).map(t => t.name)
   const disabledSet = new Set(disabledToolsets)

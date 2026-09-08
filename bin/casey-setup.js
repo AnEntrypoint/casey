@@ -50,7 +50,7 @@ async function checkTimeoutCoordination() {
   // Timeout coordination (AGENTS.md's "Timeout Coordination" section): the
   // per-attempt LLM turn budget must comfortably exceed the per-provider
   // chain-link timeout, or a single unhealthy provider hop can consume an
-  // entire attempt's budget and starve hooks/handler.js's retry loop of
+  // entire attempt's budget and starve hooks/turn-attempts.js's retry loop of
   // any real remaining time. This is not read from casey's own prose --
   // acptoapi is a floating github:AnEntrypoint/acptoapi#main dependency
   // with no version pin, so its shipped DEFAULT_LINK_TIMEOUT_MS can drift

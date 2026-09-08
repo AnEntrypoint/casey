@@ -4,7 +4,7 @@
 // and provides the degradation-rate aggregate /api/health reports.
 //
 // Write-shape contract (must match GET /api/turns/degraded, operations.js, and
-// the direct appendEvent call sites in hooks/handler.js -- there is exactly one
+// the direct appendEvent call sites in hooks/turn-outcome.js -- there is exactly one
 // convention, not two): kind:'observation', actor:'system', data.degraded_turn
 // === true (boolean, not a string), data.reason, plus contact_id/turn_ts. `data` is passed as a
 // plain object -- case-store.js's appendEvent() already does the ONE
@@ -14,7 +14,7 @@
 // used kind:'degraded_turn' with a pre-stringified `data`, which /api/turns/
 // degraded's listAllEvents({kind:'observation', actor:'system'}) query could
 // never see and evData() could never parse back to a real object even if it
-// had -- the single largest degraded-turn path (hooks/handler.js's terminal
+// had -- the single largest degraded-turn path (hooks/delivery.js's terminal
 // guaranteed-response fallback) was writing an event no endpoint could ever
 // read. Confirmed live via a real recordDegradedTurn() call against a store
 // double replicating case-store.js's real appendEvent contract.
@@ -84,7 +84,7 @@ export async function calculateDegradationRate(store, { hours = 1 } = {}) {
       const createdMs = tsMs(event.created_at)
       if (!Number.isFinite(createdMs) || createdMs < thresholdMs) continue
       if (evData(event).degraded_turn === true) degradedCount += 1
-      // One turn attempt per TURN-START marker (handler.js), independent of
+      // One turn attempt per TURN-START marker (hooks/inbound-turn.js), independent of
       // whether it ultimately succeeded or degraded.
       if (typeof event.text === 'string' && event.text.startsWith('TURN-START:')) totalTurnCount += 1
     }

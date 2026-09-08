@@ -61,7 +61,7 @@ export function gateByTier(tool) {
 // identical arguments in a single runTurn loop -- with no defense this
 // produces a duplicate event row (case_report) or a wasted query, silently.
 // Keyed on toolCtx.dedupeCache, a plain Map the caller creates FRESH per turn
-// (hooks/handler.js) -- never persisted across turns, so this can only ever
+// (hooks/turn-attempts.js) -- never persisted across turns, so this can only ever
 // suppress a repeat within the SAME turn's own tool-call sequence, never mask
 // a genuine second call in a later turn. Applied to every tool (including
 // REPORT_ONLY_TOOLS, which gateByTier passes through untouched) since

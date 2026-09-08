@@ -298,6 +298,19 @@ body { background: var(--bg); color: var(--fg); }
   overflow-wrap: anywhere;
 }
 .ds-panel-swap-body { min-height: 0; padding: var(--space-4); }
+/* The one gutter in this stack casey owns. Four containers nest here --
+   .app-main, this body, the kit Panel inside it and that panel's own body --
+   and each was adding its own horizontal inset, which on a 375px phone left
+   221px of content inside 154px of gutter. The kit collapses its own three at
+   the same 480px breakpoint (deps/design app-shell/responsive.css); this
+   collapses casey's, so the page keeps exactly one horizontal gutter, the
+   .app-main page inset. The head loses its inset with the body so the sticky
+   title stays on the same left axis as the content under it. Vertical padding
+   is untouched -- it is this surface's own rhythm, not a repeated gutter. */
+@media (max-width: 480px) {
+  .ds-panel-swap-body { padding-left: 0; padding-right: 0; }
+  .ds-panel-swap-head { padding-left: 0; padding-right: 0; }
+}
 
 /* ---- topbar action row (the verbs that used to sit in the nav) --------- */
 .ds-action-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
@@ -718,7 +731,19 @@ body { background: var(--bg); color: var(--fg); }
 /* th excluded: short header words (e.g. "Source") have no pathological
    unbroken-string risk and were wrapping mid-word (SOURC/E) under the
    arbitrary-break rule meant only for runaway td content. */
-.ds-table-wrap table td { overflow-wrap: anywhere; word-break: break-word; max-width: 32ch; }
+/* `overflow-wrap: anywhere` was the wrong half of the pair for this: it is
+   the one value that also feeds back into the cell's MIN-CONTENT width, so
+   every td reported a minimum of about one character and the table happily
+   squeezed its columns to nothing rather than admitting it was too wide.
+   `.ds-table-wrap` carries overflow-x:auto and a visible scrollbar for
+   exactly that case, and it could never engage because the table always
+   "fit". `break-word` breaks a runaway token the same way at render time
+   without collapsing the intrinsic minimum, so a table too wide for a phone
+   now scrolls inside its own box instead of shrinking its columns away. The
+   min-width is the floor under a column of short values, which break-word
+   alone does not give: min-content there is one short word, still far below
+   legible. */
+.ds-table-wrap table td { overflow-wrap: break-word; max-width: 32ch; min-width: 7ch; }
 .ds-table-wrap table th { white-space: nowrap; }
 
 /* ---- account menu trigger / notifications bell --------------------------- */

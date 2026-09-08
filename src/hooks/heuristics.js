@@ -21,7 +21,7 @@ export function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n
 // contact. Distinct from the reply judge's META-COMMENTARY / PLANNING
 // NARRATION shape (hooks/reply-judge.js), which catches planning narration
 // REPLACING the reply; here the real reply is present and intact.
-// Must run BEFORE any other outbound check (handler.js) so the reply judge
+// Must run BEFORE any other outbound check (hooks/turn-attempts.js) so the reply judge
 // only ever sees the real intended reply, never the reasoning noise.
 // Strips every <think>...</think> pair anywhere in the text (a leaked block
 // is not guaranteed to be a clean prefix) plus any leftover unclosed <think>
@@ -70,7 +70,7 @@ export function sanitizeOutboundRef(text, realRef, extraAllowedRefs = []) {
 // be reintroduced. All of that judgment -- prompt echo, stock ack, tool
 // refusal, meta-commentary, jargon leaks -- is a single real LLM call,
 // hooks/reply-judge.js's judgeReply (see its own header for the reasoning),
-// whose verdict handler.js branches on: retry on a genuine miss, and a
+// whose verdict turn-attempts.js branches on: retry on a genuine miss, and a
 // jargon-only verdict routed to the draft-hold-for-human path.
 
 

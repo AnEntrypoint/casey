@@ -5,7 +5,7 @@
 // `{ kind: 'observation', actor: 'system', text }`; flagNeedsHuman is the
 // read-then-tag-then-notify-once sequence its four callers share (an explicit
 // human request in service-controls.js, and observe mode, the
-// jargon/false-confirmation hold and the assisted draft in handler.js),
+// jargon/false-confirmation hold and the assisted draft in turn-outcome.js),
 // differing only in the extra tags and the log labels. Four copies of a
 // notify-ONCE rule is four places for the "once" to drift, so it lives here
 // once.

@@ -6,9 +6,10 @@
 // inside this file's own body (even as the very first statement) would
 // always run AFTER every statically-imported module (createCasey ->
 // src/casey.js -> transitively src/hooks/handler.js) has already evaluated
-// its own top-level constants. hooks/handler.js's TURN_HARD_DEADLINE_MS
+// its own top-level constants. hooks/turn-deadlines.js's TURN_HARD_DEADLINE_MS
 // (and every other `Number(process.env.CASEY_*) || default` module-level
-// constant in that file) is exactly one such constant -- live-witnessed
+// constant reached through that import graph) is exactly one such constant --
+// live-witnessed
 // this session via bin/selftest.js hitting the identical bug: a real turn
 // kept degrading at the stale 60000ms code default no matter what
 // CASEY_TURN_HARD_DEADLINE_MS was set to in .env, because the constant had

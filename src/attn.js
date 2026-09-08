@@ -133,8 +133,8 @@ function attnScore(c, now = Date.now()) {
   if (c.status === 'waiting' && ageHours(c, now) >= 24) s += 40 // genuinely stuck over a day
   if (tags.includes(healthTag('stuck'))) s += 20
   if (tags.includes(healthTag('stale'))) s += 10
-  // A case that already had one degraded turn (hooks/handler.js's
-  // isFallback path -- empty/error/echo/stock-ack/repeat, no reply sent) is
+  // A case that already had one degraded turn (hooks/turn-outcome.js's
+  // recordDegradedOutcome path -- empty/error/echo/stock-ack/repeat, no reply sent) is
   // a priori more likely to degrade again (context corruption, a stuck
   // conversation) than a case with a clean history. Modest bump, not a
   // dominant signal -- this is a risk indicator, not itself a request for a
