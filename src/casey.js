@@ -22,7 +22,7 @@ import { createCaseStore } from './case-store.js'
 import { setCaseStore, resetCaseStore } from './case-runtime.js'
 import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier, breachNotifier } from './gateway-hooks.js'
 import { isOpenCase } from './format.js'
-import { tagList } from './timestamp.js'
+import { tagList, tsMs } from './timestamp.js'
 import { sweepCases } from './case-sweep.js'
 import { ALL_HEALTH_TAGS } from './case-health.js'
 import { mergeTag } from './hooks/heuristics.js'
@@ -739,7 +739,14 @@ export class Casey {
           if (wasAttempted && degraded === 0) continue           // silent non-degraded completion: leave it alone
           const ageMs = nowMs - (Number(ev.created_at) || nowMs)
           if (degraded >= RESUME_DEGRADED_RETRY_CAP || ageMs >= RESUME_MAX_AGE_MS) { anyCapped = true; continue }  // exhausted retries or too old: stop trying
-          if (!pending || ev.created_at >= pending.ev.created_at) pending = { id, ev }
+          // tsMs, not a bare >= on the raw column. busybase hands created_at
+          // back as a numeric-SECONDS STRING, so this was comparing strings --
+          // which happens to order correctly only while every value is the same
+          // digit length, and silently stops doing so the moment one arrives as
+          // an ISO stamp or the epoch gains a digit. The line four above already
+          // coerces the same column with Number(), so the function disagreed with
+          // itself about whether this value is a number.
+          if (!pending || tsMs(ev.created_at) >= tsMs(pending.ev.created_at)) pending = { id, ev }
         }
         if (!pending) {
           // No genuinely-pending msgId survives (each is either completed,
