@@ -115,8 +115,26 @@ scratch-*.log
 .scratch_tmp/
 bbwork/
 
-# this repo has no lockfile committed yet; ignore stray npm lock
-package-lock.json
+# Lockfile situation, stated accurately because the previous comment here
+# ("this repo has no lockfile committed yet") was false -- bun.lock IS
+# committed, and has been since 2026-09-03.
+#
+# bun.lock is the only lockfile that currently exists for this tree, and it
+# is in sync with package.json (all 9 dependencies present, express pinned
+# at 5.2.1). Nothing in casey invokes bun -- README and every script use
+# npm/node -- so it pins the tree for anyone who happens to use bun and
+# does nothing at all for the documented `npm install` path, which resolves
+# unpinned. That matters here more than in most repos: this project's own
+# SUPPLY-CHAIN-SCAN-INSTRUCTIONS.md names an unpinned install as the thing
+# that lets a compromised release reach you automatically.
+#
+# npm's own lockfile cannot currently be generated for this dependency
+# shape: `npm install --package-lock-only --ignore-scripts` exits with
+# "Cannot read properties of null (reading 'package')", npm choking on the
+# `file:deps/*` submodule dependencies. So package-lock.json is no longer
+# ignored -- the barrier to ever committing one is removed -- but one
+# cannot be produced until that resolution failure is fixed upstream or the
+# file: deps are restructured.
 *.zip
 kimi-debug-session_*
 config.bat
