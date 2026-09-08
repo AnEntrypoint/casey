@@ -467,7 +467,22 @@ node bin/casey.js init      # scaffold a .env (channel tokens, dashboard secret)
 node bin/casey.js doctor    # green/red preflight: deps, channels, port, token
 node bin/casey.js up        # gateway + dashboard (default http://localhost:4000)
 npm run lint                # dependency-free preflight (syntax+config+package+ascii); the CI gate
+npm run gui-check           # drives the real dashboard in real headless Chromium (needs a browser)
 ```
+
+`npm run gui-check` is deliberately NOT part of `npm run lint`: lint is
+dependency-free and must stay green in a bare clone with no browser, while this
+boots the real Express app against the real sqlite store, drives headless
+Chromium over CDP, and reads the rendered DOM. It adds no mocks and is not a
+test suite -- it is the manual/live verification this file already mandates,
+made repeatable, and it skips loudly with exit 0 when no chromium binary exists.
+Every assertion in it is a regression that actually shipped at least once: the
+map-first layout built but unreachable (`default_view` calling `openPanel`), the
+mobile icon grid collapsing to a single column, the desktop full-bleed map not
+being full-bleed because a transformed ancestor became the containing block, and
+icon-only controls with no accessible name. Its own failure mode was checked the
+only way that means anything -- by reintroducing the one-column bug and watching
+it fail (`1 cols (640px)`, exit 1), then reverting.
 
 **There is currently no CI workflow in this repo** -- `.github/` does not
 exist in the tree, so nothing runs `npm run lint` automatically on push or
