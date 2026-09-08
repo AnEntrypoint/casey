@@ -9,7 +9,7 @@
 // module imports is present here, verified against the real route files in
 // src/dashboard/routes/*.js.
 
-import { setConnLost } from './state.js';
+import { state, setConnLost } from './state.js';
 
 export class ApiError extends Error {
   constructor(status, body) {
@@ -17,6 +17,45 @@ export class ApiError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+// ---- offline vs unauthorized -------------------------------------------
+//
+// These are two different facts and the SPA used to render both as a login
+// form. The service worker (src/dashboard/server.js's /sw.js route) already
+// tells them apart: an /api/ request it cannot put on the wire is answered
+// with 503 {"error":"offline"}, while a real server that is reachable and
+// says no answers 401 {"error":"unauthorized"}. The SPA simply never looked.
+//
+// The subtle half is that the 503 comes back as a RESOLVED fetch. The naive
+// reading -- "fetch resolved, therefore we are connected" -- is exactly
+// backwards under a warm service worker: the request never left the device.
+// So `api()` cannot decide connection health from the promise settling; it
+// has to read the envelope.
+const OFFLINE_ENVELOPE = /"error"\s*:\s*"offline"/;
+
+async function isOfflineResponse(res) {
+  if (!res || res.status !== 503) return false;
+  try { return OFFLINE_ENVELOPE.test(await res.clone().text()); } catch { return false; }
+}
+
+// True when a thrown error means "this request never reached the origin",
+// false when it means "the origin answered and said no". An ApiError carries
+// the server's own status/body, so 401/403 are decided on evidence and never
+// mistaken for a dropped link. Anything that is NOT an ApiError came out of
+// `api()`'s own fetch rejection, which by definition never reached anyone.
+export function isOfflineError(e) {
+  if (e instanceof ApiError) return e.status === 503 && !!(e.body && e.body.error === 'offline');
+  return true;
+}
+
+// Fires on the connLost true -> false EDGE, so a session restored from the
+// last-known cache can re-verify itself against the real server the moment
+// the link comes back, with no page reload. auth.js is the only subscriber.
+const restoredListeners = new Set();
+export function onConnectionRestored(fn) {
+  restoredListeners.add(fn);
+  return () => restoredListeners.delete(fn);
 }
 
 export async function api(path, opts = {}) {
@@ -27,9 +66,47 @@ export async function api(path, opts = {}) {
     setConnLost(true);
     throw e;
   }
+  if (await isOfflineResponse(res)) {
+    setConnLost(true);
+    return res;
+  }
+  const wasLost = state.connLost;
   setConnLost(false);
+  if (wasLost) {
+    for (const fn of restoredListeners) {
+      try { fn(); } catch { /* a listener must never break a live request */ }
+    }
+  }
   return res;
 }
+
+// ---- last-known values --------------------------------------------------
+//
+// Only the two things an operator's screen is a lie without when the link is
+// down: WHO they are, and WHOSE deployment this is. Case data is deliberately
+// NOT cached here -- it stays in memory for the life of the page (the panels
+// keep their last successful load and the status bar says so), and persisting
+// live case rows to localStorage on a shared field device is a different
+// decision with its own retention argument, not a side effect of this fix.
+const LAST_KNOWN_PREFIX = 'casey_last_known_';
+
+function readLastKnown(key) {
+  try {
+    const raw = localStorage.getItem(LAST_KNOWN_PREFIX + key);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function writeLastKnown(key, value) {
+  try { localStorage.setItem(LAST_KNOWN_PREFIX + key, JSON.stringify(value)); } catch { /* private mode / quota */ }
+}
+function clearLastKnown(key) {
+  try { localStorage.removeItem(LAST_KNOWN_PREFIX + key); } catch { /* private mode */ }
+}
+
+// The last session the SERVER confirmed. auth.js assumes it only when the
+// failure is specifically offline, never on a 401 -- see checkSession().
+export function lastKnownSession() { return readLastKnown('whoami'); }
+export function forgetLastKnownSession() { clearLastKnown('whoami'); }
 
 async function json(path, opts) {
   const r = await api(path, opts);
@@ -59,19 +136,63 @@ function qs(params) {
 }
 
 // --- auth ---
-export const whoami = () => json('/api/whoami');
+// The one endpoint whose answer has to survive a dropped link: a confirmed
+// session is remembered so `auth.js` can keep an operator signed in through
+// an outage instead of showing them a login form they have no network to
+// complete. A server that ANSWERS and says "not authed" clears it -- the
+// cache only ever survives a failure to reach the server at all.
+export const whoami = async () => {
+  const j = await json('/api/whoami');
+  if (j && j.authed) writeLastKnown('whoami', j); else clearLastKnown('whoami');
+  return j;
+};
 export const login = (username, password) => post('/api/login', { username, password });
-export const logout = () => post('/api/logout');
+export const logout = async () => {
+  clearLastKnown('whoami');
+  return post('/api/logout');
+};
 export const logoutEverywhere = () => post('/api/logout-everywhere');
 
 // --- config / health ---
-export const fetchConfig = () => json('/api/config');
+// Cached last-known, for the same reason whoami is: with the link down this
+// throws, main.js's loadCaseyConfig() swallows it, and state.config stays
+// null -- which renders the deployment's own dashboard under casey's literal
+// 'casey' branding. A deployment reverting to another product's name is not a
+// cosmetic degradation; it is the screen telling the operator they are
+// somewhere else.
+export const fetchConfig = async () => {
+  try {
+    const cfg = await json('/api/config');
+    if (cfg) writeLastKnown('config', cfg);
+    return cfg;
+  } catch (e) {
+    if (isOfflineError(e)) {
+      const cached = readLastKnown('config');
+      if (cached) return cached;
+    }
+    throw e;
+  }
+};
 // Ungated (unlike fetchConfig) -- see routes/auth.js's /api/branding header
 // comment. Called pre-login so login-gate.js can show a deployment's real
 // brand/leaf instead of the literal 'casey' fallback. Never throws: a
-// network failure just leaves the fallback in place.
+// network failure now falls back to the last branding this device actually
+// saw, and only to casey's own literals when it has never seen any.
+const cachedBranding = () => {
+  const b = readLastKnown('branding');
+  if (b && (b.brand || b.leaf)) return b;
+  const cfg = readLastKnown('config');
+  const ui = cfg && cfg.dashboard_ui;
+  return ui && (ui.brand || ui.leaf) ? ui : null;
+};
 export const fetchBranding = async () => {
-  try { const r = await api('/api/branding'); return r.ok ? await r.json() : null; } catch { return null; }
+  try {
+    const r = await api('/api/branding');
+    if (!r.ok) return cachedBranding();
+    const b = await r.json();
+    if (b && (b.brand || b.leaf)) writeLastKnown('branding', b);
+    return b;
+  } catch { return cachedBranding(); }
 };
 // Per-run config override -- only reachable on a deployment that mounted
 // CASEY_EXTRA_DASHBOARD_ROUTES (e.g. serpent). A plain casey/uhh deployment

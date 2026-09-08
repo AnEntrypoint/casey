@@ -18,13 +18,13 @@
 // Chip that expands the full list on click; health/intake tags render as
 // distinct visual layers from operator/owner tags.
 
-import * as ds from '/design/dist/247420.js';
+import * as webjsx from 'webjsx';
+import { Chip, Pill } from 'ds/components/shell.js';
 import { state, toggleBulkSelect, setActiveId } from '../../state.js';
 import { rel, fmtTime, tagList, stageLabel, stageTone, healthLabel } from '../../format.js';
 import { urgencyBand, URGENCY_BAND_LABEL } from '../../map-model.js';
 import { pushHash } from '../../route.js';
-const { Chip, Pill } = ds.components;
-const h = ds.h;
+const h = webjsx.createElement;
 
 const HEALTH_TAG_PREFIX = 'health:';
 const INTERNAL_TAGS = new Set(['needs-human', 'draft-pending', 'unsent_draft', 'ai-offline', 'degraded-turn-seen']);

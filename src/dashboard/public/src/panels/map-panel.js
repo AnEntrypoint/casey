@@ -428,9 +428,19 @@ function mapStateNote() {
     if (!loadedOnce) return null;
     const pins = livePins();
     if (!pins.length) {
-        return summary.unresolvedCount
-            ? { kind: 'info', text: `Nothing can be placed on the map yet -- all ${summary.unresolvedCount} report(s) are missing a usable location. They are listed below.` }
-            : { kind: 'info', text: 'No reports in this time window yet.' };
+        if (summary.unresolvedCount) {
+            return { kind: 'info', text: `Nothing can be placed on the map yet -- all ${summary.unresolvedCount} report(s) are missing a usable location. They are listed below.` };
+        }
+        // "No reports in this time window yet" names the time window as the
+        // reason. On All time -- the default -- there is no window, so that
+        // sentence pointed the operator at a control that could not help and
+        // rendered "nothing has happened yet" as if it were "your time filter
+        // hid everything". They are two of the four facts this function has to
+        // keep apart, so they get two sentences.
+        const days = state.mapFilter.days;
+        return days && days !== '0'
+            ? { kind: 'info', text: `No reports in the last ${days} days. Widen the time window to see older ones.` }
+            : { kind: 'info', text: 'No reports have come in yet -- nothing has been reported.' };
     }
     const visible = pins.filter((p) => pinMatches(p, state.mapFilter, urgencyByCaseId(), currentExtent()));
     if (!visible.length) return { kind: 'info', text: 'No reports match the filters you have on.' };

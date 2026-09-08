@@ -69,7 +69,20 @@ export const state = {
   // 'settings'|'stats'|'help'|'onboarding'|'skills'|null
   activeModal: null,
   toasts: [],
+  // "The dashboard cannot be reached." Set by api.js on a rejected fetch AND
+  // on the service worker's 503 {"error":"offline"} envelope -- the latter is
+  // a RESOLVED fetch, which is why this used to read false for the entire
+  // duration of an outage on a device with a warm shell cache.
   connLost: false,
+  // When the link dropped, so the banner can say how long the screen has been
+  // showing last-known data instead of leaving the operator to guess.
+  connLostSince: null,
+  // True when state.authed was assumed from the last session the server
+  // confirmed, rather than confirmed by this page load. The operator is still
+  // signed in as far as anything on screen goes; what is unverified is
+  // whether the server still agrees, and that is re-checked the moment the
+  // link returns (auth.js's onConnectionRestored subscription).
+  sessionRestored: false,
   health: { ai: null, runtime: null, guardrails: null },
   savedViews: [],
   recentSearches: [],
@@ -224,7 +237,19 @@ export function removeToast(id) {
   if (i !== -1) state.toasts.splice(i, 1);
   schedule();
 }
-export function setConnLost(v) { if (state.connLost !== !!v) { state.connLost = !!v; schedule(); } }
+export function setConnLost(v) {
+  if (state.connLost === !!v) return;
+  state.connLost = !!v;
+  state.connLostSince = state.connLost ? Date.now() : null;
+  // sessionRestored is deliberately NOT cleared here. This function is what
+  // fires api.js's connection-restored listeners, and auth.js's listener reads
+  // sessionRestored to decide whether the session still needs re-verifying --
+  // clearing it here ran BEFORE that listener and made the re-check a no-op,
+  // so a session that had actually expired during the outage would never have
+  // been caught. checkSession() owns the flag in both directions.
+  schedule();
+}
+export function setSessionRestored(v) { state.sessionRestored = !!v; schedule(); }
 export function setHealth(patch) { Object.assign(state.health, patch); schedule(); }
 export function setRecentSearches(arr) { state.recentSearches = arr; schedule(); }
 export function setHandoffQueue(q) { state.handoffQueue = q; schedule(); }

@@ -16,13 +16,13 @@
 // band 1 or 2. Two derivations, two answers, one screen: exactly the failure
 // map-model.js exists to prevent. There is no local copy any more.
 
-import * as ds from '/design/dist/247420.js';
+import * as webjsx from 'webjsx';
+import { Chip, Badge, Heading } from 'ds/components/shell.js';
 import { state, setActiveId, setInboxMode, schedule } from '../../state.js';
 import { rel, waitFmt, isMine } from '../../format.js';
 import { urgencyBand, URGENCY_BAND_LABEL } from '../../map-model.js';
 import { pushHash } from '../../route.js';
-const { Chip, Badge, Heading } = ds.components;
-const h = ds.h;
+const h = webjsx.createElement;
 
 // How many rows are shown before the list says so. The number itself is not
 // the point -- the point is that the list NEVER truncates without naming the

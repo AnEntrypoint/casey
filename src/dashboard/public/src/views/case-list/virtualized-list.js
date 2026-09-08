@@ -3,10 +3,10 @@
 // scroll container, wrapping case-row.js. No external virtualizer library --
 // a plain fixed-row-height window over a scrollTop tracked per container.
 
-import * as ds from '/design/dist/247420.js';
+import * as webjsx from 'webjsx';
 import { CaseRow } from './case-row.js';
 import { schedule } from '../../state.js';
-const h = ds.h;
+const h = webjsx.createElement;
 
 const ROW_HEIGHT = 64;      // px, matches .case-row's min-height in app.css
 const OVERSCAN = 6;         // extra rows rendered above/below the viewport

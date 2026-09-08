@@ -800,7 +800,15 @@ stop).
   province->town gazetteer -- place understanding and report extraction are
   entirely the model reading and calling the right tool.
 - **Enquiries and status are PII-free.** Every worker-facing projection
-  excludes `external_id`/`contact_id`.
+  excludes `external_id`/`contact_id`. "Worker-facing" means what goes back
+  out to the reporting field worker over their own channel (`case-tools.js`'s
+  `enquiryRow`, the tier gating, the agent's replies) plus every aggregate
+  rollup -- it has never meant the authenticated operator console, which
+  necessarily shows a contact number so an operator can ring back the person
+  reporting a dying herd (`contacts.js`'s `publicContact`,
+  `/api/cases/:id/report.html`'s `tel:` link, the case-detail header's copy
+  affordance). The operator-console rule is a SHAPE rule instead, stated in
+  full under Security invariants below.
 - **A reporter's access tier is operator-assigned, never self-service or
   LLM-settable, and fails closed.** No `case_*` tool touches `contact.tier`;
   any falsy/missing/corrupt value resolves to the lower-privilege
@@ -871,6 +879,27 @@ stop).
 - All contact-supplied text is HTML-escaped before render.
 - Session-cookie and password comparisons use `crypto.timingSafeEqual` to
   prevent timing oracles.
+- **No dashboard route ever returns a raw case or contact row.** A row reaches
+  JSON only through an explicit field allowlist -- `caseListProjection()` /
+  `caseDetailProjection()` in `routes/cases.js`, `publicContact()` in
+  `routes/contacts.js` -- never a spread and never the row itself, so a column
+  added to the case table is never auto-exposed. Three fields may never be
+  emitted by any of them: `external_id` (the raw channel routing key),
+  `author_key` (the same value again) and `contact_id` (an internal join key
+  with no operator use). What an authenticated operator MAY see is the DISPLAY
+  form of the contact number -- `external_id_formatted`, via `format.js`'s
+  `fmtPhone27` -- and only on a single case they have explicitly opened
+  (`GET /api/cases/:id`, `PATCH /api/cases/:id`, `POST /api/cases/:id/transition`,
+  which must all return the same projection). The case LIST stays PII-free:
+  `/api/cases` carries no contact number, the case-list search therefore cannot
+  offer one, and a 50-row poll is no place to move 50 phone numbers.
+  `scripts/lint.mjs`'s pii-safety gate enforces all of this by dataflow -- a
+  row bound off a `store.getCase`/`updateCase`/`listContacts`-class call and
+  handed to `res.json()` with no projection between them fails the build, as
+  does a projection that starts emitting one of the three fields or spreads its
+  row. The gate previously matched only a literal `{ ...c }` spread, a shape the
+  route files never contained, and so missed a real leak for as long as it
+  existed.
 
 **Dashboard authentication audit (2026-08-21):** Complete security audit of
 `dashboard/auth.js` and `routes/auth.js` verified all seven threat categories:

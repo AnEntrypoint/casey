@@ -1,15 +1,25 @@
 // header.js -- ref/channel disclosure (ux-case-detail-channel-ref-disclosure:
-// ref prominent, channel + external-id-free metadata collapsed under a
-// toggle), claim button, snooze control, share/print links, health badge
-// chips, intake-mode badge, and the plain-language flag summary
+// ref prominent, channel + contact metadata collapsed under a toggle), claim
+// button, snooze control, share/print links, health badge chips, intake-mode
+// badge, and the plain-language flag summary
 // (ux-ai-plain-language-flag-summary: the same caseHints-mirroring
 // todo-hint text, also surfaced as a standalone Lede up top).
+//
+// The collapsed metadata reads c.external_id_formatted -- the DISPLAY form of
+// the contact number, served only by the single-case projection
+// (caseDetailProjection in routes/cases.js), never by the case list. It used
+// to read c.external_id, the raw routing key, which GET /api/cases/:id has
+// never returned: the field arrived only in the un-projected PATCH/transition
+// response, so "copy contact" copied `undefined` on every reload and worked
+// for exactly one render after an edit. Rendered only when the field is
+// actually present, so a case object from any list-shaped source shows no
+// dead affordance rather than an empty one.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, IconButton, Chip, Lede, Icon } from '/design/src/components/shell.js';
 import { state, schedule } from '../../state.js';
 import { toast, undoToast } from '../../toasts.js';
-import { fmtPhone, fmtTime, rel, healthLabel } from '../../format.js';
+import { fmtTime, rel, healthLabel } from '../../format.js';
 import { postClaim, postSnooze } from '../../api.js';
 import { todoHintText } from './todo-hint.js';
 
@@ -17,12 +27,16 @@ function tagList(tags) { return String(tags || '').split(',').map(s => s.trim())
 
 const SNOWFLAKE_PAIR = /^\d{15,20}:\d{15,20}$/;
 
-function externalIdNode(externalId) {
-    const s = String(externalId || '');
+// Already display-formatted by the server (format.js fmtPhone27, the same
+// formatter the contacts panel's external_id_formatted goes through), so this
+// only handles the one shape a phone formatter passes through untouched: a
+// Discord container:author pair, too long to read in full.
+function contactNode(contact) {
+    const s = String(contact || '');
     if (SNOWFLAKE_PAIR.test(s)) {
         return h('span', { class: 'casey-meta-id', title: s }, 'Discord: ' + s.slice(0, 6) + '...' + s.split(':')[1].slice(-6));
     }
-    return h('span', {}, fmtPhone(externalId));
+    return h('span', {}, s);
 }
 
 function snoozedUntilTag(tags) {
@@ -61,6 +75,7 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
     const setDisclosed = (v) => { state._headerDisclosed = v ? c.id : null; schedule(); };
     const isMine = state.currentUser && c.assignee === state.currentUser.username;
     const snoozeUntil = snoozedUntilTag(c.tags);
+    const contact = c.external_id_formatted || '';
 
     const claimBtn = (c.assignee && c.assignee !== 'agent')
         ? Chip({ tone: isMine ? 'accent' : '', children: isMine ? 'yours' : c.assignee })
@@ -111,8 +126,8 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
                 ' ', c.channel, ' details'
             ),
             disclosed ? h('div', { class: 'casey-meta-body' },
-                externalIdNode(c.external_id),
-                h('button', { type: 'button', class: 'casey-copy-btn', onclick: () => { try { navigator.clipboard.writeText(c.external_id); toast('copied'); } catch { toast('copy failed', 'err'); } } }, 'copy contact'),
+                contact ? contactNode(contact) : null,
+                contact ? h('button', { type: 'button', class: 'casey-copy-btn', onclick: () => { try { navigator.clipboard.writeText(contact); toast('copied'); } catch { toast('copy failed', 'err'); } } }, 'copy contact') : null,
                 h('span', {}, 'created ', rel(c.created_at))
             ) : null
         )
