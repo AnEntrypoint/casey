@@ -29,7 +29,7 @@ import { load as yamlLoadRaw, YAML11_SCHEMA } from 'js-yaml'
 const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
-import { DERIVED_ONLY_FIELDS, writeGuardViolation } from './store/guards.js'
+import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable } from './store/guards.js'
 import { REPORT_KEYS, REPORT_KEY_ORDER, APPEND_FIELDS } from './store/report-shape.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 import { tagList } from './timestamp.js'
@@ -1031,7 +1031,7 @@ export class CaseStore {
   async updateCase(id, patch, user = AGENT_USER, opts = {}) {
     const violation = writeGuardViolation(patch, user)
     if (violation) throw new Error(violation)
-    await this.t.update('case', id, { ...patch, last_event_at: nowIso() }, user, opts)
+    await this.t.update('case', id, { ...toStorable(patch), last_event_at: nowIso() }, user, opts)
     return this.getCase(id)
   }
 
@@ -1189,7 +1189,7 @@ export class CaseStore {
   async updateCaseQuiet(id, patch, user = SYSTEM_USER, opts = {}) {
     const violation = writeGuardViolation(patch, user)
     if (violation) throw new Error(violation)
-    await this.t.update('case', id, patch, user, opts.expectedVersion != null ? { expectedVersion: opts.expectedVersion } : {})
+    await this.t.update('case', id, toStorable(patch), user, opts.expectedVersion != null ? { expectedVersion: opts.expectedVersion } : {})
     return this.getCase(id)
   }
 

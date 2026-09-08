@@ -9,6 +9,7 @@
 // per-conversation lock) rather than a read-then-write of their own.
 
 import { AGENT_USER, REPORT_KEYS } from './case-store.js'
+import { toStorable } from './store/guards.js'
 import { REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_TOOL_NAME, REPORT_TOOL_DESCRIPTION } from './store/report-shape.js'
 import { normalizeLocation } from './location-normalize.js'
 import { recordProvenanceObservation } from './provenance-wire.js'
@@ -233,10 +234,10 @@ export function buildRecordTools(store, { caseTypeValues, priorityValues, stageV
           // succeeded.
           if (c?.contact_id) {
             try {
-              await store().t.update('contact', c.contact_id, {
+              await store().t.update('contact', c.contact_id, toStorable({
                 last_report_lat: lat, last_report_lon: lon, last_report_at: new Date().toISOString(),
                 last_report_case_id: id,
-              }, AGENT_USER)
+              }), AGENT_USER)
             } catch { /* best-effort -- the case's own lat/lon write is the source of truth */ }
           }
         }
