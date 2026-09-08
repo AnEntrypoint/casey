@@ -135,13 +135,10 @@ const SHELL_MOUNTS = [
 ]
 
 // Every same-origin asset index.html pulls in: stylesheets, preloads (the
-// Ubuntu faces), and classic scripts. Module imports are deliberately NOT
-// followed -- they resolve through the import map at runtime and all live under
-// public/, which the build id already walks whole.
-function shellAssetUrls(publicDir) {
-  let html
-  try { html = readFileSync(path.join(publicDir, 'index.html'), 'utf8') }
-  catch { return [] }
+// Ubuntu faces), and classic scripts. Module imports are NOT in this list --
+// shellModuleGraph below owns those, and they are deliberately kept out of the
+// service worker's precache (see the /sw.js route).
+function shellAssetUrls(html) {
   const urls = new Set()
   const add = (u) => { if (u && u.startsWith('/') && !u.startsWith('//')) urls.add(u) }
   for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
@@ -159,6 +156,133 @@ function shellAssetPath(url, publicDir) {
     if (url.startsWith(prefix)) return path.join(dir, url.slice(prefix.length))
   }
   return path.join(publicDir, url.slice(1))
+}
+
+// MODULE DISCOVERY IS SERIAL, and on this deployment's link that is the whole
+// cold-load cost. A browser cannot know a level-N+1 import exists until the
+// level-N module has arrived and been parsed, so an unbundled ES module graph
+// costs a round trip per level however few bytes it moves. Measured on this
+// shell with a fixed 200 ms added to every request: 120 module requests spread
+// over 17 serial discovery waves, the last module requested 4.8 s after the
+// first, and the page renders white for the whole descent. At the ~2 s RTT this
+// deployment targets that is the difference between a page and a blank screen.
+//
+// The fix is <link rel="modulepreload"> for the whole graph in the head. The
+// preload scanner then requests every module in one wave, discovery collapses
+// to a single level, and nothing else about the page changes: no build step,
+// no bundle, and the unbundled ds/ source layout this project chose stays
+// exactly as it is.
+//
+// GENERATED, never hand-written into index.html. A hand-maintained list drifts
+// the first time anyone adds an import -- which is what happened to the shell
+// asset list above -- and 118 link tags would undo the narration cut that took
+// index.html from 6157 to 4549 bytes.
+
+// index.html's own <script type="importmap"> is the resolution authority. It is
+// read rather than restated as constants here: a second copy of the three rules
+// would drift, and a generated href that resolves even slightly differently
+// from the browser's is a wasted request plus a console warning.
+function shellImportMap(html) {
+  const m = /<script\b[^>]*\btype\s*=\s*["']importmap["'][^>]*>([\s\S]*?)<\/script>/i.exec(html)
+  if (!m) return []
+  let imports
+  try { imports = JSON.parse(m[1]).imports || {} } catch { return [] }
+  // Longest key first. The map carries both "webjsx" and "webjsx/", and a
+  // shorter-first walk would never reach the bare entry.
+  return Object.entries(imports)
+    .filter(([, target]) => typeof target === 'string')
+    .sort((a, b) => b[0].length - a[0].length)
+}
+
+// Static import/export-from specifiers only. A dynamic import() is deferred by
+// definition, and preloading something the page may never reach is exactly what
+// produces Chrome's "preloaded but not used" warning -- the one failure mode
+// that would make this change cost round trips instead of saving them.
+//
+// Regex rather than a parser, for the same reason compressResponses is
+// hand-rolled over node:zlib: no dependency casey can write in a few lines.
+// Both failure modes are safe by construction. A specifier this misses leaves
+// that module discovered the old way, i.e. today's behaviour. A specifier it
+// invents out of a comment or a string is dropped by shellModuleGraph's
+// read-the-file check before it can become a request.
+const MODULE_FROM_RE = /\b(?:import|export)\b[^'"()]*?\bfrom\s*['"]([^'"]+)['"]/g
+const MODULE_SIDE_EFFECT_RE = /\bimport\s*['"]([^'"]+)['"]/g
+
+function resolveModuleSpecifier(spec, fromUrl, importMap) {
+  let url = null
+  if (spec.startsWith('/')) url = spec
+  else if (spec.startsWith('./') || spec.startsWith('../')) {
+    url = path.posix.normalize(path.posix.join(path.posix.dirname(fromUrl), spec))
+  } else {
+    for (const [key, target] of importMap) {
+      if (key.endsWith('/')) { if (spec.startsWith(key)) { url = target + spec.slice(key.length); break } }
+      else if (spec === key) { url = target; break }
+    }
+  }
+  // An unresolvable specifier is skipped rather than guessed at: a guess that
+  // 404s spends a round trip on nothing, which is the cost this whole mechanism
+  // exists to remove.
+  if (!url || !url.startsWith('/') || url.startsWith('//')) return null
+  if (url.includes('"') || url.includes('<')) return null
+  // THE 247420.js FENCE, structural rather than conventional. index.html states
+  // it as a rule for humans; this states it as code. Preloading the prebuilt SDK
+  // bundle would move 355,065 gzipped bytes for a strict superset of what the
+  // ds/ sources already deliver, so no specifier, however written, can reach it
+  // through this generator.
+  if (url.startsWith('/design/dist/')) return null
+  return url
+}
+
+// Breadth-first from index.html's own <script type="module"> entries, so the
+// emitted order is shallowest-first. That ordering is load-bearing on HTTP/1.1,
+// where the browser holds six connections per origin: the modules the rest of
+// the graph waits on get sockets first.
+function shellModuleGraph(html, publicDir) {
+  const importMap = shellImportMap(html)
+  const queue = []
+  const seen = new Set()
+  for (const m of html.matchAll(/<script\b[^>]*\btype\s*=\s*["']module["'][^>]*>/gi)) {
+    const src = (/\bsrc\s*=\s*["']([^"']+)["']/i.exec(m[0]) || [])[1]
+    if (!src || !src.startsWith('/') || src.startsWith('//') || seen.has(src)) continue
+    seen.add(src)
+    queue.push(src)
+  }
+  const order = []
+  while (queue.length) {
+    const url = queue.shift()
+    let src
+    // A URL reaches the emitted list only once its file has actually been read.
+    // A preload of something express.static cannot serve is a wasted request
+    // that warns in the console.
+    try { src = readFileSync(shellAssetPath(url, publicDir), 'utf8') } catch { continue }
+    order.push(url)
+    const specs = new Set()
+    for (const m of src.matchAll(MODULE_FROM_RE)) specs.add(m[1])
+    for (const m of src.matchAll(MODULE_SIDE_EFFECT_RE)) specs.add(m[1])
+    for (const spec of specs) {
+      const next = resolveModuleSpecifier(spec, url, importMap)
+      if (!next || seen.has(next)) continue
+      seen.add(next)
+      queue.push(next)
+    }
+  }
+  return order
+}
+
+// Injected into the SERVED bytes, never into the file on disk, so index.html
+// stays the single hand-maintained statement of what the shell links and the
+// generated half cannot drift from the real import graph.
+function injectModulePreloads(html, moduleUrls) {
+  if (!moduleUrls.length) return html
+  const i = html.lastIndexOf('</head>')
+  if (i < 0) return html
+  const tags = moduleUrls.map(u => `<link rel="modulepreload" href="${u}">`).join('\n')
+  // No crossorigin attribute: these are same-origin, and modulepreload already
+  // matches a module script's own same-origin credentials mode. Adding it would
+  // make the preload's cache key disagree with the import's and fetch every
+  // module twice -- the trap the Ubuntu font preloads sit on the other side of,
+  // where crossorigin is required for exactly the same reason.
+  return html.slice(0, i) + tags + '\n' + html.slice(i)
 }
 
 // Keyed by URL, not basename: the shell links two different files named
@@ -387,8 +511,27 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   // the shell can have changed.
   // One derived list feeds both the build id and the service worker's precache,
   // so the two can no longer name different files.
-  const SHELL_ASSET_URLS = shellAssetUrls(PUBLIC_DIR)
-  const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, SHELL_ASSET_URLS)
+  const SHELL_HTML_SOURCE = (() => {
+    try { return readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8') } catch { return null }
+  })()
+  const SHELL_ASSET_URLS = SHELL_HTML_SOURCE ? shellAssetUrls(SHELL_HTML_SOURCE) : []
+  const SHELL_MODULE_URLS = SHELL_HTML_SOURCE ? shellModuleGraph(SHELL_HTML_SOURCE, PUBLIC_DIR) : []
+  const SHELL_HTML = SHELL_HTML_SOURCE ? injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS) : null
+  // The module graph is hashed into the build id but deliberately NOT
+  // precached. Two reasons, pulling in opposite directions:
+  //
+  //  - INTO the id, because most of the graph resolves under /design/, outside
+  //    PUBLIC_DIR. The walk below covers public/ whole and stats the bundles
+  //    index.html links, so before this a design-kit edit shipped new module
+  //    bytes under an unchanged cache name and the worker went on serving the
+  //    old ones. A change to any byte the shell executes must change the id, or
+  //    version-scoping is not version-scoping.
+  //  - OUT of the precache, because install fetches with cache: 'reload' by
+  //    design. Precaching the graph would re-download all of it immediately
+  //    after the page has just downloaded it, doubling the first visit's cost
+  //    on the metered link this change exists to serve. The modules still join
+  //    the same versioned cache the first time they are asked for.
+  const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS])
   // First in the chain, so it wraps every downstream response -- the API
   // routes, the SPA shell, and the /design + /vendor static mounts alike.
   app.use(compressResponses)
@@ -742,6 +885,25 @@ a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);t
   // never outlive a deploy. Both layers are needed -- this one is the floor
   // for a first visit, a browser with no service-worker support, and the
   // window before the worker has installed.
+  // The shell HTML is served here rather than by express.static below, because
+  // it is the one file in public/ that does not go out verbatim: the generated
+  // modulepreload block is injected into it at boot. Same URL, same no-cache
+  // policy, same ungated status (routes/auth.js exempts '/' and '/index.html'
+  // by name, and must -- a logged-out browser has to receive this page to
+  // render a login form at all). Registered ahead of the static mount so it
+  // wins over that mount's own index: 'index.html'.
+  //
+  // Boot, not per request: the supervisor forks a fresh worker whenever a
+  // watched source file's mtime moves, so boot IS the moment the shell can have
+  // changed -- the same argument SHELL_BUILD_ID is computed on.
+  if (SHELL_HTML) {
+    const sendShell = (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache')
+      res.type('html').send(SHELL_HTML)
+    }
+    app.get('/', sendShell)
+    app.get('/index.html', sendShell)
+  }
   app.use(express.static(PUBLIC_DIR, {
     index: 'index.html',
     setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache') },

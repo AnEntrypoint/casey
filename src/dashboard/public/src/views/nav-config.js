@@ -190,6 +190,28 @@ function applyNavConfig(sections, navConfig) {
     }));
 }
 
+// Which action items need a server-side capability to do anything at all.
+// `casey dashboard` (casey-serve.js cmdDashboard) starts the console against
+// the store alone and passes no runSweep, so POST /api/sweep answers 501
+// "sweep not available in this mode" -- while this list still rendered the
+// button, and the operator's only way to find out was to press it and read the
+// refusal. /api/health publishes `capabilities` (routes/operations.js); a
+// control whose capability is explicitly false is not rendered.
+const ITEM_CAPABILITY = { sweep: 'sweep' };
+
+// Hide ONLY on an explicit false. Before the first /api/health poll lands (and
+// on a poll that failed) there is no capabilities block at all, and a full
+// deployment must never flicker its controls away while health is unknown --
+// absent means "no reason to hide", exactly as it did before this existed.
+function applyCapabilityScope(items) {
+  const caps = (state.health && state.health.ai && state.health.ai.capabilities) || null;
+  if (!caps) return items;
+  return items.filter(it => {
+    const need = ITEM_CAPABILITY[it.key];
+    return !need || caps[need] !== false;
+  });
+}
+
 // Actions run through the identical hide/relabel pass as the nav items did
 // when they lived there. A control that moved from the nav to the topbar must
 // not quietly escape a deployer's config or a role's floor -- the secretary
@@ -209,7 +231,7 @@ export function buildSideSections(opts = {}) {
 }
 
 export function buildActionItems(opts = {}) {
-  return applyItemConfig(rawActionItems(opts), state.currentUser?.role, state.config?.dashboard_ui?.nav);
+  return applyItemConfig(applyCapabilityScope(rawActionItems(opts)), state.currentUser?.role, state.config?.dashboard_ui?.nav);
 }
 
 export function backToCases() { closePanel(); }

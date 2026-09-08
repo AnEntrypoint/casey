@@ -27,6 +27,7 @@ import { DASHBOARD_UI, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
 import { BRAND, TYPE_SCALE_CSS } from '../brand.js'
 import { parseReport } from '../../timestamp.js'
 import { mountRoutes } from './register.js'
+import { RUNTIME_STATES } from './operations.js'
 
 // Session gate: a valid casey_session cookie (see dashboard/auth.js) resolves
 // to a real operator_account row. Middleware runs on every request BEFORE
@@ -650,25 +651,142 @@ export function postReport({ store }) {
 
 // Readiness probe for orchestrators/load balancers: is the system of record
 // actually reachable RIGHT NOW (a real store query succeeds), not merely "the
-// HTTP server booted"? Distinct from /api/health, which reports AI-helper and
-// gateway liveness; a process can serve HTTP with a wedged or unopened store and
-// /api/health would still answer. This exercises the store with the cheapest real
-// read (a count) and returns 200 {ready:true} or 503 {ready:false,error}. It is
-// UNGATED on purpose -- a k8s/LB probe has no dashboard token, and the response
-// leaks nothing sensitive (a boolean + a short error string, no case data). Placed
-// before the auth middleware so the token gate never 401s a readiness check.
-// Mounted { raw: true }: it owns the try/catch that turns a store failure into
-// its own 503 shape, which deps.wrap's 500 envelope would replace.
-export function getReady({ store }) {
+// HTTP server booted"? This exercises the store with the cheapest real read (a
+// count) and returns 200 {ready:true} or 503 {ready:false,error}. It is UNGATED
+// on purpose -- a k8s/LB probe has no dashboard token. Placed before the auth
+// middleware so the session gate never 401s a readiness check. Mounted
+// { raw: true }: it owns the try/catch that turns a store failure into its own
+// 503 shape, which deps.wrap's 500 envelope would replace.
+//
+// WHY IT REPORTS MORE THAN THE STORE. A sqlite answer is the ONE thing this
+// probe used to check, so an instance whose LLM backend was genuinely
+// unreachable still answered {"ready":true,"store":"ok"} -- alive, looking
+// fine, answering nobody. Every signal that distinguishes "processing" from
+// "answering nobody" (/api/health, /api/health/provider, /api/turns/degraded,
+// /api/runtime) sits behind the operator session and is unreachable to a
+// monitor or a load balancer, so the one endpoint a monitor CAN poll was the
+// one that could not fail for the reasons that matter.
+//
+// WHAT IT MAY SAY. This route stays PII-free (AGENTS.md's "only ungated
+// routes" list is absolute): booleans, counts and a fixed vocabulary of state
+// words, never case content, never a ref, never a contact identifier, and
+// never the provider model/url (a url can carry a key). `degraded_reasons` is
+// a closed set of machine tokens; `checks` is a closed set of state words.
+//
+// WHY DEGRADED IS STILL 200. `ready` answers "may this instance take traffic",
+// and a casey whose provider is down is still the instance that accepts the
+// inbound, queues the turn and re-drives it on recovery -- pulling it from the
+// pool makes the outage worse, and a dashboard-only console has no provider by
+// design. So degradation is reported IN the body, and only an unreachable
+// store is a 503. A monitor alerts on `degraded`; a load balancer reads the
+// status code. `capabilities` says which signals this process can produce at
+// all, so an absent one reads as a MODE rather than as a fault: a
+// `casey dashboard` console with nothing wired is NOT degraded, it is a
+// different shape, and every capability reads false to say so.
+//
+// `degraded` here is the UNION of every signal this process can see, and is a
+// wider word than /api/health's own `degraded` (which is only llm.js's
+// slow-turn rolling window, and deliberately never flips on one failed turn).
+// A provider that is flatly offline shows degraded:false on /api/health's
+// window and degraded:true here, which is the whole point of this route.
+const READY_PROBE_TIMEOUT_MS = 1500
+const READY_CACHE_MS = 2000
+const readyResolve = async (v) => (typeof v === 'function' ? await v() : v)
+// A probe that hangs must never make the readiness probe itself hang: an
+// orchestrator reads a timed-out probe as a dead instance. Undefined is
+// "did not answer", which the callers below report as such.
+function readyProbe(v) {
+  if (v == null) return Promise.resolve(undefined)
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(undefined), READY_PROBE_TIMEOUT_MS)
+    t.unref?.()
+    Promise.resolve().then(() => readyResolve(v)).then(
+      (r) => { clearTimeout(t); resolve(r) },
+      () => { clearTimeout(t); resolve(undefined) })
+  })
+}
+const readyInt = (n) => (Number.isFinite(Number(n)) ? Math.max(0, Math.trunc(Number(n))) : 0)
+
+export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSweep, sendReply, runtimeStatus }) {
+  // Which signals this process was GIVEN a way to produce. Fixed at
+  // createDashboard time, so it is computed once rather than per request.
+  const capabilities = {
+    llm: llmStatus != null,
+    receive: receiveStatus != null,
+    queue: queueStatus != null,
+    sweep: runSweep != null,
+    reply: sendReply != null,
+    runtime: runtimeStatus != null,
+  }
+  // A liveness probe can be polled every second by several watchers at once.
+  // The store count is the cheap part; the four status probes are not, so one
+  // snapshot is shared for a couple of seconds rather than fanned out per
+  // request. Per-closure (one createDashboard call), the same discipline
+  // makeReportRateLimiter uses for its buckets.
+  let cached = null
+  async function degradationSnapshot() {
+    if (cached && Date.now() - cached.at < READY_CACHE_MS) return cached.value
+    const checks = { store: 'ok', llm: 'not_wired', gateway: 'not_wired', runtime: 'not_wired', queue: null }
+    const reasons = []
+    const [s, rs, qs, rt] = await Promise.all([
+      capabilities.llm ? readyProbe(llmStatus) : undefined,
+      capabilities.receive ? readyProbe(receiveStatus) : undefined,
+      capabilities.queue ? readyProbe(queueStatus) : undefined,
+      capabilities.runtime ? readyProbe(runtimeStatus) : undefined,
+    ])
+    if (capabilities.llm) {
+      if (!s || !s.source) { checks.llm = 'no_answer'; reasons.push('llm_no_answer') }
+      else if (s.source === 'acptoapi') { checks.llm = s.degraded ? 'degraded' : 'ok'; if (s.degraded) reasons.push('llm_degraded') }
+      else if (s.source === 'none') { checks.llm = 'offline'; reasons.push('llm_offline') }
+      else { checks.llm = 'unknown'; reasons.push('llm_unknown') }
+    }
+    if (capabilities.receive) {
+      const state = rs && typeof rs.state === 'string' ? rs.state : ''
+      if (!state) checks.gateway = 'no_answer'
+      else if (state === 'none') checks.gateway = 'none'
+      else if (state === 'never-connected') { checks.gateway = 'not_receiving'; reasons.push('gateway_not_receiving') }
+      else checks.gateway = 'ok'
+    }
+    if (capabilities.queue) {
+      if (!qs) checks.queue = null
+      else {
+        checks.queue = { pending: readyInt(qs.pending), dead_lettered: readyInt(qs.deadLettered) }
+        if (checks.queue.dead_lettered > 0) reasons.push('queue_dead_lettered')
+        if (checks.queue.pending > 0) reasons.push('queue_backlog')
+      }
+    }
+    if (capabilities.runtime) {
+      const state = rt && typeof rt.state === 'string' ? rt.state.slice(0, 32) : ''
+      // Same whitelist getRuntime enforces, imported rather than copied so the
+      // two can never drift into disagreeing about what a runtime state is.
+      const safe = RUNTIME_STATES.has(state) ? state : ''
+      if (!safe) { checks.runtime = 'no_answer' }
+      else if (safe === 'healthy' || safe === 'standalone') { checks.runtime = 'ok' }
+      else { checks.runtime = safe; if (safe === 'degraded' || safe === 'stopped') reasons.push('runtime_' + safe) }
+    }
+    const value = { degraded: reasons.length > 0, degraded_reasons: reasons, checks }
+    cached = { at: Date.now(), value }
+    return value
+  }
   return async (req, res) => {
     const started = Date.now()
     try {
       await store.countCases({})
-      res.json({ ready: true, store: 'ok', took_ms: Date.now() - started })
     } catch (e) {
       // Bound the error so a hostile/huge store error cannot bloat the probe body.
-      res.status(503).json({ ready: false, store: 'unreachable', error: String(e.message || e).slice(0, 200) })
+      return res.status(503).json({
+        ready: false, store: 'unreachable', degraded: true, degraded_reasons: ['store_unreachable'],
+        error: String(e.message || e).slice(0, 200),
+      })
     }
+    const took_ms = Date.now() - started
+    let snapshot
+    // A failure to READ the degradation signals is itself a reportable state,
+    // never a 500 out of a liveness probe: the store answered, so the instance
+    // is ready, and the body says the extra signals could not be gathered.
+    try { snapshot = await degradationSnapshot() }
+    catch { snapshot = { degraded: true, degraded_reasons: ['checks_unavailable'], checks: { store: 'ok', llm: 'no_answer', gateway: 'no_answer', runtime: 'no_answer', queue: null } } }
+    res.json({ ready: true, store: 'ok', took_ms, ...snapshot, capabilities })
   }
 }
 

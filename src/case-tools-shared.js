@@ -142,7 +142,7 @@ export function enquiryRow(c, distanceKm) {
   }
 }
 // The turn's active-case binding, read through the SHARED binding object
-// (handler.js's turnBinding, passed as toolCtx.activeCaseBinding). That one
+// (turn-attempts.js's turnBinding, passed as toolCtx.activeCaseBinding). That one
 // object reference survives freddie's per-dispatch shallow copy of ctx
 // (host_helpers.js spreads ctx into ctxWithProgress), so a case_new/
 // case_switch rebind mid-attempt is visible to every later tool call in the

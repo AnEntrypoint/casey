@@ -135,7 +135,7 @@ async function upSupervised(flags, channels, skipped) {
 // no live reload. Kept for debugging -- a code change here needs a manual restart.
 // Uses the SAME makeResilientCallLLM wiring bin/worker.js's supervised path
 // uses (previously a one-shot resolveCallLLM + a hand-rolled llmStatus that
-// never returned a `degraded` key) -- without this, handler.js's LLM-down
+// never returned a `degraded` key) -- without this, case-intake.js's LLM-down
 // queue-gate branch never fires (llmStatus was null-shaped for it),
 // drainQueuedTurns' status gate had nothing to fall back to, and GET
 // /api/health's degraded field was hardcoded false so the amber "AI helper:
@@ -234,6 +234,23 @@ export async function cmdDashboard({ flags }) {
     })
   }
   console.log(`dashboard: ${cyan(`http://localhost:${dash.port}`)}  ${dim('(ctrl-c to stop)')}`)
+  // What this mode CANNOT do, said once, plainly, at boot.
+  //
+  // createDashboard above is called with {port} alone -- no sendReply,
+  // llmStatus, runSweep, receiveStatus, runtimeStatus or queueStatus (compare
+  // cmdUp/bin/worker.js, which pass all six). Every one of those is a real
+  // capability that silently disappears here, and until this block existed the
+  // only way an operator learned about any of them was to press a control and
+  // read a refusal. This is a MODE, not a fault, which is the same distinction
+  // operations.js's LLM_HEALTH_VIEWS 'unwired' view draws for the AI helper --
+  // stated here for the whole set. Keep the three lists in step: this block,
+  // that view's detail text, and /api/health's `capabilities`.
+  console.log(`${yellow('dashboard-only mode')}${dim('   (reads and edits the store; not attached to a running agent)')}`)
+  console.log(dim('  not available here: sending a reply to a contact, AI-helper status, message-channel'))
+  console.log(dim('  receive status, queued/dead-lettered message counts, supervisor runtime state, Sweep now.'))
+  console.log(dim('  Controls that need them are hidden rather than shown and refused; a reply typed here is'))
+  console.log(dim('  recorded on the timeline as unsent, never as delivered. All of it keeps working wherever'))
+  console.log(dim('  `casey up` is running. Everything that reads the store is unaffected.'))
   process.on('SIGINT', async () => {
     try {
       await dash.close()

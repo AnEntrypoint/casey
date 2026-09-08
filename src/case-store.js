@@ -17,7 +17,6 @@
 
 import { createThatcher } from 'thatcher'
 import path from 'node:path'
-import { randomBytes } from 'node:crypto'
 import { DEFAULT_THRESHOLDS } from './case-health.js'
 import { mergeThresholds } from './thresholds.js'
 import fs from 'node:fs'
@@ -30,8 +29,15 @@ const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
 import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable } from './store/guards.js'
-import { REPORT_KEYS, REPORT_KEY_ORDER, APPEND_FIELDS } from './store/report-shape.js'
+import { REPORT_KEYS, REPORT_KEY_ORDER } from './store/report-shape.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
+import { validateCaseConfig, parseFieldEnums } from './store/config-schema.js'
+import { deriveAuthorKey, mintRef } from './store/ref.js'
+import { saveMediaFile } from './store/media.js'
+import { createBusyRetryProxy } from './store/busy-retry.js'
+import { APPEND_FIELD_MAX_LEN, parseReportJson, mergeReportFields, fillIfEmptyReport } from './store/report-merge.js'
+import { taggedObservations } from './store/settings-log.js'
+import { parseJsonArray, foldAreas } from './store/operator-areas.js'
 import { tagList } from './timestamp.js'
 import { evData, rowInt } from './safe.js'
 
@@ -45,32 +51,11 @@ export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
 // "is this case unclaimed" check compares against).
 export const UNCLAIMED_ASSIGNEE = 'agent'
 
-// Flattens external_id's 'container:author' shape (hooks/handler.js
-// conversationKey) down to a plain author token thatcher's real equality
-// operator-where can query directly -- the derived-only case.author_key field.
-// conversationKey only ever produces zero or one colon (container:author, or a
-// bare id with none), so the LAST colon-separated segment is always the author
-// regardless of which shape produced this external_id.
-export function deriveAuthorKey(externalId) {
-  const s = String(externalId || '')
-  if (!s) return ''
-  const i = s.lastIndexOf(':')
-  return i === -1 ? s : s.slice(i + 1)
-}
-
 // Re-exported so every existing external import (case-tools.js, dashboard/
 // server.js, etc.) keeps resolving these names from case-store.js unchanged,
 // even though the actual definitions now live in src/store/*.js.
 export { REPORT_KEYS, REPORT_KEY_ORDER }
-
-// Ceiling on the accumulated photos/audio/sites field: each arrival APPENDS
-// (see _mergeReportFields/appendReportField below), so a long-running
-// conversation or a malfunctioning agent loop could otherwise grow that
-// field without bound. Generous enough for a genuinely long site visit
-// (dozens of photo/voice-note notes) while still bounding the worst case --
-// a further append past this cap is rejected loudly rather than silently
-// truncated, so no worker-volunteered fact is ever silently discarded.
-const APPEND_FIELD_MAX_LEN = 20000
+export { deriveAuthorKey }
 
 export class CaseStore {
   constructor(opts = {}) {
@@ -112,8 +97,8 @@ export class CaseStore {
     // Parse + validate the config before booting thatcher so a malformed config
     // fails fast with a clear message instead of a cryptic runtime error later.
     const cfg = yamlLoad(fs.readFileSync(this.configPath, 'utf8'))
-    this._wf = this._validateConfig(cfg)
-    this._fieldEnums = this._parseFieldEnums(cfg)
+    this._wf = validateCaseConfig(cfg, this.workflow)
+    this._fieldEnums = parseFieldEnums(cfg)
     // The lifecycle is now a real xstate machine built from the same graph: it,
     // not bespoke array checks, is the authority on whether a transition is legal.
     this._machine = buildCaseMachine(this._wf)
@@ -227,133 +212,7 @@ export class CaseStore {
   // `init()` runs, without creating ./data or a live store. Pure read.
   validateConfig() {
     if (!fs.existsSync(this.configPath)) throw new Error(`casey config not found: ${this.configPath}`)
-    return this._validateConfig(yamlLoad(fs.readFileSync(this.configPath, 'utf8')))
-  }
-
-  // Validate the config and return the parsed workflow stage graph. Throws a
-  // descriptive error on any structural problem.
-  _validateConfig(cfg) {
-    if (!cfg || typeof cfg !== 'object') throw new Error('casey config is empty or not an object')
-    for (const ent of ['case', 'event', 'contact']) {
-      if (!cfg.entities?.[ent]) throw new Error(`casey config: missing required entity "${ent}"`)
-    }
-    const wfDef = cfg.workflows?.[this.workflow]
-    if (!wfDef) throw new Error(`casey config: missing workflow "${this.workflow}"`)
-    const stages = wfDef.stages || []
-    if (!stages.length) throw new Error(`casey config: workflow "${this.workflow}" has no stages`)
-    const names = new Set(stages.map(s => s.name))
-    const graph = {}
-    for (const s of stages) {
-      if (!s.name) throw new Error('casey config: a workflow stage has no name')
-      for (const t of [...(s.forward || []), ...(s.backward || [])]) {
-        if (!names.has(t)) throw new Error(`casey config: stage "${s.name}" references unknown target "${t}"`)
-      }
-      graph[s.name] = { forward: s.forward || [], backward: s.backward || [], requires_role: s.requires_role || [] }
-    }
-    // case.status enum should cover every workflow stage, else transitions write
-    // values the column rejects.
-    const statusOpts = cfg.entities.case.fields?.status?.options
-    if (Array.isArray(statusOpts)) {
-      for (const n of names) if (!statusOpts.includes(n)) throw new Error(`casey config: case.status enum is missing stage "${n}"`)
-    }
-    this._validateFieldDefs(cfg)
-    this._validateRowAccessAndSort(cfg)
-    return graph
-  }
-
-  // Broader structural validation over every declared entity.field beyond the
-  // workflow-stage-coverage check above: a field definition must be an object
-  // with a recognised `type`, an `enum` field must declare a non-empty
-  // `options` array, and the required system columns (id/created_at/
-  // created_by/updated_at, matching _system_fields in the config) must be
-  // present on every entity -- thatcher's write engine always writes these,
-  // so a missing one fails obscurely at first insert rather than at boot.
-  _validateFieldDefs(cfg) {
-    const KNOWN_TYPES = new Set(['id', 'text', 'textarea', 'number', 'enum', 'timestamp', 'boolean', 'json'])
-    const REQUIRED_SYSTEM_FIELDS = ['id', 'created_at', 'created_by', 'updated_at']
-    for (const [entName, ent] of Object.entries(cfg.entities || {})) {
-      const fields = ent?.fields
-      if (!fields || typeof fields !== 'object') {
-        throw new Error(`casey config: entity "${entName}" has no fields object`)
-      }
-      for (const sys of REQUIRED_SYSTEM_FIELDS) {
-        if (!fields[sys]) throw new Error(`casey config: entity "${entName}" is missing required system field "${sys}"`)
-      }
-      for (const [fieldName, def] of Object.entries(fields)) {
-        if (!def || typeof def !== 'object') {
-          throw new Error(`casey config: entity "${entName}" field "${fieldName}" has no definition object`)
-        }
-        if (!def.type) {
-          throw new Error(`casey config: entity "${entName}" field "${fieldName}" has no "type"`)
-        }
-        if (!KNOWN_TYPES.has(def.type)) {
-          throw new Error(`casey config: entity "${entName}" field "${fieldName}" has unrecognised type "${def.type}"`)
-        }
-        if (def.type === 'enum' && (!Array.isArray(def.options) || !def.options.length)) {
-          throw new Error(`casey config: entity "${entName}" field "${fieldName}" is type enum but has no non-empty "options" array`)
-        }
-      }
-    }
-  }
-
-  // row_access (when declared) must name a scope this codebase actually
-  // understands and a field that is a real column on the entity -- a typo
-  // here (e.g. "asignee") would silently no-op the worker enquiry scoping
-  // this exists to enforce, handing every worker every case. list.defaultSort
-  // (when declared) must be a non-empty array of {field, dir} pairs with dir
-  // in ASC/DESC and field a real column, else a sort silently falls back to
-  // whatever thatcher/sqlite happens to return.
-  _validateRowAccessAndSort(cfg) {
-    // 'none' explicitly disables row-access scoping for an entity (e.g.
-    // operator_identity/operator_account below -- internal bookkeeping no
-    // worker ever queries) and carries no `field`; every other known scope
-    // keys on a real column.
-    const KNOWN_ROW_ACCESS_SCOPES = new Set(['assigned', 'owner', 'none'])
-    for (const [entName, ent] of Object.entries(cfg.entities || {})) {
-      const fieldNames = new Set(Object.keys(ent?.fields || {}))
-      if (ent?.row_access) {
-        const { scope, field } = ent.row_access
-        if (!KNOWN_ROW_ACCESS_SCOPES.has(scope)) {
-          throw new Error(`casey config: entity "${entName}" row_access.scope "${scope}" is not recognised (expected one of: ${[...KNOWN_ROW_ACCESS_SCOPES].join(', ')})`)
-        }
-        if (scope !== 'none' && (!field || !fieldNames.has(field))) {
-          throw new Error(`casey config: entity "${entName}" row_access.field "${field}" is not a declared field on this entity`)
-        }
-      }
-      const sort = ent?.list?.defaultSort
-      if (sort != null) {
-        if (!Array.isArray(sort) || !sort.length) {
-          throw new Error(`casey config: entity "${entName}" list.defaultSort must be a non-empty array`)
-        }
-        for (const s of sort) {
-          if (!s || !fieldNames.has(s.field)) {
-            throw new Error(`casey config: entity "${entName}" list.defaultSort references unknown field "${s?.field}"`)
-          }
-          if (s.dir && !['ASC', 'DESC'].includes(s.dir)) {
-            throw new Error(`casey config: entity "${entName}" list.defaultSort field "${s.field}" has invalid dir "${s.dir}" (expected ASC or DESC)`)
-          }
-        }
-      }
-    }
-  }
-
-  // Read every entity.field { type: enum, options: [...] } declaration off the
-  // same parsed config, so a deployment that adds/renames a case_type or
-  // priority value in thatcher.config.yml is picked up by every consumer
-  // (case-tools.js validation guards, case_list/case_update tool-schema enums)
-  // with no code change and no second hardcoded copy of the list. Shape:
-  // { "<entity>.<field>": string[] }. Non-enum fields and entities with no
-  // fields are simply absent -- callers fall back to their own default.
-  _parseFieldEnums(cfg) {
-    const out = {}
-    for (const [entName, ent] of Object.entries(cfg?.entities || {})) {
-      for (const [fieldName, def] of Object.entries(ent?.fields || {})) {
-        if (def && def.type === 'enum' && Array.isArray(def.options)) {
-          out[`${entName}.${fieldName}`] = [...def.options]
-        }
-      }
-    }
-    return out
+    return validateCaseConfig(yamlLoad(fs.readFileSync(this.configPath, 'utf8')), this.workflow)
   }
 
   // Config-declared enum options for entity.field (e.g. 'case.case_type',
@@ -381,36 +240,10 @@ export class CaseStore {
   get t() {
     if (!this.thatcher) throw new Error('CaseStore not initialised  --  call init() first')
     if (this._tProxy) return this._tProxy
-    // SQLITE_BUSY retry proxy. thatcher rides busybase (an embedded sqlite store);
-    // under concurrency a read/write can transiently fail with "SQLITE_BUSY:
-    // database is locked" -- e.g. an agent turn's enquiry tool (case_list/case_get)
-    // reading while casey writes the same turn's events. Without a retry that throws
-    // out of runTurn and the worker sends the degraded fallback instead of the real
-    // answer. We wrap the mutating/reading methods in a
-    // bounded retry with small linear backoff so a lock contends-and-recovers rather
-    // than surfacing as a turn error. Bounded (never infinite), and only retries the
-    // BUSY/locked class -- any other error propagates immediately.
-    const RETRY_METHODS = new Set(['list', 'get', 'create', 'update', 'remove', 'delete'])
-    const isBusy = (e) => /SQLITE_BUSY|database is locked|database table is locked/i.test(String(e?.message || e))
-    const sleep = (ms) => new Promise(r => setTimeout(r, ms))
-    const self = this
-    this._tProxy = new Proxy(this.thatcher, {
-      get(target, prop, recv) {
-        const orig = Reflect.get(target, prop, recv)
-        if (typeof orig !== 'function' || !RETRY_METHODS.has(prop)) return orig
-        return async (...args) => {
-          const MAX = 6
-          for (let attempt = 0; ; attempt++) {
-            try { return await orig.apply(target, args) }
-            catch (e) {
-              if (!isBusy(e) || attempt >= MAX) throw e
-              self.log?.warn?.('[casey] sqlite busy; retrying', { method: String(prop), attempt: attempt + 1 })
-              await sleep(15 * (attempt + 1))   // 15,30,45,... ms linear backoff
-            }
-          }
-        }
-      },
-    })
+    // Every read/write goes through the SQLITE_BUSY retry wrapper (see
+    // store/busy-retry.js for why): a transient lock must contend-and-recover
+    // rather than surfacing as a turn error and sending the degraded fallback.
+    this._tProxy = createBusyRetryProxy(this.thatcher, this.log)
     return this._tProxy
   }
 
@@ -488,15 +321,40 @@ export class CaseStore {
   // Contacts/Reporters panel. Contacts carry no same-second-tiebreak requirement
   // (unlike events), so the sort pushes down to thatcher directly. Internal-team-
   // only surface (operator/admin), never exposed on the public /report form.
-  async listContacts({ limit = 500 } = {}) {
-    return this.t.list('contact', {}, { limit, sort: [{ field: 'created_at', dir: 'DESC' }] })
+  //
+  // System rows are excluded by default, the same decision listCases makes for
+  // the case side and for the same reason. Each settings singleton
+  // (_systemSingletonCaseId -> findOrCreateCase with channel:'system') creates a
+  // CONTACT row too, so 'settings', 'fleet-health' and 'shift' otherwise render
+  // in the Contacts/Reporters panel as if they were reporters -- promotable to
+  // field_worker, and offered the irreversible POPIA erase. They are the contact
+  // side of an audit-log carrier, never a person. Excluding them here fixes every
+  // consumer at one chokepoint rather than adding the same filter to each:
+  // routes/contacts.js's panel (which shows them today), and routes/map.js's two
+  // worker/last-report projections (which already dropped them downstream for
+  // want of a coordinate, so their output is unchanged). Every internal reader of
+  // settings state goes through _settingsCaseId()/findOrCreateCase + listEvents
+  // directly, never listContacts -- confirmed: no call site filters or relies on
+  // a system contact appearing here. includeSystem:true is the explicit opt-in
+  // escape hatch for a caller that genuinely needs to see them (none exist today).
+  async listContacts({ limit = 500, includeSystem = false } = {}) {
+    const where = includeSystem ? {} : { channel: { $ne: 'system' } }
+    return this.t.list('contact', where, { limit, sort: [{ field: 'created_at', dir: 'DESC' }] })
   }
 
   // Operator-assigned access-tier change (reporter <-> field_worker). NEVER
-  // called from the agent/tool-call path (case-tools.js has no tool that can
-  // reach this) -- only the dashboard's admin-gated /api/contacts/:id/tier
-  // route and the CLI's break-glass path call this, matching the "operator-
-  // assignable, never contact-self-service or LLM-settable" design.
+  // reachable from the agent/tool-call path: case-tools.js registers no tool
+  // that calls this, which is what makes the "never contact-self-service or
+  // LLM-settable" half of the design real.
+  //
+  // Its ONE caller is dashboard/routes/contacts.js's postContactTier (around
+  // line 53), whose gate is `authed(req)` ALONE -- any logged-in operator, NOT
+  // admin-only, deliberately (that route's own header says so: tier assignment
+  // is an everyday triage action, unlike account management or the
+  // admin-gated + isAdmin erase route beside it). There is no CLI caller and no
+  // other break-glass path. So the privilege boundary this method sits behind
+  // is "a valid operator session", nothing narrower; an audit looking for an
+  // admin check will not find one, because there is none to find.
   async setContactTier(contactId, tier, user = SYSTEM_USER) {
     if (tier !== 'reporter' && tier !== 'field_worker') throw new Error(`invalid tier: ${tier}`)
     return this.t.update('contact', contactId, { tier }, user)
@@ -528,12 +386,9 @@ export class CaseStore {
     try { id = await this._settingsCaseId() } catch { return null }
     const events = await this.listEvents(id).catch(() => [])
     // Walk newest-first; the first parseable thresholds observation wins.
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i]
-      if (ev.kind !== 'observation' || typeof ev.text !== 'string') continue
-      const m = ev.text.match(/^thresholds:(.+)$/s)
-      if (!m) continue
-      try { return JSON.parse(m[1]) } catch { continue }
+    const hits = taggedObservations(events, 'thresholds')
+    for (let i = hits.length - 1; i >= 0; i--) {
+      try { return JSON.parse(hits[i].payload) } catch { continue }
     }
     return null
   }
@@ -604,11 +459,8 @@ export class CaseStore {
     try { id = await this._fleetHealthCaseId() } catch { return { latest: null, history: [], degraded: false } }
     const events = await this.listEvents(id).catch(() => [])
     const recs = []
-    for (const ev of events) {
-      if (ev.kind !== 'observation' || typeof ev.text !== 'string') continue
-      const m = ev.text.match(/^fleet-health:(.+)$/s)
-      if (!m) continue
-      try { recs.push(JSON.parse(m[1])) } catch { continue }
+    for (const { payload } of taggedObservations(events, 'fleet-health')) {
+      try { recs.push(JSON.parse(payload)) } catch { continue }
     }
     const history = recs.slice(Math.max(0, recs.length - Math.max(1, n)))
     const latest = history.length ? history[history.length - 1] : null
@@ -641,14 +493,14 @@ export class CaseStore {
     let id
     try { id = await this._shiftCaseId() } catch { return null }
     const events = await this.listEvents(id).catch(() => [])
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i]
-      if (ev.kind !== 'observation' || typeof ev.text !== 'string') continue
-      const m = ev.text.match(/^shift-start:(\d+)$/)
-      if (!m) continue
-      const ts = parseInt(m[1], 10)
+    // Stricter pattern than the JSON-payload readers above: a shift marker is
+    // `shift-start:<unix ms>` and nothing else, so a malformed row is skipped by
+    // the scan itself rather than reaching parseInt.
+    const hits = taggedObservations(events, 'shift-start', /^shift-start:(\d+)$/)
+    for (let i = hits.length - 1; i >= 0; i--) {
+      const ts = parseInt(hits[i].payload, 10)
       if (!Number.isFinite(ts)) continue
-      const by = evData(ev).by || null
+      const by = evData(hits[i].event).by || null
       return { ts, by }
     }
     return null
@@ -778,57 +630,14 @@ export class CaseStore {
   // the fast DB round-trip is inside the lock -- LLM/network latency stays out.
   // Non-empty incoming values win; a known field is never overwritten with blank.
   // Returns { report } (the merged object) or { error } on guards.
-  // Single chokepoint for the report-JSON safe-parse-with-fallback pattern, so
-  // fallback/logging behavior cannot drift between call sites.
-  // Returns { value, corrupted }: corrupted:true means the stored report JSON
-  // failed to parse, so `value` is a fallback EMPTY object standing in for
-  // unrecoverable data, not a genuinely-empty report. A caller that merges on
-  // top of this MUST distinguish "the case really had no report yet"
-  // (corrupted:false, value:{}) from "every previously-recorded field was just
-  // discarded" (corrupted:true) -- without the flag a corruption event is
-  // indistinguishable from a normal successful merge, so nobody is warned and
-  // the loss is persisted.
+  // Store-side wrapper over store/report-merge.js's pure parseReportJson: the
+  // parse rules live there, the case-attributed warning lives here (only the
+  // store knows which case id a corrupt blob belongs to). Returns the same
+  // { value, corrupted } shape every caller in this file already destructures.
   _parseReport(raw, caseId) {
-    try { return { value: raw ? JSON.parse(raw) : {}, corrupted: false } }
-    catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); return { value: {}, corrupted: true } }
-  }
-
-  // Builds the merged report object from current+incoming; extracted so
-  // mergeReport can retry the merge against a freshly re-read row on a
-  // version conflict without duplicating the field-merge rules. Returns
-  // { merged, cappedFields } -- cappedFields lists any photos/audio/sites
-  // field whose append was rejected for exceeding APPEND_FIELD_MAX_LEN (the
-  // field is left at its pre-call value, never silently truncated).
-  _mergeReportFields(current, incoming) {
-    const merged = { ...current }
-    const cappedFields = []
-    const APPEND_KEYS = APPEND_FIELDS
-    for (const [k, v] of Object.entries(incoming)) {
-      if (v == null || String(v).trim() === '') continue
-      // Bounded worst-case for the append-prone fields, applied to EVERY
-      // write regardless of branch -- a single call carrying an oversized
-      // value (an adversarial or malfunctioning agent passing a huge string
-      // in one shot) must be rejected exactly like an append that grows past
-      // the cap over many turns; capping only the append branch left the
-      // first-write/same-value-overwrite paths open to an unbounded single
-      // write. Reject, never truncate silently, so the caller can surface
-      // that a note did not attach rather than a fact quietly vanishing.
-      if (APPEND_KEYS.has(k) && String(v).length > APPEND_FIELD_MAX_LEN) { cappedFields.push(k); continue }
-      // photos/audio/sites: a worker can give MULTIPLE across one
-      // conversation (more than one photo, more than one distinct site
-      // within the same visit) -- overwrite would silently discard every
-      // one after the first. Every other field is a single fact that
-      // genuinely replaces/refines its prior value, so overwrite stays
-      // correct there.
-      if (APPEND_KEYS.has(k) && merged[k] != null && String(merged[k]).trim() !== '' && String(merged[k]) !== String(v)) {
-        const next = `${merged[k]}; ${v}`
-        if (next.length > APPEND_FIELD_MAX_LEN) { cappedFields.push(k); continue }
-        merged[k] = next
-      } else {
-        merged[k] = v
-      }
-    }
-    return { merged, cappedFields }
+    const { value, corrupted, error } = parseReportJson(raw)
+    if (corrupted) this.log?.warn?.('[casey] report_parse_failed', { caseId, error: error?.message })
+    return { value, corrupted }
   }
 
   async mergeReport(caseId, incoming, user = AGENT_USER) {
@@ -841,7 +650,7 @@ export class CaseStore {
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe') return { error: 'observe' }
       const { value: currentReport, corrupted: initCorrupted } = this._parseReport(c.report, caseId)
-      const { merged, cappedFields: initCapped } = this._mergeReportFields(currentReport, incoming)
+      const { merged, cappedFields: initCapped } = mergeReportFields(currentReport, incoming)
       // No server-side geocoding: the map's lat/lon comes ONLY from the agent's
       // own case_report call (its own best-effort estimate from the location the
       // worker described, using the model's own world knowledge -- see
@@ -897,7 +706,7 @@ export class CaseStore {
           if (fresh.autonomy === 'observe') return { error: 'observe' }
           attemptCase = fresh
           const { value: freshReport, corrupted: retryCorrupted } = this._parseReport(fresh.report, caseId)
-          const { merged: retryMerged, cappedFields: retryCapped } = this._mergeReportFields(freshReport, incoming)
+          const { merged: retryMerged, cappedFields: retryCapped } = mergeReportFields(freshReport, incoming)
           attemptMerged = retryMerged
           attemptCorrupted = attemptCorrupted || retryCorrupted
           attemptCapped = retryCapped
@@ -932,7 +741,7 @@ export class CaseStore {
         const { value: current, corrupted } = this._parseReport(attemptCase.report, caseId)
         const have = current[field] != null && String(current[field]).trim() !== ''
         const appended = have ? `${current[field]}; ${note}` : String(note)
-        // Same bounded-worst-case discipline as _mergeReportFields: reject
+        // Same bounded-worst-case discipline as mergeReportFields: reject
         // rather than silently truncate once further growth would exceed the
         // cap -- the caller surfaces this so the note is known not to have
         // attached, never silently dropped off the end.
@@ -958,24 +767,12 @@ export class CaseStore {
     })
   }
 
-  // Persist a downloaded media buffer (photo/voice note) to <dataDir>/media/<caseId>/
-  // and return its path relative to dataDir. A photo/voice note is a one-shot
-  // artifact -- once the worker leaves the site it cannot be recaptured -- so the
-  // actual bytes are written to disk here rather than only ever noted as text
-  // ("farmer sent a photo" with no photo anywhere). Failure
-  // to write must never block the reply path -- callers catch and log, same
-  // discipline as appendReportField's own callers.
-  saveMedia(caseId, buffer, { mimeType = '', kind = 'file' } = {}) {
-    const dir = path.join(this.dataDir, 'media', String(caseId))
-    fs.mkdirSync(dir, { recursive: true })
-    const ext = (mimeType.split('/')[1] || 'bin').split(';')[0].replace(/[^a-z0-9]/gi, '') || 'bin'
-    const name = `${Date.now()}-${randomBytes(4).toString('hex')}-${kind}.${ext}`
-    const full = path.join(dir, name)
-    fs.writeFileSync(full, buffer)
-    // Forward slashes always -- this value is embedded in a /media/<path> URL
-    // (dashboard/server.js), not just used for a local fs.join, so a Windows
-    // backslash join here would break the link on the very platform that produced it.
-    return `media/${caseId}/${name}`
+  // Persist a downloaded media buffer (photo/voice note) under this store's
+  // dataDir and return its dataDir-relative path (see store/media.js for the
+  // naming/slash rules). Failure to write must never block the reply path --
+  // callers catch and log, same discipline as appendReportField's own callers.
+  saveMedia(caseId, buffer, opts = {}) {
+    return saveMediaFile(this.dataDir, caseId, buffer, opts)
   }
 
   // OPERATOR IDENTITY LEARNING -- a durable per-operator record layered on top of
@@ -991,11 +788,6 @@ export class CaseStore {
   async _operatorIdentityRow(operatorId) {
     const [row] = await this.t.list('operator_identity', { operator_id: operatorId }, { limit: 1 })
     return row || null
-  }
-
-  _parseJsonArray(raw) {
-    try { const v = JSON.parse(raw || '[]'); return Array.isArray(v) ? v : [] }
-    catch { return [] }
   }
 
   // Record that `operatorId` (an operator_account roster id) acted on `caseRow` --
@@ -1027,19 +819,12 @@ export class CaseStore {
           // DERIVED from the stored row, so a retry that reused the first
           // read's values would re-apply a count the winner already applied.
           const existing = await this._operatorIdentityRow(operatorId)
-          const areas = existing ? this._parseJsonArray(existing.areas) : []
+          const areas = existing ? parseJsonArray(existing.areas) : []
           const { value: report } = this._parseReport(caseRow.report, caseRow.id)
-          const locToks = [...tokens(report.location)]
-          for (const t of locToks) {
-            const i = areas.findIndex(a => a.token === t)
-            if (i >= 0) areas[i].count = (areas[i].count || 0) + 1
-            else areas.push({ token: t, count: 1 })
-          }
-          // Cap the area list so a long-lived operator's record does not grow
-          // unbounded -- keep the most-frequent areas, a bounded working-area
-          // profile rather than a full history.
-          areas.sort((a, b) => (b.count || 0) - (a.count || 0))
-          const boundedAreas = areas.slice(0, 40)
+          // foldAreas (store/operator-areas.js) counts this case's location
+          // tokens into the running profile and returns it capped, most-frequent
+          // first, so the record cannot grow unbounded over an operator's life.
+          const boundedAreas = foldAreas(areas, [...tokens(report.location)])
           const patch = {
             operator_id: operatorId,
             areas: JSON.stringify(boundedAreas),
@@ -1118,20 +903,11 @@ export class CaseStore {
     return { case: created, created: true }
   }
 
-  // Friendly, collision-proof case ref. The numeric part is a best-effort
-  // human-friendly sequence taken as the max over a capped page of cases; we scan
-  // every returned row and take Math.max, so ordering is irrelevant here (we pass
-  // no sort). UNIQUENESS does not depend on the sequence: the random suffix
-  // guarantees it even if two creators read the same max concurrently or the
-  // highest case falls outside the page.
+  // Friendly, collision-proof case ref -- the sequence/suffix rules live in
+  // store/ref.js; this owns only the capped, deliberately unsorted page of
+  // existing cases mintRef takes the max over.
   async _nextRef() {
-    let seq = 1000
-    const recent = await this.t.list('case', {}, { limit: 200 })
-    for (const r of recent) {
-      const m = /^CASE-(\d+)/.exec(r.ref || '')
-      if (m) seq = Math.max(seq, parseInt(m[1], 10))
-    }
-    return `CASE-${seq + 1}-${randomSuffix()}`
+    return mintRef(await this.t.list('case', {}, { limit: 200 }))
   }
 
   // opts.expectedVersion: forwarded straight to thatcher's optimistic-concurrency
@@ -1382,40 +1158,16 @@ export class CaseStore {
       const srcEvents = await this.listEvents(sourceId)
       // 1) Re-point every source event onto the target -- lossless.
       for (const ev of srcEvents) await this.updateEvent(ev.id, { case_id: targetId })
-      // 2) Fill-if-empty report merge (target value wins -- it is canonical,
-      // NEVER overwritten by the source, unlike mergeReport's own overwrite-
-      // on-refinement contract for a single case's own incoming turns) for
-      // every field EXCEPT photos/audio/sites, which are append-only
-      // everywhere else in this codebase (_mergeReportFields, appendReportField,
-      // and case_report's own promise that a photo note is never overwritten):
-      // treating those three like any other field silently DROPS the source's
-      // note whenever source and target both already hold a non-empty one --
-      // the realistic duplicate-report merge -- contradicting the append-only
-      // guarantee.
-      //
-      // NOTE: _mergeReportFields is NOT reused here despite implementing the
-      // correct join-with-'; ' shape for these three keys -- it OVERWRITES
-      // every other field with the incoming value whenever incoming is
-      // non-empty (correct for mergeReport's own "a later message refines an
-      // earlier one" contract), which would silently violate mergeCases' own
-      // "target value wins" contract for every ordinary field. Kept as an
-      // explicit fill-if-empty loop with only photos/audio/sites special-cased
-      // to append, so the target's canonical values for every OTHER field are
-      // never at risk from a source case's stale/conflicting data.
+      // 2) Fill-if-empty report merge: the target value wins -- it is canonical
+      // and NEVER overwritten by the source, unlike mergeReport's own
+      // overwrite-on-refinement contract for a single case's own incoming turns
+      // -- except for the append-only photos/audio/sites fields. Both rules, and
+      // why mergeReportFields is deliberately NOT reused here, live in
+      // store/report-merge.js's fillIfEmptyReport.
       const { value: srcReport, corrupted: srcCorrupted } = this._parseReport(src.report, sourceId)
       const { value: tgtReport, corrupted: tgtCorrupted } = this._parseReport(tgt.report, targetId)
       const reportWasCorrupted = srcCorrupted || tgtCorrupted
-      const mergedReport = { ...tgtReport }
-      for (const [k, v] of Object.entries(srcReport)) {
-        if (!REPORT_KEYS.has(k)) continue
-        if (v == null || String(v).trim() === '') continue
-        const have = tgtReport[k] != null && String(tgtReport[k]).trim() !== ''
-        if (APPEND_FIELDS.has(k) && have && String(tgtReport[k]) !== String(v)) {
-          mergedReport[k] = `${tgtReport[k]}; ${v}`
-        } else if (!have) {
-          mergedReport[k] = v
-        }
-      }
+      const mergedReport = fillIfEmptyReport(tgtReport, srcReport)
       // 3) Union tags onto target (drop the internal 'merged' marker).
       const tgtTags = new Set(tagList(tgt))
       for (const tg of srcTags) if (tg !== 'merged') tgtTags.add(tg)
@@ -1692,27 +1444,6 @@ export class CaseStore {
 function nowIso() {
   // CaseStore runs in the casey process (not the workflow sandbox), so Date is fine here.
   return new Date().toISOString()
-}
-
-// The ref is the sole "secret" gating the unauthenticated public /report form
-// (see dashboard/server.js) -- a farmer's phone, symptoms, and location are all
-// readable and writable by anyone who can guess it, AND it is the one code a
-// field worker must read back over a bad phone line or retype by hand. Balance:
-// 8 chars from a 32-symbol unambiguous alphabet (no 0/O/1/I/l confusion, no
-// vowel-adjacent pairs that sound alike read aloud) is ~40 bits of entropy,
-// while staying short and speakable, unlike a full-entropy base64url string
-// (dense mixed-case + symbols, hard to read/say/type accurately). Do NOT drop
-// back to Math.random() -- that suffix was ~26 bits over 5 chars, and it is not
-// a CSPRNG. crypto.randomBytes is the
-// entropy source; each byte is reduced mod 32 into the alphabet (a benign
-// bias -- this is an unguessability-vs-readability tradeoff, not a keyed secret
-// requiring perfectly uniform output).
-const REF_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'   // 32 symbols, no 0/O/1/I/l
-function randomSuffix() {
-  const bytes = randomBytes(8)
-  let s = ''
-  for (const b of bytes) s += REF_ALPHABET[b % REF_ALPHABET.length]
-  return s
 }
 
 export function createCaseStore(opts) { return new CaseStore(opts) }

@@ -1,12 +1,24 @@
 // core/provenance.js -- the honesty floor's foundational type.
 //
 // Every value casey stores through the observation write path carries a
-// provenance tag. This module is the ONLY place a provenanced value may be
-// constructed: mkValue() is the single factory, and the shape it returns has
-// no other constructor anywhere in the codebase. A value built any other way
-// (a bare object literal shaped like one) is not rejected by a runtime check
-// -- it simply never entered through this module, which is what
-// requireProvenance()/isProvenanced() below actually verify.
+// provenance tag. This module is the ONLY sanctioned place a provenanced value
+// is constructed: mkValue() is the single factory, and no other constructor for
+// the shape exists in the codebase.
+//
+// What the runtime check below actually enforces, exactly: isProvenanced()
+// tests `v.__provenanced === true` AND that `v.provenance` is one of
+// PROVENANCE_KINDS. So an ordinary bare literal (one that merely happens to
+// carry the same value/recordedAt/recordedBy keys) IS rejected -- it has no
+// __provenanced marker. What is NOT checked is Object.freeze, and nothing stops
+// a literal that deliberately sets `__provenanced: true` alongside a valid
+// `provenance` string from passing. The marker is an entry-point discipline for
+// this module's own callers, not an unforgeable capability, and it is not
+// relied on as one: every writer reaches the shape through
+// core/write-path.js's writeObservation, which is internal to casey and never
+// takes a caller-supplied provenanced object off the wire. Code deserializing
+// untrusted input (a synced payload, a pack-declared default) must therefore
+// re-wrap through mkValue rather than trusting a shape that arrived already
+// marked.
 //
 // PROVENANCE_KINDS is exhaustive and ordered worst-to-best for confidence
 // comparisons (unknown carries no claim at all, inferred is the model's own
@@ -62,11 +74,13 @@ export function mkUnknown({ recordedAt, recordedBy, packVersion = null }) {
   return mkValue({ value: null, provenance: 'unknown', recordedAt, recordedBy, packVersion })
 }
 
-// The ONLY recognized marker of a properly-constructed value. A plain object
-// that merely happens to have the same keys was not built by mkValue (no
-// Object.freeze, no __provenanced) and fails this check -- so any code
-// deserializing untrusted input (a synced payload, a pack-declared default)
-// must re-wrap through mkValue rather than trusting the shape.
+// The recognized marker of a properly-constructed value: the __provenanced flag
+// mkValue stamps, plus a provenance string that is one of PROVENANCE_KINDS. A
+// plain object that merely happens to carry the same keys fails this check
+// because it has no marker. Object.freeze is NOT part of the test (mkValue does
+// freeze, but nothing here verifies it), and a literal that deliberately sets
+// __provenanced:true passes -- see this module's header for why that
+// forgeability is acceptable and where the real boundary is.
 export function isProvenanced(v) {
   return !!v && typeof v === 'object' && v.__provenanced === true && PROVENANCE_KINDS.includes(v.provenance)
 }

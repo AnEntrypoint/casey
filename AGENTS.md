@@ -228,15 +228,15 @@ alongside freddie's `@freddie/freddie-base` bundle:
   defaults. There is no `WHATSAPP_WEBHOOK_PORT`. Dispatch is synchronous and
   media hydration is detached, so the caller MUST ack as soon as it returns or
   Meta redelivers.
-- `src/agent/run-turn.js` -- the thin adapter `hooks/handler.js` calls as
+- `src/agent/run-turn.js` -- the thin adapter `hooks/turn-attempts.js` calls as
   `runTurn(...)`: it creates/reuses a real freddie `Agent` per case
   (`ctx.agents.create()`), submits the inbound via
   `agent.followup(createUserMessage(...))`, awaits `agent.whenIdle()`, and
   reads the reply back from `agent.session.events`.
 
 **The outbound adapter lookup is load-bearing and fails silently when wrong.**
-`hooks/handler.js` resolves its adapter off `casey.js`'s `this.adapters`, a
-plain OBJECT keyed by channel -- there is no `platforms` Map. The same
+`hooks/delivery.js`'s `resolveAdapter` resolves it off `casey.js`'s
+`this.adapters`, a plain OBJECT keyed by channel -- there is no `platforms` Map. The same
 `adapter` backs the guaranteed-fallback send and the agent's real reply, and
 `freddie-bundle/src/platform` invokes `handleInbound(...).catch(...)`
 discarding the handler's return value, so `adapter.send` is the ONLY route an
@@ -262,8 +262,8 @@ waterfall hides every non-allowlisted tool's schema from the prompt the model
 sees; (2) the `tools/pre-execute` waterfall denies dispatch of any
 non-allowlisted tool by name even if the model somehow names one outside its
 own visible schema. `src/agent/run-turn.js`'s `runTurn()` derives the
-allowed-name set from `enabledToolsets`/`disabledToolsets` (`hooks/handler.js`'s
-call-site params) against `buildCaseToolset(null)`'s real tool names -- the
+allowed-name set from `enabledToolsets`/`disabledToolsets` (`hooks/turn-attempts.js`'s
+`buildTurnRequest` call-site params) against `buildCaseToolset(null)`'s real tool names -- the
 reporter-tier/field_worker-tier exclusion logic, enforced through freddie's
 real waterfalls. Keep both gates: removing either leaves the base bundle's
 bash/write/credential tools reachable from a contact-facing conversation.
@@ -432,7 +432,14 @@ src/
   report.js                management report rendering (CSV/HTML)
   report-analytics.js      pure management analytics: SLA compliance, period comparison, channel/case-type metrics
   privacy.js               k-anonymity folding for aggregate rollups
-  hooks/handler.js         makeCaseHandler: STOP/HUMAN short-circuit, LLM-down queue gate, or one runTurn tool loop (re-exported by gateway-hooks.js)
+  hooks/handler.js         makeCaseHandler: the per-contact claim + burst drain around one turn, plus conversationKey/splitExternalId/replyTarget/caseDeliveryTarget (re-exported by gateway-hooks.js)
+  hooks/inbound-turn.js    one inbound turn end to end: intake + pre-turn gates (runInboundTurn), then agent turn + outcome + delivery (driveAgentTurn)
+  hooks/case-intake.js     admission/rate-limit check, find-or-create + recordInbound + dedup, intake side effects, STOP/HUMAN + observe + LLM-down queue gates
+  hooks/turn-attempts.js   the bounded retry loop: per-attempt runTurn request (incl. the enabledToolsets/toolCtx security surface) and the in-loop reply judgement
+  hooks/turn-outcome.js    post-turn, pre-delivery: degraded-turn recording, ref correction, ai-offline tag/clear, jargon+assisted draft holds, intake advance
+  hooks/delivery.js        resolveAdapter plus the two send paths (guaranteed fallback, agent reply); both delivery flags start FALSE below their own send guard
+  hooks/turn-deadlines.js  CASEY_TURN_HARD/SOFT_DEADLINE_MS and the two truthful status strings
+  hooks/typing.js          the typing indicator start/stop pair, best-effort by construction
   hooks/media.js           voice-note/photo/voice-reply media tools, all opt-in and fail-open
   llm.js                   model call wiring; self-healing backend that re-resolves a recovered provider
   supervisor.js            fork/kill/watch parent; supervisor-reload-watch.js owns the reload watch list
@@ -653,8 +660,8 @@ the backend is healthy but slow.
   acptoapi's shipped default (`deps/acptoapi/lib/chain-machine.js`'s
   `DEFAULT_LINK_TIMEOUT_MS`) is **120000**, equal to the per-attempt budget. At
   that value a SINGLE unhealthy provider hop can consume the entire
-  per-attempt/hard-deadline budget, leaving zero room for `hooks/handler.js`'s
-  `MAX_TOOL_CHOICE_ATTEMPTS` retry loop. **A deployment must set
+  per-attempt/hard-deadline budget, leaving zero room for
+  `hooks/turn-attempts.js`'s `MAX_TOOL_CHOICE_ATTEMPTS` retry loop. **A deployment must set
   `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS` explicitly rather than inheriting that
   default.** `casey doctor` flags a per-link timeout that is not comfortably
   below the per-attempt budget. This repo ships no `.env`, so a bare `casey

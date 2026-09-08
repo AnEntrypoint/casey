@@ -13,10 +13,10 @@
 // real LLM verdict. Returns { clean: boolean, reasons: string[], category:
 // 'jargon'|'other'|null }. clean:false means the reply must not be sent as-
 // is. category:'jargon' is the ONE recoverable shape -- real content that
-// just needs a human to reword a word -- and handler.js holds such a reply as
+// just needs a human to reword a word -- and turn-outcome.js holds such a reply as
 // a DRAFT rather than blanking it. Every other shape is category:'other'.
 //
-// The SHAPE HEADING WORDS below are a wire protocol, not prose: handler.js
+// The SHAPE HEADING WORDS below are a wire protocol, not prose: turn-attempts.js
 // routes a category:'other' verdict by regex over `reasons` -- /false.?confirm|
 // claims?.*record/ retries then holds as a draft, /repeated|echo|stock|
 // meta.?commentary|planning narration/ retries then BLANKS the reply, and
@@ -27,7 +27,7 @@
 // REPEATED REPLY only when the latest message actually called for a fresh
 // answer. It must be passed: without it a content-free "hi again" mid-intake
 // makes a correct warm re-ask of still-missing facts read as "repeated", and
-// the shape blanks the reply on every one of handler.js's
+// the shape blanks the reply on every one of turn-attempts.js's
 // MAX_TOOL_CHOICE_ATTEMPTS (3) attempts, so the contact gets the terminal
 // fallback despite a healthy model.
 //

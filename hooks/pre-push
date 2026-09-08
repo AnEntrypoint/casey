@@ -1,0 +1,47 @@
+#!/bin/sh
+# casey pre-push hook -- run the lint gate before anything leaves this machine.
+#
+# Three places in this repo call `npm run lint` "the CI gate": app.css's header,
+# scripts/lint.mjs's own comment, and AGENTS.md's command table. There is no CI.
+# `.github/` does not exist, nothing runs on push or PR, and AGENTS.md says so
+# plainly a few paragraphs after calling it a gate. So the entire quality bar --
+# syntax, config, package, the ascii check, and the four structural grep gates
+# (pure-llm, no-stub-mock, pii-safety, trust-boundary) -- depended on a human
+# remembering. It was not remembered: a prior audit found lint red at HEAD and
+# nobody noticed until someone went looking by hand.
+#
+# pre-push rather than pre-commit deliberately. A commit is a private checkpoint
+# and interrupting one is a tax on ordinary work; a push is the moment the code
+# becomes everyone else's problem, which is where a gate belongs. It also means
+# a mid-work commit can be red without a fight, and only the final state is
+# checked.
+#
+# Escape hatch is git's own: `git push --no-verify`. Deliberately not a custom
+# env var -- one standard, discoverable mechanism beats a bespoke one nobody
+# remembers, and --no-verify leaves an obvious trace in a shell history.
+#
+# Never blocks for the WRONG reason. A tree with no node_modules (a bare clone,
+# a tarball checkout) cannot run lint, and refusing the push then would be a
+# gate failing closed on its own absence rather than on a real fault. It says so
+# and lets the push through -- lint is dependency-free by design but still needs
+# node and the repo's own scripts present.
+here="$(cd "$(dirname "$0")/.." && pwd)"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "[casey hook] pre-push: node not found, skipping lint (cannot verify)"
+  exit 0
+fi
+if [ ! -f "$here/scripts/lint.mjs" ]; then
+  echo "[casey hook] pre-push: scripts/lint.mjs missing, skipping lint (cannot verify)"
+  exit 0
+fi
+
+echo "[casey hook] pre-push: running lint gate..."
+if node "$here/scripts/lint.mjs"; then
+  exit 0
+fi
+
+echo ""
+echo "[casey hook] PUSH BLOCKED -- lint failed above."
+echo "[casey hook] Fix it, or push anyway with: git push --no-verify"
+exit 1

@@ -176,7 +176,7 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
       // Quiet update: setting health tags must NOT touch last_event_at, or the
       // sweep would make every stale case it flags look freshly active. Guarded
       // by expectedVersion (when the installed thatcher supports it) so a
-      // concurrent turn's tag write (e.g. handler.js adding 'needs-human'
+      // concurrent turn's tag write (e.g. hooks/case-writes.js adding 'needs-human'
       // mid-sweep) cannot be silently clobbered by this stale read-modify-write
       // -- on a version conflict, re-read the case and re-derive nextTags from
       // its FRESH tags (the health:* add/remove diff is unaffected, since

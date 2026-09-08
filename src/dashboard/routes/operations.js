@@ -37,10 +37,21 @@ const LLM_HEALTH_VIEWS = {
   //               cannot see it from here", and saying so is the difference
   //               between a fault and a mode.
   unknown: { ok: false, label: 'AI helper: no answer yet', detail: 'The provider check has not come back, so whether auto-replies are working is not known yet. It usually resolves within a minute of start-up.' },
-  unwired: { ok: false, label: 'AI helper: not visible in dashboard-only mode', detail: 'This console was started with `casey dashboard`, which reads and edits the store but is not attached to the running agent, so it cannot see the AI helper at all. Auto-replies may well be running: check where `casey up` is running. Everything else on this screen is unaffected.' },
+  // The detail names the WHOLE set this mode cannot do, once, in the one place
+  // the operator already reads when something is off. It used to end with
+  // "Everything else on this screen is unaffected", which was not true: the
+  // same missing wiring also silently removes sending a reply, receive
+  // liveness, the queue counts, the supervisor runtime state and the manual
+  // sweep. Naming a mode is only honest if it names all of it -- keep this
+  // list in step with what `casey dashboard` (casey-serve.js cmdDashboard)
+  // does not pass to createDashboard, and with the `capabilities` block below.
+  unwired: { ok: false, label: 'AI helper: not visible in dashboard-only mode', detail: 'This console was started with `casey dashboard`, which reads and edits the store but is not attached to the running agent. It cannot see the AI helper, the message channels, the queued-message counts or the supervisor state, it cannot run a sweep, and a reply typed here is recorded on the timeline but NOT sent to the contact. All of that keeps working wherever `casey up` is running. Everything on this screen that reads the store is unaffected.' },
 }
 
-const RUNTIME_STATES = new Set(['booting', 'healthy', 'restarting', 'degraded', 'stopping', 'stopped', 'standalone'])
+// Exported so /api/ready (routes/auth.js) validates a supervisor state against
+// the SAME whitelist getRuntime does. A second local copy is how the ungated
+// probe and the gated route come to disagree about what a runtime state is.
+export const RUNTIME_STATES = new Set(['booting', 'healthy', 'restarting', 'degraded', 'stopping', 'stopped', 'standalone'])
 const RUNTIME_LABELS = {
   booting: 'Runtime: starting', healthy: 'Runtime: healthy', restarting: 'Runtime: restarting',
   degraded: 'Runtime: degraded -- needs attention', stopping: 'Runtime: stopping', stopped: 'Runtime: stopped',
@@ -106,7 +117,7 @@ function alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus) {
     : { configured: true, ok: null, last_attempt_at: null, last_error: null }
 }
 
-export function getHealth({ store, llmStatus, receiveStatus, queueStatus, getWebhookDeliveryStatus, alertWebhookUrl }) {
+export function getHealth({ store, llmStatus, receiveStatus, queueStatus, runSweep, sendReply, runtimeStatus, getWebhookDeliveryStatus, alertWebhookUrl }) {
   return async (req, res) => {
     // Whether this process was GIVEN a way to ask is a different fact from
     // what the answer was, and only this side knows it -- see LLM_HEALTH_VIEWS
@@ -137,7 +148,22 @@ export function getHealth({ store, llmStatus, receiveStatus, queueStatus, getWeb
       ...view, source: s.source, model, url, degraded: !!s.degraded,
       last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null,
       gateway, queue,
-      capabilities: { llm: wired, receive: receiveStatus != null, queue: queueStatus != null },
+      // Every capability this process was GIVEN, not just the three that had a
+      // pill. `sweep` is the load-bearing addition: postSweep answers 501
+      // "sweep not available in this mode" when runSweep is absent, and the
+      // nav rendered the "Sweep now" control regardless, so the only way an
+      // operator learned the mode was by pressing a button that could never
+      // work. nav-config.js hides the control on `sweep: false` instead.
+      // `reply` and `runtime` are published on the same footing so a client
+      // surface never has to infer a mode from a missing field.
+      capabilities: {
+        llm: wired,
+        receive: receiveStatus != null,
+        queue: queueStatus != null,
+        sweep: runSweep != null,
+        reply: sendReply != null,
+        runtime: runtimeStatus != null,
+      },
       alert_webhook: alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus),
       degradation_rate: degradationRate,
     })
@@ -603,7 +629,7 @@ export function getActivity({ store, authed }) {
 // signal (process alive, /api/health, gateway connected) still reads green,
 // because none of them individually witness whether a specific reply
 // actually generated. This route answers the question those cannot: query
-// the durable data.degraded_turn marker (hooks/handler.js) directly, across
+// the durable data.degraded_turn marker (hooks/turn-outcome.js) directly, across
 // every case, so "did any real turn actually fail recently, and why" has a
 // real answer without already knowing which case to look at or grepping the
 // raw log file. `since` (unix ms, default last hour) windows the query.

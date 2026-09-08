@@ -162,7 +162,7 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // different signals, intervalMs governing the SEPARATE completion-health
   // staleness decay below. Share them and a single FAILED reachability probe
   // (source:'none', backend still null) locks EVERY subsequent inbound into the
-  // LLM-down queue gate (hooks/handler.js: "LLM backend down; queued inbound, no
+  // LLM-down queue gate (hooks/case-intake.js: "LLM backend down; queued inbound, no
   // reply sent") for a full 30 real seconds with zero further attempt made, even
   // when the underlying provider chain is fully reachable and only that ONE probe
   // attempt was unlucky. Retrying a failed reachability probe is cheap (worst

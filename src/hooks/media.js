@@ -13,7 +13,7 @@ import { truncate } from './heuristics.js'
 // None of the three dispatchTool calls below carry any timeout of their own
 // (freddie's dispatch path and the bare fetch() calls beneath it are both
 // unbounded), and transcribeAudio/describePhoto run BEFORE turnStartedAt is
-// set (hooks/handler.js), so they sit entirely outside
+// set (hooks/inbound-turn.js), so they sit entirely outside
 // CASEY_TURN_HARD_DEADLINE_MS -- a half-open connection to the transcription/
 // vision/tts provider would hang the whole inbound turn and the per-contact
 // concurrency gate forever. Bounded well under the 60s turn hard-deadline
@@ -85,7 +85,7 @@ export async function describePhoto(buffer, mimeType) {
 // Best-effort voice REPLY via src/agent/media-tools.js's synthesizeSpeech() (an
 // acptoapi /v1/audio/speech passthrough) -- OPT-IN. It exists for the reporter
 // who can send a voice note but struggles to READ a text reply.
-// Called AFTER the degraded/blanked-reply gate in hooks/handler.js, so a turn
+// Called AFTER the degraded/blanked-reply gate in hooks/inbound-turn.js, so a turn
 // that correctly sent nothing never speaks -- keep the call site below that gate.
 // The audio is ADDITIVE -- the text always sends; a tts failure/absence degrades
 // silently to text-only and never blocks the reply path. Length is capped so a
