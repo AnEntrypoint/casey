@@ -278,7 +278,21 @@ for (const file of routeFiles) {
     let at = src.indexOf(`function ${name}(`)
     if (at < 0) at = src.search(new RegExp(String.raw`(?:const|let)\s+${name}\s*=\s*\(`))
     if (at < 0) { note(`pii-safety: ${file} declares projection ${name}() in lint.mjs but the function is gone -- the gate below has nothing to enforce`); continue }
-    const open = src.indexOf('{', at)
+    // Walk the PARAMETER LIST to its closing paren before looking for the body
+    // brace. Taking the first `{` after the name instead is wrong the moment a
+    // projection destructures a parameter -- `f(c, { now, staleMs })` made the
+    // options object itself the "body", so the checks below ran against the
+    // parameter list and the real function was unenforced while lint stayed
+    // green. Live-witnessed with a deliberate `return { ...c }` that the gate
+    // did not see.
+    const parenOpen = src.indexOf('(', at)
+    let pdepth = 0
+    let parenClose = parenOpen
+    for (let i = parenOpen; i < src.length; i++) {
+      if (src[i] === '(') pdepth++
+      else if (src[i] === ')') { pdepth--; if (pdepth === 0) { parenClose = i; break } }
+    }
+    const open = src.indexOf('{', parenClose)
     let depth = 0
     let end = src.length
     for (let i = open; i < src.length; i++) {
@@ -290,7 +304,7 @@ for (const file of routeFiles) {
     // takes the parsed report and its cluster index alongside the case row), so
     // match the first identifier in the list rather than requiring a
     // single-parameter signature -- which silently skipped the spread check.
-    const param = (/\(\s*([A-Za-z_$][\w$]*)\s*[,)]/.exec(src.slice(at, open)) || [])[1]
+    const param = (/\(\s*([A-Za-z_$][\w$]*)\s*[,)]/.exec(src.slice(parenOpen, parenClose + 1)) || [])[1]
     for (const key of PII_KEYS) {
       // `key:` (explicit) or `key,`/`key}` (shorthand) as an emitted key.
       // `external_id_formatted:` and `c.external_id` both correctly miss.
