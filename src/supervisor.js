@@ -9,13 +9,19 @@
 // itself. The machine answers "is event E legal from state S, and what does it
 // lead to?"; the supervisor performs the effect and advances its own state value.
 //
-// Two concerns that were inline here now have modules of their own, because
-// neither is about performing a lifecycle effect: supervisor-reload-watch.js
-// answers "a watched source file changed, once" (paths, filter, debounce,
-// per-path watch failures), and supervisor-runtime-events.js answers "get this
-// bounce durably recorded even though the process that detected it cannot store
-// it". The supervisor supplies each with the one thing only it knows -- what to
-// do on a change, and whether a worker can persist right now.
+// What is left in this file is the ASSEMBLY: it wires one collaborator per
+// lifecycle concern and holds the shared mutable runtime record (`rt`) they all
+// read, because that record is exactly the thing no single one of them owns.
+// Each concern lives beside it, none of them a lifecycle effect on its own:
+//   supervisor-machine.js        legal transitions
+//   supervisor-state.js          the live state value, its context, and the snapshot
+//   supervisor-worker-process.js fork, the IPC message contract, worker ready/exit
+//   supervisor-crash-policy.js   the crash budget, the backoff, exit code 44, the parent's own net
+//   supervisor-restart.js        the sequential drain-then-respawn cycle
+//   supervisor-health.js         reading a HEALTH tick and deciding "degraded"
+//   supervisor-reload-watch.js   "a watched source file changed, once"
+//   supervisor-runtime-events.js "get this bounce durably recorded even though
+//                                 the process that detected it cannot store it"
 //
 // Durable boundary: the worker holds the sqlite store (cwd-bound db.sqlite). A reload
 // or crash respawns the worker, which REOPENS the same file -- so persisted case
@@ -24,101 +30,41 @@
 // store), so two processes never hold the db at once -- that race is structurally
 // unrepresentable here.
 
-import { fork } from 'node:child_process'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import {
-  buildSupervisorMachine, canFire, crashBudgetExceeded, isTerminal,
-} from './supervisor-machine.js'
-import { WORKER_MSG, PARENT_MSG, ipcSend } from './supervisor-ipc.js'
+import { buildSupervisorMachine } from './supervisor-machine.js'
+import { PARENT_MSG, ipcSend } from './supervisor-ipc.js'
 import { armReloadWatchers } from './supervisor-reload-watch.js'
 import { createRuntimeEventBuffer } from './supervisor-runtime-events.js'
+import { createSupervisorState } from './supervisor-state.js'
+import { createWorkerProcess } from './supervisor-worker-process.js'
+import { createRestartCycle, RELOAD_DEBOUNCE_MS } from './supervisor-restart.js'
+import { installParentCrashNet } from './supervisor-crash-policy.js'
+import { applyWorkerHealth, detectZombieReceive } from './supervisor-health.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const WORKER_ENTRY = path.join(__dirname, '..', 'bin', 'worker.js')
-
-// Reload/crash tuning (env-overridable; all have conservative defaults so an
-// unconfigured run behaves sanely).
-const RELOAD_DEBOUNCE_MS = Number(process.env.CASEY_RELOAD_DEBOUNCE_MS || 300)
-const DRAIN_DEADLINE_MS = Number(process.env.CASEY_DRAIN_DEADLINE_MS || 15_000)
-const CRASH_WINDOW_MS = Number(process.env.CASEY_CRASH_WINDOW_MS || 60_000)
-// CASEY_CRASH_LIMIT has no "disabled"/"no limit" mode -- it is a crash-loop
-// circuit breaker, and a value of 0 or below is invalid input, not a valid way
-// to express "never stop". CASEY_CRASH_LIMIT=0 (a plausible-but-wrong attempt
-// to mean exactly that) would otherwise trip crashBudgetExceeded on the very
-// FIRST crash: '0' is a non-empty string so `|| 5` never applies its fallback,
-// and Number('0') is 0, meaning `recent.length >= 0` is true immediately -- the
-// exact opposite of the operator's likely intent. A non-positive value falls
-// back to the documented default (5) rather than a degenerate floor of 1 (which
-// would still trip on the very first crash, the same failure this exists to
-// prevent, just relabeled).
-const rawCrashLimit = Number(process.env.CASEY_CRASH_LIMIT || 5)
-const CRASH_LIMIT = rawCrashLimit > 0 ? rawCrashLimit : 5
-const BACKOFF_BASE_MS = Number(process.env.CASEY_RESTART_BACKOFF_MS || 500)
-const BACKOFF_CEIL_MS = Number(process.env.CASEY_RESTART_BACKOFF_CEIL_MS || 10_000)
-// Zombie-receive self-heal threshold: a real-time channel that WAS receiving and
-// then went silent longer than this is treated as a wedged gateway and healed by a
-// restart. Default 0 = OFF -- a conservative opt-in, because a genuinely quiet day
-// is indistinguishable from a wedge by silence alone, and a false restart is worse
-// than waiting. Set e.g. CASEY_RECEIVE_SILENCE_MS=900000 (15min) to enable.
-const RECEIVE_SILENCE_MS = Number(process.env.CASEY_RECEIVE_SILENCE_MS || 0)
-
-// Pure zombie-receive detector over a receiveStatus snapshot ({state, channels:{
-// [ch]:{connected, sinceConnectMs, sinceInboundMs}}}). Returns the first channel
-// that is connected and was receiving (sinceInboundMs != null) but has now been
-// silent past `silenceMs`, or null. A never-received channel (sinceInboundMs ===
-// null) is intentionally NOT flagged: a quiet day is not a wedge. Exported for the
-// single real-services witness to assert the heuristic directly.
-export function detectZombieReceive(receive, silenceMs) {
-  if (!receive || !receive.channels || !(silenceMs > 0)) return null
-  for (const [channel, c] of Object.entries(receive.channels)) {
-    if (!c || !c.connected) continue
-    if (c.sinceInboundMs != null && c.sinceInboundMs > silenceMs) {
-      return { channel, silentMs: c.sinceInboundMs }
-    }
-  }
-  return null
-}
+// Re-exported from its own module so the single real-services witness (and any
+// other caller that imported it from here) keeps one import path.
+export { detectZombieReceive }
 
 export function createSupervisor(opts = {}) {
   const log = opts.log || console
-  // The supervisor parent exists specifically to keep every forked worker
-  // alive and restart it on crash -- but it had no crash net of its own.
-  // Without this, an unhandled rejection anywhere in the PARENT (IPC
-  // handling, the auto-update pull() timer, a future dependency bug) hits
-  // Node's default uncaught-exception behavior and terminates the whole
-  // parent process, killing every forked worker with zero restart and only a
-  // raw stack trace on stderr -- the exact "supervisor stops the restart loop
-  // instead of thrashing" discipline this file already applies to WORKER
-  // crashes (see the crash-budget logic below) never applied to itself.
-  // Mirrors bin/worker.js's own uncaughtException/unhandledRejection net.
-  process.on('uncaughtException', (e) => {
-    log.error?.('[supervisor] uncaughtException (exiting)', { error: e?.stack || e?.message || String(e) })
-    process.exit(1)
-  })
-  process.on('unhandledRejection', (e) => {
-    log.error?.('[supervisor] unhandledRejection (exiting)', { error: e?.stack || e?.message || String(e) })
-    process.exit(1)
-  })
+  installParentCrashNet(log)
   const workerArgs = opts.workerArgs || []   // passed through to the worker (--channels, --port, ...)
   const enableReload = opts.reload !== false && process.env.CASEY_RELOAD !== '0'
 
   const machine = buildSupervisorMachine()
-  // The supervisor IS the live state: the machine value plus the context it owns.
-  let state = machine.config.initial   // 'booting'
-  const ctx = {
-    restarts: 0,
-    crashes: [],            // epoch-ms of recent unexpected worker exits
-    lastReloadAt: null,
-    lastCrashReason: null,
-    since: null,            // epoch-ms the current state was entered (stamped by caller)
+  // The one piece of state no single collaborator owns: the live child, whether
+  // it has sent READY, and the three flags that coordinate a drain/stop/reload
+  // across them. Held here so each module below reads one record rather than
+  // each keeping a copy that can drift.
+  const rt = {
+    worker: null,
+    booted: false,          // the current worker has sent READY
+    watchers: [],
+    stopping: false,
+    reloadQueued: false,    // a reload requested mid-restart is held, not dropped or stacked
+    draining: false,
+    resolveDrain: null,
   }
-
-  let worker = null
-  let watchers = []
-  let reloadQueued = false   // a reload requested mid-restart is held, not dropped or stacked
-  let stopping = false
-  let booted = false         // the current worker has sent READY
 
   // Durable runtime-lifecycle events (CRASH / RELOAD / DEGRADED / BUDGET) that must
   // land in the store as audited observations so the timeline + shift-handover show
@@ -130,226 +76,27 @@ export function createSupervisor(opts = {}) {
     log,
     logPath: path.join(process.cwd(), 'data', 'runtime-events.jsonl'),
     deliver: (entry) => {
-      if (!worker || !worker.connected || !booted) return false   // hold until a live, ready worker can persist
-      ipcSend(worker, PARENT_MSG.RUNTIME_EVENT, entry)
+      if (!rt.worker || !rt.worker.connected || !rt.booted) return false   // hold until a live, ready worker can persist
+      ipcSend(rt.worker, PARENT_MSG.RUNTIME_EVENT, entry)
       return true
     },
   })
-  function emitRuntimeEvent(event, reason, nowMs) {
-    runtimeEvents.emit({ event, reason: reason || null, restarts: ctx.restarts, ts: nowMs })
-  }
 
-  // --- machine-validated state advance -------------------------------------
-  // Every lifecycle move goes through the machine: illegal transitions are a bug
-  // we surface loudly, not silently swallow. `nowMs` is injected so the whole
-  // supervisor is replayable/testable without a hidden clock.
-  function fire(event, nowMs, reason) {
-    const res = canFire(machine, state, event)
-    if (!res.ok) {
-      // An illegal transition means our effect-ordering is wrong; log loud and do
-      // NOT change state (fail safe over corrupting the lifecycle).
-      log.warn?.('[supervisor] illegal transition', { from: state, event, error: res.error })
-      return false
-    }
-    const from = state
-    state = res.target
-    ctx.since = nowMs
-    if (reason) ctx.lastCrashReason = event === 'CRASH' || event === 'HEALTH_DEGRADED' ? reason : ctx.lastCrashReason
-    log.info?.('[supervisor] transition', { from, event, to: state, reason: reason || undefined })
-    pushStateToWorker()
-    // A runtime bounce is an auditable action: buffer it for durable persistence by
-    // the worker. Only the events that mean "the runtime was disrupted and why" --
-    // not the routine BOOTED/HEALTH_OK churn that would flood the timeline.
-    if (event === 'CRASH' || event === 'RELOAD_REQUESTED' || event === 'HEALTH_DEGRADED' || event === 'BUDGET_EXCEEDED') {
-      emitRuntimeEvent(event, reason, nowMs)
-    }
-    opts.onTransition?.({ from, event, to: state, reason, ctx: snapshot() })
-    return true
-  }
+  const sup = createSupervisorState({
+    machine, log,
+    onTransition: (t) => opts.onTransition?.(t),
+    onRuntimeEvent: (event, reason, nowMs) => runtimeEvents.emit({ event, reason: reason || null, restarts: sup.ctx.restarts, ts: nowMs }),
+    deliverSnapshot: (snap) => { if (rt.worker && rt.worker.connected) ipcSend(rt.worker, PARENT_MSG.STATE, snap) },
+  })
 
-  // The authoritative runtime snapshot the worker's /api/runtime serves. Pushed on
-  // every transition AND right after a fresh worker READY (so a new worker is never
-  // blank). external_id / PII never appears here -- state + counts + reason only.
-  function snapshot() {
-    return {
-      state,
-      supervised: true,
-      restarts: ctx.restarts,
-      lastReloadAt: ctx.lastReloadAt,
-      lastCrashReason: ctx.lastCrashReason ? String(ctx.lastCrashReason).slice(0, 300) : null,
-      since: ctx.since,
-    }
-  }
-  function pushStateToWorker() {
-    if (worker && worker.connected) ipcSend(worker, PARENT_MSG.STATE, snapshot())
-  }
-
-  // --- worker lifecycle -----------------------------------------------------
-  function spawnWorker(nowMs) {
-    booted = false
-    const child = fork(WORKER_ENTRY, workerArgs, {
-      // Inherit env (tokens, CASEY_*). No shell -- fork never interpolates a string,
-      // so untrusted data can never reach a shell here (security invariant).
-      stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
-    })
-    worker = child
-
-    child.on('message', (m) => {
-      if (!m || typeof m !== 'object') return
-      if (m.type === WORKER_MSG.READY) {
-        booted = true
-        // booting|restarting -> healthy. (restarting sends RESTART_DONE->booting
-        // first; we collapse the common case by firing BOOTED from either.)
-        if (state === 'restarting') fire('RESTART_DONE', Date.now())
-        const bootedOk = fire('BOOTED', Date.now())
-        // A confirmed-live worker (we just got its READY message) whose BOOTED
-        // fire was still illegal means the machine diverged from reality via a
-        // race (e.g. onHealth fired HEALTH_DEGRADED between RESTART_DONE and
-        // BOOTED above) -- without a resync, state stays stuck at whatever it
-        // was forever, since nothing else re-fires BOOTED later. Force a resync
-        // to healthy directly: the worker being up is ground truth here.
-        if (!bootedOk && state !== 'healthy') {
-          log.warn?.('[supervisor] resyncing stuck state to healthy after confirmed worker READY', { stuckState: state })
-          state = 'healthy'
-          ctx.since = Date.now()
-        }
-        pushStateToWorker()   // hand the fresh worker the current snapshot immediately
-        runtimeEvents.flush() // persist any lifecycle bounce buffered while no worker was up (e.g. the crash that killed the prior one)
-        log.info?.('[supervisor] worker ready', { pid: child.pid, port: m.payload?.port })
-      } else if (m.type === WORKER_MSG.HEALTH) {
-        onHealth(m.payload || {}, Date.now())
-      } else if (m.type === WORKER_MSG.DRAIN_COMPLETE) {
-        // handled by the drain promise (resolveDrain), nothing to do here
-        if (resolveDrain) resolveDrain()
-      } else if (m.type === WORKER_MSG.FATAL) {
-        log.error?.('[supervisor] worker fatal', { reason: m.payload?.reason })
-        ctx.lastCrashReason = m.payload?.reason || 'fatal'
-        // a fatal is treated as a crash on exit below; record the reason now
-      }
-    })
-
-    child.on('exit', (code, signal) => {
-      const now = Date.now()
-      if (stopping || state === 'stopping' || state === 'stopped') return   // expected exit
-      // A planned drain (reload or stop) marks the child _expectedExit BEFORE asking
-      // it to drain. This per-worker flag is immune to the timing race that the
-      // shared `draining` flag has: DRAIN_COMPLETE resolves the drain promise (which
-      // clears `draining`) BEFORE the child's 'exit' event lands, so by the time we
-      // get here `draining` is already false and the exit would be miscounted as a
-      // crash -- inflating the restart count, burning a backoff, and wrongly eating
-      // the crash budget on rapid reloads. The child-local flag stays true.
-      if (child._expectedExit || draining) return
-      // Exit code 44 = config-fatal (the worker's dashboard port is already held by
-      // another process). Retrying the same port can never succeed, so fail loud
-      // ONCE with the actionable message and degrade immediately -- never a 5x
-      // re-fork storm that ends in a budget message pointing nowhere.
-      if (code === 44) {
-        fire('BUDGET_EXCEEDED', now, ctx.lastCrashReason || 'dashboard port in use')
-        log.error?.('[supervisor] worker port is already in use (another casey running?) -- not restarting. Stop the other instance or pass a different --port.', { code })
-        return
-      }
-      // Unexpected exit == crash. Record, count against the budget, restart-or-degrade.
-      ctx.crashes.push(now)
-      // Trim to the windowed subset here, not just inside crashBudgetExceeded's
-      // own per-check filter (which only ever reads a COPY) -- without this,
-      // ctx.crashes grows by one entry per crash for the entire process
-      // lifetime, an unbounded array on a long-uptime host with occasional
-      // below-budget crashes.
-      ctx.crashes = ctx.crashes.filter(t => now - t <= CRASH_WINDOW_MS)
-      ctx.lastCrashReason = ctx.lastCrashReason || `worker exited code=${code} signal=${signal || ''}`
-      log.error?.('[supervisor] worker crashed', { code, signal, reason: ctx.lastCrashReason })
-      fire('CRASH', now, ctx.lastCrashReason)
-      if (crashBudgetExceeded(ctx.crashes, now, { windowMs: CRASH_WINDOW_MS, limit: CRASH_LIMIT })) {
-        // Too many crashes too fast: stop the tight loop, fail loud, hold the process
-        // alive in 'degraded' (the dashboard pill + /api/runtime show it) -- never a
-        // silent respawn storm.
-        fire('BUDGET_EXCEEDED', now, ctx.lastCrashReason)
-        log.error?.('[supervisor] crash budget exceeded -- entering degraded, no further auto-restart', {
-          crashes: ctx.crashes.length, windowMs: CRASH_WINDOW_MS, limit: CRASH_LIMIT,
-        })
-        // Do NOT respawn. An operator (or a source change -> RELOAD) recovers it.
-        return
-      }
-      const backoff = Math.min(BACKOFF_CEIL_MS, BACKOFF_BASE_MS * Math.pow(2, ctx.restarts))
-      log.info?.('[supervisor] restarting after crash', { backoffMs: backoff })
-      setTimeout(() => respawn(Date.now()), backoff).unref?.()
-    })
-
-    return child
-  }
-
-  // Sequential drain-then-respawn: tell the worker to drain, await DRAIN_COMPLETE
-  // (or a deadline), ensure it has exited, THEN spawn a fresh one. The old worker
-  // fully releases the store before the new one opens it.
-  let draining = false
-  let resolveDrain = null
-  function drainWorker() {
-    if (!worker || !worker.connected) return Promise.resolve()
-    return new Promise((resolve) => {
-      draining = true
-      // Mark THIS worker's coming exit as expected, on the child object itself, so a
-      // late 'exit' event (arriving after DRAIN_COMPLETE has already cleared the
-      // shared `draining` flag) is still recognised as planned, not a crash.
-      if (worker) worker._expectedExit = true
-      let done = false
-      const finish = () => {
-        if (done) return
-        done = true
-        draining = false
-        resolveDrain = null
-        resolve()
-      }
-      resolveDrain = finish
-      // If the worker exits before/around DRAIN_COMPLETE, that also satisfies the drain.
-      worker.once('exit', finish)
-      ipcSend(worker, PARENT_MSG.DRAIN, {})
-      // Bounded: a worker stuck mid-turn must not block the runtime forever. On
-      // deadline, force-kill -- any stranded turn is recoverable via the resume
-      // sweep (reliability-resume-on-boot), better than a wedged supervisor.
-      setTimeout(() => {
-        if (done) return
-        log.warn?.('[supervisor] drain deadline exceeded, force-killing worker')
-        try { worker?.kill('SIGKILL') } catch {}
-        finish()
-      }, DRAIN_DEADLINE_MS).unref?.()
-    })
-  }
-
-  // A respawn for crash recovery: the old worker is already gone, just count + spawn.
-  function respawn(nowMs) {
-    if (stopping) return
-    ctx.restarts++
-    spawnWorker(nowMs)
-  }
-
-  // A reload: drain the live worker, wait for full exit, then spawn fresh code. The
-  // machine is already in 'restarting' (fired by requestReload). On completion the
-  // new worker's READY drives restarting->booting->healthy.
-  async function reloadNow(nowMs) {
-    ctx.restarts++
-    ctx.lastReloadAt = nowMs
-    await drainWorker()
-    if (stopping) return
-    spawnWorker(Date.now())
-    // If another reload was requested mid-drain, run exactly one follow-up now.
-    if (reloadQueued) {
-      reloadQueued = false
-      // Re-enter via the machine: healthy/restarting -> restarting handled by guard.
-      // We are mid-restart; the queued reload coalesces into the next cycle once
-      // this worker is healthy. Defer it slightly so the new worker can boot first.
-      setTimeout(() => requestReload(Date.now()), RELOAD_DEBOUNCE_MS).unref?.()
-    }
-  }
-
-  // --- reload watcher -------------------------------------------------------
-  function requestReload(nowMs) {
-    if (stopping) return
-    // If already restarting (a reload/crash in flight), hold exactly one follow-up
-    // rather than stacking N reloads or dropping the change.
-    if (state === 'restarting') { reloadQueued = true; return }
-    const fired = fire('RELOAD_REQUESTED', nowMs)
-    if (fired) reloadNow(nowMs)
-  }
+  const onHealth = (payload, nowMs) => applyWorkerHealth({
+    log, sup, payload, nowMs, reload: (at) => restart.reloadNow(at),
+  })
+  const workerProcess = createWorkerProcess({
+    log, rt, sup, workerArgs, runtimeEvents, onHealth,
+    restart: () => restart,
+  })
+  const restart = createRestartCycle({ log, rt, sup, spawnWorker: (nowMs) => workerProcess.spawn(nowMs) })
 
   // Arm the live-reload watchers, or say once that reload is off. The watcher
   // module owns the paths, the change filter, the debounce and the per-path
@@ -357,71 +104,42 @@ export function createSupervisor(opts = {}) {
   // a debounced change actually means here, which is requestReload.
   function armWatcher() {
     if (!enableReload) { log.info?.('[supervisor] live reload disabled'); return }
-    watchers = armReloadWatchers({
+    rt.watchers = armReloadWatchers({
       log,
       debounceMs: RELOAD_DEBOUNCE_MS,
-      onChange: () => requestReload(Date.now()),
+      onChange: () => restart.requestReload(Date.now()),
     })
-  }
-
-  // --- health ---------------------------------------------------------------
-  function onHealth(payload, nowMs) {
-    if (state !== 'healthy' && state !== 'degraded') return   // only meaningful when serving
-    // A wedged store or a zombie receive is a degraded runtime: heal it by restart
-    // through the same drain->refork path. receiveStatus shape: per-channel
-    // {connected, sinceConnectMs, sinceInboundMs}; a real-time channel connected
-    // long ago with NO inbound is only SUSPICIOUS, not proof -- so the trigger is a
-    // store failure (definitive) here; the zombie-receive heuristic is left to the
-    // dedicated health-selfheal row to avoid false restarts on a genuinely quiet day.
-    if (payload.store === false) {
-      log.error?.('[supervisor] worker reports store not ready -- degrading')
-      if (fire('HEALTH_DEGRADED', nowMs, 'store not ready')) reloadNow(nowMs)
-      return
-    }
-    // Zombie-receive heal (opt-in via CASEY_RECEIVE_SILENCE_MS): a real-time channel
-    // that connected AND received inbound at some point, but has now been silent past
-    // the threshold while still "connected", is a wedged gateway (TCP up, delivery
-    // dead) -- the exact "online but deaf" failure. A channel that connected and NEVER
-    // received is NOT flagged (a quiet day is legitimate, sinceInboundMs===null). Heal
-    // by restart through the same drain->refork path; channel NAME only (never PII).
-    const zombie = RECEIVE_SILENCE_MS > 0 ? detectZombieReceive(payload.receive, RECEIVE_SILENCE_MS) : null
-    if (zombie) {
-      log.error?.('[supervisor] zombie receive detected -- degrading', { channel: zombie.channel, silentMs: zombie.silentMs })
-      if (fire('HEALTH_DEGRADED', nowMs, `receive silent on ${zombie.channel} for ${zombie.silentMs}ms`)) reloadNow(nowMs)
-      return
-    }
-    if (state === 'healthy') fire('HEALTH_OK', nowMs)
   }
 
   // --- public control -------------------------------------------------------
   async function start() {
-    if (worker) return
-    ctx.since = Date.now()
-    spawnWorker(Date.now())
+    if (rt.worker) return
+    sup.ctx.since = Date.now()
+    workerProcess.spawn(Date.now())
     armWatcher()
   }
 
   async function stop() {
-    if (stopping) return
-    stopping = true
-    fire('STOP', Date.now())
-    for (const w of watchers) { try { w.close() } catch {} }
-    watchers = []
-    await drainWorker()
-    fire('STOPPED', Date.now())
+    if (rt.stopping) return
+    rt.stopping = true
+    sup.fire('STOP', Date.now())
+    for (const w of rt.watchers) { try { w.close() } catch {} }
+    rt.watchers = []
+    await restart.drainWorker()
+    sup.fire('STOPPED', Date.now())
   }
 
   return {
     start, stop,
     // introspection for tests + doctor + /api/runtime fallback
-    get state() { return state },
-    snapshot,
-    isTerminal: () => isTerminal(machine, state),
+    get state() { return sup.state },
+    snapshot: sup.snapshot,
+    isTerminal: sup.isTerminal,
     // test seams (drive lifecycle deterministically without real processes)
-    _fire: fire, _ctx: ctx, _machine: machine,
+    _fire: sup.fire, _ctx: sup.ctx, _machine: machine,
     // requestReload IS the entry the fs.watch callback calls; exposing it lets a
     // test drive a genuine drain-respawn reload cycle without depending on a
     // platform-specific fs.watch event firing. Production behaviour is unchanged.
-    _requestReload: (nowMs) => requestReload(nowMs ?? Date.now()),
+    _requestReload: (nowMs) => restart.requestReload(nowMs ?? Date.now()),
   }
 }

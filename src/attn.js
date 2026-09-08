@@ -133,6 +133,19 @@ function attnScore(c, now = Date.now()) {
   if (c.status === 'waiting' && ageHours(c, now) >= 24) s += 40 // genuinely stuck over a day
   if (tags.includes(healthTag('stuck'))) s += 20
   if (tags.includes(healthTag('stale'))) s += 10
+  // Scored ABOVE stuck deliberately, and it is not an urgency claim about the
+  // case -- it is the one tag meaning the machine cannot judge the case at all.
+  // case-health.js pushes timestamp_corrupt and returns EARLY when lastTouch is
+  // unreadable, so stale, stuck, unanswered_handoff and the escalation tier are
+  // all skipped: a case carrying it may be any of those and score nothing for
+  // them. The weight therefore stands in for the checks it suppresses (stale 10
+  // + stuck 20 are the two it most often masks) rather than rating the case.
+  // It sat at zero, so the one case whose health nobody could assess ranked
+  // below every case whose health was known -- the exact inversion a worst-first
+  // queue exists to prevent. Kept under premature_complete (30) and the
+  // waiting-over-a-day rule (40), both of which are statements about a real
+  // person waiting rather than about the system's own blindness.
+  if (tags.includes(healthTag('timestamp_corrupt'))) s += 25
   // A case that already had one degraded turn (hooks/turn-outcome.js's
   // recordDegradedOutcome path -- empty/error/echo/stock-ack/repeat, no reply sent) is
   // a priori more likely to degrade again (context corruption, a stuck
@@ -199,6 +212,11 @@ function caseHints(c, now = Date.now()) {
   if (tags.includes(healthTag('premature_complete'))) return { reason: 'The AI helper marked this done, but most of the visit facts are still blank. Worth a check.', todo: 'The conversation was marked complete, but most of the visit-critical facts were never recorded. Check the report -- it may need a follow-up message.' }
   if (tags.includes(healthTag('abandoned_intake'))) return { reason: 'The farmer may have left. On-site facts are still missing.', todo: 'On-site facts are still missing and the farmer may be gone. Check if they are still reachable and ask for the most important detail (location or how to find the place).' }
   if (c.status === 'waiting' && ageHours(c, now) >= 24) return { reason: 'No answer for over a day. A check-in may help.', todo: 'No answer for over a day. A check-in may help -- reply below.' }
+  // Ahead of stuck and stale because it is the reason those two cannot be
+  // trusted on this case: with unreadable timestamps neither was ever evaluated.
+  // Says what the operator can actually act on -- the age is unknown, so read it
+  // rather than wait for a clock that is not running.
+  if (tags.includes(healthTag('timestamp_corrupt'))) return { reason: 'This case\'s own dates are unreadable, so nothing can tell how long it has been waiting.', todo: 'The stored dates on this case are unreadable, so the usual "going cold" and "stuck too long" checks never ran on it. Open it and judge it by its messages instead.' }
   if (tags.includes(healthTag('stuck'))) return { reason: 'This one has been in the same stage too long.', todo: 'This case has been in the same stage for a while. Check if it needs a push or can be closed.' }
   if (tags.includes(healthTag('stale'))) return { reason: 'No activity in a while. A check may be due.', todo: 'No activity for a while. Check if anything needs following up.' }
   if (c.autonomy === 'observe') return { reason: 'The AI helper is only listening here. A reply has to come from you.', todo: 'This one is waiting for you. Read it and reply, or set Who answers to auto so it can answer.' }
