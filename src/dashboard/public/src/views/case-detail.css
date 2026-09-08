@@ -59,10 +59,11 @@
 .casey-rep-missing{color:var(--fg-3, var(--muted))}
 .casey-rep-src-legend{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted));display:flex;align-items:center;gap:var(--space-1-75, 6px)}
 
-.casey-rep-row{display:flex;gap:var(--space-3, 10px);padding:var(--space-1, 6px) 0;border-bottom:1px solid var(--border-soft, var(--border));font-size:var(--fs-sm, 13px)}
-.casey-rep-row:last-child{border-bottom:none}
-.casey-rep-label{flex:0 0 40%;color:var(--fg-3, var(--muted))}
-.casey-rep-val{flex:1 1 auto;display:flex;flex-direction:column;gap:var(--space-1, 4px);word-break:break-word}
+/* The report field row, its label column, its value column and the hairline
+   that separates one field from the next are all the kit's DetailRow now
+   (deps/design src/components/content/row.js + app-shell/panel-row.css).
+   They were four rules here that reimplemented it, hairline included, which
+   is exactly the drift the kit primitive exists to stop. */
 .casey-rep-editable{cursor:text;border-radius:var(--r-sm, 4px);padding:var(--space-hair, 2px) var(--space-1, 4px);display:inline-flex;align-items:center;gap:var(--space-1-75, 6px);transition:background var(--dur-snap) var(--ease)}
 .casey-rep-editable:hover,.casey-rep-editable:focus{background:var(--bg-2, var(--panel));outline:none}
 .casey-rep-editable:focus-visible{outline:var(--focus-w) solid var(--focus-color);outline-offset:var(--focus-offset)}
