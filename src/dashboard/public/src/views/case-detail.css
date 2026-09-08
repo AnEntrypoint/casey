@@ -122,6 +122,11 @@
 
 .casey-timeline-actions{display:flex;gap:var(--space-2, 8px);justify-content:flex-end}
 
+/* The three elements in this file that declare a transition -- and the only
+   reduced-motion guard any of them needs. .casey-progress-line was named twice
+   in this one selector list, and all three were ALSO restated in app.css's own
+   catch-all guard, so a fourth file's worth of cascade had to be read to answer
+   "is this element guarded". Each sheet now guards the classes it declares. */
 @media (prefers-reduced-motion: reduce){
-  .casey-progress-line,.casey-rep-editable,.casey-progress-line,.casey-meta-toggle{transition:none;animation:none}
+  .casey-progress-line,.casey-rep-editable,.casey-meta-toggle{transition:none;animation:none}
 }

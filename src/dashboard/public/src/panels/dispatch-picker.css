@@ -1,8 +1,12 @@
 /* Backdrop/panel/title/message/actions-row chrome now reuses app.css's
-   shared .ds-dialog-* modal shell (see app.css:39-43) instead of a second,
-   independently-drifting copy -- only the genuinely novel bits (no existing
-   design-system atom covers these) stay local: the select, its label, the
-   note textarea, and the two action buttons. */
+   shared .ds-dialog-* modal shell (see app.css's ".ds-dialog-backdrop" block)
+   instead of a second, independently-drifting copy -- only the genuinely novel
+   bits (no existing design-system atom covers these) stay local: the select,
+   its label, the note textarea, and the two action buttons.
+   Named by selector, not by line: this pointer read "app.css:39-43", which has
+   not been the dialog shell for a long time -- those lines are the map-first
+   layout comment, so the one cross-file reference in this file sent a reader
+   to the wrong block entirely. */
 @media (prefers-reduced-motion: reduce){
   .casey-dispatch-select,.casey-dispatch-note,.casey-dispatch-cancel,.casey-dispatch-ok{transition:none;animation:none}
 }
