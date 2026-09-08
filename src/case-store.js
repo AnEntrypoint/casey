@@ -125,7 +125,55 @@ export class CaseStore {
       server: { hotReload: false },
     })
     await this.thatcher.init()
+    await this.reportStrandedStages()
     return this
+  }
+
+  // Nothing in this chain versions or migrates stored rows: thatcher's
+  // migrate() is a documented no-op and busybase creates/extends columns
+  // lazily from whatever row is inserted next (ALTER TABLE ... ADD COLUMN
+  // TEXT), so a config edit and the rows already on disk can disagree with no
+  // one noticing. Renaming or removing a workflow stage in thatcher.config.yml
+  // is the case that costs data: every case already sitting in the old stage is
+  // stranded, SILENTLY. Witnessed end to end against a real store by renaming
+  // one stage -- init() accepted the new config without complaint, the stored
+  // row kept the old status, findOpenCase's `status: {$in: openStatuses}` no
+  // longer matched it, availableTransitions() went empty and transition() threw
+  // `invalid current stage`, and the reporter's very next message opened a
+  // DUPLICATE case, orphaning the original report (species, location,
+  // symptoms) with nothing on any surface saying so.
+  //
+  // Loud, never fatal: refusing to boot would take a live disease-surveillance
+  // gateway down over rows an operator can still re-stage by hand, and the
+  // stranded cases are still readable in listCases. Reports rather than fixes
+  // because only a human knows which new stage an old one became.
+  //
+  // 'deleted'/'archived'/'active' are busybase RECORD statuses (its soft-delete
+  // marker, store.js RECORD_STATUS), not workflow stages, and are expected here.
+  // Bounded scan: one pass at process start, capped, so this can never become
+  // the per-request cost it is warning about.
+  async reportStrandedStages({ limit = 10000 } = {}) {
+    try {
+      const known = new Set([...Object.keys(this._wf || {}), 'active', 'deleted', 'archived'])
+      const rows = await this.t.list('case', {}, { limit })
+      const stranded = rows.filter(r => r.status && !known.has(r.status))
+      if (!stranded.length) return []
+      const byStage = new Map()
+      for (const r of stranded) {
+        if (!byStage.has(r.status)) byStage.set(r.status, [])
+        byStage.get(r.status).push(r.ref || r.id)
+      }
+      const detail = [...byStage.entries()]
+        .map(([s, refs]) => `${s}: ${refs.length} case(s) (${refs.slice(0, 10).join(', ')}${refs.length > 10 ? ', ...' : ''})`)
+        .join('; ')
+      const msg = `[casey] ${stranded.length} stored case(s) sit in a workflow stage this config no longer declares -- they are invisible to find-or-create, cannot be transitioned, and the next message from those reporters will open a DUPLICATE case. Re-stage them or restore the stage name. ${detail}`
+      if (this.log?.error) this.log.error(msg, { stages: [...byStage.keys()], count: stranded.length })
+      else console.error(msg)
+      return stranded.map(r => r.id)
+    } catch (e) {
+      this.log?.warn?.('[casey] stranded-stage check failed', { error: e.message })
+      return []
+    }
   }
 
   // Read, parse, and validate the config WITHOUT booting thatcher or touching a
@@ -934,39 +982,83 @@ export class CaseStore {
   // does not claim to learn a Discord/WhatsApp handle for the operator; it learns
   // WORKING AREA from the case's report location) and bumps case_count/last_seen.
   // Best-effort: a failure here must never break the dashboard action it rides on.
+  // This is a read-modify-write (read the row, rebuild the areas array, bump
+  // case_count, write it back) and it was the ONE writer in this file doing
+  // that with neither a lock nor an expectedVersion guard. Witnessed against a
+  // real store: five CONCURRENT calls for one operator landed exactly ONE
+  // update (case_count "1" -> "2", _version 1) and silently dropped four,
+  // taking four learned working-area observations with them; the same five
+  // calls made sequentially gave "7". thatcher only runs its conflict check
+  // when expectedVersion is supplied (busybase-store.js update()), so an
+  // unguarded write has no detection at all -- last write wins, no error.
+  // Two gates now, matching the rest of this file: the per-operator lock
+  // serializes calls inside THIS process (the dashboard, gateway and store all
+  // share one worker process, so that covers two operators acting in the same
+  // tick), and expectedVersion catches a writer in a DIFFERENT process (the
+  // supervisor's fork-before-drain reload window, or a CLI run) that no
+  // in-process lock can see.
   async learnOperatorActivity(operatorId, caseRow) {
     if (!operatorId || !caseRow) return null
-    try {
-      const existing = await this._operatorIdentityRow(operatorId)
-      const areas = existing ? this._parseJsonArray(existing.areas) : []
-      const { value: report } = this._parseReport(caseRow.report, caseRow.id)
-      const locToks = [...tokens(report.location)]
-      for (const t of locToks) {
-        const i = areas.findIndex(a => a.token === t)
-        if (i >= 0) areas[i].count = (areas[i].count || 0) + 1
-        else areas.push({ token: t, count: 1 })
-      }
-      // Cap the area list so a long-lived operator's record does not grow
-      // unbounded -- keep the most-frequent areas, a bounded working-area
-      // profile rather than a full history.
-      areas.sort((a, b) => (b.count || 0) - (a.count || 0))
-      const boundedAreas = areas.slice(0, 40)
-      const patch = {
-        operator_id: operatorId,
-        areas: JSON.stringify(boundedAreas),
-        last_seen_at: nowIso(),
-        // busybase reads integer columns back as DIGIT STRINGS (see AGENTS.md,
-        // thatcher/busybase chain), so a bare `+ 1` CONCATENATES rather than adds:
-        // "1" -> "11" -> "111". Observed live at 9 actions: case_count read
-        // "111111111", which the map's coverage tooltip rendered verbatim as
-        // "111111111 case action(s)". Coerce before arithmetic; a corrupt legacy
-        // value is also re-based here rather than carried forward.
-        case_count: rowInt(existing?.case_count) + 1,
-      }
-      if (existing) await this.t.update('operator_identity', existing.id, patch, SYSTEM_USER)
-      else await this.t.create('operator_identity', { ...patch, channel_ids: '[]' }, SYSTEM_USER)
-      return patch
-    } catch { return null }   // learning is best-effort, never blocks the caller's real action
+    return this._withLock(`operator_identity|${operatorId}`, async () => {
+      try {
+        const LEARN_RETRY_LIMIT = 3
+        for (let attempt = 0; attempt <= LEARN_RETRY_LIMIT; attempt++) {
+          // Re-read INSIDE the retry loop: areas and case_count are both
+          // DERIVED from the stored row, so a retry that reused the first
+          // read's values would re-apply a count the winner already applied.
+          const existing = await this._operatorIdentityRow(operatorId)
+          const areas = existing ? this._parseJsonArray(existing.areas) : []
+          const { value: report } = this._parseReport(caseRow.report, caseRow.id)
+          const locToks = [...tokens(report.location)]
+          for (const t of locToks) {
+            const i = areas.findIndex(a => a.token === t)
+            if (i >= 0) areas[i].count = (areas[i].count || 0) + 1
+            else areas.push({ token: t, count: 1 })
+          }
+          // Cap the area list so a long-lived operator's record does not grow
+          // unbounded -- keep the most-frequent areas, a bounded working-area
+          // profile rather than a full history.
+          areas.sort((a, b) => (b.count || 0) - (a.count || 0))
+          const boundedAreas = areas.slice(0, 40)
+          const patch = {
+            operator_id: operatorId,
+            areas: JSON.stringify(boundedAreas),
+            last_seen_at: nowIso(),
+            // busybase reads integer columns back as DIGIT STRINGS (see AGENTS.md,
+            // thatcher/busybase chain), so a bare `+ 1` CONCATENATES rather than adds:
+            // "1" -> "11" -> "111". Observed live at 9 actions: case_count read
+            // "111111111", which the map's coverage tooltip rendered verbatim as
+            // "111111111 case action(s)". Coerce before arithmetic; a corrupt legacy
+            // value is also re-based here rather than carried forward.
+            case_count: rowInt(existing?.case_count) + 1,
+          }
+          // toStorable, not the bare patch: case_count is the one numeric value
+          // here, and thatcher's optimistic-concurrency check re-reads the row
+          // and compares each patched field against what it asked for. busybase
+          // hands every column back as TEXT, so a JS number fails that compare
+          // ("2" !== 2) on every single call -- a FALSE conflict AFTER the write
+          // already landed, so each retry increments again. Witnessed while
+          // adding the guard below: five calls took case_count 1 -> 21 instead
+          // of 1 -> 6, four surplus increments per call, one per retry. This is
+          // the write-side trap AGENTS.md names; toStorable() is its guard.
+          const storablePatch = toStorable(patch)
+          try {
+            if (existing) {
+              await this.t.update('operator_identity', existing.id, storablePatch, SYSTEM_USER,
+                existing._version != null ? { expectedVersion: existing._version } : {})
+            } else {
+              await this.t.create('operator_identity', { ...storablePatch, channel_ids: '[]' }, SYSTEM_USER)
+            }
+            return patch
+          } catch (e) {
+            // Only a version conflict is retryable; anything else falls to the
+            // best-effort catch below exactly as it did before.
+            if (e.code !== 'conflict' || attempt === LEARN_RETRY_LIMIT) throw e
+          }
+        }
+        return null
+      } catch { return null }   // learning is best-effort, never blocks the caller's real action
+    })
   }
 
   // Every learned operator-identity row, for the dashboard's coverage view.
