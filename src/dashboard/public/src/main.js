@@ -296,11 +296,24 @@ initRouteSync((r) => {
 // times an hour. Net effect is still far less traffic, spent on the surface
 // actually in front of the operator.
 const onMapHome = () => !state.activePanel && state.homeView === 'map';
-const _casesIv = setInterval(() => { if (!state.inboxMode && !onMapHome()) loadCases(); }, 5000);
-const _healthIv = setInterval(refreshHealth, 15000);
-const _attnIv = setInterval(refreshAttention, 30000);
-const _mapIv = setInterval(() => { if (onMapHome()) refreshMapData(); }, 30000);
-const _degradedIv = setInterval(refreshDegradedTurns, 60000);
+// The polling cadence, named rather than left as five bare numbers inline.
+// This is not housekeeping: every one of these is traffic on what AGENTS.md
+// describes as a metered, intermittent rural link, so how often each surface
+// refreshes is an operational decision someone should be able to read off
+// and change, not a literal to be found by grepping for a number. The
+// relationships matter too -- attention and the map pins share a tick on
+// purpose, because they feed the same rail and drifting them apart is how the
+// map and the queue come to disagree.
+const CASES_POLL_MS = 5000;
+const HEALTH_POLL_MS = 15000;
+const ATTENTION_POLL_MS = 30000;
+const MAP_POLL_MS = ATTENTION_POLL_MS;
+const DEGRADED_POLL_MS = 60000;
+const _casesIv = setInterval(() => { if (!state.inboxMode && !onMapHome()) loadCases(); }, CASES_POLL_MS);
+const _healthIv = setInterval(refreshHealth, HEALTH_POLL_MS);
+const _attnIv = setInterval(refreshAttention, ATTENTION_POLL_MS);
+const _mapIv = setInterval(() => { if (onMapHome()) refreshMapData(); }, MAP_POLL_MS);
+const _degradedIv = setInterval(refreshDegradedTurns, DEGRADED_POLL_MS);
 window.addEventListener('beforeunload', () => {
   clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv);
   clearInterval(_mapIv); clearInterval(_degradedIv);
