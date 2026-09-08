@@ -2,6 +2,104 @@
 
 ## Unreleased
 
+This file recorded nothing for the 88 commits between the repo's squashed
+`Initial commit` and 2026-09-08; `git log --oneline -- CHANGELOG.md` returns
+only that one commit. The block below is reconstructed from `git log` and
+from the live code, and covers what actually landed in that span. The
+sections beneath it are the pre-squash history and are left as written --
+several describe modules (`src/extract.js`, `src/gazetteer.js`, `test.js`,
+`CASEY_OPERATORS`) that no longer exist, which is what a historical entry is
+supposed to look like once the code moves on.
+
+### Changed
+- **freddie is now the agent, not a library casey calls.** Upstream freddie's
+  `main` was rewritten from a flat harness+Gateway package into a Cordis
+  plugin tree with no messaging-bot primitives left. casey's own transport,
+  `case_*` tools, LLM adapter and per-agent tool allowlist now mount into
+  freddie's real `boot()` as Cordis plugins under `freddie-bundle/`, and
+  `src/agent/run-turn.js` drives a real freddie `Agent`. casey owns the
+  WhatsApp/Discord adapters (`src/adapters/`) that freddie used to provide.
+- **The domain is config, not code.** `CASEY_CONFIG_DIR` +
+  `src/config-loader.js` + `src/store/report-shape.js` replace the
+  hardcoded animal-health vocabulary; this repo ships a generic IT-helpdesk
+  demo under `config/default/`, and the animal-health deployment moved to
+  the separate `AnEntrypoint/uhh` config package. `CASEY_EXTRA_PLUGINS_DIR`
+  and `CASEY_EXTRA_DASHBOARD_ROUTES` let a deployer add tools and dashboard
+  routes without casey knowing the domain.
+- **Composed dependencies resolve locally.** `thatcher`, `acptoapi` and
+  `anentrypoint-design` moved from `github:AnEntrypoint/<repo>#main` specs to
+  `file:deps/<name>` against their submodule checkouts, because npm's git-dep
+  preparation stalled a fresh clone's install. `freddie` left `package.json`
+  entirely: it is a `pnpm` workspace linked in by
+  `scripts/install-freddie-deps.mjs` + `scripts/link-deps.mjs`.
+- **The map is the dashboard's home view**, not a panel behind the nav: a
+  full-bleed map pane plus one rail carrying the worst-first queue or the
+  open case, with the urgency ladder and filter predicate defined once in
+  `dashboard/public/src/map-model.js` and read by both halves. Brand theming,
+  role-scoped nav with a secretary landing view, an in-app Dialog replacing
+  native `alert`/`confirm`/`prompt`, and text-response compression (2.50 MB
+  -> 0.89 MB on the map landing) landed alongside it.
+
+### Added
+- Per-operator dashboard login (`src/dashboard/auth.js`): scrypt-hashed
+  passwords, stateless HMAC-signed session cookies, an `operator_account`
+  table, a bootstrap admin created on first boot with a forced password
+  change, and the `casey operators` CLI as the break-glass path. This
+  replaces the shared dashboard token entirely -- no route accepts a bearer
+  token or `?token=` any more.
+- Supply-chain scanning: `scripts/scan-deps.mjs` (`npm run scan-deps`), wired
+  into `casey doctor` and into `scripts/postinstall.mjs`, where its exit code
+  now reaches npm so a real hit fails the install. `npm run check-submodules`
+  reports each `deps/*` checkout's branch/dirty/ahead-behind state.
+- `npm run gui-check` (`scripts/gui-check.mjs`): drives the real dashboard in
+  headless Chromium over CDP and asserts the map-first layout, the mobile icon
+  grid, accessible names and WCAG AA contrast. Deliberately not part of
+  `npm run lint`, which stays dependency-free; skips with exit 0 when no
+  chromium binary exists.
+- `lint.mjs` gained structural grep gates beyond syntax/config/ascii:
+  pure-agent, no-stub-mock, pii-safety (a dataflow check that a store row
+  never reaches `res.json()` without a projection) and trust-boundary
+  (`src/packs/*` may not import `src/core/`).
+- A `secretary` operator role plus `/api/secretary/queue`, the follow-up
+  queue that surfaces dropped cases for a non-operator follow-up owner.
+
+### Fixed
+- The ported turn-runner never reached the model: `hooks/handler.js` resolved
+  its adapter through `this?.platforms?.get?.(platform)`, a shape the old
+  freddie Gateway had and `casey.js` does not, so the optional chain
+  short-circuited and `adapter` was `undefined` on every turn. Both delivery
+  flags were also initialised `true` above the `if (adapter?.send)` guard that
+  earns them, which is what kept it silent.
+- Deleting an operator revoked nothing. thatcher deletes are soft, and the
+  session middleware resolved through `t.get` (which returns deleted rows)
+  while `listAccounts` used `t.list` (which does not), so a removed
+  operator's cookie kept working. Closed by a `status='deleted'` check in the
+  middleware and a `session_epoch` bump in `deleteAccount`.
+- `casey doctor` reported the wrong database file (`data/app.db`); busybase
+  hardcodes `db.sqlite` regardless of thatcher's `databasePath` option.
+- js-yaml v5 dropped YAML 1.1 merge-key resolution, so `<<: *system_fields`
+  silently vanished from every entity in `thatcher.config.yml` until every
+  config load opted back into `YAML11_SCHEMA`.
+- A guessed coordinate now looks guessed: both map overlays carry
+  `location_source` on the gps/estimated/confirmed ladder and render an
+  unconfirmed estimate differently, and an auto-generated photo description
+  or voice-note transcript names the AI helper as its author.
+- `learnOperatorActivity` concatenated instead of adding, because busybase
+  binds numeric columns as TEXT -- nine operator actions stored a
+  `case_count` of `"111111111"`, which the map's coverage tooltip rendered
+  verbatim.
+
+### Removed
+- The provenance subsystem's unreferenced tiers, in two audits: `src/engine/`
+  entirely, plus `aggregate.js`, `interpretation.js`, `event-log.js`,
+  `escrow-export.js`, `quality-flags.js`, `reputation.js`, `subject.js` and
+  `pack-loader.js` under `src/core/`, and `packs/water-point.js`. The live
+  modules are `provenance.js`, `observation.js`, `raw-log.js`,
+  `write-path.js` and `pack-schema.js`, reached only via
+  `src/provenance-wire.js`.
+- `src/provider-health.js`, whose only would-be consumer had already been
+  rewired away from it.
+
 ### Changed
 - Untracked `.gm/browser-chrome-profile-default/` (Chrome's own runtime
   automation profile, never source) and restored eight tracked files that
