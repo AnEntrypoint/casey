@@ -439,6 +439,18 @@ There is no automated test suite. Verification is manual/live: run `casey up`
 against real freddie/thatcher/a real LLM provider and exercise the actual
 conversation over Discord/WhatsApp or the dashboard.
 
+**Query the live store as part of any audit, not just the source.** Reading
+`data/db.sqlite` directly found a shipped, operator-visible bug that a whole
+session of source review had walked past: `operator_identity.case_count` holding
+`"111111111"`, which the map's coverage tooltip rendered verbatim (see the
+busybase digit-string section above). Because busybase returns loosely-typed
+values, the tell is a row value with an impossible SHAPE -- a run of identical
+digits, a count that could never be plausible, a timestamp that is uniformly
+zero across every row. Those are invisible in the code and obvious in the data.
+There is no `sqlite3` binary in this environment; open the file with the
+`@libsql/client` already in `node_modules`, or go through `CaseStore` when you
+want the audited path (it is cwd-bound -- see the Conventions note).
+
 ## Dev workflow
 
 ```sh
