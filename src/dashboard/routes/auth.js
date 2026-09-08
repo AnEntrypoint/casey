@@ -134,6 +134,25 @@ export function registerAuth(app, deps) {
     return [...shown.filter(f => f.critical_for_visit).map(row), ...shown.filter(f => !f.critical_for_visit).map(row)]
   })()
 
+  // This page is reached with NO session and NO design-kit bundle, so its CSS is
+  // inline and dependency-free by necessity. What it must not ALSO be is a
+  // separate palette: every brand-carrying value in the <style> block below
+  // comes from dashboard/brand.js, the same resolution manifest.json, the
+  // generated icon and offline.html already read. It used to be a stock blue
+  // (#2f6fb0 buttons and focus rings, #1a3a5c headings, #dce8f5 rules) with a
+  // progress bar at #f0a030 -- a near-miss of this deployment's real brand
+  // orange #E88427 rather than the brand orange itself -- on the one surface a
+  // reporting contact ever sees.
+  //
+  // Semantic colours (the ok/error banners, the completed-bar green) stay fixed
+  // on purpose: those encode meaning, not identity, and re-tinting them to a
+  // brand is how "saved" and "failed" stop being distinguishable at a glance.
+  //
+  // This rationale is a JS comment rather than an HTML one deliberately. Every
+  // byte of this page crosses a rural, metered link to a contact who may be on
+  // a feature phone; an explanatory comment about our own colour history is not
+  // something they should have to download, and it named internal decisions to
+  // the public besides.
   function publicFormHtml({ ref = '', caseRow = null, done = false, err = '' } = {}) {
     let report = {}
     try { report = caseRow?.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
@@ -178,17 +197,6 @@ export function registerAuth(app, deps) {
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="${esc(BRAND.ground)}">
 <title>${esc(BRAND.name)} - ${esc(ENTITY)} form</title>
-<!-- This page is reached with NO session and NO design-kit bundle, so its CSS
-     is inline and dependency-free by necessity. What it must not also be is a
-     SEPARATE PALETTE: every brand-carrying value below comes from
-     dashboard/brand.js, the same resolution manifest.json, the generated icon
-     and offline.html already read. It used to be a stock blue (#2f6fb0) with a
-     progress bar at #f0a030 -- a near-miss of this deployment's real brand
-     orange #E88427 rather than the brand orange itself -- on the one surface a
-     reporting contact ever sees. Semantic colours (the ok/error banners, the
-     completed-bar green) stay fixed on purpose: those encode meaning, not
-     identity, and re-tinting them to a brand is how "saved" and "failed" stop
-     being distinguishable at a glance. -->
 <style>
   *{box-sizing:border-box}
   body{margin:0;font-family:system-ui,sans-serif;background:#f4f6f9;color:#1a1f29;min-height:100vh}
