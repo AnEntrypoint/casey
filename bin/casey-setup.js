@@ -222,6 +222,20 @@ export async function cmdDoctor({ flags }) {
   }
   // public URL (optional but useful)
   console.log(process.env.CASEY_PUBLIC_URL ? ok(`CASEY_PUBLIC_URL set (${process.env.CASEY_PUBLIC_URL})`) : dim('  CASEY_PUBLIC_URL unset - contacts will not receive a web form link (optional)'))
+  // The session cookie fails SAFE -- dashboard/auth.js adds Secure unless
+  // CASEY_COOKIE_SECURE is explicitly '0' -- and .env.example documents that
+  // opt-out as being for a plain-HTTP dev or LAN deployment. Neither of those
+  // facts helps if the opt-out is still set when the deployment goes public,
+  // which is the one combination worth naming: a session cookie without Secure
+  // travels in the clear over any http:// hop, on the shared and mobile
+  // networks this deployment actually runs on. Keyed on an https CASEY_PUBLIC_URL
+  // because that is the deployment declaring itself publicly reachable over TLS;
+  // a local http dev boot stays silent, which is the whole point of not making
+  // this a blanket warning.
+  if (process.env.CASEY_COOKIE_SECURE === '0' && /^https:/i.test(process.env.CASEY_PUBLIC_URL || '')) {
+    console.log(bad('CASEY_COOKIE_SECURE=0 with an https CASEY_PUBLIC_URL - the dashboard session cookie is being sent WITHOUT the Secure flag on a deployment that declares itself publicly reachable over TLS; unset it (Secure is the default) or set it to 1'))
+    problems++
+  }
   // host timezone -- casey always renders absolute times in SAST regardless of
   // the host clock, so a non-SAST host is fine (not a problem), but flag it so
   // an operator reading raw OS timestamps elsewhere knows the offset.

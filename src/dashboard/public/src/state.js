@@ -5,11 +5,9 @@
 // below ends by calling schedule() so a state change always re-renders.
 //
 // A field belongs here only when more than one module reads it. A field no
-// module writes does not belong here at all: two of them (savedViews,
-// recentSearches) sat as permanently-empty arrays that consumers read INSTEAD
-// of the localStorage store those features actually keep, which is how the
-// saved-view menu and the recent-search chips came to be unable to render
-// anything at all.
+// module writes does not belong here at all -- a consumer reading a
+// never-written field renders nothing and looks broken. Saved views and recent
+// searches keep their real store in localStorage (saved-views.js), not here.
 
 // BLUF: where things are happening is the single most operationally
 // important fact, so the map -- not the case list -- is the default home
@@ -86,13 +84,8 @@ export const state = {
   // link returns (auth.js's onConnectionRestored subscription).
   sessionRestored: false,
   health: { ai: null, runtime: null, guardrails: null },
-  // savedViews and recentSearches used to live here as empty arrays that no
-  // module ever wrote. Both features keep their real store in localStorage
-  // (saved-views.js), and both consumers had been reading these never-written
-  // fields instead -- so a saved view toasted "saved" and never appeared in
-  // the menu, and the recent-search chips could not render. The state field
-  // was the bug in both cases, not the missing writer: there is one store,
-  // and views/case-list/filters-bar.js reads it.
+  // No savedViews/recentSearches field here on purpose: saved-views.js owns
+  // the one localStorage store for both, and filters-bar.js reads it directly.
   handoffDismissed: new Set(),
   handoffQueue: [],
   degradedTurns: [],
@@ -238,13 +231,10 @@ export function closePanel() { state.activePanel = null; schedule(); }
 export function openModal(name) { state.activeModal = name; schedule(); }
 export function closeModal() { state.activeModal = null; schedule(); }
 
-// state.toasts is the queue; toasts.js owns every mutation of it (push,
-// dismiss, the auto-dismiss timers, the undo rows). A second splice-by-id
-// implementation used to live here as removeToast, exported alongside
-// toasts.js's own export of the same name -- two definitions of one operation
-// in two modules, with zero call sites between them, so neither was reachable
-// and either could have been "fixed" without the other. dismissToast in
-// toasts.js is the one that is actually called, and it is now the only one.
+// state.toasts is the queue, but toasts.js owns every mutation of it (push,
+// dismiss, the auto-dismiss timers, the undo rows). Do not add a second
+// splice-by-id here: two definitions of one operation in two modules means
+// either can be "fixed" without the other.
 export function setConnLost(v) {
   if (state.connLost === !!v) return;
   state.connLost = !!v;

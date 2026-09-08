@@ -3,10 +3,8 @@
 // queue, timers, and the actual undo/correction network calls (the real
 // /undo and /reply POSTs live here so every caller gets identical behavior).
 //
-// undoToast/replyUndoToast/failMsg match the signature case-detail's 22
-// consumer files use (undoToast(caseId, label, onDone),
-// replyUndoToast(caseId, onDone), failMsg(errorOrResponse, fallback)) --
-// the richer, actually-called shape across every worktree.
+// The signatures every case-detail consumer calls: undoToast(caseId, label,
+// onDone), replyUndoToast(caseId, onDone), failMsg(errorOrResponse, fallback).
 
 import { state, schedule } from './state.js';
 import { api } from './api.js';

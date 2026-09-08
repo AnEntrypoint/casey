@@ -4,10 +4,8 @@
 // typed ApiError on non-2xx, and toggles the connection-lost banner via
 // state.js on network failure vs success.
 //
-// This is the merged superset of the per-worktree api.js variants (shell/
-// case-list/case-detail/panels) -- every endpoint function any consumer
-// module imports is present here, verified against the real route files in
-// src/dashboard/routes/*.js.
+// Every endpoint function any consumer module imports must be present here and
+// must name a route that really exists in src/dashboard/routes/*.js.
 
 import { state, setConnLost } from './state.js';
 
@@ -349,8 +347,6 @@ export const fetchOperatorIdentities = () => json('/api/operators/identities');
 export const fetchContacts = () => json('/api/contacts');
 export const postContactTier = (id, tier) => post('/api/contacts/' + encodeURIComponent(id) + '/tier', { tier });
 export const postContactErase = (id, reason) => post('/api/contacts/' + encodeURIComponent(id) + '/erase', { reason });
-
-// --- accounts (admin) ---
 
 // --- degraded turns ---
 export const fetchDegradedTurns = (params) => json('/api/turns/degraded' + qs(params));

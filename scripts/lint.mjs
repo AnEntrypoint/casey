@@ -264,100 +264,110 @@ const stripText = (s) => s
   .replace(/'(?:\\.|[^'\\])*'/g, "''")
   .replace(/"(?:\\.|[^"\\])*"/g, '""')
   .replace(/`(?:\\.|[^`\\])*`/g, '``')
-let routeFiles = []
-try { routeFiles = readdirSync(ROUTE_DIR).filter((f) => f.endsWith('.js')) } catch { routeFiles = [] }
-for (const file of routeFiles) {
-  let src = ''
-  try { src = readFileSync(join(ROUTE_DIR, file), 'utf8') } catch { continue }
-  const lineAt = (idx) => src.slice(0, idx).split('\n').length
-  const projections = PROJECTIONS_BY_FILE.get(file) || []
+// Locate a projection function's body by walking its PARAMETER LIST to the
+// closing paren before looking for the body brace. Taking the first `{` after
+// the name instead is wrong the moment a projection destructures a parameter --
+// `f(c, { now, staleMs })` made the options object itself the "body", so the
+// checks below ran against the parameter list and the real function was
+// unenforced while lint stayed green. Live-witnessed with a deliberate
+// `return { ...c }` that the gate did not see.
+// Returns null when the function is gone, so the caller can say so.
+function projectionBody(src, name) {
+  let at = src.indexOf(`function ${name}(`)
+  if (at < 0) at = src.search(new RegExp(String.raw`(?:const|let)\s+${name}\s*=\s*\(`))
+  if (at < 0) return null
+  const parenOpen = src.indexOf('(', at)
+  let pdepth = 0
+  let parenClose = parenOpen
+  for (let i = parenOpen; i < src.length; i++) {
+    if (src[i] === '(') pdepth++
+    else if (src[i] === ')') { pdepth--; if (pdepth === 0) { parenClose = i; break } }
+  }
+  const open = src.indexOf('{', parenClose)
+  let depth = 0
+  let end = src.length
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++
+    else if (src[i] === '}') { depth--; if (depth === 0) { end = i; break } }
+  }
+  // The row is the FIRST parameter; a projection may take more (a map pin
+  // takes the parsed report and its cluster index alongside the case row), so
+  // match the first identifier in the list rather than requiring a
+  // single-parameter signature -- which silently skipped the spread check.
+  const param = (/\(\s*([A-Za-z_$][\w$]*)\s*[,)]/.exec(src.slice(parenOpen, parenClose + 1)) || [])[1]
+  return { body: src.slice(open, end + 1), param }
+}
 
-  // (a) Every declared projection must actually be an allowlist: no PII key
-  // among the keys it returns, and no spread of the row it was handed.
-  for (const name of projections) {
-    let at = src.indexOf(`function ${name}(`)
-    if (at < 0) at = src.search(new RegExp(String.raw`(?:const|let)\s+${name}\s*=\s*\(`))
-    if (at < 0) { note(`pii-safety: ${file} declares projection ${name}() in lint.mjs but the function is gone -- the gate below has nothing to enforce`); continue }
-    // Walk the PARAMETER LIST to its closing paren before looking for the body
-    // brace. Taking the first `{` after the name instead is wrong the moment a
-    // projection destructures a parameter -- `f(c, { now, staleMs })` made the
-    // options object itself the "body", so the checks below ran against the
-    // parameter list and the real function was unenforced while lint stayed
-    // green. Live-witnessed with a deliberate `return { ...c }` that the gate
-    // did not see.
-    const parenOpen = src.indexOf('(', at)
-    let pdepth = 0
-    let parenClose = parenOpen
-    for (let i = parenOpen; i < src.length; i++) {
-      if (src[i] === '(') pdepth++
-      else if (src[i] === ')') { pdepth--; if (pdepth === 0) { parenClose = i; break } }
-    }
-    const open = src.indexOf('{', parenClose)
-    let depth = 0
-    let end = src.length
-    for (let i = open; i < src.length; i++) {
-      if (src[i] === '{') depth++
-      else if (src[i] === '}') { depth--; if (depth === 0) { end = i; break } }
-    }
-    const body = src.slice(open, end + 1)
-    // The row is the FIRST parameter; a projection may take more (a map pin
-    // takes the parsed report and its cluster index alongside the case row), so
-    // match the first identifier in the list rather than requiring a
-    // single-parameter signature -- which silently skipped the spread check.
-    const param = (/\(\s*([A-Za-z_$][\w$]*)\s*[,)]/.exec(src.slice(parenOpen, parenClose + 1)) || [])[1]
-    for (const key of PII_KEYS) {
-      // `key:` (explicit) or `key,`/`key}` (shorthand) as an emitted key.
-      // `external_id_formatted:` and `c.external_id` both correctly miss.
-      if (new RegExp(`(^|[{,\\s])${key}\\s*[:,}]`).test(body)) {
-        note(`pii-safety: ${file} projection ${name}() emits ${key} -- that field must never reach a JSON response`)
-      }
-    }
-    if (param && new RegExp(`\\.\\.\\.\\s*${param}\\b`).test(body)) {
-      note(`pii-safety: ${file} projection ${name}() spreads its whole row (...${param}) instead of listing fields -- every column, present and future, leaks`)
+// (a) Every declared projection must actually be an allowlist: no PII key among
+// the keys it returns, and no spread of the row it was handed.
+function checkProjectionIsAllowlist(file, src, name) {
+  const found = projectionBody(src, name)
+  if (!found) { note(`pii-safety: ${file} declares projection ${name}() in lint.mjs but the function is gone -- the gate below has nothing to enforce`); return }
+  const { body, param } = found
+  for (const key of PII_KEYS) {
+    // `key:` (explicit) or `key,`/`key}` (shorthand) as an emitted key.
+    // `external_id_formatted:` and `c.external_id` both correctly miss.
+    if (new RegExp(`(^|[{,\\s])${key}\\s*[:,}]`).test(body)) {
+      note(`pii-safety: ${file} projection ${name}() emits ${key} -- that field must never reach a JSON response`)
     }
   }
+  if (param && new RegExp(`\\.\\.\\.\\s*${param}\\b`).test(body)) {
+    note(`pii-safety: ${file} projection ${name}() spreads its whole row (...${param}) instead of listing fields -- every column, present and future, leaks`)
+  }
+}
 
-  // (b) One route handler at a time. A binding is only a row for the handler
-  // that made it -- these files reuse short names freely (a `claimed` case row
-  // in the bulk handler, a `claimed` boolean in the reply handler), and a
-  // file-wide name set would confuse the two and cry wolf.
-  //
-  // Chunk on the HANDLER, not on the registration. This used to split only at
-  // `app.get(`/`app.post(`/... , which silently assumed every handler is an
-  // inline arrow inside its own registration call. It is not any more: a route
-  // module is now a set of module-level named handler factories plus a
-  // declarative table mounted through routes/register.js, so a file can contain
-  // twenty real handlers and zero `app.<method>(` call sites -- under the old
-  // boundary set that file produced no chunks at all and the whole dataflow
-  // check below silently did nothing. A route handler is identifiable by its
-  // own signature instead, `(req, res` , which holds for an inline arrow, a
-  // named `function h(req, res)`, and a factory's returned arrow alike. Both
-  // boundary sets are taken so a registration that is not immediately followed
-  // by its handler still opens a chunk; the extra empty chunk that produces
-  // costs nothing (no bindings, no responses).
+// (b) One route handler at a time. A binding is only a row for the handler
+// that made it -- these files reuse short names freely (a `claimed` case row
+// in the bulk handler, a `claimed` boolean in the reply handler), and a
+// file-wide name set would confuse the two and cry wolf.
+//
+// Chunk on the HANDLER, not on the registration. This used to split only at
+// `app.get(`/`app.post(`/... , which silently assumed every handler is an
+// inline arrow inside its own registration call. It is not any more: a route
+// module is now a set of module-level named handler factories plus a
+// declarative table mounted through routes/register.js, so a file can contain
+// twenty real handlers and zero `app.<method>(` call sites -- under the old
+// boundary set that file produced no chunks at all and the whole dataflow
+// check below silently did nothing. A route handler is identifiable by its
+// own signature instead, `(req, res` , which holds for an inline arrow, a
+// named `function h(req, res)`, and a factory's returned arrow alike. Both
+// boundary sets are taken so a registration that is not immediately followed
+// by its handler still opens a chunk; the extra empty chunk that produces
+// costs nothing (no bindings, no responses).
+function routeHandlerChunks(src) {
   const bounds = [...new Set([
     ...[...src.matchAll(/\bapp\.(?:get|post|patch|put|delete)\s*\(/g)].map((m) => m.index),
     ...[...src.matchAll(/\(\s*req\s*,\s*res\s*[,)]/g)].map((m) => m.index),
   ])].sort((a, b) => a - b)
-  const chunks = bounds.map((start, n) => ({ start, text: src.slice(start, bounds[n + 1] ?? src.length) }))
+  return bounds.map((start, n) => ({ start, text: src.slice(start, bounds[n + 1] ?? src.length) }))
+}
+
+// Names bound straight off a store row-returning call inside this one handler.
+// Over-approximates a destructuring LHS (`const { case: c, created } = ...`
+// binds both names); harmless, since only a name that later reaches a response
+// can fail anything.
+function rowBindingsIn(code) {
   const bindRe = new RegExp(String.raw`(?:^|[;{}\n])\s*(?:const|let|var)?\s*([^=;\n]*?)=\s*(?:await\s+)?store\.(?:${ROW_METHODS.join('|')})\s*\(`, 'g')
-  const callRe = /res(?:\.status\([^)]*\))?\.(json|send)\(/g
-  for (const chunk of chunks) {
-    const code = stripText(chunk.text)
-    const rowNames = new Set()
-    // Over-approximates a destructuring LHS (`const { case: c, created } = ...`
-    // binds both names); harmless, since only a name that later reaches a
-    // response can fail anything.
-    for (const m of code.matchAll(bindRe)) {
-      for (const id of m[1].matchAll(/[A-Za-z_$][\w$]*/g)) {
-        if (!['const', 'let', 'var', 'case', 'await'].includes(id[0])) rowNames.add(id[0])
-      }
+  const rowNames = new Set()
+  for (const m of code.matchAll(bindRe)) {
+    for (const id of m[1].matchAll(/[A-Za-z_$][\w$]*/g)) {
+      if (!['const', 'let', 'var', 'case', 'await'].includes(id[0])) rowNames.add(id[0])
     }
+  }
+  return rowNames
+}
+
+// (c) A response argument that references such a name as a VALUE -- a bare
+// identifier, a shorthand key, or a spread, but never `row.field` (a single
+// picked field) and never `row:` (a key that happens to share the name) -- and
+// that carries no projection call, hands the caller the whole row.
+function checkRawRowResponses(file, src, projections) {
+  const lineAt = (idx) => src.slice(0, idx).split('\n').length
+  const callRe = /res(?:\.status\([^)]*\))?\.(json|send)\(/g
+  for (const chunk of routeHandlerChunks(src)) {
+    const code = stripText(chunk.text)
+    const rowNames = rowBindingsIn(code)
     if (!rowNames.size) continue
-    // (c) A response argument that references such a name as a VALUE -- a bare
-    // identifier, a shorthand key, or a spread, but never `row.field` (a single
-    // picked field) and never `row:` (a key that happens to share the name) --
-    // and that carries no projection call, hands the caller the whole row.
     for (const m of code.matchAll(callRe)) {
       let i = m.index + m[0].length
       let depth = 1
@@ -381,6 +391,16 @@ for (const file of routeFiles) {
       }
     }
   }
+}
+
+let routeFiles = []
+try { routeFiles = readdirSync(ROUTE_DIR).filter((f) => f.endsWith('.js')) } catch { routeFiles = [] }
+for (const file of routeFiles) {
+  let src = ''
+  try { src = readFileSync(join(ROUTE_DIR, file), 'utf8') } catch { continue }
+  const projections = PROJECTIONS_BY_FILE.get(file) || []
+  for (const name of projections) checkProjectionIsAllowlist(file, src, name)
+  checkRawRowResponses(file, src, projections)
 }
 
 // --- cli-help: every dispatchable command is discoverable ------------------
