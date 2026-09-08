@@ -36,6 +36,11 @@ import {
 } from './map-leaflet.js';
 import { GeoPanel } from './geo-panel.js';
 import { ClustersPanel } from './clusters-panel.js';
+// One definition of the counted filter chip, shared with the case-list home
+// view. Both surfaces render the same control and it must not be able to drift
+// on one of them -- the same rule map-model.js enforces for the derivations
+// these chips apply.
+import { FilterChip, ClearChip } from '../components/filter-chip.js';
 
 const h = webjsx.createElement;
 
@@ -45,7 +50,7 @@ let summary = { unresolvedCount: 0, unresolved: [], truncated: false, cap: 0, to
 let error = null;
 // Distinguishes "the request failed" from "it succeeded and there is genuinely
 // nothing" -- rendering both as an empty map told the operator nothing about
-// which had happened. Null until the first attempt resolves either way.
+// which had happened. False until the first attempt resolves either way.
 let loadedOnce = false;
 let lastUpdatedAt = null;
 // How many queue rows are shown. A silent slice(0,5) meant the rail head could
@@ -202,7 +207,6 @@ function filterChips() {
     const pins = livePins();
     const attentionCount = (state.attention || []).length;
     const newToday = pins.filter((p) => isToday(p.created_at)).length;
-    const ex = currentExtent();
     const inViewCount = (() => {
         const ms = mapStateRef.current;
         if (!ms || !ms.map) return null;
@@ -212,12 +216,7 @@ function filterChips() {
         } catch { return null; }
     })();
 
-    const chip = (key, label, count, on, onClick, title) => h('button', {
-        key, type: 'button', title,
-        class: 'ds-fchip' + (on ? ' is-on' : '') + (count === 0 ? ' is-empty' : ''),
-        'aria-pressed': on ? 'true' : 'false',
-        onclick: onClick,
-    }, h('span', { class: 'ds-fchip-n' }, String(count)), h('span', { class: 'ds-fchip-l' }, label));
+    const chip = (key, label, count, on, onClick, title) => FilterChip({ key, label, count, on, onClick, title });
 
     const f = state.mapFilter;
     return h('div', { class: 'ds-fchips' },
@@ -234,9 +233,8 @@ function filterChips() {
             () => { setMapFilter({ inView: !f.inView }); applyFilterToMap(); },
             'Narrow the list to the part of the map you are looking at'),
         filterIsActive(f)
-            ? h('button', { key: 'clr', type: 'button', class: 'ds-fchip-clear', onclick: () => { clearMapFilter(); applyFilterToMap(); } }, 'Clear')
-            : null,
-        ex ? null : null);
+            ? ClearChip({ onClick: () => { clearMapFilter(); applyFilterToMap(); } })
+            : null);
 }
 
 function applyFilterToMap() {
@@ -318,24 +316,53 @@ function mapFilterRow() {
         }));
 }
 
+// Each toggle says what it will draw. The four labels are the overlay's name,
+// which is what an operator who already knows the map reads at a glance -- but
+// "Coverage" and "Clusters" name nothing recognisable to the secretarial and
+// AHT staff this deployment is for, and unlike the filter chips beside them
+// these four shipped with no explanatory title at all. The title is the
+// sentence; the label stays short.
 function mapOverlayRow() {
     const ms = mapStateRef.current;
-    const tog = (key, label, on, onClick) => Chip({
+    const tog = (key, label, title, on, onClick) => Chip({
         key, tone: on ? 'accent' : '',
-        children: h('button', { type: 'button', class: 'ds-chip-btn', 'aria-pressed': on ? 'true' : 'false', onclick: onClick }, label),
+        children: h('button', {
+            type: 'button', class: 'ds-chip-btn', title,
+            'aria-pressed': on ? 'true' : 'false', onclick: onClick,
+        }, label),
     });
     return h('div', { class: 'ds-map-overlays' },
-        tog('cl', 'Clusters', !!(ms && ms.showClusters), () => { toggleClusters(ms, state.mapFilter); schedule(); }),
-        tog('cov', 'Coverage', !!(ms && ms.showCoverage), async () => { await toggleCoverage(ms); schedule(); }),
-        tog('wk', 'Workers', !!(ms && ms.showWorkers), async () => { await toggleWorkers(ms); schedule(); }),
-        tog('lr', 'Last reported', !!(ms && ms.showLastReports), async () => { await toggleLastReports(ms); schedule(); }));
+        tog('cl', 'Clusters', 'Draw a line between reports that look like the same outbreak',
+            !!(ms && ms.showClusters), () => { toggleClusters(ms, state.mapFilter); schedule(); }),
+        tog('cov', 'Coverage', 'Ring the areas each operator has been working in',
+            !!(ms && ms.showCoverage), async () => { await toggleCoverage(ms); schedule(); }),
+        tog('wk', 'Workers', 'Show where field workers last checked in from',
+            !!(ms && ms.showWorkers), async () => { await toggleWorkers(ms); schedule(); }),
+        tog('lr', 'Last reported', 'Show the last place each contact reported from',
+            !!(ms && ms.showLastReports), async () => { await toggleLastReports(ms); schedule(); }));
 }
 
+// The COLLAPSED line is the only thing on screen while this disclosure is
+// shut, so every fact that must not be silent has to be in it. It used to
+// carry the no-location count alone, which meant a capped load with no
+// no-location reports rendered "Reports with no location (0)" -- an operator
+// reads that zero and never opens it, and the cap statement sitting inside
+// was never seen. A cap is stated with its true total beside it or it is not
+// stated, and that is a safety property here, not a cosmetic one.
+function mapUnresolvedSummaryText() {
+    const parts = [];
+    if (summary.unresolvedCount) parts.push(`Reports with no location (${summary.unresolvedCount})`);
+    if (summary.truncated) parts.push(`Only ${summary.cap} of ${summary.totalConsidered} reports loaded`);
+    return parts.join(' -- ');
+}
+
+// The expanded body says WHY each of those two facts is true. It no longer
+// repeats the counts the summary above it already states.
 function mapUnresolvedNoteText() {
-    return summary.unresolvedCount
-        ? `${summary.unresolvedCount} report(s) have no placeable location yet (no GPS, and the location text did not match a known area) -- they are not shown on the map.`
-          + (summary.truncated ? ` Showing the most recent ${summary.cap} of ${summary.totalConsidered} considered.` : '')
-        : (summary.truncated ? `Showing the most recent ${summary.cap} of ${summary.totalConsidered} considered.` : '');
+    const parts = [];
+    if (summary.unresolvedCount) parts.push('No GPS, and the location text did not match a known area, so these cannot be drawn on the map.');
+    if (summary.truncated) parts.push('The rest are not loaded at all, so they are not on this screen and not in the list below.');
+    return parts.join(' ');
 }
 
 function mapUnresolvedList() {
@@ -360,7 +387,7 @@ function mapUnresolvedList() {
 function mapUnresolvedDisclosure() {
     if (!summary.unresolvedCount && !summary.truncated) return [];
     return [h('details', { class: 'ds-rail-disclosure' },
-        h('summary', {}, `Reports with no location (${summary.unresolvedCount || 0})`),
+        h('summary', {}, mapUnresolvedSummaryText()),
         h('div', { class: 'ds-rail-disclosure-body' },
             h('div', { class: 'ds-map-unresolved-note' }, mapUnresolvedNoteText()),
             mapUnresolvedList()))];

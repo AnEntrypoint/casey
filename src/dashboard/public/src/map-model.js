@@ -84,7 +84,16 @@ export function pinMatches(pin, filter, urgency, extent) {
 export function rowMatches(row, pinsById, filter, urgency, extent) {
   const f = filter || state.mapFilter;
   const pin = pinsById.get(row.id);
-  if (!pin) return !f.inView && !f.band ? true : bandOnly(row, f, urgency);
+  // No pin means no coordinate, so the extent is not applicable and `extent`
+  // is deliberately not passed on: a case with no position is not "outside the
+  // viewport", it is nowhere, and a spatial filter must never be what makes it
+  // disappear. Only the band filters, which are spatial in no sense, still
+  // apply. This used to read `!f.inView && !f.band ? true : bandOnly(...)`,
+  // which evaluates to exactly bandOnly() -- bandOnly's two checks are both
+  // gated on f.band, so it already returns true when no band is set -- but the
+  // dead guard in front of it read as though inView were being handled here,
+  // which is the one thing this line must not be ambiguous about.
+  if (!pin) return bandOnly(row, f, urgency);
   return pinMatches(pin, f, urgency, extent);
 }
 

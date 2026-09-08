@@ -1,11 +1,9 @@
-// Bulk selection toolbar: claim/transition/tag/untag/note/draft-approve/
-// draft-discard/clear, restyled onto Btn/Dropdown (ux-case-list-bulk-actions,
-// kept behaviorally identical to the legacy toolbar, restyled onto the SDK).
+// Bulk selection toolbar: claim / move to stage / tag / untag / note / send
+// drafts / discard drafts / clear. Renders only while something is selected.
 
 import * as webjsx from 'webjsx';
 import { Btn } from 'ds/components/shell.js';
 import { Select } from 'ds/components/content.js';
-import { Dropdown } from 'ds/components/overlay-primitives.js';
 import { state, clearBulkSelect } from '../../state.js';
 import { postBulk } from '../../api.js';
 import { toast, failMsg } from '../../toasts.js';

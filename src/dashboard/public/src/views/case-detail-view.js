@@ -76,7 +76,18 @@ function pauseWhileEditing(el) {
     el.addEventListener('focusout', (e) => { if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) setEditing(false); });
 }
 
-export function CaseDetailView({ onClose, onOpenCase, key } = {}) {
+// showBack=false when the CONTAINER already renders the way out. The map home
+// view docks this pane in the rail under its own worded "Back to the list"
+// control (map-command-center.js) and this module rendered a second one
+// immediately beneath it -- two back controls stacked on one pane, the lower
+// one reading a bare " cases" while it actually returned to the map rail. One
+// escape per pane, and it says where it goes.
+function backControl(onClose) {
+    return h('button', { type: 'button', class: 'casey-back-btn', onclick: onClose },
+        Icon('chevron-left', { size: 14 }), ' Back to the list');
+}
+
+export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {}) {
     const id = state.activeId;
     if (!id) return h('div', { key, class: 'casey-detail-empty' },
         Icon('paw', { size: 32 }),
@@ -94,7 +105,7 @@ export function CaseDetailView({ onClose, onOpenCase, key } = {}) {
 
     if (state.caseDetailError) {
         return h('div', { key, class: 'casey-detail-error' },
-            h('button', { type: 'button', class: 'casey-back-btn', onclick: onClose }, Icon('chevron-left', { size: 14 }), ' cases'),
+            showBack ? backControl(onClose) : null,
             h('p', { class: 'casey-hint' }, state.caseDetailError));
     }
     if (!state.caseDetail || state.caseDetail.case.id !== id) {
@@ -104,7 +115,7 @@ export function CaseDetailView({ onClose, onOpenCase, key } = {}) {
     const { case: c, events, transitions, events_total, suggested_assignee, case_type_source } = state.caseDetail;
 
     return h('div', { key, class: 'casey-detail-pane', tabindex: '-1', ref: pauseWhileEditing },
-        h('button', { type: 'button', class: 'casey-back-btn', onclick: onClose }, Icon('chevron-left', { size: 14 }), ' cases'),
+        showBack ? backControl(onClose) : null,
         CaseHeader({ c, suggestedAssignee: suggested_assignee, onReload: reload, onOpenShare: openShareDialog, onOpenSnooze: openSnoozeDialog }),
         LinkedReportsNote({ caseId: id }),
         CaseProgress({ status: c.status }),

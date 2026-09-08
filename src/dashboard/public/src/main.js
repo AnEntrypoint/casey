@@ -49,10 +49,13 @@ initTheme();
 // map-first command centre -- the whole restructure was shipped and then
 // bypassed. The map is a home view now (state.homeView), not a panel.
 //
-// 'clusters' and 'geo' stay registered because both are still reachable as
-// full pages from the case-list side of the app; on the map side they render
-// in the rail instead, so the map is never unmounted to answer a question
-// about where something is (see map-panel.js's RAIL_MODES).
+// 'clusters' and 'geo' are the two SPATIAL rollups and they render in the map
+// rail with the map still mounted beside them (map-panel.js's RAIL_MODES), so
+// the map is never unmounted to answer a question about where something is.
+// They stay registered here even though no control currently opens either as a
+// full page -- both nav items go through openOnMap() -- so that anything that
+// does set activePanel to one of them gets the real body rather than the
+// "not available in this deployment" page.
 registerPanelBody('metrics', MetricsPanel);
 registerPanelBody('clusters', ClustersPanel);
 registerPanelBody('distribution', DistributionPanel);

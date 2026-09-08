@@ -67,10 +67,13 @@ export function MapCommandCenter() {
       hasActive
         // A worded back control, not a bare glyph: this is the only way back to
         // the list on a phone, where the rail covers the map entirely.
+        // showBack:false -- this rail row IS the way out. Without it the pane
+        // rendered a second back control immediately under this one, reading a
+        // bare " cases" while it actually returned here.
         ? h('div', { class: 'ds-rail-stack' },
             h('div', { class: 'ds-rail-back' },
               Btn({ variant: 'ghost', children: 'Back to the list', onClick: () => closeCase() })),
-            CaseDetailView({ onClose: closeCase, onOpenCase: openCase, key: 'detail-view' }))
+            CaseDetailView({ onClose: closeCase, onOpenCase: openCase, key: 'detail-view', showBack: false }))
         : MapRail()
     )
   );

@@ -1,13 +1,11 @@
-// reply-box.js -- TextField(multiline) reply composer, char counter
-// (TextField's own maxLength counter), Ctrl+Enter send, canned-replies
-// Dropdown (context-dependent, empty when opted out), draft banner
-// (ux-ai-draft-state-and-actions: Alert-based approve/discard for
-// assisted-mode held drafts), correction "take it back" toast wiring.
+// The reply composer: a multiline TextField with Ctrl+Enter send, a row of
+// context-dependent canned openers, the assisted-mode draft banner (approve or
+// discard a held draft), and the "take it back" correction toast a sent reply
+// gets instead of an undo it cannot have.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
 import { TextField, Alert } from '/design/src/components/content.js';
-import { Dropdown } from '/design/src/components/overlay-primitives.js';
 import { state, schedule } from '../../state.js';
 import { toast, replyUndoToast, failMsg } from '../../toasts.js';
 import { api, postDraftApprove, postDraftDiscard } from '../../api.js';

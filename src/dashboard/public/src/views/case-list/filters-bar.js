@@ -18,12 +18,11 @@
 // screen it did not exist at all. It is real, tappable chips now.
 
 import * as webjsx from 'webjsx';
-import { Btn } from 'ds/components/shell.js';
 import { SearchInput, Select, FilterPills } from 'ds/components/content.js';
 import { Dropdown } from 'ds/components/overlay-primitives.js';
 import { state, setFilt } from '../../state.js';
 import { stageLabel, stageTone } from '../../format.js';
-import { pushRecentSearch, loadRecentSearches } from '../../saved-views.js';
+import { pushRecentSearch, loadRecentSearches, listNamedViews } from '../../saved-views.js';
 const h = webjsx.createElement;
 
 // Truncate a long option label to a fixed budget so a Select never blows out
@@ -57,6 +56,21 @@ function recent() {
   return recentCache;
 }
 function remember(q) { pushRecentSearch(q); recentCache = null; }
+
+// The saved-view names, from the localStorage map saveNamedView actually
+// writes. This menu used to list Object.keys(state.savedViews) -- a field
+// state.js initialised to [] and no module ever wrote -- so saving a view
+// toasted 'Saved view "X"' and X then never appeared here. The same
+// write-only-feature shape as the recent-search buffer above, and the same
+// fix: read the store, not the state field nothing publishes into. Cached so
+// the 5s list poll's re-render is not a storage read; invalidated by
+// refreshSavedViews() the moment a save happens.
+let viewsCache = null;
+function namedViews() {
+  if (viewsCache === null) viewsCache = listNamedViews();
+  return viewsCache;
+}
+export function refreshSavedViews() { viewsCache = null; }
 
 // Real chips, not a screen-reader-only dropdown. Only while the box is empty:
 // once the operator is typing, their own text is the subject of the control
@@ -113,9 +127,20 @@ export function MoreFilters({ onOpenSavedViews, onSaveView }) {
     Dropdown({
       key: 'views',
       ariaLabel: 'Saved views',
-      trigger: () => Btn({ variant: 'ghost', size: 'sm', children: 'Saved views' }),
+      // An ARRAY, not a Btn vnode -- the same trap account-menu.js and
+      // notifications-center.js already document and work around, and the one
+      // Dropdown call in the SPA that had not been fixed. The design SDK's
+      // Dropdown re-wraps a vnode trigger by reading `child.children`, but
+      // webjsx only ever stores children under `child.props.children`, so the
+      // label is dropped: live-witnessed at 1440x900, this control shipped as
+      // <button class="btn-ghost btn-sm" aria-label="Saved views"></button> --
+      // an empty button with no visible text in the filter row, invisible to a
+      // sighted operator while still passing an accessible-name check.
+      // Returning an array routes through Dropdown's other branch, which puts
+      // the content into its own ds-dropdown-trigger button intact.
+      trigger: () => [h('span', {}, 'Saved views')],
       items: [
-        ...Object.keys(state.savedViews).sort().map((n) => ({ id: 'apply:' + n, label: n })),
+        ...namedViews().map((n) => ({ id: 'apply:' + n, label: n })),
         { separator: true },
         { id: 'save', label: 'Save current view' },
       ],

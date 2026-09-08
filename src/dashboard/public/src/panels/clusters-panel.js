@@ -1,11 +1,13 @@
-// Clusters panel -- related-case review + merge CTA. Content-swap panel
-// (state.activePanel === 'clusters'). Correlated groups from /api/clusters.
+// Reports that look like the same situation, grouped by /api/clusters.
+// Rendered two ways -- docked in the map rail beside the pins (railed), and as
+// a content-swap page whose title and back control come from app-view.js's
+// PanelSwap head, not from here.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
-import { Chip, Btn } from '/design/src/components/shell/atoms.js';
-import { state, schedule, closePanel, setActiveId } from '../state.js';
+import { Chip } from '/design/src/components/shell/atoms.js';
+import { state, schedule, setActiveId } from '../state.js';
 import { fetchClusters } from '../api.js';
 
 const h = webjsx.createElement;
@@ -62,6 +64,11 @@ export function ClustersPanel({ railed = false } = {}) {
             : Alert({ kind: 'info', children: 'No related-looking groups right now.' });
     }
     if (railed) return body;
-    const back = Btn({ variant: 'ghost', children: 'Back to cases', onClick: closePanel });
-    return Panel({ title: 'Related reports', children: [back, body] });
+    // Body only, like every other registered panel. This module used to add its
+    // own 'Back to cases' button and its own 'Related reports' title on top of
+    // the ones app-view.js's PanelSwap head already renders, so the page
+    // carried two back controls that disagreed about where back was -- the head
+    // correctly said "Back to the map" from the map home view while this one
+    // said "Back to cases" directly under it -- and two headings.
+    return Panel({ children: [body] });
 }
