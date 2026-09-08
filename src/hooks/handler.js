@@ -15,6 +15,8 @@ import { fmtTimeSAST } from '../format.js'
 // observation event body written literally at thirty points, and a
 // read-then-tag-then-notify-once sequence copy-pasted four times.
 import { observation, flagNeedsHuman } from './case-writes.js'
+import { makeAdmissionControl } from './admission.js'
+import { applyServiceControls } from './service-controls.js'
 import { tagList } from '../timestamp.js'
 import { reporterTierExcludedToolNames } from '../case-tools.js'
 import { caseSystemPrompt } from './prompt.js'
@@ -23,12 +25,10 @@ import {
   sanitizeOutboundRef,
   CASE_REF_RE,
   stripChannelMarkup,
-  detectContactIntent,
   mergeTag,
   dropTag,
   canAgentAct,
   stripThinkingBlock,
-  OPTED_OUT_TAG,
 } from './heuristics.js'
 import { judgeReply } from './reply-judge.js'
 import { transcribeAudio, describePhoto, synthesizeVoice } from './media.js'
@@ -137,67 +137,15 @@ function resolveAdapter(receiver, platform) {
 // Missing methods on a given channel degrade to a no-op, never a thrown error
 // (typing is a UX affordance, never load-bearing).
 export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoRespond = true, log = console, notifyHandoff = null } = {}) {
-  // Per-contact in-flight guard: if a prior agent turn is still running for this
-  // contact, we drop the new message rather than race two concurrent LLM calls
-  // against the same case. The contact's inbound is still recorded (above), so
-  // nothing is lost -- the next turn will pick up the full conversation including
-  // this message. The guard is keyed on external_id (the canonical contact key).
-  const inFlight = new Set()
-  // A message that arrives while a prior turn is still in flight for the same
-  // contact is recorded (inbound event, above the guard) but was previously
-  // dropped from ever reaching a future prompt -- a fast burst ("the cow" /
-  // "by the dam" / "not eating") lost every message but the first the guard let
-  // through. Buffer the raw msg per contact; once the in-flight turn's finally
-  // block clears the guard, replay ONE more handleInbound call for any buffered
-  // text, oldest-first, same shape as the existing LLM-down queue drain.
-  const pendingBuffer = new Map()   // external_id -> msg[] (raw, unprocessed)
-  // Per-contact rate limit: inFlight only blocks a SIMULTANEOUS second message
-  // while a turn is running -- it does nothing to bound SEQUENTIAL message rate
-  // over time, so one contact could otherwise drive unbounded LLM spend and
-  // store writes. A sliding window of recent turn-start timestamps per contact;
-  // over the cap, the message is dropped (no reply, no LLM turn) and logged/recorded
-  // but skips the LLM turn entirely.
-  const rateWindows = new Map()   // external_id -> number[] (recent turn-start ms)
-  const RATE_LIMIT_MSGS = Number(process.env.CASEY_RATE_LIMIT_MSGS) || 10
-  const RATE_LIMIT_WINDOW_MS = Number(process.env.CASEY_RATE_LIMIT_WINDOW_MS) || 60_000
-  function rateLimited(id, now = Date.now()) {
-    sweepRateWindows(now)
-    const hits = (rateWindows.get(id) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS)
-    hits.push(now)
-    rateWindows.set(id, hits)
-    return hits.length > RATE_LIMIT_MSGS
-  }
-  // rateWindows never removes a key on its own (a contact that goes quiet after
-  // its window empties out still leaves an entry), so a long-running process
-  // with many one-time senders grows the Map unboundedly. A periodic sweep
-  // (piggybacked on the natural rate-check cadence, not its own timer) evicts
-  // any contact with no hits inside the current window.
-  const RATE_SWEEP_INTERVAL_MS = 10 * 60_000
-  let lastRateSweep = 0
-  function sweepRateWindows(now = Date.now()) {
-    if (now - lastRateSweep < RATE_SWEEP_INTERVAL_MS) return
-    lastRateSweep = now
-    for (const [id, hits] of rateWindows) {
-      if (!hits.some(t => now - t < RATE_LIMIT_WINDOW_MS)) rateWindows.delete(id)
-    }
-  }
-  // GLOBAL rate limit: the per-contact window above bounds each external_id
-  // independently, so many DISTINCT senders (a distributed source, or simply
-  // many legitimate contacts at once) have no aggregate ceiling -- each gets
-  // its own fresh RATE_LIMIT_MSGS/WINDOW allowance, so total case creation and
-  // LLM spend across all contacts is unbounded. A second sliding window, same
-  // shape, keyed by a fixed sentinel instead of external_id, caps AGGREGATE
-  // volume regardless of how many distinct ids are sending.
-  const globalRateWindow = []   // number[] (recent turn-start ms, all contacts)
-  const GLOBAL_RATE_LIMIT_MSGS = Number(process.env.CASEY_GLOBAL_RATE_LIMIT_MSGS) || 200
-  const GLOBAL_RATE_LIMIT_WINDOW_MS = Number(process.env.CASEY_GLOBAL_RATE_LIMIT_WINDOW_MS) || 60_000
-  function globallyRateLimited(now = Date.now()) {
-    let i = 0
-    while (i < globalRateWindow.length && now - globalRateWindow[i] >= GLOBAL_RATE_LIMIT_WINDOW_MS) i++
-    if (i) globalRateWindow.splice(0, i)
-    globalRateWindow.push(now)
-    return globalRateWindow.length > GLOBAL_RATE_LIMIT_MSGS
-  }
+  // Admission: the in-flight claim, the burst buffer, and the two rate windows.
+  // These four pieces of state share nothing with the rest of this handler
+  // except being consulted before a turn starts, and they are the only state
+  // here whose correctness is about time and concurrency rather than about a
+  // case -- so they live together in hooks/admission.js with the three
+  // AGENTS.md guarantees they own (a burst is buffered not dropped, an
+  // over-cap message is dropped silently, and the claim is taken with no
+  // await between the has() and the add()).
+  const admission = makeAdmissionControl({ log })
   // Claims inFlight SYNCHRONOUSLY, before handleInboundOnceClaimed's first
   // await (rateLimited/findOrCreateCase/recordInbound), not after --
   // Set.has+Set.add with no await between them is an atomic critical section
@@ -218,25 +166,18 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const external_id = conversationKey(msg)   // per-contact case IDENTITY
     const replyTo = replyTarget(msg)           // channel/chat DELIVERY target
     if (!msg.burstReplay) {
-      if (inFlight.has(external_id)) {
+      if (admission.isClaimed(external_id)) {
         log.info?.('[casey] skipping concurrent LLM turn, buffered for replay', { channel })
         msg.burstReplay = true
-        const BUFFER_CAP = 20
-        const buf = pendingBuffer.get(external_id) || []
-        buf.push(msg)
-        if (buf.length > BUFFER_CAP) {
-          buf.shift()
-          log.warn?.('[casey] burst buffer cap exceeded, oldest message dropped', { channel, cap: BUFFER_CAP })
-        }
-        pendingBuffer.set(external_id, buf)
+        admission.bufferBurst(external_id, msg, channel)
         return { to: replyTo, text: '', platform, skipped: true, buffered: true }
       }
-      inFlight.add(external_id)
+      admission.claim(external_id)
     }
     try {
       return await handleInboundOnceClaimed.call(this, platform, msg, channel, external_id, replyTo)
     } finally {
-      if (!msg.burstReplay) inFlight.delete(external_id)
+      if (!msg.burstReplay) admission.release(external_id)
     }
   }
   async function handleInboundOnceClaimed(platform, msg, channel, external_id, replyTo) {
@@ -250,11 +191,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // message (only the FIRST arrival, before it was buffered, consumed a
     // window slot) -- double-counting a burst against its own buffer defeats
     // the "buffered, never dropped" guarantee the buffer exists to provide.
-    if (!msg.burstReplay && rateLimited(external_id)) {
+    if (!msg.burstReplay && admission.rateLimited(external_id)) {
       log.error?.('[casey] rate limit: skipping turn, no store write, no reply sent', { channel })
       return { to: replyTo, text: '', platform, rateLimited: true }
     }
-    if (globallyRateLimited()) {
+    if (admission.globallyRateLimited()) {
       log.error?.('[casey] global rate limit: skipping turn, no store write, no reply sent', { channel })
       return { to: replyTo, text: '', platform, rateLimited: true }
     }
@@ -476,142 +417,19 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // STOP (opt-out) and HUMAN (handoff) are legal/service controls that must fire
     // synchronously in any language even with the model down -- they are never
     // queued and never left to the agent's discretion, and they must fire
-    // REGARDLESS of autonomy mode: an observe-mode contact can still say STOP or
-    // ask for a person, and that request is irreversible/legal, not something an
-    // operator's autonomy choice can silently swallow. This check therefore runs
-    // BEFORE the observe-mode early-return below. Everything else (status, help,
-    // greeting, enquiry, report, extraction) is now the agent's job via the case
-    // tools in the runTurn loop further down. Empty/media messages return null
-    // here and fall through unchanged.
-    let optedOut = tagList(fresh).includes(OPTED_OUT_TAG)
-    const intent = detectContactIntent(inboundText)
-    // HELP-RESUME: an opted-out contact who sends "help" (any supported language)
-    // OPTS BACK IN -- the opted-out tag is cleared, the opt-back-in is recorded, and
-    // a short warm resume ack goes out. Subsequent messages reach the agent normally.
-    // Without this, a STOP was a permanent dead-end (nothing ever cleared the tag).
-    if (optedOut && intent === 'help') {
-      try { await store.updateCase(fresh.id, { tags: dropTag(fresh.tags, OPTED_OUT_TAG) }) }
-      catch (e) { log.warn?.('[casey] opt-back-in untag failed', { caseId: fresh.id, error: e.message }) }
-      optedOut = false
-      await store.appendEvent(fresh.id, observation('OPT-BACK-IN: contact asked for help after opting out; messages resumed.'))
-      // USER DIRECTIVE: no hardcoded language handling anywhere -- same fix as
-      // the STOP/HUMAN branch below. The state change above (untagging
-      // opted-out) is the real, unconditional control; the acknowledgement
-      // TEXT no longer comes from guessLang+intentReply's canned strings.
-      // With the LLM down, log loud and send nothing (matches the queue-gate
-      // pattern) rather than a hardcoded-language fallback; otherwise fall
-      // through to the normal agent turn to compose a real, language-
-      // mirrored resume acknowledgement.
-      let helpDown = false
-      if (typeof llmStatus === 'function') {
-        try { const st = await llmStatus(); helpDown = st && st.ok === false } catch { helpDown = false }
-      }
-      if (helpDown) {
-        log.error?.('[casey] LLM backend down; opt-back-in state recorded but no reply composed (no hardcoded-language fallback)', { caseId: fresh.id })
-        await store.appendEvent(fresh.id, observation('RESUME-ACK-DEGRADED: LLM unreachable; opt-back-in was applied, but no acknowledgement reply could be composed.', { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
-        return { to: replyTo, text: '', platform, caseId: fresh.id, intent: 'resume', degraded: true }
-      }
-      // Fall through to the normal agent turn below -- it composes the real
-      // resume acknowledgement, in the person's own language, from the
-      // OPT-BACK-IN observation already on the case timeline.
-    }
-    // Respect a prior opt-out: once someone said STOP, do not auto-reply again
-    // unless they explicitly ask for help (handled above) or a human.
-    if (optedOut && intent !== 'human') {
-      await store.appendEvent(fresh.id, observation('contact previously opted out; no auto-reply'))
-      return { to: replyTo, text: '', platform, caseId: fresh.id, optedOut: true }
-    }
-    if (intent === 'stop' || intent === 'human') {
-      if (intent === 'human') {
-        // detectContactIntent returns 'human' for EVERY message with a human
-        // keyword, so the notify must fire only on the FIRST handoff for this
-        // case -- otherwise a contact repeating "person?" re-pings every time.
-        // mergeTag is idempotent; the notify is not.
-        // STATE-CHANGING WRITE FIRST, independently guarded: this used to run
-        // AFTER an unguarded appendEvent (the audit-trail note two lines
-        // below), so a transient thatcher/lock error on that leading append
-        // threw before this write ever ran, silently losing the needs-human
-        // flag with no record the handoff was ever requested -- an
-        // irreversible-control tag must be structurally guaranteed to persist
-        // independent of whether its own audit-trail note happens to land.
-        // Flag needs-human as an OBSERVABLE signal; do NOT auto-raise priority.
-        // casey amplifies the organisers' intent, it does not impose escalation
-        // -- the operator decides urgency. The tag surfaces the request in the
-        // triage inbox; priority stays where the people set it. The notify-once
-        // read happens before the tag write inside flagNeedsHuman, which is the
-        // whole reason that sequence is one function and not four copies.
-        await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, flagLabel: 'handoff', notifyLabel: 'handoff' })
-        try { await store.appendEvent(fresh.id, observation('HANDOFF REQUESTED: contact asked for a human. Needs an operator.')) }
-        catch (e) { log.warn?.('[casey] handoff audit event failed', { caseId: fresh.id, error: e.message }) }
-      } else if (intent === 'stop') {
-        // Same ordering fix as the human branch above: the state-changing
-        // opt-out tag write must never be gated behind its own audit-trail
-        // append succeeding first -- STOP is a legal opt-out control and must
-        // be structurally guaranteed to persist even if the append throws.
-        try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, OPTED_OUT_TAG) }) }
-        catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: fresh.id, error: e.message }) }
-        try { await store.appendEvent(fresh.id, observation('OPT-OUT: contact asked to stop messaging.')) }
-        catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: fresh.id, error: e.message }) }
-        // A stop can arrive packed with real report content ("...please stop
-        // messaging me") -- the agent never sees it (opt-out means no further
-        // engagement, correctly), so any facts in the same message would
-        // otherwise rest silently in the append-only inbound event with nothing
-        // making them actionable. A distinct, worst-first-visible observation
-        // gives a human the chance to read and act on it manually.
-        const substantive = String(inboundText || '').trim().length >= 20
-        if (substantive) {
-          await store.appendEvent(fresh.id, observation(
-            `STOP-WITH-CONTENT: the opt-out message also carried possible report content -- review manually: ${truncate(inboundText, 300)}`,
-            { guardrail: 'stop_with_content' },
-          ))
-          try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-human') }) }
-          catch (e) { log.warn?.('[casey] stop-with-content flag failed', { caseId: fresh.id, error: e.message }) }
-        }
-      }
-      // USER DIRECTIVE: no hardcoded language handling anywhere -- the LLM is the
-      // only thing that provides language interpretation and response. The
-      // STOP/HUMAN state change above (opt-out tag, needs-human flag, audit
-      // trail, handoff notify) is a real legal/safety control and MUST persist
-      // regardless of LLM health -- that part stays fully deterministic and
-      // unconditional. But the REPLY TEXT used to be composed via guessLang's
-      // hardcoded per-language word-cue tables + intentReply's canned per-
-      // language strings specifically so it could "still work" with the LLM
-      // down. That is exactly the silent-fallback shape the no-mocks/no-
-      // fallbacks invariant already forbids everywhere else in this file (the
-      // LLM-down queue gate below sends nothing and logs loud, never a scripted
-      // apology) -- this branch was the one deterministic-language exception
-      // to that rule, kept for a stated reason (a legal control must not
-      // depend on ONE thing succeeding) that turned out not to require a
-      // canned-text fallback at all: the STATE CHANGE (the actual legal
-      // action) already does not depend on the LLM, so the LLM-composed reply
-      // can now fail loudly exactly like every other turn instead of getting
-      // a silent deterministic substitute.
-      let down = false
-      if (typeof llmStatus === 'function') {
-        try { const st = await llmStatus(); down = st && st.ok === false } catch { down = false }
-      }
-      if (down) {
-        log.error?.('[casey] LLM backend down; opt-out/handoff state recorded but no reply composed (no hardcoded-language fallback)', { caseId: fresh.id, intent })
-        await store.appendEvent(fresh.id, observation(`${intent.toUpperCase()}-ACK-DEGRADED: LLM unreachable; the ${intent} control itself was applied, but no acknowledgement reply could be composed.`, { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
-        return { to: replyTo, text: '', platform, caseId: fresh.id, intent, degraded: true }
-      }
-      // Reply target is external_id (the conversation key), NOT msg.from. On
-      // Discord, freddie's adapter POSTs to /channels/{to}/messages, so `to` must
-      // be the channel id (conversationKey), not the author id -- sending to the
-      // author id silently fails (Discord 404, swallowed by .then(json)) and the
-      // contact never sees a reply. external_id is correct for WhatsApp too, where
-      // conversationKey falls back to msg.from (the phone number).
-      //
-      // The acknowledgement text itself is now composed by the SAME real-LLM
-      // turn path every other reply uses (runTurn further below), never a
-      // canned per-language string -- see the deferred-to-agent note this
-      // replaces. STOP/HUMAN's own state change already happened above,
-      // unconditionally; falling through here lets the normal agent turn
-      // compose a warm, correctly-mirrored-language acknowledgement instead
-      // of a hardcoded one, while the irreversible control itself already
-      // took effect regardless of what the agent turn produces or whether it
-      // even completes.
-    }
+    // REGARDLESS of autonomy mode, so this runs BEFORE the observe-mode gate
+    // below. Everything else (status, help, greeting, enquiry, report,
+    // extraction) is the agent's job via the case tools in the runTurn loop.
+    //
+    // The control's own state change is unconditional and happens inside; a
+    // non-null return means the turn is finished here, and null falls through
+    // so the ordinary agent turn composes the acknowledgement in the contact's
+    // own language rather than from a hardcoded per-language string.
+    const controlled = await applyServiceControls({
+      store, log, llmStatus, notifyHandoff,
+      caseRow: fresh, inboundText, channel, msg, replyTo, platform,
+    })
+    if (controlled) return controlled
 
     // observe-mode: the agent does not act or reply automatically; a human
     // drives the case. We still recorded the inbound above, and STOP/HUMAN (the
@@ -1407,11 +1225,8 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       try { adapter?.stopTyping?.(replyTarget(msg)) } catch { /* best-effort */ }
     }
     const external_id = conversationKey(msg)
-    const buf = pendingBuffer.get(external_id)
-    if (buf && buf.length && !inFlight.has(external_id)) {
-      const next = buf.shift()
-      if (!buf.length) pendingBuffer.delete(external_id)
-      else pendingBuffer.set(external_id, buf)
+    const next = admission.takeBuffered(external_id)
+    if (next) {
       // Fire-and-forget: the replay is a full turn in its own right (it will
       // append its own events/outbound), not something the original caller
       // should block on -- mirrors how drainQueuedTurns re-drives independently.
