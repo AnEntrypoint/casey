@@ -165,6 +165,35 @@ try {
     }).map(e => e.tagName.toLowerCase() + '.' + String(e.className||'').split(' ')[0]));
   })()`))
   check(bad.length === 0, 'every visible control has an accessible name', bad.length ? bad.join(', ') : 'none unlabelled')
+
+  // WCAG AA text contrast. Caught a real 3.27:1 failure on the alert count,
+  // because casey coloured it with --danger (the brand red kept for FILLS)
+  // rather than the --danger-ink companion the kit already expected but no
+  // theme defined. On a surveillance dashboard the alert count is precisely the
+  // text that must be readable outdoors on a phone.
+  const lowContrast = JSON.parse(await evalJs(`(() => {
+    const lum = (c) => { const [r,g,b] = c.map(v => { v/=255; return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4) }); return 0.2126*r + 0.7152*g + 0.0722*b };
+    const parse = (s) => { const m = s.match(/rgba?\\(([^)]+)\\)/); if (!m) return null; const p = m[1].split(',').map(Number); return { rgb: p.slice(0,3), a: p.length > 3 ? p[3] : 1 } };
+    const bgOf = (el) => { let e = el; while (e && e !== document.documentElement) { const c = parse(getComputedStyle(e).backgroundColor); if (c && c.a > 0.5) return c.rgb; e = e.parentElement } return [255,255,255] };
+    const ratio = (a,b) => { const l1 = lum(a), l2 = lum(b), hi = Math.max(l1,l2), lo = Math.min(l1,l2); return (hi+0.05)/(lo+0.05) };
+    const out = [];
+    for (const el of document.querySelectorAll('*')) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      const cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.opacity === '0') continue;
+      const txt = [...el.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent.trim()).join(' ').trim();
+      if (!txt) continue;
+      const fg = parse(cs.color);
+      if (!fg || fg.a <= 0.5) continue;
+      const size = parseFloat(cs.fontSize), weight = Number(cs.fontWeight) || 400;
+      const need = (size >= 24 || (size >= 18.66 && weight >= 700)) ? 3 : 4.5;
+      const cr = ratio(fg.rgb, bgOf(el));
+      if (cr < need) out.push(Math.round(cr*100)/100 + ':1 (need ' + need + ') "' + txt.slice(0,30) + '"');
+    }
+    return JSON.stringify(out);
+  })()`))
+  check(lowContrast.length === 0, 'all text meets WCAG AA contrast', lowContrast.length ? lowContrast[0] : 'no failures')
   check(consoleMsgs.length === 0, 'browser console clean', consoleMsgs.length ? consoleMsgs[0] : 'no errors or warnings')
   check(failedReqs.length === 0, 'no failed requests', failedReqs.length ? [...new Set(failedReqs)][0] : 'none')
 } catch (e) {

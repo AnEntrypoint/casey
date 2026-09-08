@@ -628,7 +628,8 @@ body { background: var(--bg); color: var(--fg); }
 .ds-login-gate { position: fixed; inset: 0; background: var(--bg); z-index: var(--z-modal, 1000); display: flex; align-items: center; justify-content: center; padding: var(--space-4); }
 .ds-login-form { display: flex; flex-direction: column; gap: var(--space-2); background: var(--panel, var(--bg-2)); border: 1px solid var(--border); border-radius: var(--r-lg, var(--r-2)); padding: var(--space-7, var(--space-6)) var(--space-6); max-width: 340px; width: 100%; box-shadow: var(--shadow-lg, none); }
 .ds-login-brand { margin: 0 0 var(--space-5); font-size: var(--fs-xl, var(--fs-lg)); }
-.ds-login-error { color: var(--danger); font-size: var(--fs-sm); margin-bottom: var(--space-3); }
+/* Error text on the login gate is TYPE, so it takes the ink companion too. */
+.ds-login-error { color: var(--danger-ink, var(--danger)); font-size: var(--fs-sm); margin-bottom: var(--space-3); }
 
 /* ---- table cell overflow guard -------------------------------------------
    The SDK's own table CSS has no overflow-wrap/word-break fallback on td
@@ -658,7 +659,12 @@ body { background: var(--bg); color: var(--fg); }
 /* The alerts trigger is now the SDK's own .ds-dropdown-trigger (styled above)
    carrying an icon plus the word -- the .ds-notif-trigger wrapper and its
    positioned danger Badge are gone with the icon-only bell. */
-.ds-notif-count.is-active { color: var(--danger, var(--warn)); font-weight: 600; }
+/* --danger-ink, not --danger: --danger is the brand red kept for FILLS and it
+   measured 3.27:1 here against the pill's tinted ground -- a WCAG AA failure on
+   the alert count, which is the one number on this screen that has to be
+   noticed. The old `var(--danger, var(--warn))` fallback never fired because
+   --danger is always defined; this one does. */
+.ds-notif-count.is-active { color: var(--danger-ink, var(--danger)); font-weight: 600; }
 
 /* ---- related-reports cluster row / case-id pill grid --------------------- */
 .ds-cluster-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--border-soft, var(--border)); }
