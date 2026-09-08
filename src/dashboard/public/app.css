@@ -1102,7 +1102,7 @@ body { background: var(--bg); color: var(--fg); }
      the account and alerts dropdowns are safe (they portal to body anyway) and
      the health pill's own absolutely-positioned detail, which does not, still
      hangs below the bar rather than being cut off at its edge. */
-  padding-bottom: 1px;
+  padding-bottom: var(--space-hair);
 }
 .ds-247420 .ds-appbar::-webkit-scrollbar { height: 6px; }
 .ds-247420 .ds-appbar::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--r-pill); }
