@@ -212,6 +212,13 @@ export async function deleteAccount(store, id) {
     const otherEnabledAdmins = accounts.some(a => a.id !== id && a.role === 'admin' && a.disabled !== '1')
     if (!otherEnabledAdmins) throw new Error('cannot delete the last enabled admin account')
   }
+  // Revoke outstanding sessions BEFORE removing the row. The session middleware
+  // now also refuses a status='deleted' account, so this is the second of two
+  // independent gates rather than the only one -- but it is the one that does
+  // not depend on the deleted row remaining readable, and bumping the epoch is
+  // what makes any token issued for this account fail its epoch comparison.
+  // Best-effort: a revocation failure must not leave the account undeleted.
+  try { await revokeAccountSessions(store, id) } catch { /* the status gate still applies */ }
   return store.t.delete('operator_account', id)
 }
 
