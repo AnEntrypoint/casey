@@ -9,6 +9,7 @@ import { hostTimezone, hostIsSAST, SAST_TZ } from '../src/format.js'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { ROOT, bold, dim, green, red, cyan, ok, bad, warn, pkgVersion, hasCreds, partialCreds, portFree } from './casey-cli-ui.js'
+import { checkConfigDrift } from './casey-config-drift.js'
 
 const ENV_TEMPLATE = `# casey environment -- fill in the channels you want, leave the rest blank.
 # Discord:
@@ -188,6 +189,13 @@ export async function cmdDoctor({ flags }) {
       problems++
     }
   }
+  // Config drift: CASEY_CONFIG_DIR wholesale-REPLACES casey's base config
+  // (src/config-loader.js resolves exactly one dir, no layering), so a
+  // deployment's three config files are whole-file forks that nothing keeps in
+  // step with casey's own. This row compares their SHAPE against casey's base
+  // and names any key the deployment has fallen behind on. See
+  // bin/casey-config-drift.js for why each file is compared the way it is.
+  problems += checkConfigDrift()
   // dashboard auth -- per-operator login (dashboard/auth.js) gates every route
   // regardless of any env var; there is no bearer-token bypass any more.
   console.log(ok('dashboard requires per-operator login (no bearer-token bypass)'))

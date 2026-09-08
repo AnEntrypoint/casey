@@ -17,6 +17,8 @@
 // the point: the algorithm's real inputs were four collaborators, and reading
 // it no longer means knowing what else lives on Casey.
 import { tagList, tsMs } from './timestamp.js'
+import { mergeTag } from './hooks/heuristics.js'
+import { splitExternalId } from './hooks/handler.js'
 
 export async function resumePendingTurnsBody({ store, log, gateway, adapters, handle }, { maxCases, maxRedrives, spacingMs }) {
   let scanned = 0, resumed = 0
