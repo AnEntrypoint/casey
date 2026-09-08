@@ -68,8 +68,16 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
             if (!r.ok) { toast(await failMsg(r, 'send failed'), 'err'); schedule(); return; }
             const j = await r.json().catch(() => ({}));
             state._replyDraft = '';
+            // Three genuinely different outcomes, and only one of them is
+            // "the person has your message". The response says which: `sent`
+            // is whether this process HAS a channel to send on at all (a
+            // `casey dashboard` console is started without one), `delivered`
+            // is whether the send actually landed. Neither of the two failures
+            // is an 'ok' toast -- the reply is on the timeline either way, so
+            // an operator who is not told will believe it arrived.
             if (j.delivered) replyUndoToast(c.id, () => onReload && onReload(c.id));
-            else toast(j.sent ? 'reply sent but it did not reach the contact - check the timeline' : 'reply logged (channel not connected)', 'ok');
+            else if (j.sent) toast('Saved to the timeline, but the channel refused it. The contact has NOT received this. Check the timeline.', 'warn');
+            else toast('Saved to the timeline only. This console is not attached to the messaging channels, so nothing was sent to the contact.', 'warn');
             if (onReload) await onReload(c.id);
         } catch (e) { state._replySending = false; toast('send error: ' + e.message, 'err'); schedule(); }
     };
@@ -79,13 +87,16 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
 
     const draftBanner = draftPending
         ? Alert({
-            kind: 'warn', title: 'AI drafted a reply -- review before it sends.',
+            kind: 'warn', title: 'The AI helper drafted a reply. Review it before it sends.',
             children: h('div', { class: 'casey-draft-actions' },
                 Btn({ size: 'sm', variant: 'primary', children: 'Approve & send', onClick: async () => {
                     const t = text.trim();
                     try {
                         const j = await postDraftApprove(c.id, t);
-                        toast(j.delivered ? 'draft sent' : 'draft logged (channel not connected)', 'ok');
+                        if (j.delivered) toast('Draft sent', 'ok');
+                        else toast(j.sent
+                            ? 'Saved to the timeline, but the channel refused it. The contact has NOT received this.'
+                            : 'Saved to the timeline only. This console is not attached to the messaging channels, so nothing was sent to the contact.', 'warn');
                         if (onReload) await onReload(c.id);
                     } catch (e) { toast(await failMsg(e, 'approve failed'), 'err'); }
                 } }),

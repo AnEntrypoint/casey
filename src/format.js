@@ -6,16 +6,13 @@
 // Display only -- the raw stored value (event created_at, case external_id)
 // stays the key.
 //
-// That parity claim was false for as long as it was written here. This file
-// called toLocaleString with no format options and inherited the en-ZA
-// default, while the SPA passed explicit ones, so the same stored value
-// rendered "2026/07/02, 09:29:48 SAST" in the CLI and a management-report CSV
-// but "02 Jul 2026, 09:29 SAST" in the dashboard -- different date order,
-// different month form, and seconds on one side only. The options below are
-// the SPA's, verbatim, which is the direction that makes the sentence true:
-// an operator reading a case aloud off the terminal and one reading it off
-// the dashboard now say the same words, and 2026/07/02 stops being orderable
-// two ways by a reader who does not know which convention it is in.
+// Pass explicit format options, never toLocaleString's bare locale default:
+// the en-ZA default renders "2026/07/02, 09:29:48 SAST" where the SPA renders
+// "02 Jul 2026, 09:29 SAST" -- a different date order, a different month form,
+// and seconds on one side only. The option bag below is the SPA's, verbatim,
+// so an operator reading a case aloud off the terminal and one reading it off
+// the dashboard say the same words, and no numeric date order is left
+// orderable two ways by a reader who does not know which convention it is in.
 
 // The timezone casey shows absolute times in. Defaults to SAST (UTC+2, no
 // DST) -- casey's shipped design is a South African deployment -- but is
@@ -27,12 +24,12 @@
 export const SAST_TZ = process.env.CASEY_TZ || 'Africa/Johannesburg'
 const TZ_LABEL = process.env.CASEY_TZ_LABEL || (process.env.CASEY_TZ ? '' : 'SAST')
 
-// A case is "open" when it is neither resolved nor closed. Several dashboard
-// endpoints (clusters, geo, map) previously filtered on status!=='closed' alone,
-// which counts a resolved case as still-open -- a resolved outbreak kept
-// showing as an active cluster/hotspot pin on the map long after report.js's
-// own "open" totals (which exclude resolved too) stopped counting it. Single
-// source of truth so every open/active view agrees.
+// A case is "open" when it is neither resolved nor closed. Single source of
+// truth so every open/active view agrees: a dashboard endpoint (clusters, geo,
+// map) that filters on status!=='closed' alone counts a resolved case as
+// still-open, and a resolved outbreak then keeps showing as an active
+// cluster/hotspot pin on the map long after report.js's own "open" totals
+// (which exclude resolved too) have stopped counting it.
 export function isOpenCase(c) {
   return c && c.status !== 'resolved' && c.status !== 'closed'
 }

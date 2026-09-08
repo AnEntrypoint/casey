@@ -1,25 +1,23 @@
 // hooks/turn-results.js -- pure readers over ONE runTurn() result.
 //
 // Everything here answers "what did this attempt actually DO?" by reading the
-// real tool-call results freddie returned, never by classifying text. They were
-// three separate blocks nested inside makeCaseHandler's turn body, where two of
-// them carried a byte-identical copy of the same tool-name lookup and the third
-// was an anonymous braced block. Lifted out because they close over nothing:
-// each one is a function of `result` alone, so keeping them inside a
-// per-inbound closure re-created them on every single message and hid the
-// duplication.
+// real tool-call results freddie returned, never by classifying text. Each is a
+// function of `result` alone and closes over nothing.
 //
-// Shared premise for all of them: freddie's tool-role messages carry
-// `tool_call_id` but never a `name` (machine.js only ever sets
-// {tool_call_id, content}), so the tool's NAME lives on the preceding assistant
-// message's tool_calls[].name. Any parse failure or non-matching content counts
-// as "no, it did not happen" -- never a false positive.
+// Shared premise for all of them: a tool-role message carries `tool_call_id`
+// but never a `name` -- agent/run-turn.js's summarizeSince() builds them as
+// {role:'tool', tool_call_id, content} -- so the tool's NAME lives on the
+// preceding assistant message's tool_calls[].name. In mutatingActions and
+// hadSuccessfulWrite any parse failure or non-matching content counts as "no,
+// it did not happen", never a false positive; toolCaseRefs is deliberately the
+// opposite (see its own note).
 
 import { CASE_REF_RE } from './heuristics.js'
 
 // Mutating tools whose success is worth telling a RETRY attempt about, so it
-// does not blindly repeat the call (a retry is a fresh runTurn and cannot see
-// the prior attempt's tool results -- live-witnessed re-opening the same case).
+// does not blindly repeat the call: a retry is a fresh runTurn and cannot see
+// the prior attempt's tool results, so without this note it re-opens the case
+// it already opened.
 const MUTATING_TOOLS = new Set(['case_new', 'case_report', 'case_update', 'case_transition', 'case_switch'])
 // The narrower set that counts as "a report field was actually WRITTEN this
 // turn" -- ground truth for reply-judge.js's FALSE CONFIRMATION shape (the

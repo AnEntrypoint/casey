@@ -13,15 +13,15 @@
 // drives this (casey.js) owns the interval and clears it on stop.
 
 import { classifyCaseHealth, healthTag, ALL_HEALTH_TAGS, DEFAULT_THRESHOLDS } from './case-health.js'
-// tsMs moved to timestamp.js (one shared implementation, was independently
-// duplicated here/attn.js/case-health.js).
+// tsMs/tagList are timestamp.js's single shared implementation; do not add a
+// local copy here.
 import { tsMs, tagList } from './timestamp.js'
 
 const HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
 // caseId -> last-attempted-ms, for breaches whose updateCaseQuiet write keeps
 // failing (a persistently locked/broken row). Without this, the observation +
-// notifyBreach page above re-fires every sweep interval indefinitely while the
+// notifyBreach page re-fires every sweep interval indefinitely while the
 // write never succeeds (currentHealth is only ever updated on a SUCCESSFUL
 // write, so "added" never shrinks) -- an unbounded duplicate/page storm rather
 // than the intended "at worst one visible duplicate on retry". Gate re-attempts
@@ -82,13 +82,11 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
   // thresholds.js mergeThresholds), ride straight through -- classifyCaseHealth
   // reads them off effThresholds with its own literal fallback, same pattern as
   // openStatuses above.
-  // Only open cases can be unhealthy; a closed case is finished. Filtered
-  // server-side to the open-stage set (same pattern findOpenCase already uses,
-  // case-store.js) rather than fetching every historical case and discarding
-  // closed/system rows in JS -- an unfiltered fetch grows with TOTAL case
-  // count forever (cases are append-only, never deleted), not open-case count,
-  // so every 15-minute sweep pass was doing strictly more work than it needed
-  // to as the table grew. The in-loop skip below stays as defense-in-depth:
+  // Only open cases can be unhealthy; a closed case is finished. Filter
+  // server-side to the open-stage set rather than fetching every historical
+  // case and discarding closed/system rows in JS -- an unfiltered fetch grows
+  // with TOTAL case count forever (cases are append-only, never deleted), not
+  // open-case count. The in-loop skip below stays as defense-in-depth:
   // the system pseudo-cases may still carry an "open" status value and must
   // still be excluded.
   const sweepOpenStatuses = typeof store.getOpenStatuses === 'function' ? store.getOpenStatuses() : null
@@ -117,13 +115,12 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
     catch (e) {
       log?.warn?.('[sweep] classify failed', { caseId: c.id, error: e.message })
       summary.errors.push({ caseId: c.id, error: e.message, phase: 'classify' })
-      // The abort check below (post-classify) never runs for a classify-phase
-      // failure -- this `continue` skips straight past it back to the loop
-      // head every time, so a systemic classify bug (e.g. malformed rows
-      // across thousands of cases) never tripped the documented safety halt.
-      // Duplicated here so BOTH failure paths (classify and the existing
-      // post-classify check, which still covers reconcile-phase failures)
-      // are actually guarded.
+      // The post-classify abort check below is unreachable from here -- this
+      // `continue` skips straight past it back to the loop head every time --
+      // so the safety halt is duplicated on this path. Without the duplicate a
+      // systemic classify failure (e.g. malformed rows across thousands of
+      // cases) never trips the halt at all. Keep BOTH copies guarded: this one
+      // covers classify, the one below covers reconcile.
       if (summary.errors.length > 100) {
         log?.error?.('[sweep] aborted', { error_count: summary.errors.length, reason: 'too many errors, sweep halted for safety' })
         summary.errors.push({ phase: 'aborted', reason: 'too many errors, sweep halted for safety' })
@@ -161,7 +158,7 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
       // write succeeded but the observation failed, the next pass would see the
       // tag already present and never append -- a silently missing observation.
       // Doing the event first means a partial failure costs at worst a visible
-      // duplicate observation on retry, never a silent loss (P9).
+      // duplicate observation on retry, never a silent loss.
       for (const b of breaches) {
         if (added.includes(healthTag(b.breach))) {
           await store.appendEvent(c.id, {

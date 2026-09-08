@@ -32,7 +32,7 @@ export function Transitions({ c, transitions, onReload, key } = {}) {
     };
 
     return h('div', { key, class: 'casey-transitions' },
-        h('label', {}, state.simpleMode ? 'Change the stage' : 'Override workflow stage'),
+        h('label', {}, 'Change the stage'),
         transitions && transitions.length
             ? h('div', { class: 'casey-transition-btns' }, ...transitions.map(t => Btn({
                 key: t, size: 'sm', variant: 'ghost', children: '-> ' + stageLabel(t), title: t,

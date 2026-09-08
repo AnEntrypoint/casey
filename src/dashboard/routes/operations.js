@@ -23,7 +23,21 @@ const SWEEP_DEFAULT_INTERVAL_MS = 15 * 60 * 1000
 const LLM_HEALTH_VIEWS = {
   acptoapi: { ok: true, label: 'AI helper: online', detail: 'Auto-replies are on. Contacts get an instant answer.' },
   none: { ok: false, label: 'AI helper: offline', detail: 'Auto-replies are paused. No message is sent; messages queue and re-drive once the provider recovers.' },
-  unknown: { ok: false, label: 'AI helper: unknown', detail: 'Cannot tell if the AI helper is connected.' },
+  // Two DIFFERENT facts used to share the word 'unknown', and an operator read
+  // both as a diagnosis of the helper:
+  //
+  //   unknown  -- an llmStatus IS wired and it answered with a source this
+  //               table does not recognise, or has not resolved one yet.
+  //   unwired  -- no llmStatus was passed to createDashboard at all, so this
+  //               process has no way to ask. `casey dashboard` (casey-serve.js
+  //               cmdDashboard) passes only {port}; `casey up` and worker.js
+  //               pass sendReply/llmStatus/runSweep/receiveStatus/
+  //               runtimeStatus/queueStatus. In dashboard-only mode the answer
+  //               is not "we do not know how it is", it is "this console
+  //               cannot see it from here", and saying so is the difference
+  //               between a fault and a mode.
+  unknown: { ok: false, label: 'AI helper: no answer yet', detail: 'The provider check has not come back, so whether auto-replies are working is not known yet. It usually resolves within a minute of start-up.' },
+  unwired: { ok: false, label: 'AI helper: not visible in dashboard-only mode', detail: 'This console was started with `casey dashboard`, which reads and edits the store but is not attached to the running agent, so it cannot see the AI helper at all. Auto-replies may well be running: check where `casey up` is running. Everything else on this screen is unaffected.' },
 }
 
 const RUNTIME_STATES = new Set(['booting', 'healthy', 'restarting', 'degraded', 'stopping', 'stopped', 'standalone'])
@@ -94,7 +108,12 @@ function alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus) {
 
 export function getHealth({ store, llmStatus, receiveStatus, queueStatus, getWebhookDeliveryStatus, alertWebhookUrl }) {
   return async (req, res) => {
-    const s = (await resolve(llmStatus)) || { source: 'unknown' }
+    // Whether this process was GIVEN a way to ask is a different fact from
+    // what the answer was, and only this side knows it -- see LLM_HEALTH_VIEWS
+    // above. `capabilities` publishes the same distinction as booleans so a
+    // client surface can be honest about a mode rather than about a fault.
+    const wired = llmStatus != null
+    const s = (wired ? await resolve(llmStatus) : null) || { source: wired ? 'unknown' : 'unwired' }
     const view = llmHealthView(s)
     // Bound the externally-supplied model/url so a misconfigured or hostile
     // llmStatus cannot return a multi-megabyte string into the operator's UI.
@@ -114,7 +133,14 @@ export function getHealth({ store, llmStatus, receiveStatus, queueStatus, getWeb
     try {
       degradationRate = await calculateDegradationRate(store, { hours: 1 })
     } catch { /* best-effort; never break health */ }
-    res.json({ ...view, source: s.source, model, url, degraded: !!s.degraded, last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null, gateway, queue, alert_webhook: alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus), degradation_rate: degradationRate })
+    res.json({
+      ...view, source: s.source, model, url, degraded: !!s.degraded,
+      last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null,
+      gateway, queue,
+      capabilities: { llm: wired, receive: receiveStatus != null, queue: queueStatus != null },
+      alert_webhook: alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus),
+      degradation_rate: degradationRate,
+    })
   }
 }
 
@@ -135,10 +161,14 @@ export function getHealth({ store, llmStatus, receiveStatus, queueStatus, getWeb
 export function getHealthProvider({ authed, llmStatus, queueStatus }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    // Same split as getHealth: 'unwired' means this process was never handed
+    // an llmStatus (dashboard-only mode), which is not the same as asking and
+    // getting no answer.
+    const wired = llmStatus != null
     let s = null
-    try { s = await resolve(llmStatus) } catch { s = null }
-    s = s || { source: 'unknown' }
-    const status = s.source === 'acptoapi' ? (s.degraded ? 'degraded' : 'up') : (s.source === 'none' ? 'down' : 'unknown')
+    if (wired) { try { s = await resolve(llmStatus) } catch { s = null } }
+    s = s || { source: wired ? 'unknown' : 'unwired' }
+    const status = s.source === 'acptoapi' ? (s.degraded ? 'degraded' : 'up') : (s.source === 'none' ? 'down' : (s.source === 'unwired' ? 'not_visible' : 'unknown'))
     let queued_turn_count = 0
     let dead_lettered_count = 0
     let queue_truncated = false

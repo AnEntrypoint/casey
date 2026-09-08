@@ -1,11 +1,7 @@
-// The OFFLINE state, Alert-based, driven by state.connLost.
-//
-// This used to say "Connection lost / Retrying..." and, on a device with a
-// warm service-worker cache, it never rendered at all: api.js concluded the
-// link was fine because the fetch RESOLVED, when what resolved was the
-// worker's own 503 offline envelope. So the one screen that had to say "you
-// are looking at old data" said nothing, and the SPA showed a login form
-// instead (see auth.js).
+// The OFFLINE state, Alert-based, driven by state.connLost. api.js owns that
+// flag: a fetch rejection, the service worker's own 503 offline envelope, and
+// the quiet-link watch all raise it, so a resolved fetch is never mistaken for
+// a reachable origin.
 //
 // It states three things, because on an intermittently connected rural link
 // an operator has to be able to act on all three without asking anyone:
@@ -28,11 +24,10 @@ const h = webjsx.createElement;
 // The kit's Alert(kind:'warn') tints only its icon and leaves the panel
 // background neutral in both themes (app.css says so where .ds-handoff-banner
 // overrides exactly this), which would leave "no signal" looking like an
-// ordinary grey note. The band around it is what makes this unmistakably not
-// the healthy state -- which renders no banner at all -- and not the login
-// gate, which is a centred form on a plain ground.
+// ordinary grey note. The tinted band is what makes this unmistakably not the
+// healthy state, which renders no banner at all. The band alone: no rule under
+// it, since a one-sided border is decoration the ground already does better.
 const BAND = 'background: var(--warn-bg, color-mix(in oklab, var(--warn, var(--amber)) 18%, var(--bg)));'
-  + ' border-bottom: 2px solid var(--warn, var(--amber));'
   + ' padding: var(--space-1, 4px);';
 
 export function ConnectionBanner() {
@@ -44,6 +39,27 @@ export function ConnectionBanner() {
   // line said `new Date(...)`: "Showing the last data received, at 05 Aug
   // 58655, 12:22 SAST."
   const since = state.connLostSince ? fmtTime(new Date(state.connLostSince)) : '';
+  // The banner also renders over the LOGIN GATE (app-view.js renders it above
+  // the unauthed early return), and there the three lines below would each be
+  // false: nobody is signed in, there is no last data on screen, and the page
+  // cannot catch up on its own because the operator still has to log in. Say
+  // the one thing that is true and actionable on that screen instead.
+  if (!state.authed) {
+    return h('div', {
+      class: 'ds-conn-banner is-offline', id: 'conn',
+      'data-conn-state': 'offline',
+      style: BAND,
+    },
+      Alert({
+        kind: 'warn',
+        title: 'Offline -- no signal',
+        children: [
+          h('div', { key: 'gate' }, 'This device cannot reach the dashboard, so signing in will not work yet.'),
+          h('div', { key: 'wait' }, 'Leave this page open -- the form works again as soon as the link comes back. Nothing here is broken and nothing has been lost.'),
+        ],
+      })
+    );
+  }
   const lines = [
     h('div', { key: 'signed' },
       who ? `Still signed in as ${who}` : 'Still signed in',

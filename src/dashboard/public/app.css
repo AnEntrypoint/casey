@@ -164,8 +164,8 @@ body { background: var(--bg); color: var(--fg); }
 .ds-rail-disclosure > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .ds-rail-disclosure-body { padding: var(--space-3); }
 .ds-rail-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
-.ds-app-surface h2.ds-rail-title, .ds-rail-title { margin: 0; font-size: var(--fs-sm); font-weight: 700; }
-.ds-rail-head .ds-map-updated { font-size: var(--fs-nano); color: var(--fg-2); margin: 0; }
+.ds-app-surface h2.ds-rail-title, .ds-rail-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 700; }
+.ds-rail-head .ds-map-updated { font-size: var(--fs-micro); color: var(--fg-2); margin: 0; }
 
 /* Segmented control -- the time window in the rail head, and the map/list
    switch on a phone. One always-visible control rather than a dropdown: the
@@ -174,7 +174,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-1); overflow: hidden; }
 .ds-seg-btn {
   flex: 1 1 auto; background: var(--bg); border: 0;
-  color: var(--fg-2, var(--muted)); font: inherit; font-size: var(--fs-nano);
+  color: var(--fg-2, var(--muted)); font: inherit; font-size: var(--fs-micro);
   padding: var(--space-2) var(--space-3); cursor: pointer; min-height: 2.25rem; white-space: nowrap;
 }
 .ds-seg-btn:hover { background: var(--bg-2); color: var(--fg); }
@@ -186,7 +186,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-rail-reset {
   flex: 0 0 auto; background: var(--bg-2); border: 1px solid var(--border);
   border-radius: var(--r-1); color: var(--fg-2, var(--muted)); font: inherit;
-  font-size: var(--fs-nano); padding: var(--space-2) var(--space-3);
+  font-size: var(--fs-micro); padding: var(--space-2) var(--space-3);
   cursor: pointer; min-height: 2.25rem; white-space: nowrap;
 }
 .ds-rail-reset:hover { background: var(--bg-3, var(--border)); color: var(--fg); }
@@ -201,7 +201,7 @@ body { background: var(--bg); color: var(--fg); }
   display: inline-flex; align-items: baseline; gap: var(--space-1);
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-pill, var(--r-1));
   padding: var(--space-1) var(--space-3); cursor: pointer; color: var(--fg);
-  font: inherit; font-size: var(--fs-nano); min-height: 2.25rem;
+  font: inherit; font-size: var(--fs-micro); min-height: 2.25rem;
 }
 .ds-fchip:hover { background: var(--bg-3, var(--border)); }
 .ds-fchip.is-on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg, var(--paper)); }
@@ -214,7 +214,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-fchip-l { color: inherit; }
 .ds-fchip-clear {
   background: none; border: 0; color: var(--accent-ink, var(--accent)); font: inherit;
-  font-size: var(--fs-nano); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+  font-size: var(--fs-micro); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
   padding: var(--space-1);
 }
 .ds-fchip-clear:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
@@ -226,11 +226,56 @@ body { background: var(--bg); color: var(--fg); }
    can never silently disagree with the count above it. */
 .ds-queue-more {
   display: block; width: 100%; background: none; border: 0;
-  color: var(--accent-ink, var(--accent)); font: inherit; font-size: var(--fs-nano);
+  color: var(--accent-ink, var(--accent)); font: inherit; font-size: var(--fs-micro);
   padding: var(--space-3); cursor: pointer; text-align: left; min-height: 2.75rem;
 }
 .ds-queue-more:hover { background: var(--bg-2); }
 .ds-queue-more:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
+
+/* ---- THE RAIL'S ONE CONTROL CONTRACT -----------------------------------
+   Every control in the rail shares one height and one label size; only the
+   shape distinguishes a count-chip (pill) from an action (rect).
+
+   The .ds-247420 scope is load-bearing, not decoration. The kit styles its
+   own `button` at two classes deep, which outranks a bare `.ds-fchip` /
+   `.ds-seg-btn` / `.ds-rail-reset` / `.ds-queue-more` -- so every font-size
+   those rules declared lost the cascade and the rail rendered its controls
+   at the kit's inherited 16px while the rows beside them sat at 10-11px.
+   Anything here that must beat the kit carries the scope class. */
+.ds-map-rail, .ds-rail-stack { --rail-ctrl-h: 2.25rem; }
+/* The phone's map/list toggle is a .ds-seg-btn outside the rail, so it reads
+   the shared height too -- and it is the ONLY way to switch panes there, which
+   is why it keeps the thumb target rather than the desk one. Declared as the
+   variable, not as a competing height, so the two cannot drift apart. */
+.ds-pane-toggle { --rail-ctrl-h: 2.75rem; }
+.ds-247420 .ds-seg-btn,
+.ds-247420 .ds-rail-reset,
+.ds-247420 .ds-fchip,
+.ds-247420 .ds-chip-btn {
+  box-sizing: border-box;
+  min-height: var(--rail-ctrl-h, 2.25rem);
+  height: var(--rail-ctrl-h, 2.25rem);
+  font-size: var(--fs-micro);
+  line-height: 1.2;
+}
+.ds-247420 .ds-queue-more, .ds-247420 .ds-fchip-clear { font-size: var(--fs-micro); }
+/* The datum inside a count chip is the one thing in the rail allowed to sit a
+   rung above its own label -- the number IS the control's content. */
+.ds-247420 .ds-fchip-n { font-size: var(--fs-sm); font-weight: 700; }
+/* The overlay toggles were bare 20px-tall text with no box at all, so four
+   real controls read as a caption. Same secondary treatment as the chips. */
+.ds-247420 .ds-chip-btn {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  background: var(--bg-2); color: var(--fg);
+  border: 1px solid var(--border); border-radius: var(--r-pill, var(--r-1));
+}
+.ds-247420 .ds-chip-btn:hover { background: var(--bg-3, var(--border)); }
+/* Thumb targets, not mouse targets, on the surface a field operator works
+   from -- one bump for the whole rail rather than per-control exceptions. */
+@media (max-width: 900px) {
+  .ds-map-rail, .ds-rail-stack { --rail-ctrl-h: 2.75rem; }
+}
 
 /* ---- panel-swap chrome: a content-swap panel is a full PAGE ------------
    ONE treatment for all seven non-spatial panels (app-view.js's PanelSwap):
@@ -249,7 +294,7 @@ body { background: var(--bg); color: var(--fg); }
   background: var(--bg);
 }
 .ds-app-surface h1.ds-panel-swap-title, .ds-panel-swap-title {
-  margin: 0; min-width: 0; font-size: var(--fs-lg); font-weight: 700;
+  margin: 0; min-width: 0; font-size: var(--fs-h2-app); font-weight: 700;
   overflow-wrap: anywhere;
 }
 .ds-panel-swap-body { min-height: 0; padding: var(--space-4); }
@@ -301,7 +346,11 @@ body { background: var(--bg); color: var(--fg); }
   gap: var(--space-3);
   margin: 0 0 var(--space-2);
 }
-.ds-dialog-title { margin: 0; font-size: var(--fs-lg); }
+/* The kit gives every h2 under .ds-app-surface the --fs-h2-app rung, at a
+   specificity a lone .ds-dialog-title cannot reach -- so a dialog title read
+   as loud as a page title. Same tag-qualified shape the other headings in this
+   file use, which is what lets them win at all. */
+.ds-app-surface h2.ds-dialog-title, .ds-dialog-title { margin: 0; font-size: var(--fs-h3-app); }
 .ds-dialog-x, .ds-dialog-close {
   background: transparent; border: 0; cursor: pointer; padding: var(--space-1);
   border-radius: var(--r-0, var(--r-sm)); color: var(--fg-2, var(--muted));
@@ -393,9 +442,9 @@ body { background: var(--bg); color: var(--fg); }
   padding: var(--space-3) var(--space-4);
   display: flex; flex-direction: column; gap: var(--space-1);
 }
-.ds-stat-label { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); text-transform: uppercase; letter-spacing: .03em; }
-.ds-stat-value { font-size: var(--fs-xl, var(--fs-lg)); font-weight: 700; color: var(--fg); line-height: 1.15; }
-.ds-stat-sub { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.ds-stat-label { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); text-transform: uppercase; letter-spacing: .03em; }
+.ds-stat-value { font-size: var(--fs-xl); font-weight: 700; color: var(--fg); line-height: 1.15; }
+.ds-stat-sub { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
 
 /* ---- at-risk-by-case-type strip (metrics-panel.js) ----------------------- */
 .ds-risk-strip { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-2); }
@@ -419,7 +468,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-dist-token { font-size: var(--fs-sm); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-dist-bar-track { position: relative; height: 8px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); overflow: hidden; }
 .ds-dist-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--r-hair, var(--r-sm)); transition: width .3s; }
-.ds-dist-count { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); text-align: right; min-width: 2ch; }
+.ds-dist-count { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); text-align: right; min-width: 2ch; }
 @media (prefers-reduced-motion: reduce) { .ds-dist-bar-fill { transition: none; } }
 
 /* ---- team workload panel (team-panel.js) --------------------------------- */
@@ -429,7 +478,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-settings-panel { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-1) 0; }
 .ds-settings-row { display: flex; flex-direction: column; }
 .ds-settings-actions { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-2); }
-.ds-settings-state { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.ds-settings-state { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
 
 /* Four rule blocks were removed from here, all verified to have no emitter
    anywhere in the client tree: the draft banner (.draft-banner/.ds-draft-*),
@@ -455,7 +504,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-case-list-scroll { overflow-y: auto; }
 .ds-case-list-spine { position: relative; }
 .ds-case-list-plain, .ds-case-list-empty { display: flex; flex-direction: column; }
-.ds-case-list-empty { padding: var(--space-5) var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
+.ds-case-list-empty { padding: var(--space-5) var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-micro); }
 
 .case-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); cursor: pointer; min-height: 64px; transition: background var(--dur-snap) var(--ease), box-shadow var(--dur-snap) var(--ease); }
 /* Native checkbox has no square guarantee across browsers/zoom levels and
@@ -487,29 +536,37 @@ body { background: var(--bg); color: var(--fg); }
 }
 .case-row-ref {
   font-weight: 400;
-  font-size: var(--fs-nano, var(--fs-micro));
+  font-size: var(--fs-micro);
   color: var(--fg-2, var(--muted));
 }
-.case-row-when { margin-left: auto; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
-.case-row-sub { display: flex; align-items: center; gap: var(--space-2); row-gap: var(--space-1-75, var(--space-2)); font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-top: var(--space-2); flex-wrap: wrap; }
-.ds-guardrail-toggle-btn { background: none; border: none; color: var(--accent-ink, var(--accent)); font-size: var(--fs-pico, var(--fs-micro)); cursor: pointer; padding: 0; margin-top: var(--space-1-75, var(--space-2)); display: block; text-decoration: underline; text-underline-offset: 2px; transition: color var(--dur-snap) var(--ease); }
+.case-row-when { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
+.case-row-sub { display: flex; align-items: center; gap: var(--space-2); row-gap: var(--space-1-75, var(--space-2)); font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-top: var(--space-2); flex-wrap: wrap; }
+.ds-guardrail-toggle-btn { background: none; border: none; color: var(--accent-ink, var(--accent)); font-size: var(--fs-micro); cursor: pointer; padding: 0; margin-top: var(--space-1-75, var(--space-2)); display: block; text-decoration: underline; text-underline-offset: 2px; transition: color var(--dur-snap) var(--ease); }
 .ds-guardrail-toggle-btn:hover { color: var(--accent); }
 .ds-guardrail-toggle-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-guardrail-expanded { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 
 .ds-bulk-bar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-2) var(--space-3); background: var(--bg-2); border-radius: var(--r-md, var(--r-1)); }
-.ds-bulk-count { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.ds-bulk-count { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
 
 .triage { background: var(--accent-soft, var(--bg-2)); border-radius: var(--r-md, var(--r-1)); }
 .triage-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-1); }
-.triage .calm { padding: var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
+.triage .calm { padding: var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-micro); }
 .tcase { padding: var(--space-3); cursor: pointer; transition: background var(--dur-snap) var(--ease); }
 .tcase:hover { background: var(--bg-2); }
 .tcase.active { outline: var(--focus-w, 2px) solid var(--accent); outline-offset: -2px; }
 .tcase:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
-.tcase-why { font-size: var(--fs-nano, var(--fs-micro)); font-weight: 600; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.tcase-meta { font-size: var(--fs-pico, var(--fs-micro)); color: var(--fg-3, var(--muted)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tcase-breach-detail { font-size: var(--fs-pico, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+/* The row's LEAD. map-panel.js puts the case subject here and the ref in
+   .tcase-meta below it, so this is the case content and it takes the content
+   rung -- it rendered a rung under its own ref, which made the subject of the
+   row the smallest text on a phone-first surface. */
+.tcase-why { font-size: var(--fs-sm); font-weight: 600; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; overflow-wrap: anywhere; }
+.tcase-meta { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tcase-breach-detail { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
+/* The ranking reason is what is said ABOUT the report, so it sits with the ref
+   rather than above the subject. It carried no rule at all and inherited 16px,
+   which made the quietest line in the row its largest. */
+.tcase-reason { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
 /* 3px inset stripe matches the same left-edge accent idiom on
    .case-row.active/.selected and .ds-activity-row.ds-activity-tone--* elsewhere
    in this file -- not --bw-chunk (4px), a differently-scoped border-width token
@@ -536,7 +593,7 @@ body { background: var(--bg); color: var(--fg); }
 /* The queue is the first block in the view now, so it carries the weight the
    deleted <h1> brand used to take. */
 .case-list-view > .triage { border: 1px solid var(--border); }
-.ds-app-surface .triage-head h2, .triage-head h2 { margin: 0; font-size: var(--fs-sm); font-weight: 700; }
+.ds-app-surface .triage-head h2, .triage-head h2 { margin: 0; font-size: var(--fs-h4-app); font-weight: 700; }
 
 /* The list's own section head: what this section is, and how much of it is
    actually loaded, stated BEFORE the rows instead of under them. */
@@ -545,11 +602,11 @@ body { background: var(--bg); color: var(--fg); }
   gap: var(--space-3); flex-wrap: wrap;
   padding-top: var(--space-2);
 }
-.ds-app-surface h2.ds-cl-section-title, .ds-cl-section-title { margin: 0; font-size: var(--fs-sm); font-weight: 700; }
-.ds-cl-range { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted)); }
+.ds-app-surface h2.ds-cl-section-title, .ds-cl-section-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 700; }
+.ds-cl-range { font-size: var(--fs-micro); color: var(--fg-2, var(--muted)); }
 /* The match count only exists while a filter is on, and it is a different fact
    from the cap beside it, so it is toned as the live one of the two. */
-.ds-cl-match { font-size: var(--fs-nano, var(--fs-micro)); color: var(--accent-ink, var(--accent)); font-weight: 600; }
+.ds-cl-match { font-size: var(--fs-micro); color: var(--accent-ink, var(--accent)); font-weight: 600; }
 
 /* Tier-2 filters. Same disclosure idiom as the map rail's "Map options", so
    the two home views hide their rarely-reached controls the same way. */
@@ -560,10 +617,10 @@ body { background: var(--bg); color: var(--fg); }
    Dropdown whose whole trigger carried sr-only, i.e. a control that did not
    exist for anyone working on a touch screen. */
 .ds-recent-searches { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.ds-recent-label { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.ds-recent-label { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
 .ds-recent-chip {
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-pill, var(--r-1));
-  color: var(--fg); font: inherit; font-size: var(--fs-nano); cursor: pointer;
+  color: var(--fg); font: inherit; font-size: var(--fs-micro); cursor: pointer;
   padding: var(--space-1) var(--space-3); min-height: 2.25rem; max-width: 18ch;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -573,7 +630,7 @@ body { background: var(--bg); color: var(--fg); }
 /* The row's lead line: what makes this one worth touching, first and largest.
    The ref, the stage and the timestamp moved to the line under it. */
 .case-row-lead {
-  font-size: var(--fs-sm, var(--fs-body)); font-weight: 600; color: var(--fg);
+  font-size: var(--fs-sm); font-weight: 600; color: var(--fg);
   line-height: 1.35; overflow-wrap: anywhere;
 }
 /* .case-row-top and .case-row-ref are declared once, up with the rest of the
@@ -620,6 +677,22 @@ body { background: var(--bg); color: var(--fg); }
 
 /* ---- connection-lost banner --------------------------------------------- */
 .ds-conn-banner { position: sticky; top: 0; z-index: var(--z-banner, var(--z-toast, 30)); }
+/* On the login screen the gate is a FIXED full-viewport overlay at --z-modal,
+   so a sticky banner behind it is invisible -- and that screen has no topbar,
+   no status bar and no other chrome, which makes the banner the only thing
+   that can tell an operator why the form will not submit.
+
+   Selected off the banner as a SIBLING, not off .is-gated: ConnectionBanner()
+   returns null while the link is healthy, so this only fires when there is
+   actually a banner to make room for and the ordinary login screen keeps its
+   centred form. The gate drops out of fixed positioning here and becomes the
+   flex child under the banner, so the two stack instead of overlapping --
+   .ds-app-root is already a min-height:100vh flex column. */
+.ds-conn-banner + .ds-login-gate {
+  position: static;
+  flex: 1 1 auto;
+  min-height: 0;
+}
 
 /* ---- toast tray ---------------------------------------------------------- */
 .ds-toast-tray { position: fixed; right: var(--space-4); bottom: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); z-index: var(--z-toast, 50); max-width: 340px; }
@@ -628,7 +701,7 @@ body { background: var(--bg); color: var(--fg); }
 /* ---- login gate ----------------------------------------------------------- */
 .ds-login-gate { position: fixed; inset: 0; background: var(--bg); z-index: var(--z-modal, 1000); display: flex; align-items: center; justify-content: center; padding: var(--space-4); }
 .ds-login-form { display: flex; flex-direction: column; gap: var(--space-2); background: var(--panel, var(--bg-2)); border: 1px solid var(--border); border-radius: var(--r-lg, var(--r-2)); padding: var(--space-7, var(--space-6)) var(--space-6); max-width: 340px; width: 100%; box-shadow: var(--shadow-lg, none); }
-.ds-login-brand { margin: 0 0 var(--space-5); font-size: var(--fs-xl, var(--fs-lg)); }
+.ds-247420 .ds-login-brand, .ds-login-brand { margin: 0 0 var(--space-5); font-size: var(--fs-h1-app); }
 /* Error text on the login gate is TYPE, so it takes the ink companion too. */
 .ds-login-error { color: var(--danger-ink, var(--danger)); font-size: var(--fs-sm); margin-bottom: var(--space-3); }
 
@@ -670,7 +743,7 @@ body { background: var(--bg); color: var(--fg); }
 /* ---- related-reports cluster row / case-id pill grid --------------------- */
 .ds-cluster-row { padding: var(--space-3) 0; }
 .ds-cluster-row:last-child { border-bottom: none; }
-.ds-cluster-sub { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
+.ds-cluster-sub { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
 /* a real column grid instead of flex-wrap so case-id pills align edge to
    edge across rows instead of wrapping raggedly at whatever count fits. */
 .ds-cluster-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-2); margin-top: var(--space-2); }
@@ -708,7 +781,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-map-canvas { overflow: hidden; }
 .ds-map-legend {
   display: flex; gap: var(--space-3); flex-wrap: wrap;
-  font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted));
+  font-size: var(--fs-micro); color: var(--fg-2, var(--muted));
   margin: var(--space-2) 0; padding: var(--space-2) var(--space-3);
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-1);
 }
@@ -720,7 +793,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-map-legend-sw-dashed { background: transparent; border: 2px dashed var(--fg-3, var(--muted)); }
 
 /* ---- attention feed + map controls (map-panel.js) ----------------------- */
-.ds-map-updated { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin: 0 0 var(--space-2); }
+.ds-map-updated { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin: 0 0 var(--space-2); }
 /* No max-height: the feed lives in the rail, which does its own scrolling.
    A second scroll region nested inside it produced two competing scrollbars
    and made the "show all" control unreachable on a short viewport. */
@@ -730,11 +803,11 @@ body { background: var(--bg); color: var(--fg); }
 .ds-map-overlays { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .ds-chip-btn { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; }
 .ds-chip-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
-.ds-map-unresolved-note { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin: var(--space-2) 0; }
+.ds-map-unresolved-note { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin: var(--space-2) 0; }
 .ds-map-unresolved-list { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
 .ds-map-unresolved-row {
   display: flex; align-items: baseline; gap: var(--space-1); flex-wrap: wrap;
-  font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted));
+  font-size: var(--fs-micro); color: var(--fg-2, var(--muted));
   padding: var(--space-1) var(--space-2); border-radius: var(--r-1);
 }
 .ds-map-unresolved-row:hover { background: var(--bg-2); }
@@ -850,9 +923,9 @@ body { background: var(--bg); color: var(--fg); }
    here" rather than "what is this pin", so it reads as context under the
    header rather than as another field of the report. */
 .casey-linked-reports {
-  font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted));
-  padding: var(--space-1) var(--space-2); margin-bottom: var(--space-2);
-  border-left: 3px solid var(--amber); background: var(--bg-2); border-radius: var(--r-1);
+  font-size: var(--fs-micro); color: var(--fg-2, var(--muted));
+  padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2);
+  background: var(--bg-2); border-radius: var(--r-1);
 }
 
 @container (max-width: 640px) {
@@ -860,7 +933,7 @@ body { background: var(--bg); color: var(--fg); }
   /* The legend is the only chrome on the canvas, so on a small phone it is the
      only thing that can cover a pin -- cap it harder here than the 40% the
      desktop rule allows. */
-  .ds-map-legend { font-size: var(--fs-micro, var(--fs-nano)); gap: var(--space-2); max-width: 60%; max-height: 30%; }
+  .ds-map-legend { font-size: var(--fs-micro); gap: var(--space-2); max-width: 60%; max-height: 30%; }
 }
 
 /* ---- case-detail empty state -------------------------------------------- */
@@ -870,8 +943,8 @@ body { background: var(--bg); color: var(--fg); }
   color: var(--fg-3, var(--muted));
 }
 .casey-detail-empty svg { color: var(--fg-3, var(--faint)); }
-.ds-app-surface h2.casey-detail-empty-title { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--fg-2, var(--muted)); }
-.casey-detail-empty .casey-hint { margin: 0; font-size: var(--fs-nano, var(--fs-micro)); max-width: 32ch; }
+.ds-app-surface h2.casey-detail-empty-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 600; color: var(--fg-2, var(--muted)); }
+.casey-detail-empty .casey-hint { margin: 0; font-size: var(--fs-micro); max-width: 32ch; }
 
 /* ---- activity feed panel (activity-panel.js) ---------------------------- */
 .ds-activity-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--space-3); }
@@ -891,8 +964,8 @@ body { background: var(--bg); color: var(--fg); }
 .ds-activity-icon { flex: 0 0 auto; color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
 .ds-activity-body { flex: 1; min-width: 0; }
 .ds-activity-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.ds-activity-who { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted)); }
-.ds-activity-when { margin-left: auto; font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
+.ds-activity-who { font-size: var(--fs-micro); color: var(--fg-2, var(--muted)); }
+.ds-activity-when { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
 .ds-activity-text { font-size: var(--fs-sm); color: var(--fg); margin-top: var(--space-1); overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .ds-activity-row { transition: none; } }
 
@@ -901,21 +974,21 @@ body { background: var(--bg); color: var(--fg); }
 
 /* ---- shift handover panel (handover-panel.js) ---------------------------- */
 .ds-ho-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-.ds-ho-since { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-bottom: var(--space-3); }
+.ds-ho-since { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-bottom: var(--space-3); }
 .ds-ho-row {
   display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
   padding: var(--space-2) var(--space-1);
 }
 .ds-ho-row:last-child { border-bottom: none; }
 .ds-ho-ref {
-  font-weight: 600; font-size: var(--fs-sm, var(--fs-body)); color: var(--accent-ink, var(--accent));
+  font-weight: 600; font-size: var(--fs-sm); color: var(--accent-ink, var(--accent));
   cursor: pointer; border-radius: var(--r-hair, var(--r-sm));
 }
 .ds-ho-ref:hover { text-decoration: underline; }
 .ds-ho-ref:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
-.ds-ho-why { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); overflow-wrap: anywhere; }
+.ds-ho-why { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); overflow-wrap: anywhere; }
 .ds-ho-assignee { margin-left: auto; }
-.ds-act-when { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-left: auto; }
+.ds-act-when { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-left: auto; }
 
 /* ---- print CSS (printable handover/metrics/report links) ---------------- */
 /* LOAD-BEARING !important -- a print override that must win, which is the
@@ -1147,14 +1220,59 @@ body { background: var(--bg); color: var(--fg); }
   align-items: center;
   gap: var(--space-1);
 }
-/* The health pill is a bare text trigger with no box of its own, so matching
-   only its height would still leave it optically adrift beside eight bordered
-   controls. It gets the same box as the rest of the row. */
+/* ---- ONE HIERARCHY FOR THE WHOLE BAR ------------------------------------
+   Three treatments, and only three: ONE primary (New report, the kit's own
+   .btn-primary, untouched below), ONE lead (.ds-attn-lead, which differs from
+   the secondary in COLOUR only because it is the frame's bottom line), and
+   ONE secondary that every remaining control wears.
+
+   What this replaces, measured live at 1440x900: six treatments in one row --
+   an orange filled primary, a red-tinted lead, a transparent-bordered health
+   pill, two ghost buttons whose 1px border was transparent (so a live control
+   read as plain text), a bare underline-on-hover link for Export, and two
+   dropdown triggers the kit filled with a flat grey at 0.08-alpha border,
+   which read as disabled while being fully live.
+
+   The kit's own dropdown-trigger fill outranks a single-class rule, so the
+   scope class is required here to reach it. */
+.ds-247420 .ds-appbar .btn-ghost,
+.ds-247420 .ds-appbar .ds-action-link,
+.ds-247420 .ds-appbar .ds-icon-btn,
+.ds-247420 .ds-appbar .ds-dropdown-trigger,
 .ds-247420 .ds-appbar .ds-health-pill-trigger {
   padding: 0 var(--space-3);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--r-md, var(--r-1));
+  color: var(--fg);
   font-size: var(--fs-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+.ds-247420 .ds-appbar .btn-ghost:hover,
+.ds-247420 .ds-appbar .ds-action-link:hover,
+.ds-247420 .ds-appbar .ds-icon-btn:hover,
+.ds-247420 .ds-appbar .ds-dropdown-trigger:hover,
+.ds-247420 .ds-appbar .ds-health-pill-trigger:hover {
+  background: var(--bg-2);
+  border-color: var(--fg-3, var(--border));
+  color: var(--fg);
+  text-decoration: none;
+}
+/* The lead wears the same box as the secondary and differs only in tone, so
+   the row reads as one system with one thing shouting in it. */
+.ds-247420 .ds-appbar .ds-attn-lead {
+  padding: 0 var(--space-3);
+  border-radius: var(--r-md, var(--r-1));
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+/* Icon-only controls keep a square box rather than a wide one, so the row's
+   rhythm does not break where a control has no word. */
+.ds-247420 .ds-appbar .ds-icon-btn {
+  width: var(--appbar-ctrl-h);
+  padding: 0;
+  justify-content: center;
 }
 .ds-247420 .ds-appbar .ds-health-pill { align-items: center; gap: var(--space-2); }
 /* An action carries its glyph beside its word on desktop; the glyph is what
@@ -1194,7 +1312,15 @@ body { background: var(--bg); color: var(--fg); }
   }
   .ds-247420 .ds-appbar {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(4rem, 1fr));
+    /* 6.5rem, not 4rem. At 375px the crumb's right slot is 299px, so a 4rem
+       floor resolved to four 71.8px columns while the labels they had to hold
+       are 89-96px and set `white-space: nowrap` -- every caption overflowed its
+       own tile and three of them rendered on top of each other as intersecting
+       tap targets. The column has to be able to hold the longest verb this bar
+       carries; wrapping (below) does the rest. 5.75rem is the widest floor
+       that still resolves to THREE columns at 375px -- wider and the bar grows
+       to five rows and eats the map it sits above. */
+    grid-template-columns: repeat(auto-fit, minmax(5.75rem, 1fr));
     gap: var(--space-1);
     width: 100%;
     /* The grid lays the tiles out; it is not the thing that scrolls. */
@@ -1212,7 +1338,17 @@ body { background: var(--bg); color: var(--fg); }
      inside it, so a height on the trigger alone resolved against a 54px parent
      while its neighbours were 58px. Stretching the grid item itself is what
      lets the rule below reach the control the operator actually sees. */
-  .ds-247420 .ds-appbar > * { height: 100%; }
+  /* `.ds-action-row` is display:contents, so its children are the grid items
+     while the DOM parent they are selected through is still the row -- a bare
+     `.ds-appbar > *` misses every verb, and app-view.js wraps each one in a
+     .ds-action-common/.ds-action-rare span, so the span is the item and the
+     button inside it is not. Both levels have to be told to fill the track, or
+     the six verbs sit 57px tall and vertically centred inside 70px rows while
+     their neighbours fill them -- three tile heights on three top edges again. */
+  .ds-247420 .ds-appbar > *,
+  .ds-247420 .ds-appbar .ds-action-row > * { height: 100%; }
+  .ds-247420 .ds-appbar .ds-action-common,
+  .ds-247420 .ds-appbar .ds-action-rare { display: flex; }
   /* The pill nests one more box between the grid item and the button
      (.ds-health-pill > .ds-health-pill-has-detail > .ds-health-pill-trigger),
      and the outer one centres its children, so the trigger stopped 4px short
@@ -1243,6 +1379,12 @@ body { background: var(--bg); color: var(--fg); }
     width: 100%;
     flex-direction: column;
     justify-content: center;
+    /* A caption that cannot wrap has nowhere to go but over its neighbour.
+       .ds-attn-lead sets nowrap for the desktop row, where it is correct; in
+       the grid every tile wraps instead, and the tile is wide enough (above)
+       that a two-line caption is the worst case rather than a clipped word. */
+    white-space: normal;
+    overflow-wrap: anywhere;
     /* --space-hair is 0.125rem scaled by --density, i.e. the 2px this used to
        hardcode at the default density -- but it now tracks the density knob
        like every other gap instead of staying 2px when the rest of the UI
@@ -1251,10 +1393,33 @@ body { background: var(--bg); color: var(--fg); }
     gap: var(--space-hair);
     padding: var(--space-1);
     text-align: center;
-    font-size: var(--fs-nano, var(--fs-micro));
+    font-size: var(--fs-micro);
     line-height: 1.1;
   }
   .ds-247420 .ds-appbar .ds-action-glyph { display: block; }
+  /* The caption sits under the glyph and must wrap with it -- the label span
+       is where nowrap actually lands, so overriding only the tile leaves the
+       inner span overflowing. */
+  .ds-247420 .ds-appbar .ds-action-label,
+  .ds-247420 .ds-appbar .ds-attn-lead .ds-action-label {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font-size: var(--fs-nano);
+    line-height: 1.15;
+    max-width: 100%;
+  }
+  /* The bar is a grid of tiles here, so the desktop row's single-line box
+       (fixed height, horizontal padding, a border per control) does not apply.
+       Keep the shared border so a tile still reads as a control. */
+  .ds-247420 .ds-appbar .btn-ghost,
+  .ds-247420 .ds-appbar .ds-action-link,
+  .ds-247420 .ds-appbar .ds-icon-btn,
+  .ds-247420 .ds-appbar .ds-dropdown-trigger,
+  .ds-247420 .ds-appbar .ds-health-pill-trigger,
+  .ds-247420 .ds-appbar .ds-attn-lead {
+    padding: var(--space-1);
+    width: 100%;
+  }
   /* The rare verbs are hidden on a narrow DESKTOP row (the pre-existing
      @container rule) but belong in the grid, where space is no longer the
      constraint. */

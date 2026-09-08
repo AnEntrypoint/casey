@@ -14,19 +14,32 @@ import { toast } from '../toasts.js';
 
 const h = webjsx.createElement;
 
-// Every label below is a noun-phrase naming the condition being timed (not
-// a mixed instruction/fragment/question) so the set reads as one
-// consistent labeling convention.
+// Every one of these seven knobs is entered and stored in HOURS -- the field
+// converts to and from milliseconds on the way in and out (hoursOf/save), and
+// every label says so, because "48" with no unit beside it is a number nobody
+// can safely change on a live escalation threshold.
+//
+// The unit is HOURS for all seven, checked against case-health.js's
+// DEFAULT_THRESHOLDS rather than assumed: handoffMs 4h, escalateHandoffMs 12h,
+// staleMs 48h, abandonMs 24h, incompleteCriticalMs 8h, neverClosedMs 7 days
+// (168h), unsentDraftMs 1h. thresholds.js clamps each one to its own range on
+// the way in, so a typo is refused rather than stored.
+//
+// Each helper says what that ONE threshold changes. Four of them used to be
+// the same sentence reworded, all ending in flagged/flagging, which told an
+// operator nothing about which of the four to touch.
 const THRESH_META = {
-    handoffMs: ['Unanswered request for a person', 'How long to wait before flagging that nobody has stepped in yet.'],
-    escalateHandoffMs: ['Escalated unanswered handoff', 'After this long with no human reply, the case is raised more urgently.'],
-    staleMs: ['Case with no activity', 'How long a case can go quiet before it is flagged as going stale.'],
-    abandonMs: ['Half-finished intake left sitting', 'A case that started but never finished gathering details is flagged after this.'],
-    incompleteCriticalMs: ['Missing essential visit details', 'How long an actionable case may lack must-have fields before flagging.'],
-    neverClosedMs: ['Case open far too long', 'A case still open past this is surfaced as overdue.'],
-    unsentDraftMs: ['Unsent AI draft waiting', 'How long an assisted draft can wait for an operator before it is flagged.'],
+    handoffMs: ['Unanswered request for a person (hours)', 'A contact asked for a real person. This is how long the team has to reply before the case is raised.'],
+    escalateHandoffMs: ['Escalated unanswered handoff (hours)', 'The second, louder deadline on that same request. Set it above the one above, or it fires first.'],
+    staleMs: ['Case with no activity (hours)', 'An open case nobody has touched for this long is called going cold. 48 is two days.'],
+    abandonMs: ['Half-finished intake left sitting (hours)', 'Intake started and stopped with on-site facts never gathered. Short values chase a reporter who may still be reachable.'],
+    incompleteCriticalMs: ['Missing essential visit details (hours)', 'Work has started but the facts a field visit cannot proceed without are still blank.'],
+    neverClosedMs: ['Marked done but never closed (hours)', 'How long a resolved case may sit unclosed. 168 is one week.'],
+    unsentDraftMs: ['Unsent AI draft waiting (hours)', 'In assisted mode the contact waits on a person to release the draft. This is how long that wait may run.'],
 };
 
+// Milliseconds in, hours on screen: one decimal place, so 90 minutes reads
+// 1.5 rather than rounding away to 2.
 function hoursOf(ms) { return Math.round((ms / 3600000) * 10) / 10; }
 
 let saving = false;
@@ -86,6 +99,7 @@ export function SettingsPanel() {
             }));
     });
     return h('div', { class: 'ds-settings-panel' },
+        h('p', { class: 'ds-settings-state' }, 'These are the deadlines the guardrail sweep checks every case against. Every value is in hours: 24 is a day, 168 is a week. Decimals are allowed, so 0.5 is thirty minutes.'),
         ...rows,
         h('div', { class: 'ds-settings-actions' },
             Btn({ variant: 'primary', children: saving ? 'Saving...' : 'Save', disabled: saving, onClick: save }),

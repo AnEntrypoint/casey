@@ -1,16 +1,12 @@
-// WhatsApp Cloud API webhook adapter. Ported from freddie's
-// plugins/platform/platform-whatsapp (freddie's messaging-transport surface
-// was removed in a later upstream rewrite; casey now owns this code
-// directly -- see AGENTS.md's freddie-port PRD rows and the WhatsApp HMAC
-// verification security invariant).
+// WhatsApp Cloud API webhook adapter. Inbound is HMAC-SHA256 verified -- see
+// AGENTS.md's WhatsApp HMAC verification security invariant.
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMedia } from './webhook-platform-base.js'
 
-// Outbound send/media-upload bound: see DiscordAdapter.send's identical
-// constant for the failure this closes -- a bare, unbounded fetch() can leave
-// a guaranteed-fallback reply composed and recorded but never actually
-// delivered because the network call itself just hangs with no timeout.
+// Outbound send/media-upload bound: a bare, unbounded fetch() can leave a
+// guaranteed-fallback reply composed and recorded but never actually delivered
+// because the network call itself just hangs with no timeout.
 const SEND_TIMEOUT_MS = 15000
 
 export class WhatsappAdapter extends EventEmitter {
@@ -94,8 +90,7 @@ export class WhatsappAdapter extends EventEmitter {
     )
     // Optional audio: an already-hosted link sends directly; raw bytes upload
     // first, then send by media id. The text (when present) is sent alongside
-    // so the reporter still gets the words. A text-only reply is byte-identical
-    // to the original single POST -- audio is purely additive.
+    // so the reporter still gets the words.
     const a = reply.audio
     if (a && (a.link || a.data_base64)) {
       const audioMsg = a.link ? { link: a.link } : { id: await this._uploadMedia(Buffer.from(a.data_base64, 'base64'), a.mime || 'audio/ogg') }
@@ -116,11 +111,10 @@ export class WhatsappAdapter extends EventEmitter {
 // emitWithDetachedMedia, so a slow or hung Meta media response can never make
 // Meta see an unacked webhook and redeliver it.
 //
-// This lives here, beside the adapter that owns _downloadMedia and the media
-// field vocabulary, rather than in the freddie-bundle platform plugin that
-// calls it -- there used to be two copies (this one, driving an express app
-// this adapter no longer owns, and a second inside the plugin) and the copy
-// on the live path had already drifted off emitWithDetachedMedia.
+// This parsing lives here, beside the adapter that owns _downloadMedia and the
+// media field vocabulary, and NOT in the freddie-bundle platform plugin that
+// calls it. Do not grow a second copy there: a duplicate on the live path
+// drifts off emitWithDetachedMedia and stops detaching media hydration.
 export function dispatchWhatsappWebhookBody(adapter, body) {
   const events = []
   for (const e of (body?.entry || [])) for (const c of (e.changes || [])) {

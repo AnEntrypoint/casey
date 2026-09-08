@@ -5,15 +5,15 @@
 // rather than types, are the two most valuable on-site artifacts and neither can
 // be recovered once the worker leaves. So neither is left to the agent turn to
 // notice and record -- on a media-only message it may not narrate them at all.
-// This runs deterministically, before any LLM is involved, and is append-only:
-// a worker routinely sends more than one photo across a conversation, and
-// fill-if-empty silently discarded every arrival after the first.
+// This runs deterministically, before any LLM is involved, and MUST stay
+// append-only: a worker routinely sends more than one photo across a
+// conversation, and a fill-if-empty write silently discards every arrival after
+// the first.
 //
-// The photo and audio blocks were two near-identical 40-line copies inline in
-// makeCaseHandler (save bytes -> compose note -> appendReportField -> observation
-// -> corruption warning), differing only in field name, enrichment step and
-// wording. They are one parameterised path here; the DIFFERENCES between them
-// are now the only thing written twice.
+// Photo and audio share one parameterised path (save bytes -> compose note ->
+// appendReportField -> observation -> corruption warning); the DIFFERENCES
+// between them -- field name, enrichment step, wording -- are the only thing
+// written twice.
 //
 // Nothing in here may block the reply path: every failure is a warn and a
 // continue. In observe mode appendReportField refuses the report WRITE (that
@@ -75,13 +75,13 @@ function inboundAudioNote(msg, transcript = '') {
 
 // Normalise msg.media across adapter shapes. WhatsApp's adapter resolves a
 // SINGLE object ({type, mimeType, buffer}); Discord's resolves an ARRAY, one
-// entry per attachment. Every read here used to assume the WhatsApp shape, so on
-// Discord msg.media.buffer was permanently undefined (arrays have no .buffer)
-// and every Discord photo/voice note was stuck at the honest-degradation floor
-// with real downloaded bytes sitting right there. Picking the first entry that
-// actually HAS a buffer (a failed-download entry may be null/error-only) mirrors
-// WhatsApp's own single-object degrade shape; Array.isArray is false for the
-// WhatsApp object, so this is a no-op there.
+// entry per attachment. Read msg.media through here, never directly: a bare
+// msg.media.buffer is permanently undefined on Discord (arrays have no
+// .buffer), which strands every Discord photo/voice note at the
+// honest-degradation floor with real downloaded bytes sitting right there.
+// Picking the first entry that actually HAS a buffer (a failed-download entry
+// may be null/error-only) mirrors WhatsApp's own single-object degrade shape;
+// Array.isArray is false for the WhatsApp object, so this is a no-op there.
 //
 // Module-private: recordInboundMedia below is its only caller anywhere in the
 // tree. It was exported alongside describeMedia when this file was lifted out

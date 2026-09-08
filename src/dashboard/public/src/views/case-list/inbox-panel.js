@@ -20,7 +20,7 @@ import * as webjsx from 'webjsx';
 import { Chip, Badge, Heading } from 'ds/components/shell.js';
 import { state, setActiveId, setInboxMode, schedule } from '../../state.js';
 import { rel, waitFmt, isMine } from '../../format.js';
-import { urgencyBand, URGENCY_BAND_LABEL } from '../../map-model.js';
+import { urgencyBand, URGENCY_BAND_LABEL, QUEUE_NAME } from '../../map-model.js';
 import { pushHash } from '../../route.js';
 const h = webjsx.createElement;
 
@@ -32,9 +32,42 @@ const h = webjsx.createElement;
 const INBOX_PAGE = 8;
 let inboxShown = INBOX_PAGE;
 
+// One short fact per breach, with the elapsed time stripped out of every one
+// of them. The server's own detail strings each carry the interval ("no
+// activity for 13 days", "in \"waiting\" for 13 days (max 7 days)", "on-site
+// facts still missing after 13 days", "in waiting for 13 days but
+// visit-critical facts still missing"), so a case tripping four guardrails
+// stated the same 13 days four times in four wordings. The interval is one
+// fact: it is said once, up front, and each breach then adds only what it
+// alone knows.
+const BREACH_FACT = {
+  stale: 'no activity',
+  stuck: 'stuck in this stage',
+  abandoned_intake: 'on-site facts still missing',
+  incomplete_critical: 'visit-critical facts still missing',
+  unanswered_handoff: 'nobody has answered the request for a person',
+  unanswered_handoff_escalated: 'still no reply after escalating',
+  unsent_draft: 'a drafted reply is waiting for approval',
+  never_closed: 'resolved but never closed',
+  premature_complete: 'marked done with the visit facts still blank',
+  timestamp_corrupt: 'this case\'s own timestamps look wrong',
+};
+
+function breachSummary(breaches) {
+  if (!breaches.length) return '';
+  const facts = [];
+  for (const b of breaches) {
+    const f = BREACH_FACT[b.breach] || b.breach;
+    if (!facts.includes(f)) facts.push(f);
+  }
+  const longest = Math.max(0, ...breaches.map((b) => Number(b.since_ms) || 0));
+  const span = longest > 0 ? waitFmt(longest) + ': ' : '';
+  return span + facts.join('; ');
+}
+
 function InboxRow(e) {
   const breaches = e.breaches || [];
-  const breachDetail = breaches.length ? breaches.map((b) => b.detail || b.breach).join('; ') : '';
+  const breachDetail = breachSummary(breaches);
   const ho = breaches.find((b) => b.breach === 'unanswered_handoff' || b.breach === 'unanswered_handoff_escalated');
   const waiting = ho && ho.since_ms ? waitFmt(ho.since_ms) : null;
   const owner = e.assignee && e.assignee !== 'agent' ? e.assignee : '';
@@ -52,18 +85,23 @@ function InboxRow(e) {
     'data-id': e.id, role: 'listitem', tabindex: '0',
     // Says the band in words, not only in a colour stripe -- a stripe is the
     // one channel a screen reader and a colourblind operator both miss.
-    'aria-label': e.ref + ': ' + (URGENCY_BAND_LABEL[band] || 'in the queue'),
+    'aria-label': e.ref + ': ' + (URGENCY_BAND_LABEL[band] || 'can wait'),
     onclick: open,
     onkeydown: (ev) => { if (ev.key === 'Enter') open(); },
   },
+    // The report leads. The ranking reason is drawn from a fixed ladder, so on
+    // a quiet morning most rows share one sentence ("A new message came in.")
+    // and leading with it makes the queue unreadable -- the subject is the
+    // only line that tells one report from another.
     h('div', { key: 'why', class: 'tcase-why' },
-      h('span', { key: 'r' }, e.reason || 'This one is worth a look.'),
+      h('span', { key: 's' }, e.subject || '(no subject)'),
       waiting ? Badge({ key: 'w', tone: 'warn', children: 'waiting ' + waiting }) : null,
-      owner ? Chip({ key: 'o', tone: mine ? 'accent' : '', size: 'sm', children: mine ? 'you' : owner }) : null,
-      breachDetail ? h('span', { key: 'b', class: 'tcase-breach-detail' }, breachDetail) : null
+      owner ? Chip({ key: 'o', tone: mine ? 'accent' : '', size: 'sm', children: mine ? 'you' : owner }) : null
     ),
+    h('div', { key: 'r', class: 'tcase-reason' }, e.reason || 'This one is worth a look.'),
+    breachDetail ? h('div', { key: 'b', class: 'tcase-breach-detail' }, breachDetail) : null,
     h('div', { key: 'meta', class: 'tcase-meta' },
-      e.ref + ' - ' + e.channel + ' - ' + (e.subject || '(no subject)') + ' - ' + rel(e.updated_at)
+      e.ref + ' - ' + e.channel + ' - ' + rel(e.updated_at)
     )
   );
 }
@@ -76,17 +114,17 @@ export function InboxPanel() {
   const shown = ranked.slice(0, cap);
 
   if (!shown.length) {
-    return h('div', { class: 'triage', role: 'list', 'aria-label': 'Needs a person now' },
-      Heading({ level: 2, children: 'Needs a person now' }),
+    return h('div', { class: 'triage', role: 'list', 'aria-label': QUEUE_NAME },
+      Heading({ level: 2, children: QUEUE_NAME }),
       h('div', { class: 'calm' }, state.mineOnly
         ? 'Nothing you have claimed needs you right now. Turn off "yours" below to see everyone else\'s.'
         : 'All caught up. Nothing needs a person right now. A new one will show up here the moment someone needs you.')
     );
   }
 
-  return h('div', { class: 'triage', role: 'list', 'aria-label': 'Needs a person now' },
+  return h('div', { class: 'triage', role: 'list', 'aria-label': QUEUE_NAME },
     h('div', { key: 'head', class: 'triage-head' },
-      Heading({ level: 2, children: 'Needs a person now' }),
+      Heading({ level: 2, children: QUEUE_NAME }),
       Badge({ tone: 'blue', children: String(ranked.length) })
     ),
     ...shown.map(InboxRow),

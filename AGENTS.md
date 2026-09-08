@@ -696,10 +696,22 @@ The periodic guardrail sweep (`case-sweep.js`, `casey.startSweep()`) runs on
 on every open case. Every newly-entered breach produces an observation event +
 a `health:*` tag on the case.
 
-**Breach types:** stale (48h), stage_stuck (per-stage maxDwell), handoff_needed
-(30 min), unanswered_handoff_escalated (8h), incomplete_critical,
-abandoned_intake (12h), never_closed (7d), unsentDraft (1h). All thresholds are
-operator-tunable through `thresholds.js`'s validate/clamp/merge.
+**Breach types**, with the defaults `case-health.js` actually ships (this table
+was wrong on three of them until 2026-09-08 -- read the constants, not this
+paragraph, if the two ever disagree again): stale (48h), stage_stuck (per-stage
+maxDwell), handoff_needed (4h), unanswered_handoff_escalated (12h),
+incomplete_critical (8h), abandoned_intake (24h), never_closed (7d), unsentDraft
+(1h). All thresholds are operator-tunable through `thresholds.js`'s
+validate/clamp/merge.
+
+`ALL_HEALTH_TAGS` is the whole set the sweep can write, and it is the list to
+check a tag against: `stale`, `stuck`, `unanswered_handoff`,
+`unanswered_handoff_escalated`, `unsent_draft`, `abandoned_intake`,
+`incomplete_critical`, `never_closed`, `timestamp_corrupt`. A consumer keyed on
+a `health:*` tag outside that set is dead code -- `attn.js` scores
+`health:premature_complete` at +30 and renders a reason for it, and
+`inbox-panel.js` carries a label for it, but nothing emits it and it is not in
+the set.
 
 **Team coverage gaps** fire once per rising edge when the roster is non-empty
 AND at least one breaching case exists AND zero operator replies landed on a

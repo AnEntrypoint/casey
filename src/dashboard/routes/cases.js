@@ -24,7 +24,7 @@
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27 } from '../../format.js'
-import { fieldLabel } from '../../store/report-shape.js'
+import { fieldLabel, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
 import { BRAND } from '../brand.js'
 import { mountRoutes } from './register.js'
 
@@ -898,6 +898,32 @@ export function postDraftDiscard({ store, authed, str, actingOperator }) {
   }
 }
 
+// How many ruled writing lines an empty field gets on the printed briefing.
+//
+// The count is DERIVED from the deployment's own field declarations, never a
+// per-key table in here: report-fields.yml already says which answers are
+// paragraphs. `multiline` is the direct statement of it (uhh declares it on
+// six fields -- symptoms, how_to_find, treatment_history, access_notes and
+// friends), and `append` fields carry the same shape for a different reason,
+// since they accumulate several entries rather than holding one value. Every
+// other field is a species, a count or a date: one line is the honest amount
+// of space, and more would just push the next question off the page.
+//
+// WHAT THIS CANNOT DERIVE, stated rather than guessed: casey's own bundled
+// default config declares `multiline` on nothing at all, so under that config
+// every field falls to a single line. That is the correct behaviour for a
+// config that has not said otherwise -- it is not a silent wrong guess, it is
+// the deployment declining to say -- but a deployer whose form has free-text
+// answers should add `multiline: true` to those fields rather than expect this
+// to infer it from the label.
+const FIELD_DEF_BY_KEY = new Map((REPORT_FIELD_DEFS || []).filter(f => f && f.key).map(f => [f.key, f]))
+const MULTILINE_FILL_LINES = 3
+function fillLinesHtml(key) {
+  const d = FIELD_DEF_BY_KEY.get(key)
+  const n = (d && (d.multiline === true || d.append === true)) ? MULTILINE_FILL_LINES : 1
+  return `<span class="ds-fill-lines" aria-hidden="true">${'<span class="ds-fill-line"></span>'.repeat(n)}</span>`
+}
+
 // Printable case briefing for field teams. Plain HTML, no JS, print-friendly.
 // Mounted { raw: true }: it owns its own try/catch and answers an HTML error
 // page, so deps.wrap's JSON 500 envelope would change what a failure looks
@@ -921,12 +947,17 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
       // voice note, not just read that one arrived.
       const mediaLinkRe = /\(saved: (media\/[^)]+)\)/g
       const rows = REPORT_KEY_LIST.map(k => {
-        let val = '<em>not recorded</em>'
+        // Unrecorded: the words on screen, the writing space on paper. The
+        // shared print stylesheet hides .ds-print-blank and reveals
+        // .ds-fill-lines, so neither is a decision this route has to make
+        // twice. Overwritten wholesale below when there is a real value, so a
+        // recorded field never carries stray lines.
+        let val = `<span class="ds-print-blank"><em>not recorded</em></span>${fillLinesHtml(k)}`
         if (r[k] != null && String(r[k]).trim()) {
           const raw = String(r[k])
           if (k === 'location') {
             const mapHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(raw)}`
-            val = `${esc(raw)} <a href="${esc(mapHref)}" target="_blank" rel="noopener" style="font-size:12px">[map]</a>`
+            val = `${esc(raw)} <a class="maplink" href="${esc(mapHref)}" target="_blank" rel="noopener">[map]</a>`
           } else if (k === 'photos' || k === 'audio') {
             val = esc(raw).replace(mediaLinkRe, (_m, p) => `(<a href="/${esc(p)}" target="_blank" rel="noopener">open</a>)`)
           } else {
@@ -949,10 +980,18 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
       // when printed) and the fixed label column. Its buttons take the
       // deployment's own brand ground with the ink readableInkOn computes for
       // it, so they stay legible on a light or a dark brand.
-      const extraCss = `body{max-width:700px;margin:2em auto}h1{font-size:1.2em;margin-bottom:.5em}`
+      //
+      // The h1 override that used to sit here is GONE on purpose. It said
+      // 1.2em, which resolved to 16.8px, while the management report and the
+      // shift handover -- built by the same printableReport helper, carrying
+      // the same page-title role -- resolved 20.8px. One heading, two sizes,
+      // measured live in a browser. Dropping the override lets the shared
+      // title size (--fs-xl) apply, so all three printables now agree.
+      const extraCss = `body{max-width:700px;margin:var(--space-5) auto}`
         + `table{width:100%}th{width:40%;font-weight:600;vertical-align:top}td{vertical-align:top}`
-        + `.act{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}`
-        + `.act a{background:${BRAND.ground};color:${BRAND.ink};padding:8px 16px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600}`
+        + `.maplink{font-size:var(--fs-micro)}`
+        + `.act{display:flex;gap:var(--space-2-75);flex-wrap:wrap;margin:var(--space-2-5) 0 var(--space-4)}`
+        + `.act a{background:${BRAND.ground};color:${BRAND.ink};padding:var(--space-2) var(--space-3);border-radius:6px;text-decoration:none;font-size:var(--fs-xs);font-weight:600}`
         + `.act a:hover{background:${BRAND.hover}}`
         + `@media print{.act{display:none}}`
       const body = `<h1>Field briefing: ${esc(c.ref||c.id)}</h1>

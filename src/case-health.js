@@ -4,8 +4,7 @@
 // case that is technically in a legal stage yet quietly rotting -- a report that
 // no one has touched in days, a stage a case has been stuck in far too long, a
 // farmer who asked for a human and never got one, an intake abandoned with the
-// on-site facts still missing. Those are the failures that lose a disease report,
-// and the system had no notion of them.
+// on-site facts still missing. Those are the failures that lose a disease report.
 //
 // classifyCaseHealth is a PURE function of (case row, now, thresholds): no clock,
 // no I/O. `now` is injected so every breach boundary is testable to the
@@ -66,14 +65,12 @@ const OPEN = new Set(['new', 'triaging', 'in_progress', 'waiting', 'resolved'])
 // Fallback only -- classifyCaseHealth prefers thresholds.activeWorkStatuses (a
 // Set) when present, matching the openStatuses override pattern above, so a
 // deployment that renames/restructures workflow stages does not need a code
-// change here either. Single shared constant (was two independently-defined
-// literal Sets at both call sites, a silent-drift risk if one were edited
-// without the other).
+// change here either. One shared constant, never a literal Set at each call
+// site: two copies drift silently when only one is edited.
 const ACTIVE_WORK_STAGES = new Set(['in_progress', 'waiting'])
 
-// tsMs/tagList/parseReport moved to timestamp.js (one shared implementation
-// -- see that file's header for why the three near-identical copies existed
-// and why format.js's toDate stays separate).
+// tsMs/tagList/parseReport are timestamp.js's single shared implementation; do
+// not add a local copy here (format.js's toDate stays separate on purpose).
 function lastTouch(c) {
   // The most recent signal of activity: last_event_at if present, else created_at.
   const le = tsMs(c?.last_event_at), ca = tsMs(c?.created_at)
@@ -87,8 +84,8 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   if (!caseRow || !Number.isFinite(now)) return out
   const status = caseRow.status
   // A closed case is finished: it cannot be stale, stuck, or abandoned. This is
-  // the structural guard against flagging done work (P6 -- the wrong state is
-  // unrepresentable, not merely filtered).
+  // the structural guard against flagging done work -- the wrong state is
+  // unrepresentable, not merely filtered.
   const openStatuses = thresholds?.openStatuses instanceof Set ? thresholds.openStatuses : OPEN
   if (status === 'closed' || !openStatuses.has(status)) return out
 
@@ -139,6 +136,23 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
   if (status === 'resolved') {
     if (Number.isFinite(touched) && idle >= forType('neverClosedMs')) {
       out.push({ breach: 'never_closed', since_ms: idle, detail: `resolved but not closed for ${hours(idle)}` })
+    }
+    // PREMATURE_COMPLETE: resolved means somebody -- usually the agent -- called
+    // this done, but the facts a team needs to act on it are still blank. That is
+    // a different failure from incomplete_critical, which only fires on ACTIVE
+    // work stages (activeWorkStages excludes resolved), so the two cannot both
+    // fire on one case: one says "still working and missing facts", this says
+    // "claimed finished and missing facts". In disease surveillance the second is
+    // worse, because nothing further will happen to the case on its own.
+    //
+    // Not time-gated. Every other breach here asks "has this sat too long"; this
+    // one is wrong the instant it is true, and waiting a window before saying so
+    // only delays the correction while the reporter is still reachable.
+    const resolvedRep = parseReport(caseRow)
+    const resolvedCritical = Array.isArray(thresholds?.visitCritical) ? thresholds.visitCritical : VISIT_CRITICAL
+    const blank = resolvedCritical.filter(k => resolvedRep[k] == null || String(resolvedRep[k]).trim() === '')
+    if (blank.length) {
+      out.push({ breach: 'premature_complete', since_ms: Number.isFinite(touched) ? idle : 0, detail: `marked resolved with ${blank.length} of ${resolvedCritical.length} visit-critical fact(s) still blank: ${blank.join(', ')}` })
     }
     return out
   }
@@ -199,14 +213,12 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
     out.push({ breach: 'incomplete_critical', since_ms: idle, detail: `in ${status} for ${hours(idle)} but visit-critical facts still missing` })
   }
 
-  // A 'contact_degradation' breach (sustained turn failures for one contact)
-  // used to be sketched here, gated on thresholds.contactDegradationCount --
-  // a key thresholds.js never produces and case-sweep.js never passed, so the
-  // branch was permanently false and its own comment said it was a placeholder
-  // "case-sweep.js will populate". Removed 2026-09-07. The real per-contact
-  // failure data does exist (degraded-turns.js, behind /api/turns/degraded);
-  // if this breach is wanted, feed that into classifyCaseHealth's inputs and
-  // add the tag back to ALL_HEALTH_TAGS in the same change, not before.
+  // There is deliberately NO 'contact_degradation' breach (sustained turn
+  // failures for one contact): classifyCaseHealth is never handed per-contact
+  // failure data, so any such branch here would be permanently false. The real
+  // data does exist (degraded-turns.js, behind /api/turns/degraded); to add the
+  // breach, feed that into classifyCaseHealth's inputs and add the tag to
+  // ALL_HEALTH_TAGS in the same change, not before.
 
   return out
 }
@@ -220,7 +232,7 @@ function hours(msVal) {
 
 // Stable tag name for a breach, so the sweep can set/clear them idempotently.
 export function healthTag(breach) { return 'health:' + breach }
-export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'unanswered_handoff_escalated', 'unsent_draft', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt'].map(healthTag)
+export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'unanswered_handoff_escalated', 'unsent_draft', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt', 'premature_complete'].map(healthTag)
 
 // Worker check-in baseline: every field_worker should check in at least once per
 // configurable window (default 7 days). Returns a list of workers who are past the
@@ -234,21 +246,19 @@ export function classifyWorkerCheckins(contacts, now = Date.now(), checkinWindow
     // tsMs, not new Date(): last_location_at is written as ISO (case-tools.js's
     // check-in handler), but this module already imports the one shared
     // digit-string-aware parser and hooks/prompt.js reads the SAME column
-    // through it -- three readers of one column must not each guess differently
-    // (timestamp.js's own header states exactly this).
+    // through it -- three readers of one column must not each guess differently.
     const lastAt = c.last_location_at ? tsMs(c.last_location_at) : null
     const ageMs = lastAt ? now - lastAt : Infinity
     if (!Number.isFinite(ageMs) || ageMs > checkinWindowMs) {
-      // Identity deliberately absent. This used to also carry external_id and
-      // display_name (defaulting to external_id, so a raw contact number could
-      // arrive in a field literally named display_name). Nothing consumed
-      // either: the one caller, routes/map.js, reads contact_id to build a
-      // membership Set and emits a boolean overdue_checkin through
-      // workerPinProjection. That made this a pure function manufacturing PII
-      // no caller wanted, one res.json() away from a leak -- and lint's
-      // pii-safety gate would not have caught it, because that gate keys on
-      // the named case/contact projections and on store-call dataflow, and
-      // this is neither. Cheaper to not build the value than to guard it.
+      // Identity deliberately absent: this row carries no external_id and no
+      // display_name, and must not grow one. The only caller, routes/map.js,
+      // reads contact_id to build a membership Set and emits a boolean
+      // overdue_checkin through workerPinProjection, so either field would be a
+      // pure function manufacturing PII no caller wants, one res.json() away
+      // from a leak -- and lint's pii-safety gate would not catch it, because
+      // that gate keys on the named case/contact projections and on store-call
+      // dataflow, and this is neither. Cheaper to not build the value than to
+      // guard it.
       overdue.push({
         contact_id: c.id,
         last_checkin_at: c.last_location_at || null,

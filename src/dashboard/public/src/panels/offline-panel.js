@@ -10,6 +10,10 @@ import { createPanelLoader } from './panel-load.js';
 import { fetchUnreplied } from '../api.js';
 import { fmtTime } from '../format.js';
 
+// The product name is the deployment's own (dashboard_ui.brand), never the
+// literal 'casey' -- same lookup app-view.js and todo-hint.js use.
+const brand = () => state.config?.dashboard_ui?.brand || 'casey';
+
 const h = webjsx.createElement;
 
 // The count in the nav badge is a second consumer of this same response, so it
@@ -29,10 +33,10 @@ export function OfflinePanel() {
     const body = loader.slot(() => {
         const j = state._offline;
         const rows = (j && j.items) || [];
-        if (!rows.length) return Alert({ kind: 'success', children: 'Nothing waiting -- casey is answering normally.' });
+        if (!rows.length) return Alert({ kind: 'success', children: 'Nothing waiting. ' + brand() + ' is answering normally.' });
         const capped = j.total > rows.length;
         return h('div', {},
-            capped ? Alert({ kind: 'info', children: `Showing the newest ${rows.length} of ${j.total} -- use Search or claim these first to bring the rest into view.` }) : null,
+            capped ? Alert({ kind: 'info', children: `Showing the newest ${rows.length} of ${j.total}. Use Search, or claim these first, to bring the rest into view.` }) : null,
             Table({
                 headers: ['Ref', 'Subject', 'Channel', 'Owner', 'Last event'],
                 rows: rows.map((r) => [r.ref || '', r.subject || '(no subject)', r.channel || '', (r.assignee && r.assignee !== 'agent') ? r.assignee : '', fmtTime(r.last_event_at)]),

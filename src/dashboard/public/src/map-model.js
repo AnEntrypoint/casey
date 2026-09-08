@@ -15,15 +15,29 @@
 
 import { state } from './state.js';
 
+// ---- the queue's name ---------------------------------------------------
+// The worst-first queue is ONE list and it has ONE name. It used to be called
+// "Needs a person" on the map rail, "Needs a person now" on the case-list
+// side, "Needs you now" in the glossary, the handover digest and the
+// onboarding overlay, and "the inbox" in the snooze dialog -- five names for
+// one thing, taught to an operator on their first shift. Every surface that
+// names it imports this, for the same reason the urgency ladder below lives
+// here rather than in each consumer.
+export const QUEUE_NAME = 'Needs a person';
+
 // ---- urgency ------------------------------------------------------------
 // attn.js's score, cut into three bands. These exact thresholds were already
 // in map-panel.js's rail feed (the heat-1/2/3 ladder); they are lifted here
 // unchanged so the pin and the row for the SAME case can never land in
 // different bands.
+// Three rungs of one urgency ladder. Band 1 used to read "in the queue",
+// which named the LIST rather than the rung and made "the queue" a fifth
+// name for it beside the four the UI already had. The list has one name
+// (QUEUE_NAME); these three say how soon, not where.
 export const URGENCY_BAND_LABEL = {
   3: 'needs a person now',
   2: 'needs a look today',
-  1: 'in the queue',
+  1: 'can wait',
 };
 
 export function urgencyBand(score) {

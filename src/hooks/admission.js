@@ -1,17 +1,17 @@
 // hooks/admission.js -- everything that decides whether an inbound is allowed
 // to become a turn AT ALL, and nothing that knows what a turn is.
 //
-// Four pieces of mutable per-process state used to sit as bare `const`s at the
-// top of makeCaseHandler's 1300-line closure, interleaved with the handler's own
-// logic: the per-contact in-flight claim, the burst buffer that catches whatever
-// the claim turns away, the per-contact sliding rate window (plus its own
-// piggybacked eviction sweep), and the global sliding window. They share nothing
-// with the rest of the handler except being consulted before it starts, and they
-// are the only state in the file whose correctness is about time and
-// concurrency rather than about a case.
+// Four pieces of mutable per-process state live here: the per-contact in-flight
+// claim, the burst buffer that catches whatever the claim turns away, the
+// per-contact sliding rate window (plus its own piggybacked eviction sweep),
+// and the global sliding window. They share nothing with the rest of the
+// handler except being consulted before a turn starts, and they are the only
+// state whose correctness is about time and concurrency rather than about a
+// case.
 //
-// The three guarantees this module is responsible for, all of them named in
-// AGENTS.md:
+// The three guarantees this module is responsible for. The first two are also
+// stated in AGENTS.md; the third is stated only here and at the claim site in
+// hooks/handler.js:
 //   * A fast message burst is BUFFERED and replayed, never silently dropped.
 //   * An over-cap message is dropped SILENTLY -- no synthetic "slow down" text.
 //   * The claim is taken SYNCHRONOUSLY, with no await between the has() and the
@@ -24,10 +24,10 @@ export function makeAdmissionControl({ log = console } = {}) {
   // key): while a turn is running for a contact, a second arrival must not race
   // a concurrent LLM call against the same case.
   const inFlight = new Set()
-  // What the guard turned away. A fast burst ("the cow" / "by the dam" / "not
-  // eating") used to lose every message but the first: the inbound was recorded
-  // but never reached a prompt. Buffered raw and unprocessed, replayed as a FULL
-  // turn once the claim clears.
+  // What the guard turned away. Buffered RAW and unprocessed, and replayed as a
+  // FULL turn once the claim clears -- recording the inbound without replaying
+  // it loses every message of a fast burst but the first, since the rest never
+  // reach a prompt.
   const pendingBuffer = new Map()   // external_id -> msg[] (raw, unprocessed)
   const BUFFER_CAP = 20
 

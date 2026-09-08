@@ -6,16 +6,21 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Pill } from '/design/src/components/shell.js';
 import { Tooltip } from '/design/src/components/overlay-primitives.js';
+import { state } from '../../state.js';
 const h = webjsx.createElement;
 
+// The product name is the deployment's own (dashboard_ui.brand), never the
+// literal 'casey', and the prose reads as prose rather than carrying the
+// source tree's ASCII double-hyphen convention onto an operator's screen.
 const AUTONOMY_COPY = {
-    auto: 'casey replies to the contact on its own, no review needed.',
-    assisted: 'casey drafts a reply and waits for a person to approve or discard it before it sends.',
-    observe: 'casey only logs what happens -- it never replies. A person must reply by hand.',
+    auto: '{brand} replies to the contact on its own, no review needed.',
+    assisted: '{brand} drafts a reply and waits for a person to approve or discard it before it sends.',
+    observe: '{brand} only logs what happens. It never replies; a person must reply by hand.',
 };
 
 export function AutonomyBadge({ autonomy, key } = {}) {
-    const copy = AUTONOMY_COPY[autonomy] || 'Who answers the contact.';
+    const brand = state.config?.dashboard_ui?.brand || 'casey';
+    const copy = (AUTONOMY_COPY[autonomy] || 'Who answers the contact.').replace(/\{brand\}/g, brand);
     return h('span', { key, class: 'casey-autonomy-badge' },
         Tooltip({
             content: copy,

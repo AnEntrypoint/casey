@@ -33,7 +33,6 @@ const SCALAR_BOUNDS = {
 // accepted whenever it is a non-empty string -- NOT restricted to the shipped
 // default's 4 stage names, so a deployment that renames/adds a workflow stage
 // in thatcher.config.yml can tune its dwell ceiling with no code change here.
-// (Previously a fixed 4-item allowlist silently dropped any other stage name.)
 const STAGE_BOUNDS = [HOUR, 60 * DAY]
 const MAX_STAGE_KEY_LEN = 64
 

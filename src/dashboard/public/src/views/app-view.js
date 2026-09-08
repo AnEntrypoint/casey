@@ -9,6 +9,7 @@ import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton, Btn } from 'ds
 import { state, closeModal, openModal } from '../state.js';
 import { buildSideSections, buildActionItems, backToCases, panelTitle, openQueue } from './nav-config.js';
 import { HealthPills } from '../components/health-pills.js';
+import { QUEUE_NAME } from '../map-model.js';
 import { AccountMenu, LogoutEverywhereConfirmDialog } from '../components/account-menu.js';
 import { NotificationsCenter } from '../components/notifications-center.js';
 import { HandoffBanner } from '../components/handoff-banner.js';
@@ -27,7 +28,7 @@ const h = webjsx.createElement;
 const modalBodies = {};
 export function registerModalBody(name, renderFn) { modalBodies[name] = renderFn; }
 function modalTitle(name) {
-  return { settings: 'Settings', stats: 'Stats', help: 'Help', onboarding: 'Quick start', skills: 'Getting the hang of it' }[name] || name;
+  return { settings: 'Settings', stats: 'Stats', help: 'How this screen works', onboarding: 'Your first shift', skills: 'Ways to work faster' }[name] || name;
 }
 // Content-heavy dialogs (a wide data table, a multi-section form) need the
 // Dialog's wide variant -- see dialog-shell.js's own Dialog({wide}) doc,
@@ -189,8 +190,8 @@ function AttentionLead() {
   return h('button', {
     type: 'button',
     class: 'ds-attn-lead' + (n ? ' is-waiting' : ''),
-    title: 'Open the queue of reports that need a person',
-    'aria-label': label + ' -- open the queue',
+    title: 'Open the "' + QUEUE_NAME + '" list',
+    'aria-label': label + ', open the ' + QUEUE_NAME + ' list',
     onclick: openQueue,
   },
     h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('activity', { size: 15 })),
@@ -232,7 +233,14 @@ function MainContent() {
 }
 
 export function App() {
-  if (!state.authed) return LoginGate();
+  // The banner renders WITH the gate, not below it. This early return used to
+  // hand back LoginGate() alone, and ConnectionBanner() sits further down this
+  // function -- so an operator whose link dropped before the session was
+  // confirmed got a login form and nothing else, while the app already knew
+  // the link was down (api.js had the worker's 503 offline envelope in hand).
+  // A form nobody can submit, with no statement of why, on the one screen with
+  // no other chrome to say it.
+  if (!state.authed) return h('div', { class: 'ds-app-root is-gated' }, ConnectionBanner(), LoginGate());
 
   // brand/leaf are config-driven (dashboard_ui.brand/dashboard_ui.leaf, see
   // report-shape.js's DASHBOARD_UI, threaded through /api/config) so a

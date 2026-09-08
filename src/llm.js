@@ -2,51 +2,42 @@
 //
 // casey's callLLM contract is freddie's: ({messages, tools}) => {content, tool_calls}.
 // freddie's acptoapi bridge (src/agent/acptoapi-bridge.js) calls the acptoapi
-// library IN-PROCESS (no HTTP hop, no separate listening port) -- it used to
-// fetch() a standalone acptoapi.js daemon on :4800, but that process crashed on
-// an uncaught ACP-timeout exception (witnessed live, taking the whole LLM path
-// down until manually restarted), so freddie now imports acptoapi directly.
-// resolveCallLLM picks the backend by an explicit, honest precedence and never
-// claims a capability it can't deliver:
-//
-//   1. acptoapi reachable (a real in-process probe call succeeds): real model
-//      via the freddie bridge
-//   2. otherwise: null
+// library IN-PROCESS -- no HTTP hop, no separate listening port. Do not
+// reintroduce an out-of-process daemon: an uncaught ACP-timeout exception in one
+// takes the whole LLM path down until it is manually restarted.
+// resolveCallLLM returns the real model via the freddie bridge when a live
+// in-process probe call succeeds, and null otherwise. There is deliberately no
+// third, degraded backend.
 //
 // USER DIRECTIVE: no mocks/fallbacks/stubs, only singular working mechanisms and
-// loud errors. The null fall-through is NOT a "canned reply" path any more -- the
-// gateway logs loud and sends nothing on a genuinely unreachable backend. The
-// reliability fix is the in-process bridge itself: the LLM should always work,
-// not fall back to a scripted apology when it doesn't.
+// loud errors. The null fall-through is not a canned-reply path: the gateway
+// logs loud and sends nothing on a genuinely unreachable backend. The LLM should
+// always work rather than fall back to a scripted apology.
 
-// Sonnet by default: casey's turn is a multi-step extraction + tool-orchestration +
-// tone-sensitive task (never alarm, mirror the contact's language, never repeat a
-// question, decide when to call case_split/case_report) that a cheaper
-// model has repeatedly been observed to get wrong (dropped tool calls, repeated
-// questions, fabricated context on empty turns -- see AGENTS.md prompt-steering
-// notes). CASEY_LLM_MODEL overrides this in either direction, including back down
-// to a cheaper tier for cost-sensitive deployments.
+// Sonnet by default: casey's turn is a multi-step extraction + tool-orchestration
+// + tone-sensitive task (never alarm, mirror the contact's language, never repeat
+// a question, decide when to call case_split/case_report). Cheaper models drop
+// tool calls, repeat questions, and fabricate context on empty turns, so this is
+// the floor for a live turn. CASEY_LLM_MODEL overrides it in either direction,
+// including back down to a cheaper tier for cost-sensitive deployments.
 const DEFAULT_MODEL = process.env.CASEY_LLM_MODEL || 'claude/sonnet'
 
-// Bind freddie's bridge callLLM to a default model so every casey turn
-// requests the same brain by default. The bridge reads FREDDIE_LLM_URL /
-// FREDDIE_LLM_MODEL itself, but we pass model explicitly so CASEY_LLM_MODEL is
-// the single casey-facing knob.
+// Bind freddie's bridge callLLM to a default model so every casey turn requests
+// the same brain by default. The bridge reads FREDDIE_LLM_URL/FREDDIE_LLM_MODEL
+// itself; casey passes model explicitly so CASEY_LLM_MODEL is the single
+// casey-facing knob.
 //
-// Per-call override: req.model, when present, wins over the bound default.
-// This is NOT currently exercised by casey's own case handler -- freddie's
-// runTurn is a single undifferentiated tool loop where the agent itself
-// decides mid-turn whether to classify/extract/route/answer (AGENTS.md), so
-// casey has no ahead-of-time "this call is cheap classification vs. expensive
-// extraction" signal to route on; splitting that would mean redesigning the
-// turn shape, not this file. The override exists so a FUTURE caller with a
-// genuine per-call reason (a background/batch task outside the live
-// conversational turn, e.g. a lower-cost summarization pass) can request a
-// different model without a second resolveCallLLM/makeResilientCallLLM
-// instance -- one bridge, per-call choice, rather than a second bound backend.
+// Per-call override: req.model, when present, wins over the bound default. No
+// casey call site uses it today -- freddie's runTurn is one undifferentiated
+// tool loop where the agent itself decides mid-turn whether to
+// classify/extract/route/answer, so casey has no ahead-of-time "cheap
+// classification vs. expensive extraction" signal to route on; adding one means
+// redesigning the turn shape, not this file. The override exists so a caller
+// with a genuine per-call reason (a background/batch summarization pass outside
+// the live conversational turn) needs no second bound backend.
 function bridgeBackend(bridge, model) {
-  // Pass EVERYTHING through (tool_choice, future params) -- destructuring only
-  // {messages, tools} silently stripped tool_choice, severing the forced-first-call
+  // Pass the WHOLE req through (tool_choice, future params). Destructuring only
+  // {messages, tools} silently strips tool_choice, severing the forced-first-call
   // nudge the whole way down.
   return (req) => bridge.callLLM({ ...req, model: req.model || model })
 }
@@ -63,28 +54,26 @@ export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {
   } catch {
     return { callLLM: null, source: 'none' }
   }
-  // isReachable() only probes the auto-chain's top-3 ranked links
+  // isReachable() probes only the auto-chain's top-3 ranked links
   // (REACHABILITY_PROBE_CHAIN_LINK_CAP), which for an 'auto' model resolve to
-  // whichever provider currently ranks highest by static SWE-bench score.
-  // When that one top-ranked provider is rate-limited by concurrent boot-time
-  // traffic (the resume sweep + readiness prober firing their own probes in
-  // the same window), the narrow 3-link sample reports the WHOLE ecosystem
-  // unreachable even though healthy providers sit immediately behind it in
-  // the SAME chain -- resolveCallLLM then returns source:none and every real
-  // turn queues silently with no reply sent, live-witnessed this session.
-  // A genuine chat call through the bridge walks the FULL chain (every
-  // configured/keyed provider, not just the top 3), so it is a strictly wider
-  // and more accurate liveness signal than isReachable()'s own narrow probe.
-  // Fall through to it only on the narrow probe's negative, so the common
-  // case (top-ranked provider healthy) still pays just the cheap probe.
+  // whichever provider currently ranks highest by static SWE-bench score. When
+  // that one top-ranked provider is rate-limited by concurrent boot-time traffic
+  // (the resume sweep and readiness prober firing their own probes in the same
+  // window), the narrow 3-link sample reports the WHOLE ecosystem unreachable
+  // even though healthy providers sit immediately behind it in the SAME chain --
+  // resolveCallLLM then returns source:none and every real turn queues silently
+  // with no reply sent. A genuine chat call through the bridge walks the FULL
+  // chain (every configured/keyed provider, not just the top 3), so it is a
+  // strictly wider and more accurate liveness signal. Fall through to it only on
+  // the narrow probe's negative, so the common case (top-ranked provider
+  // healthy) still pays just the cheap probe.
   let reachable = await bridge.isReachable(undefined, model).catch(() => false)
   if (!reachable) {
     // callLLM's own bound is ACPTOAPI_TIMEOUT_MS (default 240000ms) -- far too
-    // wide for a liveness probe. Without an explicit race, the narrow-probe-
-    // negative case (the uncommon, unhealthy case this fallback exists for)
-    // can hang a live inbound turn up to 4 minutes instead of failing fast to
-    // source:'none', contradicting this path's own cheap-probe intent when it
-    // matters most.
+    // wide for a liveness probe. Without an explicit race, this
+    // narrow-probe-negative path (the uncommon, unhealthy case the fallback
+    // exists for) can hang a live inbound turn up to 4 minutes instead of
+    // failing fast to source:'none'.
     const FALLBACK_PROBE_TIMEOUT_MS = Number(process.env.CASEY_LLM_FALLBACK_PROBE_TIMEOUT_MS) || 45000
     try {
       const r = await Promise.race([
@@ -98,24 +87,19 @@ export async function resolveCallLLM({ probe = true, model = DEFAULT_MODEL } = {
   return { callLLM: bridgeBackend(bridge, model), source: 'acptoapi', model, url: bridge.getAcptoapiUrl() }
 }
 
-// A long-lived gateway must not latch "AI helper offline" for its whole life just
-// because the provider was down at boot. resolveCallLLM probes ONCE; the handler
-// then closes over a static callLLM, so a provider that recovers minutes later is
-// never picked up without a restart -- contacts get nothing sent (per the
-// no-fallback directive) turn after turn. makeResilientCallLLM wraps
+// A long-lived gateway must not latch "AI helper offline" for its whole life
+// because the provider was down at boot. resolveCallLLM probes ONCE and the
+// handler closes over a static callLLM, so a provider that recovers minutes
+// later is never picked up without a restart -- contacts get nothing sent (per
+// the no-fallback directive) turn after turn. makeResilientCallLLM wraps
 // resolveCallLLM in a self-healing backend:
 //
-//   - status() always reflects the CURRENT resolution, so the dashboard health row
-//     shows recovery live (no separate re-probe to drift from the real backend).
-//   - the returned callLLM is ALWAYS a function. While no real backend is resolved,
-//     each call triggers a debounced re-resolve (single in-flight probe, at most one
-//     attempt per intervalMs) and, if still unreachable, THROWS -- the case handler
-//     already catches a failing callLLM, logs loud, and sends nothing (no fallback
-//     text); the next inbound re-probes. Once resolved, calls delegate to the real
-//     backend with no probe overhead.
-//
-// This is the never-stay-degraded half (auto-resume when the provider returns) --
-// the missing "never send anything but never stay silently broken either" half.
+//   - status() always reflects the CURRENT resolution, so the dashboard health
+//     row shows recovery live with no separate re-probe to drift from it.
+//   - the returned callLLM is ALWAYS a function. While no real backend is
+//     resolved it debounces a re-resolve (one in-flight probe) and, if still
+//     unreachable, THROWS -- the case handler catches that, logs loud and sends
+//     nothing (no fallback text), and the next inbound re-probes.
 export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, intervalMs = 30000, resolveDebounceMs = null, resolve = resolveCallLLM, now = null, slowMs = 20000, slowWindow = 5, onRecover = null } = {}) {
   let backend = null                 // resolved real callLLM, or null while degraded
   let last = { source: 'none', model: null, url: null }
@@ -125,27 +109,22 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // Completion-path health: a provider can resolve (source acptoapi, /v1/models
   // answers) yet have every real turn hang for tens of seconds while it walks a
   // failing provider chain. Reachability alone is then a false green -- the pill
-  // says "online" while contacts wait minutes. So we time the REAL turns the
-  // gateway already makes (no synthetic probe burning provider quota) and keep a
-  // small rolling window of {ms, ok}. The health row reads `degraded` from it, so
-  // a slow/erroring brain shows degraded instead of online. `slowMs` is the
-  // per-turn ceiling; `slowWindow` is how many recent turns we keep.
+  // says "online" while contacts wait minutes. So time the REAL turns the gateway
+  // already makes (no synthetic probe burning provider quota) and keep a small
+  // rolling window of {ms, ok}. The health row reads `degraded` from it, so a
+  // slow/erroring brain shows degraded instead of online. `slowMs` is the
+  // per-turn ceiling; `slowWindow` is how many recent turns are kept.
   const recent = []                  // newest-last: { ms, ok, at }
   const recordTurn = (ms, ok) => { recent.push({ ms, ok, at: clock() }); if (recent.length > slowWindow) recent.shift() }
   // Degraded when the recent window has ENOUGH turns and ALL of them were slow
   // or failed -- one fast turn (a recovered provider) clears it. Conservative: a
   // mixed window (some fast) is still online, so a single slow turn never flips
   // the pill, but a sustained slow/failing brain does. MIN_SAMPLES_FOR_DEGRADED
-  // guards the early-window case the comment above claimed but the code did not
-  // actually enforce: right after a boot (or after the window was last cleared),
-  // recent.length can be 1 -- a single unlucky sample (e.g. one rate-limited
-  // provider hop pushing a turn past its timeout) then trivially satisfies
-  // "ALL of them failed" and gates every new inbound into the LLM-down queue for
-  // a full intervalMs, even though the very next real call succeeds fine.
-  // Witnessed live: a genuine chat ok right after a lone prior timeout still
-  // read degraded and queued a plain "hi I'm in sheppie" report with no reply.
-  // Requiring at least 2 samples before degraded can fire matches the
-  // "sustained", not "one bad roll", intent the comment already promised.
+  // must stay >= 2: right after a boot (or after the window was last cleared)
+  // recent.length can be 1, and one unlucky sample (a single rate-limited
+  // provider hop pushing a turn past its timeout) would otherwise satisfy "ALL
+  // of them failed" and gate every new inbound into the LLM-down queue for a
+  // full intervalMs even though the very next real call succeeds fine.
   const MIN_SAMPLES_FOR_DEGRADED = 2
   const completionHealth = () => {
     if (!recent.length) return { degraded: false, lastMs: null, recentSlow: 0, newestSampleAt: null }
@@ -154,9 +133,10 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
     return { degraded, lastMs: recent[recent.length - 1].ms, recentSlow: slow.length, newestSampleAt: recent[recent.length - 1].at }
   }
 
-  // `resolve` and `now` are injectable so the single real-services test can drive the
-  // recovery transition and the debounce clock deterministically (a real resolver
-  // function and a real clock, not a mock framework); both default to production.
+  // `resolve` and `now` are injection seams so the recovery transition and the
+  // debounce clock can be driven deterministically against real code (a real
+  // resolver function and a real clock, never a mock framework); both default to
+  // production.
   const clock = now || (() => Date.now())
 
   async function resolveOnce() {
@@ -178,24 +158,17 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // the last is skipped so a down provider never adds a round-trip to every
   // inbound or stampedes.
   //
-  // SEVERE, live-witnessed bug this constant fixes: this debounce used to share
-  // `intervalMs` (30s, the same window governing the SEPARATE completion-health
-  // staleness decay below) -- but those are genuinely different signals. A
-  // single FAILED reachability probe (source:'none', backend still null) used
-  // to lock EVERY subsequent inbound into the LLM-down queue gate
-  // (hooks/handler.js: "LLM backend down; queued inbound, no reply sent") for
-  // a full 30 REAL seconds, with zero attempt made, even when the underlying
-  // provider chain was fully reachable the whole time -- live-witnessed
-  // directly: resolveCallLLM's own reachability probe (freddie's isReachable,
-  // itself walking a real multi-provider chatChain) raced against a too-short
-  // internal timeout and lost, then a genuinely independent chain call
-  // succeeded in barely over a second moments later, proving the backend was
-  // never actually down -- only the ONE probe attempt was unlucky. Retrying a
-  // failed reachability probe is cheap (worst case: another quick failure, no
-  // worse than today) so this now debounces on a MUCH shorter window by
-  // default, independent of the health-staleness decay's own 30s -- a caller
-  // that explicitly wants the old shared-window behavior can still pass
-  // resolveDebounceMs to override.
+  // RESOLVE_DEBOUNCE_MS must stay INDEPENDENT of intervalMs: they are genuinely
+  // different signals, intervalMs governing the SEPARATE completion-health
+  // staleness decay below. Share them and a single FAILED reachability probe
+  // (source:'none', backend still null) locks EVERY subsequent inbound into the
+  // LLM-down queue gate (hooks/handler.js: "LLM backend down; queued inbound, no
+  // reply sent") for a full 30 real seconds with zero further attempt made, even
+  // when the underlying provider chain is fully reachable and only that ONE probe
+  // attempt was unlucky. Retrying a failed reachability probe is cheap (worst
+  // case, another quick failure), so the default is a much shorter window; a
+  // caller that explicitly wants the shared-window behaviour passes
+  // resolveDebounceMs.
   const RESOLVE_DEBOUNCE_MS = resolveDebounceMs != null ? resolveDebounceMs : Math.min(intervalMs, 3000)
   async function ensure() {
     if (backend) return backend
@@ -209,17 +182,13 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // recordHealth: true for a live inbound turn (the default -- these ARE the
   // completion-path health signal), false for a boot-time resume/redrive of a
   // case already known to have failed before. A resume re-drive is, by
-  // definition, retrying past failures -- letting a burst of them (e.g. the
+  // definition, retrying past failures, and letting a burst of them (the
   // boot-time resumePendingTurns sweep re-attempting several already-degraded
-  // cases in a row) dominate the small rolling window would poison the SAME
-  // gate that decides whether a brand-new, unrelated contact's fresh message
-  // gets queued instead of answered live. Witnessed live: two ancient stuck
-  // cases timing out during the boot resume sweep flipped completionHealth()
-  // to degraded just as a genuinely new "hi there" arrived seconds later, and
-  // it was queued even though the very next real turn succeeded in under a
-  // second. Resume turns still throw/succeed normally for their OWN caller
-  // (resumePendingTurns still sees a real degraded result) -- only the shared
-  // health window is exempted.
+  // cases in a row) dominate the small rolling window poisons the SAME gate that
+  // decides whether a brand-new, unrelated contact's fresh message gets queued
+  // instead of answered live. Resume turns still throw/succeed normally for their
+  // OWN caller (resumePendingTurns still sees a real degraded result) -- only the
+  // shared health window is exempted.
   const callLLM = async (req, { recordHealth = true } = {}) => {
     const b = await ensure()
     if (!b) throw new Error('AI helper offline (provider unreachable); no reply sent')
@@ -243,21 +212,19 @@ export function makeResilientCallLLM({ probe = true, model = DEFAULT_MODEL, inte
   // It folds in completion-path health so a resolved-but-slow backend reads
   // degraded -- the operator can tell "online" from "online but answering nobody".
   const status = async () => {
-    // Matches ensure()'s own RESOLVE_DEBOUNCE_MS gate exactly (not intervalMs)
-    // -- this is a pre-check for whether ensure() is worth calling at all, so
-    // it must use the SAME window ensure() itself checks, or status() would
-    // still silently wait the old, longer intervalMs before ever attempting
-    // the fix ensure() now provides.
+    // Must use the SAME window ensure() itself checks (RESOLVE_DEBOUNCE_MS, not
+    // intervalMs): this is a pre-check for whether ensure() is worth calling at
+    // all, so a wider window here makes status() wait the longer intervalMs
+    // before ever attempting the re-resolve ensure() provides.
     if (!backend && clock() - lastAttempt >= RESOLVE_DEBOUNCE_MS) await ensure()
     const health = completionHealth()
-    // SELF-SUSTAINING-TRAP fix: the old backend-clearing branch (that nulled
-    // `backend` when degraded) raced against the decay-clear below: both gated
-    // on the same `intervalMs`, the clear ran first, nulled `backend`, then the
-    // decay (which requires `backend` truthy) never fired. The degraded flag
-    // persisted until a fresh `ensure()` call happened to re-resolve, which
-    // could take arbitrarily long. Dropping the clear-backend branch lets the
-    // decay fire unconditionally. If the backend is truly down, the next real
-    // callLLM call fails and immediately re-poisons the window.
+    // Do not reintroduce a branch here that nulls `backend` when degraded: it
+    // races the decay-clear below (both gate on the same `intervalMs`), the clear
+    // runs first, and the decay -- which requires `backend` truthy -- then never
+    // fires, so the degraded flag persists until some later `ensure()` happens to
+    // re-resolve, which can take arbitrarily long. The decay must fire
+    // unconditionally; if the backend is truly down, the next real callLLM call
+    // fails and immediately re-poisons the window.
     if (backend && health.degraded && health.newestSampleAt != null && clock() - health.newestSampleAt >= intervalMs) {
       return { ...last, degraded: false, lastMs: health.lastMs, recentSlow: health.recentSlow, ok: true }
     }

@@ -1,20 +1,21 @@
 // hooks/case-writes.js -- the two case-write shapes the inbound path repeats.
 //
 // Neither of these is a new abstraction over the store: they are the exact
-// literal shapes makeCaseHandler already wrote out by hand, once each per site.
-// `observation()` was spelled `{ kind: 'observation', actor: 'system', text }`
-// at roughly twenty-five separate points in one function, and flagNeedsHuman's
-// read-then-tag-then-notify-once sequence was copy-pasted four times (explicit
-// human request, observe mode, jargon/false-confirmation hold, assisted draft)
-// with only the extra tags and the log label differing. Four copies of a
-// notify-ONCE rule is four places for the "once" to drift.
+// literal shapes the inbound path writes at each site. `observation()` is
+// `{ kind: 'observation', actor: 'system', text }`; flagNeedsHuman is the
+// read-then-tag-then-notify-once sequence its four callers share (an explicit
+// human request in service-controls.js, and observe mode, the
+// jargon/false-confirmation hold and the assisted draft in handler.js),
+// differing only in the extra tags and the log labels. Four copies of a
+// notify-ONCE rule is four places for the "once" to drift, so it lives here
+// once.
 
 import { tagList } from '../timestamp.js'
 import { mergeTag } from './heuristics.js'
 
 // The system-observation event body. `data` is omitted entirely when absent --
-// never passed as an explicit undefined -- so the row written is byte-identical
-// to the hand-written object literals this replaces.
+// never passed as an explicit undefined -- so the written row carries no `data`
+// key at all rather than one holding undefined.
 export function observation(text, data) {
   return data ? { kind: 'observation', actor: 'system', text, data } : { kind: 'observation', actor: 'system', text }
 }
@@ -25,18 +26,15 @@ export function observation(text, data) {
 // already-flagged read has to happen BEFORE the tag write, never after.
 //
 // `extraTags` carries the caller's additional tag (today: 'draft-pending' on the
-// two draft-hold paths) and is merged BEFORE 'needs-human', preserving the exact
-// tag-string order the nested mergeTag(mergeTag(tags,'draft-pending'),
-// 'needs-human') call sites produced -- tags are a comma-joined string, so the
-// order is observable, not incidental. Tags merge onto `caseRow.tags` exactly as
-// each call site did, so a caller holding a stale row keeps its existing
-// behaviour rather than silently gaining a re-read it never had.
+// two draft-hold paths) and MUST merge BEFORE 'needs-human' -- tags are a
+// comma-joined string, so the order is observable, not incidental. Tags merge
+// onto the `caseRow.tags` the CALLER passed, never a fresh re-read, so a caller
+// holding a stale row keeps its own behaviour.
 //
-// Best-effort by contract: every call site treated a tag/notify failure as
-// non-blocking (the reply path must never die because an audit tag did not
-// land), so the whole sequence is guarded and logged, never thrown. The two log
-// labels stay separate because the observe-mode call site's own two messages
-// are not symmetric.
+// Best-effort by contract: a tag or notify failure is non-blocking -- the reply
+// path must never die because an audit tag did not land -- so the whole sequence
+// is guarded and logged, never thrown. The two log labels stay separate because
+// the observe-mode call site's own two messages are not symmetric.
 export async function flagNeedsHuman({ store, log, caseRow, notifyHandoff, channel, from, extraTags = [], flagLabel, notifyLabel }) {
   const alreadyFlagged = tagList(caseRow).includes('needs-human')
   try {

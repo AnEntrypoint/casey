@@ -10,7 +10,14 @@
 .casey-detail-pane{padding:var(--space-5, 20px);display:flex;flex-direction:column;gap:var(--space-4, 14px)}
 .casey-case-header{position:sticky;top:0;z-index:var(--z-sticky, 200);background:var(--bg);padding-bottom:var(--space-2, 8px);}
 .casey-detail-empty,.casey-detail-loading,.casey-detail-error{padding:var(--space-5, 20px)}
-.casey-back-btn{display:inline-flex;align-items:center;gap:var(--space-1, 4px);background:transparent;border:0;color:var(--fg-2, var(--muted));cursor:pointer;font-size:var(--fs-nano, 12px);padding:0;margin:0 0 var(--space-2, 6px)}
+/* SPECIFICITY NOTE, and it applies to every font-size rule in this sheet.
+   The kit ships as one scope-prefixed bundle (design/dist/247420.css), so its
+   own rules read `.ds-247420 button` (0,1,1) and `.ds-247420 .ds-app-surface
+   h2` (0,2,1) -- both of which outrank a bare `.casey-x` class. A font-size
+   here on a button or a heading therefore has to carry a container class (or
+   its element name) to reach the screen at all; without one it loses silently
+   and the kit's own size is what renders. */
+.casey-detail-pane .casey-back-btn,.casey-detail-error .casey-back-btn{display:inline-flex;align-items:center;gap:var(--space-1, 4px);background:transparent;border:0;color:var(--fg-2, var(--muted));cursor:pointer;font-size:var(--fs-nano);padding:0;margin:0 0 var(--space-2, 6px)}
 .casey-back-btn:hover{color:var(--fg)}
 .casey-back-btn:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
 
@@ -27,9 +34,23 @@
    reads as one set of controls rather than two sizes that happen to be
    adjacent. */
 .casey-case-header-top .btn,.casey-case-header-top .btn-ghost,.casey-case-header-top .btn-primary{min-height:32px}
-.casey-case-ref{font-size:var(--fs-md, 16px);font-weight:600;margin:0;display:flex;align-items:center;gap:var(--space-2, 8px)}
-.casey-suggested{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted))}
-.casey-copy-btn{background:transparent;border:0;color:var(--fg-3, var(--muted));cursor:pointer;padding:0;font-size:var(--fs-nano, 11px);text-decoration:underline}
+/* Type ladder for this pane, largest first. Every step is a kit token and no
+   two steps share a size, so the pane reads as a hierarchy rather than as two
+   sizes and a jump:
+     --fs-h1-app  the case subject, the one thing this page is about
+     --fs-h2-app  block heads (report, timeline, duplicates, site history)
+     --fs-h3-app  section titles inside the report block
+     --fs-sm      body controls and prose
+     --fs-nano    hints, notes, legends, the ref handle, the automation aside
+     --fs-pico    stage labels, provenance badges, the per-field note control
+   No --fs-* fallback appears anywhere below: the kit stylesheet
+   (design/dist/247420.css) is linked ahead of this sheet in index.html, so a
+   fallback can only ever fire when the page is already broken, and a set of
+   guessed fallbacks that disagree with each other is worse than none.
+   --fs-md is not a token in the kit at all and is therefore never used here. */
+.casey-detail-pane .casey-case-header h2.casey-case-ref{font-size:var(--fs-h1-app);font-weight:600;margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2, 8px);min-width:0;overflow-wrap:anywhere}
+.casey-suggested{font-size:var(--fs-nano);color:var(--fg-3, var(--muted))}
+.casey-detail-pane .casey-copy-btn{background:transparent;border:0;color:var(--fg-3, var(--muted));cursor:pointer;padding:0;font-size:var(--fs-nano);text-decoration:underline}
 .casey-copy-btn:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
 .casey-linklike{background:transparent;border:0;color:var(--accent-ink, var(--accent));cursor:pointer;padding:0;font-weight:600;text-decoration:underline}
 .casey-linklike:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
@@ -37,7 +58,7 @@
 .casey-health-badges{display:flex;flex-wrap:wrap;gap:var(--space-1, 6px)}
 .casey-intake-badge{display:inline-flex;gap:var(--space-1, 4px)}
 
-.casey-case-meta{font-size:var(--fs-nano, 12px);color:var(--fg-3, var(--muted))}
+.casey-case-meta{font-size:var(--fs-nano);color:var(--fg-3, var(--muted))}
 .casey-meta-toggle{display:inline-flex;align-items:center;gap:var(--space-1, 4px);background:transparent;border:0;color:var(--fg-3, var(--muted));cursor:pointer;padding:var(--space-1) 0;font-size:inherit;transition:color var(--dur-snap) var(--ease)}
 /* Measured at 17px tall with padding:0 -- a real control with barely any
    target. Vertical padding only, so it still reads as the inline text
@@ -45,11 +66,17 @@
 .casey-meta-toggle:hover{color:var(--fg)}
 .casey-meta-toggle:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
 .casey-meta-body{display:flex;align-items:center;gap:var(--space-2, 8px);margin-top:var(--space-1, 4px)}
-.casey-meta-id{font-family:var(--ff-mono);font-size:var(--fs-pico, 10px);color:var(--fg-3, var(--muted))}
+.casey-meta-id{font-family:var(--ff-mono);font-size:var(--fs-pico);color:var(--fg-3, var(--muted))}
 
-.casey-progress{display:flex;align-items:center;gap:0;padding:var(--space-2, 8px) 0}
+/* The six stages run 514px wide against a 258px pane on a 375px phone. They
+   WRAP rather than scroll: a stepper is a map of where a case can go, so
+   every stage has to be on screen at once -- "resolved" and "closed" sat past
+   the clip edge with nothing on screen saying they existed, and an operator
+   cannot move a case to a stage they cannot see. Labels stay nowrap so a
+   stage name never breaks mid-word. */
+.casey-progress{display:flex;flex-wrap:wrap;align-items:center;gap:0;row-gap:var(--space-1, 4px);padding:var(--space-2, 8px) 0}
 .casey-progress-step{display:flex;align-items:center;gap:var(--space-1-75, 6px);flex:0 0 auto}
-.casey-progress-label{font-size:var(--fs-pico, 10px);color:var(--fg-3, var(--muted));white-space:nowrap}
+.casey-progress-label{font-size:var(--fs-pico);color:var(--fg-3, var(--muted));white-space:nowrap}
 .casey-progress-step--active .casey-progress-label{color:var(--fg);font-weight:700}
 .casey-progress-dot--done{opacity:.6}
 .casey-progress-line{flex:0 0 var(--space-3-5);width:var(--space-3-5);min-width:var(--space-3-5);height:2px;background:var(--border);margin:0 var(--space-1-75, 6px);transition:background var(--dur-base) var(--ease)}
@@ -63,20 +90,47 @@
    which carries no casey- class. Nothing in the tree writes the name, and it
    never matched in 34 live views, panels and modals. */
 
-.casey-source-badge{display:inline-block;font-size:var(--fs-pico, 10px);margin-top:var(--space-1, 4px)}
+.casey-source-badge{display:inline-block;font-size:var(--fs-pico);margin-top:var(--space-1, 4px)}
 .casey-source-badge--agent{color:var(--fg-3, var(--muted))}
 .casey-ev-flagged{display:inline-flex;color:var(--fg-3, var(--muted))}
 
 .casey-report{display:flex;flex-direction:column;gap:var(--space-3, 10px);border:1px solid var(--border);border-radius:var(--r-md, 8px);padding:var(--space-3, 12px)}
-.casey-report-head{font-family:var(--ff-body);font-weight:600;font-size:var(--fs-sm, 13px)}
+/* Block head, one step above the Section titles it contains. */
+.casey-report-head{font-family:var(--ff-body);font-weight:600;font-size:var(--fs-h2-app)}
+/* The kit gives every h2 --fs-h2-app, which put these section titles level
+   with the block head above them. Inside the report they are one level down,
+   so they take the next step of the app scale. */
+.casey-detail-pane .casey-report .ds-section > h2{font-size:var(--fs-h3-app)}
 .casey-rep-missing{color:var(--fg-3, var(--muted))}
-.casey-rep-src-legend{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted));display:flex;align-items:center;gap:var(--space-1-75, 6px)}
+.casey-rep-src-legend{font-size:var(--fs-nano);color:var(--fg-3, var(--muted));display:flex;align-items:center;gap:var(--space-1-75, 6px)}
 
 /* The report field row, its label column, its value column and the hairline
    that separates one field from the next are all the kit's DetailRow now
    (deps/design src/components/content/row.js + app-shell/panel-row.css).
    They were four rules here that reimplemented it, hairline included, which
    is exactly the drift the kit primitive exists to stop. */
+/* The kit sizes a DetailRow's label column at 40% of the row, which is right
+   for a wide settings pane and wrong for a case rail: at a 645px rail that is
+   a 258px column holding the word "Animals" while the value it labels gets
+   what is left. Cap it in rem so the column tracks the label text rather than
+   the rail, and on a phone stack the two halves so the value gets the whole
+   width instead of a third of 375px. */
+.casey-detail-pane .ds-detail-label{flex:0 0 auto;width:min(38%, 10rem)}
+.casey-detail-pane .ds-detail-val{min-width:0}
+/* Same argument for the kit's LogRow in the timeline: its label column has a
+   110px floor and its text column keeps one line, which on a 258px rail left
+   70px for a 196px entry -- the row ran 343px wide inside a 256px box, and
+   the overflow was scrollable with nothing on screen saying so. Wrapping the
+   entry body and dropping the label floor on a phone holds the row inside
+   the rail; the desktop row is untouched. */
+.casey-detail-pane .ds-log-text{overflow-wrap:anywhere}
+@container (max-width: 700px){
+  .casey-detail-pane .ds-detail-row{flex-direction:column;gap:var(--space-hair, 2px)}
+  .casey-detail-pane .ds-detail-label{width:auto}
+  .casey-detail-pane .ds-log-row{flex-wrap:wrap}
+  .casey-detail-pane .ds-log-label{min-width:0}
+}
+
 .casey-rep-editable{cursor:text;border-radius:var(--r-sm, 4px);padding:var(--space-hair, 2px) var(--space-1, 4px);display:inline-flex;align-items:center;gap:var(--space-1-75, 6px);transition:background var(--dur-snap) var(--ease)}
 .casey-rep-editable:hover,.casey-rep-editable:focus{background:var(--bg-2, var(--panel));outline:none}
 .casey-rep-editable:focus-visible{outline:var(--focus-w) solid var(--focus-color);outline-offset:var(--focus-offset)}
@@ -89,21 +143,22 @@
    floor matches what the kit now gives its own button vocabulary. Padding
    stays horizontal-light so it still reads as the quiet inline affordance
    it is, not a button block repeated twenty-eight times. */
-.casey-rep-note-btn{background:transparent;border:0;color:var(--accent-ink, var(--accent));cursor:pointer;padding:0;height:var(--ctl-sm, 28px);font-size:var(--fs-pico, 10px);align-self:flex-start}
+.casey-detail-pane .casey-rep-note-btn{background:transparent;border:0;color:var(--accent-ink, var(--accent));cursor:pointer;padding:0;height:var(--ctl-sm, 28px);font-size:var(--fs-pico);align-self:flex-start}
 @media (pointer: coarse){.casey-rep-note-btn{min-height:44px}}
 .casey-rep-note-btn:hover{text-decoration:underline}
 .casey-rep-note-btn:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
-.casey-rep-field-note{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted));background:var(--bg-2, var(--panel));border-radius:var(--r-sm, 4px);padding:var(--space-half, 3px) var(--space-2, 8px);border-left:2px solid var(--border)}
+/* The tinted ground is what separates a field note from the value above it.
+   A rule on one edge only adds a second, weaker separator saying the same
+   thing, and reads as an unfinished border everywhere it appears. */
+.casey-rep-field-note{font-size:var(--fs-nano);color:var(--fg-3, var(--muted));background:var(--bg-2, var(--panel));border-radius:var(--r-sm, 4px);padding:var(--space-half, 3px) var(--space-2, 8px)}
 
 .casey-research-notes{display:flex;flex-direction:column}
 .casey-research-notes-list{display:flex;flex-direction:column;gap:var(--space-1, 6px)}
-.casey-research-note{}
-.casey-research-note:last-child{border-bottom:none}
-.casey-research-note-toggle{width:100%;text-align:left;background:transparent;border:0;cursor:pointer;padding:var(--space-1, 6px) 0;font-size:var(--fs-sm, 13px);color:var(--fg);display:flex;align-items:baseline;gap:var(--space-1-75, 6px)}
+.casey-detail-pane .casey-research-note-toggle{width:100%;text-align:left;background:transparent;border:0;cursor:pointer;padding:var(--space-1, 6px) 0;font-size:var(--fs-sm);color:var(--fg);display:flex;align-items:baseline;gap:var(--space-1-75, 6px)}
 .casey-research-note-toggle:hover{color:var(--accent-ink, var(--accent))}
 .casey-research-note-toggle:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
-.casey-research-note-caret{flex:0 0 auto;color:var(--fg-3, var(--muted));font-size:var(--fs-nano, 11px)}
-.casey-research-note-body{white-space:pre-wrap;word-break:break-word;font-family:var(--ff-body);font-size:var(--fs-nano, 12px);color:var(--fg-2, var(--muted));background:var(--bg-2, var(--panel));border-radius:var(--r-sm, 4px);padding:var(--space-2, 8px);margin:0 0 var(--space-2, 8px)}
+.casey-research-note-caret{flex:0 0 auto;color:var(--fg-3, var(--muted));font-size:var(--fs-nano)}
+.casey-research-note-body{white-space:pre-wrap;word-break:break-word;font-family:var(--ff-body);font-size:var(--fs-nano);color:var(--fg-2, var(--muted));background:var(--bg-2, var(--panel));border-radius:var(--r-sm, 4px);padding:var(--space-2, 8px);margin:0 0 var(--space-2, 8px)}
 
 .casey-fields-editor{display:flex;flex-direction:column;gap:var(--space-3, 10px)}
 .casey-fields-row{display:flex;gap:var(--space-3, 10px);flex-wrap:wrap}
@@ -111,25 +166,30 @@
 
 .casey-transitions{display:flex;flex-direction:column;gap:var(--space-2, 6px)}
 .casey-transition-btns{display:flex;flex-wrap:wrap;gap:var(--space-1, 6px)}
-.casey-hint{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted))}
+.casey-hint{font-size:var(--fs-nano);color:var(--fg-3, var(--muted))}
 
 .casey-draft-actions{display:flex;gap:var(--space-2, 8px);margin-top:var(--space-2, 8px)}
 .casey-reply-box{display:flex;flex-direction:column;gap:var(--space-2, 6px)}
-.casey-reply-label{font-size:var(--fs-nano, 12px);color:var(--fg-3, var(--muted))}
+.casey-reply-label{font-size:var(--fs-nano);color:var(--fg-3, var(--muted))}
 .casey-canned-wrap{display:flex;flex-direction:column;gap:var(--space-2, 6px)}
-.casey-canned-lab{font-size:var(--fs-nano, 12px);color:var(--fg-3, var(--muted));margin:0}
+.casey-canned-lab{font-size:var(--fs-nano);color:var(--fg-3, var(--muted));margin:0}
 .casey-canned{display:flex;flex-wrap:wrap;gap:var(--space-2, 8px);align-items:stretch}
 /* A canned reply whose text wraps to two lines stood 63px beside 44px
    siblings. align-items:stretch gives every button in a wrapped row the
    height of the tallest, so a longer phrase no longer makes one button
    tower over its neighbours. */
-.casey-canned-btn{margin:0;background:var(--panel, var(--bg-2));color:var(--fg);border:1px solid var(--border);border-radius:var(--r-md, 8px);padding:var(--space-1-75, 10px) var(--space-2, 14px);font-size:var(--fs-sm, 14px);min-height:44px;text-align:left;flex:0 1 auto;cursor:pointer}
+.casey-detail-pane .casey-canned-btn{margin:0;background:var(--panel, var(--bg-2));color:var(--fg);border:1px solid var(--border);border-radius:var(--r-md, 8px);padding:var(--space-1-75, 10px) var(--space-2, 14px);font-size:var(--fs-sm);min-height:44px;text-align:left;flex:0 1 auto;cursor:pointer}
 .casey-canned-btn:hover{border-color:var(--accent)}
 .casey-canned-btn:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
 .casey-reply-send-row{display:flex;justify-content:flex-end}
 
 .casey-timeline-wrap{display:flex;flex-direction:column;gap:var(--space-2, 8px)}
-.casey-timeline-head{margin:0;font-size:var(--fs-sm, 14px)}
+/* Block heads: the timeline, the duplicate suggestions and the site history
+   are peers of the report block, and the kit's h3 default put them a step
+   below it. They take the same step as the report head. */
+.casey-detail-pane h3.casey-timeline-head,
+.casey-detail-pane .casey-dedup-panel > h3,
+.casey-detail-pane .casey-site-history > h3{margin:0;font-size:var(--fs-h2-app)}
 .casey-timeline{display:flex;flex-direction:column}
 /* The timeline row, its icon/label/text/time columns, its dashed separator and
    its four tone rails are all the kit's LogRow now (deps/design
@@ -137,16 +197,16 @@
    reimplemented it, including the tone rails -- the same drift the kit
    primitive exists to stop. .casey-ev-flagged stays: the flag-a-bad-reply
    marker is casey's own, not a property of log rows in general. */
-.casey-load-older{align-self:flex-start;background:transparent;border:1px solid var(--border);border-radius:var(--r-sm, 6px);color:var(--fg);cursor:pointer;font-size:var(--fs-nano, 12px);padding:var(--space-1-75, 6px) var(--space-1-75, 10px)}
+.casey-detail-pane .casey-load-older{align-self:flex-start;background:transparent;border:1px solid var(--border);border-radius:var(--r-sm, 6px);color:var(--fg);cursor:pointer;font-size:var(--fs-nano);padding:var(--space-1-75, 6px) var(--space-1-75, 10px)}
 .casey-load-older:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
 
 .casey-dedup-panel,.casey-site-history{display:flex;flex-direction:column;gap:var(--space-2, 6px);padding-top:var(--space-3, 12px)}
-.casey-dup-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2, 8px);padding:var(--space-1, 6px) 0;font-size:var(--fs-sm, 13px)}
+.casey-dup-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2, 8px);padding:var(--space-1, 6px) 0;font-size:var(--fs-sm)}
 
 .casey-split-evbox{border:1px solid var(--border);border-radius:var(--r-sm, 6px);padding:var(--space-1-75, 6px);max-height:220px;overflow-y:auto}
-.casey-split-row{display:flex;align-items:flex-start;gap:var(--space-1-75, 6px);padding:var(--space-1, 4px) var(--space-hair, 2px);font-size:var(--fs-nano, 12px)}
+.casey-split-row{display:flex;align-items:flex-start;gap:var(--space-1-75, 6px);padding:var(--space-1, 4px) var(--space-hair, 2px);font-size:var(--fs-nano)}
 
-.casey-share-url{font-size:var(--fs-sm, 13px);word-break:break-all;background:var(--bg-2, var(--panel));border-radius:var(--r-sm, 6px);padding:var(--space-2, 8px) var(--space-1-75, 10px)}
+.casey-share-url{font-size:var(--fs-sm);word-break:break-all;background:var(--bg-2, var(--panel));border-radius:var(--r-sm, 6px);padding:var(--space-2, 8px) var(--space-1-75, 10px)}
 
 .casey-timeline-actions{display:flex;gap:var(--space-2, 8px);justify-content:flex-end}
 

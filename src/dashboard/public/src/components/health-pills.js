@@ -91,7 +91,14 @@ function aiPill() {
     if (hl.queue.dead_lettered > 0) detail += ' (' + hl.queue.dead_lettered + ' gave up after repeated failures).';
   }
   if (webhookFailing) detail += ' Alert webhook is failing to send.';
-  const label = hl.ok ? 'Messages are backing up' : (hl.label || 'AI helper: unknown');
+  // A missing label is a hole in THIS RESPONSE, not a state the helper is in.
+  // 'AI helper: unknown' rendered that hole as a word and an operator read it
+  // as a diagnosis. The server owns the real wording (operations.js's
+  // LLM_HEALTH_VIEWS, which distinguishes "asked, no answer yet" from "this
+  // console cannot see the helper at all in dashboard-only mode"); this branch
+  // only covers a response that carried no label, so it says exactly that and
+  // claims nothing about the helper.
+  const label = hl.ok ? 'Messages are backing up' : (hl.label || 'AI helper: no state reported');
   return pill('ai', hl.ok ? 'warn' : 'off', label, hl.ok ? 'warn' : 'error', detail.trim());
 }
 

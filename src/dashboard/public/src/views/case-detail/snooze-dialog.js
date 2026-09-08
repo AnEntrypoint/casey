@@ -30,7 +30,7 @@ export function SnoozeDialog({ onReload, key } = {}) {
     return Dialog({
         key, open, title: 'Snooze this case', onClose: close,
         children: !open ? null : [
-            h('p', { key: 'lead' }, 'Hide it from the inbox for a while without losing it. A case where someone asked for a person is never hidden, even snoozed.'),
+            h('p', { key: 'lead' }, 'Hide it from the "Needs a person" list for a while without losing it. A case where someone asked for a person is never hidden, even snoozed.'),
             TextField({ key: 'minutes', label: 'Minutes from now (e.g. 60 for 1 hour, 1440 for a day)', type: 'number', value: state._snoozeMinutes || '', placeholder: '240', onInput: (v) => { state._snoozeMinutes = v; schedule(); } }),
             h('div', { key: 'acts', class: 'ds-dialog-actions' },
                 Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: close }),

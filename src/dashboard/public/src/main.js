@@ -187,7 +187,7 @@ async function refreshAttention() {
 }
 
 async function refreshHealth() {
-  try { setHealth({ ai: await api.fetchHealth() }); } catch { setHealth({ ai: { ok: false, label: 'AI helper: unknown', detail: 'Cannot reach the server to check the AI helper.' } }); }
+  try { setHealth({ ai: await api.fetchHealth() }); } catch { setHealth({ ai: { ok: false, label: 'AI helper: cannot be checked', detail: 'This browser could not reach the server to ask about the AI helper. Auto-replies may still be running.' } }); }
   try { setHealth({ runtime: await api.fetchRuntime() }); } catch { /* best-effort */ }
   try { setHealth({ guardrails: await api.fetchFleetHealth() }); } catch { /* best-effort */ }
 }
@@ -314,9 +314,14 @@ const _healthIv = setInterval(refreshHealth, HEALTH_POLL_MS);
 const _attnIv = setInterval(refreshAttention, ATTENTION_POLL_MS);
 const _mapIv = setInterval(() => { if (onMapHome()) refreshMapData(); }, MAP_POLL_MS);
 const _degradedIv = setInterval(refreshDegradedTurns, DEGRADED_POLL_MS);
+// Not one of the polls above: it fetches no data and exists only so that
+// "Connected" cannot outlive the last response that reached the origin. The
+// polls are a side-effect detector with a 15s floor on this view and no floor
+// at all in a throttled tab -- see api.js's startConnectionWatch.
+const _stopConnWatch = api.startConnectionWatch();
 window.addEventListener('beforeunload', () => {
   clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv);
-  clearInterval(_mapIv); clearInterval(_degradedIv);
+  clearInterval(_mapIv); clearInterval(_degradedIv); _stopConnWatch();
 });
 
 // Read-only diagnostic hook. The bug class this layout keeps producing is the

@@ -1,13 +1,12 @@
 // provenance-wire.js -- the ADDITIVE bridge from the live agent conversation
 // into the new provenance/ground-truth subsystem (src/core/, src/packs/).
 //
-// AGENTS.md's Provenance subsystem section explicitly names this as not yet
-// done: case_report continues writing directly to thatcher's case.report
-// JSON blob (case-tools.js/case-store.js, UNCHANGED by this file), and this
-// wires the SAME agent-recorded fields into a provenance-tagged Observation
-// via writeObservation() alongside that existing write -- never instead of
-// it. A failure here must never block or alter the real case_report write,
-// which already landed by the time this runs.
+// case_report writes directly to thatcher's case.report JSON blob
+// (case-tools.js/case-store.js, UNCHANGED by this file); this wires the SAME
+// agent-recorded fields into a provenance-tagged Observation via
+// writeObservation() alongside that write -- never instead of it. A failure
+// here must never block or alter the real case_report write, which already
+// landed by the time this runs.
 //
 // Provenance choice: every value case_report records came from the AGENT's
 // own free-form extraction of what the contact said (never a device
@@ -51,11 +50,9 @@ function getRawLog(dataDir) {
 // actually declares (PACK_FIELD_MAP) are wired through -- REPORT_KEYS carries
 // several casey-specific fields (present_person, owner_contact, notes, ...)
 // the pack does not yet model; those stay thatcher-only until the pack is
-// extended, exactly as documented ("the enumerated migration targets a
-// future session should wire through"). Never throws: any failure is
-// swallowed by the caller (case-tools.js case_report), matching every other
-// best-effort side-write in that handler (systemUpdateDerived, contact
-// last_report_* propagation).
+// extended. Never throws: any failure is swallowed by the caller
+// (case-tools.js case_report), matching every other best-effort side-write in
+// that handler (systemUpdateDerived, contact last_report_* propagation).
 export async function recordProvenanceObservation({ dataDir, caseId, author, incoming, hasLatLon, lat, lon, recordedAtMs = Date.now() }) {
   const findings = {}
   const mk = (value) => mkValue({ value, provenance: 'reported', recordedAt: recordedAtMs, recordedBy: author || 'unknown', packVersion: PACK.version })

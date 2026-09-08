@@ -6,6 +6,11 @@
 
 import { toast } from '../toasts.js';
 import { postDispatch } from '../api.js';
+import { state } from '../state.js';
+
+// The deployment's own product name (dashboard_ui.brand), never the literal
+// 'casey' -- an operator never meets the name of the software underneath.
+const brand = () => state.config?.dashboard_ui?.brand || 'casey';
 
 function haversineKm(lat1, lon1, lat2, lon2) {
     const R = 6371, toRad = (d) => (d * Math.PI) / 180;
@@ -52,19 +57,19 @@ function showWorkerPicker(title, message, workers) {
 export async function openDispatchPicker(mapState, caseId, caseLat, caseLon) {
     const workers = mapState.workers || [];
     if (!workers.length) {
-        toast('No field-worker locations loaded yet -- turn on the worker overlay first so there is someone to pick from.', 'warn');
+        toast('No field-worker locations loaded yet. Turn on the Workers overlay first, so there is someone to pick from.', 'warn');
         return;
     }
     const withDist = workers.map((w) => ({ ...w, km: (caseLat != null && caseLon != null && Number.isFinite(w.lat) && Number.isFinite(w.lon)) ? haversineKm(caseLat, caseLon, w.lat, w.lon) : null }))
         .sort((a, b) => (a.km ?? Infinity) - (b.km ?? Infinity));
     const picked = await showWorkerPicker(
         'Dispatch a worker to this case',
-        'This only records a suggestion -- casey never messages a worker unprompted. They will hear about it the next time they message in.',
+        'This only records a suggestion. ' + brand() + ' never messages a worker unprompted; they will hear about it the next time they message in.',
         withDist);
     if (!picked) return;
     const worker = withDist.find((w) => w.id === picked.workerId);
     try {
         await postDispatch(caseId, { worker_id: picked.workerId, note: picked.note });
-        toast('Dispatch suggested -- ' + ((worker && worker.display_name) || 'the worker') + ' will hear about it on their own next reply-in', 'ok');
+        toast('Dispatch suggested. ' + ((worker && worker.display_name) || 'The worker') + ' will hear about it on their own next reply-in.', 'ok');
     } catch (e) { toast('Dispatch error: ' + e.message, 'err'); }
 }

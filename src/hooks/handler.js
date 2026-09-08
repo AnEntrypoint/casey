@@ -1,19 +1,15 @@
-// hooks/handler.js -- casey's main inbound orchestration (makeCaseHandler).
-//
-// Split out of gateway-hooks.js (see AGENTS.md's Source map for the file's
-// role). This is the ~850-line runTurn tool-loop orchestration: find/create
-// case -> log inbound -> STOP/HUMAN short-circuit -> LLM-down queue gate ->
-// rate limits -> agent turn -> outbound scrubs -> send. Moved verbatim; only
-// the physical location and the source of its helper imports changed --
-// every helper it calls (prompt construction, pure-text heuristics, media
-// enrichment) now lives in a sibling hooks/*.js file, wired as ordinary ES
-// module imports below.
+// hooks/handler.js -- casey's main inbound orchestration (makeCaseHandler),
+// re-exported by gateway-hooks.js (see AGENTS.md's Source map for the file's
+// role). The runTurn tool-loop orchestration: find/create case -> log inbound
+// -> STOP/HUMAN short-circuit -> LLM-down queue gate -> rate limits -> agent
+// turn -> outbound scrubs -> send. Every helper it calls (prompt construction,
+// pure-text heuristics, media enrichment) lives in a sibling hooks/*.js file,
+// wired as ordinary ES module imports below.
 
 import { runTurn } from '../agent/run-turn.js'
 import { fmtTimeSAST } from '../format.js'
-// The two case-write shapes this file used to spell out by hand -- an
-// observation event body written literally at thirty points, and a
-// read-then-tag-then-notify-once sequence copy-pasted four times.
+// The two case-write shapes this file would otherwise spell out by hand: the
+// observation event body, and the read-then-tag-then-notify-once sequence.
 import { observation, flagNeedsHuman } from './case-writes.js'
 import { makeAdmissionControl } from './admission.js'
 import { applyServiceControls, isLlmDown } from './service-controls.js'
@@ -40,14 +36,14 @@ const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 // GUARANTEED-RESPONSE FSM (typing indicator + bounded turnaround + explicit
 // fallback message). USER DIRECTIVE: every LIVE first-attempt turn must end
 // in either a real chat reply or an explicit, truthful "still working" /
-// "having trouble" status message -- never total silence. This is a
-// deliberate, scoped evolution of the no-fallback-text principle, not a
-// reversal of it: the banned thing was always FABRICATED case content or a
-// scripted apology standing in for real understanding (a mock). A truthful
-// status update ("still working on this", "having trouble right now, please
-// try again in a moment") invents nothing and claims nothing about the
-// contact's case -- it is the same class of honesty as the existing loud
-// log lines, just also shown to the contact. Applies only to a live,
+// "having trouble" status message -- never total silence. This is a scoped
+// exception to the no-fallback-text principle, not a reversal of it: what that
+// principle bans is FABRICATED case content or a scripted apology standing in
+// for real understanding (a mock). A truthful status update ("still working on
+// this", "having trouble right now, please try again in a moment") invents
+// nothing and claims nothing about the contact's case -- it is the same class
+// of honesty as the loud log lines, just also shown to the contact. Applies
+// only to a live,
 // first-attempt turn that clears rate-limiting: excludes msg.resume /
 // msg.queuedRedrive (background catch-up re-drives of an OLD message the
 // contact has likely moved on from -- see the isBackgroundRedrive guard
@@ -64,11 +60,10 @@ const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
 // "completing through multiple samples" behavior the design calls for: a
 // retry that starts with real remaining budget gets a genuine chance, not an
 // arbitrarily truncated one). acptoapi's OWN shipped default for this
-// timeout (chain-machine.js DEFAULT_LINK_TIMEOUT_MS) is 120s, not 20s -- a
-// stale claim this comment used to make; casey's .env explicitly overrides
-// it to 60s specifically because the upstream default alone would let one
-// bad chain hop consume the whole hard-deadline budget on attempt 1 alone.
-// A deployment missing that .env override silently inherits the wider 120s
+// timeout (chain-machine.js DEFAULT_LINK_TIMEOUT_MS) is 120s, not 20s; casey's
+// .env explicitly overrides it to 60s specifically because the upstream default
+// alone would let one bad chain hop consume the whole hard-deadline budget on
+// attempt 1 alone. A deployment missing that override silently inherits the 120s
 // default (see AGENTS.md's Timeout Coordination section). Once the hard
 // deadline is reached the loop stops retrying and the guaranteed-fallback
 // text is composed and sent -- see the attempt loop's own remainingMs
@@ -106,25 +101,23 @@ const TURN_TIMEOUT_TEXT = "Sorry, I'm having trouble right now. Please try again
 // Resolve the outbound adapter for a platform from the receiver the handler is
 // bound to.
 //
-// This read `this?.platforms?.get?.(platform)` and could never resolve. casey.js
-// binds this handler to the Casey instance (`handler.bind(this)`), and Casey has
-// no `platforms` at all -- it builds `this.adapters`, a plain OBJECT keyed by
-// channel. `platforms` exists only as a local const in casey.js's init that is
-// assigned straight into `this.adapters`. So the optional chain short-circuited
-// on every turn and `adapter` was always undefined. A later .call/.apply could
-// not have rescued it either: .bind is permanent.
+// Object index, NEVER `.get()`: casey.js binds this handler to the Casey instance
+// (`handler.bind(this)`), and Casey has no `platforms` at all -- it builds
+// `this.adapters`, a plain OBJECT keyed by channel (`platforms` exists only as a
+// local const in casey.js's init, assigned straight into `this.adapters`). A
+// `.get()` lookup short-circuits silently under optional chaining, leaving
+// `adapter` undefined on every turn, and .bind is permanent so no later
+// .call/.apply rescues it.
 //
-// It read as a dead typing indicator and was not. The same `adapter` backs the
-// guaranteed-fallback send and the agent's real reply to the contact, and
-// freddie-bundle/src/platform discards this handler's return value, so
-// adapter.send is the only route an agent reply has to a reporter. Both delivery
-// flags were also initialised true BEFORE their `if (adapter?.send)` guard, so a
-// skipped send still recorded the turn as delivered -- silent, not loud, which is
-// how it survived. Likely a port regression: the freddie Gateway this replaced
-// exposed a real `platforms` Map.
+// That failure is silent, not loud, and it is not merely a dead typing indicator:
+// the same `adapter` backs the guaranteed-fallback send and the agent's real reply
+// to the contact, and freddie-bundle/src/platform discards this handler's return
+// value, so adapter.send is the ONLY route an agent reply has to a reporter. Both
+// delivery flags must therefore start FALSE, below their `if (adapter?.send)`
+// guard -- initialised true above it, a skipped send records the turn as delivered.
 //
-// Object index, not .get() -- `adapters` is an object. Kept tolerant of a missing
-// channel so an unconfigured platform still degrades rather than throwing.
+// Kept tolerant of a missing channel so an unconfigured platform degrades rather
+// than throwing.
 function resolveAdapter(receiver, platform) {
   return receiver?.adapters?.[platform] || null
 }
@@ -148,20 +141,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
   // await between the has() and the add()).
   const admission = makeAdmissionControl({ log })
   // Claims inFlight SYNCHRONOUSLY, before handleInboundOnceClaimed's first
-  // await (rateLimited/findOrCreateCase/recordInbound), not after --
+  // await (rateLimited/findOrCreateCase/recordInbound), never after:
   // Set.has+Set.add with no await between them is an atomic critical section
-  // under JS's single-threaded/cooperative concurrency, closing a race the
-  // OLD later in-flight check (originally sitting well past several awaited
-  // store calls) could not: two overlapping handleInboundOnce calls for the
-  // same contact could both pass that later check before either had reached
-  // the point of adding itself to inFlight. A burstReplay call is the
-  // ALREADY-in-flight turn for this contact being re-driven (see the
-  // trailing drain block below) so it does not re-claim here; it runs as the
-  // sole owner of an existing claim instead. This wrapper -- not a change to
-  // handleInboundOnceClaimed's own ~850-line body -- is what guarantees the
+  // under JS's single-threaded/cooperative concurrency. A check placed past
+  // any awaited store call cannot close the race -- two overlapping
+  // handleInboundOnce calls for the same contact both pass it before either
+  // reaches the point of adding itself to inFlight. A burstReplay call is the
+  // ALREADY-in-flight turn for this contact being re-driven (see the trailing
+  // drain block below), so it does not re-claim here; it runs as the sole
+  // owner of an existing claim instead. This wrapper is what guarantees the
   // claim is released on EVERY exit path (return or throw) via the single
-  // finally below, without needing to hunt down every one of that body's
-  // many early returns individually.
+  // finally below, rather than at each of the inner body's many early returns.
   async function handleInboundOnce(platform, msg) {
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
     const external_id = conversationKey(msg)   // per-contact case IDENTITY
@@ -185,9 +175,9 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const adapter = resolveAdapter(this, platform)
     // Rate limits are checked here, before findOrCreateCase/recordInbound run
     // any store write, so a signature-verified flood is turned away without
-    // driving unbounded case/event writes -- checking only after those writes
-    // (as this used to) still protected the LLM spend but let the flood itself
-    // through to the store on every single message. A buffered-then-replayed
+    // driving unbounded case/event writes. Checking only AFTER those writes
+    // still protects the LLM spend but lets the flood itself through to the
+    // store on every single message. A buffered-then-replayed
     // message must not be rate-checked a second time for the same human
     // message (only the FIRST arrival, before it was buffered, consumed a
     // window slot) -- double-counting a burst against its own buffer defeats
@@ -211,7 +201,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const msgId = messageId(msg)
     // Channel only, never external_id -- it is the contact's phone number
     // (PII), and the same rule is spelled out again at the findOrCreateCase
-    // catch below. This line used to be the one exception in the whole file.
+    // catch below.
     if (!msgId) log?.warn?.('[casey] inbound message missing id; dedup guarantee not applied', { channel })
 
     let caseRow, created
@@ -234,11 +224,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // once. recordInbound runs on the per-conversation lock so the dedup check
     // and the append are atomic -- duplicates are structurally unrepresentable,
     // not merely improbable.
-    // Strip channel mention markup (e.g. Discord's "<@BOTID> hello" for an
-    // "@memobot hello") so it never reaches capture/intent: the mention's numeric
-    // id was being read as a livestock count, flipping a bare greeting out of the
-    // content-free path into the case-ack. The raw msg.text is still recorded by
-    // recordInbound below for audit; only the reasoning copy is cleaned.
+    // Strip channel mention markup (e.g. Discord's "<@BOTID> hello") before the
+    // text reaches any reasoning: the mention's numeric id otherwise reads as a
+    // count and flips a bare greeting out of the content-free path into the
+    // case-ack. The raw msg.text is still recorded by recordInbound below for
+    // audit; only the reasoning copy is cleaned.
     const inboundText = stripChannelMarkup(msg.text || '')
     const media = describeMedia(msg)
     let inboundEvent
@@ -249,30 +239,26 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         data: {}, msg_id: msgId,
       })
     } catch (e) {
-      // Unlike every sibling store call around it (findOrCreateCase above,
-      // appendReportField below), this one had no try/catch of its own -- a
-      // transient store error here (thatcher busy, a lock timeout) threw
-      // straight past this point and silently dropped the WHOLE inbound turn,
-      // with only casey.js's _wrapInflight backstop (its own comment admits
-      // it's a backstop, not a real handler) standing between this and an
+      // Unguarded, a transient store error here (thatcher busy, a lock timeout)
+      // throws straight past this point and silently drops the WHOLE inbound
+      // turn, with only casey.js's _wrapInflight backstop between it and an
       // unhandled rejection. Same explicit-drop discipline as the
       // findOrCreateCase catch above: log loud, send nothing (no fallback text).
       log.error?.('[casey] recordInbound failed; dropping inbound', { caseId: caseRow.id, channel, error: e.message })
       return { to: replyTo, text: '', platform, caseId: caseRow.id, error: e.message }
     }
     // A resume re-drive (msg.resume) intentionally carries the ORIGINAL msg_id of
-    // an inbound already recorded -- recordInbound correctly returns null. That is
+    // an inbound already recorded, so recordInbound correctly returns null. That is
     // the expected path here, not a duplicate to drop: the boot resume sweep is
     // re-running the turn for a message whose inbound persisted but whose reply
     // never went out. Fall through to the agent turn instead of short-circuiting.
-    // Same reasoning for msg.burstReplay: the fast-message-burst buffer (below)
-    // stores the ORIGINAL msg object, whose inbound was already recorded the
-    // first time this same message hit the inFlight guard -- the replay re-enters
-    // this same function to actually run the turn, not to re-record a redelivery.
-    // Without this exemption the replay always self-dedupes on its own earlier
-    // recording and silently no-ops, defeating the "buffered and replayed, never
-    // silently dropped" design principle -- the message ends up IN the event log
-    // but never gets a real reply.
+    // Same for msg.burstReplay: the fast-message-burst buffer stores the ORIGINAL
+    // msg object, whose inbound was already recorded the first time this message
+    // hit the inFlight guard, and the replay re-enters this function to run the
+    // turn, not to re-record a redelivery. Without both exemptions the replay
+    // self-dedupes on its own earlier recording and silently no-ops -- the message
+    // sits IN the event log and never gets a real reply, defeating the "buffered
+    // and replayed, never silently dropped" guarantee.
     if (!inboundEvent && !msg.resume && !msg.burstReplay) {
       log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
       return { to: replyTo, text: '', platform, caseId: caseRow.id, duplicate: true }
@@ -289,13 +275,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       } catch (e) { log.warn?.('[casey] draft supersede failed', { caseId: caseRow.id, error: e.message }) }
     }
     // Record every media artifact this message carried, before the agent turn.
-    // The photo and audio arrival sequences were near-identical and are one
-    // helper in hooks/media-intake.js now. The adapter-shape normalisation goes
-    // with them, because it is the reason a Discord photo used to be stuck at
-    // the text-only floor with real downloaded bytes sitting right there:
-    // WhatsApp's adapter resolves a single media object, Discord's resolves an
-    // array, and every read here assumed the WhatsApp shape. Append-only and
-    // best-effort -- nothing in here may block the reply path.
+    // Photo and audio arrival share one helper in hooks/media-intake.js, and the
+    // adapter-shape normalisation lives with them: WhatsApp's adapter resolves a
+    // single media object and Discord's resolves an ARRAY, so a read that assumes
+    // the WhatsApp shape strands a Discord photo at the text-only floor with real
+    // downloaded bytes sitting right there. Append-only and best-effort --
+    // nothing in here may block the reply path.
     await recordInboundMedia({ store, log, caseId: caseRow.id, msg })
     if (created) {
       if (!caseRow.subject) {
@@ -308,27 +293,25 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
           await store.updateCase(caseRow.id, { tags: mergeTag(caseRow.tags, 'intake_mode:channel') })
         }
       } catch (e) { log.warn?.('[casey] intake_mode tag failed', { error: e.message }) }
-      // Unlike its immediate siblings above (subject seed, intake_mode tag),
-      // this append had no try/catch -- a transient store error here silently
-      // dropped the whole inbound turn with no reply, no observation, no
-      // logged reason. This event is audit-trail decoration (the case already
-      // exists by this point), so a failure here must never block the reply
-      // path -- best-effort, same discipline as every other non-critical
-      // append in this function.
+      // This event is audit-trail decoration (the case already exists by this
+      // point), so a failure here must never block the reply path -- guarded,
+      // best-effort, the same discipline as every other non-critical append in
+      // this function. Unguarded, a transient store error here silently drops
+      // the whole inbound turn with no reply, no observation and no logged
+      // reason.
       try { await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` }) }
       catch (e) { log.warn?.('[casey] case-opened note failed', { caseId: caseRow.id, error: e.message }) }
     }
 
     if (!autoRespond) return { to: replyTo, text: '', platform, caseId: caseRow.id }
 
-    // Unguarded like the two fixed above -- a transient store error here
-    // silently dropped the entire agent turn (the STOP/HUMAN short-circuit,
-    // the LLM call, the reply) past this point with no explicit error
-    // response. The case row from findOrCreateCase (caseRow) is a fine
-    // fallback: it is only slightly staler (missing whatever the
-    // append/updateCase calls just above wrote), and a genuinely broken store
-    // will fail again on the very next real call in this turn, surfacing
-    // loudly there instead of vanishing here.
+    // Guarded: unguarded, a transient store error here silently drops the whole
+    // agent turn (the STOP/HUMAN short-circuit, the LLM call, the reply) with no
+    // explicit error response. The case row from findOrCreateCase (caseRow) is a
+    // fine fallback -- only slightly staler (missing whatever the
+    // append/updateCase calls just above wrote) -- and a genuinely broken store
+    // fails again on the very next real call in this turn, surfacing loudly
+    // there instead of vanishing here.
     let fresh
     try { fresh = await store.getCase(caseRow.id) }
     catch (e) {
@@ -376,13 +359,13 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     }
 
     // Everything else -- status, help, greeting, thanks, enquiry, report, field
-    // extraction, the whole conversation -- is now the AGENT'S job. No deterministic
+    // extraction, the whole conversation -- is the AGENT'S job. No deterministic
     // pre-route: the message goes straight into the runTurn tool loop below, where
     // the model classifies and acts by calling the case tools (case_report,
-    // case_list, case_get, case_mine/case_today, case_new, case_stop). The old
-    // keyword/shape router + STATUS-BY-REF + enquiry/answer/chitchat short-circuits
-    // are removed; the soft dead-end is structurally impossible because the agent,
-    // not a phrase maze, decides the reply.
+    // case_list, case_get, case_mine/case_today, case_new, case_stop). Never add a
+    // keyword/shape router or a STATUS-BY-REF short-circuit back: the soft dead-end
+    // stays structurally impossible only while the agent, not a phrase maze,
+    // decides the reply.
 
     const contact = fresh.contact_id ? await store.getContact(fresh.contact_id).catch(() => null) : null
     const events = await store.listEvents(fresh.id)
@@ -391,8 +374,8 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // LLM-DOWN QUEUE GATE. A message that arrives while the backend is down cannot
     // be understood now -- so QUEUE it and re-drive when the provider recovers
     // (drainQueuedTurns on the down->up edge). The inbound is already recorded
-    // above; here we append a durable QUEUED-FOR-AGENT marker and return WITHOUT a
-    // TURN-START (so the resume sweep does not also claim it). USER DIRECTIVE: no
+    // above; here a durable QUEUED-FOR-AGENT marker is appended and the turn returns
+    // WITHOUT a TURN-START (so the resume sweep does not also claim it). USER DIRECTIVE: no
     // fallback text -- log loud, send nothing, rely on the queue to re-drive once
     // the provider (the in-process acptoapi bridge) is actually reachable. Guarded
     // once per msgId. STOP/HUMAN are handled by the deterministic short-circuit
@@ -417,11 +400,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       }
     }
 
-    // Per-contact concurrency gate: the claim itself now happens synchronously
-    // at function entry, before this point is ever reached (see the top of
+    // Per-contact concurrency gate: the claim happens synchronously at function
+    // entry, before this point is ever reached (see the top of
     // handleInboundOnce) -- a concurrent arrival is buffered and returns long
-    // before reaching here. This is just the buffered-turn's own case-scoped
-    // audit note, logged once we have a real case row to attach it to.
+    // before reaching here. This is only the buffered turn's own case-scoped
+    // audit note, logged once there is a real case row to attach it to.
     if (msg.burstReplay) {
       await store.appendEvent(fresh.id, observation('concurrent turn skipped: prior LLM turn still in-flight for this contact; buffered for replay'))
     }
@@ -442,12 +425,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // typing indicator for its whole duration. Best-effort: startTyping is a
     // UX affordance, never load-bearing -- an adapter with no typing support
     // (WhatsApp today) or a failed POST degrades silently, never blocks or
-    // throws into the real turn. stopTyping is called from EVERY exit path
-    // below via the tryStopTyping() helper (including the crash-net's own
-    // reach -- but a genuine process crash bypasses this entirely, which is
-    // fine: Discord's own typing indicator expires on its own ~10s TTL with
-    // no re-POST, so a crashed turn's indicator self-clears, it does not hang
-    // forever).
+    // throws into the real turn. stopTyping must be called from EVERY exit path
+    // below. A genuine process crash bypasses all of them, which is fine:
+    // Discord's own typing indicator expires on its ~10s TTL with no re-POST,
+    // so a crashed turn's indicator self-clears rather than hanging forever.
     const isBackgroundRedrive = !!(msg.resume || msg.queuedRedrive)
     let typingStarted = false
     if (!isBackgroundRedrive && typeof adapter?.startTyping === 'function') {
@@ -465,17 +446,13 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // the turn is accepted as genuinely degraded -- freddie's own provider
     // fallback chain walks a live-availability-ranked model order per call,
     // not a fixed sequence, so each attempt is a genuinely different roll,
-    // not a repeat of the same failing call.
-    // Witnessed live this session: the structural guard alone correctly
-    // stopped a bad refusal from reaching the contact, but then left them
-    // with total silence -- a retry gives the contact a real chance at an
-    // actual reply before giving up. Raised from 2 to 3: even
-    // CASEY_LLM_MODEL's own primary occasionally misses tool_choice
-    // (witnessed live: mistral/codestral-latest missed on 2/2 attempts for a
-    // plain "I'm in sheppie" location report with no ambiguity at all) --
-    // capped, not unbounded, so a persistently broken backend still fails
-    // within a bounded number of extra round trips rather than doubling
-    // every contact's wait time indefinitely.
+    // not a repeat of the same failing call. Without the retry the structural
+    // guard stops a bad refusal from reaching the contact and leaves them with
+    // total silence instead. 3, not 2: even CASEY_LLM_MODEL's own primary
+    // misses tool_choice (mistral/codestral-latest missed on 2/2 attempts for a
+    // plain, unambiguous location report). Capped, not unbounded, so a
+    // persistently broken backend still fails within a bounded number of extra
+    // round trips rather than doubling every contact's wait indefinitely.
     const MAX_TOOL_CHOICE_ATTEMPTS = 3
     // A resume/queue re-drive (msg.resume) is retrying a turn already known to
     // have failed before -- exempt it from the shared completion-health window
@@ -487,11 +464,9 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // (TURN-START, just recorded above) anchors a remaining-budget calculation
     // for EACH attempt, so a multi-attempt retry loop can never exceed
     // TURN_HARD_DEADLINE_MS in total even though each individual attempt still
-    // gets to run its own bounded chain walk (ACPTOAPI_CHAIN_LINK_TIMEOUT_MS
-    // per-hop -- 60s via casey's own .env override; acptoapi's shipped
-    // DEFAULT_LINK_TIMEOUT_MS in chain-machine.js is 120s, not 20s, so an
-    // unoverridden deployment gets a much wider per-hop budget than this
-    // comment used to claim -- see AGENTS.md's Timeout Coordination section)
+    // runs its own bounded per-hop chain walk (ACPTOAPI_CHAIN_LINK_TIMEOUT_MS
+    // -- see TURN_HARD_DEADLINE_MS's own declaration above, which owns the
+    // per-hop budget note, and AGENTS.md's Timeout Coordination section)
     // to completion rather than being cut off mid-hop. This is the "completing
     // through multiple samples" behavior: a retry attempt that starts with
     // real remaining budget gets a REAL chance, not an arbitrarily truncated
@@ -504,14 +479,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // guarantee at all.
     const turnStartedAt = Date.now()
     // Reply quality is judged INSIDE the attempt loop below: a judge-blanked,
-    // verbatim-repeated, or false-confirming reply is a RETRYABLE miss with
-    // the judge's reasons fed straight back to the model on the next attempt
-    // -- never an instant terminal degrade. Live-witnessed why: a judge
-    // 'repeated reply' blank went straight to the "Still working" fallback
-    // while the model was healthy and seconds away from a real answer, and a
-    // false-confirmation hold parked a real report ("my chickens are sick")
-    // in draft limbo with no reply at all. The fallback/draft paths below now
-    // only fire once this genuine retry budget is exhausted.
+    // verbatim-repeated, or false-confirming reply is a RETRYABLE miss with the
+    // judge's reasons fed straight back to the model on the next attempt, never
+    // an instant terminal degrade. Judging outside the loop sends a healthy
+    // model's recoverable miss straight to the "Still working" fallback, and
+    // parks a real report in draft limbo with no reply at all. The
+    // fallback/draft paths below fire only once this retry budget is exhausted.
     let text = ''
     let jargonReasons = null
     let falseConfirmReasons = null
@@ -530,10 +503,9 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const turnBinding = { id: fresh.id, ref: fresh.ref }
     // Shared across ALL attempts of this turn: a retry is a FRESH runTurn that
     // cannot see the prior attempt's tool calls, so without cross-attempt
-    // dedupe the model blindly repeats mutating calls (live-witnessed: a
-    // retried turn opened a SECOND case for the same report). With a shared
-    // cache, an exact-repeat call returns the first attempt's cached result
-    // instead of re-executing.
+    // dedupe the model blindly repeats mutating calls and opens a SECOND case
+    // for the same report. With a shared cache, an exact-repeat call returns
+    // the first attempt's cached result instead of re-executing.
     const turnDedupeCache = new Map()
     // Human-readable record of successful mutating tool calls across attempts,
     // fed into retry prompts ("already DONE -- do not repeat") since the model
@@ -623,8 +595,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
             // CLOSED to 'reporter' on any falsy/missing/unrecognised value -- a brand
             // new contact, a pre-migration row with no tier populated yet, or a
             // corrupt value all get the LOWER-privilege tier, never silently elevated.
-            // Same discipline as ownsCase's "no author on ctx -> not owned" fail-closed
-            // guard a few lines up in case-tools.js.
             tier: resolvedTier,
             store,
             principal: { id: msg.from || external_id, role: 'worker' },
@@ -644,10 +614,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
             now: Date.now(),
           },
           // freddie's runTurn defaults to 30s, which is too tight for a COLD first
-          // turn (host boot + first provider probe) against the real bridge -- the
-          // crucible run timed out there and the contact got a degraded reply. The
-          // lead providers answer in well under a second once warm, so this bound
-          // protects the cold start without abandoning a live contact for minutes.
+          // turn (host boot + first provider probe) against the real bridge and
+          // times out into a degraded reply. The lead providers answer in well
+          // under a second once warm, so this bound protects the cold start
+          // without abandoning a live contact for minutes.
           // CASEY_LLM_TURN_TIMEOUT_MS overrides for slow links / dead-provider walks.
           // attemptTimeoutMs additionally bounds this to the REMAINING hard-deadline
           // budget for a live turn (see the guaranteed-response FSM comment above);
@@ -687,12 +657,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       //
       // Retrying re-rolls model selection too: the bridge penalizes the served
       // model in the shared availability tracker on a detected miss, so a
-      // fresh attempt genuinely routes around a model that keeps misbehaving
-      // instead of hitting the identical broken one three times in a row.
-      // stripThinkingBlock BEFORE anything judges the text -- a reasoning-
-      // family model's raw <think>...</think> block leaked through server-side
-      // once already (live-witnessed); every check below must only ever reason
-      // about the real intended reply, never the reasoning noise around it.
+      // fresh attempt routes around a model that keeps misbehaving instead of
+      // hitting the identical broken one three times in a row.
+      // stripThinkingBlock runs BEFORE anything judges the text: a reasoning-
+      // family model's raw <think>...</think> block does leak through
+      // server-side, and every check below must only ever reason about the real
+      // intended reply, never the reasoning noise around it.
       const candidate = stripThinkingBlock((result?.result || '').toString().trim())
       // Record this attempt's successful mutating tool calls BEFORE any retry
       // decision, so a retry's prompt can name them as already-done.
@@ -706,11 +676,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       }
       // Verbatim repeat-of-last-outbound guard: a structural EQUALITY
       // comparison against this case's own real prior outbound event, not a
-      // content classifier -- kept deterministic (the no-deterministic-text-
-      // classification directive targets JUDGING what a reply MEANS, not
-      // comparing two strings for being the same string). Live-witnessed: a
-      // small model (its own prior outbound visible in-context) parroted the
-      // exact previous reply verbatim on a real, distinct message.
+      // content classifier -- deterministic on purpose, since the
+      // no-deterministic-text-classification directive targets JUDGING what a
+      // reply MEANS, not comparing two strings for being the same string. A
+      // small model with its own prior outbound visible in-context does parrot
+      // the exact previous reply on a real, distinct message.
       if (lastOutboundText) {
         const strip = (s) => String(s).toLowerCase().replace(/CASE-\d+-[a-z0-9]+/gi, '').replace(/\s+/g, ' ').trim()
         if (strip(candidate) === strip(lastOutboundText)) {
@@ -773,42 +743,39 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // Re-read the case after the agent turn: the agent may have completed intake via
     // case_report (or moved the stage) during the turn. Report-aware decisions below
     // -- the precedence gate, the fallback intake-advance, the jargon hold -- must see
-    // what the agent just wrote, not the pre-turn snapshot. Without this, an agent
-    // that completed intake this turn is still overridden by a deterministic intake
-    // question, and a now-complete case never lets trusted model prose through.
+    // what the agent just wrote, not the pre-turn snapshot. Without it, an agent that
+    // completed intake this turn is overridden by a deterministic intake question and
+    // a now-complete case never lets trusted model prose through.
     fresh = await store.getCase(fresh.id).catch(() => fresh)
 
     // Never send a raw error string to the contact. USER DIRECTIVE: no fallback
     // text -- a degraded turn (below) sends nothing and logs loud instead.
     // text / jargonReasons / falseConfirmReasons arrive from the attempt loop
     // above: extraction, the verbatim-repeat guard, and the real-LLM judge all
-    // run IN-LOOP now so a flagged reply is retried with feedback instead of
-    // being blanked on the spot. Reaching this point with empty text means the
-    // whole genuine retry budget (attempts x hard deadline) was spent.
+    // run IN-LOOP, so a flagged reply is retried with feedback rather than
+    // blanked on the spot. Reaching this point with empty text means the whole
+    // genuine retry budget (attempts x hard deadline) was spent.
     const isFallback = !text
     if (isFallback) {
       if (!errored && result?.error) {
         log.error?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
-        // Structured data.degraded_turn marker (not just free-form text) so a
+        // Structured data.degraded_turn marker, not just free-form text: a
         // cross-case aggregate query (GET /api/turns/degraded, operations.js)
-        // can reliably find every degraded turn across the whole system without
-        // already knowing which case to look at -- the prose-only text this
-        // event used to carry alone was queryable only by fragile substring
-        // matching, or by an operator who happened to already be looking at
-        // THIS specific case's own timeline.
+        // has to find every degraded turn across the whole system without
+        // already knowing which case to look at, and prose alone is queryable
+        // only by fragile substring matching.
         await store.appendEvent(fresh.id, observation(`agent result error: ${result.error}`, { degraded_turn: true, reason: 'error', error: String(result.error).slice(0, 500) }))
       }
       log.error?.('[casey] degraded turn produced no reply', { caseId: fresh.id })
       await store.appendEvent(fresh.id, observation('degraded turn (empty/error/echo/stock-ack/repeat); no reply sent.', { degraded_turn: true, reason: 'empty' }))
-      // Plain (non-health-sweep) tag, read synchronously by attn.js's
-      // attnScore alongside every other tag-based signal -- a case with a
-      // prior degraded turn is a priori more likely to degrade again
-      // (context corruption, a stuck conversation), so the inbox should
-      // already nudge it up before a second failure compounds. Kept as a
-      // plain case.tags entry (not a case-health.js ALL_HEALTH_TAGS member)
-      // since this is a per-turn event fact, not a periodic sweep
-      // classification -- rankAttention already reads case.tags directly with
-      // no event fetch, so this stays a synchronous, cheap dashboard-poll cost.
+      // Plain (non-health-sweep) tag, read synchronously by attn.js alongside
+      // every other tag-based signal -- a case with a prior degraded turn is a
+      // priori more likely to degrade again (context corruption, a stuck
+      // conversation), so the inbox nudges it up before a second failure
+      // compounds. It stays a plain case.tags entry, NOT a case-health.js
+      // ALL_HEALTH_TAGS member, because it is a per-turn event fact rather than
+      // a periodic sweep classification -- rankAttention reads case.tags
+      // directly with no event fetch, keeping the dashboard poll cheap.
       try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'degraded-turn-seen') }) }
       catch (e) { log.warn?.('[casey] degraded-turn-seen tag failed', { caseId: fresh.id, error: e.message }) }
     }
@@ -838,14 +805,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
 
     // A genuinely non-degraded turn (the model produced real, usable content)
     // proves the AI is back online RIGHT NOW, independent of whether that
-    // content ends up held for jargon or assisted-mode approval below --
-    // clearing the stale ai-offline flag here (moved ahead of both of those
-    // early-return guards) instead of only after them means a jargon-held or
-    // assisted-draft reply still clears a prior failure's flag. Previously
-    // this lived after the jargon guard's own early return, so a successful-
-    // but-jargon-laden reply held as a draft never reached the clear logic at
-    // all, leaving a stale ai-offline tag in the operator's offline queue even
-    // though the AI had genuinely recovered.
+    // content ends up held for jargon or assisted-mode approval below. Keep this
+    // clear AHEAD of both of those early-return guards: below either of them, a
+    // successful-but-held reply never reaches the clear at all and a stale
+    // ai-offline tag sits in the operator's offline queue while the AI is
+    // healthy.
     if (!degraded && tagList(fresh).includes('ai-offline')) {
       try { await store.updateCase(fresh.id, { tags: dropTag(fresh.tags, 'ai-offline') }) }
       catch (e) { log.warn?.('[casey] ai-offline clear failed', { caseId: fresh.id, error: e.message }) }
@@ -897,9 +861,8 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // Deterministic intake advance: a substantive inbound on a brand-new case
     // means the case is observably past "new" -- a real report has landed and a
     // reply is going out. The agent turn is SUPPOSED to call case_transition, but
-    // the production model is content-only (it rarely emits tool calls) and even
-    // the stub can leave the move uncommitted, so relying on the LLM makes the
-    // first stage change flaky. We move new->triaging here, deterministically,
+    // a content-only model rarely emits tool calls, so relying on the LLM makes
+    // the first stage change flaky. Move new->triaging here, deterministically,
     // BEFORE recording the outbound. It is a no-op if the agent already moved the
     // case (transition() returns early on an equal stage) and is skipped for the
     // content-free social/empty turns (those never reach a substantive reply with
@@ -922,10 +885,9 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // /api/unreplied) and on the case list, on EITHER a genuine turn failure OR a
     // degraded/blanked reply -- both leave the contact unanswered. The next
     // operator reply clears it (claim-on-reply untags it), and a later successful
-    // agent turn does too (the clear half now runs earlier, ahead of the
-    // jargon/assisted-mode early returns -- see that comment above -- so only
-    // the tag-ON-degraded half remains here). Best-effort: a tag failure must
-    // never block the reply.
+    // agent turn does too, via the clear half that runs earlier -- ahead of the
+    // jargon/assisted-mode early returns. Best-effort: a tag failure must never
+    // block the reply.
     if (degraded) {
       try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'ai-offline') }) }
       catch (e) { log.warn?.('[casey] ai-offline tag failed', { caseId: fresh.id, error: e.message }) }
@@ -942,17 +904,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     }
 
     // GUARANTEED-RESPONSE FSM, terminal fallback: a degraded LIVE first-attempt
-    // turn no longer sends total silence -- it sends the truthful status text
-    // (STILL_WORKING_TEXT if the hard deadline has not yet been reached --
-    // rare here, since the attempt loop above already spent up to the whole
+    // turn never sends total silence -- it sends the truthful status text
+    // (STILL_WORKING_TEXT if the hard deadline has not yet been reached -- rare
+    // here, since the attempt loop above already spent up to the whole
     // hard-deadline budget retrying, but a genuinely instant degrade, e.g. a
     // structural refusal caught before any real network wait, can still land
     // here well under the deadline -- vs TURN_TIMEOUT_TEXT once it has). A
     // background redrive (msg.resume / msg.queuedRedrive) stays SILENT on
-    // degrade, unchanged from before: it is a background catch-up re-drive of
-    // an old message the contact has likely moved on from, never subject to
-    // the live-turn guarantee (see isBackgroundRedrive's definition above,
-    // and the queuedRedrive-specific silent return just above this block).
+    // degrade: it is a background catch-up re-drive of an old message the
+    // contact has likely moved on from, never subject to the live-turn
+    // guarantee (see isBackgroundRedrive's definition above, and the
+    // queuedRedrive-specific silent return just above this block).
     if (isFallback) {
       if (isBackgroundRedrive) {
         return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
@@ -977,14 +939,9 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
           channel,
         })
       } catch (e) { log.warn?.('[casey] failed to record degraded-turn event', { caseId: fresh.id, error: e.message }) }
-      // Message tone: a turn that degraded FAST (a structural refusal, an
-      // immediate provider auth error -- under the soft deadline) reads as
-      // "still working, one moment" since a quick retry from the contact's
-      // next message has a real chance of landing on a healthier attempt. A
-      // turn that ran long (spent real time genuinely retrying/waiting on
-      // providers, past the soft deadline) reads as the more honest "having
-      // trouble" -- the contact has already been waiting a while and a vague
-      // "still working" would understate that.
+      // Message tone is picked by the soft deadline alone -- see
+      // TURN_SOFT_DEADLINE_MS's own declaration above for why fast-degrade
+      // reads as "still working" and long-degrade as "having trouble".
       const elapsedMs = Date.now() - turnStartedAt
       const fallbackText = elapsedMs >= TURN_SOFT_DEADLINE_MS ? TURN_TIMEOUT_TEXT : STILL_WORKING_TEXT
       await store.appendEvent(fresh.id, {
@@ -993,21 +950,21 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       })
       stopTyping()
       const fallbackReply = { to: replyTo, text: fallbackText, platform, caseId: fresh.id, degraded: true, guaranteedFallback: true }
-      // Same correction as the reply path below: only true once a real send is
-      // attempted, so 'the guaranteed fallback went out' cannot be recorded for a
-      // turn that had no adapter to send it with.
+      // Same rule as the reply path below: starts FALSE and goes true only once
+      // a real send is attempted, so 'the guaranteed fallback went out' can
+      // never be recorded for a turn that had no adapter to send it with.
       let fallbackDelivered = false
       try {
         if (typeof adapter?.send === 'function') { fallbackDelivered = true; await adapter.send(fallbackReply) }
       } catch (e) {
         fallbackDelivered = false
         log.error?.('[casey] guaranteed-fallback send failed', { caseId: fresh.id, error: e.message })
-        // Mirrors the successful-reply path's send-failure visibility below --
-        // this is precisely the path meant to GUARANTEE an observable record
-        // for a worried farmer, so its own delivery failure must not be the
-        // one silent case. The 'sent' event above already exists; this adds
-        // the correcting fact so the timeline is never wrong about whether
-        // the fallback text actually reached the contact.
+        // Mirrors the successful-reply path's send-failure visibility below.
+        // This is the path meant to GUARANTEE an observable record for a
+        // worried contact, so its own delivery failure must not be the one
+        // silent case: the 'sent' event above already exists, and this adds the
+        // correcting fact so the timeline is never wrong about whether the
+        // fallback text actually reached the contact.
         await store.appendEvent(fresh.id, observation(`fallback send failed on ${channel}: ${e.message}`))
       }
       fallbackReply.delivered = fallbackDelivered
@@ -1030,9 +987,9 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // disabled/unavailable/failed, leaving a plain text reply.
     const audio = await synthesizeVoice(text)
     if (audio) reply.audio = audio
-    // Not `true` until something actually sent. This was initialised true above
-    // the guard, so when no adapter resolved the turn recorded itself delivered
-    // having sent nothing -- the failure mode that hid the broken lookup.
+    // Start FALSE and set it only inside the branch that earns it. Initialised
+    // true above the guard, a turn with no resolved adapter records itself
+    // delivered having sent nothing, and a broken adapter lookup stays hidden.
     let delivered = false
     if (adapter?.send) {
       delivered = true
@@ -1052,24 +1009,21 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
   }
 
   // Public entrypoint: run one turn, then drain any message a fast burst
-  // buffered while that turn was in flight (see pendingBuffer above) -- one
-  // extra turn per buffered message, oldest-first, so a burst's later messages
-  // still reach a prompt instead of vanishing once the guard dropped them.
-  // `this` is preserved via .call so the platform-adapter lookup inside
-  // handleInboundOnce still resolves (casey.js binds handleInbound to the
-  // gateway instance).
+  // buffered while that turn was in flight -- one extra turn per buffered
+  // message, oldest-first, so a burst's later messages still reach a prompt
+  // instead of vanishing at the guard. `this` is preserved via .call so the
+  // adapter lookup inside handleInboundOnce still resolves (casey.js binds
+  // handleInbound to the gateway instance).
   return async function handleInbound(platform, msg) {
     // Crash-safety backstop for the guaranteed-response FSM's typing indicator:
-    // handleInboundOnceClaimed (the ~850-line body handleInboundOnce's claim
-    // wrapper delegates to) has no try/finally of its own around most of that
-    // body, so an unhandled throw deep inside would otherwise bypass every
-    // stopTyping() call threaded through its own return paths, leaking a live
-    // typing indicator until Discord's own ~10s TTL silently expires it.
-    // adapter.stopTyping is idempotent (a no-op if
-    // nothing was ever started for this channel -- see DiscordAdapter's own
-    // Map-based tracking), so calling it here defensively in a finally, keyed
-    // on the same replyTarget() the inner handler used to start it, is safe
-    // even on the many paths that never started one at all.
+    // handleInboundOnceClaimed has no try/finally of its own around most of its
+    // body, so an unhandled throw deep inside bypasses every stopTyping() call
+    // threaded through its own return paths and leaks a live typing indicator
+    // until Discord's own ~10s TTL expires it. adapter.stopTyping is idempotent
+    // (a no-op if nothing was ever started for this channel -- see
+    // DiscordAdapter's own Map-based tracking), so calling it here defensively
+    // in a finally, keyed on the same replyTarget() the inner handler used to
+    // start it, is safe on the many paths that never started one at all.
     const adapter = resolveAdapter(this, platform)
     let result
     try {
@@ -1080,19 +1034,17 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const external_id = conversationKey(msg)
     const next = admission.takeBuffered(external_id)
     if (next) {
-      // Fire-and-forget: the replay is a full turn in its own right (it will
-      // append its own events/outbound), not something the original caller
-      // should block on -- mirrors how drainQueuedTurns re-drives independently.
-      // Routed through `this.handleInbound` (the casey.js _wrapInflight-WRAPPED
+      // Fire-and-forget: the replay is a full turn in its own right (it appends
+      // its own events/outbound), not something the original caller should block
+      // on -- mirrors how drainQueuedTurns re-drives independently.
+      // Route through `this.handleInbound` (the casey.js _wrapInflight-WRAPPED
       // reference -- `this` here is the gateway instance, and _wrapInflight
-      // reassigns `this.gateway.handleInbound` to a tracked version
-      // immediately after this very function is bound to it), NOT the raw
-      // closure-local `handleInbound` variable this function itself is bound
-      // to. The raw self-call bypassed casey.js's `_inflight` tracking
-      // entirely, so a burst-replay turn could still be mid-flight when
-      // casey.stop() closed the store -- live-witnessed: "CaseStore not
-      // initialised -- call init() first" thrown from a replay turn racing a
-      // real stop() call during a test run.
+      // reassigns `this.gateway.handleInbound` to a tracked version immediately
+      // after this very function is bound to it), NEVER the raw closure-local
+      // `handleInbound` variable this function itself is bound to. A raw
+      // self-call bypasses casey.js's `_inflight` tracking entirely, so a
+      // burst-replay turn can still be mid-flight when casey.stop() closes the
+      // store, and the replay throws "CaseStore not initialised".
       this.handleInbound(platform, next).catch(e => log.error?.('[casey] burst replay failed', { error: e.message }))
     }
     return result
@@ -1100,13 +1052,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
 }
 
 // The conversation/case IDENTITY -- per CONTACT, not per channel. A Discord server
-// channel carries many authors; keying on the channel alone made everyone in it
-// share ONE case (a second worker's "hello" landed on the first worker's case). So
-// when the container (channel/chat) and the author differ -- a multi-person channel
-// -- the key is "container:author". A 1:1 chat (WhatsApp, where the chat id IS the
-// person, or there is no separate container) stays the single id. This is identity
-// only; the reply DELIVERY target is replyTarget() below (the channel), because
-// Discord posts to the channel, not the author.
+// channel carries many authors, and keying on the channel alone puts everyone in it
+// on ONE case. So when the container (channel/chat) and the author differ -- a
+// multi-person channel -- the key is "container:author". A 1:1 chat (WhatsApp, where
+// the chat id IS the person, or there is no separate container) stays the single id.
+// This is identity only; the reply DELIVERY target is replyTarget() below (the
+// channel), because Discord posts to the channel, not the author.
 export function conversationKey(msg) {
   const container = msg.raw?.channel_id || msg.raw?.chatId || msg.chatId || ''
   const author = msg.from || ''
@@ -1119,21 +1070,14 @@ export function conversationKey(msg) {
 // the author the LAST, deliberately, because a corrupted key can carry the same
 // container repeated many times.
 //
-// This is one function because it used to be three, and the same SEVERE
-// COMPOUNDING-KEY BUG had to be found and fixed twice, independently, in two
-// copy-pasted copies inside casey.js (resumePendingTurns and
-// _drainQueuedTurnsBody). That bug: a redrive passed the whole combined
-// external_id back in as `msg.from`, so conversationKey (which builds
-// `container:from`) recombined it into `container:container:author` on that
-// redrive's own next write, growing by one duplicated segment every sweep pass.
-// Live-witnessed: real production external_ids had accumulated the SAME channel
-// id 30+ times, colon-joined, after weeks of nightly resume sweeps.
-// conversationKey was never at fault -- it always emits a clean two-part key;
-// the call sites were feeding its output back in as raw input. Taking the LAST
-// segment as the author both fixes it going forward and self-heals an already
-// corrupted key on its next successful resume, since the freshly split-and-
-// rejoined key collapses back to a clean two-part container:author with no
-// separate migration. Keep this in ONE place.
+// Keep this decomposition in ONE place, and never feed a combined external_id
+// back into conversationKey as `msg.from`: conversationKey builds
+// `container:from`, so a redrive that does inflates the key to
+// `container:container:author` on its own next write, growing by one duplicated
+// segment every sweep pass and compounding without bound. Taking the LAST
+// segment as the author both prevents that and self-heals an already compounded
+// key on its next successful resume -- the freshly split-and-rejoined key
+// collapses back to a clean two-part container:author with no migration.
 export function splitExternalId(externalId) {
   const parts = String(externalId || '').split(':')
   return { container: parts[0], author: parts[parts.length - 1] }
@@ -1149,10 +1093,8 @@ export function replyTarget(msg) {
 // Delivery target for an operator/system send addressed to a CASE ROW rather
 // than a live message: the inverse of conversationKey. On Discord external_id
 // is the 'container:author' composite and /channels/{composite}/messages is a
-// 400 Invalid Form Body (live-witnessed: an operator transition's stage note
-// failed to deliver with exactly that) -- the channel container alone is the
-// target. 1:1 channels (WhatsApp) carry no ':' composite and pass through
-// unchanged.
+// 400 Invalid Form Body -- the channel container alone is the target. 1:1
+// channels (WhatsApp) carry no ':' composite and pass through unchanged.
 export function caseDeliveryTarget(caseRow) {
   const ext = String(caseRow?.external_id || '')
   if ((caseRow?.channel || '') === 'discord' && ext.includes(':')) return splitExternalId(ext).container

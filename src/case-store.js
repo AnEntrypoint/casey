@@ -90,8 +90,7 @@ export class CaseStore {
     // named. Importing thatcher's db accessor ourselves to pre-seed a
     // different path forks its module graph into a second handle (see file
     // header), so the ONLY safe relocation is the process cwd.
-    // test.js therefore runs from an isolated temp cwd so a run never wipes a
-    // live ./data. dataDir is exposed for diagnostics (doctor/up print it).
+    // dataDir is exposed for diagnostics (doctor/up print it).
     this.dataDir = path.resolve(process.cwd(), 'data')
     this.workflow = opts.workflow || 'case_lifecycle'
     this.log = opts.log || null
@@ -126,6 +125,7 @@ export class CaseStore {
     })
     await this.thatcher.init()
     await this.reportStrandedStages()
+    await this.reportOrphanedOperators()
     return this
   }
 
@@ -135,13 +135,12 @@ export class CaseStore {
   // TEXT), so a config edit and the rows already on disk can disagree with no
   // one noticing. Renaming or removing a workflow stage in thatcher.config.yml
   // is the case that costs data: every case already sitting in the old stage is
-  // stranded, SILENTLY. Witnessed end to end against a real store by renaming
-  // one stage -- init() accepted the new config without complaint, the stored
-  // row kept the old status, findOpenCase's `status: {$in: openStatuses}` no
-  // longer matched it, availableTransitions() went empty and transition() threw
-  // `invalid current stage`, and the reporter's very next message opened a
-  // DUPLICATE case, orphaning the original report (species, location,
-  // symptoms) with nothing on any surface saying so.
+  // stranded, SILENTLY -- init() accepts the new config without complaint, the
+  // stored row keeps the old status, findOpenCase's `status: {$in: openStatuses}`
+  // no longer matches it, availableTransitions() goes empty and transition()
+  // throws `invalid current stage`, and the reporter's very next message opens a
+  // DUPLICATE case, orphaning the original report (species, location, symptoms)
+  // with nothing on any surface saying so.
   //
   // Loud, never fatal: refusing to boot would take a live disease-surveillance
   // gateway down over rows an operator can still re-stage by hand, and the
@@ -172,6 +171,52 @@ export class CaseStore {
       return stranded.map(r => r.id)
     } catch (e) {
       this.log?.warn?.('[casey] stranded-stage check failed', { error: e.message })
+      return []
+    }
+  }
+
+  // The same class as reportStrandedStages above, one table over: a stored row
+  // naming an operator that does not exist. The assignee key is the account
+  // USERNAME at every hop -- getRoster maps accounts to { id: username },
+  // routes/cases.js claims with `assignee: op.id`, /api/whoami returns
+  // `username`, and the SPA's three ownership checks compare against it -- so a
+  // case.assignee matching no active username is unreachable rather than
+  // mis-keyed. It costs three things at once, none of them visible: the case can
+  // never be "mine" for anyone, so the My-cases filter cannot show it; workload
+  // seeds a card per rostered account AND a card per assignee found on cases, so
+  // the same person can appear twice, splitting their load and overstating the
+  // team's spare capacity that coverage-gap alerting keys on; and the
+  // suggested-assignee path (routes/cases.js) resolves operator_identity against
+  // the roster, so an orphaned identity suggests a handle nobody can log in as.
+  //
+  // Loud, never fatal, and reports rather than fixes, for the same reason as
+  // stranded stages: only a human knows which account an old handle became.
+  // 'agent' (UNCLAIMED_ASSIGNEE) is the unassigned marker, not an operator.
+  async reportOrphanedOperators({ limit = 10000 } = {}) {
+    try {
+      const accounts = await this.t.list('operator_account', {}, { limit })
+      const known = new Set(accounts.filter(a => a.status !== 'deleted').map(a => a.username).filter(Boolean))
+      if (!known.size) return []
+      const orphans = []
+      const cases = await this.t.list('case', {}, { limit })
+      const byAssignee = new Map()
+      for (const c of cases) {
+        const a = c.assignee
+        if (!a || a === UNCLAIMED_ASSIGNEE || known.has(a)) continue
+        if (!byAssignee.has(a)) byAssignee.set(a, [])
+        byAssignee.get(a).push(c.ref || c.id)
+      }
+      for (const [a, refs] of byAssignee) orphans.push(`assignee "${a}": ${refs.length} case(s) (${refs.slice(0, 10).join(', ')}${refs.length > 10 ? ', ...' : ''})`)
+      const idents = await this.t.list('operator_identity', {}, { limit })
+      const orphanIdents = idents.filter(r => r.operator_id && !known.has(r.operator_id)).map(r => r.operator_id)
+      if (orphanIdents.length) orphans.push(`operator_identity for ${orphanIdents.length} unknown operator(s) (${orphanIdents.slice(0, 10).join(', ')})`)
+      if (!orphans.length) return []
+      const msg = `[casey] stored rows name operator(s) with no active account -- those cases can never show as "mine" to anyone, they double-count in team workload, and an orphaned identity suggests a handle nobody can log in as. Re-assign them or restore the account. ${orphans.join('; ')}`
+      if (this.log?.error) this.log.error(msg, { count: orphans.length })
+      else console.error(msg)
+      return orphans
+    } catch (e) {
+      this.log?.warn?.('[casey] orphaned-operator check failed', { error: e.message })
       return []
     }
   }
@@ -294,9 +339,9 @@ export class CaseStore {
 
   // Read every entity.field { type: enum, options: [...] } declaration off the
   // same parsed config, so a deployment that adds/renames a case_type or
-  // priority value in thatcher.config.yml is picked up everywhere that used to
-  // carry its own hardcoded copy of the list (case-tools.js validation guards,
-  // case_list/case_update tool-schema enums) with no code change. Shape:
+  // priority value in thatcher.config.yml is picked up by every consumer
+  // (case-tools.js validation guards, case_list/case_update tool-schema enums)
+  // with no code change and no second hardcoded copy of the list. Shape:
   // { "<entity>.<field>": string[] }. Non-enum fields and entities with no
   // fields are simply absent -- callers fall back to their own default.
   _parseFieldEnums(cfg) {
@@ -341,7 +386,7 @@ export class CaseStore {
     // database is locked" -- e.g. an agent turn's enquiry tool (case_list/case_get)
     // reading while casey writes the same turn's events. Without a retry that throws
     // out of runTurn and the worker sends the degraded fallback instead of the real
-    // answer (the witnessed flaky enquiry). We wrap the mutating/reading methods in a
+    // answer. We wrap the mutating/reading methods in a
     // bounded retry with small linear backoff so a lock contends-and-recovers rather
     // than surfacing as a turn error. Bounded (never infinite), and only retries the
     // BUSY/locked class -- any other error propagates immediately.
@@ -370,16 +415,10 @@ export class CaseStore {
   }
 
   // thatcher's create() returns the locally-constructed record carrying the
-  // real genId it stored in the TEXT id column -- confirmed live against the
-  // installed node_modules/thatcher/src/lib/busybase-store.js create() (returns
-  // `record` with `id: data.id || genId()`, never a rowid), and re-verified
-  // end-to-end via a direct t.create()+t.get()-by-returned-id round trip against
-  // a fresh embedded store. An older thatcher returned a rowid alias instead, so
-  // creates used to go through a _createReload(entity, data, user, uniqueWhere)
-  // wrapper that listed by uniqueWhere and picked the newest row. That reload is
-  // dead weight now: the wrapper had become a pass-through to t.create() with an
-  // unread 4th argument every call site still built, so it is gone and the four
-  // creates below call this.t.create() directly.
+  // real genId it stored in the TEXT id column (node_modules/thatcher/src/lib/
+  // busybase-store.js create() returns `record` with `id: data.id || genId()`,
+  // never a rowid), so every create below calls this.t.create() directly and
+  // may trust the returned row's id without a re-read.
 
   // ---- contacts -----------------------------------------------------------
 
@@ -471,8 +510,7 @@ export class CaseStore {
   // no new entity, and a full history of who tightened what and when.
   // Shared by every settings singleton below (thresholds, fleet-health,
   // shift): one 'system'-channel case per settings key, found-or-created on
-  // demand. Was written out three times verbatim, differing only in the two
-  // string literals.
+  // demand.
   async _systemSingletonCaseId(key, displayName) {
     const { case: c } = await this.findOrCreateCase({
       channel: 'system', external_id: `settings:${key}`,
@@ -625,13 +663,11 @@ export class CaseStore {
   // reusing the SAME (channel, external_id) as their existing conversation --
   // the real conversationKey, not a synthetic id -- so the very NEXT plain
   // inbound message correctly binds to THIS new case via the normal
-  // findOrCreateCase/findOpenCase newest-wins path. (A prior createCase +
-  // setActiveCase implementation minted a synthetic external_id and wrote to
-  // contact.active_case_id, a field findOrCreateCase never reads -- the next
-  // message silently kept talking to the OLD case. Fixed by keying on the
-  // real conversation identity instead of a second, unread binding.) Locked on
-  // the same key so two near-simultaneous "start a new report" turns cannot
-  // duplicate.
+  // findOrCreateCase/findOpenCase newest-wins path. Do NOT mint a synthetic
+  // external_id and record the binding on contact.active_case_id instead:
+  // findOrCreateCase never reads that field, so the next message silently keeps
+  // talking to the OLD case. Locked on the same key so two near-simultaneous
+  // "start a new report" turns cannot duplicate.
   async createCase({ channel, external_id, subject = '', contact_id = '' } = {}) {
     return this._withLock(`${channel}|${external_id}`, async () => {
       const ref = await this._nextRef()
@@ -652,12 +688,11 @@ export class CaseStore {
   }
 
   // List cases with an operator-aware where ({field:{$gte,$lte,$in,...}}, top-level
-  // $or, bare-array IN) and an optional opts.user for row-access scoping. The new
+  // $or, bare-array IN) and an optional opts.user for row-access scoping. The
   // worker-enquiry queries (today=created_at range, near=lat/lon box, mine=assignee
   // + user scope, open=status $in) ride these. thatcher's operator-where + row-access
   // + list sort all push down to the store directly (see the call below); there is
-  // no feature-detect or JS-side fallback -- casey consumes thatcher via npm `latest`,
-  // which has carried them since 1.0.30, so a pre-support install can never happen.
+  // no runtime feature-detect and no JS-side equality-only fallback.
   // Three singleton `channel:'system'` cases (settings:thresholds, settings:
   // fleet-health, settings:shift) are created via findOrCreateCase, default to
   // status 'new', and never close -- they are audit-log carriers for operator-
@@ -672,11 +707,6 @@ export class CaseStore {
   async listCases(where = {}, opts = {}) {
     const { limit = 50, offset = 0, user = null, sort = null, includeSystem = false } = opts
     if (!includeSystem && where.channel === undefined) where = { ...where, channel: { $ne: 'system' } }
-    // thatcher's operator-where compiler ($gte/$lte/$in/$or) has been in every
-    // published version since 1.0.30; casey consumes thatcher exclusively via npm
-    // `latest`, so the installed version can never be older than what casey was
-    // built against (see package.json's thatcher floor). Call operator-where
-    // directly -- no runtime feature-detect, no JS-side equality-only fallback.
     const rows = await this.t.list('case', where, {
       limit: Math.max(limit + offset, 1000),
       ...(user ? { user } : {}),
@@ -694,11 +724,9 @@ export class CaseStore {
   }
 
   // Count via the public list() API: same module singleton as every other call,
-  // backend-agnostic, and survives `npm ci` (no node_modules edit). The old cap
-  // of 100000 hauled the whole table into JS on every dashboard poll (every 5s);
-  // CAP is now sized to the real ceiling (dashboard PAGE_MAX is 200, real case
-  // volumes are far below this), so the count is exact for casey's scale while
-  // the 5s poll no longer materializes a 100k-row worst case.
+  // backend-agnostic, and survives `npm ci` (no node_modules edit). The whole
+  // matching set is hauled into JS on every call, and the dashboard polls this
+  // every 5s -- CAP bounds that worst case; see countCases above for its sizing.
   async _count(entity, where = {}) {
     const CAP = 50000
     const rows = await this.t.list(entity, where, { limit: CAP })
@@ -750,18 +778,16 @@ export class CaseStore {
   // the fast DB round-trip is inside the lock -- LLM/network latency stays out.
   // Non-empty incoming values win; a known field is never overwritten with blank.
   // Returns { report } (the merged object) or { error } on guards.
-  // Single chokepoint for the report-JSON safe-parse-with-fallback pattern that
-  // was previously duplicated verbatim across several call sites (mergeReport,
-  // mergeCases x2) -- any change to fallback/logging behavior now happens once
-  // instead of drifting across copies.
+  // Single chokepoint for the report-JSON safe-parse-with-fallback pattern, so
+  // fallback/logging behavior cannot drift between call sites.
   // Returns { value, corrupted }: corrupted:true means the stored report JSON
   // failed to parse, so `value` is a fallback EMPTY object standing in for
-  // unrecoverable data, not a genuinely-empty report. Callers that merge on
-  // top of this must be able to tell "the case really had no report yet"
-  // (corrupted:false, value:{}) apart from "we just silently discarded every
-  // previously-recorded field" (corrupted:true) -- without the flag, a
-  // corruption event looked identical to a normal successful merge, and the
-  // caller had no way to warn anyone or avoid persisting the loss.
+  // unrecoverable data, not a genuinely-empty report. A caller that merges on
+  // top of this MUST distinguish "the case really had no report yet"
+  // (corrupted:false, value:{}) from "every previously-recorded field was just
+  // discarded" (corrupted:true) -- without the flag a corruption event is
+  // indistinguishable from a normal successful merge, so nobody is warned and
+  // the loss is persisted.
   _parseReport(raw, caseId) {
     try { return { value: raw ? JSON.parse(raw) : {}, corrupted: false } }
     catch (e) { this.log?.warn?.('[casey] report_parse_failed', { caseId, error: e.message }); return { value: {}, corrupted: true } }
@@ -791,10 +817,9 @@ export class CaseStore {
       // photos/audio/sites: a worker can give MULTIPLE across one
       // conversation (more than one photo, more than one distinct site
       // within the same visit) -- overwrite would silently discard every
-      // one after the first (the same class of bug the deterministic
-      // media-arrival path had, fixed via appendReportField). Every other
-      // field is a single fact that genuinely replaces/refines its prior
-      // value, so overwrite stays correct there.
+      // one after the first. Every other field is a single fact that
+      // genuinely replaces/refines its prior value, so overwrite stays
+      // correct there.
       if (APPEND_KEYS.has(k) && merged[k] != null && String(merged[k]).trim() !== '' && String(merged[k]) !== String(v)) {
         const next = `${merged[k]}; ${v}`
         if (next.length > APPEND_FIELD_MAX_LEN) { cappedFields.push(k); continue }
@@ -827,10 +852,8 @@ export class CaseStore {
       // only serializes THIS contact's own sequential agent turns -- it does
       // NOT cover a dashboard operator's PATCH on the same case id landing
       // concurrently (a genuinely different lock key, no lock at all today).
-      // c._version (present when the installed thatcher supports the
-      // optimistic-lock guard -- thatcher's npm `latest` always does; a
-      // feature-detect-free direct read since casey never pins thatcher
-      // behind latest) lets us detect that race instead of silently losing
+      // c._version (thatcher's optimistic-lock token, read directly with no
+      // feature-detect) lets us detect that race instead of silently losing
       // whichever side wrote second. On a genuine conflict, re-read and
       // re-merge against the FRESH row (the operator's edit is preserved,
       // the agent's newly-learned fields are re-applied on top), retrying
@@ -889,7 +912,7 @@ export class CaseStore {
   // already occupies the field. A worker routinely sends
   // MULTIPLE photos/voice notes across one conversation -- fill-if-empty would
   // silently discard every arrival after the first, with no field update AND no
-  // operator-facing observation event (the exact bug this method fixes). Joins
+  // operator-facing observation event. Joins
   // with '; ' so every existing single-string reader (dashboard display, the
   // photo-nudge `!= null` check) keeps working unchanged -- no array, no schema
   // change downstream. Returns { report, appended:bool } or { error }.
@@ -939,7 +962,7 @@ export class CaseStore {
   // and return its path relative to dataDir. A photo/voice note is a one-shot
   // artifact -- once the worker leaves the site it cannot be recaptured -- so the
   // actual bytes are written to disk here rather than only ever noted as text
-  // (the prior behaviour: "farmer sent a photo" with no photo anywhere). Failure
+  // ("farmer sent a photo" with no photo anywhere). Failure
   // to write must never block the reply path -- callers catch and log, same
   // discipline as appendReportField's own callers.
   saveMedia(caseId, buffer, { mimeType = '', kind = 'file' } = {}) {
@@ -983,20 +1006,17 @@ export class CaseStore {
   // WORKING AREA from the case's report location) and bumps case_count/last_seen.
   // Best-effort: a failure here must never break the dashboard action it rides on.
   // This is a read-modify-write (read the row, rebuild the areas array, bump
-  // case_count, write it back) and it was the ONE writer in this file doing
-  // that with neither a lock nor an expectedVersion guard. Witnessed against a
-  // real store: five CONCURRENT calls for one operator landed exactly ONE
-  // update (case_count "1" -> "2", _version 1) and silently dropped four,
-  // taking four learned working-area observations with them; the same five
-  // calls made sequentially gave "7". thatcher only runs its conflict check
-  // when expectedVersion is supplied (busybase-store.js update()), so an
-  // unguarded write has no detection at all -- last write wins, no error.
-  // Two gates now, matching the rest of this file: the per-operator lock
-  // serializes calls inside THIS process (the dashboard, gateway and store all
-  // share one worker process, so that covers two operators acting in the same
-  // tick), and expectedVersion catches a writer in a DIFFERENT process (the
-  // supervisor's fork-before-drain reload window, or a CLI run) that no
-  // in-process lock can see.
+  // case_count, write it back) and it needs BOTH gates below. thatcher only runs
+  // its conflict check when expectedVersion is supplied (busybase-store.js
+  // update()), so an unguarded write has no detection at all -- last write wins,
+  // no error: five CONCURRENT calls for one operator landed exactly ONE update
+  // (case_count "1" -> "2", _version 1) and silently dropped four, taking four
+  // learned working-area observations with them; the same five calls made
+  // sequentially gave "7". The per-operator lock serializes calls inside THIS
+  // process (the dashboard, gateway and store all share one worker process, so
+  // that covers two operators acting in the same tick), and expectedVersion
+  // catches a writer in a DIFFERENT process (the supervisor's fork-before-drain
+  // reload window, or a CLI run) that no in-process lock can see.
   async learnOperatorActivity(operatorId, caseRow) {
     if (!operatorId || !caseRow) return null
     return this._withLock(`operator_identity|${operatorId}`, async () => {
@@ -1026,10 +1046,10 @@ export class CaseStore {
             last_seen_at: nowIso(),
             // busybase reads integer columns back as DIGIT STRINGS (see AGENTS.md,
             // thatcher/busybase chain), so a bare `+ 1` CONCATENATES rather than adds:
-            // "1" -> "11" -> "111". Observed live at 9 actions: case_count read
-            // "111111111", which the map's coverage tooltip rendered verbatim as
-            // "111111111 case action(s)". Coerce before arithmetic; a corrupt legacy
-            // value is also re-based here rather than carried forward.
+            // "1" -> "11" -> "111". At 9 actions case_count read "111111111", which
+            // the map's coverage tooltip rendered verbatim as "111111111 case
+            // action(s)". Coerce before arithmetic; a corrupt legacy value is also
+            // re-based here rather than carried forward.
             case_count: rowInt(existing?.case_count) + 1,
           }
           // toStorable, not the bare patch: case_count is the one numeric value
@@ -1037,10 +1057,9 @@ export class CaseStore {
           // and compares each patched field against what it asked for. busybase
           // hands every column back as TEXT, so a JS number fails that compare
           // ("2" !== 2) on every single call -- a FALSE conflict AFTER the write
-          // already landed, so each retry increments again. Witnessed while
-          // adding the guard below: five calls took case_count 1 -> 21 instead
-          // of 1 -> 6, four surplus increments per call, one per retry. This is
-          // the write-side trap AGENTS.md names; toStorable() is its guard.
+          // already landed, so every retry increments again: five calls took
+          // case_count 1 -> 21 instead of 1 -> 6. This is the write-side trap
+          // AGENTS.md names; toStorable() is its guard.
           const storablePatch = toStorable(patch)
           try {
             if (existing) {
@@ -1116,10 +1135,10 @@ export class CaseStore {
   }
 
   // opts.expectedVersion: forwarded straight to thatcher's optimistic-concurrency
-  // guard (installed thatcher's update() reads opts.expectedVersion natively and
-  // adds a `_version = ?` filter). On a version mismatch thatcher throws
-  // {code:'conflict'}; this rethrows for the caller to handle (mergeReport retries
-  // once, see below).
+  // guard (thatcher's update() reads opts.expectedVersion natively and adds a
+  // `_version = ?` filter). On a version mismatch thatcher throws
+  // {code:'conflict'}; this rethrows for the caller to handle (mergeReport and
+  // updateCaseChecked both retry against a freshly re-read row).
   async updateCase(id, patch, user = AGENT_USER, opts = {}) {
     const violation = writeGuardViolation(patch, user)
     if (violation) throw new Error(violation)
@@ -1131,8 +1150,8 @@ export class CaseStore {
   // autonomy flip to "observe" landing between a caller's own read and its
   // subsequent write must actually block that write, not just the read it
   // already saw. updateCase() itself has no lock at all -- a caller doing
-  // read-then-check-then-write outside a lock (as case_tools.js's case_update
-  // handler used to) can be raced by a concurrent autonomy change. Returns
+  // read-then-check-then-write outside a lock can be raced by a concurrent
+  // autonomy change. Returns
   // {error:'observe'} on the same rejection shape mergeReport already uses.
   async updateCaseChecked(id, patch, user = AGENT_USER) {
     const c0 = await this.getCase(id)
@@ -1144,8 +1163,7 @@ export class CaseStore {
       // landing concurrently (a genuinely different lock, no lock at all).
       // Without forwarding _version as expectedVersion, this write could
       // silently clobber a concurrent operator edit with no error -- exactly
-      // the gap mergeReport already closes for report-field writes, just
-      // never carried over when this helper was introduced for case_update.
+      // the gap mergeReport already closes for report-field writes.
       const RETRY_LIMIT = 3
       let c = await this.getCase(id)               // re-read INSIDE the lock
       if (!c) return { error: `no case ${id}` }
@@ -1178,9 +1196,8 @@ export class CaseStore {
   //    present_person_relation/contact_fallback/photos/audio -- the fields that
   //    can identify a specific person or place a specific person was), scrubbed
   //    to null in the report blob
-  // A tombstone `action` event is appended on the CONTACT's synthetic case slot
-  // is not possible (contacts have no case row of their own), so the tombstone
-  // rides on each touched case instead -- one per case, naming the erasure but
+  // A contact has no case row of its own, so the tombstone `action` event rides
+  // on each touched case instead -- one per case, naming the erasure but
   // never repeating the erased values. Idempotent: re-running against an
   // already-erased contact is a no-op (already-blank fields do not get a
   // second scrub event).
@@ -1228,16 +1245,14 @@ export class CaseStore {
             return
           } catch (e) {
             if (e.code !== 'conflict') throw e
-            // Unlike every other optimistic-concurrency writer in this file
-            // (mergeReport, updateCaseChecked, transition), this write had no
-            // retry at all -- a concurrent case_report write mid-erasure threw
-            // uncaught out of the loop, aborting the ENTIRE erasure (an
-            // irreversible, documented "every case scrubbed" action) after only
-            // some cases were touched, with the route surfacing an opaque 400
-            // and touchedCaseIds discarded. Bounded retry against the freshly
-            // re-read row, same pattern as the rest of this file; on exhaustion
-            // the case is recorded as failed rather than aborting the whole
-            // erasure, so every OTHER case still gets scrubbed.
+            // Bounded retry against the freshly re-read row, same pattern as
+            // every other optimistic-concurrency writer in this file
+            // (mergeReport, updateCaseChecked, transition). On exhaustion the
+            // case is recorded as failed rather than aborting the whole
+            // erasure: an uncaught conflict here aborts an irreversible,
+            // documented "every case scrubbed" action after only some cases
+            // were touched, surfacing an opaque 400 with touchedCaseIds
+            // discarded, so every OTHER case must still get scrubbed.
             if (attempt === ERASE_RETRY_LIMIT) { failedCaseIds.push(c.id); return }
             const fresh = await this.getCase(c.id)
             if (!fresh) return
@@ -1372,12 +1387,11 @@ export class CaseStore {
       // on-refinement contract for a single case's own incoming turns) for
       // every field EXCEPT photos/audio/sites, which are append-only
       // everywhere else in this codebase (_mergeReportFields, appendReportField,
-      // and case_report's own promise that a photo note is never overwritten).
-      // The old plain fill-if-empty loop treated those three the same as any
-      // other field, so the realistic duplicate-report-merge case -- both
-      // source and target already hold a non-empty photos/audio/sites note --
-      // silently DROPPED the source's note entirely, contradicting the
-      // append-only guarantee.
+      // and case_report's own promise that a photo note is never overwritten):
+      // treating those three like any other field silently DROPS the source's
+      // note whenever source and target both already hold a non-empty one --
+      // the realistic duplicate-report merge -- contradicting the append-only
+      // guarantee.
       //
       // NOTE: _mergeReportFields is NOT reused here despite implementing the
       // correct join-with-'; ' shape for these three keys -- it OVERWRITES
@@ -1611,9 +1625,9 @@ export class CaseStore {
     // already use: without it, a concurrent write (a dashboard operator's PATCH
     // landing between the read above and this write, or a second agent turn
     // racing the same case) can silently win-then-lose against this stage
-    // change with no error and no re-validation against the fresh row --
-    // before._status was already read fresh here, so `before._version` is the
-    // exact optimistic-lock token thatcher expects. Bounded retry: on a real
+    // change with no error and no re-validation against the fresh row.
+    // `before` was read fresh above, so `before._version` is the exact
+    // optimistic-lock token thatcher expects. Bounded retry: on a real
     // conflict, re-read and re-validate the transition against the CURRENT
     // status (which may have moved since `before` was read), not blindly
     // retry the original from-state check against stale data.
@@ -1651,16 +1665,15 @@ export class CaseStore {
     })
     // Re-read AFTER appendEvent, not before: appendEvent's own touch write
     // (last_event_at, touch=true by default) is a SECOND mutation of this same
-    // case row, bumping its optimistic-lock version again. Reading `result`
-    // before that touch landed (the previous ordering) returned a snapshot
-    // whose _version was already one behind the row's true state the instant
-    // transition() returned -- a caller that trusted this return value as
-    // "current" and reused its _version as their own next expectedVersion hit
-    // a spurious conflict against a write that was never actually concurrent.
-    // Thatcher's optimistic lock itself never let that stale version corrupt
-    // data (a mismatched expectedVersion always throws), but it broke the
-    // idempotent-dispatch-replay-safe property: the returned row must reflect
-    // every mutation transition() itself performed, not just the first of two.
+    // case row, bumping its optimistic-lock version again. A row read before
+    // that touch lands is already one version behind the instant transition()
+    // returns, so a caller that treats this return value as "current" and
+    // reuses its _version as their own next expectedVersion hits a spurious
+    // conflict against a write that was never actually concurrent. Thatcher's
+    // optimistic lock never lets a stale version corrupt data (a mismatched
+    // expectedVersion always throws), but it breaks the idempotent-dispatch-
+    // replay-safe property: the returned row must reflect every mutation
+    // transition() itself performed, not just the first of two.
     const result = await this.getCase(caseId)
     // Proactive contact note. Isolated: a notify failure must not fail the
     // operator's transition (the stage change already committed).
@@ -1681,18 +1694,16 @@ function nowIso() {
   return new Date().toISOString()
 }
 
-// byCreatedAscList / byCreatedDescList (stable created_at sort, index-tiebreak
-// on same-second rows) now live in store/query.js -- imported above.
-
 // The ref is the sole "secret" gating the unauthenticated public /report form
 // (see dashboard/server.js) -- a farmer's phone, symptoms, and location are all
 // readable and writable by anyone who can guess it, AND it is the one code a
 // field worker must read back over a bad phone line or retype by hand. Balance:
 // 8 chars from a 32-symbol unambiguous alphabet (no 0/O/1/I/l confusion, no
-// vowel-adjacent pairs that sound alike read aloud) is ~40 bits of entropy --
-// far stronger than the old Math.random() ~26-bit/5-char suffix, while staying
-// short and speakable, unlike a full-entropy base64url string (dense mixed-case
-// + symbols, hard to read/say/type accurately). crypto.randomBytes is the
+// vowel-adjacent pairs that sound alike read aloud) is ~40 bits of entropy,
+// while staying short and speakable, unlike a full-entropy base64url string
+// (dense mixed-case + symbols, hard to read/say/type accurately). Do NOT drop
+// back to Math.random() -- that suffix was ~26 bits over 5 chars, and it is not
+// a CSPRNG. crypto.randomBytes is the
 // entropy source; each byte is reduced mod 32 into the alphabet (a benign
 // bias -- this is an unguessability-vs-readability tradeoff, not a keyed secret
 // requiring perfectly uniform output).

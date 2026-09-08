@@ -29,9 +29,9 @@ async function withSubjectLock(subjectId, fn) {
 }
 
 // The chokepoint. `rawLog` is a core/raw-log.js RawLog instance (injected,
-// not imported as a singleton, so callers control which log -- production
-// vs. a test harness -- a write lands in). `nowFn` defaults to Date.now but
-// is injectable for deterministic witnessing.
+// not imported as a singleton, so each caller controls which log a write
+// lands in). `nowFn` defaults to Date.now but is injectable for
+// deterministic witnessing.
 export async function writeObservation(rawLog, params, { nowFn = () => Date.now() } = {}) {
   if (!rawLog || typeof rawLog.append !== 'function') throw new Error('writeObservation: rawLog (a RawLog instance) is required')
   const { subjectId } = params

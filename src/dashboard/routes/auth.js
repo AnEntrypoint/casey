@@ -24,7 +24,7 @@
 //   markLogin, getAccount, changePassword, esc, wrap
 import { mergeTag } from '../../hooks/heuristics.js'
 import { DASHBOARD_UI, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
-import { BRAND } from '../brand.js'
+import { BRAND, TYPE_SCALE_CSS } from '../brand.js'
 import { parseReport } from '../../timestamp.js'
 import { mountRoutes } from './register.js'
 
@@ -131,16 +131,63 @@ const PUBLIC_FIELDS = (() => {
     hint: f.public_hint || '',
     multiline: f.multiline === true,
     critical: f.critical_for_visit === true,
+    section: String(f.section || '').trim(),
   })
-  // Critical first, then the rest, each in declaration order. The form groups
-  // into exactly two contact-facing buckets ("needed before a visit" /
-  // "helpful but not required"), so the criticals have to be contiguous --
-  // config declares fields in operator-section order, which interleaves them.
+  // Critical first, then the rest, each in declaration order. The criticals
+  // have to be contiguous because they form the first contact-facing group,
+  // and config declares fields in operator-section order, which interleaves
+  // them. postReport reads this same flat list to decide which body keys it
+  // will accept, so the ORDER is presentational but the MEMBERSHIP is a
+  // write-side allowlist: keep it one list, not two.
   return [...shown.filter(f => f.critical_for_visit).map(row), ...shown.filter(f => !f.critical_for_visit).map(row)]
 })()
 
-// This page is reached with NO session and NO design-kit bundle, so its CSS is
-// inline and dependency-free by necessity. What it must not ALSO be is a
+// The form's contact-facing groups, in render order.
+//
+// This page asks 24 questions under uhh's config and measured 2845px of
+// unbroken scroll, which is the shape of a form people abandon: no sense of
+// how much is left, and no way to tell a question that matters from one that
+// does not. It had two text separators, which is not sectioning -- nothing
+// bounded a group, and the second one held eighteen fields.
+//
+// The grouping is NOT invented here. report-fields.yml already declares a
+// `section` per field (report-shape.js passes it straight through, and the
+// dashboard's own ReportSections renders by it), so the deployer has already
+// said how their vocabulary divides up: under uhh, "Animal & symptoms",
+// "People on site", "Notes & media". Reusing that is the same discipline the
+// field list itself follows -- the domain comes from config, never from a
+// second hand-written list in here.
+//
+// The criticals are the one group this file names itself, because their
+// grouping is a PROPERTY (critical_for_visit) rather than a section, and
+// because the deployer's own label for them is written for an operator
+// reading a case ("Visit critical"), not for a farmer answering questions.
+// A section a deployer has not named at all falls back to one plain bucket
+// rather than rendering an empty heading.
+const CRITICAL_GROUP_TITLE = 'Needed before a team can visit'
+const UNSECTIONED_GROUP_TITLE = 'More detail'
+const PUBLIC_GROUPS = (() => {
+  const groups = []
+  const critical = PUBLIC_FIELDS.filter(f => f.critical)
+  if (critical.length) groups.push({ title: CRITICAL_GROUP_TITLE, critical: true, fields: critical })
+  const byTitle = new Map()
+  for (const f of PUBLIC_FIELDS) {
+    if (f.critical) continue
+    const title = f.section || UNSECTIONED_GROUP_TITLE
+    if (!byTitle.has(title)) byTitle.set(title, { title, critical: false, fields: [] })
+    byTitle.get(title).fields.push(f)
+  }
+  return [...groups, ...byTitle.values()]
+})()
+
+// This page is reached with no session, and its CSS is inline and
+// dependency-free. Not, as this comment used to claim, "by necessity" -- the
+// /design static mount is exempted by authGate below, so the kit bundle is in
+// fact fetchable here without a cookie. It is a choice, made for the reasons
+// set out in brand.js: the kit scopes its tokens to a .ds-247420 ancestor
+// rather than :root, so a bare <link> would resolve nothing anyway, and the
+// bundle is 874,759 bytes against roughly fourteen for this whole page.
+// What this page must not ALSO be is a
 // separate palette: every brand-carrying value in the <style> block below
 // comes from dashboard/brand.js, the same resolution manifest.json, the
 // generated icon and offline.html already read. It used to be a stock blue
@@ -159,6 +206,27 @@ const PUBLIC_FIELDS = (() => {
 // something they should have to download, and it named internal decisions to
 // the public besides.
 //
+// SIZES COME FROM brand.js's TYPE_SCALE_CSS, which carries the design kit's
+// own ladder verbatim (see that file for why the kit stylesheet is not linked
+// here: it is 874,759 bytes against this page's three). Six rungs do the whole
+// page, each with exactly one job: --fs-xl page title, --fs-lg section title
+// and brand mark, --fs-body the inputs and the send button, --fs-xs the field
+// labels and banners, --fs-tiny the hints, --fs-micro the fine print. Before
+// this the page mixed 1.3em, 17px, 16px, 14px, 13px and 12px with no rule
+// about which meant what, and rendered SEVEN distinct sizes in a real browser
+// -- the seventh being an accident, see the input selector below.
+//
+// THE PAGE STAYS LIGHT IN A DARK DEPLOYMENT, and that is a decision, not an
+// oversight. brand.js derives `accent` by darkening the brand ground one
+// percent at a time until it MEASURES 4.5:1 against `soft` -- a light wash.
+// Every colour on this page is picked against a light ground by that
+// derivation, so inverting the page would not be a restyle, it would silently
+// invalidate the one contrast guarantee this surface has. A form filled in
+// outdoors in daylight also reads better light than dark. Consistency with
+// the rest of the product is carried instead by the brand bar at the top, the
+// same ground and ink the app chrome and the generated icon already use, and
+// by the shared type ladder.
+//
 // `esc` is a parameter rather than a closure binding because this is now a
 // module-level function: it is the same server.js escapeHtml every route
 // module receives through deps, just passed explicitly.
@@ -171,85 +239,139 @@ export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, er
   // here, so the bar is simply not drawn -- there is no "essential progress"
   // to report when the deployment has not named anything essential.
   const progressBar = (caseRow && vcTotal > 0) ? `<div class="progress-wrap" aria-label="Essential fields: ${vcFilled} of ${vcTotal} filled">
-      <div class="progress-label">${allFilled ? 'All essential details filled -- thank you!' : `Essential details: ${vcFilled} of ${vcTotal} filled`}</div>
+      <div class="progress-label">${allFilled ? 'All essential details filled. Thank you.' : `Essential details: ${vcFilled} of ${vcTotal} filled`}</div>
       <div class="progress-track"><div class="progress-bar${allFilled ? ' done' : ''}" style="width:${Math.round(vcFilled/vcTotal*100)}%"></div></div>
     </div>` : ''
-  let inEssential = false, inExtra = false
-  const fieldRows = PUBLIC_FIELDS.map(({ key, label, hint, multiline, critical }) => {
-    let section = ''
-    if (critical && !inEssential) { inEssential = true; section = '<div class="section-head">Essential details for a visit</div>' }
-    if (!critical && !inExtra) { inExtra = true; section = '<div class="section-head">Extra details (helpful but not required)</div>' }
+  // One field. Unchanged in every respect that matters: the value is still
+  // esc()'d before it reaches a value attribute or a textarea body, and the
+  // hint is still esc()'d before it reaches a placeholder attribute.
+  const fieldHtml = ({ key, label, hint, multiline, critical }) => {
     const val = esc(report[key] || '')
     const placeholder = hint ? ` placeholder="${esc(hint)}"` : ''
     const inp = multiline
       ? `<textarea name="${esc(key)}" rows="3"${placeholder} maxlength="4000">${val}</textarea>`
       : `<input type="text" name="${esc(key)}"${placeholder} value="${val}" maxlength="500">`
     const vcMark = critical ? ' <span class="req" aria-label="essential">*</span>' : ''
-    return `${section}<div class="field${critical ? ' vc' : ''}"><label>${esc(label)}${vcMark}</label>${inp}</div>`
+    return `<div class="field${critical ? ' vc' : ''}"><label>${esc(label)}${vcMark}</label>${inp}</div>`
+  }
+  // Each declared group becomes a bounded card with a numbered step and its
+  // own question count, so a long form reads as "four things to do" rather
+  // than one undifferentiated column. The count is the honest number, not a
+  // rounded one: someone deciding whether to start deserves to know.
+  // Without a known case the form opens with its own "find your report" card,
+  // which is step 1; the declared groups then start at 2. With a ref in hand
+  // that card collapses to a hidden input and the groups start at 1. The
+  // numbers have to agree with what is actually on the page or they are worse
+  // than no numbers at all.
+  const stepOffset = caseRow ? 0 : 1
+  const groupCards = PUBLIC_GROUPS.map((g, i) => {
+    const n = i + 1 + stepOffset
+    const count = `${g.fields.length} question${g.fields.length === 1 ? '' : 's'}`
+    return `<section class="grp${g.critical ? ' vc' : ''}">
+      <h2 class="grp-head"><span class="grp-n" aria-hidden="true">${n}</span><span class="grp-title">${esc(g.title)}</span><span class="grp-count">${count}</span></h2>
+      ${g.fields.map(fieldHtml).join('')}
+    </section>`
   }).join('')
   const banner = done
-    ? `<div class="banner ok">Your details have been saved. Thank you -- the team will be in touch.</div>`
+    ? `<div class="banner ok">Your details have been saved. The team will be in touch.</div>`
     : err ? `<div class="banner err">${esc(err)}</div>` : ''
   const caseInfo = caseRow
     ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || `Field ${ENTITY}`)}
          <button type="button" class="copy-link-btn" data-ref="${esc(caseRow.ref)}">Share link</button></div>`
     : ''
   const refBlock = caseRow ? `<input type="hidden" name="ref" value="${esc(ref)}">` : `
+      <section class="grp vc">
+      <h2 class="grp-head"><span class="grp-n" aria-hidden="true">1</span><span class="grp-title">Find your ${esc(ENTITY)}</span><span class="grp-count">2 questions</span></h2>
       <div class="field"><label>Your reference number</label>
       <input type="text" name="ref" value="${esc(ref)}" placeholder="e.g. CASE-001" maxlength="50">
       <div class="hint">This was shared with you when you first reported. Check your messages. If you do not have one, enter your phone number below instead.</div></div>
       <div class="field"><label>Or your phone number</label>
       <input type="tel" name="phone" placeholder="+27 82 123 4567" maxlength="30">
-      <div class="hint">South African number -- we use this to find your ${esc(ENTITY)}.</div></div>`
+      <div class="hint">A South African number. We use this to find your ${esc(ENTITY)}.</div></div>
+      </section>`
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="${esc(BRAND.ground)}">
 <title>${esc(BRAND.name)} - ${esc(ENTITY)} form</title>
 <style>
+  ${TYPE_SCALE_CSS}
   *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui,sans-serif;background:#f4f6f9;color:#1a1f29;min-height:100vh}
-  .wrap{max-width:540px;margin:0 auto;padding:24px 16px 60px}
-  h1{font-size:1.3em;margin:0 0 4px;color:${BRAND.accent}}
-  .sub{font-size:14px;color:#495662;margin:0 0 20px}
-  .case-info{background:${BRAND.soft};border:1px solid ${BRAND.edge};border-radius:8px;padding:10px 14px;margin:0 0 16px;font-size:14px;color:#1a1f29}
-  .banner{border-radius:8px;padding:12px 14px;margin:0 0 20px;font-size:14px}
+  body{margin:0;font-family:system-ui,sans-serif;font-size:var(--fs-body);line-height:var(--lh-base);
+    background:#f4f6f9;color:#1a1f29;min-height:100vh}
+  .topbar{background:${BRAND.ground};color:${BRAND.ink}}
+  .topbar-in{max-width:540px;margin:0 auto;padding:var(--space-2-75) var(--space-3);
+    font-size:var(--fs-lg);font-weight:700;line-height:var(--lh-snug)}
+  .wrap{max-width:540px;margin:0 auto;padding:var(--space-4) var(--space-3) var(--space-6)}
+  h1{font-size:var(--fs-xl);line-height:var(--lh-snug);margin:0 0 var(--space-1);color:${BRAND.accent}}
+  .sub{font-size:var(--fs-xs);color:#495662;margin:0 0 var(--space-3-5)}
+  .case-info{background:${BRAND.soft};border:1px solid ${BRAND.edge};border-radius:8px;
+    padding:var(--space-2-5) var(--space-3);margin:0 0 var(--space-3);font-size:var(--fs-xs);color:#1a1f29}
+  .banner{border-radius:8px;padding:var(--space-2-75) var(--space-3);margin:0 0 var(--space-3-5);font-size:var(--fs-xs)}
   .banner.ok{background:#e8f7ee;border:1px solid #9ed8b4;color:#1a5c35}
   .banner.err{background:#fdeaea;border:1px solid #f0a0a0;color:#5c1a1a}
-  .progress-wrap{margin:0 0 20px}
-  .progress-label{font-size:13px;color:#495662;margin-bottom:5px}
+  .progress-wrap{margin:0 0 var(--space-3-5)}
+  .progress-label{font-size:var(--fs-tiny);color:#495662;margin-bottom:var(--space-1-5)}
   .progress-track{background:${BRAND.edge};border-radius:4px;height:7px;overflow:hidden}
   .progress-bar{background:${BRAND.ground};height:100%;border-radius:4px;transition:width .3s}
   .progress-bar.done{background:#2a9e5c}
-  .field{margin:0 0 16px}
+  .grp{background:#fff;border:1px solid #dde3ea;border-radius:10px;
+    padding:var(--space-3) var(--space-3) var(--space-1);margin:0 0 var(--space-3-5)}
+  .grp.vc{background:${BRAND.soft};border-color:${BRAND.edge}}
+  .grp-head{display:flex;align-items:center;gap:var(--space-2);margin:0 0 var(--space-3);
+    font-size:var(--fs-lg);line-height:var(--lh-snug);font-weight:700;color:${BRAND.accent}}
+  .grp-n{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
+    width:24px;height:24px;border-radius:50%;background:${BRAND.ground};color:${BRAND.ink};
+    font-size:var(--fs-micro);font-weight:700;line-height:1}
+  .grp-title{flex:1 1 auto}
+  .grp-count{flex:0 0 auto;font-size:var(--fs-micro);font-weight:400;color:#5a6674}
+  .field{margin:0 0 var(--space-3)}
   .field.vc label{color:${BRAND.accent}}
-  label{display:block;font-size:14px;font-weight:600;margin:0 0 5px}
+  /* A label is one short line, so it takes the tight leading; --lh-base is
+     for the running prose around it (the intro, the hints, the banners). Set
+     on body alone it added about 6px to each of twenty-four labels for no
+     legibility gain, on the surface whose main problem is its length. */
+  label{display:block;font-size:var(--fs-xs);line-height:var(--lh-snug);font-weight:600;margin:0 0 var(--space-1)}
+  .hint{font-size:var(--fs-tiny);color:#5a6674;margin-top:var(--space-1)}
   .req{color:${BRAND.accent};font-weight:700}
-  input[type=text],textarea{width:100%;border:1px solid #c8d0da;border-radius:6px;
-    padding:11px 12px;font-size:16px;font-family:inherit;background:#fff;color:#1a1f29;
-    min-height:44px;-webkit-appearance:none}
+  /* input[type=tel] is named explicitly. It used to fall outside this
+     selector, so the phone field alone rendered at the browser's own default
+     (13.33px measured in Chrome) -- visibly smaller than every other field,
+     and under the 16px floor below which iOS Safari zooms the page on focus,
+     which on a narrow phone throws the rest of the form off screen. The
+     16px here is that floor, not a taste. */
+  input[type=text],input[type=tel],textarea{width:100%;border:1px solid #c8d0da;border-radius:6px;
+    padding:var(--space-2-75) var(--space-2-75);font-size:var(--fs-body);font-family:inherit;
+    background:#fff;color:#1a1f29;min-height:44px;-webkit-appearance:none}
   input:focus,textarea:focus{outline:2px solid ${BRAND.ground};border-color:${BRAND.ground}}
-  textarea{resize:vertical;min-height:80px}
-  .section-head{font-size:12px;font-weight:700;letter-spacing:.06em;color:${BRAND.accent};
-    text-transform:uppercase;margin:24px 0 10px;padding-bottom:4px;border-bottom:2px solid ${BRAND.edge}}
+  textarea{resize:vertical;min-height:80px;line-height:var(--lh-base)}
   button[type=submit]{width:100%;background:${BRAND.ground};color:${BRAND.ink};border:0;border-radius:8px;
-    padding:15px;font-size:17px;font-weight:600;cursor:pointer;margin-top:10px;min-height:52px}
+    padding:var(--space-2-75);font-size:var(--fs-body);font-weight:600;cursor:pointer;
+    margin-top:var(--space-2);min-height:52px}
   button[type=submit]:hover{background:${BRAND.hover}}
   button:disabled{opacity:.6;cursor:default}
-  .req-note{font-size:12px;color:#495662;margin:0 0 8px}
-  .copy-link-btn{background:none;border:1px solid ${BRAND.edge};border-radius:5px;color:${BRAND.accent};font-size:12px;padding:3px 8px;cursor:pointer;margin-left:8px;vertical-align:middle}
-  .copy-link-btn:hover{background:${BRAND.soft}}
-  .field-err{font-size:12px;color:#a00;margin-top:4px;display:none}
+  .req-note{font-size:var(--fs-micro);color:#495662;margin:0 0 var(--space-2)}
+  .copy-link-btn{background:none;border:1px solid ${BRAND.edge};border-radius:5px;color:${BRAND.accent};
+    font-size:var(--fs-micro);padding:var(--space-half) var(--space-2);cursor:pointer;
+    margin-left:var(--space-2);vertical-align:middle}
+  .copy-link-btn:hover{background:#fff}
+  .field-err{font-size:var(--fs-micro);color:#a00;margin-top:var(--space-1);display:none}
   .field-err.show{display:block}
-  footer{text-align:center;font-size:12px;color:#495662;margin-top:24px}
+  .draft-note{font-size:var(--fs-micro);color:#5a6674;margin:0 0 var(--space-2);display:none}
+  .draft-note.show{display:block}
+  .draft-clear{background:none;border:0;padding:0;margin-left:var(--space-1);color:${BRAND.accent};
+    font-size:var(--fs-micro);font-family:inherit;text-decoration:underline;cursor:pointer}
+  footer{text-align:center;font-size:var(--fs-micro);color:#495662;margin-top:var(--space-4)}
 </style></head><body>
+<header class="topbar"><div class="topbar-in">${esc(BRAND.name)}</div></header>
 <div class="wrap">
-  <h1>${esc(BRAND.name)} ${esc(ENTITY)}</h1>
-  <p class="sub">Please fill in as many details as you can. Fields marked * are needed before a team can visit.</p>
+  <h1>Your ${esc(ENTITY)} details</h1>
+  <p class="sub">Please fill in as many details as you can. Fields marked * are needed before a team can visit. You can leave anything you do not know blank.</p>
   ${banner}${caseInfo}${progressBar}
   <form method="POST" action="/report">
     ${refBlock}
-    ${fieldRows}
+    ${groupCards}
     <p class="req-note">* Essential for a field visit</p>
+    <p class="draft-note" id="draft-note" aria-live="polite">Your answers are kept in this tab until you send them. </p>
     <button type="submit">Send details</button>
   </form>
   <footer>${esc(BRAND.description || BRAND.name)}</footer>
@@ -290,10 +412,72 @@ export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, er
       phoneEl.setAttribute('aria-invalid', 'true')
     })
   }
-  document.querySelector('form').addEventListener('submit', (e) => {
+  // Answer retention across a bounced submit.
+  //
+  // The loss this fixes is specific and was reachable on every error path: a
+  // failed POST redirects to /report?ref=...&err=..., and that redirect
+  // carries the reference and the message but NOT the answers, so somebody who
+  // filled in twenty-four questions on a bad link got the form back empty with
+  // an apology on top. Same on an accidental back-navigation.
+  //
+  // sessionStorage, deliberately NOT localStorage. This form collects a farm
+  // location, an owner's name and an owner's phone number, and it is filled in
+  // on rural phones that get lent and shared. localStorage would leave one
+  // person's report readable on that handset indefinitely, to anyone who
+  // opened the page next; sessionStorage is scoped to the tab, which covers
+  // the reload and the bounced submit without leaving a resident copy of
+  // someone else's report behind. It is cleared outright once the server
+  // confirms the save.
+  //
+  // Do not overstate what tab scope buys: mobile Chrome restores sessionStorage
+  // into restored tabs across an app restart, so a lent phone with this tab
+  // still open still holds the draft. That is exactly why the note below is
+  // visible and carries its own clear control, rather than the page quietly
+  // holding someone's answers with no way to say otherwise.
+  const form = document.querySelector('form')
+  const DRAFT_KEY = 'casey.report.draft.' + (new URLSearchParams(location.search).get('ref') || 'new')
+  const draftNote = document.getElementById('draft-note')
+  const fields = () => [...form.querySelectorAll('input[type=text],input[type=tel],textarea')]
+  const saveDraft = () => {
+    try {
+      const d = {}
+      for (const el of fields()) if (el.value.trim()) d[el.name] = el.value
+      if (Object.keys(d).length) sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d))
+      else sessionStorage.removeItem(DRAFT_KEY)
+    } catch (_) { /* private mode or a full quota: the form still works */ }
+  }
+  const clearDraft = () => { try { sessionStorage.removeItem(DRAFT_KEY) } catch (_) {} }
+  if (document.querySelector('.banner.ok')) clearDraft()
+  else {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || '{}')
+      let restored = 0
+      for (const el of fields()) {
+        if (!el.value && typeof saved[el.name] === 'string') { el.value = saved[el.name]; restored++ }
+      }
+      if (restored) {
+        draftNote.textContent = 'We brought back ' + restored + ' answer' + (restored === 1 ? '' : 's') + ' you had already typed. '
+      }
+      const clearBtn = document.createElement('button')
+      clearBtn.type = 'button'
+      clearBtn.className = 'draft-clear'
+      clearBtn.textContent = 'Clear my answers'
+      clearBtn.addEventListener('click', () => {
+        clearDraft()
+        for (const el of fields()) el.value = ''
+        draftNote.textContent = 'Cleared. Nothing you typed is kept on this phone. '
+        draftNote.appendChild(clearBtn)
+      })
+      draftNote.appendChild(clearBtn)
+      draftNote.classList.add('show')
+    } catch (_) { /* nothing to restore */ }
+    form.addEventListener('input', saveDraft)
+  }
+  form.addEventListener('submit', (e) => {
     // Block submit if phone has visible error
     const pe = document.getElementById('phone-err')
     if (pe && pe.classList.contains('show')) { e.preventDefault(); return }
+    saveDraft()
     btn.disabled = true; btn.textContent = 'Sending...'
   })
 </script>
@@ -630,9 +814,18 @@ export function registerAuth(app, deps) {
   app.use(sessionMiddleware(deps))
   app.use(csrfGuard())
 
-  const reportRateLimited = makeReportRateLimiter(esc)
-  app.get('/report', reportRateLimited, getReport(deps))
-  app.post('/report', reportRateLimited, postReport(deps))
+  // The public form is served only where it is actually an entrypoint.
+  // CASEY_PUBLIC_URL is what hooks/prompt.js checks before ever offering a
+  // reporter the /report link, so a deployment that leaves it unset never
+  // advertises the form -- serving it anyway is unauthenticated write surface
+  // reachable by anyone who finds the host, earning nothing. Deployments whose
+  // only intake is a messaging channel are the common case, not the exception.
+  // Set CASEY_PUBLIC_URL to serve it; the flow is unchanged when set.
+  if (process.env.CASEY_PUBLIC_URL) {
+    const reportRateLimited = makeReportRateLimiter(esc)
+    app.get('/report', reportRateLimited, getReport(deps))
+    app.post('/report', reportRateLimited, postReport(deps))
+  }
 
   mountRoutes(app, deps, ROUTES)
 

@@ -2,14 +2,9 @@
 // (CRASH / RELOAD / DEGRADED / BUDGET) into durable storage even though the
 // process that DETECTS it is never the process that can store it.
 //
-// Split out of supervisor.js, where this sat inline among fork/kill/watch. It
-// is a genuinely separate concern with one job and a narrow seam: the caller
-// hands it a `deliver` that returns false while no worker can persist yet, and
-// it holds everything until one can.
-//
-// Why the buffer exists at all: the PARENT detects these events but only the
-// WORKER holds the store -- and at CRASH time the worker that died is gone
-// while the next is not yet up. So each event is buffered and flushed to the
+// Why the buffer exists: the PARENT detects these events but only the WORKER
+// holds the store -- and at CRASH time the worker that died is gone while the
+// next is not yet up. So each event is buffered and flushed to the
 // worker right after it sends READY (the same moment the state snapshot is
 // pushed). A bounded ring (drop-oldest past the cap) keeps a respawn storm from
 // growing this without limit; the per-event reason is reason-only (no
@@ -17,8 +12,8 @@
 //
 // Why there is ALSO a JSONL sidecar: durability backstop for a sustained
 // pre-READY crash loop. If every respawned worker crashes before ever reaching
-// READY (e.g. thatcher's sqlite lock held by a stray process -- a real,
-// documented Windows failure mode for this project), the flush never runs (it
+// READY (e.g. thatcher's sqlite lock held by a stray process -- a known
+// Windows failure mode for this project), the flush never runs (it
 // requires a booted worker) and BUDGET_EXCEEDED stops respawning entirely, so
 // the in-memory queue would otherwise sit there forever with only a single
 // truncated lastCrashReason string externally visible via /api/runtime. Each
