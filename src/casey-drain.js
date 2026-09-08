@@ -14,6 +14,7 @@
 // re-entrancy comment explaining it; the algorithm lives here with its inputs
 // named.
 import { tagList, tsMs } from './timestamp.js'
+import { splitExternalId } from './hooks/handler.js'
 
 export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { maxCases, maxRedrives, retryCap }) {
   const handle = gateway?.handleInbound
