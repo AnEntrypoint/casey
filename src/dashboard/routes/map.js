@@ -7,7 +7,7 @@
 //   getRoster
 import { classifyWorkerCheckins, WORKER_CHECKIN_WINDOW_MS } from '../../case-health.js'
 import { rowInt } from '../../safe.js'
-import { tsMs } from '../../timestamp.js'
+import { tsMs, parseReport } from '../../timestamp.js'
 import { mergeTag } from '../../hooks/heuristics.js'
 import { mountRoutes } from './register.js'
 
@@ -107,8 +107,7 @@ export function getMapCases({ store, authed, isOpenCase }) {
 
     const pins = [], unresolved = []
     for (const c of pool) {
-      let report = {}
-      try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+      let report = parseReport(c)
       const lat = c.lat != null && c.lat !== '' ? Number(c.lat) : null
       const lon = c.lon != null && c.lon !== '' ? Number(c.lon) : null
       const row = mapCaseProjection(c, report, clusterByRef.has(c.ref) ? clusterByRef.get(c.ref) : null)

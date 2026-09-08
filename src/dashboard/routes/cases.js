@@ -8,7 +8,7 @@
 //   AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
 //   computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
 //   getRoster, sendReply, UNCLAIMED_ASSIGNEE, printableReport
-import { tagList } from '../../timestamp.js'
+import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27 } from '../../format.js'
 import { fieldLabel } from '../../store/report-shape.js'
@@ -105,7 +105,7 @@ export function registerCases(app, deps) {
       const filtered = all.filter(c => {
         const hay = [c.ref, c.subject, c.summary, c.external_id, c.channel].join(' ').toLowerCase()
         if (hay.includes(q)) return true
-        let r = {}; try { r = c.report ? JSON.parse(c.report) : {} } catch { r = {} }
+        const r = parseReport(c)
         return REPORT_KEY_LIST.some(k => r[k] != null && String(r[k]).toLowerCase().includes(q))
       })
       total = filtered.length
@@ -171,8 +171,7 @@ export function registerCases(app, deps) {
     const META = ['ref', 'subject', 'status', 'priority', 'channel', 'created_at']
     const headers = [...META, 'intake_source', ...REPORT_KEY_LIST]
     const rows = cases.map(c => {
-      let r = {}
-      try { r = c.report ? JSON.parse(c.report) : {} } catch { r = {} }
+      let r = parseReport(c)
       const tagArr = tagList(c)
       const intakeSrc = tagArr.includes('intake_mode:manual') ? 'manual' : tagArr.includes('intake_mode:public_form') ? 'public_form' : tagArr.includes('intake_mode:channel') ? 'channel' : 'unknown'
       return [...META.map(k => csvCell(c[k])), csvCell(intakeSrc), ...REPORT_KEY_LIST.map(k => csvCell(r[k]))].join(',')
@@ -201,8 +200,7 @@ export function registerCases(app, deps) {
     let suggested_assignee = null
     const unclaimed = !c.assignee || c.assignee === UNCLAIMED_ASSIGNEE
     if (unclaimed) {
-      let report = {}
-      try { report = c.report ? JSON.parse(c.report) : {} } catch { report = {} }
+      let report = parseReport(c)
       if (report.location) {
         const loc = String(report.location).toLowerCase()
         const identities = await store.listOperatorIdentities()
@@ -256,7 +254,7 @@ export function registerCases(app, deps) {
     if (unknown.length) return res.status(400).json({ error: `unknown report fields: ${unknown.join(', ')}` })
     if (!Object.keys(incoming).length) return res.status(400).json({ error: 'no report fields provided' })
     const op = actingOperator(req)
-    const priorReport = (() => { try { return JSON.parse(c.report || '{}') } catch { return {} } })()
+    const priorReport = parseReport(c)
     const result = await store.mergeReport(c.id, incoming, op)
     if (result.error) return res.status(400).json({ error: result.error })
     // Distinguish a correction (prior value non-blank) from a first-time fill
@@ -858,8 +856,7 @@ export function registerCases(app, deps) {
       if (!authed(req)) return res.status(401).send('<p>Unauthorized.</p>')
       const c = await store.getCase(req.params.id)
       if (!c) return res.status(404).send('<p>Case not found.</p>')
-      let r = {}
-      try { r = c.report ? JSON.parse(c.report) : {} } catch { r = {} }
+      let r = parseReport(c)
       // Row labels come from report-shape.js's fieldLabel, the same
       // config-driven resolver every other consumer uses. A 16-entry
       // animal-health LABELS map used to sit here while the loop below already

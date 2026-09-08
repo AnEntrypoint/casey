@@ -13,6 +13,7 @@
 import { createCaseStore } from '../src/case-store.js'
 import { fmtTimeSAST, fmtPhone27, isOpenCase } from '../src/format.js'
 import { rankAttention } from '../src/attn.js'
+import { parseReport } from '../src/timestamp.js'
 import { randomBytes } from 'node:crypto'
 import { bold, dim, green, red, cyan, bad, closeAndExit } from './casey-cli-ui.js'
 
@@ -60,7 +61,7 @@ export async function cmdShow({ rest }) {
   console.log(`${bold(caseRow.ref)}  [${caseRow.status}]  ${caseRow.priority}  ${caseRow.channel}/${fmtPhone27(caseRow.external_id)}`)
   console.log(`opened: ${fmtTimeSAST(caseRow.created_at) || dim('(no date)')}`)
   console.log(`subject: ${caseRow.subject}\nsummary: ${caseRow.summary}\ntags: ${caseRow.tags}`)
-  let report = {}; try { report = caseRow.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
+  const report = parseReport(caseRow)
   const { VISIT_CRITICAL: VC } = await import('../src/case-health.js')
   const filled = Object.keys(report).filter(k => report[k] != null && String(report[k]).trim())
   console.log(dim('--- report ---'))
