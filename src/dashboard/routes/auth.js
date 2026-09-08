@@ -6,6 +6,18 @@
 // auth gate middleware + the static mounts (/design, /vendor, /media) that
 // must sit between the gate and the rest of the API.
 //
+// Shape: module-level named middleware and handler factories plus the ROUTES
+// table near the bottom, the same shape the other route modules use. Unlike
+// them this module cannot be a route table ALONE, and the difference is
+// structural rather than stylistic: registerAuth's ORDER is the security
+// property (session resolve -> CSRF guard -> public routes -> auth gate ->
+// static mounts), three of its five registrations are app.use middleware
+// rather than routes, and the two /report routes carry a per-route rate-limit
+// middleware that routes/register.js's mountRoutes has no argument for. So the
+// six plain routes between the CSRF guard and the auth gate go through the
+// table, and everything the table cannot express stays an explicit call in
+// registerAuth, in the original order.
+//
 // deps: store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR,
 //   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
 //   issueSession, verifySession, findAccountByUsername, verifyPassword,
@@ -14,22 +26,16 @@ import { mergeTag } from '../../hooks/heuristics.js'
 import { DASHBOARD_UI, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
 import { BRAND } from '../brand.js'
 import { parseReport } from '../../timestamp.js'
+import { mountRoutes } from './register.js'
 
-export function registerAuth(app, deps) {
-  const {
-    store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR,
-    COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
-    issueSession, verifySession, findAccountByUsername, verifyPassword,
-    markLogin, getAccount, changePassword, esc, wrap,
-  } = deps
-
-  // Session gate: a valid casey_session cookie (see dashboard/auth.js) resolves
-  // to a real operator_account row. Middleware runs on every request BEFORE
-  // route handlers so actingOperator(req) below can stay a SYNCHRONOUS reader
-  // of the pre-resolved req.caseyAccount -- every existing call site
-  // (actingOperator(req) sprinkled through dozens of route handlers) keeps
-  // working unchanged rather than needing an await added at each site.
-  app.use(async (req, res, next) => {
+// Session gate: a valid casey_session cookie (see dashboard/auth.js) resolves
+// to a real operator_account row. Middleware runs on every request BEFORE
+// route handlers so actingOperator(req) below can stay a SYNCHRONOUS reader
+// of the pre-resolved req.caseyAccount -- every existing call site
+// (actingOperator(req) sprinkled through dozens of route handlers) keeps
+// working unchanged rather than needing an await added at each site.
+export function sessionMiddleware({ store, parseCookies, verifySession, COOKIE_NAME, getAccount }) {
+  return async (req, res, next) => {
     req.caseyAccount = null
     try {
       const cookies = parseCookies(req.get('cookie'))
@@ -60,18 +66,20 @@ export function registerAuth(app, deps) {
       }
     } catch { /* a broken/tampered cookie just means not-logged-in, never a crash */ }
     next()
-  })
+  }
+}
 
-  // CSRF guard: SameSite=Lax already blocks a cross-site POST/PUT/PATCH/DELETE
-  // form submission from carrying the session cookie, but a same-site-lax
-  // cookie still rides along on a cross-site GET navigation, and this app
-  // accepts state-changing requests over POST with no separate CSRF token.
-  // Belt-and-braces: reject a state-changing request from a logged-in session
-  // whose Origin (or, lacking that, Referer) does not match this deployment's
-  // own host -- cheap, no token to mint/store, and only engages once a real
-  // session exists (the public unauthenticated /report form is untouched).
-  const STATE_CHANGING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
-  app.use((req, res, next) => {
+// CSRF guard: SameSite=Lax already blocks a cross-site POST/PUT/PATCH/DELETE
+// form submission from carrying the session cookie, but a same-site-lax
+// cookie still rides along on a cross-site GET navigation, and this app
+// accepts state-changing requests over POST with no separate CSRF token.
+// Belt-and-braces: reject a state-changing request from a logged-in session
+// whose Origin (or, lacking that, Referer) does not match this deployment's
+// own host -- cheap, no token to mint/store, and only engages once a real
+// session exists (the public unauthenticated /report form is untouched).
+const STATE_CHANGING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+export function csrfGuard() {
+  return (req, res, next) => {
     if (!req.caseyAccount || !STATE_CHANGING.has(req.method)) return next()
     const origin = req.get('origin') || req.get('referer')
     if (!origin) return next()
@@ -79,121 +87,121 @@ export function registerAuth(app, deps) {
     try { originHost = new URL(origin).host } catch { return res.status(403).json({ error: 'invalid origin' }) }
     if (originHost !== req.get('host')) return res.status(403).json({ error: 'cross-origin request rejected' })
     next()
+  }
+}
+
+// What this deployment calls the thing a contact is filing: report-fields.yml's
+// entity_label (uhh: "report"; casey's own bundled helpdesk demo: "ticket").
+// BRAND carries it alongside the colours so a page has one import, not two.
+const ENTITY = BRAND.entityLabel || 'report'
+
+// Fields shown on the public contact form -- the deployment's OWN declared
+// report vocabulary (report-fields.yml, via report-shape.js), never a second
+// hand-written list.
+//
+// This used to be thirteen hardcoded animal-health keys (species, symptoms,
+// suspected_disease, dead_count...) in a codebase whose whole point is that
+// the domain comes from config, and which ships an IT-helpdesk demo by
+// default. That was not merely off-domain wording: case-store.js's
+// mergeReport rejects any key outside REPORT_KEYS, so under any config but
+// one, a contact who filled this form in got "Something went wrong saving
+// your details" and their report was silently not saved. The form could not
+// work and could not be made to work by editing config -- the only surface a
+// reporting contact ever reaches was hardcoded to one deployment.
+//
+// Two field classes are held back:
+//  - `append` fields (photos/voice notes/extra sites) accumulate agent-written
+//    notes ABOUT media that arrived over the messaging channel. This form has
+//    no upload, so a text box for "Photos" would collect a description of a
+//    photo nobody sent.
+//  - `public: false` is the deployer's own opt-out for a field that is real
+//    but not a question to put to a contact (an agent-recorded meta field
+//    such as which language they wrote in). Absent, a field is shown --
+//    defaulting to hiding would silently empty the form for every config that
+//    has never heard of the flag.
+// `public_label`/`public_hint` likewise let a deployer phrase a field as a
+// question for a contact ("Which animals?") rather than reuse the operator
+// column header ("Animals"); absent, the operator label is shown and no
+// placeholder is rendered, which is honest rather than invented.
+const PUBLIC_FIELDS = (() => {
+  const shown = (REPORT_FIELD_DEFS || []).filter(f => f && f.key && !f.append && f.public !== false)
+  const row = (f) => ({
+    key: f.key,
+    label: f.public_label || f.display_label || f.key,
+    hint: f.public_hint || '',
+    multiline: f.multiline === true,
+    critical: f.critical_for_visit === true,
   })
+  // Critical first, then the rest, each in declaration order. The form groups
+  // into exactly two contact-facing buckets ("needed before a visit" /
+  // "helpful but not required"), so the criticals have to be contiguous --
+  // config declares fields in operator-section order, which interleaves them.
+  return [...shown.filter(f => f.critical_for_visit).map(row), ...shown.filter(f => !f.critical_for_visit).map(row)]
+})()
 
-  // What this deployment calls the thing a contact is filing: report-fields.yml's
-  // entity_label (uhh: "report"; casey's own bundled helpdesk demo: "ticket").
-  // BRAND carries it alongside the colours so a page has one import, not two.
-  const ENTITY = BRAND.entityLabel || 'report'
-
-  // Public contact-facing report form -- no token required.
-  // The ref acts as the shared secret: contacts only know their own ref,
-  // and report fields are non-sensitive (location, symptoms, contact info).
-  // GET /report?ref=REF  -> HTML form for that case (or blank ref input)
-  // POST /report         -> submit fields; redirect back with ?done=1 or ?err=...
-  // Fields shown on the public contact form -- the deployment's OWN declared
-  // report vocabulary (report-fields.yml, via report-shape.js), never a second
-  // hand-written list.
-  //
-  // This used to be thirteen hardcoded animal-health keys (species, symptoms,
-  // suspected_disease, dead_count...) in a codebase whose whole point is that
-  // the domain comes from config, and which ships an IT-helpdesk demo by
-  // default. That was not merely off-domain wording: case-store.js's
-  // mergeReport rejects any key outside REPORT_KEYS, so under any config but
-  // one, a contact who filled this form in got "Something went wrong saving
-  // your details" and their report was silently not saved. The form could not
-  // work and could not be made to work by editing config -- the only surface a
-  // reporting contact ever reaches was hardcoded to one deployment.
-  //
-  // Two field classes are held back:
-  //  - `append` fields (photos/voice notes/extra sites) accumulate agent-written
-  //    notes ABOUT media that arrived over the messaging channel. This form has
-  //    no upload, so a text box for "Photos" would collect a description of a
-  //    photo nobody sent.
-  //  - `public: false` is the deployer's own opt-out for a field that is real
-  //    but not a question to put to a contact (an agent-recorded meta field
-  //    such as which language they wrote in). Absent, a field is shown --
-  //    defaulting to hiding would silently empty the form for every config that
-  //    has never heard of the flag.
-  // `public_label`/`public_hint` likewise let a deployer phrase a field as a
-  // question for a contact ("Which animals?") rather than reuse the operator
-  // column header ("Animals"); absent, the operator label is shown and no
-  // placeholder is rendered, which is honest rather than invented.
-  const PUBLIC_FIELDS = (() => {
-    const shown = (REPORT_FIELD_DEFS || []).filter(f => f && f.key && !f.append && f.public !== false)
-    const row = (f) => ({
-      key: f.key,
-      label: f.public_label || f.display_label || f.key,
-      hint: f.public_hint || '',
-      multiline: f.multiline === true,
-      critical: f.critical_for_visit === true,
-    })
-    // Critical first, then the rest, each in declaration order. The form groups
-    // into exactly two contact-facing buckets ("needed before a visit" /
-    // "helpful but not required"), so the criticals have to be contiguous --
-    // config declares fields in operator-section order, which interleaves them.
-    return [...shown.filter(f => f.critical_for_visit).map(row), ...shown.filter(f => !f.critical_for_visit).map(row)]
-  })()
-
-  // This page is reached with NO session and NO design-kit bundle, so its CSS is
-  // inline and dependency-free by necessity. What it must not ALSO be is a
-  // separate palette: every brand-carrying value in the <style> block below
-  // comes from dashboard/brand.js, the same resolution manifest.json, the
-  // generated icon and offline.html already read. It used to be a stock blue
-  // (#2f6fb0 buttons and focus rings, #1a3a5c headings, #dce8f5 rules) with a
-  // progress bar at #f0a030 -- a near-miss of this deployment's real brand
-  // orange #E88427 rather than the brand orange itself -- on the one surface a
-  // reporting contact ever sees.
-  //
-  // Semantic colours (the ok/error banners, the completed-bar green) stay fixed
-  // on purpose: those encode meaning, not identity, and re-tinting them to a
-  // brand is how "saved" and "failed" stop being distinguishable at a glance.
-  //
-  // This rationale is a JS comment rather than an HTML one deliberately. Every
-  // byte of this page crosses a rural, metered link to a contact who may be on
-  // a feature phone; an explanatory comment about our own colour history is not
-  // something they should have to download, and it named internal decisions to
-  // the public besides.
-  function publicFormHtml({ ref = '', caseRow = null, done = false, err = '' } = {}) {
-    let report = parseReport(caseRow)
-    const vcTotal = PUBLIC_FIELDS.filter(f => f.critical).length
-    const vcFilled = PUBLIC_FIELDS.filter(f => f.critical && report[f.key] != null && String(report[f.key]).trim() !== '').length
-    const allFilled = vcTotal === 0 || vcFilled >= vcTotal
-    // A config declaring no critical_for_visit field at all would divide by zero
-    // here, so the bar is simply not drawn -- there is no "essential progress"
-    // to report when the deployment has not named anything essential.
-    const progressBar = (caseRow && vcTotal > 0) ? `<div class="progress-wrap" aria-label="Essential fields: ${vcFilled} of ${vcTotal} filled">
+// This page is reached with NO session and NO design-kit bundle, so its CSS is
+// inline and dependency-free by necessity. What it must not ALSO be is a
+// separate palette: every brand-carrying value in the <style> block below
+// comes from dashboard/brand.js, the same resolution manifest.json, the
+// generated icon and offline.html already read. It used to be a stock blue
+// (#2f6fb0 buttons and focus rings, #1a3a5c headings, #dce8f5 rules) with a
+// progress bar at #f0a030 -- a near-miss of this deployment's real brand
+// orange #E88427 rather than the brand orange itself -- on the one surface a
+// reporting contact ever sees.
+//
+// Semantic colours (the ok/error banners, the completed-bar green) stay fixed
+// on purpose: those encode meaning, not identity, and re-tinting them to a
+// brand is how "saved" and "failed" stop being distinguishable at a glance.
+//
+// This rationale is a JS comment rather than an HTML one deliberately. Every
+// byte of this page crosses a rural, metered link to a contact who may be on
+// a feature phone; an explanatory comment about our own colour history is not
+// something they should have to download, and it named internal decisions to
+// the public besides.
+//
+// `esc` is a parameter rather than a closure binding because this is now a
+// module-level function: it is the same server.js escapeHtml every route
+// module receives through deps, just passed explicitly.
+export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, err = '' } = {}) {
+  let report = parseReport(caseRow)
+  const vcTotal = PUBLIC_FIELDS.filter(f => f.critical).length
+  const vcFilled = PUBLIC_FIELDS.filter(f => f.critical && report[f.key] != null && String(report[f.key]).trim() !== '').length
+  const allFilled = vcTotal === 0 || vcFilled >= vcTotal
+  // A config declaring no critical_for_visit field at all would divide by zero
+  // here, so the bar is simply not drawn -- there is no "essential progress"
+  // to report when the deployment has not named anything essential.
+  const progressBar = (caseRow && vcTotal > 0) ? `<div class="progress-wrap" aria-label="Essential fields: ${vcFilled} of ${vcTotal} filled">
       <div class="progress-label">${allFilled ? 'All essential details filled -- thank you!' : `Essential details: ${vcFilled} of ${vcTotal} filled`}</div>
       <div class="progress-track"><div class="progress-bar${allFilled ? ' done' : ''}" style="width:${Math.round(vcFilled/vcTotal*100)}%"></div></div>
     </div>` : ''
-    let inEssential = false, inExtra = false
-    const fieldRows = PUBLIC_FIELDS.map(({ key, label, hint, multiline, critical }) => {
-      let section = ''
-      if (critical && !inEssential) { inEssential = true; section = '<div class="section-head">Essential details for a visit</div>' }
-      if (!critical && !inExtra) { inExtra = true; section = '<div class="section-head">Extra details (helpful but not required)</div>' }
-      const val = esc(report[key] || '')
-      const placeholder = hint ? ` placeholder="${esc(hint)}"` : ''
-      const inp = multiline
-        ? `<textarea name="${esc(key)}" rows="3"${placeholder} maxlength="4000">${val}</textarea>`
-        : `<input type="text" name="${esc(key)}"${placeholder} value="${val}" maxlength="500">`
-      const vcMark = critical ? ' <span class="req" aria-label="essential">*</span>' : ''
-      return `${section}<div class="field${critical ? ' vc' : ''}"><label>${esc(label)}${vcMark}</label>${inp}</div>`
-    }).join('')
-    const banner = done
-      ? `<div class="banner ok">Your details have been saved. Thank you -- the team will be in touch.</div>`
-      : err ? `<div class="banner err">${esc(err)}</div>` : ''
-    const caseInfo = caseRow
-      ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || `Field ${ENTITY}`)}
+  let inEssential = false, inExtra = false
+  const fieldRows = PUBLIC_FIELDS.map(({ key, label, hint, multiline, critical }) => {
+    let section = ''
+    if (critical && !inEssential) { inEssential = true; section = '<div class="section-head">Essential details for a visit</div>' }
+    if (!critical && !inExtra) { inExtra = true; section = '<div class="section-head">Extra details (helpful but not required)</div>' }
+    const val = esc(report[key] || '')
+    const placeholder = hint ? ` placeholder="${esc(hint)}"` : ''
+    const inp = multiline
+      ? `<textarea name="${esc(key)}" rows="3"${placeholder} maxlength="4000">${val}</textarea>`
+      : `<input type="text" name="${esc(key)}"${placeholder} value="${val}" maxlength="500">`
+    const vcMark = critical ? ' <span class="req" aria-label="essential">*</span>' : ''
+    return `${section}<div class="field${critical ? ' vc' : ''}"><label>${esc(label)}${vcMark}</label>${inp}</div>`
+  }).join('')
+  const banner = done
+    ? `<div class="banner ok">Your details have been saved. Thank you -- the team will be in touch.</div>`
+    : err ? `<div class="banner err">${esc(err)}</div>` : ''
+  const caseInfo = caseRow
+    ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || `Field ${ENTITY}`)}
          <button type="button" class="copy-link-btn" data-ref="${esc(caseRow.ref)}">Share link</button></div>`
-      : ''
-    const refBlock = caseRow ? `<input type="hidden" name="ref" value="${esc(ref)}">` : `
+    : ''
+  const refBlock = caseRow ? `<input type="hidden" name="ref" value="${esc(ref)}">` : `
       <div class="field"><label>Your reference number</label>
       <input type="text" name="ref" value="${esc(ref)}" placeholder="e.g. CASE-001" maxlength="50">
       <div class="hint">This was shared with you when you first reported. Check your messages. If you do not have one, enter your phone number below instead.</div></div>
       <div class="field"><label>Or your phone number</label>
       <input type="tel" name="phone" placeholder="+27 82 123 4567" maxlength="30">
       <div class="hint">South African number -- we use this to find your ${esc(ENTITY)}.</div></div>`
-    return `<!doctype html><html lang="en"><head>
+  return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="${esc(BRAND.ground)}">
 <title>${esc(BRAND.name)} - ${esc(ENTITY)} form</title>
@@ -290,15 +298,21 @@ export function registerAuth(app, deps) {
   })
 </script>
 </body></html>`
-  }
+}
 
-  // The public /report form has no auth (the ref is the shared secret), so it
-  // needs its own throttle: the 8-char ref and the SA phone-number space are
-  // both brute-forceable in unlimited requests. Scoped to these two routes only
-  // -- never touches the authed() /api surface. Sweeps stale buckets so the map
-  // cannot grow unbounded under sustained traffic.
-  const REPORT_RATE_LIMIT = 10
-  const REPORT_RATE_WINDOW_MS = 60000
+// The public /report form has no auth (the ref is the shared secret), so it
+// needs its own throttle: the 8-char ref and the SA phone-number space are
+// both brute-forceable in unlimited requests. Scoped to these two routes only
+// -- never touches the authed() /api surface. Sweeps stale buckets so the map
+// cannot grow unbounded under sustained traffic.
+//
+// A factory rather than module-level state on purpose: the bucket map and the
+// sweep interval belong to one registerAuth call, exactly as they did when
+// they were closure bindings, so two dashboards in one process do not share a
+// limiter (or leak a second uncleared interval).
+const REPORT_RATE_LIMIT = 10
+const REPORT_RATE_WINDOW_MS = 60000
+export function makeReportRateLimiter(esc) {
   const reportRateBuckets = new Map()
   setInterval(() => {
     const now = Date.now()
@@ -306,7 +320,7 @@ export function registerAuth(app, deps) {
       if (now - b.windowStart > REPORT_RATE_WINDOW_MS) reportRateBuckets.delete(ip)
     }
   }, REPORT_RATE_WINDOW_MS).unref?.()
-  function reportRateLimited(req, res, next) {
+  return function reportRateLimited(req, res, next) {
     const ip = req.ip || req.socket?.remoteAddress || 'unknown'
     const now = Date.now()
     let b = reportRateBuckets.get(ip)
@@ -315,23 +329,32 @@ export function registerAuth(app, deps) {
       reportRateBuckets.set(ip, b)
     }
     b.count++
-    if (b.count > REPORT_RATE_LIMIT) return res.status(429).type('html').send(publicFormHtml({ err: 'Too many requests. Please wait a moment and try again.' }))
+    if (b.count > REPORT_RATE_LIMIT) return res.status(429).type('html').send(publicFormHtml(esc, { err: 'Too many requests. Please wait a moment and try again.' }))
     next()
   }
+}
 
-  app.get('/report', reportRateLimited, async (req, res) => {
+// Public contact-facing report form -- no token required.
+// The ref acts as the shared secret: contacts only know their own ref,
+// and report fields are non-sensitive (location, symptoms, contact info).
+// GET /report?ref=REF  -> HTML form for that case (or blank ref input)
+// POST /report         -> submit fields; redirect back with ?done=1 or ?err=...
+export function getReport({ store, esc }) {
+  return async (req, res) => {
     const ref = String(req.query.ref || '').slice(0, 50).trim()
     const done = req.query.done === '1'
     const err = String(req.query.err || '').slice(0, 200)
-    if (!ref) return res.type('html').send(publicFormHtml({ done, err }))
+    if (!ref) return res.type('html').send(publicFormHtml(esc, { done, err }))
     try {
       const found = await store.getCaseByRef(ref)
-      if (!found) return res.type('html').send(publicFormHtml({ ref, err: err || `Reference "${ref}" was not found. Please check and try again.` }))
-      res.type('html').send(publicFormHtml({ ref, caseRow: found, done, err }))
-    } catch (e) { res.status(500).type('html').send(publicFormHtml({ ref, err: 'Something went wrong. Please try again in a moment.' })) }
-  })
+      if (!found) return res.type('html').send(publicFormHtml(esc, { ref, err: err || `Reference "${ref}" was not found. Please check and try again.` }))
+      res.type('html').send(publicFormHtml(esc, { ref, caseRow: found, done, err }))
+    } catch (e) { res.status(500).type('html').send(publicFormHtml(esc, { ref, err: 'Something went wrong. Please try again in a moment.' })) }
+  }
+}
 
-  app.post('/report', reportRateLimited, async (req, res) => {
+export function postReport({ store }) {
+  return async (req, res) => {
     const ref = String(req.body.ref || '').slice(0, 50).trim()
     const phoneRaw = String(req.body.phone || '').replace(/[\s\-()]/g, '').slice(0, 30)
     if (!ref && !phoneRaw) return res.redirect('/report?err=' + encodeURIComponent('Please enter your reference number or phone number.'))
@@ -397,18 +420,22 @@ export function registerAuth(app, deps) {
       const foundRef = found?.ref || ref
       res.redirect('/report?ref=' + encodeURIComponent(foundRef) + '&done=1')
     } catch (e) { res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong. Please try again.')) }
-  })
+  }
+}
 
-  // Readiness probe for orchestrators/load balancers: is the system of record
-  // actually reachable RIGHT NOW (a real store query succeeds), not merely "the
-  // HTTP server booted"? Distinct from /api/health, which reports AI-helper and
-  // gateway liveness; a process can serve HTTP with a wedged or unopened store and
-  // /api/health would still answer. This exercises the store with the cheapest real
-  // read (a count) and returns 200 {ready:true} or 503 {ready:false,error}. It is
-  // UNGATED on purpose -- a k8s/LB probe has no dashboard token, and the response
-  // leaks nothing sensitive (a boolean + a short error string, no case data). Placed
-  // before the auth middleware so the token gate never 401s a readiness check.
-  app.get('/api/ready', async (req, res) => {
+// Readiness probe for orchestrators/load balancers: is the system of record
+// actually reachable RIGHT NOW (a real store query succeeds), not merely "the
+// HTTP server booted"? Distinct from /api/health, which reports AI-helper and
+// gateway liveness; a process can serve HTTP with a wedged or unopened store and
+// /api/health would still answer. This exercises the store with the cheapest real
+// read (a count) and returns 200 {ready:true} or 503 {ready:false,error}. It is
+// UNGATED on purpose -- a k8s/LB probe has no dashboard token, and the response
+// leaks nothing sensitive (a boolean + a short error string, no case data). Placed
+// before the auth middleware so the token gate never 401s a readiness check.
+// Mounted { raw: true }: it owns the try/catch that turns a store failure into
+// its own 503 shape, which deps.wrap's 500 envelope would replace.
+export function getReady({ store }) {
+  return async (req, res) => {
     const started = Date.now()
     try {
       await store.countCases({})
@@ -417,17 +444,19 @@ export function registerAuth(app, deps) {
       // Bound the error so a hostile/huge store error cannot bloat the probe body.
       res.status(503).json({ ready: false, store: 'unreachable', error: String(e.message || e).slice(0, 200) })
     }
-  })
+  }
+}
 
-  // Login: username + password against a real operator_account row (see
-  // dashboard/auth.js). On success, sets an HttpOnly session cookie and
-  // returns the operator's display info -- never the password hash/salt.
-  // Rate-limiting/lockout is intentionally NOT added here: this is a
-  // low-stakes field-team login (see the AUTH MODEL note at the top of this
-  // file), and a lockout mechanism is itself a denial-of-service surface
-  // against a teammate's account. scrypt's own cost already makes brute-force
-  // impractical at any real request rate.
-  app.post('/api/login', wrap(async (req, res) => {
+// Login: username + password against a real operator_account row (see
+// dashboard/auth.js). On success, sets an HttpOnly session cookie and
+// returns the operator's display info -- never the password hash/salt.
+// Rate-limiting/lockout is intentionally NOT added here: this is a
+// low-stakes field-team login (see the AUTH MODEL note at the top of this
+// file), and a lockout mechanism is itself a denial-of-service surface
+// against a teammate's account. scrypt's own cost already makes brute-force
+// impractical at any real request rate.
+export function postLogin({ store, findAccountByUsername, verifyPassword, issueSession, sessionCookieHeader, markLogin }) {
+  return async (req, res) => {
     const { username, password } = req.body || {}
     const acct = await findAccountByUsername(store, username)
     if (!acct || acct.disabled === '1' || !verifyPassword(password, acct.password_salt, acct.password_hash)) {
@@ -437,39 +466,53 @@ export function registerAuth(app, deps) {
     res.set('Set-Cookie', sessionCookieHeader(token))
     markLogin(store, acct.id).catch(() => {}) // best-effort, never blocks login
     res.json({ ok: true, username: acct.username, display_name: acct.display_name, role: acct.role })
-  }))
-  app.post('/api/logout', (req, res) => {
+  }
+}
+
+export function postLogout({ clearCookieHeader }) {
+  return (req, res) => {
     res.set('Set-Cookie', clearCookieHeader())
     res.json({ ok: true })
-  })
-  // Who the current session belongs to, for the SPA to render "logged in as
-  // X" / redirect to the login screen when there is no valid session. Safe to
-  // leave ungated (it just echoes back req.caseyAccount, already resolved
-  // from the cookie by the middleware above) -- no lookup happens for an
-  // absent/invalid cookie.
-  app.get('/api/whoami', (req, res) => {
+  }
+}
+
+// Who the current session belongs to, for the SPA to render "logged in as
+// X" / redirect to the login screen when there is no valid session. Safe to
+// leave ungated (it just echoes back req.caseyAccount, already resolved
+// from the cookie by the middleware above) -- no lookup happens for an
+// absent/invalid cookie.
+export function getWhoami() {
+  return (req, res) => {
     if (!req.caseyAccount) return res.json({ authed: false })
     const a = req.caseyAccount
     res.json({ authed: true, username: a.username, display_name: a.display_name, role: a.role, must_change_password: a.must_change_password === '1' })
-  })
-  // Deliberately ungated, same reasoning as /api/whoami above: the login
-  // screen (login-gate.js) renders before any session exists, so a herd-
-  // health/rebranded deployment's "casey" -> "Herd Health" shell branding
-  // (DASHBOARD_UI.brand/leaf, see report-shape.js) never reached it before
-  // this route existed -- /api/config carries the full shape but is
-  // correctly gated (workflow stages/enums), so this exposes ONLY the two
-  // non-sensitive display strings a deployer already renders in the page
-  // title (server.js's PWA_BRAND) and the post-login topbar. Absent
-  // dashboard_ui (casey's own default, uhh) -- both fields are null and
-  // login-gate.js's own 'casey' fallback applies, unchanged.
-  app.get('/api/branding', (req, res) => {
+  }
+}
+
+// Deliberately ungated, same reasoning as /api/whoami above: the login
+// screen (login-gate.js) renders before any session exists, so a herd-
+// health/rebranded deployment's "casey" -> "Herd Health" shell branding
+// (DASHBOARD_UI.brand/leaf, see report-shape.js) never reached it before
+// this route existed -- /api/config carries the full shape but is
+// correctly gated (workflow stages/enums), so this exposes ONLY the two
+// non-sensitive display strings a deployer already renders in the page
+// title (server.js's PWA_BRAND) and the post-login topbar. Absent
+// dashboard_ui (casey's own default, uhh) -- both fields are null and
+// login-gate.js's own 'casey' fallback applies, unchanged.
+export function getBranding() {
+  return (req, res) => {
     res.json({ brand: DASHBOARD_UI?.brand || null, leaf: DASHBOARD_UI?.leaf || null })
-  })
-  // Forced password change: the ONE route a must_change_password account may
-  // reach besides login/logout/whoami/change-password itself (gated below).
-  // A printed bootstrap password (or any account an admin creates with the
-  // flag set) can never be used as a standing credential past the first login.
-  app.post('/api/change-password', async (req, res) => {
+  }
+}
+
+// Forced password change: the ONE route a must_change_password account may
+// reach besides login/logout/whoami/change-password itself (gated below).
+// A printed bootstrap password (or any account an admin creates with the
+// flag set) can never be used as a standing credential past the first login.
+// Mounted { raw: true }: its own catch answers 400 with the thrown message
+// (a rejected weak/short password), not deps.wrap's 500.
+export function postChangePassword({ store, verifyPassword, changePassword }) {
+  return async (req, res) => {
     if (!req.caseyAccount) return res.status(401).json({ error: 'unauthorized' })
     try {
       const { current_password, new_password } = req.body || {}
@@ -486,9 +529,15 @@ export function registerAuth(app, deps) {
       await changePassword(store, req.caseyAccount.id, new_password)
       res.json({ ok: true })
     } catch (e) { res.status(400).json({ error: e.message }) }
-  })
+  }
+}
 
-  app.use((req, res, next) => {
+// The auth gate itself. Everything registered AFTER this in registerAuth --
+// and every other route module, since auth.js registers first -- sits behind
+// it. The exemption list is the whole of AGENTS.md's "only ungated routes"
+// invariant; do not add to it without re-reading that section.
+export function authGate() {
+  return (req, res, next) => {
     if (req.path.startsWith('/design') || req.path.startsWith('/vendor')) return next()
     if (req.path === '/api/login' || req.path === '/api/logout' || req.path === '/api/whoami') return next()
     // The SPA shell itself (page markup + its own CSS/JS, moved to static
@@ -518,7 +567,35 @@ export function registerAuth(app, deps) {
       return res.status(403).json({ error: 'must change password before continuing', code: 'must_change_password' })
     }
     next()
-  })
+  }
+}
+
+// The pre-gate routes that mountRoutes CAN express. GET/POST /report are not
+// here because they take the rate-limit middleware as a second argument, which
+// the table has no slot for -- they are registered by hand in registerAuth,
+// immediately above this block, exactly where they used to be.
+const ROUTES = [
+  ['get', '/api/ready', getReady, { raw: true }],
+  ['post', '/api/login', postLogin],
+  ['post', '/api/logout', postLogout, { raw: true }],
+  ['get', '/api/whoami', getWhoami, { raw: true }],
+  ['get', '/api/branding', getBranding, { raw: true }],
+  ['post', '/api/change-password', postChangePassword, { raw: true }],
+]
+
+export function registerAuth(app, deps) {
+  const { store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR, esc } = deps
+
+  app.use(sessionMiddleware(deps))
+  app.use(csrfGuard())
+
+  const reportRateLimited = makeReportRateLimiter(esc)
+  app.get('/report', reportRateLimited, getReport(deps))
+  app.post('/report', reportRateLimited, postReport(deps))
+
+  mountRoutes(app, deps, ROUTES)
+
+  app.use(authGate())
 
   app.use('/design', express.static(DESIGN_DIR))
   app.use('/vendor/leaflet', express.static(LEAFLET_DIR))
