@@ -1,24 +1,22 @@
 // Attention ranking: which open cases need a HUMAN now, and why, in plain words.
 //
 // The agent is called "the AI helper" in this file's operator-facing strings,
-// which is what the dashboard already calls it everywhere else -- the health
-// pill reads "AI helper: online" (components/health-pills.js) and main.js's
-// error copy says "Cannot reach the server to check the AI helper." These
-// strings said "casey" instead, so the console named the same thing two
-// different ways, and a rebranded deployment showed the framework's own
-// codename in its triage guidance with no way to change it.
+// matching what the dashboard calls it everywhere else (the health pill reads
+// "AI helper: online", components/health-pills.js). Never name the framework's
+// own codename here: the console would name the same thing two different ways,
+// and a rebranded deployment would show casey's codename in its triage guidance
+// with no way to change it.
 // Deterministic, enum-derived (status/autonomy/tags/age); no LLM. Higher = more
-// urgent. Lifted out of the dashboard SPA string so the SAME scoring runs
-// server-side over ALL open cases (not just the page window the client fetched)
-// and is shared by the dashboard, the CLI inbox, and the mobile view. The SPA
-// re-injects attnScore/attnReason from here verbatim, so the two surfaces can
-// never drift.
+// urgent. The scoring runs server-side over ALL open cases (not just the page
+// window the client fetched) and is shared by the dashboard, the CLI inbox, and
+// the mobile view. The SPA re-injects attnScore/attnReason from here verbatim,
+// so the two surfaces can never drift.
 //
 // `now` is passed in (never read from the clock here) so the score is a pure
 // function of (case, now) -- testable and identical on every caller.
 
-// tagList/tsMs/parseReport moved to timestamp.js (one shared implementation, was
-// independently duplicated here/case-health.js/case-sweep.js).
+// tagList/tsMs/parseReport are timestamp.js's single shared implementation; do
+// not add a local copy here.
 import { tsMs, tagList, parseReport } from './timestamp.js'
 import { healthTag } from './case-health.js'
 import { OPTED_OUT_TAG } from './hooks/heuristics.js'
@@ -178,14 +176,14 @@ function attnScore(c, now = Date.now()) {
 // Single ordered state->{reason, todo} policy. ONE first-match-wins ladder feeds
 // both the inbox "why" line (terse) and the detail "what to do now" line
 // (actionable), so the two surfaces can never disagree about a case's state or
-// contradict each other -- the bug of maintaining two parallel ladders with
-// different branch orderings. Inbox-relevant states come first in the SAME order
+// contradict each other -- two parallel ladders with different branch orderings
+// drift and start disagreeing. Inbox-relevant states come first in the SAME order
 // attnScore weights them (needs-human highest), so the worst-first sort and the
 // reason line agree; the trailing states (opted-out/closed/resolved/waiting/new)
 // never reach the inbox (they score 0) but DO show in the detail "to do" line, so
 // they live at the end of the ladder where only caseHints(...).todo reads them.
 // `now` is injected (default Date.now()) to keep the waiting-over-a-day branch a
-// pure function for tests.
+// pure function of (case, now).
 function caseHints(c, now = Date.now()) {
   const tags = tagList(c)
   // Detail-only terminal/quiet states first: these are not inbox reasons (they

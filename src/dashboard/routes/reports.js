@@ -308,7 +308,7 @@ export function getReportHtml(deps) {
       || printableReportRow(['none', '0', '0', '0', '', ''])
     const title = `${BRAND.name} management report`
     const body = `<h1>${esc(title)}</h1>`
-      + `<p>Generated ${esc(fmtTimeSAST(Math.floor(r.generated_at / 1000)))} -- last ${esc(r.period_days)} days</p>`
+      + `<p class="meta">Generated ${esc(fmtTimeSAST(Math.floor(r.generated_at / 1000)))}. Covers the last ${esc(r.period_days)} days.</p>`
       + `<h2>Totals</h2><table>${row('all cases', r.totals.all)}${row('open', r.totals.open)}${row('closed', r.totals.closed)}${row('opened this period', r.opened_this_period)}${row('closed this period', r.closed_this_period)}</table>`
       + `<h2>Response time</h2><table>${row('median first reply (hours)', msToHrs(r.median_first_response_ms))}${row('p90 first reply (hours)', msToHrs(r.p90_first_response_ms))}</table>`
       + `<h2>By stage</h2><table>${stageRows}</table>`
@@ -332,7 +332,7 @@ export function getHandover(deps) {
     const sinceTxt = h.since ? fmtTimeSAST(secs(h.since)) + (h.since_by ? ` (by ${esc(h.since_by)})` : '') : 'start of records'
     const title = `${BRAND.name} shift handover`
     const body = `<h1>${esc(title)}</h1>`
-      + `<p>Generated ${esc(fmtTimeSAST(secs(h.generated_at)))} -- since ${esc(sinceTxt)}</p>`
+      + `<p class="meta">Generated ${esc(fmtTimeSAST(secs(h.generated_at)))}. Covers everything since ${esc(sinceTxt)}.</p>`
       + `<h2>Needs attention (${h.attention.length})</h2>`
       + tbl(['ref', 'subject', 'channel', 'owner', 'why'], h.attention.map(a => row([a.ref, a.subject, a.channel, a.assignee || '-', a.reason])))
       + `<h2>Open handoffs not yet taken (${h.handoffs.length})</h2>`

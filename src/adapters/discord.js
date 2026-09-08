@@ -1,7 +1,5 @@
-// Discord gateway (WebSocket) + REST send adapter. Ported from freddie's
-// plugins/platform/platform-discord (freddie's messaging-transport surface
-// was removed in a later upstream rewrite; casey now owns this code
-// directly -- see AGENTS.md's freddie-port PRD rows).
+// Discord gateway (WebSocket) + REST send adapter. Outbound gateway-websocket
+// client: it owns no listening socket.
 import { EventEmitter } from 'node:events'
 import { DEFAULT_INTENTS, SEND_TIMEOUT_MS } from './discord-lib/constants.js'
 import { fetchWithTimeout } from './webhook-platform-base.js'
@@ -38,11 +36,11 @@ export class DiscordAdapter extends EventEmitter {
 
   async start() {
     if (!this.token) throw new Error('DiscordAdapter: DISCORD_BOT_TOKEN required')
-    // Bounded like every other call this adapter makes, and for a sharper
-    // reason than send()'s: scheduleReconnect's last-resort retry calls
-    // start() again, and an unbounded lookup that never settles takes its
-    // .catch with it -- no further reconnect is ever scheduled and the bot
-    // stays deaf for the life of the process, with nothing logged.
+    // Bounded like every other call this adapter makes: scheduleReconnect's
+    // last-resort retry calls start() again, and an unbounded lookup that
+    // never settles takes its .catch with it -- no further reconnect is ever
+    // scheduled and the bot stays deaf for the life of the process, with
+    // nothing logged.
     const gw = await fetchWithTimeout(`${this.api}/gateway/bot`, { headers: { authorization: `Bot ${this.token}` } }, SEND_TIMEOUT_MS).then(r => r.json())
     if (!gw.url) throw new Error('DiscordAdapter: gateway lookup failed: ' + JSON.stringify(gw))
     this.gatewayUrl = gw.url + '/?v=10&encoding=json'

@@ -92,12 +92,6 @@ export function canReplace(current, incoming) {
   return provenanceRank(incoming.provenance) >= provenanceRank(current.provenance)
 }
 
-// isUnknown(v) used to sit here -- isProvenanced(v) && v.provenance === 'unknown'
-// -- exported and called by nothing, in the whole tree including freddie-bundle.
-// canReplace above does the same check inline at its own call site, so not even
-// this module used it. Removed as the last unreferenced leftover in this
-// subsystem, after the two audits that already took out the aggregate/
-// interpretation/rule-engine tier and then event-log/escrow-export/
-// quality-flags/reputation/subject/pack-loader/water-point/provider-health.
-// AGENTS.md's rule for this subsystem is explicit: wire a thing to a real
-// caller from day one, never leave unreferenced scaffolding.
+// This subsystem carries no unreferenced scaffolding: a new export here is
+// wired to a real caller in the same change, never left standing for a later
+// audit to find (AGENTS.md, "Provenance subsystem").

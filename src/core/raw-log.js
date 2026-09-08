@@ -1,5 +1,5 @@
-// core/raw-log.js -- the append-only raw observation log: TIER 1 of the
-// four-tier physical separation (raw / cases / aggregates / interpretations).
+// core/raw-log.js -- the append-only raw observation log: the raw tier,
+// physically separate from the case tier it sits beside.
 //
 // This is an in-process store additive to casey's existing thatcher-backed
 // case/event tables -- it does NOT replace them. Each Observation (see
@@ -13,8 +13,8 @@
 // Persistence backing: a JSON-lines file under <dataDir>/raw-log/ so the
 // log survives a process restart without requiring a new thatcher entity
 // (which would entangle this additive tier with the existing CRM schema).
-// Reads replay the file; this is intentionally simple -- correctness over
-// cleverness for a log whose entire value proposition IS its simplicity.
+// Reads replay the file. Keep the format plain JSONL, one JSON object per
+// line: a data-escrow export of this tier is "hand over the file".
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -58,11 +58,10 @@ export class RawLog {
           map.set(obs.id, obs)
         } catch (e) {
           // A corrupt line (partial write from a crash mid-append) is
-          // skipped, never silently trusted as valid -- see
-          // expansion-failure-drill-partial-sync-crash: a half-written
+          // skipped, never silently trusted as valid: a half-written
           // observation must never be readable as a real record. It is
-          // reported via the returned corruptLines count so a caller can
-          // surface it, not swallowed.
+          // counted into __corruptLines so corruptLineCount() can surface
+          // it, not swallowed.
           map.__corruptLines = (map.__corruptLines || 0) + 1
         }
       }
@@ -71,21 +70,17 @@ export class RawLog {
     return map
   }
 
-  // All observations for a given subject, in append order -- the trace-back
-  // any aggregate must support (aggregation-drillable). With append(), the
-  // only two methods this class still needs: get()/all()/count() and an
-  // invalidateCache() written for an ad-hoc drill script were removed as
-  // unreachable in the 2026-09-07 sweep, along with the event-log wrapper
-  // that was their last caller.
+  // All observations for a given subject, in append order -- the per-subject
+  // trace-back both of core/write-path.js's latest-value-per-field
+  // derivations read, and the only drill-down path off this log.
   bySubject(subjectId) {
     return [...this._load().values()].filter(o => o.subjectId === subjectId)
   }
 
   // The ONLY way the skipped-corrupt-line count above can ever reach a human.
-  // It has no caller today, which means a truncated JSONL line is detected and
-  // skipped correctly but never surfaced -- deliberately kept (rather than
-  // deleted with the rest of the dead accessors) because deleting it would
-  // make the documented "corruption is reported, not swallowed" property
-  // unimplementable. Wire it into `casey doctor` rather than removing it.
+  // Its one caller is `casey doctor` (bin/casey-setup.js), which reads it and
+  // goes red on a non-zero count. Removing either end makes the documented
+  // "corruption is reported, not swallowed" property unimplementable: a
+  // truncated JSONL line would still be skipped correctly and never surfaced.
   corruptLineCount() { return this._load().__corruptLines || 0 }
 }

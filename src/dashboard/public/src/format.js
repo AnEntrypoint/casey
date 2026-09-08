@@ -89,9 +89,12 @@ const STAGE_LABEL = {
   new: 'New', triaging: 'Looking into it', in_progress: 'Working on it',
   waiting: 'Waiting', resolved: 'Done', closed: 'Closed',
 };
-// Friendly label in simple mode, raw stage name otherwise. A stage with no
-// entry (a deployment-added workflow stage) degrades to its raw name.
-export function stageLabel(s) { return state.simpleMode ? (STAGE_LABEL[s] || s) : s; }
+// The only stage name an operator ever reads. It used to be gated behind a
+// "plain-language mode" flag that defaulted off, so the raw thatcher enum
+// (in_progress, triaging) was what actually shipped on screen. A workflow
+// stage with no entry here (a deployment-added stage) still degrades to its
+// raw name -- that is a missing label, not a mode.
+export function stageLabel(s) { return STAGE_LABEL[s] || s; }
 
 // Plain-English label for a health:* guardrail tag -- shared between the
 // case-list's collapsed/expanded guardrail chips and the case-detail

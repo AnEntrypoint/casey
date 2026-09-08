@@ -1,15 +1,9 @@
 // hooks/reply-judge.js -- real-LLM outbound-reply quality judge.
 //
 // USER DIRECTIVE: no deterministic text classification anywhere -- the LLM
-// is what interprets, judges, and responds. This replaces FIVE separate
-// regex/hardcoded-string classifiers that used to gate every outbound reply
-// (isPromptEcho, isStockAck, isToolRefusal, isMetaCommentary, jargonHits, all
-// formerly in heuristics.js) with ONE real LLM call that judges the actual
-// composed reply against the same real-world failure shapes those regexes
-// were each hand-written to catch, one at a time, over many sessions of live
-// Discord traffic. USER DIRECTIVE: cost is not a constraint here -- one
-// extra real LLM round-trip per turn, deliberately, for flawless operation
-// over a cheaper-but-blind heuristic.
+// is what interprets, judges, and responds. USER DIRECTIVE: cost is not a
+// constraint here -- one extra real LLM round-trip per turn, deliberately,
+// for flawless operation over a cheaper-but-blind heuristic.
 //
 // Distinct from the main conversational turn: this call carries NO case
 // context, NO tools, and a fixed, narrow judging prompt -- it exists only to
@@ -18,26 +12,29 @@
 // judgeReply(callLLM, replyText, { lastOutboundText, hadSuccessfulWrite, latestInbound }) ->
 // real LLM verdict. Returns { clean: boolean, reasons: string[], category:
 // 'jargon'|'other'|null }. clean:false means the reply must not be sent as-
-// is. category distinguishes the ONE recoverable failure shape (a jargon
-// leak -- the old jargonHits gate held the reply as a DRAFT for a human to
-// reword, never discarded it outright, since the underlying content was
-// otherwise fine) from every other shape (prompt echo / stock ack / tool
-// refusal / meta-commentary / false confirmation -- the old gates discarded
-// these entirely, since there is no real content worth a human rewriting).
-// Callers branch on category to preserve that same distinction.
+// is. category:'jargon' is the ONE recoverable shape -- real content that
+// just needs a human to reword a word -- and handler.js holds such a reply as
+// a DRAFT rather than blanking it. Every other shape is category:'other'.
+//
+// The SHAPE HEADING WORDS below are a wire protocol, not prose: handler.js
+// routes a category:'other' verdict by regex over `reasons` -- /false.?confirm|
+// claims?.*record/ retries then holds as a draft, /repeated|echo|stock|
+// meta.?commentary|planning narration/ retries then BLANKS the reply, and
+// anything matching neither (TOOL REFUSAL) is sent as-is. Renaming a heading
+// here silently reroutes that reply to the send-anyway branch.
 //
 // latestInbound (the contact's current message text) lets the judge apply
 // REPEATED REPLY only when the latest message actually called for a fresh
-// answer. Live-witnessed without it: a bare "hi again" mid-intake has no new
-// content to answer, so the model's correct warm re-ask of still-missing
-// facts was flagged "repeated" on all 3 retry attempts and the contact got
-// the terminal fallback despite a healthy model -- the repeat rule firing on
-// a message that demanded no novelty at all.
+// answer. It must be passed: without it a content-free "hi again" mid-intake
+// makes a correct warm re-ask of still-missing facts read as "repeated", and
+// the shape blanks the reply on every one of handler.js's
+// MAX_TOOL_CHOICE_ATTEMPTS (3) attempts, so the contact gets the terminal
+// fallback despite a healthy model.
 //
 // hadSuccessfulWrite (boolean, computed by the caller from this turn's real
-// tool-call results -- handler.js's hadSuccessfulWriteThisTurn) tells the
-// judge whether a case_report/case_update actually succeeded THIS turn, so
-// it can catch the "fail-plausible" shape: a reply confidently saying
+// tool-call results -- turn-results.js's hadSuccessfulWrite(result)) tells
+// the judge whether a case_report/case_update actually succeeded THIS turn,
+// so it can catch the "fail-plausible" shape: a reply confidently saying
 // "recorded"/"noted"/"got it" when nothing was actually written. This is
 // STILL judged by the LLM, not a new regex -- only the true/false fact of
 // "did a write land" is computed deterministically (that's a structural
@@ -131,9 +128,9 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     raw = (result?.content || '').toString().trim()
   } catch {
     // A judge-call failure must never block a real reply from reaching the
-    // person (the judge is a quality gate, not the reply-generation path
-    // itself) -- fail OPEN (treat as clean) rather than silently holding
-    // every reply hostage to this second call's own reliability.
+    // person: the judge is a quality gate, not the reply-generation path, so
+    // it fails OPEN (treat as clean) rather than holding every reply hostage
+    // to this second call's own reliability.
     return { clean: true, reasons: [], category: null }
   }
 

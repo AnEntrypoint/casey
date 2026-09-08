@@ -14,7 +14,7 @@
 // BLUF: where things are happening is the single most operationally
 // important fact, so the map -- not the case list -- is the default home
 // view (see views/map-command-center.js). Persisted per-viewer, same
-// try/catch-localStorage shape as setTheme/setSimpleMode below, so an
+// try/catch-localStorage shape as setTheme below, so an
 // operator who prefers the list-first workflow keeps that choice.
 function readHomeView() {
   try { return localStorage.casey_home_view === 'cases' ? 'cases' : 'map'; } catch { return 'map'; }
@@ -45,7 +45,7 @@ export const state = {
   allCases: [], allCasesTotal: 0, attention: [], activeId: null,
   // filters
   filt: { q: '', status: '', channel: '', source: '', mine: false },
-  mineOnly: false, inboxMode: false, simpleMode: false, theme: 'dark',
+  mineOnly: false, inboxMode: false, theme: 'dark',
   // 'map'|'cases' -- which view MainContent() renders when no panel is open
   homeView: readHomeView(),
   // The one filter object the map markers AND the rail queue both read (see
@@ -224,7 +224,6 @@ export function setHomeView(v) {
   try { localStorage.casey_home_view = state.homeView; } catch { /* localStorage unavailable */ }
   schedule();
 }
-export function setSimpleMode(v) { state.simpleMode = !!v; try { localStorage.casey_simple = v ? '1' : ''; } catch { /* localStorage unavailable */ } schedule(); }
 export function setTheme(t) { state.theme = t; try { localStorage.casey_theme = t; } catch { /* localStorage unavailable */ } schedule(); }
 
 export function toggleBulkSelect(id, on) {

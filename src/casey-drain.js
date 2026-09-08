@@ -1,18 +1,15 @@
 // casey-drain.js -- draining turns that were QUEUED while the LLM backend was
 // down, once it comes back.
 //
-// Lifted out of Casey._drainQueuedTurnsBody. It is the sibling of
-// casey-resume.js: both re-drive turns the live path could not finish, from
-// the same four collaborators, and neither is part of what the Casey class is
-// actually for. They stay separate modules because they answer different
-// questions -- resume asks "what did a crash leave half-done", this asks "what
-// did an outage refuse to start" -- and their retry and ageing rules differ
-// accordingly.
+// The sibling of casey-resume.js: both re-drive turns the live path could not
+// finish, from the same four collaborators. They stay separate modules because
+// they answer different questions -- resume asks "what did a crash leave
+// half-done", this asks "what did an outage refuse to start" -- and their retry
+// and ageing rules differ accordingly. Do not merge them.
 //
-// The class keeps the `_draining` guard (shared with resumePendingTurns, so an
-// LLM-recovery edge during boot cannot double-drive the same msgId) and the
-// re-entrancy comment explaining it; the algorithm lives here with its inputs
-// named.
+// The Casey class owns the `_draining` re-entrancy guard, shared with
+// resumePendingTurns so an LLM-recovery edge during boot cannot double-drive
+// the same msgId.
 import { tagList, tsMs } from './timestamp.js'
 import { splitExternalId } from './hooks/handler.js'
 
@@ -48,7 +45,7 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
           for (const id of queued.keys()) completedAfter.add(id)
         }
       }
-      // (b) all still-queued msgIds, oldest-first.
+      // All still-queued msgIds, oldest-first.
       const pending = [...queued.entries()]
         .filter(([id]) => !completedAfter.has(id) && !dead.has(id))
         .sort((a, b) => a[1].created_at - b[1].created_at)
@@ -63,17 +60,16 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
         // external_id is the CASE IDENTITY (conversationKey's own "container:author"
         // shape on a multi-author channel -- see hooks/handler.js's conversationKey/
         // replyTarget split) -- it is NOT a valid Discord channel snowflake on its
-        // own. replyTarget(msg) reads msg.raw.channel_id directly, so passing the
-        // combined external_id through unsplit sent every queued-redrive reply on a
-        // multi-author Discord channel to Discord as an invalid channel id (400
-        // Invalid Form Body, NUMBER_TYPE_COERCE) -- the queued reply silently never
-        // reached the contact. Recover the real container id (the FIRST segment)
-        // and the real author id (the LAST segment) -- same compounding-key fix
-        // as resumePendingTurns above: passing the whole combined external_id
-        // through as `from` let conversationKey() recombine it into an
-        // ever-growing container:container:...:author on every redrive. Taking
-        // the last segment also self-heals an already-corrupted multi-segment
-        // key back to a clean two-part one on this redrive's own write.
+        // own. It must be split before use, never passed through combined:
+        // replyTarget(msg) reads msg.raw.channel_id directly, so a combined
+        // external_id reaches Discord as an invalid channel id (400 Invalid Form
+        // Body, NUMBER_TYPE_COERCE) and the queued reply silently never reaches
+        // the contact; and passing it through as `from` lets conversationKey()
+        // recombine it into an ever-growing container:container:...:author on
+        // every redrive. Recover the real container id (the FIRST segment) and
+        // the real author id (the LAST segment). Taking the last segment also
+        // self-heals an already-corrupted multi-segment key back to a clean
+        // two-part one on this redrive's own write.
         const { container, author } = splitExternalId(c.external_id)
         const msg = { from: author, text: ev.text || '', platform: c.channel, resume: true, queuedRedrive: true, raw: { channel_id: container, id, author: {} } }
         try {
@@ -85,9 +81,9 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
             const n = (attempts.get(id) || 0) + 1
             log?.warn?.('[casey] queue drive degraded', { caseId: c.id, msgId: id, attempt: n })
             if (n >= retryCap) {
-              // data.dead_lettered alongside the existing queue-drive-failed:<id>
-              // text prefix (queueStatus() still parses that prefix to reconstruct
-              // WHICH msgId dead-lettered -- untouched) so GET /api/turns/degraded
+              // queueStatus() parses the queue-drive-failed:<id> text prefix to
+              // reconstruct WHICH msgId dead-lettered, so that prefix must stay.
+              // data.dead_lettered rides alongside it so GET /api/turns/degraded
               // can also surface this as an explicit, queryable terminal state.
               try { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-failed:${id}`, data: { dead_lettered: true, reason: 'queue-drive-degraded-exhausted', msg_id: id } }) } catch { /* best effort */ }
             } else {
@@ -96,14 +92,14 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
             // The backend is evidently still shaky -- stop this case's drain.
             break
           }
-          // (c) mark attempted only AFTER a successful drive (handle sends/records
+          // Mark attempted only AFTER a successful drive (handle sends/records
           // the reply). A throw skips the marker so the message stays queued.
           await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-attempted:${id}` })
           drained++
         } catch (e) {
           const n = (attempts.get(id) || 0) + 1
           log?.warn?.('[casey] queue drive failed', { caseId: c.id, msgId: id, attempt: n, error: e.message })
-          // (d) dead-letter after retryCap so a permanently-failing message stops.
+          // Dead-letter after retryCap so a permanently-failing message stops.
           if (n >= retryCap) {
             try { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-failed:${id}`, data: { dead_lettered: true, reason: 'queue-drive-error-exhausted', msg_id: id, error: String(e.message || e).slice(0, 500) } }) } catch { /* best effort */ }
           } else {
@@ -117,15 +113,13 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
         }
       }
     }
-    // Always log the outcome, not just when something drained -- matching the
-    // same fix already applied to resumePendingTurns's sweep-complete log
-    // (see its own comment). A silent "nothing queued" completion is exactly
-    // as important to see as a busy one when diagnosing whether the periodic
-    // drain-poll timer (startDrainPoll) is actually running at all vs.
-    // genuinely idle vs. quietly stuck/never-started -- live-witnessed
-    // needing this while verifying the drain-poll fix itself: with no log on
-    // an empty scan, a real stuck case sitting un-drained was indistinguishable
-    // from "the timer never fired" and "the timer fired but found nothing".
+    // Always log the outcome, not just when something drained. A silent
+    // "nothing queued" completion is exactly as important to see as a busy one
+    // when diagnosing whether the periodic drain-poll timer (startDrainPoll,
+    // CASEY_DRAIN_POLL_INTERVAL_MS) is running at all vs. genuinely idle vs.
+    // quietly stuck/never-started: with no log on an empty scan, a real stuck
+    // case sitting un-drained is indistinguishable from "the timer never fired"
+    // and "the timer fired but found nothing".
     log?.info?.('[casey] queue drain complete', { scanned, drained })
     return { scanned, drained }
   }

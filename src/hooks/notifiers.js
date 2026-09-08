@@ -1,9 +1,8 @@
 // hooks/notifiers.js -- casey's webhook/operator-notification surface.
 //
-// Split out of gateway-hooks.js (see AGENTS.md's Source map for the file's
-// role). Handoff/breach/transition notifiers and the shared webhook POST +
-// delivery-status tracking. Moved verbatim; only the physical location
-// changed.
+// Handoff/breach/transition notifiers, plus the shared webhook POST and its
+// delivery-status tracking. Re-exported through gateway-hooks.js (see
+// AGENTS.md's Source map).
 
 import { buildAlertPayload } from '../report-analytics.js'
 import { stageNote, OPTED_OUT_TAG } from './heuristics.js'
@@ -12,7 +11,8 @@ import { caseDeliveryTarget } from './handler.js'
 
 // Build a CaseStore onTransition hook that sends the contact a proactive,
 // plain-language note when an OPERATOR moves their request to a stage worth
-// announcing. Reuses the dashboard's sendReply(caseRow, text) adapter.
+// announcing. Sends through the caller-supplied sendReply(caseRow, text) --
+// the same channel-adapter path the dashboard uses for operator replies.
 //
 // Guards (all must pass to send):
 // - agent transitions -- skipped; the agent already replies to the contact
@@ -70,9 +70,9 @@ export function discordHandoffNotifier(webhookUrl = process.env.CASEY_HANDOFF_WE
 // persisted -- a process restart resets it, matching the existing supervisor
 // convention that health/runtime status is live-only, never a stale disk
 // record). Read by the dashboard's /api/health so an operator can tell "the
-// webhook itself has been failing" apart from "no breach has fired yet" --
-// the two were previously indistinguishable since a webhook POST failure only
-// ever surfaced as a console warning nobody sees on a headless deployment.
+// webhook itself has been failing" apart from "no breach has fired yet" -- a
+// POST failure otherwise surfaces only as a console warning nobody sees on a
+// headless deployment.
 const _webhookDeliveryStatus = new Map()   // url -> {ok, lastAttemptAt, lastError, lastLabel}
 
 export function getWebhookDeliveryStatus(webhookUrl) {
@@ -119,9 +119,9 @@ async function postWebhook(webhookUrl, content, log, label, alert = null) {
       // fetch() resolving only means a response was RECEIVED, not that Discord
       // accepted it -- a revoked/expired webhook token, deleted webhook, or a
       // rate-limit (401/404/429) all resolve normally with a non-2xx status.
-      // Without checking res.ok, every one of those was recorded ok:true, so
-      // GET /api/health told an operator the breach/handoff alert channel was
-      // healthy while every real alert had silently failed to reach Discord.
+      // Keep the res.ok check: without it every one of those records ok:true,
+      // and GET /api/health tells an operator the breach/handoff alert channel
+      // is healthy while every real alert silently fails to reach Discord.
       if (res.ok) {
         _webhookDeliveryStatus.set(webhookUrl, { ok: true, lastAttemptAt: now, lastError: null, lastLabel: label })
       } else {

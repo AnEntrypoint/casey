@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { ROOT, bold, dim, green, red, cyan, ok, bad, warn, pkgVersion, hasCreds, partialCreds, portFree } from './casey-cli-ui.js'
 import { checkConfigDrift } from './casey-config-drift.js'
+import { RawLog } from '../src/core/raw-log.js'
 
 const ENV_TEMPLATE = `# casey environment -- fill in the channels you want, leave the rest blank.
 # Discord:
@@ -169,6 +170,18 @@ export async function cmdDoctor({ flags }) {
   // recommend, though -- see noChannel below.
   const noChannel = !hasCreds('discord') && !hasCreds('whatsapp')
   if (noChannel) console.log(warn('no real channel connected - casey cannot start without at least one of discord/whatsapp configured'))
+  // Which run mode this boot will actually take, and what that costs. With no
+  // channel, `up` cannot start and the realistic command is `casey dashboard`
+  // -- which calls createDashboard(store, {port}) and passes NONE of the
+  // capabilities cmdUp and bin/worker.js pass it. The console then renders a
+  // "Sweep now" button whose endpoint answers 501, and an "AI helper: unknown"
+  // pill that is telling the truth because nothing handed it a way to ask.
+  // Doctor already knows the channel state; saying what it implies is the
+  // difference between a deployer discovering this here and discovering it by
+  // pressing a button that was never going to work.
+  if (noChannel) {
+    console.log(dim('  run mode will be dashboard-only: no health sweep, and no AI-helper / receive / runtime status or reply sending in the console'))
+  }
   // thatcher config -- same CASEY_CONFIG_DIR > cwd precedence as
   // case-store.js's own CaseStore constructor default (see there for why).
   const cfgFile = process.env.CASEY_CONFIG_DIR
@@ -234,6 +247,45 @@ export async function cmdDoctor({ flags }) {
   console.log(existsSync(dbFile)
     ? ok(`case data at ${dbFile}`)
     : dim(`  no case data yet (will be created at ${dbFile})`))
+  // Provenance raw log -- RawLog._load() skips a truncated JSONL line (a partial
+  // write from a crash mid-append) rather than trusting half an observation as a
+  // real record, and counts what it skipped. This is the only caller of that
+  // count, so without this row the skipping happens correctly and no human ever
+  // learns a record was lost. Read-only: constructing RawLog creates the
+  // directory but writes no entry.
+  // Has the health-guardrail sweep ever actually run? It is the mechanism that
+  // detects stalled, stuck and abandoned cases, and in dashboard-only mode it
+  // is never scheduled at all (casey.js starts the timer during casey's own
+  // boot, which cmdDashboard does not perform). A store full of open cases and
+  // zero health:* tags therefore looks identical to a store with nothing wrong,
+  // and an operator reading a queue with no flags concludes the second. Read
+  // the sqlite file directly rather than booting a CaseStore: doctor is a
+  // preflight and must not create or migrate anything to answer a question.
+  if (existsSync(dbFile)) {
+    try {
+      const { createClient } = await import('@libsql/client')
+      const db = createClient({ url: 'file:' + dbFile })
+      const open = await db.execute(`SELECT COUNT(*) n FROM "case" WHERE status IS NOT NULL AND status != 'closed'`)
+      const tagged = await db.execute(`SELECT COUNT(*) n FROM "case" WHERE tags LIKE '%health:%'`)
+      const openN = Number(open.rows[0]?.[0]) || 0
+      const taggedN = Number(tagged.rows[0]?.[0]) || 0
+      if (openN && !taggedN) console.log(warn(`health sweep has never flagged anything across ${openN} open case(s) - if this instance runs dashboard-only the sweep is not scheduled at all, so stalled and abandoned cases are going undetected`))
+      else if (taggedN) console.log(ok(`health sweep has run (${taggedN} case(s) currently flagged)`))
+      else console.log(dim('  no open cases yet - nothing for the health sweep to flag'))
+    } catch (e) {
+      console.log(dim(`  health sweep state could not be read (${e.message})`))
+    }
+  }
+  const rawLogFile = path.join(dataDir, 'raw-log', 'observations.jsonl')
+  if (existsSync(rawLogFile)) {
+    try {
+      const corrupt = new RawLog({ dataDir }).corruptLineCount()
+      if (corrupt > 0) { console.log(bad(`provenance raw log has ${corrupt} unreadable line(s) - a crash mid-append truncated ${corrupt} observation(s); they are skipped, not recoverable`)); problems++ }
+      else console.log(ok('provenance raw log reads clean'))
+    } catch (e) {
+      console.log(warn(`provenance raw log could not be read (${e.message})`))
+    }
+  }
   // port
   const port = Number(flags.port || 4000)
   // Every other bad() row in this command counts itself into `problems`; this

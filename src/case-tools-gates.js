@@ -1,9 +1,9 @@
 // case-tools-gates.js  --  the two wrappers every case_* tool passes through.
 //
-// Split out of case-tools.js unchanged. These are cross-cutting decorators, not
-// tools: gateByTier is the access-tier enforcement boundary (fail-closed to
-// reporter), dedupeDuplicateCalls suppresses an exact repeat call within one
-// turn. buildCaseToolset applies both, in this order, to every tool it builds.
+// These are cross-cutting decorators, not tools: gateByTier is the access-tier
+// enforcement boundary (fail-closed to reporter), dedupeDuplicateCalls
+// suppresses an exact repeat call within one turn. buildCaseToolset applies
+// both, in this order, to every tool it builds.
 
 import { boundCase } from './case-tools-shared.js'
 
@@ -34,20 +34,20 @@ export function gateByTier(tool) {
     handler: async (args, ctx) => {
       // FAIL CLOSED: allow-list, not deny-list. A ctx built with no tier at all
       // (a missing/undefined value, not merely a wrong one) must NOT fall through
-      // to full access -- only an EXPLICIT 'field_worker' tier proceeds. The prior
-      // `if (ctx?.tier && ctx.tier !== 'field_worker')` shape only denied when a
-      // tier was present and wrong, silently granting full access to any caller
-      // whose ctx carried no tier property whatsoever.
+      // to full access -- only an EXPLICIT 'field_worker' tier proceeds. An
+      // `if (ctx?.tier && ctx.tier !== 'field_worker')` shape denies only when a
+      // tier is present and wrong, and silently grants full access to any caller
+      // whose ctx carries no tier property whatsoever.
       //
       // The result text is deliberately NOT an explanation of internal
       // permissions/tools/tiers -- a model that sees a tool-shaped "requires
-      // field-worker access" string has repeatedly composed a reply that
-      // parrots that exact internal language back to the contact (witnessed:
-      // "I don't have the necessary permissions to access the case list"),
-      // which the outbound jargon scrub then holds as an unsent draft, leaving
-      // the contact with silence. This tells the model plainly, in
-      // conversational terms, to drop the query and keep going -- nothing here
-      // is safe or useful to relay to the person messaging in.
+      // field-worker access" string composes a reply that parrots that exact
+      // internal language back to the contact ("I don't have the necessary
+      // permissions to access the case list"), which the outbound jargon scrub
+      // then holds as an unsent draft, leaving the contact with silence. This
+      // tells the model plainly, in conversational terms, to drop the query and
+      // keep going -- nothing here is safe or useful to relay to the person
+      // messaging in.
       if (ctx?.tier !== 'field_worker') {
         return { unavailable: true, note: 'This is not something you can look up for this person. Do not mention tools, permissions, or access -- just continue the conversation naturally: report their case, or answer using what you already know from this conversation.' }
       }
@@ -68,9 +68,24 @@ export function gateByTier(tool) {
 // case_report is exactly the tool this most needs to catch. Takes the same
 // `store` closure buildCaseToolset's own tools use (storeOrNull || the
 // runtime singleton) rather than calling getCaseStore() directly, so this
-// works identically under buildCaseToolset(explicitStore) (tests, or any
-// caller that wants the tools without the runtime singleton) and under the
-// real plugin-loaded singleton path.
+// works identically under buildCaseToolset(explicitStore) (any caller that
+// wants the tools without the runtime singleton) and under the real
+// plugin-loaded singleton path.
+// A deterministic key for a tool call's arguments, stable under key order at
+// EVERY nesting level. Must not be JSON.stringify's replacer-array form:
+// `JSON.stringify(args, Object.keys(args).sort())` applies that allowlist
+// recursively, so any nested object serializes as {} -- case_list's
+// near:{lat,lon,radius_km} collapsed to near:{}, making two "cases near here"
+// calls for DIFFERENT places share one key. The second caller then silently
+// received the first location's results, recorded in the audit trail as a
+// suppressed duplicate.
+function stableArgsKey(v) {
+  if (v === null || v === undefined) return 'null'
+  if (typeof v !== 'object') return JSON.stringify(v)
+  if (Array.isArray(v)) return `[${v.map(stableArgsKey).join(',')}]`
+  return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${stableArgsKey(v[k])}`).join(',')}}`
+}
+
 export function dedupeDuplicateCalls(tool, store) {
   const handler = tool.handler
   return {
@@ -79,7 +94,7 @@ export function dedupeDuplicateCalls(tool, store) {
       const cache = ctx?.dedupeCache
       if (!(cache instanceof Map)) return handler(args, ctx)
       const dedupeLogTarget = boundCase(ctx).id
-      const key = `${tool.name}:${dedupeLogTarget}:${JSON.stringify(args, Object.keys(args || {}).sort())}`
+      const key = `${tool.name}:${dedupeLogTarget}:${stableArgsKey(args)}`
       if (cache.has(key)) {
         if (dedupeLogTarget) {
           try {

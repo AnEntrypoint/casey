@@ -16,20 +16,19 @@
 import { isProvenanced, requireProvenance } from './provenance.js'
 
 let _seq = 0
-// Deterministic-enough id generator that does not depend on Date.now()/
-// Math.random() at import time inside a gm workflow script context; real
-// runtime callers pass their own recordedAt, this only needs to be locally
-// unique within a process lifetime alongside that timestamp.
+// Id generator that touches neither Date.now() nor Math.random() at import
+// time. Callers pass their own recordedAt, so this only needs to be unique
+// within one process lifetime alongside that timestamp.
 function nextLocalSeq() { return ++_seq }
 
 export function mkObservationId(recordedAtMs, actorId) {
   return `obs-${recordedAtMs}-${actorId}-${nextLocalSeq()}`
 }
 
-// Time semantics: four DISTINCT timestamps, never conflated (item 41/59).
+// Time semantics: four DISTINCT timestamps, never conflated.
 // - onsetAt: when the condition/situation actually started (frequently
-//   unknowable -- must be an explicit provenance-tagged value, see
-//   expansion-time-semantics-missing-onset, never defaulted to observedAt).
+//   unknowable -- must be an explicit provenance-tagged value, never
+//   defaulted to observedAt).
 // - observedAt: when the observer actually saw/found it.
 // - reportedAt: when the observation was told to the system (a field worker
 //   relaying something seen hours earlier).
@@ -52,8 +51,8 @@ export function mkObservation({
   verifiedBy = null,     // actor id, when verificationTier !== 'unverified'
   escalatedTo = null,    // responder id/route, when triage escalates
   packId,               // which config pack authored the form this was captured against
-  packVersion,          // pack version stamp (config-pack-versioning)
-  caseDefinitionVersion = null,  // epistemics-case-definition-versioning
+  packVersion,          // pack version stamp
+  caseDefinitionVersion = null,  // case-definition version in force at capture (PROVENANCE.md, Epistemics)
   correctsId = null,     // id of the Observation this corrects, or null if original
   correctionReason = null,
 } = {}) {
@@ -120,9 +119,9 @@ export function requireObservation(o, ctx = 'observation') {
 
 // Stamp syncedAt on an already-constructed Observation -- the ONE mutation
 // path this module allows, and it produces a NEW frozen object rather than
-// mutating the original (the original stays exactly as captured, satisfying
-// sync-original-preservation). Called only by core/write-path.js at the
-// moment a record actually lands in the durable raw log.
+// mutating the original, so the original stays exactly as captured. Called
+// only by core/write-path.js at the moment a record actually lands in the
+// durable raw log.
 export function withSyncedAt(observation, syncedAt) {
   requireObservation(observation)
   return Object.freeze({ ...observation, syncedAt })

@@ -193,3 +193,67 @@ export function resolveBrand({ publicDir = PUBLIC_DIR, dashboardUi = DASHBOARD_U
 }
 
 export const BRAND = resolveBrand()
+
+// ---------------------------------------------------------------------------
+// ONE type and spacing scale for every server-rendered surface.
+//
+// WHY THIS IS A COPY OF THE KIT'S NUMBERS AND NOT A LINK TO THE KIT. The SPA
+// resolves its sizes through anentrypoint-design's tokens, served from
+// /design/dist/247420.css. Every server-rendered page here emits a bare
+// <style> block instead and hardcoded its own sizes, which measured -- live,
+// in real Chrome against a running dashboard -- as eight different computed
+// font sizes across four pages (12, 13, 13.33, 14, 16, 16.8, 17, 20.8px),
+// with the SAME page-title role rendering 16.8px on the case briefing and
+// 20.8px on the management report. That is what "some are big, some are
+// small" looks like from the inside.
+//
+// The obvious fix is to link the kit and use var(--fs-*). It does not work,
+// and the reason is not the one you would guess:
+//
+//  - THE KIT'S TOKENS ARE NOT ON :root. dist/247420.css:16 scopes every
+//    declaration to `.ds-247420:not(:where(.ds-247420 .ds-247420))`. Linking
+//    the bundle from one of these pages resolves NOTHING unless an ancestor
+//    also carries that class, so `<link>` alone is not a fix, it is a silent
+//    no-op that leaves every var() invalid.
+//  - The kit's heading tokens are cqi-based clamps that, by its own note at
+//    colors_and_type.css:274-278, need an ancestor carrying
+//    `container-type: inline-size`. These are standalone documents with no
+//    such ancestor, so those clamps would resolve against the viewport --
+//    non-deterministic sizing on a page whose whole job is to be printed.
+//  - The built bundle is 874,759 bytes, against roughly fourteen for the
+//    whole public form. That page crosses a metered rural link to a contact
+//    who may be on a feature phone.
+//  - Three of the four surfaces are print/download artifacts. A briefing a
+//    field team saves and opens offline must not depend on a stylesheet fetch.
+//
+// So the VALUES are the kit's, taken from colors_and_type.css:279-292 and
+// :339-356, and a printed report now agrees with the SPA. Two things are
+// deliberately not copied:
+//
+//  - The kit writes each spacing rung as `calc(<rem> * var(--density))`. There
+//    is no density control on a server-rendered page, and carrying the calc
+//    without also carrying --density would make every one of these invalid.
+//    Each value below is what the kit resolves at its own default --density:1.
+//  - The fluid heading clamps (--fs-h1-app and friends) are absent rather than
+//    pinned to some arbitrary point on their range. A page with nothing to
+//    clamp against should name a real rung instead.
+//
+// THIS IS A CLOSED SET, and that matters more than it looks. A var() naming
+// something not defined here is invalid at computed-value time, which throws
+// away THE WHOLE DECLARATION, not just that one value -- so a single stray
+// `var(--space-6)` inside a `padding` shorthand silently drops the padding to
+// zero with no error anywhere. That exact bug shipped and was caught by
+// measuring the rendered page, not by reading the CSS. scripts/lint.mjs's
+// `server-css-tokens` gate now fails the build on any var() in the
+// server-rendered surfaces that this block does not define; if you add a rung
+// here, add it because a surface needs it, and if you need a rung, add it here
+// first. Only rungs something actually uses are emitted -- dead custom
+// properties are dead bytes on the metered link the argument above is built on.
+export const TYPE_SCALE_CSS = ':root{'
+  + '--fs-micro:0.75rem;--fs-tiny:0.8125rem;--fs-xs:0.875rem;'
+  + '--fs-body:1rem;--fs-lg:1.125rem;--fs-xl:1.3125rem;'
+  + '--space-half:0.1875rem;--space-1:0.25rem;--space-1-5:0.3125rem;'
+  + '--space-2:0.5rem;--space-2-5:0.625rem;--space-2-75:0.75rem;'
+  + '--space-3:1rem;--space-3-5:1.25rem;--space-4:1.5rem;--space-5:2rem;--space-6:3rem;'
+  + '--lh-snug:1.2;--lh-base:1.55;--bw-hair:1px'
+  + '}'

@@ -70,6 +70,10 @@ export async function api(path, opts = {}) {
     setConnLost(true);
     return res;
   }
+  // Stamped only here, on a response that provably came from the origin: the
+  // rejection above never left the device and the 503 envelope never left the
+  // service worker, so neither is evidence of contact.
+  lastContactAt = Date.now();
   const wasLost = state.connLost;
   setConnLost(false);
   if (wasLost) {
@@ -78,6 +82,64 @@ export async function api(path, opts = {}) {
     }
   }
   return res;
+}
+
+// ---- connection watch ---------------------------------------------------
+//
+// "Connected" is only as true as the last response that actually reached the
+// origin. Failure is otherwise noticed as a SIDE EFFECT of a scheduled data
+// poll, so between polls the status bar keeps asserting a link nothing has
+// tested -- on the map home view the 5s case poll is suppressed and the
+// fastest detector is the 15s health poll, and a tab whose timers the browser
+// has coalesced or suspended has no detector at all. This bounds that window;
+// it fetches no data of its own.
+//
+// Three inputs, cheapest first:
+//   1. The browser's own offline/online events -- free, instant, and the right
+//      signal for the interface-level drop this deployment's link produces.
+//      They do NOT fire when the interface is up and the server is
+//      unreachable, which is why the other two exist.
+//   2. Becoming visible again. A backgrounded tab (a phone in a pocket) has
+//      its timers throttled, so the polls that would have caught the outage
+//      may simply not have run; an operator waking the screen must never be
+//      greeted by a "Connected" nothing has re-tested.
+//   3. A quiet-link probe. /api/ready is ungated and 39 bytes of body, and
+//      fires only after QUIET_MS with nothing reaching the origin, so the
+//      app's own polls keep it silent on a healthy link -- about one probe per
+//      health-poll cycle, against the several MB/hour that polling already
+//      costs on this metered link. While the link is down it is also the
+//      recovery detector, which is why PROBE_MIN_GAP_MS is short: the banner
+//      clears within seconds of the link returning instead of within a poll.
+const QUIET_MS = 8000;
+const PROBE_MIN_GAP_MS = 4000;
+const WATCH_TICK_MS = 2000;
+let lastContactAt = Date.now();
+let lastProbeAt = 0;
+let probing = false;
+
+async function probeConnection() {
+  if (probing) return;
+  probing = true;
+  lastProbeAt = Date.now();
+  // api() owns both edges: a rejection or the worker's 503 envelope raises the
+  // banner, a real response clears it and fires the restored listeners.
+  try { await api('/api/ready', { cache: 'no-store' }); } catch { /* api() recorded it */ }
+  probing = false;
+}
+
+export function startConnectionWatch() {
+  const tick = setInterval(() => {
+    if (document.visibilityState === 'hidden') return;
+    if (Date.now() - lastContactAt < QUIET_MS) return;
+    if (Date.now() - lastProbeAt < PROBE_MIN_GAP_MS) return;
+    probeConnection();
+  }, WATCH_TICK_MS);
+  window.addEventListener('offline', () => setConnLost(true));
+  window.addEventListener('online', probeConnection);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') probeConnection();
+  });
+  return () => clearInterval(tick);
 }
 
 // ---- last-known values --------------------------------------------------

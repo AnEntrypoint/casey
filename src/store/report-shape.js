@@ -1,7 +1,8 @@
 // store/report-shape.js  --  the report-field vocabulary a case's free-form
 // report JSON is built from. Config-driven: the actual field list, order, and
-// per-field metadata (critical_for_visit / append / never_inferred) come from
-// the deployer-selected config package's report-fields.yml (see
+// per-field metadata (critical_for_visit / append / never_inferred /
+// severity_signal / display_label / section / multiline) come from the
+// deployer-selected config package's report-fields.yml (see
 // src/config-loader.js), not a hardcoded literal -- this is what makes casey's
 // report vocabulary swappable per deployment (AGENTS.md's "configurable like
 // thatcher" goal) instead of pinned to the animal-health domain.
@@ -9,15 +10,16 @@
 import { loadDomainConfig } from '../config-loader.js'
 
 // Pure transform from a report-fields.yml-shaped object into every derived
-// shape case-store.js/case-tools.js/case-health.js/hooks/prompt.js/the
-// dashboard consume. Extracted as a standalone function (not inlined below)
-// so a deployer whose domain needs MULTIPLE schemas coexisting in one
-// running process -- a different field vocabulary per record, not one fixed
-// vocabulary per process -- can call this directly with a per-record
-// reportFields object instead of the module-level one baked in at process
-// start. The module-level exports below remain casey's own one-schema-
-// per-process default (CASEY_CONFIG_DIR, resolved once at boot) -- this
-// function is purely additive, changes nothing about that existing path.
+// shape its importers consume (attn.js, case-health.js, case-store.js,
+// case-tools.js and its -record/-shared modules, and the dashboard's
+// brand.js/routes/auth.js/routes/cases.js/routes/operations.js). Kept as a
+// standalone function, not inlined below, so a deployer whose domain needs
+// MULTIPLE schemas coexisting in one running process -- a different field
+// vocabulary per record, not one fixed vocabulary per process -- can call it
+// directly with a per-record reportFields object instead of the module-level
+// one baked in at process start. The module-level exports below remain casey's
+// own one-schema-per-process default (CASEY_CONFIG_DIR, resolved once at boot);
+// this function must stay purely additive over that path.
 export function deriveReportShape(reportFields) {
   if (!reportFields || !Array.isArray(reportFields.fields)) throw new Error('deriveReportShape: reportFields.fields[] required')
 
@@ -54,9 +56,10 @@ export function deriveReportShape(reportFields) {
   // Fields carrying a structural "must be agent-STATED, never inferred" bound.
   const NEVER_INFERRED_FIELDS = reportFields.fields.filter(f => f.never_inferred)
 
-  // The two (at most) report fields safe to show in a cross-worker PII-free
-  // enquiry list. Defaults to the first two critical_for_visit fields if the
-  // config declares none explicitly.
+  // The report fields safe to show in a cross-worker PII-free enquiry list.
+  // A config-declared enquiry_headline_fields wins verbatim and is NOT capped
+  // here; only the fallback (the first two critical_for_visit fields) is.
+  // Keep a declared list to two: it renders as one headline line per row.
   const ENQUIRY_HEADLINE_FIELDS = reportFields.enquiry_headline_fields
     || reportFields.fields.filter(f => f.critical_for_visit).slice(0, 2).map(f => f.key)
 
@@ -88,10 +91,11 @@ export function deriveReportShape(reportFields) {
   // a deployer whose domain has no "Map"/"Hotspots"/"Reporters" concept
   // (e.g. serpent's research-run tracking) can drop or relabel those nav
   // items via config instead of casey's SPA staying hardcoded to one
-  // domain's field-ops vocabulary forever. Absent entirely (casey's own
-  // default, uhh) -- DASHBOARD_UI is null, and every consumer (app-view.js,
-  // nav-config.js) falls back to today's exact hardcoded labels/full item
-  // set, so this is purely additive.
+  // domain's field-ops vocabulary forever. Absent entirely in casey's own
+  // bundled config/default, in which case DASHBOARD_UI is null and every
+  // consumer -- brand.js and routes/auth.js and routes/operations.js here,
+  // plus every SPA reader of the dashboard_ui it serves -- must fall back to
+  // its own hardcoded label/full item set, so this stays purely additive.
   const DASHBOARD_UI = reportFields.dashboard_ui || null
 
   return {

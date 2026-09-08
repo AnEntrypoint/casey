@@ -28,7 +28,7 @@ import {
     state, schedule, setActiveId, setMapFilter, clearMapFilter, setRailMode,
     onActiveIdChange, onAttentionChange, onMobilePaneChange,
 } from '../state.js';
-import { urgencyByCaseId, pinMatches, rowMatches, isToday, filterIsActive, URGENCY_BAND_LABEL } from '../map-model.js';
+import { urgencyByCaseId, pinMatches, rowMatches, isToday, filterIsActive, URGENCY_BAND_LABEL, QUEUE_NAME } from '../map-model.js';
 import {
     loadMap, toggleClusters, refilterMarkers, toggleCoverage, toggleWorkers, toggleLastReports, STATUS_TOKEN,
     focusCaseOnMap, setSelectedCase, resetMapView, LOCATION_SOURCE_LABEL,
@@ -58,6 +58,13 @@ let lastUpdatedAt = null;
 // the gap -- on a triage queue in a disease-surveillance deployment, report 6
 // being invisible is a safety problem, not a cosmetic one.
 const QUEUE_PAGE = 8;
+
+// ONE name for the worst-first queue, everywhere it is referred to by name.
+// It was called four different things across the UI plus a fifth in
+// onboarding ("Needs a person", "Needs a person now", "Needs you now", "the
+// inbox", "the queue"), which is five things for an operator to learn about
+// one list. map-model.js imports this too, so the band label and the rail
+// head can never drift apart again.
 let queueShown = QUEUE_PAGE;
 
 // One subscription, registered at module load: every path that opens a case --
@@ -280,8 +287,15 @@ function attentionFeed() {
                     if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); pick(c.id); }
                 },
             },
-                h('div', { class: 'tcase-why' }, h('b', {}, c.ref), ' ', c.reason || ''),
-                h('div', { class: 'tcase-meta' }, c.subject || ''));
+                // The report is the row. Its subject leads, at the row's
+                // largest type; the ref and the ranking reason are what is
+                // said ABOUT it and sit under it. Led the other way round,
+                // six of eight rows opened with the identical sentence
+                // ("A new message came in.") and the one line that told them
+                // apart rendered at the smallest size on the page.
+                h('div', { class: 'tcase-why' }, c.subject || c.ref),
+                h('div', { class: 'tcase-meta' }, c.ref),
+                c.reason ? h('div', { class: 'tcase-reason' }, c.reason) : null);
         }),
         // The count is stated on the list itself, next to the control that
         // reveals the rest -- so a capped list can never silently disagree with
@@ -526,7 +540,7 @@ export function MapPanel() {
 // show where. Here the table sits in the rail and the map stays put beside it,
 // with the matching map overlay switched on so the two agree.
 const RAIL_MODES = {
-    queue: { label: 'Needs a person', body: attentionFeed },
+    queue: { label: QUEUE_NAME, body: attentionFeed },
     clusters: { label: 'Related reports', body: () => ClustersPanel({ railed: true }) },
     geo: { label: 'Hotspots', body: () => GeoPanel({ railed: true }) },
 };

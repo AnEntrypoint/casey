@@ -91,13 +91,20 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
 
     const entityLabel = activeConfig()?.entity_label || 'report';
     return h('div', { key, class: 'casey-report' },
-        h('div', { class: 'casey-report-head' }, `${entityLabel[0].toUpperCase()}${entityLabel.slice(1)} details`, any ? null : h('span', { class: 'casey-rep-missing' }, ' (nothing recorded yet)')),
+        h('div', { class: 'casey-report-head' }, `${entityLabel[0].toUpperCase()}${entityLabel.slice(1)} details`),
+        any ? null : h('p', { class: 'casey-hint' }, 'Nothing has been recorded on this ' + entityLabel + ' yet. Tap any line below to fill it in.'),
         srcLegend, readyBanner, audioBanner,
         ...sections.map(sec => h('div', { key: sec.title }, Section({
             title: sec.title,
             children: sec.keys.map(([k, label, multiline]) => ReportField({
                 key: k, caseId: c.id, k, label, value: has(r, k) ? String(r[k]) : '',
-                source: src[k], notes: fnotes[k], multiline, onSaved
+                source: src[k], notes: fnotes[k], multiline, onSaved,
+                // The head already says the whole report is blank. Repeating
+                // "not given yet" on all 28 rows two inches below it states
+                // one fact twice in two different phrasings; the ruled
+                // writing space stays either way, so an empty row is still
+                // visibly a row you can fill in.
+                sayMissing: any,
             }))
         })))
     );

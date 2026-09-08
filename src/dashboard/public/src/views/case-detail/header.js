@@ -1,9 +1,12 @@
-// header.js -- ref/channel disclosure (ux-case-detail-channel-ref-disclosure:
-// ref prominent, channel + contact metadata collapsed under a toggle), claim
-// button, snooze control, share/print links, health badge chips, intake-mode
-// badge, and the plain-language flag summary
-// (ux-ai-plain-language-flag-summary: the same caseHints-mirroring
-// todo-hint text, also surfaced as a standalone Lede up top).
+// header.js -- the case's own heading (its subject), the ref line beneath it,
+// channel + contact metadata collapsed under a toggle, claim button, snooze
+// control, share/print links, health badge chips, intake-mode badge, and the
+// one-line "what happens next" note mirroring caseHints' ladder.
+//
+// The heading is the SUBJECT and the note about who answers is an aside. It
+// used to be the other way round: the ref led, and the automation notice
+// rendered as a Lede at the pane's largest type, so a suspected
+// foot-and-mouth report was announced by a sentence about the AI helper.
 //
 // The collapsed metadata reads c.external_id_formatted -- the DISPLAY form of
 // the contact number, served only by the single-case projection
@@ -16,10 +19,10 @@
 // dead affordance rather than an empty one.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
-import { Btn, IconButton, Chip, Lede, Icon } from '/design/src/components/shell.js';
+import { Btn, IconButton, Chip, Icon } from '/design/src/components/shell.js';
 import { state, schedule } from '../../state.js';
 import { toast, undoToast } from '../../toasts.js';
-import { fmtTime, rel, healthLabel } from '../../format.js';
+import { fmtTime, rel, healthLabel, stageLabel } from '../../format.js';
 import { postClaim, postSnooze } from '../../api.js';
 import { todoHintText } from './todo-hint.js';
 
@@ -101,10 +104,16 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
         })
         : Btn({ size: 'sm', variant: 'ghost', children: 'Snooze', onClick: () => onOpenSnooze && onOpenSnooze(c) });
 
+    // The page is about the report, so the report is what the heading says.
+    // The ref is the handle you quote on the phone, not the subject of the
+    // page, and the automation notice is an aside about who answers next --
+    // both sit under the heading now rather than above or instead of it.
+    // Falls back to the ref when a case genuinely has no subject yet, so the
+    // heading is never empty.
     return h('div', { key, class: 'casey-case-header' },
         h('div', { class: 'casey-case-header-top' },
-            h('h2', { class: 'casey-case-ref' }, c.ref, ' ',
-                Chip({ tone: c.status === 'closed' ? '' : 'accent', children: c.status })),
+            h('h2', { class: 'casey-case-ref' }, c.subject || c.ref, ' ',
+                Chip({ tone: c.status === 'closed' ? '' : 'accent', children: stageLabel(c.status) })),
             claimBtn,
             snoozeBtn,
             IconButton({ icon: Icon('external-link'), title: 'Print report', onClick: () => window.open('/api/cases/' + encodeURIComponent(c.id) + '/report.html', '_blank') }),
@@ -113,7 +122,16 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
                 ? h('span', { class: 'casey-suggested', title: 'Based on ' + suggestedAssignee.name + '\'s past work near ' + suggestedAssignee.matched_area }, 'suggested: ' + suggestedAssignee.name)
                 : null
         ),
-        Lede({ children: todoHintText(c) }),
+        // .casey-case-ref is the pane's own heading rule (--fs-h1-app, weight
+        // 600) and .casey-meta-id / .casey-hint are its own metadata and
+        // small-note rules -- no new sizes are introduced here, the three
+        // existing ones are just applied to the right three things.
+        // Both classes deliberately: the mono face from .casey-meta-id (a ref
+        // gets read down a phone line, so the digits have to be unambiguous)
+        // at .casey-hint's size, which is the later rule in case-detail.css
+        // and the one an operator can actually read on a handset.
+        h('div', { class: 'casey-meta-id casey-hint' }, c.ref),
+        h('p', { class: 'casey-hint' }, todoHintText(c)),
         healthBadges(c.tags),
         intakeModeBadge(c.tags),
         h('div', { class: 'casey-case-meta' },

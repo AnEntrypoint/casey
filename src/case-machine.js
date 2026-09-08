@@ -1,9 +1,7 @@
 // case-machine.js  --  the case lifecycle as a real xstate machine.
 //
-// casey used to hand-walk a {forward,backward} graph to decide whether a stage
-// change was legal. That logic now lives in a published, battle-tested state
-// machine (xstate v5), so an illegal transition is rejected by the machine's own
-// resolution rather than by bespoke array checks we have to keep correct.
+// An illegal stage change is rejected by the machine's own resolution, never by
+// a hand-walked {forward,backward} array check.
 //
 // IMPORTANT ownership boundary (P10): thatcher remains the single owner of a
 // case's persisted `status`. This machine is the TRANSITION-VALIDATION AUTHORITY
@@ -50,20 +48,17 @@ function ev(stage) { return 'GO_' + String(stage).toUpperCase() }
 // thatcher.config.yml's `closed: { requires_role: [operator, admin], backward:
 // [resolved] }` reads (per its own comment) as "reopening a closed case
 // (closed -> resolved) is operator/admin only" -- closing a case (the FORWARD
-// move resolved -> closed) is NOT meant to be restricted at all. The old
-// behavior (mirroring the pre-xstate _validateTransition truth table exactly)
-// gated on the TARGET's requires_role regardless of direction -- since
-// `closed` is both the forward target of `resolved` and the backward source
-// of its own edge back to `resolved`, that single field was being read as
-// "gate on entry" for the forward move and, by the same TARGET-role logic,
-// was NEVER actually checked on the backward move's own source (closed) at
-// all except by coincidence of them being the same call. Net effect before
-// this fix: closing required operator/admin, reopening required nothing --
-// exactly backwards from the documented intent. Fixed: a `backward` edge
-// (viaBackward, stamped by buildCaseMachine) checks the FROM node's
-// requires_role; a `forward` edge is NEVER role-gated by this mechanism (a
-// forward move's own target can still declare requires_role for OTHER
-// reasons if a future config needs entry-gating, but none currently does).
+// move resolved -> closed) is NOT meant to be restricted at all. So a
+// `backward` edge (viaBackward, stamped by buildCaseMachine) checks the FROM
+// node's requires_role, and a `forward` edge is NEVER role-gated by this
+// mechanism. Gating on the TARGET's requires_role instead inverts both rules at
+// once: `closed` is both the forward target of `resolved` and the backward
+// source of its own edge back to `resolved`, so that one field reads as "gate
+// on entry" for the forward move while the backward move's own source is never
+// checked at all -- closing then requires operator/admin and reopening requires
+// nothing, exactly backwards from the documented intent. (A forward move's own
+// target can still declare requires_role for OTHER reasons if a future config
+// needs entry-gating, but none currently does.)
 export function canTransition(machine, from, to, role) {
   const node = machine.config.states?.[from]
   if (!node) return { ok: false, error: `invalid current stage "${from}"` }
@@ -85,11 +80,11 @@ export function canTransition(machine, from, to, role) {
   return { ok: true }
 }
 
-// The stages reachable from `from` that `role` is allowed to enter. Replaces the
-// hand-rolled availableTransitions filter; same result set. Same role-gate
-// direction as canTransition above -- only a backward edge (e.g. reopening)
-// is gated, on the FROM node's requires_role; a forward edge is never gated
-// by this mechanism, so this list matches exactly what canTransition allows.
+// The stages reachable from `from` that `role` is allowed to enter. Same
+// role-gate direction as canTransition above -- only a backward edge (e.g.
+// reopening) is gated, on the FROM node's requires_role; a forward edge is
+// never gated by this mechanism, so this list matches exactly what
+// canTransition allows.
 export function nextStates(machine, from, role) {
   const node = machine.config.states?.[from]
   if (!node || !node.on) return []

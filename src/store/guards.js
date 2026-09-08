@@ -1,6 +1,5 @@
 // store/guards.js  --  write-guard rules protecting derived and contact-authored
-// fields from the wrong actor. Extracted from case-store.js (structural split
-// only; behavior is byte-identical to the original inline definitions).
+// fields from the wrong actor.
 
 // Fields only casey's own system code may write (computed FROM other fields,
 // never hand-typed or agent-composed) -- see thatcher.config.yml's matching
@@ -42,11 +41,9 @@ const SYSTEM_USER_ID = 'casey-system'
 //
 // busybase binds every column as TEXT, which is why the read side of this
 // codebase never trusts a numeric-looking column and goes through rowInt()/
-// tsMs() instead. The write side had no matching guard, and it needed one:
-// passing a JS number in a patch that also carries expectedVersion makes the
-// optimistic-concurrency check fail every single time.
-//
-// Witnessed directly against a real store, same value both ways:
+// tsMs() instead. The write side needs the matching guard: passing a JS number
+// in a patch that also carries expectedVersion makes the optimistic-concurrency
+// check fail every single time, while the write still lands, once per retry:
 //   updateCaseChecked(id, { lat: -29.1, lon: 30.4 })   -> "update conflict
 //     after 3 retries -- not applied", yet lat reads back -29.1 and _version
 //     has gone 0 -> 4, because all four attempts DID write
@@ -54,11 +51,11 @@ const SYSTEM_USER_ID = 'casey-system'
 // Text-typed columns (subject, assignee, location_source) are unaffected in
 // both shapes, so it is the JS number itself, not the field or the column.
 //
-// The damage was never lost coordinates -- those were written, four times
-// over -- but the false failure handed back to the caller. case_report bails
-// out on that error, so a report carrying a location skipped its timeline
-// event, its provenance observation, the contact's last_report_* propagation
-// and the derived normalized_location, and told the agent the write failed.
+// The damage is not lost coordinates -- those are written, four times over --
+// but the false failure handed back to the caller. case_report bails out on
+// that error, so a report carrying a location skips its timeline event, its
+// provenance observation, the contact's last_report_* propagation and the
+// derived normalized_location, and tells the agent the write failed.
 //
 // Numbers become their decimal string here so thatcher stores exactly what it
 // would have stored anyway. null, undefined, booleans and strings pass through

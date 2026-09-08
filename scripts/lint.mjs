@@ -425,8 +425,56 @@ for (const file of routeFiles) {
   }
 }
 
+// server-css-tokens: every var(--x) emitted by a SERVER-RENDERED page must be
+// defined by dashboard/brand.js's TYPE_SCALE_CSS.
+//
+// The design-lint gate above covers src/dashboard/public -- the SPA, which
+// loads the real kit. It has never covered the four server-rendered surfaces
+// (the public /report form, the printable case briefing, the management report
+// and the shift handover), which emit their own <style> block and so resolve
+// against TYPE_SCALE_CSS and nothing else. That gap is why those pages drifted
+// to eight distinct hardcoded font sizes in the first place.
+//
+// What this catches is specifically silent: an undefined custom property is
+// invalid at computed-value time, which discards THE WHOLE DECLARATION rather
+// than one value. A single `var(--space-6)` typo inside a `padding` shorthand
+// dropped the public form's page padding to 0 on every side, with no console
+// error and no visual hint in the source. It was found by measuring a rendered
+// page in a browser; this gate finds it in a second, for free.
+{
+  const brandSrc = readFileSync(join(ROOT, 'src', 'dashboard', 'brand.js'), 'utf8')
+  const blockAt = brandSrc.indexOf('TYPE_SCALE_CSS')
+  const defined = new Set(
+    blockAt < 0 ? [] : [...brandSrc.slice(blockAt).matchAll(/(--[a-z0-9-]+):/g)].map((m) => m[1]),
+  )
+  if (!defined.size) {
+    note('server-css-tokens: dashboard/brand.js exports no TYPE_SCALE_CSS custom properties -- this gate has nothing to enforce')
+  } else {
+    const SERVER_RENDERED = [
+      join(ROOT, 'src', 'dashboard', 'server.js'),
+      join(ROOT, 'src', 'dashboard', 'routes', 'auth.js'),
+      join(ROOT, 'src', 'dashboard', 'routes', 'cases.js'),
+      join(ROOT, 'src', 'dashboard', 'routes', 'reports.js'),
+    ]
+    for (const f of SERVER_RENDERED) {
+      let src
+      try { src = readFileSync(f, 'utf8') } catch { continue }
+      const rel = f.replace(ROOT, '')
+      for (const m of src.matchAll(/var\(\s*(--[a-z0-9-]+)/g)) {
+        // A var() carrying its own fallback still renders if the token is
+        // missing, so it is not the silent-drop failure this gate is about.
+        const tail = src.slice(m.index + m[0].length, m.index + m[0].length + 2)
+        if (tail.trimStart().startsWith(',')) continue
+        if (!defined.has(m[1])) {
+          note(`server-css-tokens: ${rel} uses var(${m[1]}) but brand.js's TYPE_SCALE_CSS does not define it -- the whole declaration is discarded at render time. Add the rung to TYPE_SCALE_CSS or use one it defines.`)
+        }
+      }
+    }
+  }
+}
+
 if (fails.length) {
   console.error('lint FAIL:\n' + fails.map((m) => '  - ' + m).join('\n'))
   process.exit(1)
 }
-console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii + pure-agent + no-stub-mock + pii-safety + cli-help clean`)
+console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii + pure-agent + no-stub-mock + pii-safety + cli-help + server-css-tokens clean`)

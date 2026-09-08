@@ -1,30 +1,27 @@
 #!/usr/bin/env node
 // postinstall.mjs -- the npm postinstall chain, as a script rather than a shell
-// one-liner, because the one-liner silently disarmed the supply-chain scanner.
+// one-liner, because the one-liner disarms the supply-chain scanner.
 //
-// It used to be:
+// Never collapse it back to:
 //
 //   install-freddie-deps && link-deps && install-hooks && scan-deps || true
 //
-// In both sh and cmd, `||` binds to the WHOLE preceding `&&` chain, so the
-// trailing `|| true` swallowed the exit code of every link -- including
-// scan-deps.mjs, the last one. Live-witnessed: plant a file carrying the
-// HiddenSpawn signature and `node scripts/scan-deps.mjs` exits 1 and prints
-// "Do not run `npm install`/`casey up` again until every FAIL/BLOCKED above is
-// confirmed malicious or a real false positive"; append `|| true` and the same
-// run exits 0. npm therefore reported a clean install while the scanner was
-// telling the operator to stop. That scanner exists because thatcher's own main
-// was compromised on 2026-08-09 (see AGENTS.md, "thatcher / busybase chain"),
-// and npm install is its primary automated trigger, so this was the one place
-// it most needed to bite.
+// In both sh and cmd, `||` binds to the WHOLE preceding `&&` chain, so a
+// trailing `|| true` swallows the exit code of every link -- including
+// scan-deps.mjs, the last one. npm then reports a clean install while the
+// scanner is telling the operator to stop ("Do not run `npm install`/`casey up`
+// again until every FAIL/BLOCKED above is confirmed malicious or a real false
+// positive"). That scanner exists because a composed dependency's own main has
+// been compromised before (see AGENTS.md, "thatcher / busybase chain"), and
+// `npm install` is its primary automated trigger, so this is the one place it
+// most needs to bite.
 //
-// The `|| true` was not pointless, though, which is why this is a script and not
-// a deletion: the three SETUP steps genuinely may fail on a machine that is not
-// set up for them (no pnpm, deps/ submodules not checked out, a git dir that
-// will not take a hook) and must not break `npm install` over it -- AGENTS.md
-// states that degrade-to-a-loud-warning contract for install-freddie-deps
-// explicitly. So the tolerance stays exactly where it was earned, on the setup
-// steps, and stops covering the security gate.
+// The tolerance is real, which is why this is a script and not a deletion: the
+// three SETUP steps genuinely may fail on a machine that is not set up for them
+// (no pnpm, deps/ submodules not checked out, a git dir that will not take a
+// hook) and must not break `npm install` over it -- AGENTS.md states that
+// degrade-to-a-loud-warning contract for install-freddie-deps explicitly. So the
+// tolerance sits on the setup steps only, and never covers the security gate.
 //
 // Setup failures are reported, not hidden: a swallowed step that leaves the tree
 // half-linked is worth seeing in the install log even when it is not fatal.

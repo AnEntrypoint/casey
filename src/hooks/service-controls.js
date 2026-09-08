@@ -9,20 +9,17 @@
 // is irreversible and legal, not something an operator's autonomy setting may
 // silently swallow.
 //
-// ORDERING IS THE WHOLE POINT of this being its own stage, and it is the reason
-// it is called where it is called: this runs ABOVE the LLM-down queue gate and
-// ABOVE the observe-mode early return. Buried 350 lines into a single function,
-// that ordering was a fact you had to reconstruct by reading; as a named stage
-// in the handler's own body it is visible at the call site.
+// ORDERING IS THE WHOLE POINT of this being its own stage: it must be called
+// ABOVE the LLM-down queue gate and ABOVE the observe-mode early return, or an
+// opt-out during an outage gets queued instead of firing.
 //
 // The SPLIT that makes all of this work: the STATE CHANGE (opt-out tag,
 // needs-human flag, audit trail, handoff notify) is unconditional and does not
 // depend on the LLM. The ACKNOWLEDGEMENT TEXT is not -- it goes through the same
-// real-LLM turn as any other reply, never a canned per-language string. That
-// canned table was the one deterministic-language exception to the
-// no-mocks/no-fallbacks invariant, and it turned out not to be needed at all:
-// the legal action already survives the model being down, so the reply may fail
-// loudly like every other turn.
+// real-LLM turn as any other reply, never a canned per-language string. Do not
+// reintroduce such a table: it would be the one deterministic-language
+// exception to the no-mocks/no-fallbacks invariant, and it buys nothing, since
+// the legal action already survives the model being down.
 //
 // Everything else -- status, help, greeting, enquiry, report, extraction -- is
 // the agent's job via the case tools, not this file's.
@@ -32,10 +29,9 @@ import { tagList } from '../timestamp.js'
 import { mergeTag, dropTag, detectContactIntent, OPTED_OUT_TAG } from './heuristics.js'
 import { observation, flagNeedsHuman } from './case-writes.js'
 
-// Is the LLM backend reporting itself down right now? Three call sites used to
-// spell this out inline, identically, including the swallow-and-assume-up catch:
-// a status() that itself throws must never be read as "the provider is down",
-// or a broken health probe would gate every inbound into the queue.
+// Is the LLM backend reporting itself down right now? A status() that itself
+// throws must never be read as "the provider is down" -- swallow and assume up,
+// or a broken health probe gates every inbound into the queue.
 export async function isLlmDown(llmStatus) {
   if (typeof llmStatus !== 'function') return false
   try { const st = await llmStatus(); return !!(st && st.ok === false) }
@@ -51,8 +47,8 @@ export async function applyServiceControls({ store, log, llmStatus, notifyHandof
   const intent = detectContactIntent(inboundText)
 
   // HELP-RESUME: an opted-out contact who asks for help (any supported language)
-  // OPTS BACK IN. Without this a STOP was a permanent dead-end -- nothing ever
-  // cleared the tag.
+  // OPTS BACK IN. Keep this path -- it is the only thing that clears the tag, so
+  // without it a STOP is a permanent dead-end.
   if (optedOut && intent === 'help') {
     try { await store.updateCase(caseRow.id, { tags: dropTag(caseRow.tags, OPTED_OUT_TAG) }) }
     catch (e) { log.warn?.('[casey] opt-back-in untag failed', { caseId: caseRow.id, error: e.message }) }
@@ -81,18 +77,20 @@ export async function applyServiceControls({ store, log, llmStatus, notifyHandof
   if (intent !== 'stop' && intent !== 'human') return null
 
   if (intent === 'human') {
-    // STATE-CHANGING WRITE FIRST, independently guarded: this used to run AFTER
-    // the audit-trail note below, so a transient store error on that leading
-    // append threw before the flag was ever written, silently losing the fact
-    // that a handoff was requested. An irreversible control's tag must persist
-    // independent of whether its own audit note happens to land.
+    // STATE-CHANGING WRITE FIRST, independently guarded: an irreversible
+    // control's tag must persist independent of whether its own audit note
+    // lands. Ordered the other way round, a transient store error on the
+    // leading append throws before the flag is ever written and the fact that
+    // a handoff was requested is lost silently.
     //
     // Flag needs-human as an OBSERVABLE signal; do NOT auto-raise priority --
     // casey amplifies the organisers' intent, it does not impose escalation. The
     // tag surfaces the request in the triage inbox; priority stays where the
-    // people set it. detectContactIntent returns 'human' for EVERY message with
-    // a human keyword, so the notify must fire only on the FIRST handoff for
-    // this case: mergeTag is idempotent, the notify is not.
+    // people set it. detectContactIntent can return 'human' on any number of
+    // messages in one conversation, so the notify must fire only on the FIRST
+    // handoff for this case -- flagNeedsHuman's notify-once rule (see
+    // case-writes.js) is what enforces that; mergeTag alone is idempotent, the
+    // notify is not.
     await flagNeedsHuman({
       store, log, caseRow, notifyHandoff, channel, from: msg.from,
       flagLabel: 'handoff', notifyLabel: 'handoff',

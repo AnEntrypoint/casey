@@ -19,7 +19,7 @@ const KNOWN_ROW_ACCESS = new Set(['assigned', 'owner', 'none'])
 function fail(errors, msg) { errors.push(msg) }
 
 // Validates subjectTypes: a flat or shallow-nested entity tree with labels.
-// Rejects a cycle (item: circular subject-type reference).
+// Rejects a circular parent reference.
 function validateSubjectTypes(pack, errors) {
   const types = pack.subjectTypes
   if (!types || typeof types !== 'object' || !Object.keys(types).length) {
@@ -46,10 +46,9 @@ function validateSubjectTypes(pack, errors) {
 }
 
 // Validates observationForms: field defs incl. per-field unknown-allowed +
-// provenance rules -- the honesty floor's config surface. A pack may make a
-// field required, but "required" here can only ever mean "answer or mark
-// unknown" -- there is no way for a pack to express "unknown not allowed",
-// because that key literally does not exist in this schema (item 18).
+// provenance rules -- the honesty floor's config surface. No pack can
+// express "unknown not allowed" on a field; the unknownAllowed check below
+// is what makes that structural.
 function validateObservationForms(pack, errors) {
   const forms = pack.observationForms
   if (!forms || typeof forms !== 'object' || !Object.keys(forms).length) {
@@ -154,7 +153,7 @@ function validateRules(pack, errors) {
 }
 
 function validateRoles(pack, errors) {
-  if (pack.roles == null) return   // optional -- engine has a fixed default set
+  if (pack.roles == null) return   // optional
   if (typeof pack.roles !== 'object') { fail(errors, 'roles: must be an object when present'); return }
   for (const [roleId, def] of Object.entries(pack.roles)) {
     if (!def || typeof def !== 'object') { fail(errors, `roles.${roleId}: must be an object`); continue }

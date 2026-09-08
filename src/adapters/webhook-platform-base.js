@@ -1,7 +1,4 @@
 // Shared helpers for webhook/gateway-style platform adapters (discord, whatsapp).
-// Ported from freddie's plugins/_shared/webhook-platform-base.js (freddie's
-// messaging-transport surface was removed in a later upstream rewrite; casey
-// now owns this code directly).
 
 import crypto from 'node:crypto'
 
@@ -42,11 +39,10 @@ export function timingSafeEqualStr(a, b) {
  * mismatch, sends a 401 and returns false so the caller can bail out before
  * doing any further work; on success, returns true so the caller proceeds.
  *
- * `req`/`res` are the express-shaped pair the verifier speaks -- req.get(name)
- * plus req.rawBody, and res.sendStatus(code). No express request ever reaches
- * here: the one caller (freddie-bundle/src/platform) builds that pair by hand
- * around freddie's raw node req/res, so the types below describe the shim, not
- * express.
+ * `req`/`res` are an express-SHAPED pair, never a real express request:
+ * req.get(name) plus req.rawBody, and res.sendStatus(code). The one caller
+ * (freddie-bundle/src/platform) builds that pair by hand around freddie's raw
+ * node req/res, so the types below describe the shim, not express.
  * @param {{get: (name: string) => string|undefined, rawBody: Buffer}} req
  * @param {{sendStatus: (code: number) => void}} res
  * @param {(req: object) => boolean} verifyFn
@@ -98,17 +94,16 @@ export async function verifiedSend(sendFn, extractMarker, errLabel) {
  */
 export function emitWithDetachedMedia(emitFn, baseEvent, hasPending, resolveMediaFn, onError) {
   if (!hasPending) { emitFn(baseEvent); return }
-  // The catch belongs to the media resolution, not to the emit. Chained after
-  // the emit instead, a listener that threw synchronously drove the SAME
+  // The catch belongs to the media resolution, not to the emit: chained after
+  // the emit instead, a listener that throws synchronously drives the SAME
   // message through emitFn a second time carrying a degraded media object --
   // one inbound, two turns.
   const resolved = onError ? resolveMediaFn().catch(onError) : resolveMediaFn()
   resolved.then((media) => {
     // A throwing listener is a bug in the listener, and this emit is detached:
     // left to reject, it reaches node's unhandledRejection and takes the whole
-    // worker down over one message, killing every other live conversation --
-    // the same reasoning src/casey.js applies to handleInbound. Loud, not fatal,
-    // and never a second delivery.
+    // worker down over one message, killing every other live conversation.
+    // Loud, not fatal, and never a second delivery.
     try { emitFn({ ...baseEvent, media }) }
     catch (err) { console.error('emitWithDetachedMedia: a message listener threw; the message was delivered once and is not retried', err) }
   })

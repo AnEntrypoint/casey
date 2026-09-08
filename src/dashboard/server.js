@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { VISIT_CRITICAL } from '../case-health.js'
 import { REPORT_KEY_ORDER, UNCLAIMED_ASSIGNEE } from '../case-store.js'
-import { BRAND } from './brand.js'
+import { BRAND, TYPE_SCALE_CSS } from './brand.js'
 import { rankAttention } from '../attn.js'
 import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27 } from '../format.js'
 import { getWebhookDeliveryStatus } from '../gateway-hooks.js'
@@ -197,8 +197,61 @@ function shellBuildId(publicDir, assetUrls) {
 // raw ground is never used for small type). Body copy stays a neutral near
 // -black: a management report is read as prose, and tinting a wall of running
 // text is a way to make it harder to read, not more branded.
+//
+// Sizes and spacing come from brand.js's TYPE_SCALE_CSS, the kit's own ladder
+// (see that file for why the values are copied rather than the stylesheet
+// linked). Three rungs carry this page: --fs-xl for the title, --fs-lg for a
+// section head, --fs-xs for body and table cells. The title used to be 1.3rem
+// (20.8px) and the section head 1rem (16px) -- one off-ladder, and the other
+// close enough to the 14px body that a section head barely read as one.
+//
+// LINE HEIGHT IS DELIBERATELY NOT SET, and that is a decision rather than an
+// omission. The rule this replaces used the `font:` SHORTHAND, which resets
+// line-height to `normal`; the longhands below leave it at its initial value,
+// which is also `normal`, so a printed line box measures 19.2px at 14px
+// system-ui before this change and 19.2px after -- page counts are untouched.
+// Naming the kit's --lh-base (1.55) instead would take that to 21.7px, a 13%
+// stretch on every row of every report a team has ever filed. Prose
+// line-height belongs on prose surfaces, not on a dense printed table.
+//
+// Sizes are rem, following the kit, which is deliberate and has a consequence
+// worth stating: rem resolves against the READER's root font size, so an
+// operator who has enlarged their browser text gets a proportionally larger
+// report rather than a fixed 14px one. That is the point of the kit using rem
+// (WCAG 1.4.4), and it does mean a printed page count is reader-dependent.
+//
+// extraCss lands BEFORE the shared @media print block, not after. It used to
+// come last, which let the case briefing's own `body{margin:...}` override the
+// print rule at equal specificity and win on source order -- so the one page
+// with an extraCss body rule was the one page that ignored `@media
+// print{body{margin:0}}` and printed a 32px margin anyway.
+//
+// THE PRINTED SHEET IS A FORM TO FILL IN WITH A PEN, not only a record to
+// read. An officer prints a briefing, drives out, and writes on it. Two rules
+// follow, and this is the one place they live for all three printables:
+//
+//  - An unrecorded field prints BLANK. On screen "not recorded" is a useful
+//    statement; on paper it is wrong twice, because it eats the space the
+//    answer goes in and because a location row reading "not recorded" looks
+//    like a finding somebody made rather than a question still open.
+//    `.ds-print-blank` wraps the placeholder and this hides it in print.
+//  - `.ds-fill-lines` then supplies real ruled writing space. The rule is a
+//    BORDER, never a background gradient or a box-shadow: browsers leave
+//    background graphics out of a print by default, so a gradient rule prints
+//    as nothing at all on the common setting.
+//
+// The class names, the 24px line height and the 8px gap are the design kit's
+// own (deps/design/src/css/app-shell/row-print.css), so the printed briefing
+// and the SPA's printed case detail rule identical lines. The screen default
+// is declared BEFORE the print block, so the print override wins on source
+// order at equal specificity. That ordering is load-bearing: reversed, the
+// screen `display:none` beats the print `display:block` and no line is ever
+// drawn on paper.
+//
+// break-inside on rows keeps a field and its writing lines on one page, so a
+// pen never runs off the bottom of a sheet mid-answer.
 function printableReportStyle(extraCss = '') {
-  return `<style>body{font:14px system-ui,sans-serif;margin:2rem;color:#1a1a1a}h1{font-size:1.3rem;color:${BRAND.accent}}h2{font-size:1rem;margin-top:1.5rem;color:${BRAND.accent}}table{border-collapse:collapse;margin:.3rem 0}td,th{border:1px solid ${BRAND.edge};padding:.2rem .6rem;text-align:left}th{background:${BRAND.soft}}@media print{body{margin:0}}${extraCss}</style>`
+  return `<style>${TYPE_SCALE_CSS}body{font-family:system-ui,sans-serif;font-size:var(--fs-xs);margin:var(--space-5);color:#1a1a1a}h1{font-size:var(--fs-xl);margin:0 0 var(--space-2);color:${BRAND.accent}}h2{font-size:var(--fs-lg);margin:var(--space-4) 0 var(--space-2);color:${BRAND.accent}}p.meta{font-size:var(--fs-tiny);color:#5a6674;margin:0 0 var(--space-4)}table{border-collapse:collapse;margin:var(--space-2) 0}td,th{border:1px solid ${BRAND.edge};padding:var(--space-1) var(--space-2-5);text-align:left}th{background:${BRAND.soft}}.ds-fill-lines{display:none}${extraCss}@media print{body{margin:0}.ds-print-blank{display:none}.ds-fill-lines{display:block;margin-bottom:var(--space-1)}.ds-fill-line{display:block;height:var(--space-4);border-bottom:var(--bw-hair) solid #1a1a1a}.ds-fill-line+.ds-fill-line{margin-top:var(--space-2)}tr,td,th{break-inside:avoid;page-break-inside:avoid}}</style>`
 }
 function printableReportRow(cells) {
   return `<tr>${cells.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`
@@ -512,6 +565,14 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   const PWA_ICON_LETTER = PWA_BRAND.charAt(0).toUpperCase()
   const PWA_THEME_COLOR = BRAND.ground
   const PWA_ICON_INK = BRAND.ink
+  // The font-size="120" here is an SVG PRESENTATION ATTRIBUTE, not CSS, and it
+  // is deliberately NOT on the shared type ladder. Two reasons, both hard: a
+  // var() is not substituted in a presentation attribute, and /icon.svg is a
+  // standalone document that carries no token block to substitute from -- so
+  // tokenising this would silently render an icon with no letter in it. It is
+  // also not type in the typographic sense: it is a glyph sized to fill a
+  // 192x192 box, and it belongs to that geometry rather than to a text scale.
+  // A future sweep over font-size in this file should skip this line.
   const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="32" fill="${PWA_THEME_COLOR}"/><text x="96" y="136" font-family="system-ui,sans-serif" font-size="120" font-weight="700" fill="${PWA_ICON_INK}" text-anchor="middle">${PWA_ICON_LETTER}</text></svg>`
   app.get('/icon.svg', (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
@@ -642,12 +703,12 @@ self.addEventListener('fetch', (e) => {
   app.get('/offline.html', (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
     res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(PWA_BRAND)} - offline</title>
-<style>body{font-family:system-ui,sans-serif;background:#ffffff;color:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:20px}
-.card{max-width:360px}.card h1{font-size:1.4em;margin:0 0 8px}p{color:#555c66;line-height:1.5;margin:0 0 16px}
-a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};text-decoration:none;border:1px solid ${PWA_THEME_COLOR};border-radius:6px;padding:8px 18px;display:inline-block}</style>
+<style>${TYPE_SCALE_CSS}body{font-family:system-ui,sans-serif;font-size:var(--fs-body);background:#ffffff;color:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:var(--space-3-5)}
+.card{max-width:360px}.card h1{font-size:var(--fs-xl);margin:0 0 var(--space-2)}p{color:#555c66;line-height:var(--lh-base);margin:0 0 var(--space-3)}
+a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);text-decoration:none;border:1px solid ${PWA_THEME_COLOR};border-radius:6px;padding:var(--space-2) var(--space-3-5);display:inline-block}</style>
 </head><body><div class="card">
 <h1>${esc(PWA_BRAND)}</h1>
-<p>You are offline. Reports already on this device are not shown here -- reconnect to see the live queue.</p>
+<p>You are offline. Reports already on this device are not shown here. Reconnect to see the live queue.</p>
 <a href="/">Try again</a>
 </div></body></html>`)
   })
