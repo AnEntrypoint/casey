@@ -142,13 +142,28 @@ function walk(dir, out = [], visited = new Set()) {
   return out
 }
 
+// A read can fail for two completely different reasons, and only one of them
+// is evidence. Windows Defender refusing a file it already flagged is the
+// signal this scanner exists for -- it is how the thatcher incident was first
+// noticed, via npm's own extraction failing with errno -4094. A path that is
+// simply too long to open, or a symlink loop, is a filesystem artifact and
+// says nothing about the file's content: pnpm's workspace linking produces
+// self-referential @freddie/cordis -> cordis-plugin-loader -> @freddie/cordis
+// chains 1400+ characters deep, and those surfaced here as BLOCKED while the
+// same files opened and read cleanly at their canonical shallow path.
+//
+// The distinction became load-bearing when postinstall started honouring this
+// script's exit code (see scripts/postinstall.mjs): with the two conflated, a
+// path-length artifact on someone's machine would fail their npm install and
+// tell them to treat it as possible malware. A scanner that cries wolf is a
+// scanner whose next real hit gets waved through, so the artifact class is
+// reported and NOT failed, while every genuinely blocked read still fails.
+const PATH_ARTIFACT_CODES = new Set(['ENAMETOOLONG', 'ELOOP', 'ENOENT'])
+
 function scanFile(path) {
   let text
   try { text = readFileSync(path, 'utf8') } catch (e) {
-    // A read failure here (e.g. Windows Defender blocking access to a file
-    // it already flagged) IS ITSELF the finding -- surface it rather than
-    // silently skip, since this exact symptom is how the thatcher incident
-    // was first noticed (npm's own extraction failing with errno -4094).
+    if (PATH_ARTIFACT_CODES.has(e.code)) return { path, unreadable: true, reason: e.code }
     return { path, blocked: true, reason: e.message }
   }
   const lines = text.split('\n').length
@@ -209,16 +224,22 @@ function main() {
   const files = [...sourceFiles, ...freddieSourceFiles, ...depFiles]
   const findings = []
   const blocked = []
+  const unreadable = []
   for (const f of files) {
     const r = scanFile(f)
     if (!r) continue
-    if (r.blocked) blocked.push(r)
+    if (r.unreadable) unreadable.push(r)
+    else if (r.blocked) blocked.push(r)
     else findings.push(r)
   }
   const failing = findings.filter(f => f.severity === 'fail')
   const warnings = findings.filter(f => f.severity === 'warn')
+  if (unreadable.length) {
+    console.log(`scan-deps: ${unreadable.length} path(s) could not be opened for filesystem reasons (path length or a symlink loop, NOT a block) -- reported, not treated as a finding:`)
+    for (const u of unreadable) console.log(`  UNREADABLE  ${u.reason}  ${u.path.length} chars  ${u.path.replace(ROOT, '').slice(0, 120)}...`)
+  }
   if (!findings.length && !blocked.length) {
-    console.log(`scan-deps OK: ${files.length} files scanned (${sourceFiles.length} own source + ${freddieSourceFiles.length} deps/freddie source + ${depFiles.length} in node_modules), no HiddenSpawn-pattern matches`)
+    console.log(`scan-deps OK: ${files.length} files scanned (${sourceFiles.length} own source + ${freddieSourceFiles.length} deps/freddie source + ${depFiles.length} in node_modules), no HiddenSpawn-pattern matches${unreadable.length ? ` (${unreadable.length} path artifact(s) skipped, listed above)` : ''}`)
     return 0
   }
   if (blocked.length) {
