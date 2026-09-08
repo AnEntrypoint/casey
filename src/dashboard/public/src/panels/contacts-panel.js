@@ -5,10 +5,10 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
-import { Spinner, Alert } from '/design/src/components/content/feedback.js';
+import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule } from '../state.js';
-import { panelError } from './panel-error.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchContacts, postContactTier, postContactErase } from '../api.js';
 import { fmtTime } from '../format.js';
 import { toast } from '../toasts.js';
@@ -16,17 +16,14 @@ import { confirmDialog } from '../components/dialog-shell.js';
 
 const h = webjsx.createElement;
 
-let loaded = false, loading = false, error = null;
 const busyIds = new Set();
 
-function ensureLoaded() {
-    if (loaded || loading) return;
-    loading = true;
-    fetchContacts().then((j) => {
-        state._contacts = j;
-        loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = panelError('the reporters', e); schedule(); });
-}
+const loader = createPanelLoader({
+    what: 'the reporters',
+    label: 'loading reporters',
+    fetch: fetchContacts,
+    apply: (j) => { state._contacts = j; },
+});
 
 async function toggleTier(c) {
     const to = c.tier === 'field_worker' ? 'reporter' : 'field_worker';
@@ -34,7 +31,9 @@ async function toggleTier(c) {
     try {
         await postContactTier(c.id, to);
         toast(to === 'field_worker' ? 'Promoted to field worker' : 'Demoted to reporter', 'ok');
-        loaded = false; ensureLoaded();
+        // The tier is a column in the table below, so the row on screen now
+        // disagrees with the server.
+        loader.reload();
     } catch (e) {
         toast('Could not change tier: ' + (e.message || ''), 'err');
     }
@@ -55,7 +54,10 @@ async function erase(c) {
         const scrubbedN = j.casesScrubbed ? j.casesScrubbed.length : 0;
         const failedN = j.casesFailed ? j.casesFailed.length : 0;
         toast(failedN > 0 ? `Erased -- ${scrubbedN} case(s) scrubbed, ${failedN} FAILED (retry needed)` : `Erased -- ${scrubbedN} case(s) scrubbed`, failedN > 0 ? 'err' : 'ok');
-        loaded = false; ensureLoaded();
+        // The name/number cell for this row is exactly what was just scrubbed,
+        // so leaving the old value on screen would show identifying text the
+        // server no longer holds.
+        loader.reload();
     } catch (e) {
         toast('Could not erase contact: ' + (e.message || ''), 'err');
     }
@@ -63,15 +65,12 @@ async function erase(c) {
 }
 
 export function ContactsPanel() {
-    ensureLoaded();
+    loader.ensureLoaded();
     const isAdmin = state.currentUser && state.currentUser.role === 'admin';
-    let body;
-    if (loading && !loaded) body = Spinner({ label: 'loading reporters' });
-    else if (error) body = Alert({ kind: 'error', children: error });
-    else {
+    const body = loader.slot(() => {
         const contacts = (state._contacts && state._contacts.contacts) || [];
-        if (!contacts.length) body = Alert({ kind: 'info', children: 'No one has reported yet.' });
-        else body = Table({
+        if (!contacts.length) return Alert({ kind: 'info', children: 'No one has reported yet.' });
+        return Table({
             headers: ['Who', 'Channel', 'Tier', 'Last check-in', ''],
             rows: contacts.map((c) => {
                 const isField = c.tier === 'field_worker';
@@ -87,6 +86,6 @@ export function ContactsPanel() {
                 ];
             }),
         });
-    }
+    });
     return Panel({ children: [body] });
 }

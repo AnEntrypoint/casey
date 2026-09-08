@@ -15,34 +15,31 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
-import { Spinner, Alert } from '/design/src/components/content/feedback.js';
+import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
-import { state, schedule, setActiveId } from '../state.js';
-import { panelError } from './panel-error.js';
+import { state, setActiveId } from '../state.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchSecretaryQueue } from '../api.js';
 import { fmtDur, fmtTime } from '../format.js';
 
 const h = webjsx.createElement;
 
-let loaded = false, loading = false, error = null, filter = 'all';
+let filter = 'all';
 
-function load() {
-    loading = true; schedule();
-    fetchSecretaryQueue({ assignee: filter === 'all' ? undefined : filter }).then((j) => {
-        state._secretary = j;
-        loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = panelError('the follow-up list', e); schedule(); });
-}
-
-function ensureLoaded() {
-    if (loaded || loading) return;
-    load();
-}
+// The assignee filter is a SERVER-side narrowing, so changing it is a refetch
+// rather than a filter over what is already loaded -- which is why this fetch
+// reads `filter` at call time instead of closing over one value.
+const loader = createPanelLoader({
+    what: 'the follow-up list',
+    label: 'loading follow-up queue',
+    fetch: () => fetchSecretaryQueue({ assignee: filter === 'all' ? undefined : filter }),
+    apply: (j) => { state._secretary = j; },
+});
 
 function setFilter(f) {
     if (f === filter) return;
-    filter = f; loaded = false;
-    load();
+    filter = f;
+    loader.reload();
 }
 
 function filterBar() {
@@ -68,18 +65,12 @@ function placeSection(group) {
 }
 
 export function SecretaryPanel() {
-    ensureLoaded();
-    let body;
-    if (loading && !loaded) body = Spinner({ label: 'loading follow-up queue' });
-    else if (error) body = Alert({ kind: 'error', children: error });
-    else {
+    loader.ensureLoaded();
+    const body = loader.slot(() => {
         const j = state._secretary;
         const places = (j && j.places) || [];
-        if (!places.length) {
-            body = Alert({ kind: 'success', children: 'Nothing waiting on a call right now.' });
-        } else {
-            body = h('div', {}, ...places.map(placeSection));
-        }
-    }
+        if (!places.length) return Alert({ kind: 'success', children: 'Nothing waiting on a call right now.' });
+        return h('div', {}, ...places.map(placeSection));
+    });
     return Panel({ children: [filterBar(), body] });
 }

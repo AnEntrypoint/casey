@@ -4,24 +4,20 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
-import { Spinner, Alert } from '/design/src/components/content/feedback.js';
+import { Alert } from '/design/src/components/content/feedback.js';
 import { Lede } from '/design/src/components/shell/atoms.js';
-import { state, schedule } from '../state.js';
-import { panelError } from './panel-error.js';
+import { state } from '../state.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchDistribution } from '../api.js';
 
 const h = webjsx.createElement;
 
-let loaded = false, loading = false, error = null;
-
-function ensureLoaded() {
-    if (loaded || loading) return;
-    loading = true;
-    fetchDistribution().then((j) => {
-        state._distribution = j;
-        loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = panelError('the breakdown', e); schedule(); });
-}
+const loader = createPanelLoader({
+    what: 'the breakdown',
+    label: 'loading distribution',
+    fetch: fetchDistribution,
+    apply: (j) => { state._distribution = j; },
+});
 
 function barRows(rows, max) {
     return h('div', { class: 'ds-dist-group-body' }, ...rows.map((r, i) => {
@@ -34,22 +30,17 @@ function barRows(rows, max) {
 }
 
 export function DistributionPanel() {
-    ensureLoaded();
-    let body;
-    if (loading && !loaded) body = Spinner({ label: 'loading distribution' });
-    else if (error) body = Alert({ kind: 'error', children: error });
-    else {
+    loader.ensureLoaded();
+    const body = loader.slot(() => {
         const j = state._distribution;
         const species = (j && j.species) || [], symptoms = (j && j.symptoms) || [];
-        if (!species.length && !symptoms.length) body = Alert({ kind: 'info', children: 'No species or symptom data recorded yet.' });
-        else {
-            const maxSp = species.length ? species[0].count : 0;
-            const maxSym = symptoms.length ? symptoms[0].count : 0;
-            body = h('div', {},
-                Lede({ children: `${j.total_cases} open case(s), ${j.cases_with_species_or_symptom} with species or symptoms recorded` }),
-                species.length ? Section({ title: 'Species', children: [barRows(species, maxSp)] }) : null,
-                symptoms.length ? Section({ title: 'Symptoms', children: [barRows(symptoms, maxSym)] }) : null);
-        }
-    }
+        if (!species.length && !symptoms.length) return Alert({ kind: 'info', children: 'No species or symptom data recorded yet.' });
+        const maxSp = species.length ? species[0].count : 0;
+        const maxSym = symptoms.length ? symptoms[0].count : 0;
+        return h('div', {},
+            Lede({ children: `${j.total_cases} open case(s), ${j.cases_with_species_or_symptom} with species or symptoms recorded` }),
+            species.length ? Section({ title: 'Species', children: [barRows(species, maxSp)] }) : null,
+            symptoms.length ? Section({ title: 'Symptoms', children: [barRows(symptoms, maxSym)] }) : null);
+    });
     return Panel({ children: [body] });
 }

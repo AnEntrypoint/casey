@@ -4,10 +4,10 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
-import { Spinner, Alert } from '/design/src/components/content/feedback.js';
+import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
-import { state, schedule } from '../state.js';
-import { panelError } from './panel-error.js';
+import { state } from '../state.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchOverview, fetchReportJson, fetchSlaAtRiskByType } from '../api.js';
 import { fmtDur } from '../format.js';
 
@@ -18,20 +18,19 @@ const CASE_TYPE_LABEL = { unset: 'Unclassified', outbreak: 'Outbreak', follow_up
 const ctLabel = (t) => CASE_TYPE_LABEL[t] || t;
 const slaMetPct = (s) => (s && s.considered ? Math.round(((s.met_count || 0) / s.considered) * 100) + '%' : '--');
 
-let loaded = false, loading = false, error = null;
-
-function ensureLoaded() {
-    if (loaded || loading) return;
-    loading = true;
-    Promise.all([
+// Three requests, each allowed to fail on its own: this page is still worth
+// showing when only the SLA half answered, so a per-request null is a section
+// the render leaves out rather than a failure for the whole panel.
+const loader = createPanelLoader({
+    what: 'the trends',
+    label: 'loading metrics -- scans every open case, can take several seconds',
+    fetch: () => Promise.all([
         fetchOverview(14).catch(() => null),
         fetchReportJson(14).catch(() => null),
         fetchSlaAtRiskByType().catch(() => null),
-    ]).then(([overview, report, risk]) => {
-        state._metrics = { overview, report, risk };
-        loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = panelError('the trends', e); schedule(); });
-}
+    ]),
+    apply: ([overview, report, risk]) => { state._metrics = { overview, report, risk }; },
+});
 
 function summaryCards(j) {
     const fr = j.first_response_ms || {};
@@ -82,20 +81,17 @@ function byTypeTable(report) {
 }
 
 export function MetricsPanel() {
-    ensureLoaded();
+    loader.ensureLoaded();
     const exportLinks = h('div', { class: 'ds-metrics-exports' },
         Btn({ href: '/api/report.csv?days=14', variant: 'ghost', size: 'sm', children: 'Export CSV' }),
         Btn({ href: '/api/report.html?days=14', variant: 'ghost', size: 'sm', children: 'Export HTML' }),
         Btn({ href: '/api/audit.csv?days=14', variant: 'ghost', size: 'sm', children: 'Audit trail CSV' }));
-    let body;
-    if (loading && !loaded) body = Spinner({ label: 'loading metrics -- scans every open case, can take several seconds' });
-    else if (error) body = Alert({ kind: 'error', children: error });
-    else {
+    const body = loader.slot(() => {
         const { overview, report, risk } = state._metrics || {};
-        body = h('div', {},
+        return h('div', {},
             overview ? summaryCards(overview) : Alert({ kind: 'warn', children: 'Could not load metrics.' }),
             risk ? atRiskByType(risk) : null,
             report ? byTypeTable(report) : null);
-    }
+    });
     return Panel({ children: [exportLinks, body] });
 }

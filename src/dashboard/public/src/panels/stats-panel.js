@@ -4,31 +4,22 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
-import { Spinner } from '/design/src/components/content/feedback.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Alert } from '/design/src/components/content/feedback.js';
-import { state, schedule } from '../state.js';
-import { panelError } from './panel-error.js';
+import { state } from '../state.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchStats } from '../api.js';
 
 const h = webjsx.createElement;
 
 const MODE_LABEL = { channel: 'AI (channel)', manual: 'Operator entry', public_form: 'Public form', unknown: 'Untagged' };
 
-let loaded = false;
-let loading = false;
-let error = null;
-
-function ensureLoaded() {
-    if (loaded || loading) return;
-    loading = true;
-    fetchStats().then((j) => {
-        state._stats = j;
-        loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => {
-        loaded = true; loading = false; error = panelError('the summary numbers', e); schedule();
-    });
-}
+const loader = createPanelLoader({
+    what: 'the summary numbers',
+    label: 'loading stats',
+    fetch: fetchStats,
+    apply: (j) => { state._stats = j; },
+});
 
 // All three completion metrics use the same "N/total (P%)" shape so
 // adjacent columns read as one consistent notation instead of three
@@ -48,18 +39,15 @@ function statRow(mode, s) {
 }
 
 export function StatsPanel() {
-    ensureLoaded();
-    let body;
-    if (loading && !loaded) body = Spinner({ label: 'loading stats' });
-    else if (error) body = Alert({ kind: 'error', children: error });
-    else {
+    loader.ensureLoaded();
+    const body = loader.slot(() => {
         const j = state._stats;
         const modes = j ? Object.keys(j.by_mode || {}) : [];
-        if (!modes.length) body = Alert({ kind: 'info', children: 'No intake data yet. Fill-rate breakdown shows up here once reports start coming in.' });
-        else body = Table({
+        if (!modes.length) return Alert({ kind: 'info', children: 'No intake data yet. Fill-rate breakdown shows up here once reports start coming in.' });
+        return Table({
             headers: ['Source', 'Count', 'Fields', 'Visit-ready', 'Essential'],
             rows: modes.map((m) => statRow(m, j.by_mode[m])),
         });
-    }
+    });
     return h('div', { class: 'ds-stats-panel' }, Panel({ title: 'Intake stats', children: [body] }));
 }

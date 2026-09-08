@@ -8,7 +8,7 @@ import { TextField } from '/design/src/components/content/fields.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { state, schedule } from '../state.js';
-import { panelError } from './panel-error.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchThresholds, putThresholds } from '../api.js';
 import { toast } from '../toasts.js';
 
@@ -29,21 +29,26 @@ const THRESH_META = {
 
 function hoursOf(ms) { return Math.round((ms / 3600000) * 10) / 10; }
 
-let loaded = false, loading = false, saving = false, error = null;
+let saving = false;
 let draft = {}; // key -> hours string, edited locally before Save
 
-function ensureLoaded() {
-    if (loaded || loading) return;
-    loading = true;
-    fetchThresholds().then((j) => {
+const SPINNER_LABEL = 'loading settings';
+
+// This panel is its own shell rather than a body inside a Panel, so it reads
+// the loader's state directly instead of going through slot() -- the skeleton
+// and the failure sentence are the whole modal here, not a slot inside one.
+const loader = createPanelLoader({
+    what: 'the settings',
+    label: SPINNER_LABEL,
+    fetch: fetchThresholds,
+    apply: (j) => {
         state._thresholds = j;
         draft = {};
         for (const k of Object.keys(THRESH_META)) {
             if (j.thresholds && j.thresholds[k] != null) draft[k] = String(hoursOf(j.thresholds[k]));
         }
-        loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = panelError('the settings', e); schedule(); });
-}
+    },
+});
 
 async function save() {
     saving = true; schedule();
@@ -55,7 +60,10 @@ async function save() {
     try {
         await putThresholds(patch);
         toast('Settings saved', 'ok');
-        loaded = false; ensureLoaded();
+        // The server clamps and merges what it was sent, so what it now holds
+        // is not necessarily what was typed -- re-read rather than assume the
+        // draft on screen is what was stored.
+        loader.reload();
     } catch (e) {
         toast('Save failed: ' + (e.message || ''), 'err');
     }
@@ -63,9 +71,10 @@ async function save() {
 }
 
 export function SettingsPanel() {
-    ensureLoaded();
-    if (loading && !loaded) return Spinner({ label: 'loading settings' });
-    if (error) return Alert({ kind: 'error', children: error });
+    loader.ensureLoaded();
+    if (loader.pending()) return Spinner({ label: SPINNER_LABEL });
+    const err = loader.error();
+    if (err) return Alert({ kind: 'error', children: err });
     const j = state._thresholds || {};
     const rows = Object.keys(THRESH_META).filter((k) => draft[k] !== undefined).map((k) => {
         const [lab, help] = THRESH_META[k];

@@ -6,24 +6,20 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
-import { Spinner, Alert } from '/design/src/components/content/feedback.js';
-import { state, schedule } from '../state.js';
-import { panelError } from './panel-error.js';
+import { Alert } from '/design/src/components/content/feedback.js';
+import { state } from '../state.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchGeo } from '../api.js';
 import { fmtTime } from '../format.js';
 
 const h = webjsx.createElement;
 
-let loaded = false, loading = false, error = null;
-
-function ensureLoaded() {
-    if (loaded || loading) return;
-    loading = true;
-    fetchGeo().then((j) => {
-        state._geo = j;
-        loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = panelError('the hotspots', e); schedule(); });
-}
+const loader = createPanelLoader({
+    what: 'the hotspots',
+    label: 'loading hotspots',
+    fetch: fetchGeo,
+    apply: (j) => { state._geo = j; },
+});
 
 function mixOf(p) {
     return Object.entries(p.species || {}).sort((a, b) => b[1] - a[1]).slice(0, 3)
@@ -36,19 +32,16 @@ function mixOf(p) {
 // the only thing that can show where. In the rail the numbers sit beside the
 // map instead of replacing it, and the panel keeps every column it had.
 export function GeoPanel({ railed = false } = {}) {
-    ensureLoaded();
-    let body;
-    if (loading && !loaded) body = Spinner({ label: 'loading hotspots' });
-    else if (error) body = Alert({ kind: 'error', children: error });
-    else {
+    loader.ensureLoaded();
+    const body = loader.slot(() => {
         const places = (state._geo && state._geo.places) || [];
-        body = places.length
+        return places.length
             ? Table({
                 headers: ['Place', 'Count', 'Species mix', 'Latest'],
                 rows: places.map((p) => [p.place, String(p.count), mixOf(p), p.latest ? fmtTime(p.latest) : '']),
             })
             : Alert({ kind: 'info', children: 'No location data yet.' });
-    }
+    });
     if (railed) return body;
     // Body only, like every other registered panel. This module used to add its
     // own 'Back to cases' button and its own 'Hotspots' title on top of the
