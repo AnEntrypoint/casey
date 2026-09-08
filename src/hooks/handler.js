@@ -18,6 +18,7 @@ import { observation, flagNeedsHuman } from './case-writes.js'
 import { makeAdmissionControl } from './admission.js'
 import { applyServiceControls } from './service-controls.js'
 import { recordInboundMedia } from './media-intake.js'
+import { mutatingActions, hadSuccessfulWrite } from './turn-results.js'
 import { tagList } from '../timestamp.js'
 import { reporterTierExcludedToolNames } from '../case-tools.js'
 import { caseSystemPrompt } from './prompt.js'
@@ -461,71 +462,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       try { adapter.stopTyping?.(replyTo) }
       catch (e) { log.warn?.('[casey] stopTyping failed', { caseId: fresh.id, error: e.message }) }
     }
-    // Which MUTATING tool calls succeeded in this attempt? Feeds the
-    // cross-attempt "already DONE -- do not repeat" retry note (a retry is a
-    // fresh runTurn; the model cannot see the prior attempt's tool results,
-    // and live-witnessed re-opened the same case / re-reported the same facts
-    // without it). Same name-by-tool_call_id mapping as
-    // hadSuccessfulWriteThisTurn (freddie's tool-role messages carry no name).
-    function mutatingActionsThisAttempt(r) {
-      if (!Array.isArray(r?.messages)) return []
-      const MUTATING = new Set(['case_new', 'case_report', 'case_update', 'case_transition', 'case_switch'])
-      const nameById = new Map()
-      for (const m of r.messages) {
-        if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
-          for (const tc of m.tool_calls) nameById.set(tc.id || tc.tool_call_id, tc.name || tc.function?.name)
-        }
-      }
-      const done = []
-      for (const m of r.messages) {
-        if (m?.role !== 'tool' || !m.content) continue
-        const tname = nameById.get(m.tool_call_id)
-        if (!tname || !MUTATING.has(tname)) continue
-        const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-        try {
-          const parsed = JSON.parse(content)
-          if (parsed && parsed.ok === true) {
-            const detail = parsed.activeCase?.ref ? ` (${parsed.activeCase.ref})`
-              : parsed.fields ? ` (${Object.keys(parsed.fields).join(', ')})` : ''
-            done.push(`${tname}${detail}`)
-          }
-        } catch { /* not a recognized success result */ }
-      }
-      return done
-    }
-    // Did case_report/case_update actually WRITE something this turn? A
-    // structural fact read straight from this turn's real tool-call results
-    // (role:'tool' messages), never a text classifier -- feeds reply-judge.js's
-    // FALSE CONFIRMATION shape (the judge itself still decides whether the
-    // reply's WORDS claim a write happened; this only supplies the ground
-    // truth of whether one actually did). A tool result is JSON-stringified
-    // by the bridge; {"ok":true,...} is case_report/case_update's own success
-    // shape (see case-tools.js). Any parse failure or non-matching content
-    // counts as no write, never a false positive.
-    function hadSuccessfulWriteThisTurn(r) {
-      if (!Array.isArray(r?.messages)) return false
-      const WRITE_TOOLS = new Set(['case_report', 'case_update', 'case_new'])
-      // Tool-role messages carry tool_call_id but never a `name` (freddie's
-      // machine.js only ever sets {tool_call_id, content} on them) -- the name
-      // lives on the preceding assistant message's tool_calls[].name instead.
-      const nameById = new Map()
-      for (const m of r.messages) {
-        if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
-          for (const tc of m.tool_calls) nameById.set(tc.id || tc.tool_call_id, tc.name || tc.function?.name)
-        }
-      }
-      for (const m of r.messages) {
-        if (m?.role !== 'tool' || !m.content) continue
-        const tname = nameById.get(m.tool_call_id)
-        if (!tname || !WRITE_TOOLS.has(tname)) continue
-        const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-        try {
-          const parsed = JSON.parse(content)
-          if (parsed && parsed.ok === true) return true
-        } catch { /* not JSON or not this shape -- not a recognized write result */ }
-      }
-      return false
-    }
     // A forced-tool-call turn (tool_choice:'required' below) that comes back
     // with NO tool call at all is retried with a fresh runTurn dispatch before
     // the turn is accepted as genuinely degraded -- freddie's own provider
@@ -762,7 +698,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       const candidate = stripThinkingBlock((result?.result || '').toString().trim())
       // Record this attempt's successful mutating tool calls BEFORE any retry
       // decision, so a retry's prompt can name them as already-done.
-      for (const action of mutatingActionsThisAttempt(result)) completedActions.push(action)
+      for (const action of mutatingActions(result)) completedActions.push(action)
       if (!candidate) {
         log.warn?.('[casey] agent turn produced empty reply', { caseId: fresh.id, attempt })
         try { await store.appendEvent(fresh.id, observation(`empty reply on attempt ${attempt}${attempt < MAX_TOOL_CHOICE_ATTEMPTS ? '; retrying' : ''}`)) }
@@ -791,7 +727,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       // (hooks/reply-judge.js), never a regex/word-list. A jargon-only verdict
       // is NOT retried -- it is the one recoverable shape (real content, just
       // needs a human to reword one word), carried to the post-loop hold.
-      const verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: hadSuccessfulWriteThisTurn(result), latestInbound: inboundText })
+      const verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: hadSuccessfulWrite(result), latestInbound: inboundText })
       if (verdict.clean) { text = candidate; break }
       if (verdict.category === 'jargon') { text = candidate; jargonReasons = verdict.reasons; break }
       if (verdict.reasons?.some(r => /false.?confirm|claims?.*record|confirm.*record/i.test(r))) {
