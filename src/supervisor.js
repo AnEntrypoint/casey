@@ -4,10 +4,18 @@
 // This is the runtime half of the reliability slice. The xstate machine
 // (supervisor-machine.js) is the pure transition-validation authority; THIS file
 // owns the real, irreversible side-effects -- child_process.fork, kill, the
-// fs.watch, the drain handshake -- and threads the live machine-state value plus a
+// drain handshake -- and threads the live machine-state value plus a
 // small context (restart count, crash timestamps, last reload/crash) it keeps
 // itself. The machine answers "is event E legal from state S, and what does it
 // lead to?"; the supervisor performs the effect and advances its own state value.
+//
+// Two concerns that were inline here now have modules of their own, because
+// neither is about performing a lifecycle effect: supervisor-reload-watch.js
+// answers "a watched source file changed, once" (paths, filter, debounce,
+// per-path watch failures), and supervisor-runtime-events.js answers "get this
+// bounce durably recorded even though the process that detected it cannot store
+// it". The supervisor supplies each with the one thing only it knows -- what to
+// do on a change, and whether a worker can persist right now.
 //
 // Durable boundary: the worker holds the sqlite store (cwd-bound db.sqlite). A reload
 // or crash respawns the worker, which REOPENS the same file -- so persisted case
@@ -17,13 +25,14 @@
 // unrepresentable here.
 
 import { fork } from 'node:child_process'
-import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   buildSupervisorMachine, canFire, crashBudgetExceeded, isTerminal,
 } from './supervisor-machine.js'
 import { WORKER_MSG, PARENT_MSG, ipcSend } from './supervisor-ipc.js'
+import { armReloadWatchers } from './supervisor-reload-watch.js'
+import { createRuntimeEventBuffer } from './supervisor-runtime-events.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const WORKER_ENTRY = path.join(__dirname, '..', 'bin', 'worker.js')
@@ -53,40 +62,6 @@ const BACKOFF_CEIL_MS = Number(process.env.CASEY_RESTART_BACKOFF_CEIL_MS || 10_0
 // is indistinguishable from a wedge by silence alone, and a false restart is worse
 // than waiting. Set e.g. CASEY_RECEIVE_SILENCE_MS=900000 (15min) to enable.
 const RECEIVE_SILENCE_MS = Number(process.env.CASEY_RECEIVE_SILENCE_MS || 0)
-
-// Default the reload watch to casey's own src/, plus any extra dirs the operator
-// names (CASEY_RELOAD_PATHS, comma-separated -- e.g. ../freddie/src to pick up a
-// sibling change). Absent dirs are skipped with a warning, never a crash (a bare
-// clone has no ../freddie).
-function reloadWatchPaths() {
-  const paths = [path.join(__dirname)]   // src/
-  // freddie is an npm dependency, but a developer editing a sibling ../freddie
-  // checkout (agent harness + gateway adapters) needs those saves to reload the
-  // worker too, else the running build silently diverges. Watched by DEFAULT,
-  // existence-guarded by armWatcher's fs.existsSync -- a bare clone (no sibling)
-  // simply skips it with a warning, never crashes. (thatcher is an npm dep with no
-  // local source tree to watch; its db.sqlite is the durable boundary, reopened per
-  // worker -- nothing to hot-reload there.)
-  const freddieSrc = path.resolve(__dirname, '..', '..', 'freddie', 'src')
-  paths.push(freddieSrc)
-  const extra = (process.env.CASEY_RELOAD_PATHS || '').split(',').map(s => s.trim()).filter(Boolean)
-  for (const p of extra) paths.push(path.resolve(p))
-  // Dedup: an operator naming ../freddie/src in CASEY_RELOAD_PATHS must not arm two
-  // watchers on the same dir (double-fire on every freddie save).
-  return [...new Set(paths)]
-}
-
-// A source file change worth a reload: .js/.mjs only, ignore the spool, dotfiles,
-// node_modules, and the sqlite store itself (the worker writes db.sqlite constantly --
-// watching it would reload-storm forever).
-function isReloadableChange(file) {
-  if (!file) return false
-  if (!/\.(mjs|js)$/.test(file)) return false
-  if (file.includes('node_modules')) return false
-  if (file.includes('.gm')) return false
-  if (file.startsWith('.')) return false
-  return true
-}
 
 // Pure zombie-receive detector over a receiveStatus snapshot ({state, channels:{
 // [ch]:{connected, sinceConnectMs, sinceInboundMs}}}). Returns the first channel
@@ -141,51 +116,27 @@ export function createSupervisor(opts = {}) {
 
   let worker = null
   let watchers = []
-  let reloadTimer = null
   let reloadQueued = false   // a reload requested mid-restart is held, not dropped or stacked
   let stopping = false
   let booted = false         // the current worker has sent READY
 
   // Durable runtime-lifecycle events (CRASH / RELOAD / DEGRADED / BUDGET) that must
   // land in the store as audited observations so the timeline + shift-handover show
-  // the runtime was bounced and why. The PARENT detects them but only the WORKER
-  // holds the store -- and at CRASH time the worker that died is gone while the next
-  // is not yet up. So we BUFFER each event here and flush the buffer to the worker
-  // right after it sends READY (the same moment the snapshot is pushed). A bounded
-  // ring (drop-oldest past the cap) keeps a respawn storm from growing this without
-  // limit; the per-event reason is reason-only (no external_id / PII).
-  const pendingRuntimeEvents = []
-  const RUNTIME_EVENT_CAP = 50
-  // Durability backstop for a sustained pre-READY crash loop: if every
-  // respawned worker crashes before ever reaching READY (e.g. thatcher's
-  // sqlite lock held by a stray process -- a real, documented Windows
-  // failure mode for this project), flushRuntimeEvents never runs (it
-  // requires a booted worker) and BUDGET_EXCEEDED stops respawning entirely,
-  // so pendingRuntimeEvents would otherwise sit in memory forever with only
-  // a single truncated lastCrashReason string externally visible via
-  // /api/runtime. Append each event to a plain JSONL sidecar the moment it's
-  // buffered -- reason-only, same no-PII shape as the in-memory event -- so
-  // an operator investigating a crash loop has a real, durable trail even
-  // when no worker ever came up to write it to the audited event store.
-  const runtimeEventLogPath = path.join(process.cwd(), 'data', 'runtime-events.jsonl')
-  function appendRuntimeEventLog(entry) {
-    try {
-      fs.mkdirSync(path.dirname(runtimeEventLogPath), { recursive: true })
-      fs.appendFileSync(runtimeEventLogPath, JSON.stringify(entry) + '\n')
-    } catch (e) { log.warn?.('[supervisor] runtime_event_log_append_failed', { error: e.message }) }
-  }
+  // the runtime was bounced and why -- buffered until a live, READY worker can
+  // persist them, and mirrored to a JSONL sidecar so a pre-READY crash loop still
+  // leaves a trail. See supervisor-runtime-events.js for the full reasoning; the
+  // only part the supervisor itself knows is whether a worker can take one now.
+  const runtimeEvents = createRuntimeEventBuffer({
+    log,
+    logPath: path.join(process.cwd(), 'data', 'runtime-events.jsonl'),
+    deliver: (entry) => {
+      if (!worker || !worker.connected || !booted) return false   // hold until a live, ready worker can persist
+      ipcSend(worker, PARENT_MSG.RUNTIME_EVENT, entry)
+      return true
+    },
+  })
   function emitRuntimeEvent(event, reason, nowMs) {
-    const entry = { event, reason: reason || null, restarts: ctx.restarts, ts: nowMs }
-    pendingRuntimeEvents.push(entry)
-    if (pendingRuntimeEvents.length > RUNTIME_EVENT_CAP) pendingRuntimeEvents.shift()
-    appendRuntimeEventLog(entry)
-    flushRuntimeEvents()
-  }
-  function flushRuntimeEvents() {
-    if (!worker || !worker.connected || !booted) return   // hold until a live, ready worker can persist
-    while (pendingRuntimeEvents.length) {
-      ipcSend(worker, PARENT_MSG.RUNTIME_EVENT, pendingRuntimeEvents.shift())
-    }
+    runtimeEvents.emit({ event, reason: reason || null, restarts: ctx.restarts, ts: nowMs })
   }
 
   // --- machine-validated state advance -------------------------------------
@@ -263,7 +214,7 @@ export function createSupervisor(opts = {}) {
           ctx.since = Date.now()
         }
         pushStateToWorker()   // hand the fresh worker the current snapshot immediately
-        flushRuntimeEvents()  // persist any lifecycle bounce buffered while no worker was up (e.g. the crash that killed the prior one)
+        runtimeEvents.flush() // persist any lifecycle bounce buffered while no worker was up (e.g. the crash that killed the prior one)
         log.info?.('[supervisor] worker ready', { pid: child.pid, port: m.payload?.port })
       } else if (m.type === WORKER_MSG.HEALTH) {
         onHealth(m.payload || {}, Date.now())
@@ -400,35 +351,17 @@ export function createSupervisor(opts = {}) {
     if (fired) reloadNow(nowMs)
   }
 
+  // Arm the live-reload watchers, or say once that reload is off. The watcher
+  // module owns the paths, the change filter, the debounce and the per-path
+  // failure handling; the supervisor supplies the one thing only it can -- what
+  // a debounced change actually means here, which is requestReload.
   function armWatcher() {
     if (!enableReload) { log.info?.('[supervisor] live reload disabled'); return }
-    for (const dir of reloadWatchPaths()) {
-      if (!fs.existsSync(dir)) { log.warn?.('[supervisor] reload path missing, skipping', { dir }); continue }
-      try {
-        const w = fs.watch(dir, { recursive: true }, (_evt, file) => {
-          if (!isReloadableChange(file)) return
-          // Debounce: an editor save-all writes N files; coalesce into ONE reload.
-          if (reloadTimer) clearTimeout(reloadTimer)
-          reloadTimer = setTimeout(() => { reloadTimer = null; requestReload(Date.now()) }, RELOAD_DEBOUNCE_MS)
-          reloadTimer.unref?.()
-        })
-        // An FSWatcher can emit 'error' ASYNCHRONOUSLY after a successful fs.watch()
-        // call (dir deleted, permission change mid-run -- common on Windows recursive
-        // watches) -- the try/catch below only guards the synchronous fs.watch() call
-        // itself. An unhandled 'error' event throws inside the SUPERVISOR process, the
-        // one process whose job is to keep the worker alive and restart on crash, with
-        // no restart-with-backoff for this failure -- just total supervisor death.
-        // Disable reload for this one path and keep the supervisor running.
-        w.on('error', (e) => {
-          log.warn?.('[supervisor] watch error, disabling live reload for this path', { dir, error: e.message })
-          try { w.close() } catch { /* already closing */ }
-        })
-        watchers.push(w)
-        log.info?.('[supervisor] watching for live reload', { dir })
-      } catch (e) {
-        log.warn?.('[supervisor] could not watch path', { dir, error: e.message })
-      }
-    }
+    watchers = armReloadWatchers({
+      log,
+      debounceMs: RELOAD_DEBOUNCE_MS,
+      onChange: () => requestReload(Date.now()),
+    })
   }
 
   // --- health ---------------------------------------------------------------
