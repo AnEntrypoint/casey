@@ -416,7 +416,7 @@ src/
   case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, optimistic-lock report merge
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
   provenance-wire.js       additive bridge from case_report into the provenance subsystem (src/core/, src/packs/)
-  case-tools.js            composes the 18 case_* tools from case-tools-{lookup,record,triage,worker,binding,control}.js; gateByTier wraps every query/mutation tool behind field_worker tier
+  case-tools.js            composes the 18 case_* tools from case-tools-{lookup,record,triage,worker,binding,control}.js; -record composes three of its own (case-tools-record-{fields,report,timeline}.js); gateByTier wraps every query/mutation tool behind field_worker tier
   dashboard/auth.js        per-operator login: scrypt hashing, stateless HMAC-signed session cookies, operator_account CRUD
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
@@ -442,7 +442,7 @@ src/
   hooks/typing.js          the typing indicator start/stop pair, best-effort by construction
   hooks/media.js           voice-note/photo/voice-reply media tools, all opt-in and fail-open
   llm.js                   model call wiring; self-healing backend that re-resolves a recovered provider
-  supervisor.js            fork/kill/watch parent; supervisor-reload-watch.js owns the reload watch list
+  supervisor.js            fork/kill/watch parent, composed from supervisor-state.js (machine value + validated fire + /api/runtime snapshot), -worker-process.js (fork + IPC contract + ready/exit), -crash-policy.js (crash budget, backoff ladder, exit 44), -restart.js (the sequential drain-then-respawn cycle -- the two-writers-on-the-db boundary), -health.js (HEALTH tick -> degraded, incl. detectZombieReceive); supervisor-reload-watch.js owns the reload watch list
   dashboard/server.js      express API + anentrypoint-design SPA; map/reporters/accounts routes
   dashboard/public/src/map-model.js   the ONE model the map and the rail both read: the urgency ladder (attn.js score -> band) and the shared filter predicate
 ```
@@ -714,11 +714,13 @@ validate/clamp/merge.
 `ALL_HEALTH_TAGS` is the whole set the sweep can write, and it is the list to
 check a tag against: `stale`, `stuck`, `unanswered_handoff`,
 `unanswered_handoff_escalated`, `unsent_draft`, `abandoned_intake`,
-`incomplete_critical`, `never_closed`, `timestamp_corrupt`. A consumer keyed on
-a `health:*` tag outside that set is dead code -- `attn.js` scores
-`health:premature_complete` at +30 and renders a reason for it, and
-`inbox-panel.js` carries a label for it, but nothing emits it and it is not in
-the set.
+`incomplete_critical`, `never_closed`, `timestamp_corrupt`,
+`premature_complete`. A consumer keyed on a `health:*` tag outside that set is
+dead code. `premature_complete` was exactly that until 2026-09-08 -- `attn.js`
+scored it and `inbox-panel.js` labelled it while nothing emitted it -- and the
+fix went into the producer, not the consumers: `case-health.js`'s `resolved`
+branch now raises it when a case is marked resolved with a visit-critical fact
+still blank, and the tag is in `ALL_HEALTH_TAGS`. Both consumers are live.
 
 **Team coverage gaps** fire once per rising edge when the roster is non-empty
 AND at least one breaching case exists AND zero operator replies landed on a
