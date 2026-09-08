@@ -24,7 +24,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // cordis.patch.yml uses it for e.g. `root: !!js freddieHomePath('sessions')`).
 function loadPatchFile(absPath) {
   const parsed = yaml.load(readFileSync(absPath, 'utf8'), { schema: entryListSchema })
-  return Array.isArray(parsed) ? parsed : []
+  // A patch file that is not a row list is a broken bundle, not an empty one.
+  // Returning [] for it dropped whichever bundle's rows failed to parse and
+  // booted a tree missing that bundle's whole contribution, with nothing said.
+  if (!Array.isArray(parsed)) throw new Error(`bootCasey: ${absPath} did not parse to a patch-row list`)
+  return parsed
 }
 
 function resolveBundlePatchPath(packageName) {
@@ -73,8 +77,11 @@ export async function bootCasey(opts) {
 
   const ctx = await boot('casey', rootConfigPath, patches, async (hostCtx) => {
     // Provide casey's own transport config before any plugin row activates,
-    // so casey-platform's apply() reads it via ctx.get() at mount time.
-    hostCtx.provide?.('caseyBootOptions', opts)
+    // so casey-platform's apply() reads it via ctx.get() at mount time. Called
+    // unguarded: every adapter and both handler paths depend on it landing, so
+    // a freddie that stopped offering provide() must fail here and name itself
+    // rather than mount a tree whose transport quietly has no config.
+    hostCtx.provide('caseyBootOptions', opts)
   })
   return ctx
 }

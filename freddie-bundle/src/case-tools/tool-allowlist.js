@@ -23,9 +23,16 @@ export function installToolAllowlist(agentCtx, allowedNames) {
     const assembled = await next()
     return { ...assembled, tools: assembled.tools.filter(t => allowed.has(t.name)) }
   })
+  // The denial names what IS callable, not just what is not. freddie's own
+  // registry makes the same point about its collapsed-tool denial (see
+  // @freddie/freddie-tools's createExecution): a bare refusal for a name the
+  // model believes in reads as a broken deployment, and the model gives up
+  // rather than reaching for a tool it may actually use. The reason string is
+  // read by the model, never by a person.
   const disposeExecute = agentCtx.on('tools/pre-execute', async (exec, next) => {
     if (!allowed.has(exec.name)) {
-      return { kind: 'deny', reason: `tool "${exec.name}" is not available to this agent` }
+      const callable = [...allowed].join(', ')
+      return { kind: 'deny', reason: `"${exec.name}" is not one of this conversation's tools -- call one of these instead: ${callable}` }
     }
     return next()
   })

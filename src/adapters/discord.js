@@ -3,7 +3,8 @@
 // was removed in a later upstream rewrite; casey now owns this code
 // directly -- see AGENTS.md's freddie-port PRD rows).
 import { EventEmitter } from 'node:events'
-import { DEFAULT_INTENTS } from './discord-lib/constants.js'
+import { DEFAULT_INTENTS, SEND_TIMEOUT_MS } from './discord-lib/constants.js'
+import { fetchWithTimeout } from './webhook-platform-base.js'
 import * as gateway from './discord-lib/gateway.js'
 import * as rest from './discord-lib/rest.js'
 
@@ -34,11 +35,15 @@ export class DiscordAdapter extends EventEmitter {
     // Typing-indicator bookkeeping, per channel: { timer, lastSentAt }.
     this._typingTimers = new Map()
   }
-  getRequiredEnv() { return ['DISCORD_BOT_TOKEN'] }
 
   async start() {
     if (!this.token) throw new Error('DiscordAdapter: DISCORD_BOT_TOKEN required')
-    const gw = await fetch(`${this.api}/gateway/bot`, { headers: { authorization: `Bot ${this.token}` } }).then(r => r.json())
+    // Bounded like every other call this adapter makes, and for a sharper
+    // reason than send()'s: scheduleReconnect's last-resort retry calls
+    // start() again, and an unbounded lookup that never settles takes its
+    // .catch with it -- no further reconnect is ever scheduled and the bot
+    // stays deaf for the life of the process, with nothing logged.
+    const gw = await fetchWithTimeout(`${this.api}/gateway/bot`, { headers: { authorization: `Bot ${this.token}` } }, SEND_TIMEOUT_MS).then(r => r.json())
     if (!gw.url) throw new Error('DiscordAdapter: gateway lookup failed: ' + JSON.stringify(gw))
     this.gatewayUrl = gw.url + '/?v=10&encoding=json'
     // Open the gateway WebSocket so inbound messages are emitted as 'message'
@@ -62,8 +67,6 @@ export class DiscordAdapter extends EventEmitter {
   }
 
   async send(reply) { return rest.send(this, reply) }
-
-  async triggerTyping(channelId) { return rest.triggerTyping(this, channelId) }
 
   startTyping(channelId) { return rest.startTyping(this, channelId) }
 

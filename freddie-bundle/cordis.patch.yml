@@ -23,11 +23,22 @@
     # does not want) -- insert the plain standalone Service directly, with a
     # literal host/port config instead of web-app's own webStartup CLI-args
     # provider dependency casey has no use for.
+    #
+    # This is a SECOND listening socket, not the dashboard's. The dashboard is
+    # its own Express app that bin/worker.js binds itself (`--port`, default
+    # 4000) after this tree is already up; freddie's WebServer listens the
+    # instant this row activates. Both defaulted to 4000, and since worker.js
+    # calls createCasey() -- and therefore this boot -- before createDashboard(),
+    # freddie took the port and the dashboard died on it: EADDRINUSE, exit 44,
+    # "dashboard failed to bind port 4000", on a stock `casey up`. Its own port
+    # knob, defaulting clear of the dashboard's, is what stops that. It carries
+    # exactly one route, WhatsappAdapter's webhook, so a WhatsApp deployment
+    # must publish THIS port to Meta, not the dashboard's.
     - id: casey-webserver
       name: '@freddie/freddie-host-webserver'
       config:
-        host: !!js process.env.CASEY_DASHBOARD_HOST || '127.0.0.1'
-        port: !!js Number(process.env.PORT) || 4000
+        host: !!js process.env.CASEY_WEBHOOK_HOST || '127.0.0.1'
+        port: !!js Number(process.env.CASEY_WEBHOOK_PORT) || 4001
 
     - id: casey-case-tools
       name: ./src/case-tools/index.js
