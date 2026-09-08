@@ -151,9 +151,9 @@ function rawActionItems({ refreshAll } = {}) {
 // `relabel` is {key: newLabel}. `group_labels` is {oldGroupName: newGroupName}.
 // Absent config (casey's own default, uhh) -- returns the raw sections
 // unchanged.
-// Role-scoped nav: a secretary's job is the follow-up queue (2a/2b, see
-// HERD-HEALTH-ROADMAP.md Phase 2), not admin/analyst-grade tooling --
-// "need to know on every page" per the redesign request. Hidden items are
+// Role-scoped nav: the secretary role exists to work the follow-up queue,
+// not admin/analyst-grade tooling -- only what that role needs to know on
+// every page. Hidden items are
 // still reachable to an admin/operator; this is a per-role floor, applied
 // BEFORE the deployer's own dashboard_ui.nav hide/relabel (so a deployer
 // can hide further, never un-hide a role-level restriction by relabeling
