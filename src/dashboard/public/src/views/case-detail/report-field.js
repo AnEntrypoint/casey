@@ -6,7 +6,7 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Chip, Icon } from '/design/src/components/shell.js';
-import { TextField, FillLines } from '/design/src/components/content.js';
+import { TextField, FillLines, DetailRow } from '/design/src/components/content.js';
 import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { postIntake, postNote } from '../../api.js';
@@ -92,15 +92,20 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             source ? Chip({ size: 'sm', tone: source === 'ai' ? 'accent' : (source === 'manual' ? 'ok' : ''), children: SOURCE_LABEL[source] || source }) : null
         );
 
-    return h('div', { key, class: 'casey-rep-row', 'data-field': k },
-        h('span', { class: 'casey-rep-label' }, label),
-        h('span', { class: 'casey-rep-val' },
-            valueNode,
-            editing ? h('div', { class: 'casey-rep-edit-actions' },
+    // The row itself is the kit's DetailRow: a record field is label + value +
+    // whatever is said about that value, and the hairline that closes it
+    // belongs to one rule in the kit rather than to a copy of it here. What
+    // stays casey's is what is genuinely casey's -- the click-to-edit value,
+    // the save/cancel pair, the per-field note button and the notes.
+    return DetailRow({
+        key, field: k, label,
+        value: valueNode,
+        trailing: editing
+            ? h('div', { class: 'casey-rep-edit-actions' },
                 Btn({ size: 'sm', variant: 'primary', disabled: savingSet.has(editKey), children: savingSet.has(editKey) ? 'Saving...' : 'Save', onClick: save }),
                 Btn({ size: 'sm', variant: 'ghost', children: 'Cancel', onClick: cancelEdit })
-            ) : h('button', { type: 'button', class: 'casey-rep-note-btn', title: 'Add a note to this field', onclick: addNote }, Icon('pencil', { size: 11 }), ' note'),
-            ...(notes || []).map((n, i) => h('div', { key: 'n' + i, class: 'casey-rep-field-note' }, n.text))
-        )
-    );
+            )
+            : h('button', { type: 'button', class: 'casey-rep-note-btn', title: 'Add a note to this field', onclick: addNote }, Icon('pencil', { size: 11 }), ' note'),
+        notes: (notes || []).map((n, i) => h('div', { key: 'n' + i, class: 'casey-rep-field-note' }, n.text)),
+    });
 }
