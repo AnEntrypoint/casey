@@ -7,6 +7,7 @@
 // into freddie's chunk protocol (block-start/text-delta/tool-call-delta/
 // block-end/usage/finish) in one shot.
 import { LlmAdapter } from '@freddie/freddie-llm'
+import { resolveChainLinks } from '../../../src/agent/acptoapi-bridge.js'
 
 let _acptoapi = null
 async function getAcptoapi() {
@@ -21,21 +22,12 @@ async function getAcptoapi() {
   return _acptoapi
 }
 
-function isConfiguredChainSyntax(model) {
-  return typeof model === 'string' && (model.includes(',') || model.startsWith('queue/') || model.startsWith('chain/'))
-}
-
-// `auto` is not a model name any provider answers to -- it is the instruction
-// to build acptoapi's real fallback chain. Swallowing a buildAutoChain throw
-// here handed that literal string on to chat() as if it were a model, so a
-// broken chain build surfaced as an unrecognised-model error from whichever
-// provider happened to be asked, naming neither `auto` nor the real cause.
-async function resolveChainLinks(acptoapi, useModel) {
-  if (isConfiguredChainSyntax(useModel)) return useModel
-  const links = acptoapi.buildAutoChain(useModel)
-  return (Array.isArray(links) && links.length) ? links.map(l => l.model || l) : useModel
-}
-
+// resolveChainLinks and isConfiguredChainSyntax live in casey's own agent
+// bridge and are imported, not copied. They were copied, and the copies
+// drifted: this one was fixed to stop swallowing a buildAutoChain throw and
+// the other was not, so one process held two different failure behaviours for
+// the same call. Same import direction as this bundle's platform plugin,
+// which already reaches into src/adapters for the webhook verifier.
 // freddie's message content is an array of typed ContentBlocks
 // ({type:'text'|'tool-call'|'tool-result'|'reasoning'}), not a flat string --
 // flatten to OpenAI-compatible {role, content, tool_calls}/{role, tool_call_id,
