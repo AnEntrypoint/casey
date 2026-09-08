@@ -82,7 +82,14 @@ function inboundAudioNote(msg, transcript = '') {
 // actually HAS a buffer (a failed-download entry may be null/error-only) mirrors
 // WhatsApp's own single-object degrade shape; Array.isArray is false for the
 // WhatsApp object, so this is a no-op there.
-export function pickMediaItem(msg) {
+//
+// Module-private: recordInboundMedia below is its only caller anywhere in the
+// tree. It was exported alongside describeMedia when this file was lifted out
+// of makeCaseHandler, but describeMedia has real outside consumers (the
+// new-case subject seed and the agent prompt) and this does not -- an export
+// with no importer advertises a seam that isn't one, and invites a second
+// reader of msg.media instead of a second caller of this.
+function pickMediaItem(msg) {
   return Array.isArray(msg.media) ? (msg.media.find(m => m?.buffer) || msg.media[0]) : msg.media
 }
 
