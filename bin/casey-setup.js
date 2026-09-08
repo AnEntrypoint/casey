@@ -163,7 +163,11 @@ export async function cmdDoctor({ flags }) {
     console.log(bad('WHATSAPP_VERIFY_TOKEN is unset - webhook verification will fail to start (set WHATSAPP_VERIFY_TOKEN to a real secret)'))
     problems++
   }
-  if (!hasCreds('discord') && !hasCreds('whatsapp')) console.log(warn('no real channel connected - casey cannot start without at least one of discord/whatsapp configured'))
+  // Not counted as a problem: `casey dashboard` is a legitimate way to run
+  // with no channel at all. It does decide what the closing line may
+  // recommend, though -- see noChannel below.
+  const noChannel = !hasCreds('discord') && !hasCreds('whatsapp')
+  if (noChannel) console.log(warn('no real channel connected - casey cannot start without at least one of discord/whatsapp configured'))
   // thatcher config -- same CASEY_CONFIG_DIR > cwd precedence as
   // case-store.js's own CaseStore constructor default (see there for why).
   const cfgFile = process.env.CASEY_CONFIG_DIR
@@ -224,7 +228,20 @@ export async function cmdDoctor({ flags }) {
     : dim(`  no case data yet (will be created at ${dbFile})`))
   // port
   const port = Number(flags.port || 4000)
-  console.log(await portFree(port) ? ok(`port ${port} is free`) : bad(`port ${port} is in use - start with --port <other>`))
-  console.log(problems ? red(`\n${problems} problem(s) to fix before ${cyan('casey up')}`) : green('\nall good - run casey up'))
+  // Every other bad() row in this command counts itself into `problems`; this
+  // one did not, so a busy port printed the red [x] marker and doctor still
+  // finished with "all good - run casey up" and exit 0 -- telling an operator
+  // to start a dashboard that cannot bind, in the one command whose whole job
+  // is to catch that before they try.
+  if (await portFree(port)) console.log(ok(`port ${port} is free`))
+  else { console.log(bad(`port ${port} is in use - start with --port <other>`)); problems++ }
+  // With no channel configured `casey up` genuinely cannot start -- the row
+  // above says so in as many words -- so recommending it as the next step
+  // contradicted the report the operator had just read. `casey dashboard`
+  // is what actually runs in that state, so that is what gets suggested.
+  const nextStep = noChannel ? 'casey dashboard' : 'casey up'
+  console.log(problems
+    ? red(`\n${problems} problem(s) to fix before ${cyan(nextStep)}`)
+    : green(`\nall good - run ${nextStep}`))
   process.exit(problems ? 1 : 0)
 }
