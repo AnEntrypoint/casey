@@ -898,6 +898,27 @@ stop).
 - **No deterministic text processing.** No keyword intent classifier, no
   province->town gazetteer -- place understanding and report extraction are
   entirely the model reading and calling the right tool.
+- **A COORDINATE IS THE ONLY THING THE MODEL MAY GUESS.** Everything else is
+  recorded as the person actually said it, or left out. lat/lon are the single
+  sanctioned inference: the model places a described location from its own world
+  knowledge, and is told to do so confidently when the description is
+  identifiable and to leave both out when it genuinely is not. Every other field
+  is report-not-assert -- a count is the number or the words they gave and never
+  a conversion of "a lot" into a figure, a species is what they said the animals
+  are and never a deduction from symptoms, a disease name is one somebody
+  actually said. `never_inferred` + `never_inferred_guard_pattern` in
+  `report-fields.yml` make that structural for the fields where a guess would do
+  the most damage (`suspected_disease`, and `dead_count`, which feeds the
+  attention ranking): the guard phrase must survive any future description
+  rewrite or `case-tools.js` throws at module load.
+  **The corollary is that a guessed coordinate must always LOOK guessed.** Both
+  map overlays carry `location_source` on the gps/estimated/confirmed ladder and
+  render an unconfirmed estimate differently -- a case pin through its border
+  treatment, a worker pin through a dashed stroke. A check-in or report whose
+  provenance nobody stated resolves to `estimated`, never silently to a fix.
+  Anything else the model produces and an operator reads -- a photo
+  auto-description, a voice-note auto-transcript -- names the AI helper as its
+  author, so machine output is never mistaken for a person's words.
 - **Enquiries and status are PII-free.** Every worker-facing projection
   excludes `external_id`/`contact_id`. "Worker-facing" means what goes back
   out to the reporting field worker over their own channel (`case-tools.js`'s
