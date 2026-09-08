@@ -24,6 +24,7 @@ import { makeCaseHandler, makeTransitionNotifier, discordHandoffNotifier, breach
 import { isOpenCase } from './format.js'
 import { tagList, tsMs } from './timestamp.js'
 import { resumePendingTurnsBody } from './casey-resume.js'
+import { drainQueuedTurnsBody } from './casey-drain.js'
 import { sweepCases } from './case-sweep.js'
 import { ALL_HEALTH_TAGS } from './case-health.js'
 import { mergeTag } from './hooks/heuristics.js'
@@ -727,118 +728,10 @@ export class Casey {
   }
 
   async _drainQueuedTurnsBody({ maxCases, maxRedrives, retryCap }) {
-    const handle = this.gateway?.handleInbound
-    let scanned = 0, drained = 0
-    {
-      const openStatuses = new Set(this.store.getOpenStatuses?.() || [])
-      const rows = await this.store.listCases({}, { limit: maxCases, offset: 0 })
-      for (const c of rows) {
-        if (drained >= maxRedrives) break
-        if (openStatuses.size && !openStatuses.has(c.status)) continue
-        if (!this.adapters[c.channel]?.send) continue
-        let events
-        try { events = await this.store.listEvents(c.id) } catch { continue }
-        // Per msgId: the queued inbound, whether an outbound/draft completed it, the
-        // attempt count, and whether it was dead-lettered.
-        const queued = new Map()        // msgId -> inbound event
-        const completedAfter = new Set()
-        const attempts = new Map()      // msgId -> count
-        const dead = new Set()
-        for (const ev of events) {
-          if (ev.kind === 'inbound' && ev.msg_id) { /* inbound seen; queued only if marked below */ }
-          if (ev.kind === 'observation' && typeof ev.text === 'string') {
-            let m = ev.text.match(/^QUEUED-FOR-AGENT:(.+)$/)
-            if (m) { const inb = events.find(e => e.kind === 'inbound' && e.msg_id === m[1]); if (inb) queued.set(m[1], inb) }
-            m = ev.text.match(/^queue-drive-(?:attempted|retry):(.+)$/)
-            if (m) attempts.set(m[1], (attempts.get(m[1]) || 0) + 1)
-            m = ev.text.match(/^queue-drive-failed:(.+)$/)
-            if (m) dead.add(m[1])
-          }
-          if (ev.kind === 'outbound' || ev.kind === 'draft') {
-            for (const id of queued.keys()) completedAfter.add(id)
-          }
-        }
-        // (b) all still-queued msgIds, oldest-first.
-        const pending = [...queued.entries()]
-          .filter(([id]) => !completedAfter.has(id) && !dead.has(id))
-          .sort((a, b) => a[1].created_at - b[1].created_at)
-        if (!pending.length) continue
-        scanned++
-        for (const [id, ev] of pending) {
-          if (drained >= maxRedrives) break
-          // queuedRedrive marks this as a QUEUE re-drive (vs a boot resume): a
-          // degraded turn then records an observation instead of an outbound so
-          // the queued msgId is never positionally burned.
-          //
-          // external_id is the CASE IDENTITY (conversationKey's own "container:author"
-          // shape on a multi-author channel -- see hooks/handler.js's conversationKey/
-          // replyTarget split) -- it is NOT a valid Discord channel snowflake on its
-          // own. replyTarget(msg) reads msg.raw.channel_id directly, so passing the
-          // combined external_id through unsplit sent every queued-redrive reply on a
-          // multi-author Discord channel to Discord as an invalid channel id (400
-          // Invalid Form Body, NUMBER_TYPE_COERCE) -- the queued reply silently never
-          // reached the contact. Recover the real container id (the FIRST segment)
-          // and the real author id (the LAST segment) -- same compounding-key fix
-          // as resumePendingTurns above: passing the whole combined external_id
-          // through as `from` let conversationKey() recombine it into an
-          // ever-growing container:container:...:author on every redrive. Taking
-          // the last segment also self-heals an already-corrupted multi-segment
-          // key back to a clean two-part one on this redrive's own write.
-          const { container, author } = splitExternalId(c.external_id)
-          const msg = { from: author, text: ev.text || '', platform: c.channel, resume: true, queuedRedrive: true, raw: { channel_id: container, id, author: {} } }
-          try {
-            const res = await handle.call(this.gateway, c.channel, msg)
-            // A DEGRADED re-drive (the turn ended in the fallback path -- the agent
-            // never actually understood the message) is a FAILED attempt, not a
-            // completion: count it toward the retry cap and keep the msg queued.
-            if (res && res.degraded) {
-              const n = (attempts.get(id) || 0) + 1
-              this.log?.warn?.('[casey] queue drive degraded', { caseId: c.id, msgId: id, attempt: n })
-              if (n >= retryCap) {
-                // data.dead_lettered alongside the existing queue-drive-failed:<id>
-                // text prefix (queueStatus() still parses that prefix to reconstruct
-                // WHICH msgId dead-lettered -- untouched) so GET /api/turns/degraded
-                // can also surface this as an explicit, queryable terminal state.
-                try { await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-failed:${id}`, data: { dead_lettered: true, reason: 'queue-drive-degraded-exhausted', msg_id: id } }) } catch { /* best effort */ }
-              } else {
-                try { await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-retry:${id}` }) } catch { /* best effort */ }
-              }
-              // The backend is evidently still shaky -- stop this case's drain.
-              break
-            }
-            // (c) mark attempted only AFTER a successful drive (handle sends/records
-            // the reply). A throw skips the marker so the message stays queued.
-            await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-attempted:${id}` })
-            drained++
-          } catch (e) {
-            const n = (attempts.get(id) || 0) + 1
-            this.log?.warn?.('[casey] queue drive failed', { caseId: c.id, msgId: id, attempt: n, error: e.message })
-            // (d) dead-letter after retryCap so a permanently-failing message stops.
-            if (n >= retryCap) {
-              try { await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-failed:${id}`, data: { dead_lettered: true, reason: 'queue-drive-error-exhausted', msg_id: id, error: String(e.message || e).slice(0, 500) } }) } catch { /* best effort */ }
-            } else {
-              // Record the failed attempt so the count advances toward the cap, but do
-              // NOT mark drive-attempted (that only lands on success).
-              try { await this.store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-retry:${id}` }) } catch { /* best effort */ }
-            }
-            // Stop this case's drain on a throw -- the backend likely went down again;
-            // the next recovery edge re-enters and continues in order.
-            break
-          }
-        }
-      }
-      // Always log the outcome, not just when something drained -- matching the
-      // same fix already applied to resumePendingTurns's sweep-complete log
-      // (see its own comment). A silent "nothing queued" completion is exactly
-      // as important to see as a busy one when diagnosing whether the periodic
-      // drain-poll timer (startDrainPoll) is actually running at all vs.
-      // genuinely idle vs. quietly stuck/never-started -- live-witnessed
-      // needing this while verifying the drain-poll fix itself: with no log on
-      // an empty scan, a real stuck case sitting un-drained was indistinguishable
-      // from "the timer never fired" and "the timer fired but found nothing".
-      this.log?.info?.('[casey] queue drain complete', { scanned, drained })
-      return { scanned, drained }
-    }
+    return await drainQueuedTurnsBody(
+      { store: this.store, log: this.log, gateway: this.gateway, adapters: this.adapters },
+      { maxCases, maxRedrives, retryCap },
+    )
   }
 
   // Read-only queue-depth check for the dashboard health panel: how many
