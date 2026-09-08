@@ -171,7 +171,7 @@ try {
   // rather than the --danger-ink companion the kit already expected but no
   // theme defined. On a surveillance dashboard the alert count is precisely the
   // text that must be readable outdoors on a phone.
-  const lowContrast = JSON.parse(await evalJs(`(() => {
+  const CONTRAST_JS = `(() => {
     const lum = (c) => { const [r,g,b] = c.map(v => { v/=255; return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4) }); return 0.2126*r + 0.7152*g + 0.0722*b };
     const parse = (s) => { const m = s.match(/rgba?\\(([^)]+)\\)/); if (!m) return null; const p = m[1].split(',').map(Number); return { rgb: p.slice(0,3), a: p.length > 3 ? p[3] : 1 } };
     const bgOf = (el) => { let e = el; while (e && e !== document.documentElement) { const c = parse(getComputedStyle(e).backgroundColor); if (c && c.a > 0.5) return c.rgb; e = e.parentElement } return [255,255,255] };
@@ -192,8 +192,20 @@ try {
       if (cr < need) out.push(Math.round(cr*100)/100 + ':1 (need ' + need + ') "' + txt.slice(0,30) + '"');
     }
     return JSON.stringify(out);
-  })()`))
-  check(lowContrast.length === 0, 'all text meets WCAG AA contrast', lowContrast.length ? lowContrast[0] : 'no failures')
+  })()`
+
+  // BOTH themes. The dark preset had never been audited live and carried ten
+  // failures, including a tier-3 surface that stayed light while its text
+  // followed the theme (1.16:1) and map cluster counts at 2.03:1. Checking only
+  // the theme that happens to be active is how that survived.
+  for (const theme of ['herd', 'herd-ink']) {
+    // Exactly what account-menu.js's applyTheme does -- documentElement, body
+    // and #app all carry it, and the kit's rules key off the scope element.
+    await evalJs(`(() => { const t = ${JSON.stringify(theme)}; document.documentElement.dataset.theme = t; document.body.dataset.theme = t; const a = document.getElementById('app'); if (a) a.dataset.theme = t; return 1 })()`)
+    await sleep(1200)
+    const low = JSON.parse(await evalJs(CONTRAST_JS))
+    check(low.length === 0, `all text meets WCAG AA contrast (${theme})`, low.length ? `${low.length} failing, e.g. ${low[0]}` : 'no failures')
+  }
   check(consoleMsgs.length === 0, 'browser console clean', consoleMsgs.length ? consoleMsgs[0] : 'no errors or warnings')
   check(failedReqs.length === 0, 'no failed requests', failedReqs.length ? [...new Set(failedReqs)][0] : 'none')
 } catch (e) {

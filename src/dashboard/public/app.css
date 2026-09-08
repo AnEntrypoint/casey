@@ -744,6 +744,21 @@ body { background: var(--bg); color: var(--fg); }
    popup is ever opened (map-leaflet.js). Theming an element nothing emits is
    how a stylesheet accumulates rules nobody dares delete later. */
 .leaflet-container { background: var(--bg-2); }
+/* Leaflet and leaflet.markercluster ship FIXED backgrounds that no theme can
+   reach -- the cluster bubbles are stock pastel fills (#6ECC39 green, #F0C20C
+   amber, #F18017 orange) and the zoom/attribution controls are white -- while
+   their text colour is inherited and therefore DOES follow the theme. In the
+   dark theme that inverted into unreadable pairings, measured live: the cluster
+   COUNT at 2.03:1 on green and 1.69:1 on amber, and the zoom controls and
+   attribution at 2.19:1 (accent orange on white). A cluster count is not
+   decoration on a disease map -- it is how many reports are stacked at that
+   point. --ink is a base token no theme overrides, so pinning to it holds in
+   both directions; this is the same call --accent-fg makes by being black on
+   the brand orange rather than white. */
+.ds-247420 .marker-cluster div,
+.ds-247420 .leaflet-bar a,
+.ds-247420 .leaflet-control-attribution,
+.ds-247420 .leaflet-control-attribution a { color: var(--ink); }
 /* "Not refreshing" is a warning, not a caption, so it stops reading like the
    ordinary timestamp it sits in place of. */
 .ds-map-updated.is-stale { color: var(--warn, var(--amber)); font-weight: 600; }
