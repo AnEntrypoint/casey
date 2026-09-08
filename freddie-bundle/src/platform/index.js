@@ -3,21 +3,23 @@
 // running app -- transport included, not just the agent loop.
 //
 // Real freddie primitive used: ctx.webServer.register({kind:'exact', path,
-// handler}) for WhatsApp's inbound Cloud API webhook, reusing freddie's own
-// dashboard HTTP server on one port rather than a second listener (see
-// deps/freddie's packages/host/webserver -- confirmed the only standing
-// listening-socket seam in the tree). Discord needs no listening socket at
-// all: its own gateway connection is an OUTBOUND websocket CLIENT the
-// adapter opens itself.
+// handler}) for WhatsApp's inbound Cloud API webhook (see deps/freddie's
+// packages/host/webserver -- the only standing listening-socket seam in the
+// tree). That socket is freddie's own, on freddie-bundle/cordis.patch.yml's
+// CASEY_WEBHOOK_PORT, and is NOT the dashboard's -- the dashboard is a
+// separate Express app bin/worker.js binds for itself. Discord needs no
+// listening socket at all: its own gateway connection is an OUTBOUND
+// websocket CLIENT the adapter opens itself.
 //
 // Adapter CONSTRUCTION (including casey's own DM/mention filtering, the
-// follow-up window, and receive-liveness tracking -- src/casey.js's
-// _makeDiscordAdapter) stays in src/casey.js, since that logic is tied to
-// the live Casey instance (this.store, this.log, this._markConnected). This
-// plugin receives the already-built, already-listening (for Discord)
-// adapters via ctx.get('caseyBootOptions').adapters and wires only the
-// WhatsApp webhook route + the shared message->handleInbound dispatch --
-// purely transport glue, ignorant of casey's case-store/domain logic.
+// follow-up window, and receive-liveness tracking) lives in
+// src/casey-adapters.js's makeDiscordAdapter, since that logic is tied to the
+// live Casey instance (its store, its log, its receive-liveness stamps). This
+// plugin receives the already-built adapters via
+// ctx.get('caseyBootOptions').adapters and wires only the WhatsApp webhook
+// route + the shared message->handleInbound dispatch -- purely transport glue,
+// ignorant of casey's case-store/domain logic. Discord is built but not yet
+// connected when this runs: src/casey.js opens its gateway later, in start().
 import { setAgentContext } from '../../../src/agent/run-turn.js'
 import { dispatchWhatsappWebhookBody } from '../../../src/adapters/whatsapp.js'
 import { verifyWebhookOr401 } from '../../../src/adapters/webhook-platform-base.js'
@@ -52,10 +54,10 @@ export async function apply(ctx) {
     if (!whatsapp.token || !whatsapp.phoneId) throw new Error('WhatsappAdapter: WHATSAPP_API_TOKEN + WHATSAPP_PHONE_NUMBER_ID required')
     if (!whatsapp.verifyToken) throw new Error('WhatsappAdapter: WHATSAPP_VERIFY_TOKEN required')
     // The adapter owns no listening socket: its webhook verify/receive logic
-    // is driven through ctx.webServer.register, reusing freddie's single
-    // dashboard port. adapter.send() (outbound REST) is unaffected.
-    // The path comes from the adapter itself so there is one answer to "where
-    // does Meta POST", not a second env read with its own default here.
+    // is driven through ctx.webServer.register, on freddie's own socket.
+    // adapter.send() (outbound REST) is unaffected. The path comes from the
+    // adapter itself so there is one answer to "where does Meta POST", not a
+    // second env read with its own default here.
     ctx.webServer.register({
       kind: 'exact',
       path: whatsapp.path,
@@ -97,15 +99,28 @@ async function webhookHandler(adapter, req, res) {
   const asExpressReq = {
     get: (h) => req.headers[h.toLowerCase()],
     rawBody,
-    body: JSON.parse(rawBody.toString('utf8') || '{}'),
   }
   const asExpressRes = {
     sendStatus: (code) => { res.writeHead(code); res.end() },
     json: (obj) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)) },
   }
+  // The HMAC is over rawBody, so nothing here needs the payload parsed to
+  // decide whether to trust it. Parsing it up front, as part of building the
+  // request shim, meant an anonymous POST of any non-JSON bytes threw out of
+  // this handler with no status written at all, before the signature was ever
+  // consulted -- live-witnessed: an unsigned "not json at all" body left the
+  // socket unanswered where it should have read 401.
   if (!verifyWebhookOr401(asExpressReq, asExpressRes, (r) => adapter._verifySignature(r))) return
+  let body
+  try {
+    body = JSON.parse(rawBody.toString('utf8') || '{}')
+  } catch {
+    // Signed by Meta and still unparseable: answer, do not hang the socket.
+    asExpressRes.sendStatus(400)
+    return
+  }
   // Emission is detached inside dispatchWhatsappWebhookBody, so this returns
   // before any media download -- ack immediately, or Meta redelivers.
-  dispatchWhatsappWebhookBody(adapter, asExpressReq.body)
+  dispatchWhatsappWebhookBody(adapter, body)
   asExpressRes.json({ ok: true })
 }

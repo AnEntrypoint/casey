@@ -13,5 +13,3 @@ export function apply(ctx, config) {
   const adapter = new AcptoapiAdapter({ getModel: config?.getModel })
   ctx.llm.registerAdapter([PROVIDER], adapter)
 }
-
-export { PROVIDER }

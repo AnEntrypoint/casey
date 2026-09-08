@@ -27,13 +27,13 @@ export class WhatsappAdapter extends EventEmitter {
     this.appSecret = opts.appSecret || process.env.WHATSAPP_APP_SECRET || ''
     // The webhook path freddie's ctx.webServer registers this adapter on
     // (freddie-bundle/src/platform). This adapter owns no listening socket of
-    // its own -- freddie's boot() assembles the whole transport and the
-    // webhook shares the single dashboard port (AGENTS.md, "freddie
-    // integration"), so there is no WHATSAPP_WEBHOOK_PORT.
+    // its own -- freddie's boot() assembles the whole transport, and the
+    // socket the webhook lands on is freddie's, configured once in
+    // freddie-bundle/cordis.patch.yml (CASEY_WEBHOOK_PORT), so there is no
+    // WHATSAPP_WEBHOOK_PORT of its own.
     this.path = opts.path || process.env.WHATSAPP_WEBHOOK_PATH || '/webhooks/whatsapp'
     this.api = opts.api || 'https://graph.facebook.com/v20.0'
   }
-  getRequiredEnv() { return ['WHATSAPP_API_TOKEN', 'WHATSAPP_PHONE_NUMBER_ID'] }
 
   // Verify Meta's HMAC-SHA256 signature over the raw request body.
   _verifySignature(req) {
@@ -127,11 +127,11 @@ export function dispatchWhatsappWebhookBody(adapter, body) {
     for (const m of (c.value?.messages || [])) {
       const event = {
         from: m.from,
+        // `id` is lifted out for dedup upstream; `raw` is Meta's own message
+        // object as it arrived, which already carries id and type.
         text: m.text?.body || '',
-        // surface the platform message id for dedup, and the message type
-        // so media-only messages are recognisable upstream.
         id: m.id,
-        raw: { ...m, id: m.id, type: m.type },
+        raw: m,
       }
       const mediaObj = m.image || m.audio || m.document || m.video
       const type = m.image ? 'image' : m.audio ? 'audio' : m.document ? 'document' : m.video ? 'video' : null

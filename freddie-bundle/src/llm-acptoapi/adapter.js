@@ -25,12 +25,15 @@ function isConfiguredChainSyntax(model) {
   return typeof model === 'string' && (model.includes(',') || model.startsWith('queue/') || model.startsWith('chain/'))
 }
 
+// `auto` is not a model name any provider answers to -- it is the instruction
+// to build acptoapi's real fallback chain. Swallowing a buildAutoChain throw
+// here handed that literal string on to chat() as if it were a model, so a
+// broken chain build surfaced as an unrecognised-model error from whichever
+// provider happened to be asked, naming neither `auto` nor the real cause.
 async function resolveChainLinks(acptoapi, useModel) {
   if (isConfiguredChainSyntax(useModel)) return useModel
-  try {
-    const links = acptoapi.buildAutoChain(useModel)
-    return (Array.isArray(links) && links.length) ? links.map(l => l.model || l) : useModel
-  } catch { return useModel }
+  const links = acptoapi.buildAutoChain(useModel)
+  return (Array.isArray(links) && links.length) ? links.map(l => l.model || l) : useModel
 }
 
 // freddie's message content is an array of typed ContentBlocks
@@ -71,8 +74,6 @@ function toOpenAiTools(tools) {
   if (!Array.isArray(tools) || !tools.length) return []
   return tools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters || { type: 'object', properties: {} } } }))
 }
-
-function tryParseJson(s) { try { return typeof s === 'string' ? JSON.parse(s) : (s || {}) } catch { return {} } }
 
 export class AcptoapiAdapter extends LlmAdapter {
   constructor({ getModel } = {}) {
