@@ -12,6 +12,7 @@
 import {
   defTool, str, enquiryRow, mineRows, boundCase, isValidLatLon,
 } from './case-tools-shared.js'
+import { toStorable } from './store/guards.js'
 
 export function buildWorkerTools(store) {
   return [
@@ -81,10 +82,10 @@ export function buildWorkerTools(store) {
           ? await ctx.store.findOrCreateContactLocked({ channel: ctx.channel || 'other', external_id: author })
           : null
         if (!contact?.id) return { error: 'could not resolve the contact record for this check-in' }
-        await store().t.update('contact', contact.id, {
+        await store().t.update('contact', contact.id, toStorable({
           last_location_lat: lat, last_location_lon: lon, last_location_at: new Date().toISOString(),
           last_location_source: resolvedLocationSource,
-        }, { id: 'casey-agent', role: 'agent' })
+        }), { id: 'casey-agent', role: 'agent' })
         return { ok: true }
       }),
     // Workers report they have nothing to do -- records an IDLE observation so

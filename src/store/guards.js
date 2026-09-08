@@ -37,3 +37,38 @@ export function writeGuardViolation(patch, user) {
 // constant (rather than importing case-store.js's SYSTEM_USER, which would
 // create a circular import) since only the id string is needed here.
 const SYSTEM_USER_ID = 'casey-system'
+
+// The WRITE side of the busybase digit-string trap.
+//
+// busybase binds every column as TEXT, which is why the read side of this
+// codebase never trusts a numeric-looking column and goes through rowInt()/
+// tsMs() instead. The write side had no matching guard, and it needed one:
+// passing a JS number in a patch that also carries expectedVersion makes the
+// optimistic-concurrency check fail every single time.
+//
+// Witnessed directly against a real store, same value both ways:
+//   updateCaseChecked(id, { lat: -29.1, lon: 30.4 })   -> "update conflict
+//     after 3 retries -- not applied", yet lat reads back -29.1 and _version
+//     has gone 0 -> 4, because all four attempts DID write
+//   updateCaseChecked(id, { lat: '-29.1', lon: '30.4' }) -> ok, _version 0 -> 1
+// Text-typed columns (subject, assignee, location_source) are unaffected in
+// both shapes, so it is the JS number itself, not the field or the column.
+//
+// The damage was never lost coordinates -- those were written, four times
+// over -- but the false failure handed back to the caller. case_report bails
+// out on that error, so a report carrying a location skipped its timeline
+// event, its provenance observation, the contact's last_report_* propagation
+// and the derived normalized_location, and told the agent the write failed.
+//
+// Numbers become their decimal string here so thatcher stores exactly what it
+// would have stored anyway. null, undefined, booleans and strings pass through
+// untouched: null is a real "clear this column" and must not become "null",
+// and NaN/Infinity are left alone rather than silently written as text.
+export function toStorable(patch) {
+  if (!patch || typeof patch !== 'object') return patch
+  const out = {}
+  for (const [k, v] of Object.entries(patch)) {
+    out[k] = (typeof v === 'number' && Number.isFinite(v)) ? String(v) : v
+  }
+  return out
+}
