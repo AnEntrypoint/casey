@@ -277,11 +277,24 @@ async function renderMapWorkers(mapState) {
             const ageText = w.age_ms != null ? fmtDur(w.age_ms) + ' ago' : 'unknown';
             const staleNote = w.stale ? ` (stale: ${ageText})` : ` (here now, ${ageText})`;
             const overdueNote = w.overdue_checkin ? ' OVERDUE check-in' : '';
-            const label = esc(w.display_name || 'field worker') + staleNote + overdueNote;
+            // HOW this position was arrived at, on the pin itself. case_checkin's
+            // own lat is documented as the worker's "best estimate for a described
+            // place, or exact if they shared GPS", so this dot may be the model's
+            // guess at a place name -- and it used to be drawn identically to a
+            // real fix. A case pin already answers this through its border
+            // treatment; a worker pin is an SVG circle, so the same distinction is
+            // a dashed stroke. Only an unconfirmed estimate is dashed: gps and
+            // worker-confirmed are solid, and 'unset' (a check-in predating this
+            // field) stays solid rather than implying a precision claim either way.
+            const locSrc = w.location_source || 'unset';
+            const srcNote = LOCATION_SOURCE_LABEL[locSrc] ? ` -- ${LOCATION_SOURCE_LABEL[locSrc]}` : '';
+            const label = esc(w.display_name || 'field worker') + staleNote + overdueNote + srcNote;
             const color = w.overdue_checkin ? cssVar('--danger') : cssVar('--amber');
             const fillOpacity = w.overdue_checkin ? 0.8 : (w.stale ? 0.15 : 0.7);
-            window.L.circleMarker([w.lat, w.lon], { radius: w.overdue_checkin ? 10 : 8, color, weight: 2, fillColor: color, fillOpacity })
-                .bindTooltip(label).addTo(layer);
+            window.L.circleMarker([w.lat, w.lon], {
+                radius: w.overdue_checkin ? 10 : 8, color, weight: 2, fillColor: color, fillOpacity,
+                ...(locSrc === 'estimated' ? { dashArray: '4 3' } : {}),
+            }).bindTooltip(label).addTo(layer);
         }
         layer.addTo(map);
         mapState.workersLayer = layer;

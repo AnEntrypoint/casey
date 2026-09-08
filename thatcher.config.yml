@@ -79,6 +79,13 @@ entities:
       last_location_lat:  { type: number }            # field_worker casual location check-in (see case_checkin tool);
       last_location_lon:  { type: number }            # distinct from case.lat/lon (a CASE's location, not a person's)
       last_location_at:   { type: text }              # ISO timestamp of the check-in, for map staleness fade-out
+      last_location_source: { type: enum, options: [unset, gps, estimated, confirmed], default: unset }
+                                                      # HOW that position was arrived at, same ladder as case.location_source.
+                                                      # case_checkin's own lat is documented as "their own best estimate for a
+                                                      # described place, or exact if they shared GPS", so a worker's dot on the
+                                                      # operator map may be the model's guess at a place name. Without this the
+                                                      # map drew a guess and a real GPS fix identically, and an operator
+                                                      # dispatching to that dot could not tell which they were looking at.
       last_report_lat:    { type: number }            # this contact's most recent TICKET's own location (case_report's
       last_report_lon:    { type: number }            # own lat/lon, propagated here on write) -- distinct from
                                                        # last_location_* (the worker's own position) and from any single

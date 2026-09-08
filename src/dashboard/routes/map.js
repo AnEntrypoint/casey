@@ -55,6 +55,12 @@ export function workerPinProjection(c, { now, staleMs, checkinWindowMs, overdue 
   return {
     id: c.id, display_name: c.display_name || null,
     lat: Number(c.last_location_lat), lon: Number(c.last_location_lon),
+    // HOW that position was arrived at. case_checkin's lat may be the model's
+    // own guess at a place name the worker said, and without this the map drew
+    // a guess and a real GPS fix identically -- an operator dispatching to the
+    // dot could not tell which they were looking at. Same ladder as a case pin's
+    // location_source, so both overlays answer the question the same way.
+    location_source: c.last_location_source || 'unset',
     last_location_at: c.last_location_at, age_ms: ageMs,
     stale: ageMs == null || ageMs > staleMs,
     overdue_checkin: overdue,
