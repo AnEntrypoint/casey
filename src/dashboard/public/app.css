@@ -147,15 +147,14 @@ body { background: var(--bg); color: var(--fg); }
 /* ---- the rail ---------------------------------------------------------- */
 .ds-map-rail, .ds-rail-stack { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
 .ds-rail-head {
-  position: sticky; top: 0; z-index: var(--z-raised); background: var(--bg);
-  border-bottom: 1px solid var(--border); padding: var(--space-3);
+  position: sticky; top: 0; z-index: var(--z-raised); background: var(--bg); padding: var(--space-3);
   display: flex; flex-direction: column; gap: var(--space-2);
 }
 /* The only scrolling region in the rail. overscroll-contain stops a flick at
    the list's end from scrolling the page behind it on a phone. */
 .ds-rail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-.ds-rail-back { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
-.ds-rail-disclosure { border-top: 1px solid var(--border); }
+.ds-rail-back { padding: var(--space-2) var(--space-3); }
+.ds-rail-disclosure { }
 /* A real word with a real hit target, never a bare chevron. */
 .ds-rail-disclosure > summary {
   cursor: pointer; padding: var(--space-3); font-weight: 600;
@@ -163,7 +162,7 @@ body { background: var(--bg); color: var(--fg); }
 }
 .ds-rail-disclosure > summary:hover { background: var(--bg-2); }
 .ds-rail-disclosure > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.ds-rail-disclosure-body { padding: var(--space-3); border-top: 1px solid var(--border); }
+.ds-rail-disclosure-body { padding: var(--space-3); }
 .ds-rail-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
 .ds-app-surface h2.ds-rail-title, .ds-rail-title { margin: 0; font-size: var(--fs-sm); font-weight: 700; }
 .ds-rail-head .ds-map-updated { font-size: var(--fs-nano); color: var(--fg-2); margin: 0; }
@@ -174,11 +173,10 @@ body { background: var(--bg); color: var(--fg); }
    buys nothing and costs the operator the ability to see which is on. */
 .ds-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-1); overflow: hidden; }
 .ds-seg-btn {
-  flex: 1 1 auto; background: var(--bg); border: 0; border-right: 1px solid var(--border);
+  flex: 1 1 auto; background: var(--bg); border: 0;
   color: var(--fg-2, var(--muted)); font: inherit; font-size: var(--fs-nano);
   padding: var(--space-2) var(--space-3); cursor: pointer; min-height: 2.25rem; white-space: nowrap;
 }
-.ds-seg-btn:last-child { border-right: 0; }
 .ds-seg-btn:hover { background: var(--bg-2); color: var(--fg); }
 .ds-seg-btn.is-on { background: var(--accent); color: var(--accent-fg, var(--paper)); font-weight: 600; }
 .ds-seg-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
@@ -227,7 +225,7 @@ body { background: var(--bg); color: var(--fg); }
 /* Names the true total next to the control that reveals it, so a capped list
    can never silently disagree with the count above it. */
 .ds-queue-more {
-  display: block; width: 100%; background: none; border: 0; border-top: 1px solid var(--border);
+  display: block; width: 100%; background: none; border: 0;
   color: var(--accent-ink, var(--accent)); font: inherit; font-size: var(--fs-nano);
   padding: var(--space-3); cursor: pointer; text-align: left; min-height: 2.75rem;
 }
@@ -248,7 +246,7 @@ body { background: var(--bg); color: var(--fg); }
   position: sticky; top: 0; z-index: var(--z-raised);
   display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
   padding: var(--space-3) var(--space-4);
-  background: var(--bg); border-bottom: 1px solid var(--border);
+  background: var(--bg);
 }
 .ds-app-surface h1.ds-panel-swap-title, .ds-panel-swap-title {
   margin: 0; min-width: 0; font-size: var(--fs-lg); font-weight: 700;
@@ -459,7 +457,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-case-list-plain, .ds-case-list-empty { display: flex; flex-direction: column; }
 .ds-case-list-empty { padding: var(--space-5) var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
 
-.case-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--border); cursor: pointer; min-height: 64px; transition: background var(--dur-snap) var(--ease), box-shadow var(--dur-snap) var(--ease); }
+.case-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); cursor: pointer; min-height: 64px; transition: background var(--dur-snap) var(--ease), box-shadow var(--dur-snap) var(--ease); }
 /* Native checkbox has no square guarantee across browsers/zoom levels and
    defaults to baseline-ish vertical alignment that sits high relative to
    the bold case-row-ref text next to it -- lock the box shape and nudge it
@@ -502,10 +500,10 @@ body { background: var(--bg); color: var(--fg); }
 .ds-bulk-bar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-2) var(--space-3); background: var(--bg-2); border-radius: var(--r-md, var(--r-1)); }
 .ds-bulk-count { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); }
 
-.triage { border-bottom: 1px solid var(--border); background: var(--accent-soft, var(--bg-2)); border-radius: var(--r-md, var(--r-1)); }
+.triage { background: var(--accent-soft, var(--bg-2)); border-radius: var(--r-md, var(--r-1)); }
 .triage-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-1); }
 .triage .calm { padding: var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-nano, var(--fs-micro)); }
-.tcase { padding: var(--space-3); border-top: 1px solid var(--border); cursor: pointer; transition: background var(--dur-snap) var(--ease); }
+.tcase { padding: var(--space-3); cursor: pointer; transition: background var(--dur-snap) var(--ease); }
 .tcase:hover { background: var(--bg-2); }
 .tcase.active { outline: var(--focus-w, 2px) solid var(--accent); outline-offset: -2px; }
 .tcase:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
@@ -545,7 +543,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-cl-section-head {
   display: flex; align-items: baseline; justify-content: space-between;
   gap: var(--space-3); flex-wrap: wrap;
-  padding-top: var(--space-2); border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
 }
 .ds-app-surface h2.ds-cl-section-title, .ds-cl-section-title { margin: 0; font-size: var(--fs-sm); font-weight: 700; }
 .ds-cl-range { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-2, var(--muted)); }
@@ -670,7 +668,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-notif-count.is-active { color: var(--danger-ink, var(--danger)); font-weight: 600; }
 
 /* ---- related-reports cluster row / case-id pill grid --------------------- */
-.ds-cluster-row { padding: var(--space-3) 0; border-bottom: 1px solid var(--border-soft, var(--border)); }
+.ds-cluster-row { padding: var(--space-3) 0; }
 .ds-cluster-row:last-child { border-bottom: none; }
 .ds-cluster-sub { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
 /* a real column grid instead of flex-wrap so case-id pills align edge to
@@ -727,8 +725,7 @@ body { background: var(--bg); color: var(--fg); }
    A second scroll region nested inside it produced two competing scrollbars
    and made the "show all" control unreachable on a short viewport. */
 .ds-map-attention-feed { display: flex; flex-direction: column; }
-.ds-map-attention-feed .tcase { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); border-radius: 0; }
-.ds-map-attention-feed .tcase:last-child { border-bottom: none; }
+.ds-map-attention-feed .tcase { padding: var(--space-2) var(--space-3); border-radius: 0; }
 .ds-map-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .ds-map-overlays { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
 .ds-chip-btn { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; }
@@ -881,7 +878,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-activity-list { display: flex; flex-direction: column; }
 .ds-activity-row {
   display: flex; align-items: flex-start; gap: var(--space-2);
-  padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--border);
+  padding: var(--space-2) var(--space-1);
   box-shadow: inset 3px 0 0 transparent;
 }
 .ds-activity-row[role="button"] { cursor: pointer; }
@@ -907,7 +904,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-ho-since { font-size: var(--fs-nano, var(--fs-micro)); color: var(--fg-3, var(--muted)); margin-bottom: var(--space-3); }
 .ds-ho-row {
   display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
-  padding: var(--space-2) var(--space-1); border-bottom: 1px solid var(--border-soft, var(--border));
+  padding: var(--space-2) var(--space-1);
 }
 .ds-ho-row:last-child { border-bottom: none; }
 .ds-ho-ref {
