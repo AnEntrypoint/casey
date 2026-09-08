@@ -17,6 +17,7 @@ import { fmtTimeSAST } from '../format.js'
 import { observation, flagNeedsHuman } from './case-writes.js'
 import { makeAdmissionControl } from './admission.js'
 import { applyServiceControls } from './service-controls.js'
+import { recordInboundMedia } from './media-intake.js'
 import { tagList } from '../timestamp.js'
 import { reporterTierExcludedToolNames } from '../case-tools.js'
 import { caseSystemPrompt } from './prompt.js'
@@ -31,7 +32,7 @@ import {
   stripThinkingBlock,
 } from './heuristics.js'
 import { judgeReply } from './reply-judge.js'
-import { transcribeAudio, describePhoto, synthesizeVoice } from './media.js'
+import { synthesizeVoice } from './media.js'
 import { recordDegradedTurn, FAILURE_REASONS } from '../degraded-turns.js'
 
 const CHANNEL_DEFAULT = { whatsapp: 'whatsapp', discord: 'discord', sim: 'sim' }
@@ -287,87 +288,15 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         await store.appendEvent(caseRow.id, observation('DRAFT SUPERSEDED: a new message arrived; the pending draft reply was set aside for a fresh one.'))
       } catch (e) { log.warn?.('[casey] draft supersede failed', { caseId: caseRow.id, error: e.message }) }
     }
-    // One-shot: a received animal photo is recorded as explicit case state right
-    // here, deterministically, so the operator always sees that a picture exists
-    // -- never relying on the agent turn to notice it (it may not, on a media-only
-    // message). APPEND-only (appendReportField), never fill-if-empty: a worker
-    // routinely sends more than one photo/voice note across a conversation, and
-    // fill-if-empty silently discarded every arrival after the first with no
-    // field update and no observation event -- the exact silent-loss bug this
-    // fixes. In observe mode appendReportField refuses the report WRITE (that
-    // guard stays -- observe means no automatic field edits), but the ARRIVAL of
-    // a photo/voice note must still be visible in the timeline (observe is
-    // exactly the mode with no LLM narration to compensate), so a plain
-    // observation event is appended even when the field write was refused. A
-    // failure here must never block the reply path.
-    // Normalize msg.media across adapter shapes: WhatsApp's adapter resolves a
-    // SINGLE object ({type, mimeType, buffer}, freddie's platform-whatsapp
-    // handler.js), but Discord's resolves an ARRAY (one entry per attachment,
-    // freddie's platform-discord handler.js _resolveAttachments). Every read
-    // below used to assume the WhatsApp shape unconditionally
-    // (msg.media?.buffer), so on Discord msg.media.buffer was always undefined
-    // (arrays have no .buffer property) -- isPhotoMsg/isAudioMsg were
-    // permanently false, meaning every Discord photo/voice note was stuck at
-    // the honest-degradation floor ("farmer sent a photo", no bytes saved, no
-    // transcription/description) even with real downloaded bytes sitting right
-    // there and CASEY_DESCRIBE_PHOTOS/CASEY_TRANSCRIBE_VOICE_NOTES enabled.
-    // Picking the first entry that actually has a buffer (a failed-download
-    // entry may be null/error-only) mirrors WhatsApp's own single-object
-    // degrade shape; Array.isArray is false for WhatsApp's object, so this is
-    // a no-op there (mediaItem === msg.media, byte-identical to before).
-    const mediaItem = Array.isArray(msg.media) ? (msg.media.find(m => m?.buffer) || msg.media[0]) : msg.media
-    // When the channel adapter actually downloaded the media bytes (mediaItem),
-    // save them to disk and fold the saved path into the note -- otherwise the
-    // note is text-only ("farmer sent a photo") with nothing behind it, which is
-    // exactly the "looks captured but isn't" gap this closes. A download failure
-    // (mediaItem.error set, buffer null) still yields the plain text note, same
-    // as before freddie could fetch media at all -- never a harder failure.
-    const photoNote = inboundImageNote(msg)
-    if (photoNote) {
-      try {
-        let note = photoNote
-        const isPhotoMsg = mediaItem?.buffer && mediaItem.type !== 'audio'
-        if (isPhotoMsg) {
-          const savedPath = store.saveMedia(caseRow.id, mediaItem.buffer, { mimeType: mediaItem.mimeType, kind: 'photo' })
-          note = `${photoNote} (saved: ${savedPath})`
-          const description = await describePhoto(mediaItem.buffer, mediaItem.mimeType)
-          if (description) note += ` -- described: "${truncate(description, 500)}"`
-        }
-        const r = await store.appendReportField(caseRow.id, 'photos', note)
-        if (r?.appended || r?.error === 'observe') {
-          await store.appendEvent(caseRow.id, observation(`PHOTO RECEIVED: ${note} (recorded for the field team).`))
-        }
-        if (r?.reportWasCorrupted) {
-          await store.appendEvent(caseRow.id, observation('WARNING: this case\'s stored report JSON was corrupted and has been reset before appending this photo note -- some previously recorded fields may be lost.'))
-        }
-      } catch (e) { log.warn?.('[casey] photo mark failed', { caseId: caseRow.id, error: e.message }) }
-    }
-    // Same discipline for a voice note: record it as explicit state so an
-    // operator always sees EVERY voice message arrive, even on an audio-only
-    // message the agent turn might not narrate. Append-only; never blocks the reply.
-    // Transcription (opt-in via CASEY_TRANSCRIBE_VOICE_NOTES=1) runs BEFORE the
-    // note is composed so a successful transcript is folded straight into the
-    // recorded field -- a failure/opt-out yields '' and the note reads exactly
-    // as it always did (operator listens, per the original degrade rung).
-    const isAudioMsg = mediaItem?.buffer && mediaItem.type === 'audio'
-    const transcript = isAudioMsg ? await transcribeAudio(mediaItem.buffer, mediaItem.mimeType) : ''
-    const audioNote = inboundAudioNote(msg, transcript)
-    if (audioNote) {
-      try {
-        let note = audioNote
-        if (isAudioMsg) {
-          const savedPath = store.saveMedia(caseRow.id, mediaItem.buffer, { mimeType: mediaItem.mimeType, kind: 'audio' })
-          note = `${audioNote} (saved: ${savedPath})`
-        }
-        const r = await store.appendReportField(caseRow.id, 'audio', note)
-        if (r?.appended || r?.error === 'observe') {
-          await store.appendEvent(caseRow.id, observation(`AUDIO RECEIVED: ${note}.`))
-        }
-        if (r?.reportWasCorrupted) {
-          await store.appendEvent(caseRow.id, observation('WARNING: this case\'s stored report JSON was corrupted and has been reset before appending this audio note -- some previously recorded fields may be lost.'))
-        }
-      } catch (e) { log.warn?.('[casey] audio mark failed', { caseId: caseRow.id, error: e.message }) }
-    }
+    // Record every media artifact this message carried, before the agent turn.
+    // The photo and audio arrival sequences were near-identical and are one
+    // helper in hooks/media-intake.js now. The adapter-shape normalisation goes
+    // with them, because it is the reason a Discord photo used to be stuck at
+    // the text-only floor with real downloaded bytes sitting right there:
+    // WhatsApp's adapter resolves a single media object, Discord's resolves an
+    // array, and every read here assumed the WhatsApp shape. Append-only and
+    // best-effort -- nothing in here may block the reply path.
+    await recordInboundMedia({ store, log, caseId: caseRow.id, msg })
     if (created) {
       if (!caseRow.subject) {
         const subj = truncate(inboundText || media || 'New conversation', 80)
@@ -1323,40 +1252,4 @@ function describeMedia(msg) {
   return ''
 }
 
-// A photo of a sick or dead animal is the single most valuable on-site artifact,
-// and on the one-shot path it cannot be recovered once the worker leaves. So a
-// received image is recorded as explicit case state (report.photos) at ingress,
-// deterministically -- never left to the agent turn to notice and record, which
-// it may not on a media-only message. Returns a short note when THIS message
-// carries a real image (not a sticker, not audio, not a generic attachment of
-// unknown type), else ''. WhatsApp/Twilio surface images as raw.image, type
-// 'image', or attachments with an image/* content type; we match all three.
-function inboundImageNote(msg) {
-  const r = msg.raw || {}
-  if (r.image || r.type === 'image') return 'farmer sent a photo'
-  const atts = Array.isArray(r.attachments) ? r.attachments : []
-  const imgs = atts.filter(a => typeof (a?.content_type || a?.contentType || a?.mimetype) === 'string'
-    && /^image\//i.test(a.content_type || a.contentType || a.mimetype))
-  if (imgs.length) return imgs.length === 1 ? 'farmer sent a photo' : `farmer sent ${imgs.length} photos`
-  return ''
-}
 
-// A voice note is, for a low-literacy farmer, often the MAIN report -- they speak
-// rather than type. Like the photo, it is one-shot and easy to lose if it is only
-// described into the agent's context and never recorded as explicit case state.
-// So we capture it the same way: detect a real audio/voice message (not a sticker,
-// not an image) and record a note at ingress, append-only. When a transcript is
-// available (see transcribeAudio below) it is folded into the note; otherwise the
-// operator listens and can fill the richer detail -- an honest degradation rung,
-// not a silent drop. Returns '' when THIS message carries no audio.
-function inboundAudioNote(msg, transcript = '') {
-  const r = msg.raw || {}
-  const tail = transcript ? ` -- transcript: "${truncate(transcript, 500)}"` : ''
-  const base = 'farmer sent a voice note (listen and record what it says)' + tail
-  if (r.audio || r.voice || r.type === 'audio' || r.type === 'voice') return base
-  const atts = Array.isArray(r.attachments) ? r.attachments : []
-  const auds = atts.filter(a => typeof (a?.content_type || a?.contentType || a?.mimetype) === 'string'
-    && /^audio\//i.test(a.content_type || a.contentType || a.mimetype))
-  if (auds.length) return base
-  return ''
-}
