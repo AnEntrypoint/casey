@@ -247,6 +247,40 @@ turn loop -- with casey's own plugins mounted alongside freddie's
   -- the exact pattern freddie's own `packages/bundle/headless` example uses
   end to end.
 
+**The port left one dangling reference, and it was the outbound path
+(fixed 2026-09-08).** `hooks/handler.js` resolved its adapter with
+`this?.platforms?.get?.(platform)`. The old freddie Gateway exposed a
+`platforms` Map; the port replaced it with `casey.js`'s `this.adapters`, a
+plain OBJECT keyed by channel, and the two lookups were never updated. Since
+`casey.js` binds the handler to the Casey instance (`handler.bind(this)`) and
+Casey has no `platforms` at all, the optional chain short-circuited on every
+turn and `adapter` was always `undefined`. `.bind` is permanent, so no caller
+could have supplied a different receiver.
+
+It reads like a dead typing indicator and is not. The same `adapter` backs the
+guaranteed-fallback send and the agent's real reply, and
+`freddie-bundle/src/platform` invokes `handleInbound(...).catch(...)`
+discarding this handler's return value -- so `adapter.send` is the ONLY route
+an agent reply has to a contact. Both delivery flags were also initialised
+`true` above their own `if (adapter?.send)` guard, so a skipped send still
+recorded the turn as delivered. That is what kept it silent.
+
+Two lessons worth more than the fix. First, when a seam changes shape during a
+port, grep for the OLD shape's accessor (`.get(`) as well as its name -- a
+renamed property with a different access idiom fails silently under optional
+chaining rather than throwing. Second, a "delivered" flag must not be
+initialised to its success value above the branch that earns it; had it started
+`false`, this would have surfaced as delivery failures on day one instead of
+hiding for the life of the port.
+
+Live-witnessed both ways: the real `makeCaseHandler`, bound to a receiver of
+the shape `casey.js` builds and driven with a real inbound against a real
+`CaseStore`, now calls `adapter.send` exactly once with the guaranteed-fallback
+status message (and fires the typing indicator for the first time), where the
+old expression against the same receiver returns `undefined` and reaches no
+send at all. The remaining unwitnessed step is only the network hop inside the
+adapter itself, which needs real channel credentials.
+
 **SECURITY (the load-bearing replacement for the old `enabledToolsets`
 contract): freddie's `ctx.tools` is ONE GLOBAL registry shared by every
 mounted plugin, including `@freddie/freddie-base`'s own real
