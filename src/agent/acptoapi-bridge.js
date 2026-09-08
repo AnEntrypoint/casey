@@ -36,16 +36,29 @@ export function getAcptoapiModel(defaultModel = null) {
 // queue/, chain/) or is the 'auto' sentinel -- those go straight to
 // chat()/chatChain() unchanged. Only a genuinely bare single-model request
 // gets wrapped in acptoapi's own buildAutoChain() for real fallback.
-function isConfiguredChainSyntax(model) {
+export function isConfiguredChainSyntax(model) {
   return typeof model === 'string' && (model.includes(',') || model.startsWith('queue/') || model.startsWith('chain/'))
 }
 
-async function resolveChainLinks(acptoapi, useModel) {
+// Exported, and freddie-bundle's llm-acptoapi adapter imports these rather
+// than keeping its own copy. It HAD its own copy, and the two drifted: the
+// bundle's was fixed to stop swallowing a buildAutoChain throw while this one
+// was not, so the same call had two different failure behaviours in one
+// process depending on which module reached it first.
+//
+// The catch that used to sit here is gone for the reason it was removed
+// there. `auto` is not a model any provider answers to -- it is the
+// instruction to BUILD acptoapi's fallback chain. Swallowing the throw handed
+// that literal string on to chat() as if it were a model name, so a broken
+// chain build surfaced as an unrecognised-model error from whichever provider
+// happened to be asked, naming neither `auto` nor the real cause. Nothing
+// relied on the catch: buildAutoChain returns 20 links for 'auto', 1 for a
+// real model name, and 20 for an empty string or null, throwing on none of
+// them.
+export async function resolveChainLinks(acptoapi, useModel) {
   if (isConfiguredChainSyntax(useModel)) return useModel
-  try {
-    const links = acptoapi.buildAutoChain(useModel)
-    return (Array.isArray(links) && links.length) ? links.map(l => l.model || l) : useModel
-  } catch { return useModel }
+  const links = acptoapi.buildAutoChain(useModel)
+  return (Array.isArray(links) && links.length) ? links.map(l => l.model || l) : useModel
 }
 
 function adaptMessage(m) {
