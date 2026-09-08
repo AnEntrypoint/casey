@@ -360,30 +360,36 @@ export function postReport({ store }) {
     if (!ref && !phoneRaw) return res.redirect('/report?err=' + encodeURIComponent('Please enter your reference number or phone number.'))
     try {
       let found = null
+      // Whether THIS request opened the case it is about to write to. A
+      // submitter who supplied the ref, or who just caused the case to exist,
+      // has a claim on it; a bare phone number is not a claim (see below).
+      let openedHere = false
       if (ref) {
         found = await store.getCaseByRef(ref)
         if (!found) return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent(`Reference "${ref}" was not found. Please check, or enter your phone number instead.`))
       } else {
-        // Phone-based lookup: normalise to +27XXXXXXXXX, search by external_id
+        // Phone-based entry: normalise to +27XXXXXXXXX.
         const validPhone = /^0[0-9]{9}$/.test(phoneRaw) || /^\+27[0-9]{9}$/.test(phoneRaw)
         if (!validPhone) return res.redirect('/report?err=' + encodeURIComponent('Phone number not recognised. Please use a South African number like 0821234567 or +27821234567.'))
         const normPhone = phoneRaw.startsWith('0') ? '+27' + phoneRaw.slice(1) : phoneRaw
-        // Try to find existing case by external_id (WhatsApp stores as 27XXXXXXXXX).
-        // Indexed equality lookup (matches getCaseByRef's pattern) -- NOT a full-table
-        // scan: this endpoint is unauthenticated and public, so an unbounded listCases
-        // pull here would let a modest distinct-IP botnet force a repeated full-case-
-        // table read on every submission (the rate limiter only bounds per-IP volume).
-        const waPhone = normPhone.replace(/^\+/, '')
-        const candidates = new Set([normPhone, waPhone, phoneRaw].filter(Boolean))
-        found = null
-        for (const eid of candidates) {
-          const [row] = await store.listCases({ external_id: eid }, { limit: 1 })
-          if (row) { found = row; break }
-        }
-        if (!found) {
-          // Create a new case from the phone number
-          const { case: nc } = await store.findOrCreateCase({ channel: 'web', external_id: normPhone, contact: { phone: normPhone }, subject: `Field ${ENTITY} via web form` })
-          found = nc
+        // A PHONE NUMBER IS NOT A SECRET, so it may only ever reach a case this
+        // same form opened for that number -- never an agent-gathered
+        // conversation on another channel. This used to scan for any case with
+        // a matching external_id across every channel, which made the header's
+        // "the ref acts as the shared secret" untrue: witnessed live against a
+        // running dashboard, POSTing one seeded contact's number returned that
+        // contact's WhatsApp case ref in the redirect, the next GET rendered
+        // its whole report (a second person's phone number, the owner's name,
+        // directions to the kraal), and a following POST overwrote species,
+        // location and dead_count on a live outbreak record. findOpenCase
+        // (inside findOrCreateCase) is scoped to channel+external_id, so the
+        // reachable set is now exactly "the open web-form case for this
+        // number", and a first-time reporter with no reference still files a
+        // complete report exactly as before.
+        const { case: nc, created } = await store.findOrCreateCase({ channel: 'web', external_id: normPhone, contact: { phone: normPhone }, subject: `Field ${ENTITY} via web form` })
+        found = nc
+        openedHere = created === true
+        if (openedHere) {
           // Tag as public form intake
           try {
             await store.updateCase(nc.id, { tags: mergeTag(nc.tags, 'intake_mode:public_form') }, { id: 'contact', role: 'contact' })
@@ -397,6 +403,20 @@ export function postReport({ store }) {
         if (v == null || typeof v !== 'string') continue
         const trimmed = v.trim().slice(0, 4000)
         if (trimmed) incoming[key] = trimmed
+      }
+      // Someone who typed only a phone number, into a case they did not open,
+      // may ADD facts that are missing but never REPLACE one already recorded
+      // -- store.mergeReport overwrites non-append fields by design, which on
+      // this unauthenticated path meant a stranger could rewrite a live
+      // report's species or death count. Nothing is refused and nothing is
+      // silently dropped from a genuine reporter's point of view: every field
+      // they fill that the record does not already hold is still saved, and a
+      // reporter holding their reference keeps full correction rights.
+      if (!ref && !openedHere) {
+        const already = parseReport(found)
+        for (const k of Object.keys(incoming)) {
+          if (already[k] != null && String(already[k]).trim() !== '') delete incoming[k]
+        }
       }
       if (Object.keys(incoming).length) {
         const mergeResult = await store.mergeReport(found.id, incoming, { id: 'contact', role: 'contact' })
@@ -417,8 +437,13 @@ export function postReport({ store }) {
           await store.updateCase(found.id, { tags: mergeTag(found.tags, 'intake_mode:public_form') }, { id: 'contact', role: 'contact' })
         } catch { /* best-effort; form still submitted even if tag fails */ }
       }
-      const foundRef = found?.ref || ref
-      res.redirect('/report?ref=' + encodeURIComponent(foundRef) + '&done=1')
+      // The ref is the whole access control on this surface, so it is only ever
+      // echoed back to someone who already held it or who just opened the case
+      // here. Handing it to a bare phone-number entry that landed on a case
+      // somebody else opened is what turned a non-secret phone number into a
+      // read key for that case's full report on the following GET.
+      const showRef = ref || (openedHere ? (found?.ref || '') : '')
+      res.redirect(showRef ? '/report?ref=' + encodeURIComponent(showRef) + '&done=1' : '/report?done=1')
     } catch (e) { res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong. Please try again.')) }
   }
 }
