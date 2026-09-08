@@ -58,7 +58,12 @@ function inboundImageNote(msg) {
 // silent drop.
 function inboundAudioNote(msg, transcript = '') {
   const r = msg.raw || {}
-  const tail = transcript ? ` -- transcript: "${truncate(transcript, 500)}"` : ''
+  // Attributed to the machine, explicitly. A bare 'transcript:' reads as a
+  // record of what was said; this is the AI helper's transcription of audio it
+  // may have got wrong, and an operator acting on a disease report needs to know
+  // which of those they are reading. Same reason the photo note below names its
+  // author: the machine must not present its own output as what someone entered.
+  const tail = transcript ? ` -- auto-transcript by the AI helper (may be wrong, listen to check): "${truncate(transcript, 500)}"` : ''
   const base = 'farmer sent a voice note (listen and record what it says)' + tail
   if (r.audio || r.voice || r.type === 'audio' || r.type === 'voice') return base
   const atts = Array.isArray(r.attachments) ? r.attachments : []
@@ -91,7 +96,10 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
       text = `${note} (saved: ${savedPath})`
       if (kind === 'photo') {
         const description = await describePhoto(mediaItem.buffer, mediaItem.mimeType)
-        if (description) text += ` -- described: "${truncate(description, 500)}"`
+        // 'described:' alone reads as the farmer's own description of their photo.
+        // It is the AI helper's, and on a report a vet may act on that difference
+        // matters. Named rather than implied.
+        if (description) text += ` -- auto-description by the AI helper (not the farmer's words): "${truncate(description, 500)}"`
       }
     }
     const r = await store.appendReportField(caseId, field, text)
