@@ -207,6 +207,16 @@ the consumer's side.
    injection is caught automatically on the next install, not months later
    by chance.
 
+   casey has already done this, and the implementation is in this repo --
+   do not build a second one. `scripts/scan-deps.mjs` checks the two
+   structural properties described above (byte-size-to-line-count
+   disproportion, and dense runs of `\uXXXX` escapes decoding to an
+   identifier) across git-tracked source and `node_modules`. Run it by hand
+   with `npm run scan-deps`; it also runs on every install via
+   `scripts/postinstall.mjs`, which deliberately runs it as the LAST step
+   and exits with its status, so a hit fails the install rather than being
+   swallowed. The setup steps before it are the tolerant ones.
+
 ## Scope note
 
 This instruction describes a specific, real, currently-active pattern (found
