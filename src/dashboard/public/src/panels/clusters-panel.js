@@ -5,24 +5,20 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
-import { Spinner, Alert } from '/design/src/components/content/feedback.js';
+import { Alert } from '/design/src/components/content/feedback.js';
 import { Chip } from '/design/src/components/shell/atoms.js';
-import { state, schedule, setActiveId } from '../state.js';
-import { panelError } from './panel-error.js';
+import { state, setActiveId } from '../state.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchClusters } from '../api.js';
 
 const h = webjsx.createElement;
 
-let loaded = false, loading = false, error = null;
-
-function ensureLoaded() {
-    if (loaded || loading) return;
-    loading = true;
-    fetchClusters().then((j) => {
-        state._clusters = j;
-        loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = panelError('the related reports', e); schedule(); });
-}
+const loader = createPanelLoader({
+    what: 'the related reports',
+    label: 'loading related-case groups',
+    fetch: fetchClusters,
+    apply: (j) => { state._clusters = j; },
+});
 
 function clusterRow(c, i) {
     const loc = (c.location || []).join(', ');
@@ -54,16 +50,13 @@ function clusterRow(c, i) {
 // the rail lets the two agree on screen instead of living in two unrelated
 // presentations that can drift apart.
 export function ClustersPanel({ railed = false } = {}) {
-    ensureLoaded();
-    let body;
-    if (loading && !loaded) body = Spinner({ label: 'loading related-case groups' });
-    else if (error) body = Alert({ kind: 'error', children: error });
-    else {
+    loader.ensureLoaded();
+    const body = loader.slot(() => {
         const cl = (state._clusters && state._clusters.clusters) || [];
-        body = cl.length
+        return cl.length
             ? h('div', {}, ...cl.map(clusterRow))
             : Alert({ kind: 'info', children: 'No related-looking groups right now.' });
-    }
+    });
     if (railed) return body;
     // Body only, like every other registered panel. This module used to add its
     // own 'Back to cases' button and its own 'Related reports' title on top of

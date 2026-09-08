@@ -5,11 +5,11 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Select } from '/design/src/components/content/fields.js';
-import { Spinner, Alert } from '/design/src/components/content/feedback.js';
+import { Alert } from '/design/src/components/content/feedback.js';
 import { Chip } from '/design/src/components/shell/atoms.js';
 import { Icon } from '/design/src/components/shell.js';
-import { state, schedule, setActiveId } from '../state.js';
-import { panelError } from './panel-error.js';
+import { state, setActiveId } from '../state.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchActivity } from '../api.js';
 import { fmtTime, rel } from '../format.js';
 import { eventIcon, eventTone } from '../icons-map.js';
@@ -23,11 +23,19 @@ const ACT_KIND_LABEL = { inbound: 'Inbound', outbound: 'Reply', transition: 'Sta
 // time. Casey's own default and uhh declare no dashboard_ui, so this stays
 // the literal 'casey' for them.
 function actorLabels() {
-  return { agent: state.config?.dashboard_ui?.brand || 'casey', operator: 'Operator', contact: 'Contact', system: 'System' };
+    return { agent: state.config?.dashboard_ui?.brand || 'casey', operator: 'Operator', contact: 'Contact', system: 'System' };
 }
 
-let loading = false, error = null;
 let filters = { kind: '', actor: '' };
+
+// Both filters are SERVER-side narrowings, so changing either is a refetch --
+// this fetch reads `filters` at call time rather than closing over one value.
+const loader = createPanelLoader({
+    what: 'the activity feed',
+    label: 'loading activity',
+    fetch: () => fetchActivity({ kind: filters.kind, actor: filters.actor, limit: 100 }),
+    apply: (j) => { state._activity = j; },
+});
 
 function ActivityRow(e, i) {
     return h('div', {
@@ -48,38 +56,24 @@ function ActivityRow(e, i) {
             (e.text || '').trim() ? h('div', { class: 'ds-activity-text' }, (e.text || '').slice(0, 200)) : null));
 }
 
-function load() {
-    loading = true; schedule();
-    fetchActivity({ kind: filters.kind, actor: filters.actor, limit: 100 }).then((j) => {
-        state._activity = j;
-        loading = false; error = null; schedule();
-    }).catch((e) => { loading = false; error = panelError('the activity feed', e); schedule(); });
-}
-
-let started = false;
-function ensureLoaded() { if (!started) { started = true; load(); } }
-
 export function ActivityPanel() {
-    ensureLoaded();
+    loader.ensureLoaded();
     const filterRow = h('div', { class: 'ds-activity-filters' },
         Select({
             key: 'k', placeholder: 'all kinds', value: filters.kind,
             options: Object.entries(ACT_KIND_LABEL).map(([id, label]) => ({ id, label })),
-            onChange: (v) => { filters.kind = v; load(); },
+            onChange: (v) => { filters.kind = v; loader.reload(); },
         }),
         Select({
             key: 'a', placeholder: 'all actors', value: filters.actor,
             options: Object.entries(actorLabels()).map(([id, label]) => ({ id, label })),
-            onChange: (v) => { filters.actor = v; load(); },
+            onChange: (v) => { filters.actor = v; loader.reload(); },
         }));
-    let body;
-    if (loading) body = Spinner({ label: 'loading activity' });
-    else if (error) body = Alert({ kind: 'error', children: error });
-    else {
+    const body = loader.slot(() => {
         const ev = (state._activity && state._activity.events) || [];
-        body = ev.length
+        return ev.length
             ? h('div', { class: 'ds-activity-list' }, ...ev.map((e, i) => ActivityRow(e, i)))
             : Alert({ kind: 'info', children: 'Nothing matches these filters.' });
-    }
+    });
     return Panel({ children: [filterRow, body] });
 }

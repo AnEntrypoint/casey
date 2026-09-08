@@ -3,10 +3,10 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
-import { Spinner, Alert } from '/design/src/components/content/feedback.js';
+import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule, setActiveId } from '../state.js';
-import { panelError } from './panel-error.js';
+import { createPanelLoader } from './panel-load.js';
 import { fetchHandover, postStartShift } from '../api.js';
 import { fmtTime } from '../format.js';
 import { toast } from '../toasts.js';
@@ -20,23 +20,23 @@ const SECTION_EMPTY_TEXT = {
 
 const h = webjsx.createElement;
 
-let loaded = false, loading = false, error = null, starting = false;
+let starting = false;
 
-function ensureLoaded() {
-    if (loaded || loading) return;
-    loading = true;
-    fetchHandover().then((j) => {
-        state._handover = j;
-        loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = panelError('the handover', e); schedule(); });
-}
+const loader = createPanelLoader({
+    what: 'the handover',
+    label: 'loading handover digest',
+    fetch: fetchHandover,
+    apply: (j) => { state._handover = j; },
+});
 
 async function startShift() {
     starting = true; schedule();
     try {
         await postStartShift();
         toast('Shift started -- "changed this shift" counts from now', 'ok');
-        loaded = false; ensureLoaded();
+        // Every "since" figure on this page is measured from the shift start
+        // that call just moved, so the digest on screen is now wrong.
+        loader.reload();
     } catch (e) { toast('Could not start the shift', 'warn'); }
     starting = false; schedule();
 }
@@ -72,14 +72,13 @@ function handoverBody(j) {
 }
 
 export function HandoverPanel() {
-    ensureLoaded();
+    loader.ensureLoaded();
     const actions = h('div', { class: 'ds-ho-actions' },
         Btn({ variant: 'primary', children: starting ? 'Starting...' : 'Start shift', disabled: starting, onClick: startShift }),
         ' ',
         h('a', { href: '/api/handover?format=html', class: 'ds-link', target: '_blank', rel: 'noopener' }, 'Printable'));
-    let body;
-    if (loading && !loaded) body = Spinner({ label: 'loading handover digest' });
-    else if (error) body = Alert({ kind: 'error', children: error });
-    else body = state._handover ? handoverBody(state._handover) : Alert({ kind: 'warn', children: 'Could not load the handover digest.' });
+    const body = loader.slot(() => (state._handover
+        ? handoverBody(state._handover)
+        : Alert({ kind: 'warn', children: 'Could not load the handover digest.' })));
     return Panel({ children: [actions, body] });
 }
