@@ -17,10 +17,22 @@ import { mountRoutes } from './register.js'
 // external_id_formatted is the deliberate DISPLAY form: an authed operator may
 // ring back the person reporting a dying herd, so the number is formatted here
 // via format.js's fmtPhone27 and the raw routing key never leaves.
+// last_location_lat/lon are deliberately NOT emitted here. They were, and
+// nothing ever read them: the contacts panel renders only last_location_at, as
+// "last seen <time>" or "never". They also carried no provenance. A worker's
+// stored position may be the model's own guess at a place name they said
+// rather than a GPS fix, which is why the map's own worker projection
+// (routes/map.js workerPinProjection) emits location_source beside the
+// coordinate and draws the two differently. Handing a bare lat/lon to a client
+// through this allowlist invited the opposite: a guess rendered as a fact, by
+// whichever panel picked the fields up first.
+//
+// If a panel does need to show where a worker is, it should go through the map
+// projection, which carries the provenance -- or this allowlist should gain
+// last_location_source at the same time as the coordinates, never before.
 export const publicContact = (c) => ({
   id: c.id, channel: c.channel, external_id_formatted: fmtPhone27(c.external_id),
   display_name: c.display_name || null, tier: c.tier === 'field_worker' ? 'field_worker' : 'reporter',
-  last_location_lat: c.last_location_lat ?? null, last_location_lon: c.last_location_lon ?? null,
   last_location_at: c.last_location_at || null, created_at: c.created_at,
 })
 
