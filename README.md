@@ -14,7 +14,7 @@ people. Times are shown in SAST and phone numbers in +27 format by default
 
 This repo ships a generic **IT/facilities-helpdesk** demo config by default.
 The animal-disease-surveillance-for-rural-South-Africa domain casey was
-originally built for is now a separate, fully self-contained config package:
+originally built for is a separate, fully self-contained config package:
 [`AnEntrypoint/uhh`](https://github.com/AnEntrypoint/uhh) (private). Install
 it with `git clone --recurse-submodules` and run `node ./bin/uhh.js up`; it
 declares casey as `file:deps/casey`, and an in-repo `file:` dependency cannot
@@ -111,7 +111,7 @@ well, and may not speak English as a first language. So casey:
   has to hunt. When nothing needs a person it shows a calm "All caught up" message, not a blank box.
 - a one-time **plain-words help overlay** (re-openable with the `?` button) explains, with no
   jargon, what each row is, what the amber dot means, and what every button does.
-- a **plain-language mode** (the `Aa` button, remembered across visits) relabels stages to
+- a **plain-language mode** (remembered across visits) relabels stages to
   friendly names (`Looking into it`, `Working on it`, `Done`, ...) everywhere.
 - each open case shows a **"what to do now"** line derived from its state (e.g. "This person asked
   for a real person. Reply to them below."), plus **ready-made replies** the operator can tap to
@@ -154,6 +154,12 @@ auto-creates one admin account on first boot and prints its password once.
 casey needs at least one real channel (Discord or WhatsApp) configured in `.env` before `casey up`
 will start -- there is no offline demo mode.
 
+Note for developers: a bare `npm install` at this repo's root crashes once the
+`node_modules/@freddie/*` junctions exist (an `@npmcli/arborist` tree-load
+failure across the 220 junctions). Run `node scripts/install-freddie-deps.mjs`
+and `node scripts/link-deps.mjs` directly instead -- see `AGENTS.md`'s Dev
+workflow.
+
 ### The dashboard
 
 The dashboard is the whole operator surface -- one page, no build step:
@@ -185,9 +191,11 @@ The dashboard is the whole operator surface -- one page, no build step:
   status-colored and clustered, with a correlated-cases overlay, an operator-coverage overlay (each
   operator's learned working area), and a field-worker location overlay (from `case_checkin`
   self-reports). A case with no coordinate lands in an "unresolved" bucket instead of being dropped.
+- **Secretary queue:** `/api/secretary/queue` groups the worst-first attention list by normalised
+  place and by assignee, so a follow-up owner sees which reports have been dropped and where.
 - **Reporters panel:** promotes a trusted reporter to the `field_worker` access tier (unlocking their
   own case-query tools and casual location check-ins) or demotes them back to `reporter`. Operator-only
-  and never agent-settable -- see "Reporter access tiers" below.
+  and never agent-settable -- see "Reporter access tiers" above.
 - **Mine filter (`Mine` button):** once you have picked who you are (top-right), `Mine` scopes both the
   case list and the "Needs you now" inbox to just the cases you have claimed, so a busy shift can work
   its own queue.
@@ -198,11 +206,12 @@ The dashboard is the whole operator surface -- one page, no build step:
 - **Plain-language help + first-run onboarding:** a focused three-step **quick-start overlay** greets a
   first-time operator (pick who you are; the inbox is your queue; claim before you reply) and is
   remembered once dismissed (re-open from help). A separate **help overlay** (`?`) explains everything
-  including the keyboard shortcuts; an **`Aa` plain-mode** toggle relabels stages to friendly names
+  including the keyboard shortcuts; a **plain-mode** toggle relabels stages to friendly names
   everywhere (remembered), and each open case shows a **"what to do now"** hint derived from its state.
-- Non-blocking **toasts** replace alert popups, a banner appears if the connection drops, the list
-  auto-refreshes every 5s (paused while you're typing so it never clobbers an edit), new cases raise a
-  toast, the open case is **deep-linked** in the URL (shareable), and a **light/dark** toggle persists.
+- Non-blocking **toasts** replace alert popups, a banner appears if the connection drops, the case list
+  polls every 5s while it is the visible surface (paused while you're typing so it never clobbers an
+  edit, and stood down on the map home view and in Focus mode), new cases raise a toast, the open case
+  is **deep-linked** in the URL (shareable), and a **light/dark** toggle persists.
   All contact-supplied text is HTML-escaped before render.
 
 ## Commands
@@ -214,21 +223,30 @@ node bin/casey.js up            # gateway (any channel with creds) + dashboard o
 node bin/casey.js dashboard     # observe/edit dashboard only, on :4000
 node bin/casey.js cases         # list cases (empty -> hint on how to make one)
 node bin/casey.js show <ref|id> # show a case + full timeline
+node bin/casey.js attention     # worst-first attention ranking
+node bin/casey.js handover      # shift-handover summary
+node bin/casey.js report        # management report (SLA, response + closure rates)
+node bin/casey.js health        # read-only guardrail summary (writes nothing)
+node bin/casey.js sweep         # run the health-guardrail sweep once now (writes tags/observations)
+node bin/casey.js transition <ref|id> <stage> [--reason]   # legality-checked stage move
+node bin/casey.js erase-contact <contact-id> [--reason]    # irreversibly scrub a contact's PII
+node bin/casey.js operators <add|list|disable|enable> ...  # dashboard login accounts (break-glass)
 node bin/casey.js --version     # print the version  (also --help / -h on any command)
-npm run lint                    # dependency-free preflight: syntax + config + package + ascii + gates
+npm run lint                    # dependency-free preflight; the gate to run before pushing
 npm run gui-check               # drives the real dashboard in headless Chromium (needs a browser)
 npm run scan-deps               # supply-chain scan of own source + node_modules
 npm run check-submodules        # branch/dirty/ahead-behind report on every deps/* checkout
 ```
 
 `npm run lint` (`node scripts/lint.mjs`) runs every check that works from a bare
-clone -- `node --check` on all JS, a YAML parse of `thatcher.config.yml`,
-`package.json` sanity, the ASCII-only source convention, and four structural
-grep gates (pure-agent, no-stub-mock, pii-safety, trust-boundary). It needs no
-sibling checkouts. There is no CI workflow in this repo -- `.github/` does not
-exist -- so `npm run lint` is a local gate a human or agent runs by hand before
-pushing. There is no automated test suite either; verification is manual/live
-against a real running `casey up` instance.
+clone: `node --check` on all JS, a YAML parse of `thatcher.config.yml`,
+`package.json` sanity, the ASCII-only source convention, and the structural
+grep gates -- `pure-llm`, `no-stub-mock`, `pii-safety`, `trust-boundary`,
+`cli-help`, plus `design-lint` when `deps/design` happens to be checked out. It
+needs no sibling checkouts. There is no CI workflow in this repo -- `.github/`
+does not exist -- so `npm run lint` is a local gate a human or agent runs by
+hand before pushing. There is no automated test suite either; verification is
+manual/live against a real running `casey up` instance.
 
 `casey up` runs the real model through acptoapi's provider chain. Put your provider
 key in `~/.acptoapi/.env` (acptoapi loads that file itself, not casey's `.env`) and
@@ -252,7 +270,7 @@ AGENTS.md "Supervised runtime" for the full env-var set.
 | `DISCORD_BOT_TOKEN` | Enable Discord (real bot, gateway WebSocket receive with RESUME). |
 | `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Enable WhatsApp (Meta Graph send). |
 | `WHATSAPP_VERIFY_TOKEN` | Webhook verification handshake token. |
-| `WHATSAPP_APP_SECRET` | When set, inbound webhooks are HMAC-SHA256 verified (`X-Hub-Signature-256`); forged posts are rejected. |
+| `WHATSAPP_APP_SECRET` | When set, inbound webhooks are HMAC-SHA256 verified (`X-Hub-Signature-256`); forged posts are rejected. Required, not optional, once WhatsApp credentials exist. |
 | `WHATSAPP_WEBHOOK_PATH` | Path Meta POSTs to (default `/webhooks/whatsapp`). There is no `WHATSAPP_WEBHOOK_PORT`. |
 | `CASEY_WEBHOOK_HOST`, `CASEY_WEBHOOK_PORT` | Host/port of the freddie-tree web server carrying that webhook (default `127.0.0.1:4001`) -- a different socket from the dashboard's 4000. This is the port a WhatsApp deployment publishes to Meta as its callback URL, so Meta needs a stable public URL for it; use a tunnel in dev. |
 | `CASEY_SESSION_SECRET` | HMAC key signing the dashboard session cookie. The dashboard uses per-operator username/password login (no bearer token, no `?token=`); a fresh deployment with zero accounts auto-creates one admin with a random printed password. Random per process when unset, so a restart logs everyone out -- set it explicitly for sessions to survive a restart. |
@@ -266,7 +284,7 @@ AGENTS.md "Supervised runtime" for the full env-var set.
 | `CASEY_RECEIVE_SILENCE_MS` | Restart a channel that went silent this long (zombie-receive self-heal; default 0 = off). |
 
 `CASEY_OPERATORS` (a comma-separated `id:Name` roster env var) has been removed --
-the team-coverage-gap check now reads the live `operator_account` table directly,
+the team-coverage-gap check reads the live `operator_account` table directly,
 the same roster the dashboard's Team panel and Reporters panel already show.
 Setting it has no effect.
 
@@ -276,7 +294,7 @@ Setting it has no effect.
 casey/
   thatcher.config.yml        entities (case/event/contact) + case workflow (system of record)
   config/default/            bundled demo config: report-fields.yml + persona.cjs
-  bin/casey.js               CLI: init / doctor / up / dashboard / cases / show / attention / report / ... (colorized, --help/--version)
+  bin/casey.js               CLI entry; bin/casey-cli.mjs holds the COMMANDS table (colorized, --help/--version)
   freddie-bundle/            casey's Cordis plugins mounted into freddie's real boot(): case-tools, llm-acptoapi, platform (WhatsApp/Discord wiring), tool-allowlist
   src/
     casey.js                 top-level assembly: store + adapters + freddie boot + gateway shim + logger
@@ -286,8 +304,8 @@ casey/
     store/report-shape.js    derives REPORT_KEYS/CRITICAL_FIELDS/etc from the loaded config
     case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, config validation
     case-runtime.js          process singleton so the plugin reaches the live CaseStore
-    case-tools.js            the 18 case_* tool definitions (report/get/list/update/observe/transition/mine/today/new/switch/split/checkin/idle/health/stop/handoff/link_suggestions/transitions_available), autonomy- and tier-enforced
-    gateway-hooks.js         re-exports hooks/handler.js's makeCaseHandler: case-aware inbound (agent-driven, no deterministic text processing), dedup, media, observe
+    case-tools.js            composes the 18 case_* tools (report/get/list/update/observe/transition/mine/today/new/switch/split/checkin/idle/health/stop/handoff/link_suggestions/transitions_available) from the case-tools-*.js modules, autonomy- and tier-enforced
+    hooks/handler.js         makeCaseHandler: case-aware inbound (agent-driven, no deterministic text processing), dedup, media, observe -- re-exported by gateway-hooks.js
     provenance-wire.js       additive provenance-tagged Observation write alongside the real thatcher case.report write
     dashboard/server.js      express API + anentrypoint-design-styled SPA (observe + edit + override + reply + map + reporters + accounts)
 ```
@@ -317,5 +335,3 @@ needs `pnpm` on the machine.
 submodule's branch/dirty/ahead-behind state. See `AGENTS.md`'s Architecture
 and Dev workflow sections for the full mechanism and a copy-pasteable
 edit/push/bump sequence.
-
-<!-- auto-deploy witness 1782927443 -->
