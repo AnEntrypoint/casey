@@ -7,6 +7,19 @@
 //   getRoster, csvCell, fmtTimeSAST, printableReportRow, printableReportTable,
 //   printableReport, computeFillRate
 import { tagList } from '../../timestamp.js'
+// The deployment's own name, not casey's. These two pages are the only
+// server-rendered surfaces that still titled themselves after the framework:
+// their stylesheet already draws headings in BRAND.accent, so a rebranded
+// deployment was printing an orange page headed "casey management report".
+import { BRAND } from '../brand.js'
+
+// Download filenames carry the brand too -- an operator's Downloads folder is
+// as user-facing as the page. Slugified rather than interpolated raw: a brand
+// name legitimately contains spaces ("Herd Health"), and this value goes into
+// a Content-Disposition header where a space or a quote would be a header
+// injection, not a cosmetic problem. An unconfigured deployment slugs to
+// "casey", so the filename is unchanged from before.
+const brandSlug = () => (BRAND.name || 'casey').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'casey'
 import { evData } from '../../safe.js'
 import { mountRoutes } from './register.js'
 
@@ -197,7 +210,7 @@ export function getReportCsv(deps) {
       lines.push(['by_operator', k('oldest_waiting_hours'), csvCell(msToHrs(o.oldest_waiting_ms))].join(','))
     }
     res.setHeader('Content-Type', 'text/csv')
-    res.setHeader('Content-Disposition', 'attachment; filename="casey-management-report.csv"')
+    res.setHeader('Content-Disposition', `attachment; filename="${brandSlug()}-management-report.csv"`)
     res.send(lines.join('\n'))
   }
 }
@@ -275,7 +288,7 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
       res.setHeader('X-Audit-Truncated', 'true')
     }
     res.setHeader('Content-Type', 'text/csv')
-    res.setHeader('Content-Disposition', 'attachment; filename="casey-audit-trail.csv"')
+    res.setHeader('Content-Disposition', `attachment; filename="${brandSlug()}-audit-trail.csv"`)
     res.send(lines.join('\n'))
   }
 }
@@ -293,7 +306,8 @@ export function getReportHtml(deps) {
     const opRows = r.by_operator.map(o =>
       printableReportRow([o.name, o.open_assigned, o.stale_claims, o.replies_24h, msToHrs(o.first_reply_ms_median), msToHrs(o.oldest_waiting_ms)])).join('')
       || printableReportRow(['none', '0', '0', '0', '', ''])
-    const body = `<h1>casey management report</h1>`
+    const title = `${BRAND.name} management report`
+    const body = `<h1>${esc(title)}</h1>`
       + `<p>Generated ${esc(fmtTimeSAST(Math.floor(r.generated_at / 1000)))} -- last ${esc(r.period_days)} days</p>`
       + `<h2>Totals</h2><table>${row('all cases', r.totals.all)}${row('open', r.totals.open)}${row('closed', r.totals.closed)}${row('opened this period', r.opened_this_period)}${row('closed this period', r.closed_this_period)}</table>`
       + `<h2>Response time</h2><table>${row('median first reply (hours)', msToHrs(r.median_first_response_ms))}${row('p90 first reply (hours)', msToHrs(r.p90_first_response_ms))}</table>`
@@ -302,7 +316,7 @@ export function getReportHtml(deps) {
       + `<h2>Team workload</h2><table>${opHead}${opRows}</table>`
       + `<h2>Current health breaches</h2><table>${breachRows}</table>`
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
-    res.send(printableReport('casey management report', body))
+    res.send(printableReport(title, body))
   }
 }
 
@@ -316,7 +330,8 @@ export function getHandover(deps) {
     const row = printableReportRow
     const tbl = printableReportTable
     const sinceTxt = h.since ? fmtTimeSAST(secs(h.since)) + (h.since_by ? ` (by ${esc(h.since_by)})` : '') : 'start of records'
-    const body = `<h1>casey shift handover</h1>`
+    const title = `${BRAND.name} shift handover`
+    const body = `<h1>${esc(title)}</h1>`
       + `<p>Generated ${esc(fmtTimeSAST(secs(h.generated_at)))} -- since ${esc(sinceTxt)}</p>`
       + `<h2>Needs attention (${h.attention.length})</h2>`
       + tbl(['ref', 'subject', 'channel', 'owner', 'why'], h.attention.map(a => row([a.ref, a.subject, a.channel, a.assignee || '-', a.reason])))
@@ -327,7 +342,7 @@ export function getHandover(deps) {
       + `<h2>Touched this shift (${h.touched.length})</h2>`
       + tbl(['when', 'ref', 'subject', 'last action'], h.touched.map(a => row([fmtTimeSAST(secs(a.at)), a.ref, a.subject, `${a.last_kind}${a.last_actor ? ' by ' + a.last_actor : ''}`])))
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
-    res.send(printableReport('casey shift handover', body))
+    res.send(printableReport(title, body))
   }
 }
 
