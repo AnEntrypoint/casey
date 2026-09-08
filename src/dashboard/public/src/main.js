@@ -223,10 +223,10 @@ async function boot() {
   }
   applyRouteToState();
   const noDeepLink = !hv.caseId && !hv.view && !hv.inbox && !state.activePanel;
-  // A secretary's job is the follow-up queue (HERD-HEALTH-ROADMAP.md Phase
-  // 2) -- land them there by default, ahead of the deployment-wide
-  // dashboard_ui.default_view, since it is more specific to what this role
-  // actually needs "need to know" every time they open the dashboard.
+  // The secretary role exists to work the follow-up queue -- land them there
+  // by default, ahead of the deployment-wide dashboard_ui.default_view, since
+  // it is more specific to what this role actually needs to know every time
+  // they open the dashboard.
   // Never overrides an explicit deep link. No-op for every other role.
   if (state.currentUser?.role === 'secretary' && noDeepLink) {
     openPanel('secretary');
