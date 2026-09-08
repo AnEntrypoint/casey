@@ -231,7 +231,12 @@ export function classifyWorkerCheckins(contacts, now = Date.now(), checkinWindow
   const overdue = []
   for (const c of contacts) {
     if (c.tier !== 'field_worker') continue
-    const lastAt = c.last_location_at ? new Date(c.last_location_at).getTime() : null
+    // tsMs, not new Date(): last_location_at is written as ISO (case-tools.js's
+    // check-in handler), but this module already imports the one shared
+    // digit-string-aware parser and hooks/prompt.js reads the SAME column
+    // through it -- three readers of one column must not each guess differently
+    // (timestamp.js's own header states exactly this).
+    const lastAt = c.last_location_at ? tsMs(c.last_location_at) : null
     const ageMs = lastAt ? now - lastAt : Infinity
     if (!Number.isFinite(ageMs) || ageMs > checkinWindowMs) {
       overdue.push({

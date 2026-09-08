@@ -21,6 +21,20 @@ export function evData(e) {
   return {}
 }
 
+// Coerce a thatcher/busybase integer column to a real number. busybase reads
+// integer columns back as DIGIT STRINGS (e.g. "1", "1788821199" -- see AGENTS.md
+// "thatcher / busybase chain"), which makes bare arithmetic on a row value
+// CONCATENATE instead of add: `"1" + 1` is `"11"`. That bug shipped once, in
+// case-store.js's learnOperatorActivity, where nine operator actions accumulated
+// case_count "111111111" and the map's coverage tooltip rendered it verbatim.
+// Anything non-numeric (null, "", a corrupt legacy run of 1s beyond the safe
+// integer range) degrades to `fallback` rather than propagating NaN.
+export function rowInt(v, fallback = 0) {
+  if (v == null || v === '') return fallback
+  const n = Number(v)
+  return Number.isSafeInteger(n) ? n : fallback
+}
+
 // Parse a whole event list's `data` fields in one pass, returning new
 // shallow-cloned rows (never mutates the store's cached rows).
 export function parseEventData(events) {

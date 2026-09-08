@@ -6,6 +6,8 @@
 // deps: store, wrap, authed, actingOperator, isOpenCase, parseJsonArraySafe,
 //   getRoster
 import { classifyWorkerCheckins, WORKER_CHECKIN_WINDOW_MS } from '../../case-health.js'
+import { rowInt } from '../../safe.js'
+import { tsMs } from '../../timestamp.js'
 import { mergeTag } from '../../hooks/heuristics.js'
 
 export function registerMap(app, deps) {
@@ -26,7 +28,9 @@ export function registerMap(app, deps) {
         id: o.id, name: o.name,
         areas: r ? parseJsonArraySafe(r.areas) : [],
         last_seen_at: r?.last_seen_at || null,
-        case_count: r?.case_count || 0,
+        // rowInt(): busybase hands integer columns back as digit strings, and a
+        // row written before case-store.js's concat fix can hold a run of 1s.
+        case_count: rowInt(r?.case_count),
       }
     })
     res.json({ identities })
@@ -120,7 +124,7 @@ export function registerMap(app, deps) {
     const workers = contacts
       .filter(c => c.tier === 'field_worker' && c.last_location_lat != null && c.last_location_lon != null && c.last_location_at)
       .map(c => {
-        const at = Date.parse(c.last_location_at)
+        const at = tsMs(c.last_location_at)   // shared parser; see case-health.js
         const ageMs = Number.isFinite(at) ? now - at : null
         return {
           id: c.id, display_name: c.display_name || null,
