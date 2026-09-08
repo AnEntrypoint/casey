@@ -98,6 +98,32 @@ const TURN_HARD_DEADLINE_MS = Number(process.env.CASEY_TURN_HARD_DEADLINE_MS) ||
 const STILL_WORKING_TEXT = "Still working on this -- one moment."
 const TURN_TIMEOUT_TEXT = "Sorry, I'm having trouble right now. Please try again in a little while, or send your message again."
 
+// Resolve the outbound adapter for a platform from the receiver the handler is
+// bound to.
+//
+// This read `this?.platforms?.get?.(platform)` and could never resolve. casey.js
+// binds this handler to the Casey instance (`handler.bind(this)`), and Casey has
+// no `platforms` at all -- it builds `this.adapters`, a plain OBJECT keyed by
+// channel. `platforms` exists only as a local const in casey.js's init that is
+// assigned straight into `this.adapters`. So the optional chain short-circuited
+// on every turn and `adapter` was always undefined. A later .call/.apply could
+// not have rescued it either: .bind is permanent.
+//
+// It read as a dead typing indicator and was not. The same `adapter` backs the
+// guaranteed-fallback send and the agent's real reply to the contact, and
+// freddie-bundle/src/platform discards this handler's return value, so
+// adapter.send is the only route an agent reply has to a reporter. Both delivery
+// flags were also initialised true BEFORE their `if (adapter?.send)` guard, so a
+// skipped send still recorded the turn as delivered -- silent, not loud, which is
+// how it survived. Likely a port regression: the freddie Gateway this replaced
+// exposed a real `platforms` Map.
+//
+// Object index, not .get() -- `adapters` is an object. Kept tolerant of a missing
+// channel so an unconfigured platform still degrades rather than throwing.
+function resolveAdapter(receiver, platform) {
+  return receiver?.adapters?.[platform] || null
+}
+
 // Returns an async (platform, msg) handler suitable to assign to
 // gateway.handleInbound. `store` is a CaseStore; opts.callLLM optional;
 // opts.autoRespond=false to track-only (no agent turn / reply). The typing
@@ -210,7 +236,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     }
   }
   async function handleInboundOnceClaimed(platform, msg, channel, external_id, replyTo) {
-    const adapter = this?.platforms?.get?.(platform)
+    const adapter = resolveAdapter(this, platform)
     // Rate limits are checked here, before findOrCreateCase/recordInbound run
     // any store write, so a signature-verified flood is turned away without
     // driving unbounded case/event writes -- checking only after those writes
@@ -1323,9 +1349,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       })
       stopTyping()
       const fallbackReply = { to: replyTo, text: fallbackText, platform, caseId: fresh.id, degraded: true, guaranteedFallback: true }
-      let fallbackDelivered = true
+      // Same correction as the reply path below: only true once a real send is
+      // attempted, so 'the guaranteed fallback went out' cannot be recorded for a
+      // turn that had no adapter to send it with.
+      let fallbackDelivered = false
       try {
-        if (typeof adapter?.send === 'function') await adapter.send(fallbackReply)
+        if (typeof adapter?.send === 'function') { fallbackDelivered = true; await adapter.send(fallbackReply) }
       } catch (e) {
         fallbackDelivered = false
         log.error?.('[casey] guaranteed-fallback send failed', { caseId: fresh.id, error: e.message })
@@ -1357,8 +1386,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // disabled/unavailable/failed, leaving a plain text reply.
     const audio = await synthesizeVoice(text)
     if (audio) reply.audio = audio
-    let delivered = true
+    // Not `true` until something actually sent. This was initialised true above
+    // the guard, so when no adapter resolved the turn recorded itself delivered
+    // having sent nothing -- the failure mode that hid the broken lookup.
+    let delivered = false
     if (adapter?.send) {
+      delivered = true
       try { await adapter.send(reply) }
       catch (e) {
         delivered = false
@@ -1393,7 +1426,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // Map-based tracking), so calling it here defensively in a finally, keyed
     // on the same replyTarget() the inner handler used to start it, is safe
     // even on the many paths that never started one at all.
-    const adapter = this?.platforms?.get?.(platform)
+    const adapter = resolveAdapter(this, platform)
     let result
     try {
       result = await handleInboundOnce.call(this, platform, msg)
