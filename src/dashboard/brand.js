@@ -157,9 +157,18 @@ export function darkenUntilReadable(hex, on, floor = 4.5) {
 // different public dir (and so the derivation is inspectable/re-runnable
 // against any ground), with the process-wide answer frozen below.
 export function resolveBrand({ publicDir = PUBLIC_DIR, dashboardUi = DASHBOARD_UI, entityLabel = REPORT_ENTITY_LABEL } = {}) {
-  // Raw, as written in the tag: handed to CSS and to manifest.json verbatim, so
-  // a deployer's `#abc` or colour keyword survives untouched.
-  const ground = readThemeColor(publicDir)
+  // Raw, as written: handed to CSS and to manifest.json verbatim, so a
+  // deployer's `#abc` or colour keyword survives untouched.
+  //
+  // dashboard_ui.theme_color comes FIRST because until it existed there was no
+  // config channel for the ground at all -- the name was configurable and the
+  // colour was not, so the only way to brand a deployment's colour was to edit
+  // casey's own tracked public/index.html. That is exactly what had happened:
+  // the shipped file carried one deployer's orange and their product name, and
+  // this function read it as "casey's own default", so every OTHER deployer
+  // silently inherited it. The meta tag stays as the fallback, so a deployment
+  // that branded itself the old way keeps working with no config change.
+  const ground = normalizeHex(dashboardUi?.theme_color) ? dashboardUi.theme_color : readThemeColor(publicDir)
   // Normalised, for arithmetic only. An unparseable tag still paints (CSS gets
   // the raw value) but the derived tones fall back rather than compute garbage.
   const hex = normalizeHex(ground) || FALLBACK_GROUND
