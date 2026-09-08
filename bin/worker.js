@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createCasey } from '../src/casey.js'
 import { createDashboard } from '../src/dashboard/server.js'
 import { WORKER_MSG, PARENT_MSG, ipcSend } from '../src/supervisor-ipc.js'
-import { caseDeliveryTarget } from '../src/hooks/handler.js'
+import { makeSendReply } from './send-reply.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -189,10 +189,9 @@ async function main() {
   await casey.start()
 
   const dashPort = Number(flags.port || 4000)
-  const sendReply = (caseRow, text) => {
-    const a = casey.adapters[caseRow.channel]
-    return a?.send ? a.send({ to: caseDeliveryTarget(caseRow), text }) : Promise.resolve()
-  }
+  // Shared with bin/casey-cli.mjs's --no-supervise path: the reply delivery
+  // TARGET is deliberately not the conversation key (see bin/send-reply.js).
+  const sendReply = makeSendReply(casey)
   // Health reads the SAME backend the handler uses, so the dashboard shows recovery
   // the instant the provider comes back -- no separate probe to drift from reality.
   const llmStatus = brain.status
