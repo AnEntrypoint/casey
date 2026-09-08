@@ -8,7 +8,7 @@ import * as webjsx from 'webjsx';
 import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton, Btn } from 'ds/components/shell.js';
 import { state, closeModal, openModal } from '../state.js';
 import { buildSideSections, buildActionItems, backToCases, panelTitle, openQueue } from './nav-config.js';
-import { HealthPills } from '../components/health-pills.js';
+import { HealthNotices } from '../components/health-notices.js';
 import { QUEUE_NAME } from '../map-model.js';
 import { AccountMenu, LogoutEverywhereConfirmDialog } from '../components/account-menu.js';
 import { NotificationsCenter } from '../components/notifications-center.js';
@@ -211,16 +211,27 @@ function AttentionLead() {
 //
 // "Receiving reports" is the quiet half of the one signal that matters most in
 // a surveillance deployment: when the channel is deaf, nothing on this screen
-// looks broken and reports simply stop arriving. The loud half is a red pill
-// (health-pills.js's receivingPill), and exactly one of the two is ever on
+// looks broken and reports simply stop arriving. The loud half is a banner
+// (health-notices.js's receivingNotice), and exactly one of the two is ever on
 // screen, so they can never disagree. Absent when no channel is configured at
 // all -- claiming either way would be inventing a fact.
+//
+// Dashboard-only mode is stated HERE and nowhere else. It is a property of how
+// this console was started (`casey dashboard` passes no llmStatus), true for
+// the whole session and unchanged by anything the operator can do on this
+// screen -- so it is standing context, not an exception, and health-notices.js
+// deliberately raises nothing for it. What it costs is real and specific, which
+// is why the phrasing names the store as still live rather than only naming the
+// absence.
 function StatusBar() {
   const total = state.allCasesTotal || (state.allCases || []).length;
-  const gw = state.health.ai && state.health.ai.gateway;
+  const hl = state.health.ai;
+  const gw = hl && hl.gateway;
   const left = [h('span', { key: 'c' }, `${total} report(s) loaded`)];
   const right = [
-    gw && gw.ok ? h('span', { key: 'rx' }, 'Receiving reports') : null,
+    hl && hl.source === 'unwired'
+      ? h('span', { key: 'mode' }, 'Reading the store only -- not attached to the running agent')
+      : (gw && gw.ok ? h('span', { key: 'rx' }, 'Receiving reports') : null),
     h('span', { key: 'conn' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected'),
   ].filter(Boolean);
   return Status({ left, right });
@@ -255,15 +266,13 @@ export function App() {
     brand, leaf,
     items: [], themeToggle: false,
   });
-  // Ordered bottom-line-first: the answer, then the exceptions, then the
-  // verbs, then the account. The health pills sit second because when one is
-  // present it is the reason the operator should stop and read; when nothing
-  // is wrong they render nothing at all and the group collapses, so the
-  // healthy chrome is the lead plus the verbs and nothing else.
-  const pills = HealthPills();
+  // Ordered bottom-line-first: the answer, then the verbs, then the account.
+  // System-health exceptions are NOT here any more -- they render as sentences
+  // in the banner stack below (health-notices.js), where the offline banner
+  // already speaks for the same class of fact. The appbar carries what the
+  // operator acts on: the attention lead, the verbs, alerts, help, account.
   const crumbRight = [
     AttentionLead(),
-    pills.length ? h('div', { class: 'ds-health-pill-group' }, pills) : null,
     ActionRow(),
     NotificationsCenter(),
     IconButton({ icon: Icon('help'), title: 'What does this screen mean?', onClick: () => openModal('help') }),
@@ -298,6 +307,9 @@ export function App() {
   const mapHome = state.homeView === 'map' && !state.activePanel;
   return h('div', { class: 'ds-app-root' + (mapHome ? ' is-map-home' : '') },
     ConnectionBanner(),
+    // The link being down outranks everything below it: with no link, none of
+    // the health data behind these notices is current, so it speaks first.
+    ...HealthNotices(),
     HandoffBanner(),
     AppShell({ topbar, crumb, side, status, main: [MainContent()] }),
     ModalMount(),

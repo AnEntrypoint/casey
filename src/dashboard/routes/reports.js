@@ -7,10 +7,10 @@
 //   getRoster, csvCell, fmtTimeSAST, printableReportRow, printableReportTable,
 //   printableReport, computeFillRate
 import { tagList } from '../../timestamp.js'
-// The deployment's own name, not casey's. These two pages are the only
-// server-rendered surfaces that still titled themselves after the framework:
-// their stylesheet already draws headings in BRAND.accent, so a rebranded
-// deployment was printing an orange page headed "casey management report".
+// A server-rendered page titles itself after the DEPLOYMENT, never after
+// casey: its stylesheet already draws headings in BRAND.accent, so a
+// framework-named title prints a rebranded deployment's colours under another
+// product's name.
 import { BRAND } from '../brand.js'
 
 // Download filenames carry the brand too -- an operator's Downloads folder is

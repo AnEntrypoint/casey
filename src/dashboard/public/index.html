@@ -1,5 +1,10 @@
 <!doctype html>
-<html lang="en"><head>
+<!-- <html> carries the .ds-247420 scope class so the theme presets, which the
+     built bundle scopes as .ds-247420[data-theme="X"], resolve on the root
+     element too. That is what lets app.css paint the ground before the module
+     graph has loaded anything. data-theme is NOT hardcoded here: the inline
+     script below resolves it. -->
+<html lang="en" class="ds-247420"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -18,6 +23,32 @@
      preload even same-origin, or the browser fetches the file twice. -->
 <link rel="preload" href="/vendor/ubuntu/ubuntu-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/vendor/ubuntu/ubuntu-700.woff2" as="font" type="font/woff2" crossorigin>
+<!-- Resolve the theme BEFORE the first paint, and before any stylesheet below
+     has loaded. It has to be inline and it has to be here: a module import
+     resolves at the end of a multi-second module descent on this deployment's
+     link, and everything painted before it would be the wrong theme. The logic
+     is deliberately the same three lines account-menu.js's storedTheme /
+     systemTheme run later -- a stored choice, mapped off the pre-rebrand names,
+     else the device preference -- and account-menu.js re-applies the same
+     answer to body and #app once it loads, so a divergence self-corrects
+     rather than persisting. -->
+<script>
+(function () {
+  var legacy = { paper: 'herd', light: 'herd', ink: 'herd-ink', dark: 'herd-ink' };
+  var saved = null;
+  try { saved = localStorage.casey_theme; } catch (e) { /* storage unavailable */ }
+  var dark = false;
+  try { dark = matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { /* no matchMedia */ }
+  // Stamped as data-casey-theme, NOT data-theme. The design kit's own theme.js
+  // owns data-theme on <html> and sets it to "auto" once its module loads --
+  // live-witnessed clobbering this value, after which the root ground followed
+  // the DEVICE while body followed the operator's CHOICE, and a stored dark
+  // theme on a light device painted a white band behind a dark app. This
+  // attribute is casey's, nothing else writes it.
+  document.documentElement.dataset.caseyTheme =
+    (saved && (legacy[saved] || saved)) || (dark ? 'herd-ink' : 'herd');
+})();
+</script>
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="apple-touch-icon" href="/icon.svg">
 <title>casey</title>
@@ -62,10 +93,11 @@
      outranks the brand palette's own .ds-247420[data-theme="X"] block in
      app.css (0,2,0) however late app.css loads, so any data-accent value
      silently repaints --accent back to the SDK's. With no attribute, no preset
-     matches and the brand token stands. data-theme is stamped here as well as
-     by account-menu.js's initTheme, so the first paint is already the brand
-     ground rather than a flash that resolves a moment later. -->
-<body class="ds-247420" data-theme="herd">
+     matches and the brand token stands. data-theme is NOT hardcoded here
+     either: a literal value would paint the light theme on a dark device for
+     the whole module descent. The script below stamps body and #app with the
+     value the head script already resolved onto <html>. -->
+<body class="ds-247420">
 <!-- The scope class must be on body, not only on #app: overlay-primitives
      (Dropdown/MenuButton/Tooltip/Popover) portal their popover element straight
      onto document.body, so the SDK's own .ds-247420 .ds-popover
@@ -75,7 +107,18 @@
      ancestor. -->
 <script src="/vendor/leaflet/leaflet.js"></script>
 <script src="/vendor/leaflet.markercluster/leaflet.markercluster.js"></script>
-<div id="app" class="ds-247420 ds-app-surface" data-theme="herd"></div>
+<div id="app" class="ds-247420 ds-app-surface"></div>
+<!-- Copy the already-resolved root theme down onto the two elements that
+     could not carry it at parse time. Placed after #app rather than in the
+     head so both elements exist, and synchronous so it runs during parse,
+     before either has painted. -->
+<script>
+(function () {
+  var t = document.documentElement.dataset.caseyTheme;
+  document.body.dataset.theme = t;
+  document.getElementById('app').dataset.theme = t;
+})();
+</script>
 <script type="module" src="/src/main.js"></script>
 <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{})</script>
 </body></html>

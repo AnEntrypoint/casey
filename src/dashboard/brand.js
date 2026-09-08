@@ -1,19 +1,12 @@
 // ONE resolution of a deployment's brand, for every server-rendered surface.
 //
-// server.js already resolved a deployer's real branding for the PWA -- brand
-// name from DASHBOARD_UI.brand, ground colour parsed out of index.html's own
-// <meta name="theme-color">, and an ink colour COMPUTED from that ground's
-// luminance rather than assumed white. manifest.json, the generated icon and
-// offline.html consumed it. Three other server-rendered surfaces did not, and
-// each hand-rolled its own palette instead: the public /report form (a stock
-// blue #2f6fb0 with a progress bar at #f0a030 -- a near-miss of this
-// deployment's actual brand orange #E88427, not the brand orange), the
-// printable case briefing (#2f6fb0 again), and the management-report
-// stylesheet (bare #1a1a1a/#ccc). A deployer therefore had four different
-// answers to "what colour is this product", and the one surface a reporting
-// contact ever sees carried none of their brand at all.
+// Every server-rendered surface -- the PWA manifest and generated icon,
+// offline.html, the public /report form, the printable case briefing, the
+// management report -- resolves its palette HERE. A surface that hand-rolls
+// its own is another answer to "what colour is this product", and the one a
+// reporting contact sees is the one that ends up carrying none of the brand.
 //
-// This module is that single answer. It is deliberately dependency-free and
+// It is deliberately dependency-free and
 // synchronous: /report is reached with NO session and NO design-kit bundle, so
 // it cannot import the SPA design system, and the pages that consume this are
 // plain server-rendered HTML with an inline <style> block.
@@ -47,11 +40,10 @@ const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'p
 const FALLBACK_GROUND = '#3b6ea5'
 
 // index.html's own <meta name="theme-color"> is the single source for the brand
-// colour. It had drifted once already: the page declared #E88427 while the
-// manifest and the generated icon both hardcoded #3b6ea5, so browser chrome,
-// task-switcher entry and home-screen icon were three different colours for one
-// product. Reading the page's own tag makes that divergence unrepresentable
-// rather than merely fixed once.
+// colour (below dashboard_ui.theme_color, see resolveBrand). Read the page's
+// tag rather than restating the value: a hardcoded copy in the manifest or the
+// generated icon makes browser chrome, task-switcher entry and home-screen icon
+// three different colours for one product.
 export function readThemeColor(publicDir = PUBLIC_DIR) {
   try {
     const m = /<meta\s+name="theme-color"\s+content="([^"]+)"/i.exec(readFileSync(path.join(publicDir, 'index.html'), 'utf8'))

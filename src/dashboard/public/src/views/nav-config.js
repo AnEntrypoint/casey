@@ -162,11 +162,9 @@ function rawActionItems({ refreshAll } = {}) {
 const ROLE_HIDE = {
   secretary: ['sweep', 'settings', 'metrics', 'distribution', 'team'],
 };
-// The 'Account' survivor special-case that used to live in both filters below
-// is gone with the always-empty 'Account' group it existed to protect: a group
-// that never had an item still rendered its header, and both filters then
-// carried branch logic to keep that emptiness alive. The account controls have
-// always actually lived in the topbar's AccountMenu.
+// The account controls live in the topbar's AccountMenu, never in a nav group
+// here: an item-less group still renders its header, so both filters below
+// drop a group the moment its item count reaches zero.
 function applyRoleScope(sections, role) {
   const hide = new Set(ROLE_HIDE[role] || []);
   if (!hide.size) return sections;

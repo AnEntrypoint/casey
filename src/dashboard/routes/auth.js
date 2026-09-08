@@ -100,15 +100,10 @@ const ENTITY = BRAND.entityLabel || 'report'
 // report vocabulary (report-fields.yml, via report-shape.js), never a second
 // hand-written list.
 //
-// This used to be thirteen hardcoded animal-health keys (species, symptoms,
-// suspected_disease, dead_count...) in a codebase whose whole point is that
-// the domain comes from config, and which ships an IT-helpdesk demo by
-// default. That was not merely off-domain wording: case-store.js's
-// mergeReport rejects any key outside REPORT_KEYS, so under any config but
-// one, a contact who filled this form in got "Something went wrong saving
-// your details" and their report was silently not saved. The form could not
-// work and could not be made to work by editing config -- the only surface a
-// reporting contact ever reaches was hardcoded to one deployment.
+// Never hardcode a key list here. case-store.js's mergeReport rejects any key
+// outside REPORT_KEYS, so a hand-written list works under exactly one config
+// and silently fails the save ("Something went wrong saving your details") for
+// every other -- on the only surface a reporting contact ever reaches.
 //
 // Two field classes are held back:
 //  - `append` fields (photos/voice notes/extra sites) accumulate agent-written
@@ -191,11 +186,9 @@ const PUBLIC_GROUPS = (() => {
 // What this page must not ALSO be is a
 // separate palette: every brand-carrying value in the <style> block below
 // comes from dashboard/brand.js, the same resolution manifest.json, the
-// generated icon and offline.html already read. It used to be a stock blue
-// (#2f6fb0 buttons and focus rings, #1a3a5c headings, #dce8f5 rules) with a
-// progress bar at #f0a030 -- a near-miss of this deployment's real brand
-// orange #E88427 rather than the brand orange itself -- on the one surface a
-// reporting contact ever sees.
+// generated icon and offline.html already read. A literal hex here is a fifth
+// answer to "what colour is this product", on the one surface a reporting
+// contact ever sees.
 //
 // Semantic colours (the ok/error banners, the completed-bar green) stay fixed
 // on purpose: those encode meaning, not identity, and re-tinting them to a
@@ -212,10 +205,8 @@ const PUBLIC_GROUPS = (() => {
 // here: it is 874,759 bytes against this page's three). Six rungs do the whole
 // page, each with exactly one job: --fs-xl page title, --fs-lg section title
 // and brand mark, --fs-body the inputs and the send button, --fs-xs the field
-// labels and banners, --fs-tiny the hints, --fs-micro the fine print. Before
-// this the page mixed 1.3em, 17px, 16px, 14px, 13px and 12px with no rule
-// about which meant what, and rendered SEVEN distinct sizes in a real browser
-// -- the seventh being an accident, see the input selector below.
+// labels and banners, --fs-tiny the hints, --fs-micro the fine print. A raw
+// px/em value here is a seventh size with no rule about what it means.
 //
 // THE PAGE STAYS LIGHT IN A DARK DEPLOYMENT, and that is a decision, not an
 // oversight. brand.js derives `accent` by darkening the brand ground one

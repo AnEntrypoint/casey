@@ -119,15 +119,12 @@ const PAGE_MAX = 200
 // files) and then stats exactly the vendored bundles index.html links. It does
 // not walk the design package, which is thousands of files this page never asks
 // for.
-// The shell's asset list is DERIVED from index.html rather than maintained
-// beside it. Two hardcoded copies existed before and had already drifted apart:
-// the build-id inputs still named dist/247420.js (nothing has loaded it since
-// the design-SDK shim was removed) while BOTH copies omitted the two
-// MarkerCluster stylesheets the page really links -- so editing one of those
-// could not change the cache name, and a version-scoped cache would have gone
-// on serving the old CSS. index.html is the only thing that knows what the
-// shell loads, so it is the only thing asked. Same precedent as the manifest's
-// theme_color, which is parsed from index.html's own meta tag below.
+// The shell's asset list is DERIVED from index.html, never maintained beside
+// it: index.html is the only thing that knows what the shell loads. A
+// hand-kept copy drifts, and a drifted list means editing an asset cannot
+// change the cache name, so a version-scoped cache goes on serving the old
+// bytes. Same precedent as the manifest's theme_color, parsed from
+// index.html's own meta tag below.
 const SHELL_MOUNTS = [
   ['/design/', DESIGN_DIR],
   ['/vendor/leaflet.markercluster/', MARKERCLUSTER_DIR],
@@ -395,11 +392,9 @@ function printableReport(title, bodyHtml, extraCss = '') {
 
 // thatcher persists event.data as a JSON string and store.list* returns it unparsed.
 // The SPA reads e.data.field/.by etc. as objects, so parse `data` to an object at the
-// API boundary before sending. Both helpers now live in src/safe.js (casey's shared
-// defensive-parsing module); parseEventData there always shallow-clones each row (the
-// original inline version here skipped the clone when data was already an object --
-// a latent bug the shared version fixes, since store.list*'s returned rows must never
-// be mutated regardless of whether data happened to already be parsed).
+// API boundary before sending. src/safe.js owns both helpers; its parseEventData
+// always shallow-clones each row, because store.list*'s returned rows must never be
+// mutated -- including when `data` happened to arrive already parsed.
 
 // Response compression -- the single biggest lever on the rural link this
 // deployment targets, and it was entirely absent. Measured on the real
@@ -538,25 +533,12 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
 
-  // A /design-sdk-shim.js route used to be registered HERE, ahead of
-  // registerAuth. It re-exported webjsx's createElement plus the merged
-  // shell/content/overlay-primitives surface, and index.html's import map
-  // remapped '/design/dist/247420.js' onto it, because six case-list modules
-  // imported `* as ds` from the design SDK's prebuilt bundle -- 745,191 raw /
-  // 355,065 gzipped bytes and one more serial round trip -- while using only
-  // `ds.h` and `ds.components`, naming nine components that all live in three
-  // source modules the page already loads through the `ds/` import map.
-  //
-  // That was a redirect standing in for the real fix. The six modules now
-  // import Btn/Chip/Pill/Badge/Heading from ds/components/shell.js,
-  // Select/SearchInput/FilterPills from ds/components/content.js and Dropdown
-  // from ds/components/overlay-primitives.js directly, exactly like every
-  // other view in this SPA, so both the import-map entry and this route are
-  // gone. Nothing under public/ references /design/dist/247420.js any more.
-  //
-  // Do NOT reintroduce either half. A new design component belongs in a named
-  // import from its own ds/ module; a bundle-specifier import map entry costs
-  // 355 KB gzipped for a strict superset of bytes already in flight.
+  // Do NOT register a /design-sdk-shim.js route here, and do NOT add an
+  // import-map entry for '/design/dist/247420.js'. That pair costs 355,065
+  // gzipped bytes plus one more serial round trip for a strict superset of
+  // what the ds/ sources already deliver. A new design component belongs in a
+  // named import from its own ds/ module (shell.js, content.js,
+  // overlay-primitives.js), exactly like every other view in this SPA.
 
   // /api/login, /api/logout, and the public /report contact form are the only
   // routes reachable with no session -- every other /api route and the SPA
@@ -726,10 +708,13 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     res.json({
       name: PWA_BRAND, short_name: PWA_BRAND, start_url: '/', display: 'standalone',
       // The splash screen paints background_color before the page's own CSS
-      // exists. It used to be #0f1115, a near-black, on a deployment whose
-      // first paint is the brand's white ground -- so every launch of the
-      // installed app opened with the dark flash that index.html's own
-      // data-theme comment says was deliberately engineered away.
+      // exists, so this is the installed app's launch ground. It is the light
+      // theme's, and it cannot follow the device: the manifest is static JSON
+      // with no media-query form, so one value has to serve both themes. A
+      // dark-mode operator therefore still gets a light splash before
+      // index.html's own resolved dark ground takes over. Accepted, and the
+      // only alternative -- a dark splash -- would be wrong for the majority
+      // and would reintroduce the near-black flash this replaced.
       background_color: '#ffffff', theme_color: PWA_THEME_COLOR,
       // No hardcoded description. The old one read "Animal-disease
       // surveillance case management" in a codebase whose whole point is that

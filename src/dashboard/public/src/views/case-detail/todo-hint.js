@@ -18,6 +18,10 @@ function tagList(c) { return String(c.tags || '').split(',').map(t => t.trim()).
 export function todoHintText(c) {
     const brand = state.config?.dashboard_ui?.brand || 'casey';
     const tags = tagList(c);
+    // 'opted-out' is a legal control (the contact said STOP). Its one
+    // definition is src/hooks/heuristics.js's OPTED_OUT_TAG, which a browser
+    // module cannot import -- change this literal in step with it, and with
+    // reply-box.js's own copy, or this hint stops firing silently.
     if (tags.includes('opted-out')) return 'This person asked to stop. Do not message them. Leave this one alone.';
     if (c.status === 'closed') return 'This one is finished. Nothing to do.';
     if (tags.includes('needs-human')) return 'This person asked for a real person. Reply to them below.';

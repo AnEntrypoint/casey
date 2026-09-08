@@ -24,12 +24,25 @@ export function applyTheme(t) {
   // rendered light). #app and <body> both carry .ds-247420 (see index.html's
   // comment on why body needs it too, for portaled popover content) so both
   // need the attribute for in-page content and overlay content alike.
-  document.documentElement.dataset.theme = t;
+  // data-casey-theme, not data-theme, on the root: the kit's theme.js owns
+  // data-theme there and resets it to "auto". app.css's root-ground rule reads
+  // ours, so an operator switching theme repaints the root as well as the app.
+  document.documentElement.dataset.caseyTheme = t;
   document.body.dataset.theme = t;
   const appEl = document.getElementById('app');
   if (appEl) appEl.dataset.theme = t;
-  try { localStorage.casey_theme = t; } catch { /* storage unavailable */ }
   setTheme(t);
+}
+
+// The one write to storage, and it happens only when an operator picks a theme
+// from the menu. applyTheme deliberately does not write: it also runs for a
+// theme RESOLVED from the device preference, and storing that resolved value
+// would turn "follow my device" into a permanent choice the operator never made
+// -- after which a device switching to night mode never moves the dashboard
+// again.
+export function chooseTheme(t) {
+  try { localStorage.casey_theme = t; } catch { /* storage unavailable */ }
+  applyTheme(t);
 }
 
 // The deployment's themes are the brand presets, not the kit's stock
@@ -42,10 +55,30 @@ export function applyTheme(t) {
 // so a user who chose dark stays dark.
 const LEGACY_THEME = { paper: 'herd', light: 'herd', ink: 'herd-ink', dark: 'herd-ink' };
 
+export function systemTheme() {
+  try { return matchMedia('(prefers-color-scheme: dark)').matches ? 'herd-ink' : 'herd'; }
+  catch { return 'herd'; }
+}
+
+export function storedTheme() {
+  let saved = null;
+  try { saved = localStorage.casey_theme; } catch { /* storage unavailable */ }
+  if (!saved) return null;
+  return LEGACY_THEME[saved] || saved;
+}
+
 export function initTheme() {
-  const saved = (() => { try { return localStorage.casey_theme; } catch { return null; } })();
-  const migrated = saved ? (LEGACY_THEME[saved] || saved) : null;
-  applyTheme(migrated || (matchMedia('(prefers-color-scheme: dark)').matches ? 'herd-ink' : 'herd'));
+  const chosen = storedTheme();
+  applyTheme(chosen || systemTheme());
+  // With no stored choice the dashboard keeps FOLLOWING the device rather than
+  // sampling it once: an operator on a phone that flips to night mode at sunset
+  // gets the dark theme then, not on their next login. A stored choice outranks
+  // the device, so the listener re-checks storage on each change instead of
+  // capturing "unset" at boot -- the operator may pick a theme mid-session.
+  try {
+    matchMedia('(prefers-color-scheme: dark)')
+      .addEventListener('change', () => { if (!storedTheme()) applyTheme(systemTheme()); });
+  } catch { /* matchMedia change events unavailable */ }
 }
 
 function openLogoutEverywhereConfirm() { openModal('confirm-logout-everywhere'); }
@@ -85,7 +118,7 @@ export function AccountMenu() {
     { id: 'logout-everywhere', label: 'Log out everywhere else', danger: true },
   ];
   const onSelect = (id) => {
-    if (id === 'theme') applyTheme(state.theme === 'herd' ? 'herd-ink' : 'herd');
+    if (id === 'theme') chooseTheme(state.theme === 'herd' ? 'herd-ink' : 'herd');
     else if (id === 'help') openModal('help');
     else if (id === 'logout') doLogout();
     else if (id === 'logout-everywhere') openLogoutEverywhereConfirm();
