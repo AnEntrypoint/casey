@@ -3,8 +3,17 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="UHH">
-<meta name="theme-color" content="#E88427">
+<!-- casey's OWN identity and ground, not any deployer's. These two literals
+     used to read "UHH" and "#E88427" -- one deployer's product name and
+     orange, committed into domain-generic casey. dashboard/brand.js reads
+     this theme-color tag, so every OTHER deployer silently inherited them.
+     A deployment brands itself through dashboard_ui (brand, description,
+     theme_color) in its own report-fields.yml; brand.js prefers those and
+     falls back here, so this file is the default, never the override. The
+     SPA rewrites the title from /api/branding once a session resolves --
+     this is only what shows before that. -->
+<meta name="apple-mobile-web-app-title" content="casey">
+<meta name="theme-color" content="#3b6ea5">
 <link rel="manifest" href="/manifest.json">
 <!-- Self-hosted Ubuntu (see app.css's @font-face block for why this is not a
      fonts.googleapis.com link). Preloaded because both weights are used
@@ -16,7 +25,7 @@
 <link rel="preload" href="/vendor/ubuntu/ubuntu-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="apple-touch-icon" href="/icon.svg">
-<title>UHH - reports</title>
+<title>casey</title>
 <!-- 247420.css is the single scope-prefixed bundle (colors_and_type.css +
      app-shell.css + every overlay-primitives component sheet, concatenated
      at build time under the .ds-247420 scope the #app mount root already
