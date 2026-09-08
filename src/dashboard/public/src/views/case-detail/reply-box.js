@@ -30,6 +30,11 @@ function contactMaybeNonEnglish(events) {
 
 function cannedReplies(c) {
     const tags = tagList(c);
+    // 'opted-out' is a legal control (the contact said STOP). Its one
+    // definition is src/hooks/heuristics.js's OPTED_OUT_TAG, which a browser
+    // module cannot import -- so this literal must be changed in step with it,
+    // and with todo-hint.js's own copy. Renaming the tag server-side without
+    // these silently re-offers canned replies to someone who opted out.
     if (tags.includes('opted-out')) return [];
     if (tags.includes('needs-human')) return [
         'Hi, this is a real person now. How can I help you?',

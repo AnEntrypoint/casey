@@ -217,7 +217,12 @@ export function setHomeView(v) {
   try { localStorage.casey_home_view = state.homeView; } catch { /* localStorage unavailable */ }
   schedule();
 }
-export function setTheme(t) { state.theme = t; try { localStorage.casey_theme = t; } catch { /* localStorage unavailable */ } schedule(); }
+// Records the theme currently PAINTED, which is not the same thing as the
+// operator's choice: with nothing stored, the painted theme tracks the device's
+// prefers-color-scheme and changes when the device does. Only an explicit pick
+// is written to storage, and account-menu.js's chooseTheme owns that write --
+// persisting here would freeze the first resolved system preference forever.
+export function setTheme(t) { state.theme = t; schedule(); }
 
 export function toggleBulkSelect(id, on) {
   const shouldAdd = on !== undefined ? !!on : !state.bulkSelected.has(id);

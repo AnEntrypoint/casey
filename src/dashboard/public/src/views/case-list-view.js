@@ -7,51 +7,29 @@
 // channel/source/saved views -- sits below it, in that order of how often it
 // is actually reached for.
 //
-// What this view opened with before, in order, was: the deployment's brand name
-// as an <h1>; a text line reading "N total - M need attention"; a row of five
-// filter controls; a second row of stage pills; and only then the queue. The
-// answer was fourth on a screen whose first three rows were an identity the
-// topbar already states twice (app-view.js renders `brand` in both Topbar and
-// Crumb) and controls for a question nobody had asked yet.
+// Three things this head must NOT carry, each of which shipped once:
 //
-// Two things went with the head, not for tidiness:
+//   - An <h1> brand. app-view.js already renders `brand` in both Topbar and
+//     Crumb, so a third copy takes the slot the answer should hold.
 //
-//   - The <h1> brand. Three copies of "casey"/"uhh" on one screen, and the
-//     largest of them in the slot the most operationally important sentence
-//     should hold.
+//   - A "N total - M need attention" counts line. Any M derived here is a
+//     SECOND derivation: format.js's attn() (autonomy observe/assisted, or a
+//     needs-human tag) is not the shared urgency ladder, so it disagrees with
+//     the status bar's server-ranked state.attention.length on the same
+//     screen. In Focus mode state.allCases is never loaded at all (main.js
+//     suppresses the list poll), so any count over it reads 0 above a queue
+//     holding rows. The counts that survive are chips, and each one IS the
+//     filter it reports.
 //
-//   - CountsLine's "N total - M need attention". It was a number an operator
-//     could read and not act on -- the same failure four deleted stat tiles on
-//     the map side had ("Needs attention 3 / see below"). Worse, its M came
-//     from format.js's attn() -- a client-side predicate (autonomy is observe
-//     or assisted, or a needs-human tag) that is NOT the shared urgency ladder.
-//     The status bar three rows below it states `${state.attention.length} need
-//     a person` from the server-ranked list, so the same screen printed two
-//     different answers to one question from two derivations. And in Focus mode
-//     state.allCases is never loaded at all (main.js suppresses the list poll),
-//     so this line read "0 total - 0 need attention" directly above a queue
-//     holding fourteen rows.
-//
-// The counts that survive are chips, and each one IS the filter it reports.
-//
-// The pager went too, and that one needs naming because it looked like a
-// working feature. views/case-list/pagination.js rendered Prev / "Page 1 of N"
-// / Next / rows-per-page against state.page and state.pageSize -- and NOTHING
-// in the SPA ever sent either of them to the server. The only two callers of
-// api.fetchCases() for this list (main.js's loadCases, and reloadCases below)
-// both call it with no params at all, so every fetch is offset 0, and main.js
-// re-fetches page one every 5 seconds regardless. Pressing Next re-rendered the
-// same 35 rows. Worse, its own range line read state.allCasesTotal, which no
-// module ever published (state.js's setCases was never called for this list),
-// so the total was permanently 0 and the honest-range branch was unreachable:
-// the shipped build stated "0 cases" under a list of 35, over a deployment the
-// server said had 37. Measured live at http://localhost:4410/api/cases --
-// total 37, limit 50, returned 35, and not one word of it on screen.
+//   - A pager. state.page/state.pageSize reach the server from nowhere: both
+//     callers of api.fetchCases() for this list (main.js's loadCases and
+//     reloadCases below) pass no params, so every fetch is an offset-0 page
+//     and main.js re-fetches page one every 5 seconds. A Next button here
+//     re-renders the same rows.
 //
 // A cap statement is a safety property here: two reports the operator cannot
-// see and cannot be told about is how report 36 stops existing. So the cap is
-// stated, from the server's own total, at the TOP of the list; and the control
-// that could not page anything is gone rather than left as decoration.
+// see and cannot be told about is how report 36 stops existing. State the cap
+// from the SERVER's own total, at the TOP of the list.
 
 import * as webjsx from 'webjsx';
 import { state, schedule, setMineOnly, setCases } from '../state.js';

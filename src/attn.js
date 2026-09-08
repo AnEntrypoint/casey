@@ -1,8 +1,8 @@
 // Attention ranking: which open cases need a HUMAN now, and why, in plain words.
 //
 // The agent is called "the AI helper" in this file's operator-facing strings,
-// matching what the dashboard calls it everywhere else (the health pill reads
-// "AI helper: online", components/health-pills.js). Never name the framework's
+// matching what the dashboard calls it everywhere else (dashboard/routes/
+// operations.js's LLM_HEALTH_VIEWS). Never name the framework's
 // own codename here: the console would name the same thing two different ways,
 // and a rebranded deployment would show casey's codename in its triage guidance
 // with no way to change it.

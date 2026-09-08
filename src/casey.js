@@ -192,13 +192,13 @@ export class Casey {
     //    are skipped inside the notifier.
     // Composed, not replaced: the contact-notify hook plus a live-agent
     // eviction. src/agent/run-turn.js keeps ONE freddie Agent per `case:<id>`
-    // in a module-level Map and nothing ever removed an entry, so a
-    // long-running worker retained one session object per case it had ever
-    // conversed with, for the life of the process. A resolved/closed case will
-    // not take another turn, so its agent is dropped here; if the case is
-    // reopened, getOrCreateAgent() simply builds a fresh one, which is the same
-    // state a supervisor hot-reload already produces routinely. Eviction is a
-    // synchronous Map delete and runs first so a notifier failure cannot skip it.
+    // in a module-level Map, so without an eviction a long-running worker
+    // retains one session object per case it has ever conversed with, for the
+    // life of the process. A resolved/closed case will not take another turn,
+    // so its agent is dropped here; a reopened case just gets a fresh one from
+    // getOrCreateAgent(), the same state a supervisor hot-reload produces
+    // routinely. Eviction is a synchronous Map delete and runs FIRST, so a
+    // notifier failure cannot skip it.
     const notifyOnTransition = makeTransitionNotifier(this.store, this.sendReply.bind(this), { log: this.log })
     this.store.onTransition = async (ev) => {
       if (ev?.caseRow?.id && !isOpenCase({ status: ev.to })) disposeAgent(`case:${ev.caseRow.id}`)
@@ -402,24 +402,18 @@ export class Casey {
     if (this._sweepTimer) { clearInterval(this._sweepTimer); this._sweepTimer = null }
   }
 
-  // Periodic drain-poll: drainQueuedTurns is otherwise only reached via the
-  // brain's onRecover edge (which itself only fires from a real callLLM/status()
-  // call -- i.e. a NEW inbound on the SAME conversation, or a human loading the
-  // dashboard health row) or the boot-time resumePendingTurns sweep (which
-  // deliberately skips any case already tagged resume-exhausted). A contact whose
-  // message got queued during a real outage, who then does not write again
-  // (the ordinary case -- they are waiting for casey, not casey waiting for
-  // them) and whom no operator happens to check on, has its queued reply sit
-  // forever even once the backend is fully healthy again -- live-witnessed: a
-  // real "hi there" queued during a genuine LLM-down window stayed queued with
-  // no reply long after the backend had recovered, because nothing in the
-  // running process was ever polling status() in the background to notice the
-  // recovery and fire the drain. This timer is that missing background poll --
-  // deliberately much shorter than the 15-minute case-health sweep, since it
-  // directly gates how long a real contact is left in silence. drainQueuedTurns
-  // itself is a cheap no-op when nothing is queued (an empty scan), and its own
-  // status-gate gets the backend to skip work entirely while still down, so a
-  // short interval costs nothing during normal healthy operation.
+  // Periodic drain-poll. This timer is the ONLY thing that notices an LLM
+  // recovery on its own: the brain's onRecover edge fires only from a real
+  // callLLM/status() call (a NEW inbound on the SAME conversation, or a human
+  // loading the dashboard health row), and the boot-time resumePendingTurns
+  // sweep skips any case already tagged resume-exhausted. Without it, a contact
+  // who was queued during an outage and does not write again -- the ordinary
+  // case, since they are waiting for casey -- sits in silence indefinitely
+  // after the backend is healthy. Keep the interval much shorter than the
+  // 15-minute case-health sweep: it directly gates how long a real contact is
+  // left with no reply. It costs nothing when healthy -- drainQueuedTurns is an
+  // empty scan with nothing queued, and its own status-gate skips the work
+  // entirely while the backend is still down.
   startDrainPoll(intervalMs = this.opts.drainPollIntervalMs ?? 60 * 1000) {
     this.stopDrainPoll()
     if (!(intervalMs > 0)) return
@@ -483,11 +477,9 @@ export class Casey {
     const handle = this.gateway?.handleInbound
     if (typeof handle !== 'function') return { scanned: 0, resumed: 0 }
     // Share the SAME _draining guard drainQueuedTurns uses. start() fires this
-    // unawaited during boot, and an LLM recovery edge can fire drainQueuedTurns
-    // around the same window -- without this guard the two race on
-    // appendEvent/case locks for the same msgId, exactly the double-drive the
-    // (until now, only aspirational) comment on drainQueuedTurns claims is
-    // prevented.
+    // unawaited during boot and an LLM recovery edge can fire drainQueuedTurns
+    // in the same window; without one shared guard the two race on
+    // appendEvent/case locks for the same msgId and double-drive it.
     if (this._draining) return { scanned: 0, resumed: 0, deferred: true }
     this._draining = true
     try {
@@ -518,22 +510,18 @@ export class Casey {
     if (this._draining) return { scanned: 0, drained: 0, deferred: true }
     const handle = this.gateway?.handleInbound
     if (typeof handle !== 'function') return { scanned: 0, drained: 0 }
-    // Claim the shared guard SYNCHRONOUSLY, immediately after the check above and
-    // before the first await below -- Set-less equivalent of the same
+    // Claim the shared guard SYNCHRONOUSLY, immediately after the check above
+    // and before the first await below -- the Set-less equivalent of the
     // check-then-act atomicity hooks/handler.js's inFlight.has+inFlight.add
-    // documents for its own per-contact claim. The guard used to be set only
-    // AFTER the status-probe `await statusFn()` below, leaving a real TOCTOU
-    // window: two concurrent drainQueuedTurns() calls (the periodic drain-poll
-    // tick racing an LLM-recovery onRecover edge, or two recovery edges firing
-    // close together) could both pass the `if (this._draining)` check before
-    // either had reached the point of setting it, both entering the scan/redrive
-    // body at once -- exactly the double-drive this guard's own comment (and
-    // resumePendingTurns' sibling comment two callers up) claims is prevented.
-    // Live-witnessed: the pre-fix shape let 3/3 concurrent calls enter the
-    // critical section simultaneously. Every exit path below (including the
-    // degraded-status early return, which now happens AFTER the claim) is
-    // covered by the trailing finally that resets _draining, so the guard is
-    // never left stuck true on a thrown/early-returned path.
+    // documents for its own per-contact claim. Setting it after the
+    // status-probe `await statusFn()` instead opens a real TOCTOU window: two
+    // concurrent calls (the drain-poll tick racing an LLM-recovery onRecover
+    // edge, or two recovery edges close together) both pass the
+    // `if (this._draining)` check before either sets it and both enter the
+    // scan/redrive body -- the exact double-drive this guard exists to
+    // prevent. Every exit path below, the degraded-status early return
+    // included, is covered by the trailing finally that resets _draining, so
+    // the guard is never left stuck true.
     this._draining = true
     try {
       // (a) hard status gate -- only drain when the backend is actually back. Falls

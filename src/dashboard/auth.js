@@ -1,5 +1,5 @@
-// dashboard/auth.js -- per-operator username/password login, replacing the
-// shared CASEY_DASHBOARD_TOKEN bearer-token gate.
+// dashboard/auth.js -- per-operator username/password login. No route accepts
+// a bearer token or a ?token= query param; do not reintroduce one.
 //
 // Design: operators are field-organisation staff, often not tech-literate, on
 // shared/personal devices -- a login screen is a familiar pattern (see

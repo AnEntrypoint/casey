@@ -11,7 +11,19 @@
    chrome. Every color/radius/z-index below resolves through a design token
    var() -- zero raw hex/rgb, per the lint-tokens CI gate. */
 
+/* The root element carries the ground as well as body. Without it the browser
+   paints its own default white behind the page for the whole time between
+   first paint and the module graph's first render -- a full-brightness flash
+   on a dark device, on a link where that gap is measured in seconds.
+   It keys off data-casey-theme rather than --bg, because the kit's theme.js
+   sets <html data-theme="auto"> on load, and --bg under "auto" resolves to the
+   DEVICE preference: with a stored dark theme on a light device that painted a
+   white root behind a dark app. --paper/--ink are base tokens, defined once
+   under .ds-247420 and not re-bound per theme, so naming them here is a token
+   reference and not a second definition of the ground. */
 body { background: var(--bg); color: var(--fg); }
+html.ds-247420[data-casey-theme="herd"] { background: var(--paper); }
+html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-app-root, .ds-app-surface { display: flex; flex-direction: column; min-height: 100vh; }
 
 /* casey mounts the shell as a full standalone page, never inside the SDK's
@@ -421,27 +433,13 @@ body { background: var(--bg); color: var(--fg); }
 .ds-skills-item.is-done .ds-skills-box { background: var(--accent); border-color: var(--accent); }
 .ds-skills-item.is-done .ds-skills-label { color: var(--fg-2, var(--muted)); text-decoration: line-through; }
 
-/* ---- health pills (health-pills.js) ------------------------------------ */
-.ds-health-pill { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
-/* Degraded-state detail is a popover under the pill, never inline topbar
-   content -- see health-pills.js's pillWithDetail(). */
-.ds-health-pill-has-detail { position: relative; }
-.ds-health-pill-trigger {
-  background: none; border: none; padding: 0; margin: 0; font: inherit;
-  color: inherit; cursor: pointer; display: inline-flex; align-items: center;
-}
-.ds-health-pill-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-pill); }
-.ds-health-pill-detail {
-  position: absolute; top: calc(100% + var(--space-2)); right: 0; z-index: var(--z-dropdown);
-  width: max-content; max-width: min(380px, 80vw);
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: var(--r-1); padding: var(--space-2);
-  box-shadow: var(--shadow-2);
-}
-.ds-health-pill-group { display: flex; flex-direction: row; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-/* .ds-pill-with-spark and .ds-sparkline are gone with the guardrails
-   sparkline (health-pills.js). .ds-pill-with-spark had already had no emitter
-   anywhere in the tree before that; .ds-health-pills (the plural) likewise. */
+/* ---- health notices (health-notices.js) --------------------------------- */
+/* A full-width band in the banner stack, styled exactly like the offline
+   banner (.ds-conn-banner) because it is the same class of statement: the
+   system itself, not the work. No pill, no dot, no disclosure trigger -- those
+   went with the appbar chrome, and health-notices.js's header says why. The
+   tint comes from an inline style so error and warning share one rule here. */
+.ds-health-notice { width: 100%; }
 
 .ds-metrics-exports { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 .ds-secretary-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
@@ -1205,9 +1203,8 @@ body { background: var(--bg); color: var(--fg); }
   overscroll-behavior-x: contain;
   scrollbar-width: thin;
   /* A scroll container is only allowed to clip along the axis it scrolls, so
-     the account and alerts dropdowns are safe (they portal to body anyway) and
-     the health pill's own absolutely-positioned detail, which does not, still
-     hangs below the bar rather than being cut off at its edge. */
+     the account and alerts dropdowns are safe: they portal to body, so
+     nothing they open is clipped by this container. */
   padding-bottom: var(--space-hair);
 }
 .ds-247420 .ds-appbar::-webkit-scrollbar { height: 6px; }
@@ -1221,8 +1218,8 @@ body { background: var(--bg); color: var(--fg); }
    The list used to stop at six selectors while the bar held ten controls, so
    the rule's own claim was false on the screen. Measured live at 1440x900:
    FOUR different control heights (23, 28, 36 and 44px) sitting on FOUR
-   different top edges (93, 97, 101, 103). The health pill's trigger and both
-   dropdown triggers -- alerts and the account menu -- were never named here at
+   different top edges (93, 97, 101, 103). Both dropdown triggers -- alerts and
+   the account menu -- were never named here at
    all, and .ds-attn-lead carries its own min-height:44px, which a plain
    `height` cannot pull down. That is the whole of the "hodge-podge": a row that
    declared one height and rendered four.
@@ -1236,8 +1233,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-247420 .ds-appbar .ds-attn-lead,
 .ds-247420 .ds-appbar .ds-action-link,
 .ds-247420 .ds-appbar .ds-icon-btn,
-.ds-247420 .ds-appbar .ds-dropdown-trigger,
-.ds-247420 .ds-appbar .ds-health-pill-trigger {
+.ds-247420 .ds-appbar .ds-dropdown-trigger {
   height: var(--appbar-ctrl-h);
   min-height: var(--appbar-ctrl-h);
   box-sizing: border-box;
@@ -1252,8 +1248,9 @@ body { background: var(--bg); color: var(--fg); }
    ONE secondary that every remaining control wears.
 
    What this replaces, measured live at 1440x900: six treatments in one row --
-   an orange filled primary, a red-tinted lead, a transparent-bordered health
-   pill, two ghost buttons whose 1px border was transparent (so a live control
+   an orange filled primary, a red-tinted lead, a health pill wearing a
+   transparent border (since removed entirely, see health-notices.js), two
+   ghost buttons whose 1px border was transparent (so a live control
    read as plain text), a bare underline-on-hover link for Export, and two
    dropdown triggers the kit filled with a flat grey at 0.08-alpha border,
    which read as disabled while being fully live.
@@ -1263,8 +1260,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-247420 .ds-appbar .btn-ghost,
 .ds-247420 .ds-appbar .ds-action-link,
 .ds-247420 .ds-appbar .ds-icon-btn,
-.ds-247420 .ds-appbar .ds-dropdown-trigger,
-.ds-247420 .ds-appbar .ds-health-pill-trigger {
+.ds-247420 .ds-appbar .ds-dropdown-trigger {
   padding: 0 var(--space-3);
   background: transparent;
   border: 1px solid var(--border);
@@ -1277,8 +1273,7 @@ body { background: var(--bg); color: var(--fg); }
 .ds-247420 .ds-appbar .btn-ghost:hover,
 .ds-247420 .ds-appbar .ds-action-link:hover,
 .ds-247420 .ds-appbar .ds-icon-btn:hover,
-.ds-247420 .ds-appbar .ds-dropdown-trigger:hover,
-.ds-247420 .ds-appbar .ds-health-pill-trigger:hover {
+.ds-247420 .ds-appbar .ds-dropdown-trigger:hover {
   background: var(--bg-2);
   border-color: var(--fg-3, var(--border));
   color: var(--fg);
@@ -1299,7 +1294,6 @@ body { background: var(--bg); color: var(--fg); }
   padding: 0;
   justify-content: center;
 }
-.ds-247420 .ds-appbar .ds-health-pill { align-items: center; gap: var(--space-2); }
 /* An action carries its glyph beside its word on desktop; the glyph is what
    survives into the mobile grid below, so it is emitted always and hidden
    never -- a control whose icon only exists at one breakpoint is a control
@@ -1358,11 +1352,10 @@ body { background: var(--bg); color: var(--fg); }
   }
   /* `flex: none` here was measured to change nothing: these are grid items and
      the SDK's own grid had already sized them. `width: 100%` was likewise
-     redundant. What was NOT redundant, and was missing, is height: the health
-     pill reaches the grid as a WRAPPER (.ds-health-pill) with the real trigger
-     inside it, so a height on the trigger alone resolved against a 54px parent
-     while its neighbours were 58px. Stretching the grid item itself is what
-     lets the rule below reach the control the operator actually sees. */
+     redundant. What was NOT redundant, and was missing, is height: a grid item
+     that does not fill its track leaves its control sitting short of its
+     neighbours. Stretching the item itself is what lets the rule below reach
+     the control the operator actually sees. */
   /* `.ds-action-row` is display:contents, so its children are the grid items
      while the DOM parent they are selected through is still the row -- a bare
      `.ds-appbar > *` misses every verb, and app-view.js wraps each one in a
@@ -1374,25 +1367,18 @@ body { background: var(--bg); color: var(--fg); }
   .ds-247420 .ds-appbar .ds-action-row > * { height: 100%; }
   .ds-247420 .ds-appbar .ds-action-common,
   .ds-247420 .ds-appbar .ds-action-rare { display: flex; }
-  /* The pill nests one more box between the grid item and the button
-     (.ds-health-pill > .ds-health-pill-has-detail > .ds-health-pill-trigger),
-     and the outer one centres its children, so the trigger stopped 4px short
-     of its neighbours. Pass the full height the whole way down. */
-  .ds-247420 .ds-appbar .ds-health-pill,
-  .ds-247420 .ds-appbar .ds-health-pill-has-detail { height: 100%; align-items: stretch; }
   .ds-247420 .ds-appbar .btn,
   .ds-247420 .ds-appbar .btn-primary,
   .ds-247420 .ds-appbar .btn-ghost,
   .ds-247420 .ds-appbar .ds-attn-lead,
   .ds-247420 .ds-appbar .ds-action-link,
   .ds-247420 .ds-appbar .ds-icon-btn,
-  .ds-247420 .ds-appbar .ds-dropdown-trigger,
-  .ds-247420 .ds-appbar .ds-health-pill-trigger {
+  .ds-247420 .ds-appbar .ds-dropdown-trigger {
     /* One tile, one size. The six-selector version of this list left the two
-       dropdown triggers at 28px and the health pill at 60px while everything
-       else was 58px, which measured as FOUR tile heights on EIGHT different
-       top edges inside a four-column grid -- the phone's version of the same
-       hodge-podge the desktop row had. */
+       dropdown triggers at 28px while everything else was 58px, which measured
+       as several tile heights on several different top edges inside a
+       four-column grid -- the phone's version of the same hodge-podge the
+       desktop row had. */
     /* height:100%, not auto. As grid items these should have stretched to
        their track on their own, and measured live they did not -- a row held
        tiles of 52, 54 and 58px sitting on three different top edges, because
@@ -1440,7 +1426,6 @@ body { background: var(--bg); color: var(--fg); }
   .ds-247420 .ds-appbar .ds-action-link,
   .ds-247420 .ds-appbar .ds-icon-btn,
   .ds-247420 .ds-appbar .ds-dropdown-trigger,
-  .ds-247420 .ds-appbar .ds-health-pill-trigger,
   .ds-247420 .ds-appbar .ds-attn-lead {
     padding: var(--space-1);
     width: 100%;
