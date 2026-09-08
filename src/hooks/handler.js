@@ -11,6 +11,10 @@
 
 import { runTurn } from '../agent/run-turn.js'
 import { fmtTimeSAST } from '../format.js'
+// The two case-write shapes this file used to spell out by hand -- an
+// observation event body written literally at thirty points, and a
+// read-then-tag-then-notify-once sequence copy-pasted four times.
+import { observation, flagNeedsHuman } from './case-writes.js'
 import { tagList } from '../timestamp.js'
 import { reporterTierExcludedToolNames } from '../case-tools.js'
 import { caseSystemPrompt } from './prompt.js'
@@ -339,7 +343,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     if (tagList(caseRow).includes('draft-pending')) {
       try {
         await store.updateCase(caseRow.id, { tags: dropTag(caseRow.tags, 'draft-pending') })
-        await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: 'DRAFT SUPERSEDED: a new message arrived; the pending draft reply was set aside for a fresh one.' })
+        await store.appendEvent(caseRow.id, observation('DRAFT SUPERSEDED: a new message arrived; the pending draft reply was set aside for a fresh one.'))
       } catch (e) { log.warn?.('[casey] draft supersede failed', { caseId: caseRow.id, error: e.message }) }
     }
     // One-shot: a received animal photo is recorded as explicit case state right
@@ -390,10 +394,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         }
         const r = await store.appendReportField(caseRow.id, 'photos', note)
         if (r?.appended || r?.error === 'observe') {
-          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `PHOTO RECEIVED: ${note} (recorded for the field team).` })
+          await store.appendEvent(caseRow.id, observation(`PHOTO RECEIVED: ${note} (recorded for the field team).`))
         }
         if (r?.reportWasCorrupted) {
-          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: 'WARNING: this case\'s stored report JSON was corrupted and has been reset before appending this photo note -- some previously recorded fields may be lost.' })
+          await store.appendEvent(caseRow.id, observation('WARNING: this case\'s stored report JSON was corrupted and has been reset before appending this photo note -- some previously recorded fields may be lost.'))
         }
       } catch (e) { log.warn?.('[casey] photo mark failed', { caseId: caseRow.id, error: e.message }) }
     }
@@ -416,10 +420,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         }
         const r = await store.appendReportField(caseRow.id, 'audio', note)
         if (r?.appended || r?.error === 'observe') {
-          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: `AUDIO RECEIVED: ${note}.` })
+          await store.appendEvent(caseRow.id, observation(`AUDIO RECEIVED: ${note}.`))
         }
         if (r?.reportWasCorrupted) {
-          await store.appendEvent(caseRow.id, { kind: 'observation', actor: 'system', text: 'WARNING: this case\'s stored report JSON was corrupted and has been reset before appending this audio note -- some previously recorded fields may be lost.' })
+          await store.appendEvent(caseRow.id, observation('WARNING: this case\'s stored report JSON was corrupted and has been reset before appending this audio note -- some previously recorded fields may be lost.'))
         }
       } catch (e) { log.warn?.('[casey] audio mark failed', { caseId: caseRow.id, error: e.message }) }
     }
@@ -489,7 +493,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       try { await store.updateCase(fresh.id, { tags: dropTag(fresh.tags, OPTED_OUT_TAG) }) }
       catch (e) { log.warn?.('[casey] opt-back-in untag failed', { caseId: fresh.id, error: e.message }) }
       optedOut = false
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'OPT-BACK-IN: contact asked for help after opting out; messages resumed.' })
+      await store.appendEvent(fresh.id, observation('OPT-BACK-IN: contact asked for help after opting out; messages resumed.'))
       // USER DIRECTIVE: no hardcoded language handling anywhere -- same fix as
       // the STOP/HUMAN branch below. The state change above (untagging
       // opted-out) is the real, unconditional control; the acknowledgement
@@ -504,7 +508,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       }
       if (helpDown) {
         log.error?.('[casey] LLM backend down; opt-back-in state recorded but no reply composed (no hardcoded-language fallback)', { caseId: fresh.id })
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'RESUME-ACK-DEGRADED: LLM unreachable; opt-back-in was applied, but no acknowledgement reply could be composed.', data: { degraded_turn: true, reason: 'llm_down_on_irreversible_control' } })
+        await store.appendEvent(fresh.id, observation('RESUME-ACK-DEGRADED: LLM unreachable; opt-back-in was applied, but no acknowledgement reply could be composed.', { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
         return { to: replyTo, text: '', platform, caseId: fresh.id, intent: 'resume', degraded: true }
       }
       // Fall through to the normal agent turn below -- it composes the real
@@ -514,7 +518,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // Respect a prior opt-out: once someone said STOP, do not auto-reply again
     // unless they explicitly ask for help (handled above) or a human.
     if (optedOut && intent !== 'human') {
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'contact previously opted out; no auto-reply' })
+      await store.appendEvent(fresh.id, observation('contact previously opted out; no auto-reply'))
       return { to: replyTo, text: '', platform, caseId: fresh.id, optedOut: true }
     }
     if (intent === 'stop' || intent === 'human') {
@@ -523,7 +527,6 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // keyword, so the notify must fire only on the FIRST handoff for this
         // case -- otherwise a contact repeating "person?" re-pings every time.
         // mergeTag is idempotent; the notify is not.
-        const alreadyFlagged = tagList(fresh).includes('needs-human')
         // STATE-CHANGING WRITE FIRST, independently guarded: this used to run
         // AFTER an unguarded appendEvent (the audit-trail note two lines
         // below), so a transient thatcher/lock error on that leading append
@@ -531,19 +534,14 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // flag with no record the handoff was ever requested -- an
         // irreversible-control tag must be structurally guaranteed to persist
         // independent of whether its own audit-trail note happens to land.
-        try {
-          // Flag needs-human as an OBSERVABLE signal; do NOT auto-raise priority.
-          // casey amplifies the organisers' intent, it does not impose escalation
-          // -- the operator decides urgency. The tag surfaces the request in the
-          // triage inbox; priority stays where the people set it.
-          const patch = { tags: mergeTag(fresh.tags, 'needs-human') }
-          await store.updateCase(fresh.id, patch)
-          if (notifyHandoff && !alreadyFlagged) {
-            try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
-            catch (e) { log.warn?.('[casey] handoff notify failed', { caseId: fresh.id, error: e.message }) }
-          }
-        } catch (e) { log.warn?.('[casey] handoff flag failed', { caseId: fresh.id, error: e.message }) }
-        try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'HANDOFF REQUESTED: contact asked for a human. Needs an operator.' }) }
+        // Flag needs-human as an OBSERVABLE signal; do NOT auto-raise priority.
+        // casey amplifies the organisers' intent, it does not impose escalation
+        // -- the operator decides urgency. The tag surfaces the request in the
+        // triage inbox; priority stays where the people set it. The notify-once
+        // read happens before the tag write inside flagNeedsHuman, which is the
+        // whole reason that sequence is one function and not four copies.
+        await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, flagLabel: 'handoff', notifyLabel: 'handoff' })
+        try { await store.appendEvent(fresh.id, observation('HANDOFF REQUESTED: contact asked for a human. Needs an operator.')) }
         catch (e) { log.warn?.('[casey] handoff audit event failed', { caseId: fresh.id, error: e.message }) }
       } else if (intent === 'stop') {
         // Same ordering fix as the human branch above: the state-changing
@@ -552,7 +550,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // be structurally guaranteed to persist even if the append throws.
         try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, OPTED_OUT_TAG) }) }
         catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: fresh.id, error: e.message }) }
-        try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'OPT-OUT: contact asked to stop messaging.' }) }
+        try { await store.appendEvent(fresh.id, observation('OPT-OUT: contact asked to stop messaging.')) }
         catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: fresh.id, error: e.message }) }
         // A stop can arrive packed with real report content ("...please stop
         // messaging me") -- the agent never sees it (opt-out means no further
@@ -562,11 +560,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // gives a human the chance to read and act on it manually.
         const substantive = String(inboundText || '').trim().length >= 20
         if (substantive) {
-          await store.appendEvent(fresh.id, {
-            kind: 'observation', actor: 'system',
-            text: `STOP-WITH-CONTENT: the opt-out message also carried possible report content -- review manually: ${truncate(inboundText, 300)}`,
-            data: { guardrail: 'stop_with_content' },
-          })
+          await store.appendEvent(fresh.id, observation(
+            `STOP-WITH-CONTENT: the opt-out message also carried possible report content -- review manually: ${truncate(inboundText, 300)}`,
+            { guardrail: 'stop_with_content' },
+          ))
           try { await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-human') }) }
           catch (e) { log.warn?.('[casey] stop-with-content flag failed', { caseId: fresh.id, error: e.message }) }
         }
@@ -595,7 +592,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       }
       if (down) {
         log.error?.('[casey] LLM backend down; opt-out/handoff state recorded but no reply composed (no hardcoded-language fallback)', { caseId: fresh.id, intent })
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `${intent.toUpperCase()}-ACK-DEGRADED: LLM unreachable; the ${intent} control itself was applied, but no acknowledgement reply could be composed.`, data: { degraded_turn: true, reason: 'llm_down_on_irreversible_control' } })
+        await store.appendEvent(fresh.id, observation(`${intent.toUpperCase()}-ACK-DEGRADED: LLM unreachable; the ${intent} control itself was applied, but no acknowledgement reply could be composed.`, { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
         return { to: replyTo, text: '', platform, caseId: fresh.id, intent, degraded: true }
       }
       // Reply target is external_id (the conversation key), NOT msg.from. On
@@ -621,20 +618,13 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // irreversible controls) already had their chance to fire above this check --
     // this only gates the ordinary conversational/report turn that follows.
     if (fresh.autonomy === 'observe') {
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'autonomy=observe: awaiting operator (no auto-reply)' })
+      await store.appendEvent(fresh.id, observation('autonomy=observe: awaiting operator (no auto-reply)'))
       // Observe mode means a human drives, but the case must still SURFACE for one
       // -- otherwise an observe-mode contact waits silently with nothing in the
       // triage inbox. Flag needs-human (the observable handoff signal) and notify
       // once on first flag, exactly like an explicit human request. Do NOT raise
       // priority: casey surfaces the request; the operator decides urgency.
-      const alreadyFlagged = tagList(fresh).includes('needs-human')
-      try {
-        await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-human') })
-        if (notifyHandoff && !alreadyFlagged) {
-          try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
-          catch (e) { log.warn?.('[casey] observe handoff notify failed', { caseId: fresh.id, error: e.message }) }
-        }
-      } catch (e) { log.warn?.('[casey] observe needs-human flag failed', { caseId: fresh.id, error: e.message }) }
+      await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, flagLabel: 'observe needs-human', notifyLabel: 'observe handoff' })
       return { to: replyTo, text: '', platform, caseId: fresh.id, observed: true }
     }
 
@@ -668,7 +658,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         const already = events.some(e => e.kind === 'observation' && typeof e.text === 'string' && e.text === `QUEUED-FOR-AGENT:${msgId}`)
         if (!already) {
           try {
-            await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `QUEUED-FOR-AGENT:${msgId}` })
+            await store.appendEvent(fresh.id, observation(`QUEUED-FOR-AGENT:${msgId}`))
             log.error?.('[casey] LLM backend down; queued inbound, no reply sent', { caseId: fresh.id, msgId })
             return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true }
           } catch (e) {
@@ -687,7 +677,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // before reaching here. This is just the buffered-turn's own case-scoped
     // audit note, logged once we have a real case row to attach it to.
     if (msg.burstReplay) {
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'concurrent turn skipped: prior LLM turn still in-flight for this contact; buffered for replay' })
+      await store.appendEvent(fresh.id, observation('concurrent turn skipped: prior LLM turn still in-flight for this contact; buffered for replay'))
     }
     let result, errored = false
     try {
@@ -699,7 +689,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // message arrived mid-crash still gets a reply instead of waiting forever.
     // Completion is detected positionally (a later outbound/draft), so no separate
     // TURN-DONE marker is needed; the outbound IS the completion witness.
-    try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `TURN-START:${msgId}` }) }
+    try { await store.appendEvent(fresh.id, observation(`TURN-START:${msgId}`)) }
     catch (e) { log.warn?.('[casey] turn-start marker failed', { caseId: fresh.id, error: e.message }) }
     // GUARANTEED-RESPONSE FSM, start: a live, first-attempt turn (never a
     // background resume/queue re-drive -- see isBackgroundRedrive) shows a
@@ -1003,7 +993,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // whole handleInbound call, defeating the very error handling this block
         // exists for. Degrade to a log line; the degraded-turn no-reply path below
         // still records the failure regardless.
-        try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent turn error: ${e.message}` }) }
+        try { await store.appendEvent(fresh.id, observation(`agent turn error: ${e.message}`)) }
         catch (e2) { log.error?.('[casey] failed to record agent-turn-error observation', { caseId: fresh.id, error: e2.message }) }
         result = {}
         break   // an error is not the forced-tool-choice-miss case; no retry benefit, stop here
@@ -1028,7 +1018,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       for (const action of mutatingActionsThisAttempt(result)) completedActions.push(action)
       if (!candidate) {
         log.warn?.('[casey] agent turn produced empty reply', { caseId: fresh.id, attempt })
-        try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `empty reply on attempt ${attempt}${attempt < MAX_TOOL_CHOICE_ATTEMPTS ? '; retrying' : ''}` }) }
+        try { await store.appendEvent(fresh.id, observation(`empty reply on attempt ${attempt}${attempt < MAX_TOOL_CHOICE_ATTEMPTS ? '; retrying' : ''}`)) }
         catch (e2) { log.warn?.('[casey] failed to record empty-reply observation', { caseId: fresh.id, error: e2.message }) }
         retryFeedback = "\n\n[System note: your previous reply came back empty and was not sent. Write a direct, warm reply to the contact's latest message.]"
         continue
@@ -1043,7 +1033,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       if (lastOutboundText) {
         const strip = (s) => String(s).toLowerCase().replace(/CASE-\d+-[a-z0-9]+/gi, '').replace(/\s+/g, ' ').trim()
         if (strip(candidate) === strip(lastOutboundText)) {
-          try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `model repeated its own last outbound verbatim on attempt ${attempt}; retrying` }) }
+          try { await store.appendEvent(fresh.id, observation(`model repeated its own last outbound verbatim on attempt ${attempt}; retrying`)) }
           catch (e2) { log.warn?.('[casey] failed to record repeat observation', { caseId: fresh.id, error: e2.message }) }
           retryFeedback = "\n\n[System note: your previous reply was a verbatim repeat of your earlier message and was not sent. Say something new that responds to the contact's latest message.]"
           continue
@@ -1066,7 +1056,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // the draft hold below.
         if (attempt < MAX_TOOL_CHOICE_ATTEMPTS) {
           log.warn?.('[casey] reply judge flagged a false confirmation; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
-          try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})` }) }
+          try { await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)) }
           catch (e2) { log.warn?.('[casey] failed to record judge-retry observation', { caseId: fresh.id, error: e2.message }) }
           retryFeedback = '\n\n[System note: your previous reply was not sent because it claimed something was recorded or opened when nothing actually was. If the contact reported something new, call the case_new or case_report tool FIRST and wait for its result before replying. Never claim an action you did not actually perform.]'
           continue
@@ -1081,13 +1071,13 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // genuine reply; only a budget-exhausted flag blanks for real.
         if (attempt < MAX_TOOL_CHOICE_ATTEMPTS) {
           log.warn?.('[casey] reply judge flagged the composed reply; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
-          try { await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})` }) }
+          try { await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)) }
           catch (e2) { log.warn?.('[casey] failed to record judge-retry observation', { caseId: fresh.id, error: e2.message }) }
           retryFeedback = `\n\n[System note: your previous reply was not sent: ${verdict.reasons.join('; ')}. Write a fresh reply that directly answers the contact's latest message -- do not repeat an earlier message and do not describe your own process or plans.]`
           continue
         }
         log.warn?.('[casey] reply judge flagged the composed reply; blanking', { caseId: fresh.id, reasons: verdict.reasons })
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; blanked` })
+        await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; blanked`))
         text = ''
         break
       }
@@ -1095,7 +1085,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       // directly answering what it was asked, however poorly, not narration
       // ABOUT a reply).
       log.warn?.('[casey] reply judge flagged the composed reply; sending anyway', { caseId: fresh.id, reasons: verdict.reasons })
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `REPLY-JUDGE-FLAGGED-BUT-SENT: ${verdict.reasons.join('; ')}` })
+      await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED-BUT-SENT: ${verdict.reasons.join('; ')}`))
       text = candidate
       break
     }
@@ -1125,10 +1115,10 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // event used to carry alone was queryable only by fragile substring
         // matching, or by an operator who happened to already be looking at
         // THIS specific case's own timeline.
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `agent result error: ${result.error}`, data: { degraded_turn: true, reason: 'error', error: String(result.error).slice(0, 500) } })
+        await store.appendEvent(fresh.id, observation(`agent result error: ${result.error}`, { degraded_turn: true, reason: 'error', error: String(result.error).slice(0, 500) }))
       }
       log.error?.('[casey] degraded turn produced no reply', { caseId: fresh.id })
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded turn (empty/error/echo/stock-ack/repeat); no reply sent.', data: { degraded_turn: true, reason: 'empty' } })
+      await store.appendEvent(fresh.id, observation('degraded turn (empty/error/echo/stock-ack/repeat); no reply sent.', { degraded_turn: true, reason: 'empty' }))
       // Plain (non-health-sweep) tag, read synchronously by attn.js's
       // attnScore alongside every other tag-based signal -- a case with a
       // prior degraded turn is a priori more likely to degrade again
@@ -1171,7 +1161,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       const { text: safeText, corrected } = sanitizeOutboundRef(text, fresh.ref, toolRefs)
       if (corrected.length) {
         text = safeText
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `REF-CORRECTED: model emitted ${corrected.join(', ')}; rewrote to real ref ${fresh.ref}.` })
+        await store.appendEvent(fresh.id, observation(`REF-CORRECTED: model emitted ${corrected.join(', ')}; rewrote to real ref ${fresh.ref}.`))
       }
     }
 
@@ -1207,22 +1197,12 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       const holdNote = jargonReasons
         ? `${marker}: reply withheld -- ${heldReasons.join('; ')}; held for a human to reword plainly.`
         : `${marker}: reply withheld -- ${heldReasons.join('; ')}; the reply claims something was recorded but no write actually succeeded this turn; held for a human to check and reword.`
-      await store.appendEvent(fresh.id, {
-        kind: 'observation', actor: 'system',
-        text: holdNote,
-      })
+      await store.appendEvent(fresh.id, observation(holdNote))
       await store.appendEvent(fresh.id, {
         kind: 'draft', actor: 'agent', channel,
         text, data: { to: replyTo, fallback: isFallback, draft: true, jargon: jargonReasons, falseConfirmation: falseConfirmReasons },
       })
-      const alreadyFlagged = tagList(fresh).includes('needs-human')
-      try {
-        await store.updateCase(fresh.id, { tags: mergeTag(mergeTag(fresh.tags, 'draft-pending'), 'needs-human') })
-        if (notifyHandoff && !alreadyFlagged) {
-          try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
-          catch (e) { log.warn?.('[casey] reply-hold notify failed', { caseId: fresh.id, error: e.message }) }
-        }
-      } catch (e) { log.warn?.('[casey] reply-hold flag failed', { caseId: fresh.id, error: e.message }) }
+      await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, extraTags: ['draft-pending'], flagLabel: 'reply-hold', notifyLabel: 'reply-hold' })
       stopTyping()
       return { to: replyTo, text: '', platform, caseId: fresh.id, drafted: true, jargonHeld: jargonReasons, falseConfirmationHeld: falseConfirmReasons }
     }
@@ -1236,14 +1216,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         kind: 'draft', actor: 'agent', channel,
         text, data: { to: replyTo, fallback: isFallback, draft: true },
       })
-      const alreadyFlagged = tagList(fresh).includes('needs-human')
-      try {
-        await store.updateCase(fresh.id, { tags: mergeTag(mergeTag(fresh.tags, 'draft-pending'), 'needs-human') })
-        if (notifyHandoff && !alreadyFlagged) {
-          try { await notifyHandoff({ case: fresh, channel, from: msg.from }) }
-          catch (e) { log.warn?.('[casey] assisted draft notify failed', { caseId: fresh.id, error: e.message }) }
-        }
-      } catch (e) { log.warn?.('[casey] assisted draft flag failed', { caseId: fresh.id, error: e.message }) }
+      await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, extraTags: ['draft-pending'], flagLabel: 'assisted draft', notifyLabel: 'assisted draft' })
       // Nothing is sent in assisted mode -- return empty text so the gateway sends
       // nothing and the contact waits on a human-approved reply.
       stopTyping()
@@ -1293,7 +1266,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // agent would never see the message. Record the failure as an OBSERVATION
     // (which completes nothing) and send nothing.
     if (msg.queuedRedrive && degraded) {
-      await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: 'degraded re-drive; still degraded, nothing sent' })
+      await store.appendEvent(fresh.id, observation('degraded re-drive; still degraded, nothing sent'))
       return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true }
     }
 
@@ -1364,7 +1337,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
         // one silent case. The 'sent' event above already exists; this adds
         // the correcting fact so the timeline is never wrong about whether
         // the fallback text actually reached the contact.
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `fallback send failed on ${channel}: ${e.message}` })
+        await store.appendEvent(fresh.id, observation(`fallback send failed on ${channel}: ${e.message}`))
       }
       fallbackReply.delivered = fallbackDelivered
       return fallbackReply
@@ -1396,7 +1369,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
       catch (e) {
         delivered = false
         log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message })
-        await store.appendEvent(fresh.id, { kind: 'observation', actor: 'system', text: `send failed on ${channel}: ${e.message}` })
+        await store.appendEvent(fresh.id, observation(`send failed on ${channel}: ${e.message}`))
       }
     }
     // GUARANTEED-RESPONSE FSM, end: the real reply attempt (success or a failed
