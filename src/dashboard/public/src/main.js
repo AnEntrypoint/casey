@@ -76,7 +76,9 @@ registerModalBody('help', () => HelpOverlay({ open: true, onClose: closeModal, o
 registerModalBody('onboarding', () => OnboardingOverlay({ open: true, onClose: () => { markOnboarded(); closeModal(); } }));
 registerModalBody('skills', () => SkillsOverlay({
   open: true,
-  operatorId: state.currentUser && state.currentUser.id,
+  // Same key as maybeShowOnboarding's gate below -- these two must agree or the
+  // overlay opens against one localStorage key and dismisses under another.
+  operatorId: state.currentUser && state.currentUser.username,
   onClose: closeModal,
   onAllDone: closeModal,
 }));
@@ -133,7 +135,15 @@ installGlobalKeyboard();
 function maybeShowOnboarding() {
   if (!onboarded()) { openModal('onboarding'); return; }
   if (!helpSeen()) markHelpSeen();
-  const opId = state.currentUser && state.currentUser.id;
+  // username, not id: /api/whoami returns { authed, username, display_name,
+  // role, must_change_password } and has no id field at all, so the previous
+  // `state.currentUser.id` was permanently undefined and this overlay could
+  // never open -- witnessed by clearing localStorage and reloading twice.
+  // username is also the operator key everywhere else in this system (getRoster
+  // maps accounts to { id: username }, case.assignee holds it, and the three
+  // ownership checks compare against it), so keying per-operator state on it
+  // keeps one identifier rather than introducing a second.
+  const opId = state.currentUser && state.currentUser.username;
   if (opId && !skillsDismissed(opId)) openModal('skills');
 }
 
