@@ -72,6 +72,7 @@ ${bold('usage:')}
   casey show <ref|id>                           show a case + timeline
   casey attention [--limit N --offset N --json] worst-first inbox: who needs a person now, and why
   casey handover [--json] / handover start      shift digest: what to pick up; 'start' stamps a new shift
+  casey report [--days N] [--json]              management briefing: SLA compliance, response + closure rates
   casey health                                  read-only guardrail summary (no changes written)
   casey sweep                                   run the health-guardrail sweep once now (writes tags/observations)
   casey transition <ref|id> <stage> [--reason]  move a case to a stage (legality-checked)
