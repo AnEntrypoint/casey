@@ -44,7 +44,11 @@
 
 .casey-autonomy-badge{display:inline-block}
 
-.casey-todo-hint{margin:0}
+/* .casey-todo-hint is gone with the component that emitted it. todo-hint.js is
+   pure text now (its own header records the TodoHint component being removed as
+   rendered by nobody); header.js imports todoHintText and wraps it in a Lede,
+   which carries no casey- class. Nothing in the tree writes the name, and it
+   never matched in 34 live views, panels and modals. */
 
 .casey-source-badge{display:inline-block;font-size:var(--fs-pico, 10px);margin-top:var(--space-1, 4px)}
 .casey-source-badge--agent{color:var(--fg-3, var(--muted))}
