@@ -1081,28 +1081,74 @@ body { background: var(--bg); color: var(--fg); }
    beside it. Nothing here changes WHICH controls are present, only that they
    line up. */
 .ds-247420 .ds-appbar {
+  --appbar-ctrl-h: 2.25rem;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: nowrap;
   min-width: 0;
+  /* Scrolls sideways when the verbs outgrow the row, the same way every other
+     overflowing surface in this app scrolls rather than wrapping or squeezing.
+     nowrap without this was a promise the row could not keep: below about
+     1100px the run of ten controls simply overflowed the crumb with no way to
+     reach the last of them, and the ones that stayed got squeezed. Touch and
+     trackpad both drag it; overscroll-behavior stops that drag from turning
+     into a page-level back-swipe once it hits the end. */
+  overflow-x: auto;
+  overflow-y: visible;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  /* A scroll container is only allowed to clip along the axis it scrolls, so
+     the account and alerts dropdowns are safe (they portal to body anyway) and
+     the health pill's own absolutely-positioned detail, which does not, still
+     hangs below the bar rather than being cut off at its edge. */
+  padding-bottom: 1px;
 }
+.ds-247420 .ds-appbar::-webkit-scrollbar { height: 6px; }
+.ds-247420 .ds-appbar::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--r-pill); }
 .ds-247420 .ds-appbar > * { flex: 0 0 auto; }
 /* One height for every control in the row, whatever primitive drew it.
    The SDK's Btn emits .btn / .btn-primary / .btn-ghost (unprefixed), not
    .ds-btn -- naming the wrong one here is a rule that silently matches
-   nothing, so these are the classes atoms.js actually renders. */
+   nothing, so these are the classes atoms.js actually renders.
+
+   The list used to stop at six selectors while the bar held ten controls, so
+   the rule's own claim was false on the screen. Measured live at 1440x900:
+   FOUR different control heights (23, 28, 36 and 44px) sitting on FOUR
+   different top edges (93, 97, 101, 103). The health pill's trigger and both
+   dropdown triggers -- alerts and the account menu -- were never named here at
+   all, and .ds-attn-lead carries its own min-height:44px, which a plain
+   `height` cannot pull down. That is the whole of the "hodge-podge": a row that
+   declared one height and rendered four.
+
+   Every control the bar can hold is now named, min-height is neutralised
+   inside the bar so the shared height actually applies, and the height itself
+   is one token so it cannot drift apart again. */
 .ds-247420 .ds-appbar .btn,
 .ds-247420 .ds-appbar .btn-primary,
 .ds-247420 .ds-appbar .btn-ghost,
 .ds-247420 .ds-appbar .ds-attn-lead,
 .ds-247420 .ds-appbar .ds-action-link,
-.ds-247420 .ds-appbar .ds-icon-btn {
-  height: 2.25rem;
+.ds-247420 .ds-appbar .ds-icon-btn,
+.ds-247420 .ds-appbar .ds-dropdown-trigger,
+.ds-247420 .ds-appbar .ds-health-pill-trigger {
+  height: var(--appbar-ctrl-h);
+  min-height: var(--appbar-ctrl-h);
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
 }
+/* The health pill is a bare text trigger with no box of its own, so matching
+   only its height would still leave it optically adrift beside eight bordered
+   controls. It gets the same box as the rest of the row. */
+.ds-247420 .ds-appbar .ds-health-pill-trigger {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, var(--r-1));
+  font-size: var(--fs-sm);
+}
+.ds-247420 .ds-appbar .ds-health-pill { align-items: center; gap: var(--space-2); }
 /* An action carries its glyph beside its word on desktop; the glyph is what
    survives into the mobile grid below, so it is emitted always and hidden
    never -- a control whose icon only exists at one breakpoint is a control
@@ -1143,15 +1189,48 @@ body { background: var(--bg); color: var(--fg); }
     grid-template-columns: repeat(auto-fit, minmax(4rem, 1fr));
     gap: var(--space-1);
     width: 100%;
+    /* The grid lays the tiles out; it is not the thing that scrolls. */
+    overflow-x: visible;
+    /* Every row the same height, not each row sized to its own tallest tile.
+       Without this the last row -- which holds the two shortest controls --
+       came back 52px against 58px above it, so the grid stepped narrower as it
+       went down for no reason a reader could name. */
+    grid-auto-rows: 1fr;
   }
-  .ds-247420 .ds-appbar > * { flex: none; width: 100%; }
+  /* `flex: none` here was measured to change nothing: these are grid items and
+     the SDK's own grid had already sized them. `width: 100%` was likewise
+     redundant. What was NOT redundant, and was missing, is height: the health
+     pill reaches the grid as a WRAPPER (.ds-health-pill) with the real trigger
+     inside it, so a height on the trigger alone resolved against a 54px parent
+     while its neighbours were 58px. Stretching the grid item itself is what
+     lets the rule below reach the control the operator actually sees. */
+  .ds-247420 .ds-appbar > * { height: 100%; }
+  /* The pill nests one more box between the grid item and the button
+     (.ds-health-pill > .ds-health-pill-has-detail > .ds-health-pill-trigger),
+     and the outer one centres its children, so the trigger stopped 4px short
+     of its neighbours. Pass the full height the whole way down. */
+  .ds-247420 .ds-appbar .ds-health-pill,
+  .ds-247420 .ds-appbar .ds-health-pill-has-detail { height: 100%; align-items: stretch; }
   .ds-247420 .ds-appbar .btn,
   .ds-247420 .ds-appbar .btn-primary,
   .ds-247420 .ds-appbar .btn-ghost,
   .ds-247420 .ds-appbar .ds-attn-lead,
   .ds-247420 .ds-appbar .ds-action-link,
-  .ds-247420 .ds-appbar .ds-icon-btn {
-    height: auto;
+  .ds-247420 .ds-appbar .ds-icon-btn,
+  .ds-247420 .ds-appbar .ds-dropdown-trigger,
+  .ds-247420 .ds-appbar .ds-health-pill-trigger {
+    /* One tile, one size. The six-selector version of this list left the two
+       dropdown triggers at 28px and the health pill at 60px while everything
+       else was 58px, which measured as FOUR tile heights on EIGHT different
+       top edges inside a four-column grid -- the phone's version of the same
+       hodge-podge the desktop row had. */
+    /* height:100%, not auto. As grid items these should have stretched to
+       their track on their own, and measured live they did not -- a row held
+       tiles of 52, 54 and 58px sitting on three different top edges, because
+       each primitive's own padding decided its height and the shortest simply
+       sat where it fell. Filling the track is what makes a row of tiles read
+       as one row of tiles. */
+    height: 100%;
     min-height: 3.25rem;
     width: 100%;
     flex-direction: column;
