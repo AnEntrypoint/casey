@@ -383,8 +383,50 @@ for (const file of routeFiles) {
   }
 }
 
+// --- cli-help: every dispatchable command is discoverable ------------------
+//
+// `casey report` shipped fully working -- a management briefing with SLA
+// compliance and per-type/per-channel response rates -- and was missing from
+// the help text, so the only way to find it was to read bin/casey-cli.mjs. A
+// command an operator cannot discover may as well not exist, and nothing
+// connected the dispatch table to the text that advertises it.
+//
+// Matches the COMMANDS table's keys against the HELP string. Deliberately not
+// the reverse: HELP legitimately documents things that are not COMMANDS keys
+// (flags, env vars, the `handover start` subcommand form).
+{
+  let cli = null
+  let ui = null
+  try {
+    cli = readFileSync(join(ROOT, 'bin', 'casey-cli.mjs'), 'utf8')
+    ui = readFileSync(join(ROOT, 'bin', 'casey-cli-ui.js'), 'utf8')
+  } catch (e) {
+    note(`cli-help: cannot read the CLI dispatch table or help text -- ${String(e.message || e)}`)
+  }
+  if (cli && ui) {
+    // Anchored, not indexOf: a bare substring search matches COMMANDS_OTHER
+    // and HELPTEXT too, so a genuine rename would slip past the two
+    // "nothing to enforce" notes below and the gate would report clean while
+    // checking nothing.
+    const tableAt = cli.search(/const COMMANDS(?![\w$])/)
+    const helpAt = ui.search(/export const HELP(?![\w$])/)
+    if (tableAt < 0) note('cli-help: bin/casey-cli.mjs has no COMMANDS table -- this gate has nothing to enforce')
+    else if (helpAt < 0) note('cli-help: bin/casey-cli-ui.js exports no HELP -- this gate has nothing to enforce')
+    else {
+      const table = cli.slice(tableAt, cli.indexOf('\n}', tableAt))
+      const help = ui.slice(helpAt)
+      for (const m of table.matchAll(/^\s*'?([a-z][a-z-]*)'?:\s*cmd/gim)) {
+        const name = m[1]
+        if (!new RegExp(String.raw`casey ${name}(?![\w-])`).test(help)) {
+          note(`cli-help: "casey ${name}" is dispatchable but absent from HELP in bin/casey-cli-ui.js -- an operator cannot discover it`)
+        }
+      }
+    }
+  }
+}
+
 if (fails.length) {
   console.error('lint FAIL:\n' + fails.map((m) => '  - ' + m).join('\n'))
   process.exit(1)
 }
-console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii + pure-agent + no-stub-mock + pii-safety clean`)
+console.log(`lint OK: ${jsFiles.length} JS files syntax-checked, config + package + ascii + pure-agent + no-stub-mock + pii-safety + cli-help clean`)
