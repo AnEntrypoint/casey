@@ -16,7 +16,7 @@ import { fmtTimeSAST } from '../format.js'
 // read-then-tag-then-notify-once sequence copy-pasted four times.
 import { observation, flagNeedsHuman } from './case-writes.js'
 import { makeAdmissionControl } from './admission.js'
-import { applyServiceControls } from './service-controls.js'
+import { applyServiceControls, isLlmDown } from './service-controls.js'
 import { recordInboundMedia } from './media-intake.js'
 import { mutatingActions, hadSuccessfulWrite, toolCaseRefs } from './turn-results.js'
 import { tagList } from '../timestamp.js'
@@ -398,23 +398,22 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // once per msgId. STOP/HUMAN are handled by the deterministic short-circuit
     // ABOVE this gate, so an opt-out during an outage still fires synchronously
     // and is never queued.
-    if (typeof llmStatus === 'function' && !msg.resume) {
-      let down = false
-      try { const st = await llmStatus(); down = st && st.ok === false } catch { down = false }
-      if (down) {
-        const already = events.some(e => e.kind === 'observation' && typeof e.text === 'string' && e.text === `QUEUED-FOR-AGENT:${msgId}`)
-        if (!already) {
-          try {
-            await store.appendEvent(fresh.id, observation(`QUEUED-FOR-AGENT:${msgId}`))
-            log.error?.('[casey] LLM backend down; queued inbound, no reply sent', { caseId: fresh.id, msgId })
-            return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true }
-          } catch (e) {
-            log.warn?.('[casey] queue-gate append failed; falling through to live turn', { caseId: fresh.id, error: e.message })
-          }
-        } else {
-          // Already queued this msgId (a duplicate delivery during the outage).
-          return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true, deduped: true }
+    // isLlmDown carries the swallow-and-assume-up catch (a status() that itself
+    // throws must never gate an inbound into the queue) and the not-a-function
+    // guard, so both are read once here instead of spelled out a third time.
+    if (!msg.resume && await isLlmDown(llmStatus)) {
+      const already = events.some(e => e.kind === 'observation' && typeof e.text === 'string' && e.text === `QUEUED-FOR-AGENT:${msgId}`)
+      if (!already) {
+        try {
+          await store.appendEvent(fresh.id, observation(`QUEUED-FOR-AGENT:${msgId}`))
+          log.error?.('[casey] LLM backend down; queued inbound, no reply sent', { caseId: fresh.id, msgId })
+          return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true }
+        } catch (e) {
+          log.warn?.('[casey] queue-gate append failed; falling through to live turn', { caseId: fresh.id, error: e.message })
         }
+      } else {
+        // Already queued this msgId (a duplicate delivery during the outage).
+        return { to: replyTo, text: '', platform, caseId: fresh.id, queued: true, deduped: true }
       }
     }
 
