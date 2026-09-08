@@ -119,7 +119,52 @@ const PAGE_MAX = 200
 // files) and then stats exactly the vendored bundles index.html links. It does
 // not walk the design package, which is thousands of files this page never asks
 // for.
-function shellBuildId(publicDir, vendoredFiles) {
+// The shell's asset list is DERIVED from index.html rather than maintained
+// beside it. Two hardcoded copies existed before and had already drifted apart:
+// the build-id inputs still named dist/247420.js (nothing has loaded it since
+// the design-SDK shim was removed) while BOTH copies omitted the two
+// MarkerCluster stylesheets the page really links -- so editing one of those
+// could not change the cache name, and a version-scoped cache would have gone
+// on serving the old CSS. index.html is the only thing that knows what the
+// shell loads, so it is the only thing asked. Same precedent as the manifest's
+// theme_color, which is parsed from index.html's own meta tag below.
+const SHELL_MOUNTS = [
+  ['/design/', DESIGN_DIR],
+  ['/vendor/leaflet.markercluster/', MARKERCLUSTER_DIR],
+  ['/vendor/leaflet/', LEAFLET_DIR],
+]
+
+// Every same-origin asset index.html pulls in: stylesheets, preloads (the
+// Ubuntu faces), and classic scripts. Module imports are deliberately NOT
+// followed -- they resolve through the import map at runtime and all live under
+// public/, which the build id already walks whole.
+function shellAssetUrls(publicDir) {
+  let html
+  try { html = readFileSync(path.join(publicDir, 'index.html'), 'utf8') }
+  catch { return [] }
+  const urls = new Set()
+  const add = (u) => { if (u && u.startsWith('/') && !u.startsWith('//')) urls.add(u) }
+  for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+    if (!/\brel\s*=\s*["'](?:stylesheet|preload)["']/i.test(m[0])) continue
+    add((/\bhref\s*=\s*["']([^"']+)["']/i.exec(m[0]) || [])[1])
+  }
+  for (const m of html.matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi)) add(m[1])
+  return [...urls].sort()
+}
+
+// Resolve one of those URLs to the file express.static will actually serve for
+// it, using the same mount table routes/auth.js registers.
+function shellAssetPath(url, publicDir) {
+  for (const [prefix, dir] of SHELL_MOUNTS) {
+    if (url.startsWith(prefix)) return path.join(dir, url.slice(prefix.length))
+  }
+  return path.join(publicDir, url.slice(1))
+}
+
+// Keyed by URL, not basename: the shell links two different files named
+// leaflet.css and MarkerCluster.css from two different mounts, and a basename
+// key would have let one silently stand in for the other.
+function shellBuildId(publicDir, assetUrls) {
   const h = createHash('sha256')
   const walk = (dir, rel) => {
     const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
@@ -131,11 +176,11 @@ function shellBuildId(publicDir, vendoredFiles) {
     }
   }
   try { walk(publicDir, '') } catch { h.update('public-dir-unreadable\n') }
-  for (const f of vendoredFiles) {
+  for (const url of assetUrls) {
     try {
-      const st = statSync(f)
-      h.update(path.basename(f) + ':' + st.size + ':' + Math.round(st.mtimeMs) + '\n')
-    } catch { h.update(path.basename(f) + ':absent\n') }
+      const st = statSync(shellAssetPath(url, publicDir))
+      h.update(url + ':' + st.size + ':' + Math.round(st.mtimeMs) + '\n')
+    } catch { h.update(url + ':absent\n') }
   }
   return h.digest('hex').slice(0, 16)
 }
@@ -281,13 +326,10 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   // Computed once per boot, not per request: the supervisor forks a fresh
   // worker whenever a watched source file's mtime moves, so boot IS the moment
   // the shell can have changed.
-  const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [
-    path.join(DESIGN_DIR, 'dist', '247420.css'),
-    path.join(DESIGN_DIR, 'dist', '247420.js'),
-    path.join(LEAFLET_DIR, 'leaflet.js'),
-    path.join(LEAFLET_DIR, 'leaflet.css'),
-    path.join(MARKERCLUSTER_DIR, 'leaflet.markercluster.js'),
-  ])
+  // One derived list feeds both the build id and the service worker's precache,
+  // so the two can no longer name different files.
+  const SHELL_ASSET_URLS = shellAssetUrls(PUBLIC_DIR)
+  const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, SHELL_ASSET_URLS)
   // First in the chain, so it wraps every downstream response -- the API
   // routes, the SPA shell, and the /design + /vendor static mounts alike.
   app.use(compressResponses)
@@ -559,15 +601,15 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     res.send(`
 const VERSION = '${SHELL_BUILD_ID}'
 const CACHE = 'casey-shell-' + VERSION
-// Above the fold on the map-first landing. Everything else same-origin joins
-// the same versioned cache the first time it is asked for, so the operator
-// never pays for a module this deployment does not actually open.
-const PRECACHE = [
-  '/', '/offline.html', '/icon.svg', '/manifest.json', '/app.css',
-  '/design/dist/247420.css',
-  '/vendor/ubuntu/ubuntu-400.woff2', '/vendor/ubuntu/ubuntu-700.woff2',
-  '/vendor/leaflet/leaflet.css', '/vendor/leaflet/leaflet.js',
-]
+// Derived at boot from index.html's own stylesheet/preload/script tags, not
+// written out by hand -- the hand-written copy had already drifted from the
+// page. Everything else same-origin (the ES modules, which resolve through the
+// import map) joins the same versioned cache the first time it is asked for, so
+// the operator never pays for a module this deployment does not actually open.
+const PRECACHE = ${JSON.stringify([
+      '/', '/offline.html', '/icon.svg', '/manifest.json',
+      ...SHELL_ASSET_URLS,
+    ])}
 
 // cache: 'reload' matters. Without it the precache for a NEW build could be
 // filled from the browser's own HTTP cache entry for the OLD one, which would
