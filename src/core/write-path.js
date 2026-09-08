@@ -113,16 +113,27 @@ export async function redactSubjectFields(rawLog, { subjectId, fields, redactedB
     // derivation writeObservation uses -- a redaction must act on the
     // field's current truth, not on every stale historical observation that
     // happened to once carry it.
+    // mkObservation throws on a falsy reportedAt, so "missing" is structurally
+    // impossible here -- but it only checks truthiness, so an unparseable
+    // string ("banana") reaches this loop and Date.parse gives NaN. Every
+    // NaN comparison is false, which would silently freeze whichever record
+    // was seen first as "latest" forever. Sorting unparseable oldest makes a
+    // corrupt row lose to any real one instead of winning by accident. This
+    // replaces a `Date.parse(x || 0)` fallback that guarded the impossible
+    // case and not the reachable one, and whose 0 parsed as 2000-01-01
+    // rather than the oldest-possible instant it read as.
+    const at = (v) => { const t = Date.parse(v); return Number.isNaN(t) ? -Infinity : t }
     const latestByField = new Map()
     let latestPackId = null, latestPackVersion = null
     for (const obs of prior) {
+      const obsAt = at(obs.reportedAt)
       for (const [field, val] of Object.entries(obs.findings || {})) {
         const existing = latestByField.get(field)
-        if (!existing || Date.parse(obs.reportedAt) >= Date.parse(existing.reportedAt)) {
+        if (!existing || obsAt >= at(existing.reportedAt)) {
           latestByField.set(field, { val, reportedAt: obs.reportedAt, obsId: obs.id })
         }
       }
-      if (!latestPackId || Date.parse(obs.reportedAt) >= Date.parse(latestPackId.reportedAt || 0)) {
+      if (!latestPackId || obsAt >= at(latestPackId.reportedAt)) {
         latestPackId = { packId: obs.packId, reportedAt: obs.reportedAt }
         latestPackVersion = obs.packVersion
       }

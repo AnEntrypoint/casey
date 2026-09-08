@@ -13,14 +13,15 @@ import { tokens } from './correlate.js'
 // was independently duplicated here/clusters.js/correlate.js.
 import { parseReportTolerant as parseReport } from './timestamp.js'
 
-// Same k-anonymity floor as report-analytics.js rollupByKey (see its own
-// comment): a named place with count below this is itself a de-anonymization
-// vector -- naming a rare place directly identifies which specific case(s)
-// are there, worse than report-analytics.js's channel/case_type buckets
-// since a place name is far more specific. Shares the identical env var so
-// one knob tunes every aggregate-suppression floor in the app.
-const MIN_AGGREGATE_CELL = Number(process.env.CASEY_MIN_AGGREGATE_CELL) || 5
-const SPARSE_PLACE_KEY = 'other/sparse'
+// The k-anonymity floor is shared with report-analytics.js's rollups and now
+// lives in one place (privacy.js) rather than being declared here and there
+// with two copies of the same default -- "one knob tunes every
+// aggregate-suppression floor" is what this comment already claimed, and the
+// import is what makes it true. A named place below the floor is the sharpest
+// de-anonymization vector of the three rollups, since a rare place name
+// identifies which case is there far more directly than a channel or
+// case_type enum does.
+import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY as SPARSE_PLACE_KEY, UNSUPPRESSED_BUCKET_KEYS } from './privacy.js'
 
 // Group open cases by location token. Returns places ranked by case count, each
 // with the count, the species mix (token -> count), and the most-recent report
@@ -51,7 +52,7 @@ export function buildGeo(cases) {
   const merged = new Map()
   let sparse = null
   for (const g of places.values()) {
-    if (g.place !== 'unknown' && g.count < MIN_AGGREGATE_CELL) {
+    if (!UNSUPPRESSED_BUCKET_KEYS.has(g.place) && g.count < MIN_AGGREGATE_CELL) {
       if (!sparse) sparse = { place: SPARSE_PLACE_KEY, count: 0, species: {}, latest: null }
       sparse.count += g.count
       for (const [sp, n] of Object.entries(g.species)) sparse.species[sp] = (sparse.species[sp] || 0) + n

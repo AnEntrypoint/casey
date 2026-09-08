@@ -109,17 +109,13 @@ function reopenCount(events) {
   return n
 }
 
-// Small-cell suppression floor (k-anonymity discipline, matching CDC's own
-// published review standard for public case-surveillance aggregates): a
-// per-channel/per-case_type bucket below this count is a de-anonymization
-// vector on a small rural deployment even with external_id already stripped
-// -- a bucket of size 1 for a rare channel/case_type is effectively "this one
-// specific case", re-identifiable by anyone who knows roughly when/what was
-// reported. Folded into an explicit 'other/sparse' bucket rather than
-// rendered as its own row. Tunable since a larger deployment may want a
-// higher floor.
-const MIN_AGGREGATE_CELL = Number(process.env.CASEY_MIN_AGGREGATE_CELL) || 5
-const SPARSE_BUCKET_KEY = 'other/sparse'
+// Small-cell suppression floor. The threat model and the tuning knob live in
+// privacy.js, which geo.js's place rollups import too -- this used to be
+// declared here and again there, each with its own copy of the `|| 5` default,
+// so the two only happened to agree and raising one would have silently left
+// the other lower. A per-channel/per-case_type bucket below this count is
+// folded into an explicit 'other/sparse' row rather than rendered by name.
+import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY } from './privacy.js'
 
 // Per-intake-channel response speed + volume + quality so a manager can see whether
 // (say) WhatsApp intake is slower than the web form, and which channel actually
