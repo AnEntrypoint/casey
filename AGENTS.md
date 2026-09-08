@@ -241,9 +241,13 @@ turn loop -- with casey's own plugins mounted alongside freddie's
   (mirrors freddie's own `llm-deepseek` package's registration pattern).
 - `freddie-bundle/src/platform/index.js` -- wires casey's own WhatsApp
   webhook (`src/adapters/whatsapp.js`) onto freddie's real
-  `ctx.webServer.register()` (the one standing listening-socket seam in
-  freddie's tree, reusing its single dashboard port rather than opening a
-  second one) and casey's own Discord adapter (`src/adapters/discord.js`,
+  `ctx.webServer.register()` -- the one standing listening-socket seam in
+  freddie's tree, on its OWN port (`CASEY_WEBHOOK_PORT`, default
+  `127.0.0.1:4001`), deliberately clear of the dashboard's 4000: both
+  defaulted to 4000 until 2026-09-08 and `bin/worker.js` boots the Cordis tree
+  first, so freddie took the port and the dashboard died behind it with
+  EADDRINUSE/exit 44 on a stock `casey up` -- and casey's own Discord adapter
+  (`src/adapters/discord.js`,
   an outbound gateway-websocket client needing no listening socket at all).
   `WhatsappAdapter` therefore owns NO listening socket and has no `start()`:
   it kept a full express app plus a `WHATSAPP_WEBHOOK_PORT` for a server
@@ -253,9 +257,10 @@ turn loop -- with casey's own plugins mounted alongside freddie's
   `whatsapp.js`'s exported `dispatchWhatsappWebhookBody(adapter, body)`, which
   this plugin calls; the plugin is now transport plumbing only (read body,
   verify, dispatch, ack). The webhook path is `adapter.path`
-  (`WHATSAPP_WEBHOOK_PATH`, default `/webhooks/whatsapp`) -- one answer to
-  "where does Meta POST", not an env read in each file with different
-  defaults. Dispatch is synchronous and media hydration is detached, so the
+  (`WHATSAPP_WEBHOOK_PATH`, default `/webhooks/whatsapp`) on
+  `CASEY_WEBHOOK_PORT` -- one answer to "where does Meta POST", not an env
+  read in each file with different defaults. There is no
+  `WHATSAPP_WEBHOOK_PORT`. Dispatch is synchronous and media hydration is detached, so the
   caller MUST ack as soon as it returns or Meta redelivers.
 - `src/agent/run-turn.js` -- the thin adapter `hooks/handler.js` still calls
   as `runTurn(...)` (unchanged call signature, so casey's ~850-line
@@ -714,6 +719,7 @@ from the name alone.
 | Variable | Non-obvious behavior |
 |----------|-----------------------|
 | `WHATSAPP_APP_SECRET` | Required (not merely recommended) when WhatsApp credentials are configured -- `casey up`/`casey doctor` hard-fail without it. |
+| `CASEY_WEBHOOK_HOST`, `CASEY_WEBHOOK_PORT` | The freddie Cordis tree's own WebServer row (`freddie-bundle/cordis.patch.yml`, `casey-webserver`), default `127.0.0.1:4001`. This is a DIFFERENT socket from the operator dashboard, which keeps 4000 via `--port`. Both defaulted to 4000 until 2026-09-08, and `bin/worker.js` boots the Cordis tree before the dashboard, so freddie bound 4000 first and the dashboard died behind it with EADDRINUSE and exit 44 on a stock `casey up`. The row carries exactly one route -- `WhatsappAdapter`'s webhook -- so a WhatsApp deployment publishes THIS port to Meta as the callback URL, not the dashboard's. Deployment-visible, not an internal detail. There is no `WHATSAPP_WEBHOOK_PORT`; `WHATSAPP_WEBHOOK_PATH` still names the path on this port. |
 | `CASEY_SESSION_SECRET` | Random per process start when unset, so a restart invalidates every session. Set explicitly for sessions to survive a restart. |
 | `CASEY_OPERATORS` | Removed. The roster now reads from the `operator_account` table directly; setting this has no effect. |
 | `CASEY_LLM_MODEL` | Default `claude/sonnet`, chosen because a weaker model has repeatedly dropped tool calls or repeated questions during casey's multi-step extraction+tool-orchestration turn. `auto` builds acptoapi's real fallback chain rather than pinning one model. |
@@ -1152,9 +1158,29 @@ against it:
   so nine operator actions stored `case_count` `"111111111"` and the map's
   operator-coverage tooltip rendered it verbatim as "111111111 case action(s)".
 
-The general rule: a value off a busybase row is a string until you coerce it.
-`Number.isFinite`/`||`-guards do not save you -- `"111111111"` is truthy and
-`Number("111111111")` is finite; only coercing at the read edge does.
+- *Writing a number into a version-guarded patch.* The trap is not read-side
+  only. Passing a JS number in a patch that also carries `expectedVersion`
+  makes the optimistic-concurrency check fail every time, while the write
+  still lands -- once per retry. Witnessed against a real store:
+  `updateCaseChecked(id, { lat: -29.1, lon: 30.4 })` returned "update conflict
+  after 3 retries -- not applied" with `lat` reading back `-29.1` and
+  `_version` gone 0 -> 4; the same call with `'-29.1'`/`'30.4'` returned ok at
+  `_version` 1. Text-typed columns are unaffected in both shapes, so it is the
+  JS number, not the field. The damage was the false failure handed back, not
+  lost coordinates: `case_report` bails out on that error, so a report carrying
+  a location skipped its timeline event, its provenance observation, the
+  contact's `last_report_*` propagation and the derived
+  `normalized_location`, and told the agent the write had failed.
+  `store/guards.js`'s `toStorable()` is the write-side guard -- finite numbers
+  become their decimal string, while `null`, `undefined`, booleans, strings and
+  NaN/Infinity pass through untouched (`null` is a real "clear this column" and
+  must not become `"null"`).
+
+The general rule: a value off a busybase row is a string until you coerce it,
+and a number going back in is a string until `toStorable` makes it one.
+`Number.isFinite`/`||`-guards do not save you on the read side --
+`"111111111"` is truthy and `Number("111111111")` is finite; only coercing at
+the read edge does.
 
 ## Provenance subsystem (src/core/, src/packs/)
 
