@@ -11,6 +11,12 @@
 import { state, schedule } from './state.js';
 import { api } from './api.js';
 
+// An undoable action's toast carries the only affordance that can reverse it,
+// so it stays up far longer than an ordinary one (which self-dismisses on
+// opts.ms, default 3500). Both undo toasts used the same bare 15000; naming it
+// keeps them from drifting to two different windows for the same promise.
+const UNDOABLE_TOAST_MS = 15000;
+
 let _seq = 0;
 function nextId() { return 'toast-' + (++_seq); }
 
@@ -69,7 +75,7 @@ export function undoToast(caseId, label, onDone) {
   };
   state.toasts.push(row);
   schedule();
-  setTimeout(() => dismissToast(id), 15000);
+  setTimeout(() => dismissToast(id), UNDOABLE_TOAST_MS);
   return id;
 }
 
@@ -101,6 +107,6 @@ export function replyUndoToast(caseId, onDone) {
   };
   state.toasts.push(row);
   schedule();
-  setTimeout(() => dismissToast(id), 15000);
+  setTimeout(() => dismissToast(id), UNDOABLE_TOAST_MS);
   return id;
 }
