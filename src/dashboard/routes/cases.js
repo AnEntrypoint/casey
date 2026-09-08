@@ -7,10 +7,12 @@
 // deps: store, wrap, esc, str, clampLimit, offsetOf, actingOperator, authed,
 //   AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
 //   computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
-//   getRoster, sendReply, UNCLAIMED_ASSIGNEE
+//   getRoster, sendReply, UNCLAIMED_ASSIGNEE, printableReport
 import { tagList } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27 } from '../../format.js'
+import { fieldLabel } from '../../store/report-shape.js'
+import { BRAND } from '../brand.js'
 
 // The two projections below are the ONLY way a raw thatcher case row may reach
 // a JSON response. Both are explicit allowlists, never a spread of the row, so
@@ -64,7 +66,7 @@ export function registerCases(app, deps) {
     store, wrap, esc, str, clampLimit, offsetOf, actingOperator, authed,
     AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
     computeFillRate, csvCell, parseJsonArraySafe, isOpenCase, getRoster,
-    sendReply, parseEventData, UNCLAIMED_ASSIGNEE,
+    sendReply, parseEventData, UNCLAIMED_ASSIGNEE, printableReport,
   } = deps
 
   app.get('/api/cases', wrap(async (req, res) => {
@@ -858,12 +860,12 @@ export function registerCases(app, deps) {
       if (!c) return res.status(404).send('<p>Case not found.</p>')
       let r = {}
       try { r = c.report ? JSON.parse(c.report) : {} } catch { r = {} }
-      const LABELS = { species: 'Animals', symptoms: 'Signs seen', affected_count: 'How many affected',
-        dead_count: 'How many died', onset: 'When it started', suspected_disease: 'Suspected disease',
-        recent_movement: 'Recent movement', location: 'Where', how_to_find: 'How to find the place',
-        access_notes: 'Getting there', farmer_available: 'Farmer available?',
-        contact_fallback: 'Other contact', identifying_traits: 'Identifying the animals',
-        photos: 'Photos', audio: 'Voice notes', notes: 'Other notes' }
+      // Row labels come from report-shape.js's fieldLabel, the same
+      // config-driven resolver every other consumer uses. A 16-entry
+      // animal-health LABELS map used to sit here while the loop below already
+      // iterated the config-driven REPORT_KEY_LIST, so under any other
+      // deployment's report-fields.yml every row fell through to the raw
+      // snake_case key -- a briefing headed "device_or_asset".
       // A saved media path looks like "...(saved: media/<caseId>/<file>)" (see
       // case-store.js saveMedia / gateway-hooks.js) -- surface it as a real link
       // to /media/<path> so a field-team briefing can actually open the photo/
@@ -882,23 +884,29 @@ export function registerCases(app, deps) {
             val = esc(raw)
           }
         }
-        return `<tr><th>${esc(LABELS[k] || k)}</th><td>${val}</td></tr>`
+        return `<tr><th>${esc(fieldLabel(k))}</th><td>${val}</td></tr>`
       }).join('')
       // Maps link when location field is available
       const mapsUrl = r.location ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(r.location))}` : null
       // tel: link for the external_id if it looks like a phone
       const phone = c.external_id || ''
       const telLink = /^[+0-9]{7,}$/.test(phone.replace(/[\s\-()]/g, '')) ? `tel:${phone.replace(/[\s\-()]/g, '')}` : null
-      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Case ${esc(c.ref||c.id)} briefing</title>
-<style>body{font-family:sans-serif;max-width:700px;margin:2em auto;color:#111}
-h1{font-size:1.2em;margin-bottom:.5em}table{border-collapse:collapse;width:100%}
-th,td{text-align:left;padding:.4em .6em;border:1px solid #ccc;vertical-align:top}
-th{width:40%;background:#f5f5f5;font-weight:600}
-.act{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}
-.act a{background:#2f6fb0;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600}
-.act a:hover{background:#1a5592}
-@media print{body{margin:0}.act{display:none}}</style></head>
-<body><h1>Field briefing: ${esc(c.ref||c.id)}</h1>
+      // Composed by server.js's printableReport (already handed to this module
+      // through deps) rather than a fourth hand-rolled <head>/<style> block --
+      // the shared helper exists precisely because three print generators each
+      // carried a near-duplicate stylesheet, and this one had quietly become
+      // the fourth, on its own off-brand blue. Only what is genuinely specific
+      // to a briefing goes through extraCss: the on-screen action bar (hidden
+      // when printed) and the fixed label column. Its buttons take the
+      // deployment's own brand ground with the ink readableInkOn computes for
+      // it, so they stay legible on a light or a dark brand.
+      const extraCss = `body{max-width:700px;margin:2em auto}h1{font-size:1.2em;margin-bottom:.5em}`
+        + `table{width:100%}th{width:40%;font-weight:600;vertical-align:top}td{vertical-align:top}`
+        + `.act{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}`
+        + `.act a{background:${BRAND.ground};color:${BRAND.ink};padding:8px 16px;border-radius:6px;text-decoration:none;font-size:14px;font-weight:600}`
+        + `.act a:hover{background:${BRAND.hover}}`
+        + `@media print{.act{display:none}}`
+      const body = `<h1>Field briefing: ${esc(c.ref||c.id)}</h1>
 <p><strong>Subject:</strong> ${esc(c.subject||'')}</p>
 <p><strong>Status:</strong> ${esc(c.status||'')} &nbsp; <strong>Channel:</strong> ${esc(c.channel||'')}</p>
 <div class="act">
@@ -906,8 +914,8 @@ th{width:40%;background:#f5f5f5;font-weight:600}
   ${mapsUrl ? `<a href="${esc(mapsUrl)}" target="_blank" rel="noopener">Open in Maps</a>` : ''}
   ${telLink ? `<a href="${esc(telLink)}">Call contact</a>` : ''}
 </div>
-<table>${rows}</table></body></html>`
-      res.type('html').send(html)
+<table>${rows}</table>`
+      res.type('html').send(printableReport(`Case ${c.ref||c.id} briefing`, body, extraCss))
     } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || 'unknown error')) + '</p>') }
   })
 }
