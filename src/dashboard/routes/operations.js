@@ -10,65 +10,97 @@
 import { tagList } from '../../timestamp.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
 import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI } from '../../store/report-shape.js'
+import { mountRoutes } from './register.js'
 
-export function registerOperations(app, deps) {
-  const {
-    store, wrap, authed, actingOperator, isOpenCase, rankAttention, getWebhookDeliveryStatus,
-    SAST_TZ, llmStatus, runSweep, receiveStatus, runtimeStatus, queueStatus,
-    alertWebhookUrl,
-  } = deps
+// Same default casey.js's startSweep uses when no CASEY_SWEEP_INTERVAL_MS is
+// set. Reported to the operator so "next run at" is a real time rather than a
+// blank, and named once rather than repeated at three call sites.
+const SWEEP_DEFAULT_INTERVAL_MS = 15 * 60 * 1000
 
-  // Plain-words health for the operator: is the AI helper connected? Low-literacy
-  // operators must know WHY auto-replies may be paused (acptoapi offline) without
-  // reading logs. llmStatus is an object or a (sync/async) fn returning one; we
-  // normalise to {source, model, url} and translate to a friendly label + tone.
-  app.get('/api/health', wrap(async (req, res) => {
-    let s = typeof llmStatus === 'function' ? await llmStatus() : llmStatus
-    s = s || { source: 'unknown' }
-    const map = {
-      acptoapi: { ok: true, label: 'AI helper: online', detail: 'Auto-replies are on. Contacts get an instant answer.' },
-      none: { ok: false, label: 'AI helper: offline', detail: 'Auto-replies are paused. No message is sent; messages queue and re-drive once the provider recovers.' },
-      unknown: { ok: false, label: 'AI helper: unknown', detail: 'Cannot tell if the AI helper is connected.' },
+// Plain-words health for the operator: is the AI helper connected? Low-literacy
+// operators must know WHY auto-replies may be paused (acptoapi offline) without
+// reading logs.
+const LLM_HEALTH_VIEWS = {
+  acptoapi: { ok: true, label: 'AI helper: online', detail: 'Auto-replies are on. Contacts get an instant answer.' },
+  none: { ok: false, label: 'AI helper: offline', detail: 'Auto-replies are paused. No message is sent; messages queue and re-drive once the provider recovers.' },
+  unknown: { ok: false, label: 'AI helper: unknown', detail: 'Cannot tell if the AI helper is connected.' },
+}
+
+const RUNTIME_STATES = new Set(['booting', 'healthy', 'restarting', 'degraded', 'stopping', 'stopped', 'standalone'])
+const RUNTIME_LABELS = {
+  booting: 'Runtime: starting', healthy: 'Runtime: healthy', restarting: 'Runtime: restarting',
+  degraded: 'Runtime: degraded -- needs attention', stopping: 'Runtime: stopping', stopped: 'Runtime: stopped',
+  standalone: 'Runtime: running', unknown: 'Runtime: unknown',
+}
+
+const ACTIVITY_KINDS = new Set(['inbound', 'outbound', 'transition', 'observation', 'note', 'action', 'autonomy_change'])
+const DEFAULT_ACTORS = ['agent', 'operator', 'contact', 'system']
+
+const resolve = async (v) => (typeof v === 'function' ? await v() : v)
+
+// llmStatus is an object or a (sync/async) fn returning one; we normalise to
+// {source, model, url} and translate to a friendly label + tone.
+// Completion-path degradation: source resolved (acptoapi) but recent real turns
+// are slow/failing. Reachability is a false green here -- the brain answers
+// /v1/models but every turn hangs -- so override the online pill to a degraded
+// amber so the operator sees "answering, but slowly" not "fine".
+export function llmHealthView(s) {
+  const view = LLM_HEALTH_VIEWS[s.source] || LLM_HEALTH_VIEWS.unknown
+  if (!view.ok || !s.degraded) return view
+  const secs = Number.isFinite(s.lastMs) ? Math.round(s.lastMs / 1000) : null
+  return {
+    ok: false,
+    label: 'AI helper: slow',
+    detail: secs != null
+      ? `Auto-replies are working but the AI helper is slow (last turn ${secs}s). Contacts may wait. Check the provider.`
+      : 'Auto-replies are working but the AI helper is slow. Contacts may wait. Check the provider.',
+  }
+}
+
+// Receive-liveness for real-time channels: a zombie gateway socket leaves casey
+// deaf while the LLM pill stays green. Surfaced as `gateway` so the operator can
+// tell "online" from "online but answering nobody". A channel configured yet
+// never connected since start is the actionable red signal. Best-effort: a
+// receive-status failure never breaks health.
+async function gatewayView(receiveStatus) {
+  try {
+    const rs = await resolve(receiveStatus)
+    if (!rs || !rs.state || rs.state === 'none') return null
+    const deaf = rs.state === 'never-connected'
+    return {
+      ok: !deaf,
+      state: rs.state,
+      label: deaf ? 'Messages: not connected' : 'Messages: connected',
+      detail: deaf
+        ? 'A message channel is not receiving. Contacts may be sending with no reply. Restart casey or check the connection.'
+        : 'casey is connected and listening for messages.',
+      channels: rs.channels || {},
     }
-    let view = map[s.source] || map.unknown
-    // Completion-path degradation: source resolved (acptoapi) but recent real
-    // turns are slow/failing. Reachability is a false green here -- the brain
-    // answers /v1/models but every turn hangs -- so override the online pill to
-    // a degraded amber so the operator sees "answering, but slowly" not "fine".
-    if (view.ok && s.degraded) {
-      const secs = Number.isFinite(s.lastMs) ? Math.round(s.lastMs / 1000) : null
-      view = {
-        ok: false,
-        label: 'AI helper: slow',
-        detail: secs != null
-          ? `Auto-replies are working but the AI helper is slow (last turn ${secs}s). Contacts may wait. Check the provider.`
-          : 'Auto-replies are working but the AI helper is slow. Contacts may wait. Check the provider.',
-      }
-    }
+  } catch { return null }
+}
+
+// Alert-webhook delivery status: distinguishes "no breach has fired since boot"
+// (ds === null, nothing to report) from "the webhook itself is failing"
+// (ds.ok === false) -- previously a failed POST only ever logged a console
+// warning, invisible on a headless deployment. No URL/detail ever leaks the
+// webhook itself (a secret), only pass/fail + timing.
+function alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus) {
+  if (!alertWebhookUrl) return { configured: false, ok: null, last_attempt_at: null, last_error: null }
+  const ds = getWebhookDeliveryStatus(alertWebhookUrl)
+  return ds
+    ? { configured: true, ok: ds.ok, last_attempt_at: ds.lastAttemptAt, last_error: ds.ok ? null : ds.lastError }
+    : { configured: true, ok: null, last_attempt_at: null, last_error: null }
+}
+
+export function getHealth({ store, llmStatus, receiveStatus, queueStatus, getWebhookDeliveryStatus, alertWebhookUrl }) {
+  return async (req, res) => {
+    const s = (await resolve(llmStatus)) || { source: 'unknown' }
+    const view = llmHealthView(s)
     // Bound the externally-supplied model/url so a misconfigured or hostile
     // llmStatus cannot return a multi-megabyte string into the operator's UI.
     const model = s.model ? String(s.model).slice(0, 100) : null
     const url = s.url ? String(s.url).slice(0, 200) : null
-    // Receive-liveness for real-time channels: a zombie gateway socket leaves
-    // casey deaf while the LLM pill stays green. Surface it as `gateway` so the
-    // operator can tell "online" from "online but answering nobody". A channel
-    // configured yet never connected since start is the actionable red signal.
-    let gateway = null
-    try {
-      const rs = typeof receiveStatus === 'function' ? await receiveStatus() : receiveStatus
-      if (rs && rs.state && rs.state !== 'none') {
-        const deaf = rs.state === 'never-connected'
-        gateway = {
-          ok: !deaf,
-          state: rs.state,
-          label: deaf ? 'Messages: not connected' : 'Messages: connected',
-          detail: deaf
-            ? 'A message channel is not receiving. Contacts may be sending with no reply. Restart casey or check the connection.'
-            : 'casey is connected and listening for messages.',
-          channels: rs.channels || {},
-        }
-      }
-    } catch { gateway = null }   // receive status is best-effort; never break health
+    const gateway = await gatewayView(receiveStatus)
     // LLM-down queue depth (pending re-drives + dead-lettered) so an operator
     // sees not just "AI helper offline" but how much is actually backed up
     // behind that outage. Best-effort: a scan failure never breaks health.
@@ -77,46 +109,34 @@ export function registerOperations(app, deps) {
       const qs = typeof queueStatus === 'function' ? await queueStatus() : null
       if (qs) queue = { pending: qs.pending || 0, dead_lettered: qs.deadLettered || 0, truncated: !!qs.truncated }
     } catch { queue = null }
-    // Alert-webhook delivery status: distinguishes "no breach has fired since
-    // boot" (ds === null, nothing to report) from "the webhook itself is
-    // failing" (ds.ok === false) -- previously a failed POST only ever logged
-    // a console warning, invisible on a headless deployment. No URL/detail
-    // ever leaks the webhook itself (a secret), only pass/fail + timing.
-    let alertWebhook = null
-    if (alertWebhookUrl) {
-      const ds = getWebhookDeliveryStatus(alertWebhookUrl)
-      alertWebhook = ds
-        ? { configured: true, ok: ds.ok, last_attempt_at: ds.lastAttemptAt, last_error: ds.ok ? null : ds.lastError }
-        : { configured: true, ok: null, last_attempt_at: null, last_error: null }
-    } else {
-      alertWebhook = { configured: false, ok: null, last_attempt_at: null, last_error: null }
-    }
     // Turn degradation rate (last hour): best-effort calculation of % of turns degraded
     let degradationRate = null
     try {
       degradationRate = await calculateDegradationRate(store, { hours: 1 })
-    } catch (e) { /* best-effort; never break health */ }
-    res.json({ ...view, source: s.source, model, url, degraded: !!s.degraded, last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null, gateway, queue, alert_webhook: alertWebhook, degradation_rate: degradationRate })
-  }))
+    } catch { /* best-effort; never break health */ }
+    res.json({ ...view, source: s.source, model, url, degraded: !!s.degraded, last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null, gateway, queue, alert_webhook: alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus), degradation_rate: degradationRate })
+  }
+}
 
-  // Detailed provider health: current status, completion-path latency, queue
-  // depth. More granular than /api/health's pill; used by monitoring/debugging.
-  // Aggregate-only (no case refs, no contact data), visible to any authed operator.
-  //
-  // Both fields come from real, live call sites, never a cached/hoped-for
-  // shape: `llmStatus` is makeResilientCallLLM().status (llm.js) -- its actual
-  // return shape is {source, model, url, degraded, lastMs, recentSlow, ok},
-  // not a separate ProviderHealthTracker with lastSuccessAt/queuedTurnCount/
-  // currentChainPosition fields; no real backend has ever populated those, so
-  // reading them here always fell through to a fallback with the same fields
-  // hardcoded to null/0 -- a permanently-dead branch that only looked
-  // detailed. `queueStatus` (casey.queueStatus(), wired the same way
-  // /api/health's own pill already reads it) is where a genuine live pending/
-  // dead-lettered count actually lives.
-  app.get('/api/health/provider', wrap(async (req, res) => {
+// Detailed provider health: current status, completion-path latency, queue
+// depth. More granular than /api/health's pill; used by monitoring/debugging.
+// Aggregate-only (no case refs, no contact data), visible to any authed operator.
+//
+// Both fields come from real, live call sites, never a cached/hoped-for
+// shape: `llmStatus` is makeResilientCallLLM().status (llm.js) -- its actual
+// return shape is {source, model, url, degraded, lastMs, recentSlow, ok},
+// not a separate ProviderHealthTracker with lastSuccessAt/queuedTurnCount/
+// currentChainPosition fields; no real backend has ever populated those, so
+// reading them here always fell through to a fallback with the same fields
+// hardcoded to null/0 -- a permanently-dead branch that only looked
+// detailed. `queueStatus` (casey.queueStatus(), wired the same way
+// /api/health's own pill already reads it) is where a genuine live pending/
+// dead-lettered count actually lives.
+export function getHealthProvider({ authed, llmStatus, queueStatus }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     let s = null
-    try { s = typeof llmStatus === 'function' ? await llmStatus() : llmStatus } catch { s = null }
+    try { s = await resolve(llmStatus) } catch { s = null }
     s = s || { source: 'unknown' }
     const status = s.source === 'acptoapi' ? (s.degraded ? 'degraded' : 'up') : (s.source === 'none' ? 'down' : 'unknown')
     let queued_turn_count = 0
@@ -141,19 +161,44 @@ export function registerOperations(app, deps) {
       dead_lettered_count,
       queue_truncated,
     })
-  }))
+  }
+}
 
-  // Case-level health signals from the periodic guardrail sweep: which cases are
-  // stuck, stale, incomplete, abandoned, or awaiting team action. Exposes the live
-  // breach set per open case (stale, stage_stuck, handoff_needed, incomplete_critical,
-  // abandoned_intake, never_closed, unsentDraft) and the last sweep summary
-  // (scanned, flagged, cleared, errors). PII-free (no external_id or contact_id).
-  // The sweep runs periodically (default 15 min); this endpoint returns the live
-  // classification, not a cached snapshot.
-  app.get('/api/health/cases', wrap(async (req, res) => {
+// Sweep status: last run time, interval, and aggregate summary. Best-effort --
+// a missing or corrupt summary never breaks the endpoint it decorates.
+async function sweepStatusView(store) {
+  const idle = {
+    ok: true, last_run_at: null, interval_ms: SWEEP_DEFAULT_INTERVAL_MS, next_run_at: null,
+    scanned: 0, flagged: 0, cleared: 0, errors: 0,
+  }
+  try {
+    const fleetHealth = await store.getFleetHealth(1)
+    const summary = fleetHealth?.latest
+    if (!summary) return idle
+    return {
+      ok: !summary.degraded,
+      last_run_at: summary.ts || null,
+      interval_ms: SWEEP_DEFAULT_INTERVAL_MS,
+      next_run_at: summary.ts ? summary.ts + SWEEP_DEFAULT_INTERVAL_MS : null,
+      scanned: summary.scanned || 0,
+      flagged: summary.flagged || 0,
+      cleared: summary.cleared || 0,
+      errors: summary.errors ? (Array.isArray(summary.errors) ? summary.errors.length : 0) : 0,
+    }
+  } catch { return idle }
+}
+
+// Case-level health signals from the periodic guardrail sweep: which cases are
+// stuck, stale, incomplete, abandoned, or awaiting team action. Exposes the live
+// breach set per open case (stale, stage_stuck, handoff_needed, incomplete_critical,
+// abandoned_intake, never_closed, unsentDraft) and the last sweep summary
+// (scanned, flagged, cleared, errors). PII-free (no external_id or contact_id).
+// The sweep runs periodically (default 15 min); this endpoint returns the live
+// classification, not a cached snapshot.
+export function getHealthCases({ store, authed }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { classifyCaseHealth } = await import('../../case-health.js')
-    const { tagList } = await import('../../timestamp.js')
     const now = Date.now()
     // Read live operator-tuned thresholds, same path /api/attention uses
     const thresholds = await store.resolveThresholds()
@@ -187,35 +232,6 @@ export function registerOperations(app, deps) {
       entry.breach_count += c.breaches.length
     }
     const byOperator = [...byOperatorMap.values()].sort((a, b) => b.breach_count - a.breach_count)
-    // Sweep status: last run time, interval, and aggregate summary
-    let sweepStatus = {
-      ok: true,
-      last_run_at: null,
-      interval_ms: 15 * 60 * 1000,  // default, same as casey.js line 484
-      next_run_at: null,
-      scanned: 0,
-      flagged: 0,
-      cleared: 0,
-      errors: 0,
-    }
-    try {
-      // Read the last sweep summary via store.getFleetHealth() (case-store.js line 504).
-      // This is best-effort; a missing summary never breaks the endpoint.
-      const fleetHealth = await store.getFleetHealth(1)
-      if (fleetHealth?.latest) {
-        const summary = fleetHealth.latest
-        sweepStatus = {
-          ok: !summary.degraded,
-          last_run_at: summary.ts || null,
-          interval_ms: 15 * 60 * 1000,
-          next_run_at: summary.ts ? summary.ts + (15 * 60 * 1000) : null,
-          scanned: summary.scanned || 0,
-          flagged: summary.flagged || 0,
-          cleared: summary.cleared || 0,
-          errors: summary.errors ? (Array.isArray(summary.errors) ? summary.errors.length : 0) : 0,
-        }
-      }
-    } catch { /* best-effort; a missing or corrupt summary never breaks this endpoint */ }
     const healthCaseCount = cases.length
     const label = healthCaseCount === 0
       ? 'Cases: all healthy'
@@ -228,53 +244,51 @@ export function registerOperations(app, deps) {
       detail: healthCaseCount === 0
         ? 'No cases are breaching guardrails. The team is keeping up.'
         : `${healthCaseCount} open case(s) are stale, stuck, or waiting for team action.`,
-      sweep: sweepStatus,
+      sweep: await sweepStatusView(store),
       case_count: healthCaseCount,
       cases,
       by_operator: byOperator,
     })
-  }))
+  }
+}
 
-  // Runtime/supervisor state: the lifecycle the SUPERVISOR (parent process) drives
-  // -- healthy/restarting/degraded, restart count, last reload/crash. The parent
-  // pushes this snapshot down over IPC (PARENT_MSG.STATE) and the worker exposes it
-  // here so the operator can tell "the runtime got bounced and why" rather than
-  // seeing a silent gap. Token-gated like every other API. Null runtimeStatus (the
-  // legacy single-process path with no supervisor) reports a benign 'standalone'
-  // so the SPA pill never shows a false 'restarting'.
-  app.get('/api/runtime', wrap(async (req, res) => {
+// Runtime/supervisor state: the lifecycle the SUPERVISOR (parent process) drives
+// -- healthy/restarting/degraded, restart count, last reload/crash. The parent
+// pushes this snapshot down over IPC (PARENT_MSG.STATE) and the worker exposes it
+// here so the operator can tell "the runtime got bounced and why" rather than
+// seeing a silent gap. Token-gated like every other API. Null runtimeStatus (the
+// legacy single-process path with no supervisor) reports a benign 'standalone'
+// so the SPA pill never shows a false 'restarting'.
+export function getRuntime({ authed, runtimeStatus }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    let s = typeof runtimeStatus === 'function' ? await runtimeStatus() : runtimeStatus
+    const s = await resolve(runtimeStatus)
     if (!s) return res.json({ state: 'standalone', supervised: false, label: 'Runtime: running', ok: true })
     // Bound and whitelist the fields so a malformed snapshot cannot inject markup
     // or unbounded strings into the operator UI. No external_id ever appears here.
     const state = String(s.state || 'unknown').slice(0, 32)
-    const okStates = new Set(['booting', 'healthy', 'restarting', 'degraded', 'stopping', 'stopped', 'standalone'])
-    const safeState = okStates.has(state) ? state : 'unknown'
+    const safeState = RUNTIME_STATES.has(state) ? state : 'unknown'
     const ok = safeState === 'healthy' || safeState === 'standalone'
-    const labelMap = {
-      booting: 'Runtime: starting', healthy: 'Runtime: healthy', restarting: 'Runtime: restarting',
-      degraded: 'Runtime: degraded -- needs attention', stopping: 'Runtime: stopping', stopped: 'Runtime: stopped',
-      standalone: 'Runtime: running', unknown: 'Runtime: unknown',
-    }
     res.json({
-      state: safeState, supervised: true, ok, label: labelMap[safeState],
+      state: safeState, supervised: true, ok, label: RUNTIME_LABELS[safeState],
       restarts: Number.isFinite(s.restarts) ? s.restarts : 0,
       lastReloadAt: s.lastReloadAt != null ? Number(s.lastReloadAt) : null,
       lastCrashReason: s.lastCrashReason ? String(s.lastCrashReason).slice(0, 300) : null,
       since: s.since != null ? Number(s.since) : null,
     })
-  }))
+  }
+}
 
-  // Config-driven client bootstrap: the workflow stage list and the case_type/
-  // priority enums are declared once in thatcher.config.yml (via CaseStore) --
-  // this exposes them so the SPA can build its stage-select options, status
-  // labels, and "notified on move" set from the LIVE config instead of a
-  // hardcoded literal duplicated in several places in the client script. A
-  // deployment that adds/renames a workflow stage or case_type value is
-  // reflected in the dashboard with no client code change. PII-free (labels
-  // and enum names only).
-  app.get('/api/config', wrap((req, res) => {
+// Config-driven client bootstrap: the workflow stage list and the case_type/
+// priority enums are declared once in thatcher.config.yml (via CaseStore) --
+// this exposes them so the SPA can build its stage-select options, status
+// labels, and "notified on move" set from the LIVE config instead of a
+// hardcoded literal duplicated in several places in the client script. A
+// deployment that adds/renames a workflow stage or case_type value is
+// reflected in the dashboard with no client code change. PII-free (labels
+// and enum names only).
+export function getConfig({ store, authed, SAST_TZ }) {
+  return (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     res.json({
       stages: store.getValidStatuses(),
@@ -308,13 +322,15 @@ export function registerOperations(app, deps) {
       // literals -- byte-identical to before this existed.
       dashboard_ui: DASHBOARD_UI,
     })
-  }))
+  }
+}
 
-  // Cases the time-guardrails flagged as going wrong: stale, stuck, an unanswered
-  // request for a person, an abandoned intake, or resolved-but-never-closed. Driven
-  // by the health:* tags the sweep maintains, with the live breach detail recomputed
-  // so the reason is current, not a stale snapshot.
-  app.get('/api/attention', wrap(async (req, res) => {
+// Cases the time-guardrails flagged as going wrong: stale, stuck, an unanswered
+// request for a person, an abandoned intake, or resolved-but-never-closed. Driven
+// by the health:* tags the sweep maintains, with the live breach detail recomputed
+// so the reason is current, not a stale snapshot.
+export function getAttention({ store, authed, isOpenCase, rankAttention }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { classifyCaseHealth } = await import('../../case-health.js')
     const now = Date.now()
@@ -347,18 +363,20 @@ export function registerOperations(app, deps) {
       had_degraded_turn: tagList(c).includes('degraded-turn-seen'),
     }))
     res.json({ count: cases.length, total, limit, offset, at_risk: atRisk, sla_target_ms: slaTargetMs, cases })
-  }))
+  }
+}
 
-  // Secretary follow-up queue (Herd Health roadmap Phase 2/3): the same
-  // rankAttention breach list the operator inbox above already computes,
-  // grouped by normalized report.location so a secretary sees "N dropped in
-  // Bizana, M in Lusikisiki" instead of a flat list, plus filterable to their
-  // own assigned cases or the unassigned pool for a lead deciding allocation.
-  // Pull-based only (no scheduled push) -- see AGENTS.md/roadmap Phase 2c.
-  // never_closed (Phase 3: resolved-but-nothing-happened) already appears
-  // here for free since classifyCaseHealth is the same source /api/attention
-  // uses -- no new breach type, just this same queue surfacing it.
-  app.get('/api/secretary/queue', wrap(async (req, res) => {
+// Secretary follow-up queue (Herd Health roadmap Phase 2/3): the same
+// rankAttention breach list the operator inbox above already computes,
+// grouped by normalized report.location so a secretary sees "N dropped in
+// Bizana, M in Lusikisiki" instead of a flat list, plus filterable to their
+// own assigned cases or the unassigned pool for a lead deciding allocation.
+// Pull-based only (no scheduled push) -- see AGENTS.md/roadmap Phase 2c.
+// never_closed (Phase 3: resolved-but-nothing-happened) already appears
+// here for free since classifyCaseHealth is the same source /api/attention
+// uses -- no new breach type, just this same queue surfacing it.
+export function getSecretaryQueue({ store, authed, isOpenCase, rankAttention }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { classifyCaseHealth } = await import('../../case-health.js')
     const { normalizeLocation } = await import('../../location-normalize.js')
@@ -391,14 +409,16 @@ export function registerOperations(app, deps) {
       .map(([place, cases]) => ({ place, count: cases.length, cases }))
       .sort((a, b) => b.count - a.count)
     res.json({ total: filtered.length, filter, places })
-  }))
+  }
+}
 
-  // How many open cases are waiting past the reply SLA, bucketed by case_type, so an
-  // operator can attack the worst category first (e.g. "4 outbreaks past SLA vs 1
-  // follow_up"). Reuses the live handoff threshold (resolveThresholds) and the same
-  // atRiskCount the inbox header shows, run per case_type slice. Aggregate-only --
-  // counts only, never a case ref or external_id.
-  app.get('/api/sla-at-risk/by-type', wrap(async (req, res) => {
+// How many open cases are waiting past the reply SLA, bucketed by case_type, so an
+// operator can attack the worst category first (e.g. "4 outbreaks past SLA vs 1
+// follow_up"). Reuses the live handoff threshold (resolveThresholds) and the same
+// atRiskCount the inbox header shows, run per case_type slice. Aggregate-only --
+// counts only, never a case ref or external_id.
+export function getSlaAtRiskByType({ store, authed, isOpenCase }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { atRiskCount } = await import('../../attn.js')
     const now = Date.now()
@@ -415,24 +435,28 @@ export function registerOperations(app, deps) {
     for (const [t, slice] of groups) byType[t] = atRiskCount(slice, now, slaTargetMs)
     const total = atRiskCount(open, now, slaTargetMs)
     res.json({ by_type: byType, total, sla_target_ms: slaTargetMs })
-  }))
+  }
+}
 
-  // Operator-tunable health thresholds. GET returns the live effective values
-  // (persisted patch merged over defaults); PUT validates+clamps a partial patch
-  // against the known keys, persists it as an audited observation, and returns the
-  // new effective values plus which keys applied/were rejected. Both are gated by
-  // the global auth middleware above. The PUT feeds BOTH the live sweep and the
-  // /api/attention classifier, since both read store.resolveThresholds() at call
-  // time -- a change here takes effect on the next sweep and the next inbox scan.
-  app.get('/api/thresholds', wrap(async (req, res) => {
+// Operator-tunable health thresholds. GET returns the live effective values
+// (persisted patch merged over defaults); PUT validates+clamps a partial patch
+// against the known keys, persists it as an audited observation, and returns the
+// new effective values plus which keys applied/were rejected. The PUT feeds BOTH
+// the live sweep and the /api/attention classifier, since both read
+// store.resolveThresholds() at call time -- a change here takes effect on the
+// next sweep and the next inbox scan.
+export function getThresholds({ store, authed }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { mergeThresholds, THRESHOLD_KEYS } = await import('../../thresholds.js')
     const patch = await store.getThresholdsPatch()
     const effective = patch ? mergeThresholds(patch).thresholds : (await import('../../case-health.js')).DEFAULT_THRESHOLDS
     res.json({ thresholds: effective, customized: !!patch, keys: THRESHOLD_KEYS })
-  }))
+  }
+}
 
-  app.put('/api/thresholds', wrap(async (req, res) => {
+export function putThresholds({ store, authed, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { mergeThresholds } = await import('../../thresholds.js')
     const body = req.body && typeof req.body === 'object' ? req.body : {}
@@ -455,69 +479,78 @@ export function registerOperations(app, deps) {
     await store.setThresholdsPatch(accepted, actingOperator(req))
     const effective = await store.resolveThresholds()
     res.json({ ok: true, thresholds: effective, applied, rejected })
-  }))
+  }
+}
 
-  // Trigger a health-guardrail sweep now (operator-initiated). Only available
-  // when the casey instance passed a runSweep callback; returns 501 otherwise.
-  app.post('/api/sweep', wrap(async (req, res) => {
+// Trigger a health-guardrail sweep now (operator-initiated). Only available
+// when the casey instance passed a runSweep callback; returns 501 otherwise.
+export function postSweep({ authed, runSweep }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     if (!runSweep) return res.status(501).json({ error: 'sweep not available in this mode' })
     const result = await runSweep()
     res.json({ ok: true, scanned: result?.scanned ?? null, flagged: result?.flagged ?? null, cleared: result?.cleared ?? null })
-  }))
+  }
+}
 
-  // Fleet-wide outbreak view: connected components of the open/non-merged pool
-  // under the same correlation scorer the per-case suggestions use. Surfaces
-  // "these N cases look like one outbreak" so the team sees a spreading disease
-  // without opening each case. On-demand (one O(n^2) scan over the bounded pool),
-  // never per-poll; merge stays per-pair and human-confirmed.
-  app.get('/api/clusters', wrap(async (req, res) => {
+// Fleet-wide outbreak view: connected components of the open/non-merged pool
+// under the same correlation scorer the per-case suggestions use. Surfaces
+// "these N cases look like one outbreak" so the team sees a spreading disease
+// without opening each case. On-demand (one O(n^2) scan over the bounded pool),
+// never per-poll; merge stays per-pair and human-confirmed.
+export function getClusters({ store, authed, isOpenCase }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildClusters } = await import('../../clusters.js')
     const pool = (await store.listCases({}, { limit: 500 }))
       .filter(c => isOpenCase(c) && !tagList(c).includes('merged'))
     const clusters = buildClusters(pool)
     res.json({ pool: pool.length, count: clusters.length, clusters })
-  }))
+  }
+}
 
-  // Hotspots by area: open cases grouped by their stored location token(s),
-  // ranked by count, each with species mix and most-recent report time. Re-groups
-  // stored location only (no new data); aggregate-only, on-demand.
-  app.get('/api/geo', wrap(async (req, res) => {
+// Hotspots by area: open cases grouped by their stored location token(s),
+// ranked by count, each with species mix and most-recent report time. Re-groups
+// stored location only (no new data); aggregate-only, on-demand.
+export function getGeo({ store, authed, isOpenCase }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildGeo } = await import('../../geo.js')
     const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
     res.json({ open: open.length, places: buildGeo(open) })
-  }))
+  }
+}
 
-  // Symptom/species distribution: the pure-aggregation view this system leans
-  // on INSTEAD of outbreak/severity inference (see clusters.js's own header
-  // comment on why clusterSeverity was removed). Purely a frequency count of
-  // what was actually reported -- species x symptom co-occurrence, ranked by
-  // count -- so an operator or field worker reads the real pattern themselves
-  // rather than being handed a system-guessed diagnosis. `since` (unix
-  // seconds) narrows to a recent window; omit for the full open pool.
-  app.get('/api/distribution', wrap(async (req, res) => {
+// Symptom/species distribution: the pure-aggregation view this system leans
+// on INSTEAD of outbreak/severity inference (see clusters.js's own header
+// comment on why clusterSeverity was removed). Purely a frequency count of
+// what was actually reported -- species x symptom co-occurrence, ranked by
+// count -- so an operator or field worker reads the real pattern themselves
+// rather than being handed a system-guessed diagnosis. `since` (unix
+// seconds) narrows to a recent window; omit for the full open pool.
+export function getDistribution({ store, authed, isOpenCase }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildSymptomDistribution } = await import('../../distribution.js')
     const since = req.query.since ? Number(req.query.since) : null
     if (req.query.since && !Number.isFinite(since)) return res.status(400).json({ error: 'since must be a unix-seconds number' })
     const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
     res.json(buildSymptomDistribution(open, { since }))
-  }))
+  }
+}
 
-  // Cross-case activity/audit stream: every event newest-first, filterable by
-  // kind/actor (validated against known enums) and a since-timestamp window, each
-  // row deep-linking to its case. Read-only. Reuses the same per-case timeline
-  // data, just merged across cases for review.
-  app.get('/api/activity', wrap(async (req, res) => {
+// Cross-case activity/audit stream: every event newest-first, filterable by
+// kind/actor (validated against known enums) and a since-timestamp window, each
+// row deep-linking to its case. Read-only. Reuses the same per-case timeline
+// data, just merged across cases for review.
+export function getActivity({ store, authed }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const KINDS = new Set(['inbound', 'outbound', 'transition', 'observation', 'note', 'action', 'autonomy_change'])
     const ACTORS = new Set(
       typeof store.getFieldEnum === 'function' && store.getFieldEnum('event.actor', []).length
         ? store.getFieldEnum('event.actor', [])
-        : ['agent', 'operator', 'contact', 'system'])
-    const kind = KINDS.has(req.query.kind) ? req.query.kind : null
+        : DEFAULT_ACTORS)
+    const kind = ACTIVITY_KINDS.has(req.query.kind) ? req.query.kind : null
     const actor = ACTORS.has(req.query.actor) ? req.query.actor : null
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500)
     const since = parseInt(req.query.since, 10) || 0
@@ -528,23 +561,25 @@ export function registerOperations(app, deps) {
       text: e.text || '', created_at: e.created_at,
     }))
     res.json({ count: events.length, kind, actor, events, truncated })
-  }))
+  }
+}
 
-  // Real per-turn reply-path health, distinct from /api/health's aggregated
-  // "is the AI helper currently reachable/degraded" pill. The pill's own
-  // MIN_SAMPLES_FOR_DEGRADED window (llm.js) deliberately never flips on a
-  // single failed turn -- by design, to avoid a lone rate-limited hop flapping
-  // the whole dashboard red. That correctness comes at a real observability
-  // cost: a genuine one-off turn failure (a real contact getting the
-  // guaranteed-response fallback text) can happen while every "is it working"
-  // signal (process alive, /api/health, gateway connected) still reads green,
-  // because none of them individually witness whether a specific reply
-  // actually generated. This route answers the question those cannot: query
-  // the durable data.degraded_turn marker (hooks/handler.js) directly, across
-  // every case, so "did any real turn actually fail recently, and why" has a
-  // real answer without already knowing which case to look at or grepping the
-  // raw log file. `since` (unix ms, default last hour) windows the query.
-  app.get('/api/turns/degraded', wrap(async (req, res) => {
+// Real per-turn reply-path health, distinct from /api/health's aggregated
+// "is the AI helper currently reachable/degraded" pill. The pill's own
+// MIN_SAMPLES_FOR_DEGRADED window (llm.js) deliberately never flips on a
+// single failed turn -- by design, to avoid a lone rate-limited hop flapping
+// the whole dashboard red. That correctness comes at a real observability
+// cost: a genuine one-off turn failure (a real contact getting the
+// guaranteed-response fallback text) can happen while every "is it working"
+// signal (process alive, /api/health, gateway connected) still reads green,
+// because none of them individually witness whether a specific reply
+// actually generated. This route answers the question those cannot: query
+// the durable data.degraded_turn marker (hooks/handler.js) directly, across
+// every case, so "did any real turn actually fail recently, and why" has a
+// real answer without already knowing which case to look at or grepping the
+// raw log file. `since` (unix ms, default last hour) windows the query.
+export function getDegradedTurns({ store, authed }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { evData } = await import('../../safe.js')
     const since = req.query.since ? Number(req.query.since) : (Date.now() - 3600_000)
@@ -579,5 +614,32 @@ export function registerOperations(app, deps) {
         reason: d.reason || 'unknown', msg_id: d.msg_id || null, error: d.error || null,
       }))
     res.json({ count: degraded.length, since, turns: degraded, truncated, dead_lettered_count: deadLettered.length, dead_lettered: deadLettered })
-  }))
+  }
+}
+
+const ROUTES = [
+  // /api/health is deliberately the one route here with no per-handler
+  // authed() check: registerAuth's session gate is installed ahead of every
+  // module (server.js), so it is already gated -- this note exists so the
+  // absence reads as inherited, not forgotten.
+  ['get', '/api/health', getHealth],
+  ['get', '/api/health/provider', getHealthProvider],
+  ['get', '/api/health/cases', getHealthCases],
+  ['get', '/api/runtime', getRuntime],
+  ['get', '/api/config', getConfig],
+  ['get', '/api/attention', getAttention],
+  ['get', '/api/secretary/queue', getSecretaryQueue],
+  ['get', '/api/sla-at-risk/by-type', getSlaAtRiskByType],
+  ['get', '/api/thresholds', getThresholds],
+  ['put', '/api/thresholds', putThresholds],
+  ['post', '/api/sweep', postSweep],
+  ['get', '/api/clusters', getClusters],
+  ['get', '/api/geo', getGeo],
+  ['get', '/api/distribution', getDistribution],
+  ['get', '/api/activity', getActivity],
+  ['get', '/api/turns/degraded', getDegradedTurns],
+]
+
+export function registerOperations(app, deps) {
+  mountRoutes(app, deps, ROUTES)
 }

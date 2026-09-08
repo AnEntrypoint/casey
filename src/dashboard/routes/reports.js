@@ -3,21 +3,89 @@
 // per-operator workload, intake-mode stats, and the fleet-health trend.
 // Aggregate-only (no external_id) per AGENTS.md's audited-classification list.
 //
-// deps: store, wrap, esc, actingOperator, isOpenCase, rankAttention, getRoster,
-//   csvCell, fmtTimeSAST, printableReportRow, printableReportTable,
+// deps: store, wrap, esc, actingOperator, authed, isOpenCase, rankAttention,
+//   getRoster, csvCell, fmtTimeSAST, printableReportRow, printableReportTable,
 //   printableReport, computeFillRate
 import { tagList } from '../../timestamp.js'
 import { evData } from '../../safe.js'
+import { mountRoutes } from './register.js'
 
-export function registerReports(app, deps) {
-  const {
-    store, wrap, esc, isOpenCase, rankAttention, getRoster, csvCell,
-    fmtTimeSAST, printableReportRow, printableReportTable, printableReport,
-    computeFillRate, actingOperator, authed,
-  } = deps
+const reportDays = (req) => Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
+const msToHrs = (ms) => ms == null ? '' : Math.round(ms / 3600000 * 10) / 10
 
-  // Aggregate stats comparing intake modes. Returns fill-rate breakdown by source.
-  app.get('/api/stats', wrap(async (req, res) => {
+// Fields case_report's raw `data: {...incoming, ...}` action-event write (case-tools.js)
+// can carry -- owner_contact/present_person/contact_fallback/location and free-form report
+// text -- must never reach the audit export even under a recognized key name. Allowlist
+// rather than the old "unrecognized key falls through to empty" accident: a from/to/old/new
+// value is only ever read when the event's own `field`/`claimed_by` names a transition/claim/
+// case_type change, never for a raw case_report field dump.
+const AUDIT_SAFE_ACTIONS = new Set(['transition', 'claim', 'status', 'assignee', 'case_type', 'autonomy', 'priority'])
+
+const UNREPLIED_ROW_CAP = 100
+const FLAGGED_ROW_CAP = 200
+
+// Management briefing: one aggregate report (counts by stage + area, opened/
+// closed this period, median/p90 first-response, live breach counts) over a
+// ?days window. .csv for spreadsheets, .html for a print-friendly page; both
+// render the same buildReport numbers. Read-only, aggregate-only, SAST.
+// Returns { report, cases, eventsByCaseId, thresholds, now } -- callers that
+// only need the aggregate briefing use `.report`; /api/report.json also
+// reuses `.cases`/`.eventsByCaseId`/`.thresholds`/`.now` instead of
+// re-fetching the identical open-pool + per-case event fan-out a second
+// time in the same request.
+export async function gatherReport({ store, isOpenCase, getRoster }, days) {
+  const { classifyCaseHealth } = await import('../../case-health.js')
+  const thresholds = await store.resolveThresholds()
+  const now = Date.now()
+  const cases = await store.listCases({}, { limit: 10000, offset: 0 })
+  const eventsByCaseId = new Map(await Promise.all(cases.map(async c => [c.id, await store.listEvents(c.id).catch(() => [])])))
+  const breachRows = cases
+    .filter(isOpenCase)
+    .flatMap(c => classifyCaseHealth(c, now, thresholds))
+  const staleMs = Number.isFinite(thresholds?.staleMs) ? thresholds.staleMs : 24 * 3600 * 1000
+  const { buildReport } = await import('../../report.js')
+  const report = buildReport(cases, eventsByCaseId, breachRows, now, days, await getRoster(), staleMs)
+  return { report, cases, eventsByCaseId, thresholds, now }
+}
+
+// Shift handover: a printable digest of what the next person needs to pick up.
+// Built entirely from the event log + attention engine, scoped to "since the
+// last Start-of-shift marker" (or the full open pool when no shift was started).
+// No per-operator scoping -- a rotating field team shares one shift line.
+export async function gatherHandover({ store, isOpenCase, rankAttention }) {
+  const now = Date.now()
+  const marker = await store.getShiftMarker()
+  const since = marker?.ts || 0
+  const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
+  // Cases still needing attention, ranked by the same scorer the inbox uses.
+  const { items } = rankAttention(open, now, { limit: 50, offset: 0 })
+  const attention = items.map(({ c, score, reason }) => ({
+    id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
+    status: c.status, assignee: c.assignee || '', score, reason,
+  }))
+  // Open handoffs not yet taken: a person was asked for and no operator owns it.
+  const handoffs = open.filter(c => tagList(c).includes('needs-human'))
+    .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel, assignee: c.assignee || '' }))
+  // Unsent assisted drafts waiting for an operator to approve or discard.
+  const drafts = open.filter(c => tagList(c).includes('draft-pending'))
+    .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel }))
+  // Cases touched since the shift began, with their last action, newest-first.
+  const dueSince = open.filter(c => since && (c.last_event_at || c.updated_at || c.created_at || 0) >= since)
+  const touched = (await Promise.all(dueSince.map(async c => {
+    const evs = await store.listEvents(c.id).catch(() => [])
+    const last = evs.length ? evs[evs.length - 1] : null
+    return {
+      id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
+      at: c.last_event_at || c.updated_at || c.created_at || 0,
+      last_kind: last?.kind || '', last_actor: last?.actor || '',
+    }
+  }))).sort((a, b) => b.at - a.at)
+  return { generated_at: now, since, since_by: marker?.by || null, attention, handoffs, drafts, touched: touched.slice(0, 50) }
+}
+
+// Aggregate stats comparing intake modes. Returns fill-rate breakdown by source.
+export function getStats({ store, authed, computeFillRate }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const cases = await store.listCases({}, { limit: 10000, offset: 0 })
     const byMode = { channel: [], manual: [], public_form: [], unknown: [] }
@@ -46,28 +114,31 @@ export function registerReports(app, deps) {
       }
     }
     res.json({ total: cases.length, by_mode: summary })
-  }))
+  }
+}
 
-  // Fleet-health trend: the rolling log of SCHEDULED guardrail-sweep summaries
-  // (persisted by casey.runSweepOnce as audited observations). Returns the latest
-  // summary, the last N for a trend line, and a degraded flag (true when the
-  // latest sweep hit errors). Read-only, store-backed -- no casey-instance handle
-  // needed. ?n clamps the history depth (default 50, 1..500). The header pill
-  // wiring is the client-side half (blocked on the browser surface).
-  app.get('/api/fleet-health', wrap(async (req, res) => {
+// Fleet-health trend: the rolling log of SCHEDULED guardrail-sweep summaries
+// (persisted by casey.runSweepOnce as audited observations). Returns the latest
+// summary, the last N for a trend line, and a degraded flag (true when the
+// latest sweep hit errors). Read-only, store-backed -- no casey-instance handle
+// needed. ?n clamps the history depth (default 50, 1..500).
+export function getFleetHealth({ store, authed }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const n = Math.min(Math.max(parseInt(req.query.n, 10) || 50, 1), 500)
     const fh = await store.getFleetHealth(n)
     res.json(fh)
-  }))
+  }
+}
 
-  // Management KPIs over the live case+event history: time-to-first-reply
-  // (median/p90), median dwell per stage from transition events, opened-vs-closed
-  // per day, open backlog by stage. Aggregate-only -- no per-contact rows or
-  // external_id leak. On-demand (one scan), not a background poll. ?days scopes
-  // the per-day window (default 14, clamped 1..90). buildOverview is the pure
-  // aggregator shared with the CLI/CSV so the maths is identical everywhere.
-  app.get('/api/overview', wrap(async (req, res) => {
+// Management KPIs over the live case+event history: time-to-first-reply
+// (median/p90), median dwell per stage from transition events, opened-vs-closed
+// per day, open backlog by stage. Aggregate-only -- no per-contact rows or
+// external_id leak. On-demand (one scan), not a background poll. ?days scopes
+// the per-day window (default 14, clamped 1..90). buildOverview is the pure
+// aggregator shared with the CLI/CSV so the maths is identical everywhere.
+export function getOverview({ store, authed }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildOverview } = await import('../../overview.js')
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
@@ -75,15 +146,17 @@ export function registerReports(app, deps) {
     const eventsByCaseId = new Map(await Promise.all(cases.map(async c => [c.id, await store.listEvents(c.id).catch(() => [])])))
     const overview = buildOverview(cases, eventsByCaseId, Date.now(), days * 24 * 3600 * 1000)
     res.json({ days, ...overview })
-  }))
+  }
+}
 
-  // Per-operator workload + accountability: open cases each person holds, stale
-  // claims (held but untouched too long), replies sent in the last 24h, median
-  // first-reply on their cases, and their oldest-waiting case. Aggregate-only --
-  // no per-contact rows, no external_id. On-demand single scan, never per-poll.
-  // buildWorkload is the pure aggregator (like overview/attn) so the maths is one
-  // place. The stale window reads the live operator-tuned thresholds when present.
-  app.get('/api/operators/workload', wrap(async (req, res) => {
+// Per-operator workload + accountability: open cases each person holds, stale
+// claims (held but untouched too long), replies sent in the last 24h, median
+// first-reply on their cases, and their oldest-waiting case. Aggregate-only --
+// no per-contact rows, no external_id. On-demand single scan, never per-poll.
+// buildWorkload is the pure aggregator (like overview/attn) so the maths is one
+// place. The stale window reads the live operator-tuned thresholds when present.
+export function getWorkload({ store, authed, getRoster }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildWorkload } = await import('../../workload.js')
     const cases = await store.listCases({}, { limit: 10000, offset: 0 })
@@ -92,37 +165,14 @@ export function registerReports(app, deps) {
     const staleMs = Number.isFinite(th.staleMs) ? th.staleMs : 24 * 3600 * 1000
     const out = buildWorkload(cases, eventsByCaseId, await getRoster(), Date.now(), staleMs)
     res.json(out)
-  }))
-
-  // Management briefing: one aggregate report (counts by stage + area, opened/
-  // closed this period, median/p90 first-response, live breach counts) over a
-  // ?days window. .csv for spreadsheets, .html for a print-friendly page; both
-  // render the same buildReport numbers. Read-only, aggregate-only, SAST.
-  // Returns { report, cases, eventsByCaseId, thresholds, now } -- callers that
-  // only need the aggregate briefing use `.report`; /api/report.json also
-  // reuses `.cases`/`.eventsByCaseId`/`.thresholds`/`.now` instead of
-  // re-fetching the identical open-pool + per-case event fan-out a second
-  // time in the same request.
-  async function gatherReport(days) {
-    const { classifyCaseHealth } = await import('../../case-health.js')
-    const thresholds = await store.resolveThresholds()
-    const now = Date.now()
-    const cases = await store.listCases({}, { limit: 10000, offset: 0 })
-    const eventsByCaseId = new Map(await Promise.all(cases.map(async c => [c.id, await store.listEvents(c.id).catch(() => [])])))
-    const breachRows = cases
-      .filter(isOpenCase)
-      .flatMap(c => classifyCaseHealth(c, now, thresholds))
-    const staleMs = Number.isFinite(thresholds?.staleMs) ? thresholds.staleMs : 24 * 3600 * 1000
-    const { buildReport } = await import('../../report.js')
-    const report = buildReport(cases, eventsByCaseId, breachRows, now, days, await getRoster(), staleMs)
-    return { report, cases, eventsByCaseId, thresholds, now }
   }
-  const reportDays = (req) => Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
-  const msToHrs = (ms) => ms == null ? '' : Math.round(ms / 3600000 * 10) / 10
+}
 
-  app.get('/api/report.csv', wrap(async (req, res) => {
+export function getReportCsv(deps) {
+  const { authed, csvCell } = deps
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const { report: r } = await gatherReport(reportDays(req))
+    const { report: r } = await gatherReport(deps, reportDays(req))
     const lines = []
     lines.push(['section', 'key', 'value'].join(','))
     lines.push(['totals', 'all', csvCell(r.totals.all)].join(','))
@@ -149,17 +199,20 @@ export function registerReports(app, deps) {
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', 'attachment; filename="casey-management-report.csv"')
     res.send(lines.join('\n'))
-  }))
+  }
+}
 
-  // Same management briefing as .csv/.html but as structured JSON for BI ingest,
-  // plus three analytics the flat briefing does not carry: SLA compliance pass/
-  // fail, period-over-period comparison, and per-intake-channel response speed.
-  // Aggregate-only (no external_id); read-only. The SLA target is the live handoff
-  // threshold (what "should have been answered by"), falling back to 30 minutes.
-  app.get('/api/report.json', wrap(async (req, res) => {
+// Same management briefing as .csv/.html but as structured JSON for BI ingest,
+// plus three analytics the flat briefing does not carry: SLA compliance pass/
+// fail, period-over-period comparison, and per-intake-channel response speed.
+// Aggregate-only (no external_id); read-only. The SLA target is the live handoff
+// threshold (what "should have been answered by"), falling back to 30 minutes.
+export function getReportJson(deps) {
+  const { authed } = deps
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const days = reportDays(req)
-    const { report: r, cases, eventsByCaseId, thresholds, now } = await gatherReport(days)
+    const { report: r, cases, eventsByCaseId, thresholds, now } = await gatherReport(deps, days)
     const { buildSLAReport, buildReportComparison, buildChannelMetrics, buildSLAReportByType, buildCaseTypeMetrics, buildClosureCompleteness } = await import('../../report-analytics.js')
     const slaTargetMs = Number.isFinite(thresholds?.handoffMs) ? thresholds.handoffMs : 30 * 60 * 1000
     res.json({
@@ -171,15 +224,17 @@ export function registerReports(app, deps) {
       by_case_type: buildCaseTypeMetrics(cases, eventsByCaseId),
       closure_completeness: buildClosureCompleteness(cases, eventsByCaseId, now),
     })
-  }))
+  }
+}
 
-  // Compliance audit trail: a flat CSV of every mutation over a ?days window,
-  // one row per event, joined to its case ref. Built off the same append-only
-  // event log the timeline uses, parsed via evData(). NEVER emits external_id or
-  // any contact phone/handle -- the actor is the operator/agent/system id, and
-  // the to/from fields are scrubbed of the case external_id so a delivered-reply
-  // event cannot leak the contact number into a compliance export. Read-only.
-  app.get('/api/audit.csv', wrap(async (req, res) => {
+// Compliance audit trail: a flat CSV of every mutation over a ?days window,
+// one row per event, joined to its case ref. Built off the same append-only
+// event log the timeline uses, parsed via evData(). NEVER emits external_id or
+// any contact phone/handle -- the actor is the operator/agent/system id, and
+// the to/from fields are scrubbed of the case external_id so a delivered-reply
+// event cannot leak the contact number into a compliance export. Read-only.
+export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const days = reportDays(req)
     const sinceSec = Math.floor((Date.now() - days * 24 * 3600 * 1000) / 1000)
@@ -194,13 +249,6 @@ export function registerReports(app, deps) {
     rows = rows.filter(e => Number(e.created_at) >= sinceSec)
     const lines = []
     lines.push(['case_ref', 'timestamp_sast', 'actor', 'action', 'field', 'old_value', 'new_value', 'reason'].join(','))
-    // Fields case_report's raw `data: {...incoming, ...}` action-event write (case-tools.js)
-    // can carry -- owner_contact/present_person/contact_fallback/location and free-form report
-    // text -- must never reach this export even under a recognized key name. Allowlist rather
-    // than the old "unrecognized key falls through to empty" accident: a from/to/old/new value
-    // is only ever read when the event's own `field`/`claimed_by` names a transition/claim/
-    // case_type change, never for a raw case_report field dump.
-    const AUDIT_SAFE_ACTIONS = new Set(['transition', 'claim', 'status', 'assignee', 'case_type', 'autonomy', 'priority'])
     for (const e of rows) {
       const d = evData(e)
       const ext = extById.get(e.case_id) || ''
@@ -229,11 +277,14 @@ export function registerReports(app, deps) {
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', 'attachment; filename="casey-audit-trail.csv"')
     res.send(lines.join('\n'))
-  }))
+  }
+}
 
-  app.get('/api/report.html', wrap(async (req, res) => {
+export function getReportHtml(deps) {
+  const { authed, esc, fmtTimeSAST, printableReportRow, printableReport } = deps
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const { report: r } = await gatherReport(reportDays(req))
+    const { report: r } = await gatherReport(deps, reportDays(req))
     const row = (k, v) => printableReportRow([k, v])
     const stageRows = Object.entries(r.by_stage).map(([s, n]) => row(s, n)).join('')
     const areaRows = r.by_area.slice(0, 20).map(a => row(a.place, a.count)).join('')
@@ -252,46 +303,14 @@ export function registerReports(app, deps) {
       + `<h2>Current health breaches</h2><table>${breachRows}</table>`
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(printableReport('casey management report', body))
-  }))
-
-  // Shift handover: a printable digest of what the next person needs to pick up.
-  // Built entirely from the event log + attention engine, scoped to "since the
-  // last Start-of-shift marker" (or the full open pool when no shift was started).
-  // No per-operator scoping -- a rotating field team shares one shift line.
-  async function gatherHandover() {
-    const now = Date.now()
-    const marker = await store.getShiftMarker()
-    const since = marker?.ts || 0
-    const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
-    // Cases still needing attention, ranked by the same scorer the inbox uses.
-    const { items } = rankAttention(open, now, { limit: 50, offset: 0 })
-    const attention = items.map(({ c, score, reason }) => ({
-      id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
-      status: c.status, assignee: c.assignee || '', score, reason,
-    }))
-    // Open handoffs not yet taken: a person was asked for and no operator owns it.
-    const handoffs = open.filter(c => tagList(c).includes('needs-human'))
-      .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel, assignee: c.assignee || '' }))
-    // Unsent assisted drafts waiting for an operator to approve or discard.
-    const drafts = open.filter(c => tagList(c).includes('draft-pending'))
-      .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel }))
-    // Cases touched since the shift began, with their last action, newest-first.
-    const dueSince = open.filter(c => since && (c.last_event_at || c.updated_at || c.created_at || 0) >= since)
-    const touched = (await Promise.all(dueSince.map(async c => {
-      const evs = await store.listEvents(c.id).catch(() => [])
-      const last = evs.length ? evs[evs.length - 1] : null
-      return {
-        id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
-        at: c.last_event_at || c.updated_at || c.created_at || 0,
-        last_kind: last?.kind || '', last_actor: last?.actor || '',
-      }
-    }))).sort((a, b) => b.at - a.at)
-    return { generated_at: now, since, since_by: marker?.by || null, attention, handoffs, drafts, touched: touched.slice(0, 50) }
   }
+}
 
-  app.get('/api/handover', wrap(async (req, res) => {
+export function getHandover(deps) {
+  const { authed, esc, fmtTimeSAST, printableReportRow, printableReportTable, printableReport } = deps
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const h = await gatherHandover()
+    const h = await gatherHandover(deps)
     if (req.query.format !== 'html') return res.json(h)
     const secs = (ms) => Math.floor(ms / 1000)
     const row = printableReportRow
@@ -309,46 +328,50 @@ export function registerReports(app, deps) {
       + tbl(['when', 'ref', 'subject', 'last action'], h.touched.map(a => row([fmtTimeSAST(secs(a.at)), a.ref, a.subject, `${a.last_kind}${a.last_actor ? ' by ' + a.last_actor : ''}`])))
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(printableReport('casey shift handover', body))
-  }))
+  }
+}
 
-  // Stamp a new shift marker so the next handover digest scopes "since now".
-  app.post('/api/handover/start-shift', wrap(async (req, res) => {
+// Stamp a new shift marker so the next handover digest scopes "since now".
+export function postStartShift({ store, authed, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const m = await store.startShift(actingOperator(req))
     res.json({ ok: true, ts: m.ts, by: m.by })
-  }))
+  }
+}
 
-  // AI-offline queue: open cases whose last agent turn FAILED (model error/timeout,
-  // store/host fault) so a human could not trust the auto-reply was adequate. The
-  // gateway tags such a case 'ai-offline' (cleared by the next operator reply or a
-  // later successful agent turn), so this is a cheap tag scan over the open pool --
-  // no per-case event read on the hot path. Newest-first by last activity so the
-  // freshest outage sits on top of the operator's queue.
-  app.get('/api/unreplied', wrap(async (req, res) => {
+// AI-offline queue: open cases whose last agent turn FAILED (model error/timeout,
+// store/host fault) so a human could not trust the auto-reply was adequate. The
+// gateway tags such a case 'ai-offline' (cleared by the next operator reply or a
+// later successful agent turn), so this is a cheap tag scan over the open pool --
+// no per-case event read on the hot path. Newest-first by last activity so the
+// freshest outage sits on top of the operator's queue.
+export function getUnreplied({ store, authed, isOpenCase }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const open = (await store.listCases({}, { limit: 10000, offset: 0 }))
       .filter(c => isOpenCase(c) && tagList(c).includes('ai-offline'))
     open.sort((a, b) => (b.last_event_at || b.updated_at || 0) - (a.last_event_at || a.updated_at || 0))
-    const UNREPLIED_ROW_CAP = 100
     const items = open.slice(0, UNREPLIED_ROW_CAP).map(c => ({
       id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
       status: c.status, assignee: c.assignee || '',
       last_event_at: c.last_event_at || c.updated_at || c.created_at || 0,
     }))
     res.json({ total: open.length, shown: items.length, items })
-  }))
+  }
+}
 
-  // Live-feedback rollup for prompt tuning (pillar 8): every case an operator
-  // has flagged a reply on (cases.js POST /api/cases/:id/flag-reply), most
-  // recently flagged first, with the flagged event's own text/reason pulled
-  // from its timeline so a prompt writer can review real bad replies in one
-  // place instead of hunting through individual case timelines.
-  app.get('/api/flagged-replies', wrap(async (req, res) => {
+// Live-feedback rollup for prompt tuning (pillar 8): every case an operator
+// has flagged a reply on (cases.js POST /api/cases/:id/flag-reply), most
+// recently flagged first, with the flagged event's own text/reason pulled
+// from its timeline so a prompt writer can review real bad replies in one
+// place instead of hunting through individual case timelines.
+export function getFlaggedReplies({ store, authed }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const flagged = (await store.listCases({}, { limit: 10000, offset: 0 }))
       .filter(c => tagList(c).includes('flagged-reply'))
     flagged.sort((a, b) => (b.last_event_at || b.updated_at || 0) - (a.last_event_at || a.updated_at || 0))
-    const FLAGGED_ROW_CAP = 200
     const page = flagged.slice(0, FLAGGED_ROW_CAP)
     const items = []
     for (const c of page) {
@@ -365,5 +388,24 @@ export function registerReports(app, deps) {
     }
     items.sort((a, b) => (b.flagged_at || 0) - (a.flagged_at || 0))
     res.json({ total: flagged.length, shown: items.length, items })
-  }))
+  }
+}
+
+const ROUTES = [
+  ['get', '/api/stats', getStats],
+  ['get', '/api/fleet-health', getFleetHealth],
+  ['get', '/api/overview', getOverview],
+  ['get', '/api/operators/workload', getWorkload],
+  ['get', '/api/report.csv', getReportCsv],
+  ['get', '/api/report.json', getReportJson],
+  ['get', '/api/audit.csv', getAuditCsv],
+  ['get', '/api/report.html', getReportHtml],
+  ['get', '/api/handover', getHandover],
+  ['post', '/api/handover/start-shift', postStartShift],
+  ['get', '/api/unreplied', getUnreplied],
+  ['get', '/api/flagged-replies', getFlaggedReplies],
+]
+
+export function registerReports(app, deps) {
+  mountRoutes(app, deps, ROUTES)
 }
