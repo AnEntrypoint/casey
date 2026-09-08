@@ -948,10 +948,32 @@ a narrow signature match for this one incident shape, not a general malware
 scanner -- it does not replace fixing the actual credential/workflow gap.
 busybase's `src/*.js` are gitignored bun-build outputs -- fixes go
 in the `.ts` sources in the busybase repo and are rebuilt there, never
-patched in a casey-side copy. Timestamps read back from busybase may be
-numeric-seconds strings (e.g. `"1782977388"`); parse row timestamps with the
-digit-string-aware helpers (`attn.js` tsMs / `case-health.js` ms /
-`format.js` toDate), never bare `Date.parse`.
+patched in a casey-side copy.
+
+**busybase binds numeric columns as TEXT, so every number read off a row
+arrives as a digit string.** This has now produced two separate shipped bugs,
+in two different directions, and both readers and writers have to defend
+against it:
+
+- *Reading a timestamp.* Timestamps come back as numeric-seconds strings
+  (e.g. `"1782977388"`), and a bare `Date.parse` on one is `NaN`. Parse row
+  timestamps with `timestamp.js`'s shared `tsMs` (the single implementation
+  that replaced the near-identical `attn.js` tsMs / `case-health.js` ms /
+  `case-sweep.js` tsMs copies -- do not reintroduce a fourth) or
+  `format.js`'s `toDate`, never bare `Date.parse`/`new Date(x).getTime()`.
+  Shipped instance: `buildClosureCompleteness` pinned `closure_completeness`
+  at zero for every deployment, because its `Number.isFinite` guard rejected
+  every event.
+- *Writing an integer.* Arithmetic on a row value CONCATENATES instead of
+  adding: `"1" + 1` is `"11"`. Coerce with `safe.js`'s `rowInt()` before any
+  arithmetic on a column read back from a row. Shipped instance:
+  `case-store.js`'s `learnOperatorActivity` did `(existing?.case_count || 0) + 1`,
+  so nine operator actions stored `case_count` `"111111111"` and the map's
+  operator-coverage tooltip rendered it verbatim as "111111111 case action(s)".
+
+The general rule: a value off a busybase row is a string until you coerce it.
+`Number.isFinite`/`||`-guards do not save you -- `"111111111"` is truthy and
+`Number("111111111")` is finite; only coercing at the read edge does.
 
 ## Provenance subsystem (src/core/, src/packs/)
 

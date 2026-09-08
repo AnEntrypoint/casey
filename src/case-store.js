@@ -33,7 +33,7 @@ import { DERIVED_ONLY_FIELDS, writeGuardViolation } from './store/guards.js'
 import { REPORT_KEYS, REPORT_KEY_ORDER, APPEND_FIELDS } from './store/report-shape.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 import { tagList } from './timestamp.js'
-import { evData } from './safe.js'
+import { evData, rowInt } from './safe.js'
 
 // Principals casey acts as. role:agent satisfies normal requires_role gates.
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
@@ -955,7 +955,13 @@ export class CaseStore {
         operator_id: operatorId,
         areas: JSON.stringify(boundedAreas),
         last_seen_at: nowIso(),
-        case_count: (existing?.case_count || 0) + 1,
+        // busybase reads integer columns back as DIGIT STRINGS (see AGENTS.md,
+        // thatcher/busybase chain), so a bare `+ 1` CONCATENATES rather than adds:
+        // "1" -> "11" -> "111". Observed live at 9 actions: case_count read
+        // "111111111", which the map's coverage tooltip rendered verbatim as
+        // "111111111 case action(s)". Coerce before arithmetic; a corrupt legacy
+        // value is also re-based here rather than carried forward.
+        case_count: rowInt(existing?.case_count) + 1,
       }
       if (existing) await this.t.update('operator_identity', existing.id, patch, SYSTEM_USER)
       else await this.t.create('operator_identity', { ...patch, channel_ids: '[]' }, SYSTEM_USER)
