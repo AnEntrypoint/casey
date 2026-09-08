@@ -20,6 +20,22 @@ import { canReplace, requireProvenance, mkValue } from './provenance.js'
 
 const _locks = new Map()
 
+// Parse an observation's reportedAt for ORDERING. mkObservation throws on a
+// falsy reportedAt, so "missing" is structurally impossible -- but it only
+// checks truthiness, so an unparseable string ("banana") reaches the
+// latest-per-field loops below and a bare Date.parse gives NaN. Every NaN
+// comparison is false, which silently freezes whichever record was seen first
+// as "latest" forever. Sorting unparseable oldest makes a corrupt row lose to
+// any real one instead of winning by accident.
+//
+// Shared by writeObservation and redactSubjectFields deliberately: both derive
+// the same "latest value per field" and must agree. They did not -- redaction
+// used this guard while writeObservation compared with a bare Date.parse, so a
+// frozen latest made canReplace test the incoming value against the wrong
+// prior, and a lower-provenance value could beat a higher one. That is the one
+// property this module exists to hold.
+const at = (v) => { const t = Date.parse(v); return Number.isNaN(t) ? -Infinity : t }
+
 async function withSubjectLock(subjectId, fn) {
   const prev = _locks.get(subjectId) || Promise.resolve()
   const run = prev.catch(() => {}).then(fn)
@@ -56,7 +72,7 @@ export async function writeObservation(rawLog, params, { nowFn = () => Date.now(
     for (const obs of prior) {
       for (const [field, val] of Object.entries(obs.findings || {})) {
         const existing = latestByField.get(field)
-        if (!existing || Date.parse(obs.reportedAt) >= Date.parse(existing.reportedAt)) {
+        if (!existing || at(obs.reportedAt) >= at(existing.reportedAt)) {
           latestByField.set(field, { val, reportedAt: obs.reportedAt })
         }
       }
@@ -113,16 +129,8 @@ export async function redactSubjectFields(rawLog, { subjectId, fields, redactedB
     // derivation writeObservation uses -- a redaction must act on the
     // field's current truth, not on every stale historical observation that
     // happened to once carry it.
-    // mkObservation throws on a falsy reportedAt, so "missing" is structurally
-    // impossible here -- but it only checks truthiness, so an unparseable
-    // string ("banana") reaches this loop and Date.parse gives NaN. Every
-    // NaN comparison is false, which would silently freeze whichever record
-    // was seen first as "latest" forever. Sorting unparseable oldest makes a
-    // corrupt row lose to any real one instead of winning by accident. This
-    // replaces a `Date.parse(x || 0)` fallback that guarded the impossible
-    // case and not the reachable one, and whose 0 parsed as 2000-01-01
-    // rather than the oldest-possible instant it read as.
-    const at = (v) => { const t = Date.parse(v); return Number.isNaN(t) ? -Infinity : t }
+    // Ordering uses the shared `at` helper at module scope -- see its own note
+    // for why a bare Date.parse freezes the first-seen record as "latest".
     const latestByField = new Map()
     let latestPackId = null, latestPackVersion = null
     for (const obs of prior) {

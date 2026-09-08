@@ -156,19 +156,28 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     const channel = CHANNEL_DEFAULT[platform] || platform || 'other'
     const external_id = conversationKey(msg)   // per-contact case IDENTITY
     const replyTo = replyTarget(msg)           // channel/chat DELIVERY target
-    if (!msg.burstReplay) {
-      if (admission.isClaimed(external_id)) {
-        log.info?.('[casey] skipping concurrent LLM turn, buffered for replay', { channel })
-        msg.burstReplay = true
-        admission.bufferBurst(external_id, msg, channel)
-        return { to: replyTo, text: '', platform, skipped: true, buffered: true }
-      }
-      admission.claim(external_id)
+    // A replay skips the isClaimed CHECK -- it was already turned away once and
+    // must not be buffered a second time -- but it still takes the claim. It is
+    // a full turn on this contact and has to exclude another one, exactly like a
+    // first arrival. Skipping the claim too left the contact unclaimed for the
+    // whole replay: a new message arriving mid-replay saw isClaimed false,
+    // claimed, and ran a SECOND concurrent LLM turn on the same case, which is
+    // the one thing this gate exists to prevent.
+    //
+    // Claiming here cannot stomp a live claim: a replay only ever begins after
+    // admission.takeBuffered() handed the message over, and that returns null
+    // while inFlight.has(id) -- so the previous turn has already released.
+    if (!msg.burstReplay && admission.isClaimed(external_id)) {
+      log.info?.('[casey] skipping concurrent LLM turn, buffered for replay', { channel })
+      msg.burstReplay = true
+      admission.bufferBurst(external_id, msg, channel)
+      return { to: replyTo, text: '', platform, skipped: true, buffered: true }
     }
+    admission.claim(external_id)
     try {
       return await handleInboundOnceClaimed.call(this, platform, msg, channel, external_id, replyTo)
     } finally {
-      if (!msg.burstReplay) admission.release(external_id)
+      admission.release(external_id)
     }
   }
   async function handleInboundOnceClaimed(platform, msg, channel, external_id, replyTo) {

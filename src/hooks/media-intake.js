@@ -89,8 +89,17 @@ function inboundAudioNote(msg, transcript = '') {
 // new-case subject seed and the agent prompt) and this does not -- an export
 // with no importer advertises a seam that isn't one, and invites a second
 // reader of msg.media instead of a second caller of this.
-function pickMediaItem(msg) {
-  return Array.isArray(msg.media) ? (msg.media.find(m => m?.buffer) || msg.media[0]) : msg.media
+// The downloaded bytes for ONE kind. Selecting a single item for both kinds
+// loses the other's bytes: one message can carry a photo AND a voice note, they
+// record into different report fields, and picking the first entry with a buffer
+// meant that when the audio came first the photo recorded with no file saved and
+// no auto-description -- silently, since the note still appended. A field photo
+// of a dying animal is not recapturable, so the loss is permanent.
+// An item with no `type` counts as a photo, as it always has.
+function pickMediaItem(msg, kind) {
+  const list = Array.isArray(msg.media) ? msg.media : (msg.media ? [msg.media] : [])
+  const wantAudio = kind === 'audio'
+  return list.find(m => m?.buffer && (m.type === 'audio') === wantAudio) || null
 }
 
 // One arrival: save the bytes if the adapter actually downloaded any, append the
@@ -123,25 +132,24 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
 // preserving the original ordering (transcription runs BEFORE the audio note is
 // composed so a successful transcript is folded into the recorded field).
 export async function recordInboundMedia({ store, log, caseId, msg }) {
-  const mediaItem = pickMediaItem(msg)
+  const photoItem = pickMediaItem(msg, 'photo')
+  const audioItem = pickMediaItem(msg, 'audio')
 
   const photoNote = inboundImageNote(msg)
   if (photoNote) {
-    const isPhotoMsg = mediaItem?.buffer && mediaItem.type !== 'audio'
     await recordArrival({
       store, log, caseId, field: 'photos', note: photoNote, kind: 'photo',
-      mediaItem: isPhotoMsg ? mediaItem : null,
+      mediaItem: photoItem,
       eventPrefix: 'PHOTO RECEIVED', failLabel: 'photo mark',
     })
   }
 
-  const isAudioMsg = mediaItem?.buffer && mediaItem.type === 'audio'
-  const transcript = isAudioMsg ? await transcribeAudio(mediaItem.buffer, mediaItem.mimeType) : ''
+  const transcript = audioItem ? await transcribeAudio(audioItem.buffer, audioItem.mimeType) : ''
   const audioNote = inboundAudioNote(msg, transcript)
   if (audioNote) {
     await recordArrival({
       store, log, caseId, field: 'audio', note: audioNote, kind: 'audio',
-      mediaItem: isAudioMsg ? mediaItem : null,
+      mediaItem: audioItem,
       eventPrefix: 'AUDIO RECEIVED', failLabel: 'audio mark',
     })
   }
