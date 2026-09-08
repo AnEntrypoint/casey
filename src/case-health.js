@@ -239,10 +239,18 @@ export function classifyWorkerCheckins(contacts, now = Date.now(), checkinWindow
     const lastAt = c.last_location_at ? tsMs(c.last_location_at) : null
     const ageMs = lastAt ? now - lastAt : Infinity
     if (!Number.isFinite(ageMs) || ageMs > checkinWindowMs) {
+      // Identity deliberately absent. This used to also carry external_id and
+      // display_name (defaulting to external_id, so a raw contact number could
+      // arrive in a field literally named display_name). Nothing consumed
+      // either: the one caller, routes/map.js, reads contact_id to build a
+      // membership Set and emits a boolean overdue_checkin through
+      // workerPinProjection. That made this a pure function manufacturing PII
+      // no caller wanted, one res.json() away from a leak -- and lint's
+      // pii-safety gate would not have caught it, because that gate keys on
+      // the named case/contact projections and on store-call dataflow, and
+      // this is neither. Cheaper to not build the value than to guard it.
       overdue.push({
         contact_id: c.id,
-        external_id: c.external_id,
-        display_name: c.display_name || c.external_id,
         last_checkin_at: c.last_location_at || null,
         age_ms: Number.isFinite(ageMs) ? ageMs : null,
         overdue: true,

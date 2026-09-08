@@ -18,7 +18,7 @@
     "check-submodules": "node scripts/check-submodules.mjs",
     "install-hooks": "node scripts/install-hooks.mjs",
     "link-deps": "node scripts/link-deps.mjs",
-    "postinstall": "node scripts/install-freddie-deps.mjs && node scripts/link-deps.mjs && node scripts/install-hooks.mjs && node scripts/scan-deps.mjs || true"
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
     "acptoapi": "file:deps/acptoapi",

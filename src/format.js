@@ -1,10 +1,21 @@
 // Shared display formatters for the CLI (and any node-side consumer): absolute
 // time in the deployment's local timezone (South Africa/SAST by default) and
 // phone numbers in the deployment's country-code form (+27 by default),
-// matching the dashboard SPA's inlined fmtTime/fmtPhone (server.js
-// fmtTime/fmtPhone) byte for byte so the terminal and the web view never
-// disagree. Display only -- the raw stored value (event created_at, case
-// external_id) stays the key.
+// rendering the same strings as the dashboard SPA's own
+// public/src/format.js so the terminal and the web view never disagree.
+// Display only -- the raw stored value (event created_at, case external_id)
+// stays the key.
+//
+// That parity claim was false for as long as it was written here. This file
+// called toLocaleString with no format options and inherited the en-ZA
+// default, while the SPA passed explicit ones, so the same stored value
+// rendered "2026/07/02, 09:29:48 SAST" in the CLI and a management-report CSV
+// but "02 Jul 2026, 09:29 SAST" in the dashboard -- different date order,
+// different month form, and seconds on one side only. The options below are
+// the SPA's, verbatim, which is the direction that makes the sentence true:
+// an operator reading a case aloud off the terminal and one reading it off
+// the dashboard now say the same words, and 2026/07/02 stops being orderable
+// two ways by a reader who does not know which convention it is in.
 
 // The timezone casey shows absolute times in. Defaults to SAST (UTC+2, no
 // DST) -- casey's shipped design is a South African deployment -- but is
@@ -40,13 +51,21 @@ export function toDate(v) {
 // Absolute time in the deployment's timezone, with an explicit suffix (SAST
 // by default, blank/custom when CASEY_TZ overrides the zone -- see TZ_LABEL
 // above). Returns '' for a missing/corrupt timestamp (never throws) so a
-// timeline row with a bad created_at still renders. Mirrors server.js fmtTime.
+// timeline row with a bad created_at still renders. The option bag is the
+// dashboard SPA's (public/src/format.js fmtTime), character for character --
+// the two are a matched pair and an edit to either is a bug unless it lands
+// in both. Only the SOURCE of the zone and label differs by design: here they
+// come from CASEY_TZ/CASEY_TZ_LABEL, there from state.config.
 export function fmtTimeSAST(v) {
   const d = toDate(v)
   if (!d) return ''
   const suffix = TZ_LABEL ? ' ' + TZ_LABEL : ''
-  try { return d.toLocaleString('en-ZA', { timeZone: SAST_TZ }) + suffix }
-  catch { return d.toLocaleString() + suffix }
+  try {
+    return d.toLocaleString('en-ZA', {
+      timeZone: SAST_TZ, year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    }) + suffix
+  } catch { return d.toLocaleString() + suffix }
 }
 
 // The country calling code casey formats phone numbers for. Defaults to South

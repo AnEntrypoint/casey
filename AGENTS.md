@@ -13,8 +13,18 @@ labels -- is entirely config-driven (see "Configuration architecture"
 below); this repo ships a generic IT/facilities-helpdesk demo config by
 default. The original animal-disease-surveillance-for-rural-South-Africa
 domain this project was first built for now lives as a separate, fully
-self-contained config package: `AnEntrypoint/uhh` (private), installable via
-`npx github:AnEntrypoint/uhh`. A reporter defaults to the `reporter` tier
+self-contained config package: `AnEntrypoint/uhh` (private). Install it by
+cloning with `--recurse-submodules` and running `node ./bin/uhh.js`, NOT via
+`npx github:AnEntrypoint/uhh` -- this file advertised the npx path until
+2026-09-08, and uhh's own README says in bold that it does not work: uhh
+declares casey as `file:deps/casey`, and an in-repo `file:` dependency
+cannot be resolved inside an npx-installed package. uhh had already removed
+the same claim from its own `package.json` (its commit `d9af78b`, "stop
+advertising an install path the README says does not work") and the
+correction was never propagated here, which left the wrong version in the
+more authoritative of the two places. The generic npx pattern below is still
+real -- it just needs a `github:`-spec config package, which uhh is not.
+A reporter defaults to the `reporter` tier
 (casual, public, report-only); an operator may promote a trusted reporter to
 `field_worker`, which unlocks agentic case-query access and location
 check-ins so they show up on the operator map -- this tier mechanism is
@@ -43,7 +53,18 @@ resolved by `src/config-loader.js` at process start:
   `append` (photos/audio-style fields that accumulate rather than
   overwrite), `never_inferred` + `never_inferred_guard_pattern` (a
   structural regression guard -- see below), `display_label` + `section`
-  (dashboard `ReportSections` grouping, served via `/api/config`).
+  (dashboard `ReportSections` grouping, served via `/api/config`), and
+  `severity_signal` (a field whose mere PRESENCE raises a case's attention
+  rank -- `report-shape.js` derives `SEVERITY_SIGNAL_FIELDS` from it,
+  `attn.js` adds a flat +7 when any such field holds a non-empty value, and
+  `operations.js` publishes the set. Note what it is NOT: it reads no
+  magnitude, so "1 dead" and "400 dead" score identically, and it lives
+  inside the URGENCY score. It is not a severity axis and cannot drive a
+  graded severity ramp -- see `.gm/research/severity-route.md` in `uhh`).
+  Alongside `fields[]`, `report-fields.yml` may also declare `geo_fields`
+  (read as `REPORT_GEO_FIELD_DEFS`): the `lat`/`lon` args `case_report`
+  accepts as siblings of the report blob rather than as report fields,
+  since they are case-level columns.
 - `persona.cjs` (CommonJS `module.exports`, not ES `export` -- see
   `src/config-loader.js` for why: it must load synchronously via
   `createRequire`) declares the agent's system-prompt text: `domainIntro`,
@@ -351,6 +372,23 @@ could recur until the root cause (compromised workflow secret or bot token)
 is found and closed. Standing monitoring: `scripts/scan-deps.mjs` runs on
 every `npm install` (via `postinstall` hook) and on `casey doctor`, catching
 new samples of this and similar attack shapes.
+
+**That monitoring could not fail an install until 2026-09-08, and now can.**
+`postinstall` was a single shell line ending `... && node
+scripts/scan-deps.mjs || true`. In both `sh` and `cmd`, `||` binds to the
+whole preceding `&&` chain, so the trailing `|| true` swallowed the
+scanner's exit code along with everything else: a real hit printed
+"Do not run `npm install`/`casey up` again..." into the middle of the
+install log and npm still reported success. Live-witnessed both ways with a
+planted signature file -- old line exit 0, new path exit 1, clean tree
+still exit 0. The chain now lives in `scripts/postinstall.mjs`, which keeps
+the tolerance on the three SETUP steps (they may legitimately fail with no
+`pnpm`, no submodules, or an unwritable git dir, and now say which ones
+degraded instead of going silent) and gives the security gate's exit code
+straight to npm. When touching this, keep that split: the setup steps are
+allowed to fail the machine, the scanner is allowed to fail the install.
+A `file:` dependency's `postinstall` does run (verified on npm 11.19.0), so
+a `uhh` deployer's own `npm install` is covered by this too.
 
 **Runtime integrity (no instance-time hotpatching):**
 Casey never imports from `deps/` at runtime; the submodule checkouts are
