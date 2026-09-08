@@ -81,7 +81,16 @@
 .casey-rep-editable:hover,.casey-rep-editable:focus{background:var(--bg-2, var(--panel));outline:none}
 .casey-rep-editable:focus-visible{outline:var(--focus-w) solid var(--focus-color);outline-offset:var(--focus-offset)}
 .casey-rep-edit-actions{display:flex;gap:var(--space-1-75, 6px)}
-.casey-rep-note-btn{background:transparent;border:0;color:var(--accent-ink, var(--accent));cursor:pointer;padding:0;font-size:var(--fs-pico, 10px);align-self:flex-start}
+/* Twenty-eight of these render on one report -- one per field -- and at
+   padding:0 each was 23px tall, a height nothing else on the screen used
+   and a poor target for a real control. --ctl-sm is the kit's existing
+   small-control height, so adopting it removes a whole distinct height
+   from the page rather than adding another one, and the coarse-pointer
+   floor matches what the kit now gives its own button vocabulary. Padding
+   stays horizontal-light so it still reads as the quiet inline affordance
+   it is, not a button block repeated twenty-eight times. */
+.casey-rep-note-btn{background:transparent;border:0;color:var(--accent-ink, var(--accent));cursor:pointer;padding:0;height:var(--ctl-sm, 28px);font-size:var(--fs-pico, 10px);align-self:flex-start}
+@media (pointer: coarse){.casey-rep-note-btn{min-height:44px}}
 .casey-rep-note-btn:hover{text-decoration:underline}
 .casey-rep-note-btn:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
 .casey-rep-field-note{font-size:var(--fs-nano, 11px);color:var(--fg-3, var(--muted));background:var(--bg-2, var(--panel));border-radius:var(--r-sm, 4px);padding:var(--space-half, 3px) var(--space-2, 8px);border-left:2px solid var(--border)}
