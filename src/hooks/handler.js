@@ -18,14 +18,13 @@ import { observation, flagNeedsHuman } from './case-writes.js'
 import { makeAdmissionControl } from './admission.js'
 import { applyServiceControls } from './service-controls.js'
 import { recordInboundMedia } from './media-intake.js'
-import { mutatingActions, hadSuccessfulWrite } from './turn-results.js'
+import { mutatingActions, hadSuccessfulWrite, toolCaseRefs } from './turn-results.js'
 import { tagList } from '../timestamp.js'
 import { reporterTierExcludedToolNames } from '../case-tools.js'
 import { caseSystemPrompt } from './prompt.js'
 import {
   truncate,
   sanitizeOutboundRef,
-  CASE_REF_RE,
   stripChannelMarkup,
   mergeTag,
   dropTag,
@@ -827,21 +826,11 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     // (case_list/case_mine/case_today/case_get/case_link_suggestions) legitimately
     // cites OTHER cases' real refs per AGENTS.md's enquiry-surface design -- every
     // ref that actually came back from a tool call this turn is real, not
-    // hallucinated, and must pass through unmodified. Scan the raw tool-message
-    // content (already JSON-stringified by the bridge) for ref-shaped tokens
-    // rather than parsing each tool's own result shape -- a superset is safe here
-    // since only a token this regex would ALSO strip out of the reply is at risk.
+    // hallucinated, and must pass through unmodified. toolCaseRefs() collects
+    // those; see turn-results.js for why it scans the raw tool-message content
+    // rather than each tool's own result shape.
     {
-      const toolRefs = []
-      if (Array.isArray(result?.messages)) {
-        for (const m of result.messages) {
-          if (m?.role !== 'tool' || !m.content) continue
-          const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-          const found = content.match(CASE_REF_RE)
-          if (found) toolRefs.push(...found)
-        }
-      }
-      const { text: safeText, corrected } = sanitizeOutboundRef(text, fresh.ref, toolRefs)
+      const { text: safeText, corrected } = sanitizeOutboundRef(text, fresh.ref, toolCaseRefs(result))
       if (corrected.length) {
         text = safeText
         await store.appendEvent(fresh.id, observation(`REF-CORRECTED: model emitted ${corrected.join(', ')}; rewrote to real ref ${fresh.ref}.`))
