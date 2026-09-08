@@ -4,6 +4,19 @@
 // group (the case is casey's central entity), matching AGENTS.md's case-store
 // facade -- everything here is a thin HTTP wrapper over CaseStore methods.
 //
+// Shape: module-level named handler factories plus the ROUTES table at the
+// bottom, mounted through routes/register.js's mountRoutes -- the same shape
+// the other five route modules use. It used to be one 854-line registerCases
+// closure holding all 21 handlers inline, the largest remaining function in
+// the dashboard and the only route module inconsistent with its siblings.
+// Note what that change is NOT: the two projections below were ALREADY
+// module-level before the split (register.js's own header comment says the
+// PII projections sat inside the register closure -- true of the five
+// modules it describes, never true of this one), so no security property
+// moved. Registration order is preserved exactly as it was: GET
+// /api/cases/export.csv still registers before GET /api/cases/:id, or express
+// captures 'export.csv' as an id.
+//
 // deps: store, wrap, esc, str, clampLimit, offsetOf, actingOperator, authed,
 //   AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
 //   computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
@@ -13,6 +26,7 @@ import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27 } from '../../format.js'
 import { fieldLabel } from '../../store/report-shape.js'
 import { BRAND } from '../brand.js'
+import { mountRoutes } from './register.js'
 
 // The two projections below are the ONLY way a raw thatcher case row may reach
 // a JSON response. Both are explicit allowlists, never a spread of the row, so
@@ -41,7 +55,7 @@ import { BRAND } from '../brand.js'
 // (contact_id) are never emitted by either projection. A single case the
 // operator has explicitly opened additionally carries the DISPLAY form of the
 // contact number, through the same formatter contacts.js already uses.
-function caseListProjection(c) {
+export function caseListProjection(c) {
   if (!c) return null
   const { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type } = c
   return { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type }
@@ -56,20 +70,25 @@ function caseListProjection(c) {
 // filter and filters-bar.js's search placeholder both record that /api/cases
 // carries no contact number and that the search must not promise one, and a
 // 50-row poll is no place to move 50 phone numbers.
-function caseDetailProjection(c) {
+export function caseDetailProjection(c) {
   if (!c) return null
   return { ...caseListProjection(c), external_id_formatted: fmtPhone27(c.external_id) }
 }
 
-export function registerCases(app, deps) {
-  const {
-    store, wrap, esc, str, clampLimit, offsetOf, actingOperator, authed,
-    AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
-    computeFillRate, csvCell, parseJsonArraySafe, isOpenCase, getRoster,
-    sendReply, parseEventData, UNCLAIMED_ASSIGNEE, printableReport,
-  } = deps
+// The latest pending assisted-mode draft for a case, or null. A draft is
+// "pending" only while draft-pending is on the case (cleared on
+// approve/discard/supersede), so we read the most recent draft event and gate
+// on the tag rather than tracking draft state separately.
+async function pendingDraft(store, c) {
+  const tags = tagList(c)
+  if (!tags.includes('draft-pending')) return null
+  const events = await store.listEvents(c.id)
+  const drafts = events.filter(e => e.kind === 'draft')
+  return drafts.length ? drafts[drafts.length - 1] : null
+}
 
-  app.get('/api/cases', wrap(async (req, res) => {
+export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate, REPORT_KEY_LIST }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const where = {}
     if (req.query.status) {
@@ -116,12 +135,14 @@ export function registerCases(app, deps) {
     }
     const casesWithFill = cases.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
     res.json({ cases: casesWithFill.map(c => caseListProjection(c)), total, limit, offset })
-  }))
+  }
+}
 
-  // Create a case manually from the dashboard (non-AI intake flow).
-  // channel is forced to 'web'; external_id is synthesised from the contact phone
-  // (or a timestamp if none given) so it does not collide with channel messages.
-  app.post('/api/cases', wrap(async (req, res) => {
+// Create a case manually from the dashboard (non-AI intake flow).
+// channel is forced to 'web'; external_id is synthesised from the contact phone
+// (or a timestamp if none given) so it does not collide with channel messages.
+export function postCase({ store, authed, str, actingOperator, computeFillRate }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const subject = str(res, req.body, 'subject', { required: false }); if (subject === undefined) return
     const name = str(res, req.body, 'name', { required: false }); if (name === undefined) return
@@ -152,10 +173,13 @@ export function registerCases(app, deps) {
     await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'case created via dashboard manual intake', data: { by: op.id } })
     const createdCase = await store.getCase(c.id)
     res.status(201).json(caseListProjection({ ...createdCase, fill_rate: computeFillRate(createdCase.report) }))
-  }))
+  }
+}
 
-  // CSV export: GET before /:id so express does not capture 'export.csv' as an id.
-  app.get('/api/cases/export.csv', wrap(async (req, res) => {
+// CSV export. Registered BEFORE /api/cases/:id in the table below so express
+// does not capture 'export.csv' as an id.
+export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const where = {}
     if (req.query.status) {
@@ -180,9 +204,11 @@ export function registerCases(app, deps) {
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', 'attachment; filename="casey-cases.csv"')
     res.send(csv)
-  }))
+  }
+}
 
-  app.get('/api/cases/:id', wrap(async (req, res) => {
+export function getCaseDetail({ store, authed, clampLimit, parseEventData, actingOperator, computeFillRate, parseJsonArraySafe, getRoster, UNCLAIMED_ASSIGNEE }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
@@ -235,11 +261,13 @@ export function registerCases(app, deps) {
       ? (caseTypeAction ? caseTypeAction.actor : 'agent')
       : null
     res.json({ case: caseDetailProjection(c), events, events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
-  }))
+  }
+}
 
-  // Submit structured report fields for a case (non-AI intake or operator correction).
-  // Merges into the existing report; blank incoming values never clobber filled ones.
-  app.post('/api/cases/:id/intake', wrap(async (req, res) => {
+// Submit structured report fields for a case (non-AI intake or operator correction).
+// Merges into the existing report; blank incoming values never clobber filled ones.
+export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET, actingOperator, computeFillRate }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
@@ -271,17 +299,21 @@ export function registerCases(app, deps) {
     if (Object.keys(corrections).length) data.corrections = corrections
     await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `recorded report fields via dashboard: ${Object.keys(incoming).join(', ')}`, data })
     res.json({ report: result.report, report_fill_rate: computeFillRate(JSON.stringify(result.report)) })
-  }))
+  }
+}
 
-  app.get('/api/cases/:id/events', wrap(async (req, res) => {
+export function getCaseEvents({ store, authed, clampLimit, offsetOf, parseEventData }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const limit = clampLimit(req.query.limit, 50)
     const offset = offsetOf(req.query.offset)
     const events = parseEventData(await store.listEventsPage(req.params.id, { limit, offset }))
     res.json({ events, offset, limit })
-  }))
+  }
+}
 
-  app.patch('/api/cases/:id', wrap(async (req, res) => {
+export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const allowed = ['subject', 'summary', 'priority', 'tags', 'assignee', 'autonomy', 'case_type']
     const patch = {}
@@ -351,9 +383,11 @@ export function registerCases(app, deps) {
       await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${otherKeys.join(', ')}`, data: { ...otherPatch, by: op.id } })
     }
     res.json(caseDetailProjection(updated))
-  }))
+  }
+}
 
-  app.post('/api/cases/:id/transition', wrap(async (req, res) => {
+export function postTransition({ store, authed, str, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const to = str(res, req.body, 'to'); if (to === undefined) return
     const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
@@ -372,19 +406,21 @@ export function registerCases(app, deps) {
     const after = await store.getCase(req.params.id)
     store.learnOperatorActivity(op.id, after).catch(() => {})
     res.json(caseDetailProjection(after))
-  }))
+  }
+}
 
-  // Bulk operator actions over many cases in one request: claim, transition, tag,
-  // untag, or note a whole selection. Each case is processed INDEPENDENTLY through
-  // the same single-case store ops the per-case endpoints use -- so one case's
-  // failure (an illegal transition, a vanished id) is reported in its own result and
-  // never aborts the batch. Returns a per-id outcome list plus ok/failed counts so
-  // the SPA can show "claimed 7, 1 could not transition". Body:
-  //   { ids: string[], action: 'claim'|'transition'|'tag'|'untag'|'note',
-  //     to?, tag?, text? }
-  // No new store privilege: it is a loop over audited single-case mutations, each
-  // attributed to the acting operator exactly as the individual endpoints are.
-  app.post('/api/cases/bulk', wrap(async (req, res) => {
+// Bulk operator actions over many cases in one request: claim, transition, tag,
+// untag, or note a whole selection. Each case is processed INDEPENDENTLY through
+// the same single-case store ops the per-case endpoints use -- so one case's
+// failure (an illegal transition, a vanished id) is reported in its own result and
+// never aborts the batch. Returns a per-id outcome list plus ok/failed counts so
+// the SPA can show "claimed 7, 1 could not transition". Body:
+//   { ids: string[], action: 'claim'|'transition'|'tag'|'untag'|'note',
+//     to?, tag?, text? }
+// No new store privilege: it is a loop over audited single-case mutations, each
+// attributed to the acting operator exactly as the individual endpoints are.
+export function postBulk({ store, authed, actingOperator, sendReply }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).filter(Boolean) : null
     if (!ids || !ids.length) return res.status(400).json({ error: 'ids must be a non-empty array' })
@@ -447,7 +483,7 @@ export function registerCases(app, deps) {
           // editing before send is a single-case-only affordance (the operator
           // opened that one case to read and adjust it); a bulk release is for
           // drafts an operator has already judged fine to go out as composed.
-          const draft = await pendingDraft(c)
+          const draft = await pendingDraft(store, c)
           if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
           const text = draft.text || ''
           if (!text) { results.push({ id, ok: false, error: 'empty draft' }); continue }
@@ -463,7 +499,7 @@ export function registerCases(app, deps) {
             results.push({ id, ok: false, error: 'send failed' }); continue
           }
         } else if (action === 'draft_discard') {
-          const draft = await pendingDraft(c)
+          const draft = await pendingDraft(store, c)
           if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
           await store.updateCase(id, { tags: dropTag(c.tags, 'draft-pending') }, op)
           await store.appendEvent(id, { kind: 'observation', actor: 'operator', text: 'DRAFT DISCARDED: operator bulk discard.', data: { by: op.id, bulk: true } })
@@ -473,18 +509,20 @@ export function registerCases(app, deps) {
     }
     const okCount = results.filter(r => r.ok).length
     res.json({ action, total: ids.length, ok: okCount, failed: ids.length - okCount, results })
-  }))
+  }
+}
 
-  // Snooze a case: an operator who has SEEN a case but cannot finish it now drops
-  // it out of the attention inbox until a time, without losing it. The scorer in
-  // attn.js already honours a 'snoozed-until:<epoch-ms>' tag (and never hides a
-  // needs-human case, and un-snoozes on a newer inbound) -- this endpoint is the
-  // write side: it sets/replaces that tag and records an audited action so the
-  // snooze is observable, never a silent disappearance. Body: { minutes } (from now)
-  // or { until } (epoch ms); minutes<=0 or until<=now CLEARS any snooze. The acting
-  // operator is attributed. Snoozing is a soft inbox preference, not a workflow
-  // transition -- the case status is untouched.
-  app.post('/api/cases/:id/snooze', wrap(async (req, res) => {
+// Snooze a case: an operator who has SEEN a case but cannot finish it now drops
+// it out of the attention inbox until a time, without losing it. The scorer in
+// attn.js already honours a 'snoozed-until:<epoch-ms>' tag (and never hides a
+// needs-human case, and un-snoozes on a newer inbound) -- this endpoint is the
+// write side: it sets/replaces that tag and records an audited action so the
+// snooze is observable, never a silent disappearance. Body: { minutes } (from now)
+// or { until } (epoch ms); minutes<=0 or until<=now CLEARS any snooze. The acting
+// operator is attributed. Snoozing is a soft inbox preference, not a workflow
+// transition -- the case status is untouched.
+export function postSnooze({ store, authed, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
@@ -515,22 +553,24 @@ export function registerCases(app, deps) {
       data: { by: op.id, snoozed_until: cleared ? null : Math.floor(until) },
     })
     res.json({ ok: true, snoozed_until: cleared ? null : Math.floor(until), cleared })
-  }))
+  }
+}
 
-  // Undo the last reversible operator action on a case, within a recency window, by
-  // appending a COMPENSATING event -- history is append-only and never mutated. The
-  // 15s window is a client UX affordance; the server bounds undo at 120s so a late
-  // request cannot silently rewrite an old decision. Iteration 1 covers the clean,
-  // self-describing reversible actions whose reverse is fully recorded in the
-  // original event's data:
-  //   transition  -> reverse transition (to = data.from), reason 'undo'
-  //   snooze      -> clear the snooze tag (compensating action event)
-  //   claim       -> restore the prior assignee (data.was)
-  // A sent reply is NOT reversible (the contact already saw it) -- undo of a reply
-  // is the client-side 'disregard my last message' helper, out of scope here. The
-  // acting operator is attributed; the compensating event carries undo_of so the
-  // pair is observable on the timeline.
-  app.post('/api/cases/:id/undo', wrap(async (req, res) => {
+// Undo the last reversible operator action on a case, within a recency window, by
+// appending a COMPENSATING event -- history is append-only and never mutated. The
+// 15s window is a client UX affordance; the server bounds undo at 120s so a late
+// request cannot silently rewrite an old decision. Iteration 1 covers the clean,
+// self-describing reversible actions whose reverse is fully recorded in the
+// original event's data:
+//   transition  -> reverse transition (to = data.from), reason 'undo'
+//   snooze      -> clear the snooze tag (compensating action event)
+//   claim       -> restore the prior assignee (data.was)
+// A sent reply is NOT reversible (the contact already saw it) -- undo of a reply
+// is the client-side 'disregard my last message' helper, out of scope here. The
+// acting operator is attributed; the compensating event carries undo_of so the
+// pair is observable on the timeline.
+export function postUndo({ store, authed, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
@@ -606,9 +646,11 @@ export function registerCases(app, deps) {
       data: { by: op.id, undo_of: target.id, undo_kind: kind },
     })
     res.json({ ok: true, undone: kind, summary })
-  }))
+  }
+}
 
-  app.post('/api/cases/:id/note', wrap(async (req, res) => {
+export function postNote({ store, authed, str, REPORT_KEY_SET, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const text = str(res, req.body, 'text'); if (text === undefined) return
     if (!text.trim()) return res.status(400).json({ error: 'empty note' })
@@ -618,15 +660,17 @@ export function registerCases(app, deps) {
     const op = actingOperator(req)
     await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text, data: { ...(field ? { field } : {}), by: op.id } })
     res.json({ ok: true })
-  }))
+  }
+}
 
-  // Structured "this reply was bad/off-target" feedback -- pillar 8's live
-  // feedback loop for prompt tuning. Same pattern as /note above (an audited
-  // event, not a new subsystem): tags the flagged event id and an optional
-  // reason so /api/flagged-replies (below) can roll up every flag for an
-  // operator/prompt-writer to review, without needing to re-read the whole
-  // timeline of every case.
-  app.post('/api/cases/:id/flag-reply', wrap(async (req, res) => {
+// Structured "this reply was bad/off-target" feedback -- pillar 8's live
+// feedback loop for prompt tuning. Same pattern as /note above (an audited
+// event, not a new subsystem): tags the flagged event id and an optional
+// reason so /api/flagged-replies (below) can roll up every flag for an
+// operator/prompt-writer to review, without needing to re-read the whole
+// timeline of every case.
+export function postFlagReply({ store, authed, str, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const eventId = str(res, req.body, 'event_id'); if (eventId === undefined) return
     const reason = typeof req.body.reason === 'string' ? req.body.reason.slice(0, 500) : ''
@@ -651,12 +695,14 @@ export function registerCases(app, deps) {
       await store.updateCase(req.params.id, { tags: mergeTag(c.tags, 'flagged-reply') })
     }
     res.json({ ok: true })
-  }))
+  }
+}
 
-  // Cases that look like the SAME real-world outbreak as this one -- the
-  // operator's view of casey's grouping intelligence, with the reasons shown so
-  // the suggestion is explainable, never an opaque score.
-  app.get('/api/cases/:id/suggestions', wrap(async (req, res) => {
+// Cases that look like the SAME real-world outbreak as this one -- the
+// operator's view of casey's grouping intelligence, with the reasons shown so
+// the suggestion is explainable, never an opaque score.
+export function getSuggestions({ store, authed, isOpenCase }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
@@ -667,23 +713,26 @@ export function registerCases(app, deps) {
     const suggestions = suggestLinks(c, pool).slice(0, 5)
       .map(s => ({ ...s, subject: byId.get(s.id)?.subject || '', status: byId.get(s.id)?.status || '' }))
     res.json({ count: suggestions.length, suggestions })
-  }))
-  // site-durable-entity-visit-history PRD row: a field worker does not OWN a
-  // case (a different person may follow up from whoever reported it) -- what
-  // an operator actually needs is "who has been to this SITE and when", across
-  // every conversation (case) that turns out to be the same real place, not
-  // just this one contact's own thread. Rather than a new site/place entity
-  // (a schema migration + a second grouping mechanism competing with the
-  // existing one), this reuses correlate.js's own location/species/symptom
-  // scoring UNCHANGED -- the same signal that already powers "possibly the
-  // same case" merge suggestions above -- but over the FULL case pool
-  // (open AND closed/resolved: a visit history must include past visits, not
-  // only currently-open threads) and returns each match's reporting contact
-  // identity + timestamp rather than a merge action. PII discipline: no
-  // external_id/contact_id -- "who" is the case ref + reported-by-channel only
-  // (the same PII-free shape enquiryRow already uses elsewhere), an operator
-  // can open the linked case itself for the real contact detail if needed.
-  app.get('/api/cases/:id/site-history', wrap(async (req, res) => {
+  }
+}
+
+// site-durable-entity-visit-history PRD row: a field worker does not OWN a
+// case (a different person may follow up from whoever reported it) -- what
+// an operator actually needs is "who has been to this SITE and when", across
+// every conversation (case) that turns out to be the same real place, not
+// just this one contact's own thread. Rather than a new site/place entity
+// (a schema migration + a second grouping mechanism competing with the
+// existing one), this reuses correlate.js's own location/species/symptom
+// scoring UNCHANGED -- the same signal that already powers "possibly the
+// same case" merge suggestions above -- but over the FULL case pool
+// (open AND closed/resolved: a visit history must include past visits, not
+// only currently-open threads) and returns each match's reporting contact
+// identity + timestamp rather than a merge action. PII discipline: no
+// external_id/contact_id -- "who" is the case ref + reported-by-channel only
+// (the same PII-free shape enquiryRow already uses elsewhere), an operator
+// can open the linked case itself for the real contact detail if needed.
+export function getSiteHistory({ store, authed }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
@@ -704,11 +753,13 @@ export function registerCases(app, deps) {
       })
       .sort((a, b) => (Number(b.reported_at) || 0) - (Number(a.reported_at) || 0))
     res.json({ site_ref: c.ref, count: visits.length, visits })
-  }))
+  }
+}
 
-  // Fold another case (source = req.body.into) INTO this one (target = :id). The
-  // target stays canonical; lossless and idempotent in the store.
-  app.post('/api/cases/:id/merge', wrap(async (req, res) => {
+// Fold another case (source = req.body.into) INTO this one (target = :id). The
+// target stays canonical; lossless and idempotent in the store.
+export function postMerge({ store, authed, str, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const into = str(res, req.body, 'into'); if (into === undefined) return
     if (!into.trim()) return res.status(400).json({ error: 'no source case to merge' })
@@ -716,11 +767,13 @@ export function registerCases(app, deps) {
     const res2 = await store.mergeCases(into, req.params.id, actingOperator(req), { reason: reason || 'operator merge' })
     if (res2.error) return res.status(400).json({ error: res2.error })
     res.json({ ok: true, movedEvents: res2.movedEvents, alreadyMerged: !!res2.alreadyMerged, ...(res2.reportWasCorrupted ? { reportWasCorrupted: true } : {}) })
-  }))
+  }
+}
 
-  // Split selected events out of this case into a NEW linked case.
-  // Body: { event_ids: string[], subject?: string, reason?: string }
-  app.post('/api/cases/:id/split', wrap(async (req, res) => {
+// Split selected events out of this case into a NEW linked case.
+// Body: { event_ids: string[], subject?: string, reason?: string }
+export function postSplit({ store, authed, str, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { event_ids } = req.body
     if (!Array.isArray(event_ids) || !event_ids.length) return res.status(400).json({ error: 'event_ids must be a non-empty array' })
@@ -731,11 +784,13 @@ export function registerCases(app, deps) {
     const result = await store.splitCase(req.params.id, event_ids, { subject: subject || '', reason: reason || 'operator split' }, actingOperator(req))
     if (result.error) return res.status(400).json({ error: result.error })
     res.json({ ok: true, new_case_id: result.newCase?.id, new_case_ref: result.newCase?.ref, moved_events: result.movedEvents })
-  }))
+  }
+}
 
-  // Operator takes over the conversation: send a message to the contact on
-  // their channel and record it as an outbound event.
-  app.post('/api/cases/:id/reply', wrap(async (req, res) => {
+// Operator takes over the conversation: send a message to the contact on
+// their channel and record it as an outbound event.
+export function postReply({ store, authed, str, actingOperator, sendReply, UNCLAIMED_ASSIGNEE }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const raw = str(res, req.body, 'text'); if (raw === undefined) return
     const text = raw.trim()
@@ -786,29 +841,19 @@ export function registerCases(app, deps) {
       }
     }
     res.json({ ok: delivered, sent: !!sendReply, delivered, claimed })
-  }))
-
-  // The latest pending assisted-mode draft for a case, or null. A draft is
-  // "pending" only while draft-pending is on the case (cleared on
-  // approve/discard/supersede), so we read the most recent draft event and gate
-  // on the tag rather than tracking draft state separately.
-  async function pendingDraft(c) {
-    const tags = tagList(c)
-    if (!tags.includes('draft-pending')) return null
-    const events = await store.listEvents(c.id)
-    const drafts = events.filter(e => e.kind === 'draft')
-    return drafts.length ? drafts[drafts.length - 1] : null
   }
+}
 
-  // Approve a held assisted draft: send the (possibly operator-edited) text to the
-  // contact, record it as an operator outbound, and clear draft-pending +
-  // needs-human only once it actually delivered -- mirroring the reply path so a
-  // failed send leaves the case pinned rather than silently dropped.
-  app.post('/api/cases/:id/draft/approve', wrap(async (req, res) => {
+// Approve a held assisted draft: send the (possibly operator-edited) text to the
+// contact, record it as an operator outbound, and clear draft-pending +
+// needs-human only once it actually delivered -- mirroring the reply path so a
+// failed send leaves the case pinned rather than silently dropped.
+export function postDraftApprove({ store, authed, str, actingOperator, sendReply }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
-    const draft = await pendingDraft(c)
+    const draft = await pendingDraft(store, c)
     if (!draft) return res.status(409).json({ error: 'no pending draft' })
     // Operator may edit before approving; fall back to the drafted text. Same
     // MAX_LEN guardrail every sibling route enforces (str() below) -- an
@@ -830,16 +875,18 @@ export function registerCases(app, deps) {
       await store.updateCase(c.id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
     }
     res.json({ ok: delivered, sent: !!sendReply, delivered })
-  }))
+  }
+}
 
-  // Discard a held assisted draft without sending: clear draft-pending and record
-  // the decision. needs-human stays -- a discarded draft still wants a human to
-  // decide what (if anything) to say next.
-  app.post('/api/cases/:id/draft/discard', wrap(async (req, res) => {
+// Discard a held assisted draft without sending: clear draft-pending and record
+// the decision. needs-human stays -- a discarded draft still wants a human to
+// decide what (if anything) to say next.
+export function postDraftDiscard({ store, authed, str, actingOperator }) {
+  return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
-    const draft = await pendingDraft(c)
+    const draft = await pendingDraft(store, c)
     if (!draft) return res.status(409).json({ error: 'no pending draft' })
     // Same MAX_LEN guardrail every sibling route enforces (str() below).
     const rawReason = str(res, req.body, 'reason', { required: false }); if (rawReason === undefined) return
@@ -848,10 +895,15 @@ export function registerCases(app, deps) {
     await store.updateCase(c.id, { tags: dropTag(c.tags, 'draft-pending') }, op)
     await store.appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `DRAFT DISCARDED: ${reason}.`, data: { by: op.id } })
     res.json({ ok: true })
-  }))
+  }
+}
 
-  // Printable case briefing for field teams. Plain HTML, no JS, print-friendly.
-  app.get('/api/cases/:id/report.html', async (req, res) => {
+// Printable case briefing for field teams. Plain HTML, no JS, print-friendly.
+// Mounted { raw: true }: it owns its own try/catch and answers an HTML error
+// page, so deps.wrap's JSON 500 envelope would change what a failure looks
+// like, and its 401/404 are HTML too.
+export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableReport }) {
+  return async (req, res) => {
     try {
       if (!authed(req)) return res.status(401).send('<p>Unauthorized.</p>')
       const c = await store.getCase(req.params.id)
@@ -914,5 +966,36 @@ export function registerCases(app, deps) {
 <table>${rows}</table>`
       res.type('html').send(printableReport(`Case ${c.ref||c.id} briefing`, body, extraCss))
     } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || 'unknown error')) + '</p>') }
-  })
+  }
+}
+
+// Order is load-bearing and matches the pre-split registration order exactly:
+// GET /api/cases/export.csv must precede GET /api/cases/:id, or express
+// captures 'export.csv' as an id.
+const ROUTES = [
+  ['get', '/api/cases', getCases],
+  ['post', '/api/cases', postCase],
+  ['get', '/api/cases/export.csv', getCasesCsv],
+  ['get', '/api/cases/:id', getCaseDetail],
+  ['post', '/api/cases/:id/intake', postIntake],
+  ['get', '/api/cases/:id/events', getCaseEvents],
+  ['patch', '/api/cases/:id', patchCase],
+  ['post', '/api/cases/:id/transition', postTransition],
+  ['post', '/api/cases/bulk', postBulk],
+  ['post', '/api/cases/:id/snooze', postSnooze],
+  ['post', '/api/cases/:id/undo', postUndo],
+  ['post', '/api/cases/:id/note', postNote],
+  ['post', '/api/cases/:id/flag-reply', postFlagReply],
+  ['get', '/api/cases/:id/suggestions', getSuggestions],
+  ['get', '/api/cases/:id/site-history', getSiteHistory],
+  ['post', '/api/cases/:id/merge', postMerge],
+  ['post', '/api/cases/:id/split', postSplit],
+  ['post', '/api/cases/:id/reply', postReply],
+  ['post', '/api/cases/:id/draft/approve', postDraftApprove],
+  ['post', '/api/cases/:id/draft/discard', postDraftDiscard],
+  ['get', '/api/cases/:id/report.html', getReportHtml, { raw: true }],
+]
+
+export function registerCases(app, deps) {
+  mountRoutes(app, deps, ROUTES)
 }
