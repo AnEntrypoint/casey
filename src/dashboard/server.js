@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { VISIT_CRITICAL } from '../case-health.js'
 import { REPORT_KEY_ORDER, UNCLAIMED_ASSIGNEE } from '../case-store.js'
-import { DASHBOARD_UI } from '../store/report-shape.js'
+import { BRAND } from './brand.js'
 import { rankAttention } from '../attn.js'
 import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27 } from '../format.js'
 import { getWebhookDeliveryStatus } from '../gateway-hooks.js'
@@ -191,8 +191,14 @@ function shellBuildId(publicDir, assetUrls) {
 // a near-duplicate <style> block and their own row/tbl closures. `extraCss`
 // lets a caller layer on report-specific rules (e.g. the case briefing's
 // action-button styling) without every report paying for it.
+//
+// Headings and table heads carry the deployment's own brand (BRAND.accent is
+// the ground darkened only as far as it must be to clear 4.5:1 as text; the
+// raw ground is never used for small type). Body copy stays a neutral near
+// -black: a management report is read as prose, and tinting a wall of running
+// text is a way to make it harder to read, not more branded.
 function printableReportStyle(extraCss = '') {
-  return `<style>body{font:14px system-ui,sans-serif;margin:2rem;color:#1a1a1a}h1{font-size:1.3rem}h2{font-size:1rem;margin-top:1.5rem}table{border-collapse:collapse;margin:.3rem 0}td,th{border:1px solid #ccc;padding:.2rem .6rem;text-align:left}@media print{body{margin:0}}${extraCss}</style>`
+  return `<style>body{font:14px system-ui,sans-serif;margin:2rem;color:#1a1a1a}h1{font-size:1.3rem;color:${BRAND.accent}}h2{font-size:1rem;margin-top:1.5rem;color:${BRAND.accent}}table{border-collapse:collapse;margin:.3rem 0}td,th{border:1px solid ${BRAND.edge};padding:.2rem .6rem;text-align:left}th{background:${BRAND.soft}}@media print{body{margin:0}}${extraCss}</style>`
 }
 function printableReportRow(cells) {
   return `<tr>${cells.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`
@@ -496,42 +502,16 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerReports(app, deps)
   registerOperations(app, deps)
 
-  // dashboard_ui.brand (report-shape.js's DASHBOARD_UI) drives the PWA name
-  // and icon initial the same additive way app-view.js/nav-config.js already
-  // consume it -- absent, byte-identical to casey's own literal branding.
-  const PWA_BRAND = DASHBOARD_UI?.brand || 'casey'
+  // dashboard_ui.brand, the theme-colour ground and the ink computed from it
+  // all now come from dashboard/brand.js -- the same resolution the public
+  // /report form and the printable case briefing read, so a deployment has one
+  // answer to "what colour is this product" instead of four. Absent
+  // dashboard_ui and with casey's own index.html in place, this resolves
+  // exactly what the inline copies that used to live here resolved.
+  const PWA_BRAND = BRAND.name
   const PWA_ICON_LETTER = PWA_BRAND.charAt(0).toUpperCase()
-  // index.html's own <meta name="theme-color"> is the single source for the
-  // brand colour. It had drifted: the page declared #E88427 while this
-  // manifest and the generated icon both hardcoded #3b6ea5, so the browser
-  // chrome, the installed app's task-switcher entry and the home-screen icon
-  // were three different colours for one product. Reading the page's own tag
-  // makes that divergence unrepresentable rather than merely fixed once.
-  const readThemeColor = () => {
-    try {
-      const m = /<meta\s+name="theme-color"\s+content="([^"]+)"/i.exec(readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8'))
-      if (m) return m[1]
-    } catch { /* a deployer replacing index.html keeps casey's own colour */ }
-    return '#3b6ea5'
-  }
-  const PWA_THEME_COLOR = readThemeColor()
-  // White-on-brand is the single most common way a palette ships an unreadable
-  // mark, and this one is a live example: the design kit's own measurements
-  // (colors_and_type.css, herd preset) put white on #E88427 at 2.71:1 -- under
-  // even the 3:1 UI floor -- and black on the same orange at 7.76:1. So the
-  // letter's ink is picked from the fill's luminance rather than assumed white.
-  const readableInkOn = (hex) => {
-    const m = /^#?([0-9a-fA-F]{6})$/.exec(String(hex))
-    if (!m) return '#fff'
-    const n = parseInt(m[1], 16)
-    const lin = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
-      const s = v / 255
-      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
-    })
-    const L = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
-    return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? '#000' : '#fff'
-  }
-  const PWA_ICON_INK = readableInkOn(PWA_THEME_COLOR)
+  const PWA_THEME_COLOR = BRAND.ground
+  const PWA_ICON_INK = BRAND.ink
   const PWA_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="32" fill="${PWA_THEME_COLOR}"/><text x="96" y="136" font-family="system-ui,sans-serif" font-size="120" font-weight="700" fill="${PWA_ICON_INK}" text-anchor="middle">${PWA_ICON_LETTER}</text></svg>`
   app.get('/icon.svg', (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
@@ -553,7 +533,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       // and which ships an IT-helpdesk demo by default. A deployer that wants
       // one sets dashboard_ui.description; otherwise the field is simply
       // absent, which is valid and honest.
-      ...(DASHBOARD_UI?.description ? { description: DASHBOARD_UI.description } : {}),
+      ...(BRAND.description ? { description: BRAND.description } : {}),
       icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
     })
   })

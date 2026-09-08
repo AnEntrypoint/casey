@@ -11,7 +11,8 @@
 //   issueSession, verifySession, findAccountByUsername, verifyPassword,
 //   markLogin, getAccount, changePassword, esc, wrap
 import { mergeTag } from '../../hooks/heuristics.js'
-import { DASHBOARD_UI } from '../../store/report-shape.js'
+import { DASHBOARD_UI, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
+import { BRAND } from '../brand.js'
 
 export function registerAuth(app, deps) {
   const {
@@ -79,55 +80,91 @@ export function registerAuth(app, deps) {
     next()
   })
 
+  // What this deployment calls the thing a contact is filing: report-fields.yml's
+  // entity_label (uhh: "report"; casey's own bundled helpdesk demo: "ticket").
+  // BRAND carries it alongside the colours so a page has one import, not two.
+  const ENTITY = BRAND.entityLabel || 'report'
+
   // Public contact-facing report form -- no token required.
   // The ref acts as the shared secret: contacts only know their own ref,
   // and report fields are non-sensitive (location, symptoms, contact info).
   // GET /report?ref=REF  -> HTML form for that case (or blank ref input)
   // POST /report         -> submit fields; redirect back with ?done=1 or ?err=...
-  // Fields shown on the public contact form. [key, label, placeholder, isTextarea, isVisitCritical]
-  const PUBLIC_FIELDS = [
-    ['species', 'Which animals?', 'e.g. cattle, sheep, goats, pigs', false, true],
-    ['symptoms', 'What signs are you seeing?', 'e.g. drooling, limping, not eating, sudden death', true, true],
-    ['location', 'Where are the animals?', 'Farm name, nearest town, or GPS coordinates', false, true],
-    ['how_to_find', 'How do we find the place?', 'Road name, landmark, or directions from the nearest town', true, true],
-    ['farmer_available', 'Will the farmer be there?', 'e.g. yes, or phone first on 082...', false, true],
-    ['contact_fallback', 'Any other contact person?', 'Name and phone number if different from this one', false, true],
-    ['affected_count', 'How many are affected?', 'e.g. 5', false, false],
-    ['dead_count', 'How many have died?', 'e.g. 2 (write 0 if none)', false, false],
-    ['onset', 'When did it start?', 'e.g. yesterday morning, 3 days ago', false, false],
-    ['suspected_disease', 'What do you think it might be?', 'e.g. foot-and-mouth, lumpy skin, not sure', false, false],
-    ['recent_movement', 'Have the animals moved recently?', 'e.g. yes, bought from market last week', false, false],
-    ['access_notes', 'Any access or travel notes?', 'e.g. gravel road, locked gate - call first', true, false],
-    ['notes', 'Anything else to note?', 'Any extra information', true, false],
-  ]
+  // Fields shown on the public contact form -- the deployment's OWN declared
+  // report vocabulary (report-fields.yml, via report-shape.js), never a second
+  // hand-written list.
+  //
+  // This used to be thirteen hardcoded animal-health keys (species, symptoms,
+  // suspected_disease, dead_count...) in a codebase whose whole point is that
+  // the domain comes from config, and which ships an IT-helpdesk demo by
+  // default. That was not merely off-domain wording: case-store.js's
+  // mergeReport rejects any key outside REPORT_KEYS, so under any config but
+  // one, a contact who filled this form in got "Something went wrong saving
+  // your details" and their report was silently not saved. The form could not
+  // work and could not be made to work by editing config -- the only surface a
+  // reporting contact ever reaches was hardcoded to one deployment.
+  //
+  // Two field classes are held back:
+  //  - `append` fields (photos/voice notes/extra sites) accumulate agent-written
+  //    notes ABOUT media that arrived over the messaging channel. This form has
+  //    no upload, so a text box for "Photos" would collect a description of a
+  //    photo nobody sent.
+  //  - `public: false` is the deployer's own opt-out for a field that is real
+  //    but not a question to put to a contact (an agent-recorded meta field
+  //    such as which language they wrote in). Absent, a field is shown --
+  //    defaulting to hiding would silently empty the form for every config that
+  //    has never heard of the flag.
+  // `public_label`/`public_hint` likewise let a deployer phrase a field as a
+  // question for a contact ("Which animals?") rather than reuse the operator
+  // column header ("Animals"); absent, the operator label is shown and no
+  // placeholder is rendered, which is honest rather than invented.
+  const PUBLIC_FIELDS = (() => {
+    const shown = (REPORT_FIELD_DEFS || []).filter(f => f && f.key && !f.append && f.public !== false)
+    const row = (f) => ({
+      key: f.key,
+      label: f.public_label || f.display_label || f.key,
+      hint: f.public_hint || '',
+      multiline: f.multiline === true,
+      critical: f.critical_for_visit === true,
+    })
+    // Critical first, then the rest, each in declaration order. The form groups
+    // into exactly two contact-facing buckets ("needed before a visit" /
+    // "helpful but not required"), so the criticals have to be contiguous --
+    // config declares fields in operator-section order, which interleaves them.
+    return [...shown.filter(f => f.critical_for_visit).map(row), ...shown.filter(f => !f.critical_for_visit).map(row)]
+  })()
 
   function publicFormHtml({ ref = '', caseRow = null, done = false, err = '' } = {}) {
     let report = {}
     try { report = caseRow?.report ? JSON.parse(caseRow.report) : {} } catch { report = {} }
-    const vcTotal = PUBLIC_FIELDS.filter(f => f[4]).length
-    const vcFilled = PUBLIC_FIELDS.filter(([k,,,,vc]) => vc && report[k] != null && String(report[k]).trim() !== '').length
-    const allFilled = vcFilled >= vcTotal
-    const progressBar = caseRow ? `<div class="progress-wrap" aria-label="Essential fields: ${vcFilled} of ${vcTotal} filled">
+    const vcTotal = PUBLIC_FIELDS.filter(f => f.critical).length
+    const vcFilled = PUBLIC_FIELDS.filter(f => f.critical && report[f.key] != null && String(report[f.key]).trim() !== '').length
+    const allFilled = vcTotal === 0 || vcFilled >= vcTotal
+    // A config declaring no critical_for_visit field at all would divide by zero
+    // here, so the bar is simply not drawn -- there is no "essential progress"
+    // to report when the deployment has not named anything essential.
+    const progressBar = (caseRow && vcTotal > 0) ? `<div class="progress-wrap" aria-label="Essential fields: ${vcFilled} of ${vcTotal} filled">
       <div class="progress-label">${allFilled ? 'All essential details filled -- thank you!' : `Essential details: ${vcFilled} of ${vcTotal} filled`}</div>
       <div class="progress-track"><div class="progress-bar${allFilled ? ' done' : ''}" style="width:${Math.round(vcFilled/vcTotal*100)}%"></div></div>
     </div>` : ''
     let inEssential = false, inExtra = false
-    const fieldRows = PUBLIC_FIELDS.map(([k, label, hint, isArea, isVC]) => {
+    const fieldRows = PUBLIC_FIELDS.map(({ key, label, hint, multiline, critical }) => {
       let section = ''
-      if (isVC && !inEssential) { inEssential = true; section = '<div class="section-head">Essential details for a visit</div>' }
-      if (!isVC && !inExtra) { inExtra = true; section = '<div class="section-head">Extra details (helpful but not required)</div>' }
-      const val = esc(report[k] || '')
-      const inp = isArea
-        ? `<textarea name="${k}" rows="3" placeholder="${esc(hint)}" maxlength="4000">${val}</textarea>`
-        : `<input type="text" name="${k}" placeholder="${esc(hint)}" value="${val}" maxlength="500">`
-      const vcMark = isVC ? ' <span class="req" aria-label="essential">*</span>' : ''
-      return `${section}<div class="field${isVC ? ' vc' : ''}"><label>${esc(label)}${vcMark}</label>${inp}</div>`
+      if (critical && !inEssential) { inEssential = true; section = '<div class="section-head">Essential details for a visit</div>' }
+      if (!critical && !inExtra) { inExtra = true; section = '<div class="section-head">Extra details (helpful but not required)</div>' }
+      const val = esc(report[key] || '')
+      const placeholder = hint ? ` placeholder="${esc(hint)}"` : ''
+      const inp = multiline
+        ? `<textarea name="${esc(key)}" rows="3"${placeholder} maxlength="4000">${val}</textarea>`
+        : `<input type="text" name="${esc(key)}"${placeholder} value="${val}" maxlength="500">`
+      const vcMark = critical ? ' <span class="req" aria-label="essential">*</span>' : ''
+      return `${section}<div class="field${critical ? ' vc' : ''}"><label>${esc(label)}${vcMark}</label>${inp}</div>`
     }).join('')
     const banner = done
       ? `<div class="banner ok">Your details have been saved. Thank you -- the team will be in touch.</div>`
       : err ? `<div class="banner err">${esc(err)}</div>` : ''
     const caseInfo = caseRow
-      ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || 'Field report')}
+      ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || `Field ${ENTITY}`)}
          <button type="button" class="copy-link-btn" data-ref="${esc(caseRow.ref)}">Share link</button></div>`
       : ''
     const refBlock = caseRow ? `<input type="hidden" name="ref" value="${esc(ref)}">` : `
@@ -136,48 +173,61 @@ export function registerAuth(app, deps) {
       <div class="hint">This was shared with you when you first reported. Check your messages. If you do not have one, enter your phone number below instead.</div></div>
       <div class="field"><label>Or your phone number</label>
       <input type="tel" name="phone" placeholder="+27 82 123 4567" maxlength="30">
-      <div class="hint">South African number -- we use this to find your report.</div></div>`
+      <div class="hint">South African number -- we use this to find your ${esc(ENTITY)}.</div></div>`
     return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Animal report form</title>
+<meta name="theme-color" content="${esc(BRAND.ground)}">
+<title>${esc(BRAND.name)} - ${esc(ENTITY)} form</title>
+<!-- This page is reached with NO session and NO design-kit bundle, so its CSS
+     is inline and dependency-free by necessity. What it must not also be is a
+     SEPARATE PALETTE: every brand-carrying value below comes from
+     dashboard/brand.js, the same resolution manifest.json, the generated icon
+     and offline.html already read. It used to be a stock blue (#2f6fb0) with a
+     progress bar at #f0a030 -- a near-miss of this deployment's real brand
+     orange #E88427 rather than the brand orange itself -- on the one surface a
+     reporting contact ever sees. Semantic colours (the ok/error banners, the
+     completed-bar green) stay fixed on purpose: those encode meaning, not
+     identity, and re-tinting them to a brand is how "saved" and "failed" stop
+     being distinguishable at a glance. -->
 <style>
   *{box-sizing:border-box}
   body{margin:0;font-family:system-ui,sans-serif;background:#f4f6f9;color:#1a1f29;min-height:100vh}
   .wrap{max-width:540px;margin:0 auto;padding:24px 16px 60px}
-  h1{font-size:1.3em;margin:0 0 4px;color:#1a3a5c}
+  h1{font-size:1.3em;margin:0 0 4px;color:${BRAND.accent}}
   .sub{font-size:14px;color:#495662;margin:0 0 20px}
-  .case-info{background:#e8f0fa;border:1px solid #b8d0ee;border-radius:8px;padding:10px 14px;margin:0 0 16px;font-size:14px;color:#1a3a5c}
+  .case-info{background:${BRAND.soft};border:1px solid ${BRAND.edge};border-radius:8px;padding:10px 14px;margin:0 0 16px;font-size:14px;color:#1a1f29}
   .banner{border-radius:8px;padding:12px 14px;margin:0 0 20px;font-size:14px}
   .banner.ok{background:#e8f7ee;border:1px solid #9ed8b4;color:#1a5c35}
   .banner.err{background:#fdeaea;border:1px solid #f0a0a0;color:#5c1a1a}
   .progress-wrap{margin:0 0 20px}
   .progress-label{font-size:13px;color:#495662;margin-bottom:5px}
-  .progress-track{background:#dce8f5;border-radius:4px;height:7px;overflow:hidden}
-  .progress-bar{background:#f0a030;height:100%;border-radius:4px;transition:width .3s}
+  .progress-track{background:${BRAND.edge};border-radius:4px;height:7px;overflow:hidden}
+  .progress-bar{background:${BRAND.ground};height:100%;border-radius:4px;transition:width .3s}
   .progress-bar.done{background:#2a9e5c}
   .field{margin:0 0 16px}
-  .field.vc label{color:#1a3a5c}
+  .field.vc label{color:${BRAND.accent}}
   label{display:block;font-size:14px;font-weight:600;margin:0 0 5px}
-  .req{color:#c06000;font-weight:700}
+  .req{color:${BRAND.accent};font-weight:700}
   input[type=text],textarea{width:100%;border:1px solid #c8d0da;border-radius:6px;
     padding:11px 12px;font-size:16px;font-family:inherit;background:#fff;color:#1a1f29;
     min-height:44px;-webkit-appearance:none}
-  input:focus,textarea:focus{outline:2px solid #2f6fb0;border-color:#2f6fb0}
+  input:focus,textarea:focus{outline:2px solid ${BRAND.ground};border-color:${BRAND.ground}}
   textarea{resize:vertical;min-height:80px}
-  .section-head{font-size:12px;font-weight:700;letter-spacing:.06em;color:#2f6fb0;
-    text-transform:uppercase;margin:24px 0 10px;padding-bottom:4px;border-bottom:2px solid #dce8f5}
-  button[type=submit]{width:100%;background:#2f6fb0;color:#fff;border:0;border-radius:8px;
+  .section-head{font-size:12px;font-weight:700;letter-spacing:.06em;color:${BRAND.accent};
+    text-transform:uppercase;margin:24px 0 10px;padding-bottom:4px;border-bottom:2px solid ${BRAND.edge}}
+  button[type=submit]{width:100%;background:${BRAND.ground};color:${BRAND.ink};border:0;border-radius:8px;
     padding:15px;font-size:17px;font-weight:600;cursor:pointer;margin-top:10px;min-height:52px}
+  button[type=submit]:hover{background:${BRAND.hover}}
   button:disabled{opacity:.6;cursor:default}
   .req-note{font-size:12px;color:#495662;margin:0 0 8px}
-  .copy-link-btn{background:none;border:1px solid #b8d0ee;border-radius:5px;color:#2f6fb0;font-size:12px;padding:3px 8px;cursor:pointer;margin-left:8px;vertical-align:middle}
-  .copy-link-btn:hover{background:#dce8f5}
+  .copy-link-btn{background:none;border:1px solid ${BRAND.edge};border-radius:5px;color:${BRAND.accent};font-size:12px;padding:3px 8px;cursor:pointer;margin-left:8px;vertical-align:middle}
+  .copy-link-btn:hover{background:${BRAND.soft}}
   .field-err{font-size:12px;color:#a00;margin-top:4px;display:none}
   .field-err.show{display:block}
   footer{text-align:center;font-size:12px;color:#495662;margin-top:24px}
 </style></head><body>
 <div class="wrap">
-  <h1>Animal health report</h1>
+  <h1>${esc(BRAND.name)} ${esc(ENTITY)}</h1>
   <p class="sub">Please fill in as many details as you can. Fields marked * are needed before a team can visit.</p>
   ${banner}${caseInfo}${progressBar}
   <form method="POST" action="/report">
@@ -186,7 +236,7 @@ export function registerAuth(app, deps) {
     <p class="req-note">* Essential for a field visit</p>
     <button type="submit">Send details</button>
   </form>
-  <footer>Animal disease surveillance &ndash; South Africa</footer>
+  <footer>${esc(BRAND.description || BRAND.name)}</footer>
 </div>
 <script>
   const btn = document.querySelector('button[type=submit]')
@@ -301,7 +351,7 @@ export function registerAuth(app, deps) {
         }
         if (!found) {
           // Create a new case from the phone number
-          const { case: nc } = await store.findOrCreateCase({ channel: 'web', external_id: normPhone, contact: { phone: normPhone }, subject: 'Field report via web form' })
+          const { case: nc } = await store.findOrCreateCase({ channel: 'web', external_id: normPhone, contact: { phone: normPhone }, subject: `Field ${ENTITY} via web form` })
           found = nc
           // Tag as public form intake
           try {
@@ -311,11 +361,11 @@ export function registerAuth(app, deps) {
         }
       }
       const incoming = {}
-      for (const [k] of PUBLIC_FIELDS) {
-        const v = req.body[k]
+      for (const { key } of PUBLIC_FIELDS) {
+        const v = req.body[key]
         if (v == null || typeof v !== 'string') continue
         const trimmed = v.trim().slice(0, 4000)
-        if (trimmed) incoming[k] = trimmed
+        if (trimmed) incoming[key] = trimmed
       }
       if (Object.keys(incoming).length) {
         const mergeResult = await store.mergeReport(found.id, incoming, { id: 'contact', role: 'contact' })
