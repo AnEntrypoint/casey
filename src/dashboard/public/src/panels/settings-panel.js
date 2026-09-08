@@ -8,6 +8,7 @@ import { TextField } from '/design/src/components/content/fields.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { state, schedule } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchThresholds, putThresholds } from '../api.js';
 import { toast } from '../toasts.js';
 
@@ -41,7 +42,7 @@ function ensureLoaded() {
             if (j.thresholds && j.thresholds[k] != null) draft[k] = String(hoursOf(j.thresholds[k]));
         }
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'settings error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the settings', e); schedule(); });
 }
 
 async function save() {
@@ -64,7 +65,7 @@ async function save() {
 export function SettingsPanel() {
     ensureLoaded();
     if (loading && !loaded) return Spinner({ label: 'loading settings' });
-    if (error) return Alert({ kind: 'error', children: 'Settings error: ' + error });
+    if (error) return Alert({ kind: 'error', children: error });
     const j = state._thresholds || {};
     const rows = Object.keys(THRESH_META).filter((k) => draft[k] !== undefined).map((k) => {
         const [lab, help] = THRESH_META[k];

@@ -7,6 +7,7 @@ import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { state, schedule } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchOverview, fetchReportJson, fetchSlaAtRiskByType } from '../api.js';
 import { fmtDur } from '../format.js';
 
@@ -29,7 +30,7 @@ function ensureLoaded() {
     ]).then(([overview, report, risk]) => {
         state._metrics = { overview, report, risk };
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'metrics error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the trends', e); schedule(); });
 }
 
 function summaryCards(j) {
@@ -88,7 +89,7 @@ export function MetricsPanel() {
         Btn({ href: '/api/audit.csv?days=14', variant: 'ghost', size: 'sm', children: 'Audit trail CSV' }));
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading metrics -- scans every open case, can take several seconds' });
-    else if (error) body = Alert({ kind: 'error', children: 'Metrics error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const { overview, report, risk } = state._metrics || {};
         body = h('div', {},

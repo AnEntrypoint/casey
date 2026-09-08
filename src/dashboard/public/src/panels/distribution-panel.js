@@ -7,6 +7,7 @@ import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Lede } from '/design/src/components/shell/atoms.js';
 import { state, schedule } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchDistribution } from '../api.js';
 
 const h = webjsx.createElement;
@@ -19,7 +20,7 @@ function ensureLoaded() {
     fetchDistribution().then((j) => {
         state._distribution = j;
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'distribution error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the breakdown', e); schedule(); });
 }
 
 function barRows(rows, max) {
@@ -36,7 +37,7 @@ export function DistributionPanel() {
     ensureLoaded();
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading distribution' });
-    else if (error) body = Alert({ kind: 'error', children: 'Distribution error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const j = state._distribution;
         const species = (j && j.species) || [], symptoms = (j && j.symptoms) || [];

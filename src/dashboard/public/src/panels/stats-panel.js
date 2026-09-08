@@ -8,6 +8,7 @@ import { Spinner } from '/design/src/components/content/feedback.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Alert } from '/design/src/components/content/feedback.js';
 import { state, schedule } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchStats } from '../api.js';
 
 const h = webjsx.createElement;
@@ -25,7 +26,7 @@ function ensureLoaded() {
         state._stats = j;
         loaded = true; loading = false; error = null; schedule();
     }).catch((e) => {
-        loaded = true; loading = false; error = e.message || 'stats error'; schedule();
+        loaded = true; loading = false; error = panelError('the summary numbers', e); schedule();
     });
 }
 
@@ -50,7 +51,7 @@ export function StatsPanel() {
     ensureLoaded();
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading stats' });
-    else if (error) body = Alert({ kind: 'error', children: 'Stats error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const j = state._stats;
         const modes = j ? Object.keys(j.by_mode || {}) : [];

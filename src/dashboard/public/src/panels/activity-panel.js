@@ -9,6 +9,7 @@ import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Chip } from '/design/src/components/shell/atoms.js';
 import { Icon } from '/design/src/components/shell.js';
 import { state, schedule, setActiveId } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchActivity } from '../api.js';
 import { fmtTime, rel } from '../format.js';
 import { eventIcon, eventTone } from '../icons-map.js';
@@ -52,7 +53,7 @@ function load() {
     fetchActivity({ kind: filters.kind, actor: filters.actor, limit: 100 }).then((j) => {
         state._activity = j;
         loading = false; error = null; schedule();
-    }).catch((e) => { loading = false; error = e.message || 'activity error'; schedule(); });
+    }).catch((e) => { loading = false; error = panelError('the activity feed', e); schedule(); });
 }
 
 let started = false;
@@ -73,7 +74,7 @@ export function ActivityPanel() {
         }));
     let body;
     if (loading) body = Spinner({ label: 'loading activity' });
-    else if (error) body = Alert({ kind: 'error', children: 'Activity error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const ev = (state._activity && state._activity.events) || [];
         body = ev.length

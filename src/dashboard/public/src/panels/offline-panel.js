@@ -6,6 +6,7 @@ import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { state, schedule, setActiveId, setOfflineQueueCount } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchUnreplied } from '../api.js';
 import { fmtTime } from '../format.js';
 
@@ -20,14 +21,14 @@ function ensureLoaded() {
         state._offline = j;
         setOfflineQueueCount(j && j.total || 0);
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'offline queue error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the offline queue', e); schedule(); });
 }
 
 export function OfflinePanel() {
     ensureLoaded();
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading offline queue' });
-    else if (error) body = Alert({ kind: 'error', children: 'Offline-queue error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const j = state._offline;
         const rows = (j && j.items) || [];

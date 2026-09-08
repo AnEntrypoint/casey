@@ -8,6 +8,7 @@ import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { state, schedule } from '../state.js';
+import { panelError } from './panel-error.js';
 import { fetchGeo } from '../api.js';
 import { fmtTime } from '../format.js';
 
@@ -21,7 +22,7 @@ function ensureLoaded() {
     fetchGeo().then((j) => {
         state._geo = j;
         loaded = true; loading = false; error = null; schedule();
-    }).catch((e) => { loaded = true; loading = false; error = e.message || 'geo error'; schedule(); });
+    }).catch((e) => { loaded = true; loading = false; error = panelError('the hotspots', e); schedule(); });
 }
 
 function mixOf(p) {
@@ -38,7 +39,7 @@ export function GeoPanel({ railed = false } = {}) {
     ensureLoaded();
     let body;
     if (loading && !loaded) body = Spinner({ label: 'loading hotspots' });
-    else if (error) body = Alert({ kind: 'error', children: 'Hotspots error: ' + error });
+    else if (error) body = Alert({ kind: 'error', children: error });
     else {
         const places = (state._geo && state._geo.places) || [];
         body = places.length
