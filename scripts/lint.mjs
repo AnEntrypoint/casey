@@ -212,43 +212,24 @@ try {
   // deps/design not checked out (bare clone, no `git submodule update --init`) -- skip.
 }
 
-// PII safety gate: no external_id or contact_id returned in case/contact API responses.
-// The only allowed way to return a case row is via caseListProjection() (cases.js) or
-// publicContact() (contacts.js). This gate scans dashboard routes for unsafe patterns.
+// PII safety gate: no external_id, author_key or contact_id returned in any
+// dashboard API response. A row reaches JSON only through an explicit field
+// allowlist. Each route file's own allowlist functions are declared here, so
+// renaming or deleting one is itself a lint failure rather than a silent loss
+// of enforcement -- these are module-level named exports in their own files
+// precisely so this gate has a single definition to point at.
 const PII_PATTERNS = [
-  { file: 'cases.js', safe: 'caseListProjection', projections: ['caseListProjection', 'caseDetailProjection'] },
-  { file: 'contacts.js', safe: 'publicContact', projections: ['publicContact'] },
+  { file: 'cases.js', projections: ['caseListProjection', 'caseDetailProjection'] },
+  { file: 'contacts.js', projections: ['publicContact'] },
+  { file: 'accounts.js', projections: ['publicAccount'] },
+  { file: 'map.js', projections: ['mapCaseProjection', 'workerPinProjection'] },
 ]
 const ROUTE_DIR = join(ROOT, 'src', 'dashboard', 'routes')
-for (const { file, safe } of PII_PATTERNS) {
-  let src = ''
-  try { src = readFileSync(join(ROUTE_DIR, file), 'utf8') } catch { continue }
-  // Scan for res.json/res.send calls that might return unfiltered case/contact rows
-  // Pattern: res.json({ ... : c/cases/contacts/... })
-  // Safe pattern: uses the projection function (safe variable above)
-  const lineNum = (s) => src.substring(0, src.indexOf(s)).split('\n').length
-  // Look for direct object spreads like { ...c } or { ...found } without projection
-  if (file === 'cases.js') {
-    // Check for patterns like res.json(...{ ...c, ... }) that bypass caseListProjection
-    if (/res\.json\([^;]*\{[^}]*\.\.\.c[^}]*\}/.test(src) && !src.includes('caseListProjection')) {
-      const line = lineNum('{ ...c')
-      note(`pii-safety: ${file}:${line} spreads raw case object c into JSON without caseListProjection() -- external_id/contact_id will leak`)
-    }
-    // Check for { ...found } patterns (from getCaseByRef)
-    if (/res\.json\([^;]*\{[^}]*\.\.\.found[^}]*\}/.test(src)) {
-      const match = /res\.json\([^;]*\{[^}]*\.\.\.found[^}]*\}/.exec(src)
-      if (match && !src.substring(Math.max(0, src.indexOf(match[0]) - 200), src.indexOf(match[0])).includes('caseListProjection')) {
-        const line = lineNum(match[0])
-        note(`pii-safety: ${file}:${line} spreads raw case object found into JSON without projection -- external_id/contact_id will leak`)
-      }
-    }
-  }
-}
 
-// Extended PII gate (2026-09). The two spread checks above only ever matched a
-// literal `{ ...c }` / `{ ...found }` inside a res.json argument -- a shape
-// neither route file has ever contained -- so they were structurally incapable
-// of failing, and `res.json(updated)` (PATCH /api/cases/:id) plus
+// Two checks used to live here that only ever matched a literal `{ ...c }` /
+// `{ ...found }` inside a res.json argument -- a shape neither route file has
+// ever contained -- so they were structurally incapable of failing, and
+// `res.json(updated)` (PATCH /api/cases/:id) plus
 // `res.json(after)` (POST /api/cases/:id/transition) shipped the entire raw
 // thatcher row past a green lint: external_id AND author_key (the reporter's
 // phone number, twice), contact_id, lat/lon, _version, created_by. Witnessed
@@ -305,7 +286,11 @@ for (const file of routeFiles) {
       else if (src[i] === '}') { depth--; if (depth === 0) { end = i; break } }
     }
     const body = src.slice(open, end + 1)
-    const param = (/\(([A-Za-z_$][\w$]*)\)/.exec(src.slice(at, open)) || [])[1]
+    // The row is the FIRST parameter; a projection may take more (a map pin
+    // takes the parsed report and its cluster index alongside the case row), so
+    // match the first identifier in the list rather than requiring a
+    // single-parameter signature -- which silently skipped the spread check.
+    const param = (/\(\s*([A-Za-z_$][\w$]*)\s*[,)]/.exec(src.slice(at, open)) || [])[1]
     for (const key of PII_KEYS) {
       // `key:` (explicit) or `key,`/`key}` (shorthand) as an emitted key.
       // `external_id_formatted:` and `c.external_id` both correctly miss.
@@ -322,7 +307,24 @@ for (const file of routeFiles) {
   // that made it -- these files reuse short names freely (a `claimed` case row
   // in the bulk handler, a `claimed` boolean in the reply handler), and a
   // file-wide name set would confuse the two and cry wolf.
-  const bounds = [...src.matchAll(/\bapp\.(?:get|post|patch|put|delete)\s*\(/g)].map((m) => m.index)
+  //
+  // Chunk on the HANDLER, not on the registration. This used to split only at
+  // `app.get(`/`app.post(`/... , which silently assumed every handler is an
+  // inline arrow inside its own registration call. It is not any more: a route
+  // module is now a set of module-level named handler factories plus a
+  // declarative table mounted through routes/register.js, so a file can contain
+  // twenty real handlers and zero `app.<method>(` call sites -- under the old
+  // boundary set that file produced no chunks at all and the whole dataflow
+  // check below silently did nothing. A route handler is identifiable by its
+  // own signature instead, `(req, res` , which holds for an inline arrow, a
+  // named `function h(req, res)`, and a factory's returned arrow alike. Both
+  // boundary sets are taken so a registration that is not immediately followed
+  // by its handler still opens a chunk; the extra empty chunk that produces
+  // costs nothing (no bindings, no responses).
+  const bounds = [...new Set([
+    ...[...src.matchAll(/\bapp\.(?:get|post|patch|put|delete)\s*\(/g)].map((m) => m.index),
+    ...[...src.matchAll(/\(\s*req\s*,\s*res\s*[,)]/g)].map((m) => m.index),
+  ])].sort((a, b) => a - b)
   const chunks = bounds.map((start, n) => ({ start, text: src.slice(start, bounds[n + 1] ?? src.length) }))
   const bindRe = new RegExp(String.raw`(?:^|[;{}\n])\s*(?:const|let|var)?\s*([^=;\n]*?)=\s*(?:await\s+)?store\.(?:${ROW_METHODS.join('|')})\s*\(`, 'g')
   const callRe = /res(?:\.status\([^)]*\))?\.(json|send)\(/g
