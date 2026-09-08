@@ -53,13 +53,28 @@ export function buildWorkerTools(store) {
         properties: {
           lat: { type: 'number', description: 'Latitude of where the worker is now (their own best estimate for a described place, or exact if they shared GPS)' },
           lon: { type: 'number', description: 'Longitude of where the worker is now' },
+          location_source: str(
+            'REQUIRED. "gps" ONLY if they read out exact coordinates. Otherwise "estimated" -- your own ' +
+            'best-effort guess from a place name they said, not yet confirmed with them. After you voice ' +
+            'the estimate back and they agree, call again with "confirmed" and any refined lat/lon. ' +
+            'Never guess "confirmed" -- it means they actually agreed. The operator map draws an estimate ' +
+            'differently from a real fix, so this is what stops a guess being dispatched to as if it were one.',
+            { enum: ['gps', 'estimated', 'confirmed'] },
+          ),
         },
         required: ['lat', 'lon'],
       },
-      async ({ lat, lon }, ctx) => {
+      async ({ lat, lon, location_source }, ctx) => {
         if (!isValidLatLon(lat, lon)) {
           return { error: 'lat/lon must be finite numbers in range (lat -90..90, lon -180..180)' }
         }
+        // Same ladder and same default as case_report's own resolvedLocationSource:
+        // a coordinate with no stated provenance is an ESTIMATE, never silently a fix.
+        const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed'])
+        if (location_source != null && !LOCATION_SOURCE_VALUES.has(location_source)) {
+          return { error: `invalid location_source: ${location_source}`, allowed: [...LOCATION_SOURCE_VALUES] }
+        }
+        const resolvedLocationSource = location_source || 'estimated'
         const author = ctx?.author || ctx?.principal?.id
         if (!author) return { error: 'no author on this turn -- cannot attribute a check-in' }
         const contact = ctx?.store?.findOrCreateContactLocked
@@ -68,6 +83,7 @@ export function buildWorkerTools(store) {
         if (!contact?.id) return { error: 'could not resolve the contact record for this check-in' }
         await store().t.update('contact', contact.id, {
           last_location_lat: lat, last_location_lon: lon, last_location_at: new Date().toISOString(),
+          last_location_source: resolvedLocationSource,
         }, { id: 'casey-agent', role: 'agent' })
         return { ok: true }
       }),
