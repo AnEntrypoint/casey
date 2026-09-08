@@ -41,9 +41,10 @@ new chain -- it slots into the one casey already assumes.
   contact's language, plain warm one-idea-per-sentence, no jargon) is the
   literacy-appropriate interaction layer this subsystem's stricter data
   model sits BEHIND -- a field worker never sees "provenance" or
-  "Observation", only their own language's plain words for the report
-  (AGENTS.md's existing design principle: "Field workers see only their
-  operation's vocabulary").
+  "Observation", only their own language's plain words for the report. The
+  vocabulary a worker sees comes from the active config package's
+  `report-fields.yml` and `persona.cjs`, never from this subsystem's own
+  field names (AGENTS.md, "Configuration architecture").
 
 ## Privacy, ethics, and legal
 
@@ -97,7 +98,7 @@ new chain -- it slots into the one casey already assumes.
   noted here so a deployment knows it is a known, named gap rather than an
   oversight.
 - **Power and localization.** A future offline field-capture client (see
-  AGENTS.md's "What this subsystem does NOT yet do") would need to be
+  "Sync and offline design" below) would need to be
   battery-light with resumable sync, and fully localized (languages, units,
   date formats, iconography) for low-literacy users -- the same discipline
   casey's existing chat interaction already follows, extended to a client
@@ -181,8 +182,8 @@ new chain -- it slots into the one casey already assumes.
   prevalence from an untracked sample.
 - **Time semantics.** onset / observed / reported / synced are captured as
   four distinct fields specifically because conflating them invents and
-  erases apparent outbreaks in a time series -- see AGENTS.md's Observation
-  record section for the field-level detail.
+  erases apparent outbreaks in a time series -- see `src/core/observation.js`
+  for the field-level detail.
 
 ## Sync and offline design (for a future capture client)
 
@@ -223,14 +224,16 @@ than an improvisation:
   file" -- a full implementation would additionally bundle the pack
   version(s) that captured the data (so the export is self-describing) and
   a plain-text README explaining the schema.
-- **Deliberate failure drills.** `src/core/raw-log.js` was witnessed
-  surviving a simulated crash mid-write (a truncated JSONL line is detected
-  and skipped, never trusted as valid, and every prior real record survives
-  the corruption) -- see AGENTS.md's provenance-subsystem section for the
-  witnessed evidence. A production deployment should periodically re-run
-  this class of drill (cut the process mid-write, corrupt a line, replay a
-  duplicate sync) against its real data directory as a standing operational
-  practice, not a one-time proof.
+- **Deliberate failure drills.** `src/core/raw-log.js`'s reader skips a
+  corrupt line (a partial write from a crash mid-append) rather than trusting
+  it as valid, and counts it -- see the `catch` in its `_load()` and the
+  `__corruptLines` counter. The counter is only reachable through
+  `corruptLineCount()`, which has no caller today, so corruption is detected
+  and survived but never actually surfaced to a human; wiring that count to a
+  real reader is the open half of this property. A production deployment
+  should periodically re-run this class of drill (cut the process mid-write,
+  corrupt a line, replay a duplicate sync) against its real data directory as
+  a standing operational practice, not a one-time proof.
 - **Announcing platform correctness.** See "Published corrections" above --
   the same discipline applies to a platform-level failure (a bug that
   produced wrong aggregates for a period): the fix should be as visible as

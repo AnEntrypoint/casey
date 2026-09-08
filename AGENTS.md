@@ -43,6 +43,21 @@ resolved by `src/config-loader.js` at process start:
   `thatcher.config.yml`, `report-fields.yml`, and `persona.cjs`. Absent,
   casey falls back to its own bundled `config/default/` (the generic
   IT-helpdesk demo) plus the repo-root `thatcher.config.yml`.
+  **The three files do not share one resolver, and `config/default/` is not a
+  complete config dir.** `config-loader.js`'s `loadDomainConfig()` reads
+  `report-fields.yml` + `persona.cjs` from `CASEY_CONFIG_DIR` or
+  `config/default/`, and throws if either is missing. `thatcher.config.yml` is
+  resolved twice over, separately: by `case-store.js`'s `CaseStore`
+  constructor and by `config-loader.js`'s `readThatcherFieldEnum`, each
+  `CASEY_CONFIG_DIR`-or-`process.cwd()` (NOT `config/default/`). So
+  `config/default/` ships exactly two files and the third comes from this
+  repo's own root -- a deployer who copies `config/default/` as the template
+  for a new config package gets a dir casey will boot against but whose
+  entity/workflow schema silently comes from wherever the process happens to
+  be running. Live-confirmed 2026-09-08: `casey doctor` from this repo reports
+  `thatcher.config.yml present (<repo>/thatcher.config.yml)`, while the same
+  binary run from `uhh` (which sets `CASEY_CONFIG_DIR`) reports
+  `(<uhh>/config/thatcher.config.yml)`.
 - `report-fields.yml` declares the report field vocabulary: `entity_label`
   (e.g. "report"/"ticket"), `enquiry_headline_fields` (the two fields safe
   to show in a cross-worker PII-free enquiry list), `tool_name`/
@@ -159,8 +174,12 @@ dependency, sets `CASEY_CONFIG_DIR` to its own bundled config directory in
 its bootstrap script before dynamically importing `casey/bin/casey.js`, and
 is published as its own GitHub repo -- `npx github:<owner>/<pkg-name>
 <command>` then boots casey fully pre-configured for that domain with zero
-local config authoring. See `AnEntrypoint/uhh`'s `bin/uhh.js` as the
-reference implementation.
+local config authoring. `AnEntrypoint/uhh`'s `bin/uhh.js` is the reference
+implementation of the BOOTSTRAP half (env var, then dynamic import) but not
+of the npx half: uhh declares casey as `file:deps/casey` against a submodule
+checkout, which npx cannot resolve, so uhh is cloned with
+`--recurse-submodules` and run as `node ./bin/uhh.js`. A package that wants
+the npx path needs the `github:` spec instead.
 
 ## Architecture
 
@@ -732,18 +751,25 @@ The timeout stack is four independent layers. Each layer has its own deadline; a
 - `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS`: Per-provider timeout for each hop through the ranked candidate list.
   acptoapi's own shipped default (`node_modules/acptoapi/lib/chain-machine.js`'s
   `DEFAULT_LINK_TIMEOUT_MS`) is **120000 / 120 sec** -- NOT 20s; this drifted
-  upstream from an earlier 20s default this doc used to document, and because
-  acptoapi is consumed via a floating `github:AnEntrypoint/acptoapi#main` npm
-  spec with no version pin (see Architecture), casey's own `npm install` picks
-  up whatever default that repo's `main` currently ships with no casey-side
-  commit required. At the shipped default, a SINGLE unhealthy provider hop can
+  upstream from an earlier 20s default this doc used to document. acptoapi is
+  consumed via `file:deps/acptoapi` against the local submodule checkout (see
+  Architecture), so casey's `npm install` picks up whatever default the
+  currently-checked-out `deps/acptoapi` ships -- a submodule pointer bump, not
+  a floating remote fetch, is what changes it. Live-confirmed 2026-09-08:
+  `casey doctor` run from this repo's root reports
+  `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS=120000ms (acptoapi's installed default
+  (chain-machine.js)) >= per-attempt budget 120000ms` as a red check.
+  At the shipped default, a SINGLE unhealthy provider hop can
   consume the entire per-attempt/hard-deadline budget, leaving zero room for
-  `hooks/handler.js`'s `MAX_TOOL_CHOICE_ATTEMPTS` retry loop -- this is why
-  casey's own `.env` sets `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS=60000` explicitly
-  rather than trusting the upstream default; a fresh deployment with no
-  explicit override inherits the wider 120s default silently. `casey doctor`
-  flags a per-link timeout that is not comfortably below the per-attempt
-  budget (see its own check).
+  `hooks/handler.js`'s `MAX_TOOL_CHOICE_ATTEMPTS` retry loop -- so a deployment
+  must set `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS` explicitly rather than trusting the
+  upstream default. This repo ships no `.env` of its own, so a bare `casey
+  doctor` here goes red on this check; `uhh`'s `.env` (and its `.env.example`)
+  set `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS=30000`, and `casey doctor` run from `uhh`
+  goes green on the same check. A fresh deployment with no explicit override
+  inherits the wider 120s default silently. `casey doctor` flags a per-link
+  timeout that is not comfortably below the per-attempt budget (see its own
+  check).
 - Applies to: Each provider in the auto-chain walk, once per attempt
 - Constraint: Each attempt calls the full chain to completion, not truncated mid-hop; only the hard deadline stops retries
 
@@ -758,13 +784,14 @@ The timeout stack is four independent layers. Each layer has its own deadline; a
 ```
 Hard deadline (120s) >= Soft deadline (25s) [x]        -- tone changes partway through wait
 Hard deadline >= Per-attempt timeout (120s) [x]       -- retries fit within hard budget
-Per-attempt >= Per-link timeout (.env: 60s) [x]       -- full chain walk completes per attempt
+Per-attempt >= Per-link timeout (uhh .env: 30s) [x]   -- full chain walk completes per attempt
                                                           (acptoapi's OWN shipped default is
                                                           120s, equal to the per-attempt budget --
-                                                          casey's .env explicitly overrides to 60s;
-                                                          without that override this row FAILS)
+                                                          uhh's .env overrides to 30s; with no
+                                                          deployment .env this row FAILS, which is
+                                                          what casey doctor reports in this repo)
 Per-link >= Readiness/discovery timeouts [x]          -- inner probes complete before outer
-Chain-link (.env: 60s) * max retries (3) + buffer       -- with the .env override, up to 3
+Chain-link (uhh .env: 30s) * max retries (3) + buffer   -- with the 30s override, up to 3
                                                           attempts still cannot each complete a
                                                           multi-hop chain walk inside the 120s
                                                           hard deadline if more than one hop is
@@ -988,14 +1015,28 @@ stop).
 - Dashboard API + page gate on a logged-in session (username/password per
   operator_account, scrypt-hashed, stateless HMAC-signed session cookie). No
   route accepts a bearer token or a `?token=` query param. The only ungated
-  routes are `/design`, `/vendor/*` (static assets, no case data),
-  `/api/login`, `/api/logout`, `/api/whoami`, `/api/ready` (orchestrator/LB
-  liveness probe -- a boolean + a short error string, no case data),
-  `/api/branding` (dashboard_ui.brand/leaf only -- the two display strings
-  the post-login shell already renders, so login-gate.js can show real
-  branding before a session exists; never the full `/api/config` shape), and
-  the public `/report` form (gated by knowledge of a case ref, not auth).
-  Admin-only routes additionally require `role: 'admin'`.
+  routes -- the literal exemption list in `routes/auth.js`'s `authGate()`,
+  plus what `registerAuth` mounts ahead of it -- are `/design`, `/vendor/*`
+  (static assets, no case data), `/api/login`, `/api/logout`, `/api/whoami`,
+  `/api/ready` (orchestrator/LB liveness probe -- a boolean + a short error
+  string, no case data), `/api/branding` (dashboard_ui.brand/leaf only -- the
+  two display strings the post-login shell already renders, so login-gate.js
+  can show real branding before a session exists; never the full `/api/config`
+  shape), the public `/report` form (gated by knowledge of a case ref, not
+  auth), the SPA shell itself (`/`, `/index.html`, `/app.js`, `/app.css` and
+  the whole `/src/*` module tree -- shell code with no case data; gating it
+  would 401 before the browser could render a login form) and the PWA assets
+  (`/icon.svg`, `/manifest.json`, `/sw.js`, `/offline.html` -- a service
+  worker cannot register if fetching its own script needs a session).
+  `/media` is NOT on that list: it serves real field-worker photo/voice-note
+  bytes and is mounted after the gate. `/api/change-password` is mounted
+  ahead of the gate but does its own `req.caseyAccount` check, so it 401s
+  unauthenticated like any gated route. Live-verified 2026-09-08 against the
+  running dashboard: `/`, `/app.css`, `/icon.svg`, `/manifest.json`, `/sw.js`,
+  `/offline.html`, `/report`, `/api/ready`, `/api/branding`, `/api/whoami`
+  and `/vendor/leaflet/leaflet.js` all 200 with no session, while `/media/`,
+  `/api/cases`, `/api/config`, `/api/change-password` and every other
+  `/api/*` route 401. Admin-only routes additionally require `role: 'admin'`.
 - All contact-supplied text is HTML-escaped before render.
 - Session-cookie and password comparisons use `crypto.timingSafeEqual` to
   prevent timing oracles.
@@ -1038,8 +1079,9 @@ operator_account row (never from cookie). Session epoch revocation (changePasswo
 storage. Bootstrap admin created once on first boot with forced password change.
 Ten authorization bypass attempts tested; all rejected (tampered cookie, expired
 token, query-param injection, bearer token, weak password brute-force, timing
-oracle, epoch revocation, CSRF, disabled accounts). No CVE-class findings. System
-is production-ready from authentication perspective.
+oracle, epoch revocation, CSRF, disabled accounts). That is the full extent of
+what this audit covered -- ten cases, all passing. It is not a clean bill of
+health for the auth surface, as the correction immediately below shows.
 
 **Correction to that audit (2026-09-08): its eleventh case was missing, and it
 failed.** The audit tested DISABLED accounts but never DELETED ones. thatcher
@@ -1060,9 +1102,11 @@ being used for the authorisation decision.
 
 ## thatcher / busybase chain
 
-casey consumes thatcher via a `github:AnEntrypoint/thatcher#main` dependency
-spec, never a `file:../` sibling, so `case-store.js` calls thatcher's
-operator-where directly with no runtime feature-detect and no fallback.
+casey consumes thatcher via a `file:deps/thatcher` dependency spec resolving
+against the local submodule checkout (it used to be
+`github:AnEntrypoint/thatcher#main`; see "Kit consumption strategy" below for
+why that changed), so `case-store.js` calls thatcher's operator-where directly
+with no runtime feature-detect and no fallback.
 
 **2026-08-09 supply-chain incident, resolved.** thatcher's `main` was
 compromised: commit `724e8bce` ("chore(release): v1.0.92", authored by
