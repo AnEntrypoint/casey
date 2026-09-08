@@ -95,9 +95,9 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
         srcLegend, readyBanner, audioBanner,
         ...sections.map(sec => h('div', { key: sec.title }, Section({
             title: sec.title,
-            children: sec.keys.map(([k, label]) => ReportField({
+            children: sec.keys.map(([k, label, multiline]) => ReportField({
                 key: k, caseId: c.id, k, label, value: has(r, k) ? String(r[k]) : '',
-                source: src[k], notes: fnotes[k], onSaved
+                source: src[k], notes: fnotes[k], multiline, onSaved
             }))
         })))
     );

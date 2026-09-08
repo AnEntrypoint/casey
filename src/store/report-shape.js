@@ -72,7 +72,13 @@ export function deriveReportShape(reportFields) {
     for (const f of reportFields.fields) {
       const section = f.section || 'Other'
       if (!bySection.has(section)) { bySection.set(section, []); order.push(section) }
-      bySection.get(section).push([f.key, f.display_label || f.key])
+      // Third element is the config's own `multiline` flag. It reaches the
+      // client so a PRINTED blank field can be ruled with writing space
+      // proportional to the answer expected: one line for a species or a
+      // count, several for symptoms or directions to the place. Appended
+      // rather than reshaped into an object because both readers destructure
+      // a prefix ([k] and [k, label]) and are unaffected by a third slot.
+      bySection.get(section).push([f.key, f.display_label || f.key, !!f.multiline])
     }
     return order.map(title => ({ title, keys: bySection.get(title) }))
   })()
