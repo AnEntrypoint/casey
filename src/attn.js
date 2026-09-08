@@ -1,4 +1,12 @@
 // Attention ranking: which open cases need a HUMAN now, and why, in plain words.
+//
+// The agent is called "the AI helper" in this file's operator-facing strings,
+// which is what the dashboard already calls it everywhere else -- the health
+// pill reads "AI helper: online" (components/health-pills.js) and main.js's
+// error copy says "Cannot reach the server to check the AI helper." These
+// strings said "casey" instead, so the console named the same thing two
+// different ways, and a rebranded deployment showed the framework's own
+// codename in its triage guidance with no way to change it.
 // Deterministic, enum-derived (status/autonomy/tags/age); no LLM. Higher = more
 // urgent. Lifted out of the dashboard SPA string so the SAME scoring runs
 // server-side over ALL open cases (not just the page window the client fetched)
@@ -188,20 +196,20 @@ function caseHints(c, now = Date.now()) {
   if (tags.includes('needs-human')) return { reason: 'This person asked to talk to a real person.', todo: 'This person asked for a real person. Reply to them below.' }
   if (tags.includes(healthTag('unanswered_handoff_escalated'))) return { reason: 'A person was asked for a long time ago and still no one has replied. Please step in.', todo: 'A person was asked for a long time ago and still no one has replied. Step in below.' }
   if (tags.includes(healthTag('unanswered_handoff'))) return { reason: 'A person was asked for and no one has replied yet.', todo: 'A person was asked for and no one has replied. Reply below to take this one on.' }
-  if (tags.includes('draft-pending') || tags.includes('unsent_draft') || tags.includes(healthTag('unsent_draft'))) return { reason: 'casey drafted a reply. Review it, then send or change it.', todo: 'casey prepared a reply but waits for a person. Check it, then send.' }
+  if (tags.includes('draft-pending') || tags.includes('unsent_draft') || tags.includes(healthTag('unsent_draft'))) return { reason: 'The AI helper drafted a reply. Review it, then send or change it.', todo: 'The AI helper prepared a reply but waits for a person. Check it, then send.' }
   if (tags.includes(healthTag('incomplete_critical'))) return { reason: 'Active case but the visit-critical facts are still missing. Reach the farmer now.', todo: 'The visit-critical facts are still missing and the case is active. Try to reach the farmer now -- once they leave the site some facts cannot be recovered.' }
-  if (tags.includes(healthTag('premature_complete'))) return { reason: 'casey marked this done, but most of the visit facts are still blank. Worth a check.', todo: 'The conversation was marked complete, but most of the visit-critical facts were never recorded. Check the report -- it may need a follow-up message.' }
+  if (tags.includes(healthTag('premature_complete'))) return { reason: 'The AI helper marked this done, but most of the visit facts are still blank. Worth a check.', todo: 'The conversation was marked complete, but most of the visit-critical facts were never recorded. Check the report -- it may need a follow-up message.' }
   if (tags.includes(healthTag('abandoned_intake'))) return { reason: 'The farmer may have left. On-site facts are still missing.', todo: 'On-site facts are still missing and the farmer may be gone. Check if they are still reachable and ask for the most important detail (location or how to find the place).' }
   if (c.status === 'waiting' && ageHours(c, now) >= 24) return { reason: 'No answer for over a day. A check-in may help.', todo: 'No answer for over a day. A check-in may help -- reply below.' }
   if (tags.includes(healthTag('stuck'))) return { reason: 'This one has been in the same stage too long.', todo: 'This case has been in the same stage for a while. Check if it needs a push or can be closed.' }
   if (tags.includes(healthTag('stale'))) return { reason: 'No activity in a while. A check may be due.', todo: 'No activity for a while. Check if anything needs following up.' }
-  if (c.autonomy === 'observe') return { reason: 'casey is only listening here. A reply has to come from you.', todo: 'This one is waiting for you. Read it and reply, or set Who answers to auto so casey can answer.' }
-  if (c.autonomy === 'assisted') return { reason: 'casey can draft, but you send. Open it to check.', todo: 'casey can draft, but you send. Open it and check the draft.' }
+  if (c.autonomy === 'observe') return { reason: 'The AI helper is only listening here. A reply has to come from you.', todo: 'This one is waiting for you. Read it and reply, or set Who answers to auto so it can answer.' }
+  if (c.autonomy === 'assisted') return { reason: 'The AI helper can draft, but you send. Open it to check.', todo: 'The AI helper can draft, but you send. Open it and check the draft.' }
   // Trailing detail-only states.
   if (c.status === 'resolved') return { reason: 'This one is marked done.', todo: 'This one is marked done. Close it if you are finished.' }
   if (c.status === 'waiting') return { reason: 'Waiting on the person to reply.', todo: 'Waiting on the person to reply. Nothing to do until they answer.' }
-  if (c.status === 'new' || c.status === 'triaging') return { reason: 'A new message came in.', todo: 'A new message came in. casey is sorting it out.' }
-  return { reason: 'This one is worth a look.', todo: 'casey is handling this one on its own. Step in only if you need to.' }
+  if (c.status === 'new' || c.status === 'triaging') return { reason: 'A new message came in.', todo: 'A new message came in. The AI helper is sorting it out.' }
+  return { reason: 'This one is worth a look.', todo: 'The AI helper is handling this one on its own. Step in only if you need to.' }
 }
 
 // One honest, plain reason this case is in the inbox. Thin wrapper over the
