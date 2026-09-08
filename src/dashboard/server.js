@@ -294,58 +294,25 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
 
-  // Registered HERE, ahead of registerAuth, and that position is the whole
-  // point: routes/auth.js's gate is an app.use() installed inside
-  // registerAuth, so anything mounted before it is unconditionally public
-  // without needing a new exemption added to that gate's allowlist. The
-  // logged-out login gate pulls the same module graph the dashboard does, so
-  // this file has to be reachable with no session, exactly like /sw.js and
-  // /icon.svg (which get there via the allowlist instead).
+  // A /design-sdk-shim.js route used to be registered HERE, ahead of
+  // registerAuth. It re-exported webjsx's createElement plus the merged
+  // shell/content/overlay-primitives surface, and index.html's import map
+  // remapped '/design/dist/247420.js' onto it, because six case-list modules
+  // imported `* as ds` from the design SDK's prebuilt bundle -- 745,191 raw /
+  // 355,065 gzipped bytes and one more serial round trip -- while using only
+  // `ds.h` and `ds.components`, naming nine components that all live in three
+  // source modules the page already loads through the `ds/` import map.
   //
-  // WHAT IT IS: six case-list modules import `* as ds` from the design SDK's
-  // prebuilt bundle, /design/dist/247420.js -- 745,191 raw / 355,065 gzipped
-  // bytes and one more serial round trip -- and between them use exactly two
-  // things off it, `ds.h` and `ds.components`, naming nine components. All
-  // nine live in three source modules the page already loads through
-  // index.html's `ds/` import map, so the bundle was a strict superset of
-  // bytes already in flight. index.html remaps the bundle specifier here.
+  // That was a redirect standing in for the real fix. The six modules now
+  // import Btn/Chip/Pill/Badge/Heading from ds/components/shell.js,
+  // Select/SearchInput/FilterPills from ds/components/content.js and Dropdown
+  // from ds/components/overlay-primitives.js directly, exactly like every
+  // other view in this SPA, so both the import-map entry and this route are
+  // gone. Nothing under public/ references /design/dist/247420.js any more.
   //
-  // Measured on this deployment (21 cases, cold cache, gzip on): 138
-  // same-origin requests / 948,256 bytes before, of which the bundle was
-  // 355,065 -- 37 percent of the page, on a link where the operator is
-  // paying per megabyte.
-  //
-  // Served as a string from here rather than as a file under public/ for the
-  // same reason /sw.js and /offline.html are: those are the routes that must
-  // answer before a session exists, and they already live together in this
-  // file. A `components` name that is NOT re-exported below must fail loudly
-  // -- an undefined component renders as nothing, which on a triage queue
-  // means a row that silently loses its status chip.
-  const DESIGN_SDK_SHIM = `
-import * as webjsx from 'webjsx'
-import * as shell from 'ds/components/shell.js'
-import * as content from 'ds/components/content.js'
-import * as overlay from 'ds/components/overlay-primitives.js'
-
-export const h = webjsx.createElement
-
-const surface = { ...shell, ...content, ...overlay }
-export const components = new Proxy(surface, {
-  get(target, key) {
-    if (typeof key !== 'string' || key in target) return target[key]
-    if (key === 'then' || key === 'default' || key === '__esModule') return undefined
-    throw new Error('design-sdk-shim: components.' + key + ' is not exported by '
-      + 'shell.js, content.js or overlay-primitives.js. Import it from its own ds/ '
-      + 'module and re-export it here (server.js DESIGN_SDK_SHIM) -- do not point '
-      + 'the import map back at /design/dist/247420.js, that is 355 KB gzipped.')
-  },
-})
-`
-  app.get('/design-sdk-shim.js', (_req, res) => {
-    res.setHeader('Content-Type', 'application/javascript')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.send(DESIGN_SDK_SHIM)
-  })
+  // Do NOT reintroduce either half. A new design component belongs in a named
+  // import from its own ds/ module; a bundle-specifier import map entry costs
+  // 355 KB gzipped for a strict superset of bytes already in flight.
 
   // /api/login, /api/logout, and the public /report contact form are the only
   // routes reachable with no session -- every other /api route and the SPA

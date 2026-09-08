@@ -33,25 +33,28 @@
 <link rel="stylesheet" href="/app.css">
 <link rel="stylesheet" href="/src/views/case-detail.css">
 <link rel="stylesheet" href="/src/panels/dispatch-picker.css">
-<!-- The last entry is a redirect, not a new dependency. "ds/" above resolves
-     every component import to the SDK's unbundled sources, but six case-list
-     modules still ask for '/design/dist/247420.js' -- the SDK's prebuilt
-     bundle -- so BOTH paths were downloading on every load, including the
-     logged-out login gate, which pulls the whole module graph before anyone
-     has authenticated. Measured on this deployment, cold, gzip on: the bundle
-     was 355,065 of 948,256 same-origin bytes, 37 percent of the page, and it
-     is a strict superset of sources already loaded a few lines above it.
-     Import maps resolve URL-shaped specifiers as well as bare ones, so the
-     bundle specifier is remapped here to a shim that re-exports the same
-     surface from the sources already in flight; no case-list file changes.
-     The CSS bundle is deliberately NOT remapped -- see the comment above the
+<!-- "ds/" resolves every component import to the SDK's unbundled sources, and
+     that is now the ONLY way this page reaches the design kit's JavaScript.
+     Six case-list modules used to import '/design/dist/247420.js' -- the
+     SDK's prebuilt bundle -- so BOTH paths downloaded on every load,
+     including the logged-out login gate, which pulls the whole module graph
+     before anyone has authenticated. Measured on this deployment, cold, gzip
+     on: the bundle was 355,065 of 948,256 same-origin bytes, 37 percent of
+     the page, and a strict superset of sources already loaded here. A
+     redirect entry mapping that specifier to a /design-sdk-shim.js served
+     from server.js stood in for the fix; the six modules now import Btn/Chip/
+     Pill/Badge/Heading from ds/components/shell.js, Select/SearchInput/
+     FilterPills from ds/components/content.js and Dropdown from
+     ds/components/overlay-primitives.js directly, so both the redirect and
+     the shim route are gone. Do NOT reintroduce a '/design/dist/247420.js'
+     entry here -- import the component from its own ds/ module instead.
+     The CSS bundle is a separate matter -- see the comment above the
      stylesheet link for the live-witnessed bug that made it load-bearing. -->
 <script type="importmap">
 { "imports": {
   "webjsx": "/design/vendor/webjsx/index.js",
   "webjsx/": "/design/vendor/webjsx/",
-  "ds/": "/design/src/",
-  "/design/dist/247420.js": "/design-sdk-shim.js"
+  "ds/": "/design/src/"
 } }
 </script>
 </head>

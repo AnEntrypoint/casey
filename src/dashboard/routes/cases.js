@@ -10,16 +10,53 @@
 //   getRoster, sendReply, UNCLAIMED_ASSIGNEE
 import { tagList } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
+import { fmtPhone27 } from '../../format.js'
 
-// Remove PII fields from case row (external_id, contact_id) for all case API responses.
-// external_id is used internally for contact routing but must never appear in JSON.
-// Reply routing uses case.channel + case.id; operator identity derives from session,
-// never from contact fields. Never expose external_id or contact_id to API callers,
-// including contact-facing agent (that is handled via case-tools.js gating).
+// The two projections below are the ONLY way a raw thatcher case row may reach
+// a JSON response. Both are explicit allowlists, never a spread of the row, so
+// a column added to the case table is never auto-exposed -- the raw row also
+// carries author_key (the contact number a SECOND time), lat/lon, _version,
+// created_by and transition_reason, none of which any client asked for.
+//
+// WHAT THE PII RULE ACTUALLY MEANS. AGENTS.md's "Enquiries and status are
+// PII-free -- every WORKER-facing projection excludes external_id/contact_id"
+// is a rule about the reporter-facing surface (in casey, "worker" is the field
+// worker who reports, see AGENTS.md's own "the reporter is usually a field
+// worker"), i.e. the agent's channel replies and the enquiry/aggregate
+// rollups; glossary.js says the same thing in the operator's own words --
+// external_id is "never shown to a field worker for privacy". It was never a
+// rule about the authenticated operator console, and this codebase already
+// says so in three places: map.js's dispatch handler records that "case
+// timelines are operator-facing, not PII-scrubbed", contacts.js's
+// publicContact() hands every authed operator external_id_formatted for every
+// contact, and this file's own /api/cases/:id/report.html renders a `tel:`
+// "Call contact" link. An operator who cannot ring back the person reporting a
+// dying herd cannot do the job, and stripping the case-detail affordance while
+// /api/contacts still serves the same number would reduce no exposure at all.
+//
+// So the line is drawn at SHAPE, not at secrecy: the raw routing key
+// (external_id), the same number again (author_key) and the internal join key
+// (contact_id) are never emitted by either projection. A single case the
+// operator has explicitly opened additionally carries the DISPLAY form of the
+// contact number, through the same formatter contacts.js already uses.
 function caseListProjection(c) {
   if (!c) return null
   const { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type } = c
   return { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type }
+}
+
+// Single-case projection: GET /api/cases/:id, PATCH /api/cases/:id and
+// POST /api/cases/:id/transition, which MUST agree. They did not: the two
+// writes returned the raw row while the read projected it away, so the case
+// header's "copy contact" button worked for exactly one render after an edit
+// and was empty on every reload -- a broken affordance AND a leak at the same
+// time. The list stays PII-free deliberately: case-list-view.js's client
+// filter and filters-bar.js's search placeholder both record that /api/cases
+// carries no contact number and that the search must not promise one, and a
+// 50-row poll is no place to move 50 phone numbers.
+function caseDetailProjection(c) {
+  if (!c) return null
+  return { ...caseListProjection(c), external_id_formatted: fmtPhone27(c.external_id) }
 }
 
 export function registerCases(app, deps) {
@@ -197,7 +234,7 @@ export function registerCases(app, deps) {
     const case_type_source = c.case_type && c.case_type !== 'unset'
       ? (caseTypeAction ? caseTypeAction.actor : 'agent')
       : null
-    res.json({ case: caseListProjection(c), events, events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
+    res.json({ case: caseDetailProjection(c), events, events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
   }))
 
   // Submit structured report fields for a case (non-AI intake or operator correction).
@@ -313,7 +350,7 @@ export function registerCases(app, deps) {
       const otherPatch = Object.fromEntries(otherKeys.map(k => [k, patch[k]]))
       await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${otherKeys.join(', ')}`, data: { ...otherPatch, by: op.id } })
     }
-    res.json(updated)
+    res.json(caseDetailProjection(updated))
   }))
 
   app.post('/api/cases/:id/transition', wrap(async (req, res) => {
@@ -334,7 +371,7 @@ export function registerCases(app, deps) {
     await store.transition(req.params.id, to, { user: op, reason: reason || 'operator override' })
     const after = await store.getCase(req.params.id)
     store.learnOperatorActivity(op.id, after).catch(() => {})
-    res.json(after)
+    res.json(caseDetailProjection(after))
   }))
 
   // Bulk operator actions over many cases in one request: claim, transition, tag,

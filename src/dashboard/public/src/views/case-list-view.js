@@ -53,7 +53,7 @@
 // stated, from the server's own total, at the TOP of the list; and the control
 // that could not page anything is gone rather than left as decoration.
 
-import * as ds from '/design/dist/247420.js';
+import * as webjsx from 'webjsx';
 import { state, schedule, setMineOnly, setCases } from '../state.js';
 import { tagList, isMine } from '../format.js';
 import * as api from '../api.js';
@@ -64,7 +64,7 @@ import { InboxPanel } from './case-list/inbox-panel.js';
 import { BulkBar } from './case-list/bulk-bar.js';
 import { VirtualizedCaseList, PlainCaseList, VIRTUALIZE_THRESHOLD } from './case-list/virtualized-list.js';
 import { confirmDialog } from '../components/dialog-shell.js';
-const h = ds.h;
+const h = webjsx.createElement;
 
 // How many reports the server says exist, versus how many arrived. The list
 // poll that owns state.allCases lives in main.js and does not ask for the

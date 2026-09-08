@@ -2,12 +2,14 @@
 // draft-discard/clear, restyled onto Btn/Dropdown (ux-case-list-bulk-actions,
 // kept behaviorally identical to the legacy toolbar, restyled onto the SDK).
 
-import * as ds from '/design/dist/247420.js';
+import * as webjsx from 'webjsx';
+import { Btn } from 'ds/components/shell.js';
+import { Select } from 'ds/components/content.js';
+import { Dropdown } from 'ds/components/overlay-primitives.js';
 import { state, clearBulkSelect } from '../../state.js';
 import { postBulk } from '../../api.js';
 import { toast, failMsg } from '../../toasts.js';
-const { Btn, Select, Dropdown } = ds.components;
-const h = ds.h;
+const h = webjsx.createElement;
 
 const VERB = { claim: 'claimed', transition: 'moved', tag: 'tagged', untag: 'untagged', note: 'noted', draft_approve: 'sent', draft_discard: 'discarded' };
 

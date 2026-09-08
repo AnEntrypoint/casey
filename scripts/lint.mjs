@@ -216,8 +216,8 @@ try {
 // The only allowed way to return a case row is via caseListProjection() (cases.js) or
 // publicContact() (contacts.js). This gate scans dashboard routes for unsafe patterns.
 const PII_PATTERNS = [
-  { file: 'cases.js', safe: 'caseListProjection' },
-  { file: 'contacts.js', safe: 'publicContact' },
+  { file: 'cases.js', safe: 'caseListProjection', projections: ['caseListProjection', 'caseDetailProjection'] },
+  { file: 'contacts.js', safe: 'publicContact', projections: ['publicContact'] },
 ]
 const ROUTE_DIR = join(ROOT, 'src', 'dashboard', 'routes')
 for (const { file, safe } of PII_PATTERNS) {
@@ -240,6 +240,128 @@ for (const { file, safe } of PII_PATTERNS) {
       if (match && !src.substring(Math.max(0, src.indexOf(match[0]) - 200), src.indexOf(match[0])).includes('caseListProjection')) {
         const line = lineNum(match[0])
         note(`pii-safety: ${file}:${line} spreads raw case object found into JSON without projection -- external_id/contact_id will leak`)
+      }
+    }
+  }
+}
+
+// Extended PII gate (2026-09). The two spread checks above only ever matched a
+// literal `{ ...c }` / `{ ...found }` inside a res.json argument -- a shape
+// neither route file has ever contained -- so they were structurally incapable
+// of failing, and `res.json(updated)` (PATCH /api/cases/:id) plus
+// `res.json(after)` (POST /api/cases/:id/transition) shipped the entire raw
+// thatcher row past a green lint: external_id AND author_key (the reporter's
+// phone number, twice), contact_id, lat/lon, _version, created_by. Witnessed
+// live before the fix, body verbatim: "external_id":"27821110001",
+// "contact_id":"mta3r2es-mjgea3m7","author_key":"27821110001".
+//
+// The shape that actually leaks is a row bound straight off a store call and
+// handed to a response with no projection between the two, so that is what
+// this checks -- by dataflow, not by the punctuation of one sample. It runs
+// over EVERY file in the route dir, not just the two with a projection of
+// their own: a file with no projection function has no business returning a
+// row at all, so any bare row reference in a response there is a failure by
+// construction.
+const ROW_METHODS = [
+  'getCase', 'getCaseByRef', 'updateCase', 'findOrCreateCase', 'listCases',
+  'getContact', 'listContacts', 'setContactTier',
+]
+const PROJECTIONS_BY_FILE = new Map(PII_PATTERNS.map((p) => [p.file, p.projections]))
+// A projection must never emit these as keys of its own returned object. The
+// display form (external_id_formatted) is a deliberate, separate key: an authed
+// operator may see a contact NUMBER (contacts.js's publicContact has always
+// served exactly that, and /api/cases/:id/report.html renders a tel: link from
+// it) -- what may never leave is the raw routing key, the same number under its
+// author_key alias, and the internal contact_id join key.
+const PII_KEYS = ['external_id', 'contact_id', 'author_key']
+// String and comment bodies are not code: `{ error: 'not found' }` mentions a
+// binding called `found` and returns nothing at all. Blanked (length-preserving
+// where it matters) before any identifier match.
+const stripText = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/\/\/[^\n]*/g, ' ')
+  .replace(/'(?:\\.|[^'\\])*'/g, "''")
+  .replace(/"(?:\\.|[^"\\])*"/g, '""')
+  .replace(/`(?:\\.|[^`\\])*`/g, '``')
+let routeFiles = []
+try { routeFiles = readdirSync(ROUTE_DIR).filter((f) => f.endsWith('.js')) } catch { routeFiles = [] }
+for (const file of routeFiles) {
+  let src = ''
+  try { src = readFileSync(join(ROUTE_DIR, file), 'utf8') } catch { continue }
+  const lineAt = (idx) => src.slice(0, idx).split('\n').length
+  const projections = PROJECTIONS_BY_FILE.get(file) || []
+
+  // (a) Every declared projection must actually be an allowlist: no PII key
+  // among the keys it returns, and no spread of the row it was handed.
+  for (const name of projections) {
+    let at = src.indexOf(`function ${name}(`)
+    if (at < 0) at = src.search(new RegExp(String.raw`(?:const|let)\s+${name}\s*=\s*\(`))
+    if (at < 0) { note(`pii-safety: ${file} declares projection ${name}() in lint.mjs but the function is gone -- the gate below has nothing to enforce`); continue }
+    const open = src.indexOf('{', at)
+    let depth = 0
+    let end = src.length
+    for (let i = open; i < src.length; i++) {
+      if (src[i] === '{') depth++
+      else if (src[i] === '}') { depth--; if (depth === 0) { end = i; break } }
+    }
+    const body = src.slice(open, end + 1)
+    const param = (/\(([A-Za-z_$][\w$]*)\)/.exec(src.slice(at, open)) || [])[1]
+    for (const key of PII_KEYS) {
+      // `key:` (explicit) or `key,`/`key}` (shorthand) as an emitted key.
+      // `external_id_formatted:` and `c.external_id` both correctly miss.
+      if (new RegExp(`(^|[{,\\s])${key}\\s*[:,}]`).test(body)) {
+        note(`pii-safety: ${file} projection ${name}() emits ${key} -- that field must never reach a JSON response`)
+      }
+    }
+    if (param && new RegExp(`\\.\\.\\.\\s*${param}\\b`).test(body)) {
+      note(`pii-safety: ${file} projection ${name}() spreads its whole row (...${param}) instead of listing fields -- every column, present and future, leaks`)
+    }
+  }
+
+  // (b) One route handler at a time. A binding is only a row for the handler
+  // that made it -- these files reuse short names freely (a `claimed` case row
+  // in the bulk handler, a `claimed` boolean in the reply handler), and a
+  // file-wide name set would confuse the two and cry wolf.
+  const bounds = [...src.matchAll(/\bapp\.(?:get|post|patch|put|delete)\s*\(/g)].map((m) => m.index)
+  const chunks = bounds.map((start, n) => ({ start, text: src.slice(start, bounds[n + 1] ?? src.length) }))
+  const bindRe = new RegExp(String.raw`(?:^|[;{}\n])\s*(?:const|let|var)?\s*([^=;\n]*?)=\s*(?:await\s+)?store\.(?:${ROW_METHODS.join('|')})\s*\(`, 'g')
+  const callRe = /res(?:\.status\([^)]*\))?\.(json|send)\(/g
+  for (const chunk of chunks) {
+    const code = stripText(chunk.text)
+    const rowNames = new Set()
+    // Over-approximates a destructuring LHS (`const { case: c, created } = ...`
+    // binds both names); harmless, since only a name that later reaches a
+    // response can fail anything.
+    for (const m of code.matchAll(bindRe)) {
+      for (const id of m[1].matchAll(/[A-Za-z_$][\w$]*/g)) {
+        if (!['const', 'let', 'var', 'case', 'await'].includes(id[0])) rowNames.add(id[0])
+      }
+    }
+    if (!rowNames.size) continue
+    // (c) A response argument that references such a name as a VALUE -- a bare
+    // identifier, a shorthand key, or a spread, but never `row.field` (a single
+    // picked field) and never `row:` (a key that happens to share the name) --
+    // and that carries no projection call, hands the caller the whole row.
+    for (const m of code.matchAll(callRe)) {
+      let i = m.index + m[0].length
+      let depth = 1
+      let arg = ''
+      for (; i < code.length && depth > 0; i++) {
+        const ch = code[i]
+        if (ch === '(') depth++
+        else if (ch === ')') { depth--; if (depth === 0) break }
+        arg += ch
+      }
+      if (projections.some((p) => arg.includes(`${p}(`))) continue
+      // A row handed to a helper CALL is an input to that helper, not the
+      // response body (`buildSLAReport(cases, ...)` returns aggregates); only
+      // what survives outside every call is actually returned.
+      const outer = arg.replace(/[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\((?:[^()]|\([^()]*\))*\)/g, ' ')
+      for (const name of rowNames) {
+        if (new RegExp(String.raw`(?<![\w$.])${name}(?![\w$])\s*(?![.:(])`).test(outer)) {
+          note(`pii-safety: ${file}:${lineAt(chunk.start + m.index)} res.${m[1]}() returns the raw store row '${name}' with no projection -- external_id/contact_id/author_key leak (use ${projections[0] || 'an explicit field allowlist'})`)
+          break
+        }
       }
     }
   }

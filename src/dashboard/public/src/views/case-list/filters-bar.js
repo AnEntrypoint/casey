@@ -17,12 +17,14 @@
 // `class: 'ds-search-history-hint sr-only'` -- visually hidden, so on a touch
 // screen it did not exist at all. It is real, tappable chips now.
 
-import * as ds from '/design/dist/247420.js';
+import * as webjsx from 'webjsx';
+import { Btn } from 'ds/components/shell.js';
+import { SearchInput, Select, FilterPills } from 'ds/components/content.js';
+import { Dropdown } from 'ds/components/overlay-primitives.js';
 import { state, setFilt } from '../../state.js';
 import { stageLabel, stageTone } from '../../format.js';
 import { pushRecentSearch, loadRecentSearches } from '../../saved-views.js';
-const { SearchInput, Select, Dropdown, Btn, FilterPills } = ds.components;
-const h = ds.h;
+const h = webjsx.createElement;
 
 // Truncate a long option label to a fixed budget so a Select never blows out
 // the filter bar width; the full value stays the real title attribute for a

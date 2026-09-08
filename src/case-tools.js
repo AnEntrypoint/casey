@@ -25,29 +25,61 @@ const str = (description, extra = {}) => ({ type: 'string', description, ...extr
 function defTool(name, toolset, description, parameters, handler) {
   return { name, toolset, schema: { name, description, parameters }, handler }
 }
-// Tool-schema `enum` hint shown to the model (built once at plugin-load
-// time, before a store necessarily exists, so it cannot call the live
-// store's own getFieldEnum() -- see below). Read synchronously from the
-// active thatcher.config.yml via config-loader.js's readThatcherFieldEnum
-// (same CASEY_CONFIG_DIR/cwd resolution the live store itself will use), so
-// this hint always matches the ACTUAL active domain's real values instead
-// of a hardcoded literal that only matched one prior domain (e.g. the
-// animal-health case_type values, stale the moment casey's own default
-// config switched to the IT-helpdesk domain). Falls back to a plausible
-// shipped default only if the config file genuinely cannot be read yet
-// (never expected in normal operation -- thatcher.config.yml is required
-// for casey to boot at all). The actual WRITE-TIME validation below still
-// reads the live config-declared enum via store().getFieldEnum(), the real
-// authority -- this hint is display-only, kept in sync so the model is
-// never shown options that write-time enforcement would then reject.
-const DEFAULT_CASE_TYPE_VALUES = readThatcherFieldEnum('case', 'case_type') || ['unset']
-const DEFAULT_PRIORITY_VALUES = readThatcherFieldEnum('case', 'priority') || ['low', 'normal', 'high', 'urgent']
-// Same schema-hint-vs-enforcement split as case_type/priority above: the
-// workflow's real stage graph (thatcher.config.yml workflows.case_lifecycle)
-// is the actual authority (CaseStore._machine / getValidStatuses()), enforced
-// wherever a transition is attempted. This default only seeds the tool-schema
-// `enum` hint shown to the model before a store necessarily exists.
-const DEFAULT_STAGE_VALUES = ['new', 'triaging', 'in_progress', 'waiting', 'resolved', 'closed']
+// LAST-RESORT literals for the tool-schema `enum` hints. Reached only when
+// there is no live CaseStore AND thatcher.config.yml cannot be read -- see
+// fieldEnumHint() below for the ladder. They are never the normal source of
+// the hint, precisely because a literal goes stale the moment a deployment's
+// config declares a different vocabulary (casey's own default config already
+// moved domain once, which is what retired the previous hardcoded list).
+const FALLBACK_CASE_TYPE_VALUES = ['unset']
+const FALLBACK_PRIORITY_VALUES = ['low', 'normal', 'high', 'urgent']
+const FALLBACK_STAGE_VALUES = ['new', 'triaging', 'in_progress', 'waiting', 'resolved', 'closed']
+
+// The enum hint shown to the model, resolved LAZILY at toolset-build time
+// against the live store rather than eagerly at module load.
+//
+// Why this is not a second config parse any more: the hint has to equal what
+// write-time enforcement (store.getFieldEnum, the real authority) will accept,
+// or the model is shown options that are then rejected. config-loader.js's
+// readThatcherFieldEnum() re-resolves thatcher.config.yml from
+// CASEY_CONFIG_DIR-or-cwd, which is the CaseStore's DEFAULT but not its only
+// input: createCaseStore({ config }) takes an explicit path (src/casey.js's
+// init(), bin/casey-cli.mjs's doctor), and a second parse cannot see that
+// override -- so the two could disagree with nothing to notice it.
+//
+// The store is reachable by the time it matters. casey.js init() sets the
+// process singleton at step 1 ("case store up first so plugin handlers have
+// it"), and freddie's tree -- which applies the case-tools plugin and calls
+// buildCaseToolset() -- boots at step 4. The other callers ask only for tool
+// NAMES (reporterTierExcludedToolNames, run-turn.js's allowlist, the
+// self-check below), so they hit the fallback ladder and never look at a
+// schema. getCaseStore() throws when unset and the name-only self-check
+// passes a bare {}, hence the guard plus catch.
+function fieldEnumHint(store, entityDotField, fallback) {
+  try {
+    const s = store()
+    if (s && typeof s.getFieldEnum === 'function') {
+      const live = s.getFieldEnum(entityDotField, null)
+      if (Array.isArray(live) && live.length) return live
+    }
+  } catch { /* no store yet -- a name-only caller, never a live turn */ }
+  const [entity, field] = entityDotField.split('.')
+  return readThatcherFieldEnum(entity, field) || fallback
+}
+
+// Same ladder for the workflow's stage list: the real authority is the store's
+// own machine (getValidStatuses(), from thatcher.config.yml
+// workflows.case_lifecycle), enforced wherever a transition is attempted.
+function stageHint(store) {
+  try {
+    const s = store()
+    if (s && typeof s.getValidStatuses === 'function') {
+      const live = s.getValidStatuses()
+      if (Array.isArray(live) && live.length) return live
+    }
+  } catch { /* no store yet -- see fieldEnumHint */ }
+  return FALLBACK_STAGE_VALUES
+}
 // case_observe/case_split write straight to appendEvent, which has no
 // length guard of its own (unlike case_report's fields, capped in
 // case-store.js's mergeReport at APPEND_FIELD_MAX_LEN=20000) -- an
@@ -74,6 +106,11 @@ function ownsCase(externalId, author) {
 // by anywhere that wants the tools without the runtime singleton).
 export function buildCaseToolset(storeOrNull) {
   const store = () => storeOrNull || getCaseStore()
+
+  // Resolved once per toolset build, from the live store where one exists.
+  const CASE_TYPE_VALUES = fieldEnumHint(store, 'case.case_type', FALLBACK_CASE_TYPE_VALUES)
+  const PRIORITY_VALUES = fieldEnumHint(store, 'case.priority', FALLBACK_PRIORITY_VALUES)
+  const STAGE_VALUES = stageHint(store)
 
   const tools = [
     defTool('case_get', 'cases',
@@ -103,7 +140,7 @@ export function buildCaseToolset(storeOrNull) {
       {
         type: 'object',
         properties: {
-          status: str('Filter by workflow status', { enum: DEFAULT_STAGE_VALUES }),
+          status: str('Filter by workflow status', { enum: STAGE_VALUES }),
           channel: str('Filter by channel'),
           assignee: str('Filter by assignee'),
           location: str('A place name (town/area) to match reports whose location contains it'),
@@ -177,9 +214,9 @@ export function buildCaseToolset(storeOrNull) {
           id: str('Case id'),
           subject: str('Short human title'),
           summary: str('One-paragraph rolling summary of the case state'),
-          priority: str('Priority', { enum: DEFAULT_PRIORITY_VALUES }),
+          priority: str('Priority', { enum: PRIORITY_VALUES }),
           assignee: str('Operator handle, or "agent"'),
-          case_type: str('Category, set ONLY when directly and explicitly stated by the worker/farmer -- never inferred from severity or symptoms. Leave unset when not explicitly stated.', { enum: DEFAULT_CASE_TYPE_VALUES }),
+          case_type: str('Category, set ONLY when directly and explicitly stated by the worker/farmer -- never inferred from severity or symptoms. Leave unset when not explicitly stated.', { enum: CASE_TYPE_VALUES }),
         },
         required: ['id'],
       },
@@ -189,12 +226,14 @@ export function buildCaseToolset(storeOrNull) {
         // not silently dropped as if the field were never supplied -- pick()
         // would otherwise treat an empty-string write as a no-op, which looks
         // like the update succeeded to a caller who doesn't check fieldsRecorded.
-        // Live config-declared enum (falls back to the shipped default when the
-        // config leaves case_type/priority undeclared), so a deployment's own
-        // thatcher.config.yml options are the ones actually enforced, not a
-        // second hardcoded copy of the list.
-        const caseTypeValues = new Set(store().getFieldEnum('case.case_type', DEFAULT_CASE_TYPE_VALUES))
-        const priorityValues = new Set(store().getFieldEnum('case.priority', DEFAULT_PRIORITY_VALUES))
+        // Live config-declared enum (falling back to the same hint the model
+        // was shown, when the config leaves case_type/priority undeclared), so
+        // a deployment's own thatcher.config.yml options are the ones actually
+        // enforced, not a second hardcoded copy of the list. Hint and
+        // enforcement now read the SAME store, so the model can no longer be
+        // offered a value this check would reject.
+        const caseTypeValues = new Set(store().getFieldEnum('case.case_type', CASE_TYPE_VALUES))
+        const priorityValues = new Set(store().getFieldEnum('case.priority', PRIORITY_VALUES))
         if ('case_type' in patch && !caseTypeValues.has(patch.case_type)) {
           return { error: `invalid case_type: ${patch.case_type}`, allowed: [...caseTypeValues] }
         }
@@ -460,7 +499,7 @@ export function buildCaseToolset(storeOrNull) {
         type: 'object',
         properties: {
           id: str('Case id'),
-          to: str('Target stage', { enum: DEFAULT_STAGE_VALUES }),
+          to: str('Target stage', { enum: STAGE_VALUES }),
           reason: str('Why you are transitioning (recorded on the timeline)'),
         },
         required: ['id', 'to'],
