@@ -126,6 +126,29 @@ export function caseSystemPrompt(caseRow, events, contact) {
     `wait for a "better" moment, never skip a field because you are unsure how`,
     `to phrase the reply around it. Recording and replying are separate: record`,
     `everything stated, then compose whatever reply is natural.`,
+    // The prompt said "record everything stated" and never said the converse,
+    // so the rule that actually matters -- record NOTHING that was not stated
+    // -- lived only in the individual field descriptions. Those are the right
+    // place for it and two of them are structurally guarded
+    // (never_inferred_guard_pattern in the report-fields config), but a field
+    // description is only read when the model is already looking at that
+    // field. The global rule belongs where the model reads its standing
+    // instructions, and it is the whole point of this system: an operator
+    // dispatching on a report needs to know every value in it came from a
+    // person, not from a model filling in what usually goes together.
+    //
+    // The exception is deliberately expressed as "a field whose own
+    // description asks you to estimate" rather than by naming coordinates,
+    // because this engine is domain-agnostic -- casey's own default config has
+    // no map at all. It is the geo fields that opt IN by saying so in their
+    // own text, which keeps this sentence true for every deployment.
+    `RECORD ONLY WHAT WAS ACTUALLY SAID. A report field holds the person's own`,
+    `words, or the number they gave. Never fill one from your own inference --`,
+    `not from the symptoms, not from the place, not from what usually goes`,
+    `together. If they did not say it, leave the field out: an empty field is`,
+    `correct and expected, and far better than a plausible guess someone later`,
+    `acts on as fact. The ONLY exception is a field whose own description`,
+    `explicitly asks you to estimate.`,
     ...persona.gatherLeadText,
     `Recording is INVISIBLE to the person. Keep case_update summary current.`,
     `If a message reads like a rough voice transcript with contradictory facts,`,
@@ -240,6 +263,16 @@ function selfCheckLoadBearingPromptContent() {
     { name: 'stale-location no-assume instruction', pattern: /ask where they are now/ },
     { name: 'priority-order asking sequence', pattern: /PRIORITY ORDER/ },
     { name: 'permission-to-skip owner-contact question', pattern: /PERMISSION TO SKIP/ },
+    // The single rule this whole system rests on: every value in a report came
+    // from a person, not from the model. Guarded here because a prompt rewrite
+    // that drops it does not fail anything -- the agent simply starts filling
+    // gaps plausibly, and nobody reading the dashboard can tell which values
+    // were said and which were inferred.
+    { name: 'record-only-what-was-said rule', pattern: /RECORD ONLY WHAT WAS ACTUALLY SAID/ },
+    // The carve-out has to survive with it: without the exception sentence the
+    // rule above contradicts the geo fields, whose own descriptions ask the
+    // model to estimate a coordinate from a described place.
+    { name: 'estimate-exception carve-out', pattern: /explicitly asks you to estimate/ },
   ]
   for (const { name, pattern } of required) {
     if (!pattern.test(text)) {
