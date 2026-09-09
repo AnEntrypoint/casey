@@ -191,14 +191,19 @@ export class Casey {
     //    operator replies. Null-safe: agent transitions and opted-out contacts
     //    are skipped inside the notifier.
     // Composed, not replaced: the contact-notify hook plus a live-agent
-    // eviction. src/agent/run-turn.js keeps ONE freddie Agent per `case:<id>`
-    // in a module-level Map, so without an eviction a long-running worker
-    // retains one session object per case it has ever conversed with, for the
-    // life of the process. A resolved/closed case will not take another turn,
-    // so its agent is dropped here; a reopened case just gets a fresh one from
-    // getOrCreateAgent(), the same state a supervisor hot-reload produces
-    // routinely. Eviction is a synchronous Map delete and runs FIRST, so a
-    // notifier failure cannot skip it.
+    // eviction. src/agent/run-turn.js keeps one freddie agent handle per
+    // `case:<id>`; a resolved/closed case will not take another turn, so its
+    // agent is dropped here, and this runs FIRST so a notifier failure cannot
+    // skip it.
+    //
+    // This is no longer the ONLY thing standing between the process and
+    // unbounded growth, and the previous version of this comment said it was.
+    // run-turn.js now also sweeps on an idle TTL, which matters because a case
+    // that stays OPEN never reaches this hook at all -- that was the actual
+    // leak, and closing a case was never what bounded it. The other half was
+    // wrong too: a reopened case does NOT "just get a fresh one". An evicted
+    // key must RESUME, because a plain create() against a live backend returns
+    // an empty session and its next turn dies on an id collision.
     const notifyOnTransition = makeTransitionNotifier(this.store, this.sendReply.bind(this), { log: this.log })
     this.store.onTransition = async (ev) => {
       if (ev?.caseRow?.id && !isOpenCase({ status: ev.to })) disposeAgent(`case:${ev.caseRow.id}`)

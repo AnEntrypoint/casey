@@ -278,9 +278,17 @@ export async function cmdDoctor({ flags }) {
   // a sweep; falls back to the handoff webhook. Optional: without either, breaches
   // still surface in the dashboard inbox, they just do not push a notification.
   const alertHook = process.env.CASEY_ALERT_WEBHOOK || process.env.CASEY_HANDOFF_WEBHOOK
+  // NOT dim. This used to render as a grey "(optional)" aside, which is true of
+  // the variable and false of the situation: with neither webhook set, NOTHING
+  // in this deployment can tell a human that something has gone wrong unless a
+  // human is already looking at the dashboard. In a surveillance deployment the
+  // characteristic failure is nobody noticing for a day, so the doctor should
+  // say out loud that nobody is being told. It stays a warning rather than a
+  // problem because a deployment whose team genuinely watches the dashboard is
+  // a real, working choice -- it just has to be a choice.
   console.log(alertHook
     ? ok(`breach alerts on${process.env.CASEY_ALERT_WEBHOOK ? ' CASEY_ALERT_WEBHOOK' : ' CASEY_HANDOFF_WEBHOOK (fallback)'}`)
-    : dim('  CASEY_ALERT_WEBHOOK unset - sweep breaches surface in the inbox but do not push an alert (optional)'))
+    : warn('no alert webhook - nothing pages anyone. Breaches, a deaf channel and a dead provider all surface only to someone already looking at the dashboard. Set CASEY_ALERT_WEBHOOK to push them somewhere a person will see.'))
   // data dir -- where the live case store lives (cwd-bound). The actual
   // filename is db.sqlite, not app.db: thatcher's own databasePath option
   // only ever contributes its DIRECTORY to busybase (databasePathToDir()
@@ -327,9 +335,23 @@ export async function cmdDoctor({ flags }) {
   const rawLogFile = path.join(dataDir, 'raw-log', 'observations.jsonl')
   if (existsSync(rawLogFile)) {
     try {
-      const corrupt = new RawLog({ dataDir }).corruptLineCount()
+      const st = new RawLog({ dataDir }).stats()
+      const corrupt = st.corrupt_lines
       if (corrupt > 0) { console.log(bad(`provenance raw log has ${corrupt} unreadable line(s) - a crash mid-append truncated ${corrupt} observation(s); they are skipped, not recoverable`)); problems++ }
       else console.log(ok('provenance raw log reads clean'))
+      // write_failures is the ENOSPC surface and the only place that says so:
+      // the tier above this one swallows the throw, so a disk that filled up
+      // loses provenance records silently. A non-zero count means records the
+      // system of record was supposed to hold are simply gone, which is a
+      // problem rather than a warning.
+      if (st.write_failures > 0) {
+        console.log(bad(`provenance raw log failed ${st.write_failures} write(s) - those observations were LOST (usually a full or read-only disk); free space and check permissions on ${st.dir}`))
+        problems++
+      }
+      // Rotation is by archiving, never truncation, so archives are expected
+      // and healthy. Reported so growth is visible before it becomes a
+      // surprise, never as a fault.
+      console.log(dim(`  provenance raw log: ${st.observations} observation(s), ${st.archive_count} archive(s), ${Math.round(st.total_bytes / 1024)} KB total`))
     } catch (e) {
       console.log(warn(`provenance raw log could not be read (${e.message})`))
     }
