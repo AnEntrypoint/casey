@@ -219,32 +219,99 @@ const PUBLIC_GROUPS = (() => {
 // same ground and ink the app chrome and the generated icon already use, and
 // by the shared type ladder.
 //
+// WHAT COMES BACK ON THE QUERY STRING IS A CODE, NEVER A SENTENCE.
+//
+// The redirect after a failed POST used to carry its own message as free text
+// in `?err=`, which meant anybody could compose a link to this deployment's own
+// branded page saying anything that fitted in 200 characters -- "your report
+// was rejected, ring 08xx to confirm" reads as the organisation speaking,
+// because on that page it is. The message is chosen HERE, from a closed set,
+// and the query string only names which one; an unrecognised code falls back to
+// the generic sentence rather than rendering itself.
+//
+// The one variable part is the reference, which is a separate parameter and is
+// escaped like any other contact-supplied value.
+const ERROR_SENTENCES = {
+  need_ref_or_phone: () => 'Please enter your reference number, or your phone number.',
+  ref_unknown: (ref, esc) => `We could not find the reference "${esc(ref)}". Please check it against your messages, or enter your phone number instead.`,
+  phone_shape: () => 'That does not look like a South African phone number. Please write it as 0821234567 or +27821234567.',
+  frozen: () => 'This report is not taking updates online at the moment. Please contact the team directly.',
+  save_failed: () => 'Your details could not be saved. Please try again in a moment.',
+  unexpected: () => 'Something went wrong at our end. Please try again in a moment.',
+}
+function errorSentence(code, ref, esc, retryAfter) {
+  if (code === 'rate') {
+    // Named as the CONNECTION rather than the reader: SA mobile carriers CGNAT
+    // heavily, so a whole district can share one address and the person reading
+    // this may have sent nothing at all.
+    return `This connection has made too many requests in the last minute -- in some areas many phones share one connection. Please wait about ${retryAfter} seconds and try again.`
+  }
+  const fn = ERROR_SENTENCES[code]
+  return fn ? fn(ref, esc) : ERROR_SENTENCES.unexpected()
+}
+// The whole vocabulary a redirect may name. Anything else is dropped rather
+// than echoed, so the query string can never carry copy of its own.
+export function errorCode(value) {
+  const s = String(value || '')
+  return (s === 'rate' || Object.prototype.hasOwnProperty.call(ERROR_SENTENCES, s)) ? s : ''
+}
+
 // `esc` is a parameter rather than a closure binding because this is now a
 // module-level function: it is the same server.js escapeHtml every route
 // module receives through deps, just passed explicitly.
-export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, err = '' } = {}) {
+//
+// `values` is what the contact just typed, laid over whatever the record
+// already holds. A rejection that happens BEFORE anything is written re-renders
+// this page rather than redirecting, so the answers survive; see postReport.
+export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done = false, err = '', values = null, held = 0, cut = 0, none = false, retryAfter = 0 } = {}) {
   let report = parseReport(caseRow)
+  if (values) report = { ...report, ...values }
   const vcTotal = PUBLIC_FIELDS.filter(f => f.critical).length
   const vcFilled = PUBLIC_FIELDS.filter(f => f.critical && report[f.key] != null && String(report[f.key]).trim() !== '').length
   const allFilled = vcTotal === 0 || vcFilled >= vcTotal
   // A config declaring no critical_for_visit field at all would divide by zero
   // here, so the bar is simply not drawn -- there is no "essential progress"
   // to report when the deployment has not named anything essential.
-  const progressBar = (caseRow && vcTotal > 0) ? `<div class="progress-wrap" aria-label="Essential fields: ${vcFilled} of ${vcTotal} filled">
+  // The wrapper carried an aria-label, which a screen reader ignores on a
+  // generic div -- the count reached nobody. The visible label already states
+  // it in words, so that line is the accessible name too, and the bar itself is
+  // hidden from the tree rather than announced as a second, wordless copy.
+  const progressBar = (caseRow && vcTotal > 0) ? `<div class="progress-wrap">
       <div class="progress-label">${allFilled ? 'All essential details filled. Thank you.' : `Essential details: ${vcFilled} of ${vcTotal} filled`}</div>
-      <div class="progress-track"><div class="progress-bar${allFilled ? ' done' : ''}" style="width:${Math.round(vcFilled/vcTotal*100)}%"></div></div>
+      <div class="progress-track" aria-hidden="true"><div class="progress-bar${allFilled ? ' done' : ''}" style="width:${Math.round(vcFilled/vcTotal*100)}%"></div></div>
     </div>` : ''
-  // One field. Unchanged in every respect that matters: the value is still
-  // esc()'d before it reaches a value attribute or a textarea body, and the
-  // hint is still esc()'d before it reaches a placeholder attribute.
+  // One field. The value is esc()'d before it reaches a value attribute or a
+  // textarea body, and the hint before it reaches a placeholder attribute.
+  //
+  // THE LABEL IS ASSOCIATED, and that is the whole point of the id/for pair
+  // here. Measured live before this: every one of the 26 controls on this page
+  // reported labels.length === 0, because the label sat beside the input rather
+  // than wrapping it and carried no `for` -- so a screen reader announced each
+  // one as an unnamed edit box, and tapping the words did not focus the field
+  // they name. The id is derived from the field key, which report-shape.js
+  // already guarantees is unique across the form.
+  //
+  // The hint reaches assistive tech through aria-describedby. It stays a
+  // placeholder on screen -- the layout is unchanged -- but a placeholder is not
+  // an accessible description and vanishes the moment anyone types, so
+  // "Farm name, nearest town, or GPS coordinates" was reaching nobody using a
+  // screen reader and nobody who had started answering.
+  //
+  // The essential marker is a real word for assistive tech and an asterisk for
+  // everyone else. aria-label on a bare <span> is ignored the same way the
+  // progress wrapper's was; a visually-hidden word is not.
   const fieldHtml = ({ key, label, hint, multiline, critical }) => {
+    const id = 'f-' + esc(key)
+    const hintId = hint ? id + '-hint' : ''
     const val = esc(report[key] || '')
     const placeholder = hint ? ` placeholder="${esc(hint)}"` : ''
+    const describedBy = hintId ? ` aria-describedby="${hintId}"` : ''
     const inp = multiline
-      ? `<textarea name="${esc(key)}" rows="3"${placeholder} maxlength="4000">${val}</textarea>`
-      : `<input type="text" name="${esc(key)}"${placeholder} value="${val}" maxlength="500">`
-    const vcMark = critical ? ' <span class="req" aria-label="essential">*</span>' : ''
-    return `<div class="field${critical ? ' vc' : ''}"><label>${esc(label)}${vcMark}</label>${inp}</div>`
+      ? `<textarea id="${id}" name="${esc(key)}" rows="3"${placeholder}${describedBy} maxlength="4000">${val}</textarea>`
+      : `<input id="${id}" type="text" name="${esc(key)}"${placeholder}${describedBy} value="${val}" maxlength="500">`
+    const vcMark = critical ? ' <span class="req" aria-hidden="true">*</span><span class="vh"> (essential)</span>' : ''
+    const hintHtml = hint ? `<span class="vh" id="${hintId}">${esc(hint)}</span>` : ''
+    return `<div class="field${critical ? ' vc' : ''}"><label for="${id}">${esc(label)}${vcMark}</label>${inp}${hintHtml}</div>`
   }
   // Each declared group becomes a bounded card with a numbered step and its
   // own question count, so a long form reads as "four things to do" rather
@@ -264,22 +331,44 @@ export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, er
       ${g.fields.map(fieldHtml).join('')}
     </section>`
   }).join('')
+  // A CONFIRMATION THAT NAMES WHAT DID NOT LAND. Two things can quietly not be
+  // saved, and both used to render the same unqualified "your details have been
+  // saved": an answer to a question the record already holds (an update entered
+  // with only a phone number may add facts but never replace one -- see
+  // postReport) and an answer longer than the 4000 characters a field stores.
+  // Telling somebody who has just corrected a death count that it was saved,
+  // when it was not, is worse than refusing them outright.
+  const heldNote = held > 0
+    ? (held === 1
+      ? ' One of your answers was for a question we already have an answer to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so please contact the team if that answer is wrong.'
+      : ` ${held} of your answers were for questions we already have answers to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so please contact the team if any of them are wrong.`)
+    : ''
+  const cutNote = cut > 0
+    ? ` ${cut} of your answers ${cut === 1 ? 'was' : 'were'} longer than we can store and had the end cut off.`
+    : ''
   const banner = done
-    ? `<div class="banner ok">Your details have been saved. The team will be in touch.</div>`
-    : err ? `<div class="banner err">${esc(err)}</div>` : ''
+    ? (none
+      ? `<div class="banner ok" role="status">We found your ${esc(ENTITY)}. You did not fill in any answers this time, so nothing on it has changed.</div>`
+      : `<div class="banner ok" role="status">Your details have been saved. The team will be in touch.${heldNote}${cutNote}</div>`)
+    : err ? `<div class="banner err" role="alert">${errorSentence(err, ref, esc, retryAfter)}</div>` : ''
   const caseInfo = caseRow
     ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || `Field ${ENTITY}`)}
          <button type="button" class="copy-link-btn" data-ref="${esc(caseRow.ref)}">Share link</button></div>`
     : ''
+  // autocomplete="tel" on the phone box and nowhere else. It is the one field
+  // on this page that asks for a fact about the PERSON rather than about the
+  // animals in front of them, so it is the one field a handset can honestly
+  // fill in; offering to autofill a species or a death count from a browser
+  // profile would put someone else's last answer into this report.
   const refBlock = caseRow ? `<input type="hidden" name="ref" value="${esc(ref)}">` : `
       <section class="grp vc">
       <h2 class="grp-head"><span class="grp-n" aria-hidden="true">1</span><span class="grp-title">Find your ${esc(ENTITY)}</span><span class="grp-count">2 questions</span></h2>
-      <div class="field"><label>Your reference number</label>
-      <input type="text" name="ref" value="${esc(ref)}" placeholder="e.g. CASE-001" maxlength="50">
-      <div class="hint">This was shared with you when you first reported. Check your messages. If you do not have one, enter your phone number below instead.</div></div>
-      <div class="field"><label>Or your phone number</label>
-      <input type="tel" name="phone" placeholder="+27 82 123 4567" maxlength="30">
-      <div class="hint">A South African number. We use this to find your ${esc(ENTITY)}.</div></div>
+      <div class="field"><label for="f-find-ref">Your reference number</label>
+      <input id="f-find-ref" type="text" name="ref" value="${esc(ref)}" placeholder="e.g. CASE-001" maxlength="50" aria-describedby="f-find-ref-hint">
+      <div class="hint" id="f-find-ref-hint">This was shared with you when you first reported. Check your messages. If you do not have one, enter your phone number below instead.</div></div>
+      <div class="field"><label for="f-find-phone">Or your phone number</label>
+      <input id="f-find-phone" type="tel" name="phone" value="${esc(phone)}" placeholder="+27 82 123 4567" maxlength="30" autocomplete="tel" aria-describedby="f-find-phone-hint">
+      <div class="hint" id="f-find-phone-hint">A South African number. We use this to find your ${esc(ENTITY)}.</div></div>
       </section>`
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -342,6 +431,13 @@ export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, er
   button[type=submit]:hover{background:${BRAND.hover}}
   button:disabled{opacity:.6;cursor:default}
   .req-note{font-size:var(--fs-micro);color:#495662;margin:0 0 var(--space-2)}
+  /* WHAT SENDING ACTUALLY DOES, under the control that does it. The page
+     asked twenty-six questions and then offered a button, with the only
+     statement of what happens next living on the page AFTER the answer had
+     already gone. Somebody deciding whether a long form is worth starting
+     needs that before they start, and this deliberately promises no time, no
+     visit and no named person -- none of which this system can commit to. */
+  .next{font-size:var(--fs-tiny);color:#495662;line-height:var(--lh-base);margin:var(--space-2-5) 0 0}
   .copy-link-btn{background:none;border:1px solid ${BRAND.edge};border-radius:5px;color:${BRAND.accent};
     font-size:var(--fs-micro);padding:var(--space-half) var(--space-2);cursor:pointer;
     margin-left:var(--space-2);vertical-align:middle}
@@ -350,8 +446,19 @@ export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, er
   .field-err.show{display:block}
   .draft-note{font-size:var(--fs-micro);color:#5a6674;margin:0 0 var(--space-2);display:none}
   .draft-note.show{display:block}
-  .draft-clear{background:none;border:0;padding:0;margin-left:var(--space-1);color:${BRAND.accent};
+  /* A control that clears twenty-four answers has to be reachable by a thumb
+     without hitting it by accident. It was 16px tall, inline in a sentence;
+     the padding takes the touch target to the 44px floor while the underlined
+     text still reads as part of the note it sits in. */
+  .draft-clear{background:none;border:0;padding:var(--space-2-5) var(--space-2);margin-left:var(--space-1);
+    min-height:44px;color:${BRAND.accent};
     font-size:var(--fs-micro);font-family:inherit;text-decoration:underline;cursor:pointer}
+  /* Read by a screen reader, occupies nothing on screen. Carries the word
+     "essential" behind each asterisk and the per-field hint that is otherwise
+     only a placeholder. clip-path rather than display:none or visibility, both
+     of which take a node out of the accessibility tree entirely. */
+  .vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
+    clip-path:inset(50%);white-space:nowrap;border:0}
   footer{text-align:center;font-size:var(--fs-micro);color:#495662;margin-top:var(--space-4)}
 </style></head><body>
 <header class="topbar"><div class="topbar-in">${esc(BRAND.name)}</div></header>
@@ -365,6 +472,7 @@ export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, er
     <p class="req-note">* Essential for a field visit</p>
     <p class="draft-note" id="draft-note" aria-live="polite">Your answers are kept in this tab until you send them. </p>
     <button type="submit">Send details</button>
+    <p class="next">Your answers go onto your ${esc(ENTITY)} for the team who work these. If they need to ask you something they will use the phone number on it. You can open this page again with your reference number and add more whenever you find something out.</p>
   </form>
   <footer>${esc(BRAND.description || BRAND.name)}</footer>
 </div>
@@ -390,7 +498,9 @@ export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, er
     errEl.className = 'field-err'
     errEl.id = 'phone-err'
     errEl.setAttribute('aria-live', 'polite')
-    phoneEl.setAttribute('aria-describedby', 'phone-err')
+    // Appended, never assigned: the field already points at its own hint, and
+    // overwriting that attribute would trade one description for the other.
+    phoneEl.setAttribute('aria-describedby', ((phoneEl.getAttribute('aria-describedby') || '') + ' phone-err').trim())
     phoneEl.parentNode.appendChild(errEl)
     phoneEl.addEventListener('blur', () => {
       const v = phoneEl.value.trim()
@@ -502,7 +612,17 @@ export function publicFormHtml(esc, { ref = '', caseRow = null, done = false, er
 // sweep interval belong to one registerAuth call, exactly as they did when
 // they were closure bindings, so two dashboards in one process do not share a
 // limiter (or leak a second uncleared interval).
-const REPORT_RATE_LIMIT = 10
+//
+// READS AND WRITES HAVE SEPARATE BUDGETS, because only one of them is what the
+// limiter is for. A GET opens no case and queues no work; a submit is the thing
+// that has to be bounded. Sharing one 10-per-minute allowance meant a reporter
+// on a bad link -- which is the normal case here -- spent it on reloads and
+// redirects and was refused mid-report: a submit already costs two requests
+// (the POST and the redirect's GET), so five attempts exhausted it. The write
+// bound is unchanged at 10 per minute per address; reads get their own,
+// looser one.
+const REPORT_WRITE_LIMIT = 10
+const REPORT_READ_LIMIT = 40
 const REPORT_RATE_WINDOW_MS = 60000
 export function makeReportRateLimiter(esc) {
   const reportRateBuckets = new Map()
@@ -517,11 +637,23 @@ export function makeReportRateLimiter(esc) {
     const now = Date.now()
     let b = reportRateBuckets.get(ip)
     if (!b || now - b.windowStart > REPORT_RATE_WINDOW_MS) {
-      b = { count: 0, windowStart: now }
+      b = { reads: 0, writes: 0, windowStart: now }
       reportRateBuckets.set(ip, b)
     }
-    b.count++
-    if (b.count > REPORT_RATE_LIMIT) return res.status(429).type('html').send(publicFormHtml(esc, { err: 'Too many requests. Please wait a moment and try again.' }))
+    const writing = req.method === 'POST'
+    if (writing) b.writes++
+    else b.reads++
+    if (writing ? b.writes > REPORT_WRITE_LIMIT : b.reads > REPORT_READ_LIMIT) {
+      // The wait is the real remainder of the window, not "a moment": somebody
+      // deciding whether to give up needs a number. Retry-After carries the
+      // same figure for anything reading the response rather than the page.
+      const retryAfter = Math.max(1, Math.ceil((REPORT_RATE_WINDOW_MS - (now - b.windowStart)) / 1000))
+      res.set('Retry-After', String(retryAfter))
+      // The reference the reader was on is kept, so a refusal does not also
+      // cost them the one thing they had to type in from a message.
+      const ref = String((req.body && req.body.ref) || req.query.ref || '').slice(0, 50).trim()
+      return res.status(429).type('html').send(publicFormHtml(esc, { ref, err: 'rate', retryAfter }))
+    }
     next()
   }
 }
@@ -530,26 +662,64 @@ export function makeReportRateLimiter(esc) {
 // The ref acts as the shared secret: contacts only know their own ref,
 // and report fields are non-sensitive (location, symptoms, contact info).
 // GET /report?ref=REF  -> HTML form for that case (or blank ref input)
-// POST /report         -> submit fields; redirect back with ?done=1 or ?err=...
+// POST /report         -> a save redirects to ?done=1 (with &held=/&cut=/&none=1
+//                         saying what did not land); a rejection re-renders the
+//                         form in place so the answers survive.
+// Nothing on the query string is ever rendered as written: ?err= names one of
+// ERROR_SENTENCES, and held/cut/none are read as numbers.
 export function getReport({ store, esc }) {
   return async (req, res) => {
     const ref = String(req.query.ref || '').slice(0, 50).trim()
     const done = req.query.done === '1'
-    const err = String(req.query.err || '').slice(0, 200)
-    if (!ref) return res.type('html').send(publicFormHtml(esc, { done, err }))
+    // A code, never a message -- see ERROR_SENTENCES. `held`/`cut` carry how
+    // much of the last submission did not land, and are read as counts so the
+    // query string cannot put words on the page either.
+    const err = errorCode(req.query.err)
+    const countParam = (v) => Math.min(99, Math.max(0, parseInt(v, 10) || 0))
+    const held = countParam(req.query.held)
+    const cut = countParam(req.query.cut)
+    const none = req.query.none === '1'
+    if (!ref) return res.type('html').send(publicFormHtml(esc, { done, err, held, cut, none }))
     try {
       const found = await store.getCaseByRef(ref)
-      if (!found) return res.type('html').send(publicFormHtml(esc, { ref, err: err || `Reference "${ref}" was not found. Please check and try again.` }))
-      res.type('html').send(publicFormHtml(esc, { ref, caseRow: found, done, err }))
-    } catch (e) { res.status(500).type('html').send(publicFormHtml(esc, { ref, err: 'Something went wrong. Please try again in a moment.' })) }
+      if (!found) return res.type('html').send(publicFormHtml(esc, { ref, err: err || 'ref_unknown' }))
+      res.type('html').send(publicFormHtml(esc, { ref, caseRow: found, done, err, held, cut, none }))
+    } catch (e) { res.status(500).type('html').send(publicFormHtml(esc, { ref, err: 'unexpected' })) }
   }
 }
 
-export function postReport({ store }) {
+export function postReport({ store, esc }) {
   return async (req, res) => {
     const ref = String(req.body.ref || '').slice(0, 50).trim()
     const phoneRaw = String(req.body.phone || '').replace(/[\s\-()]/g, '').slice(0, 30)
-    if (!ref && !phoneRaw) return res.redirect('/report?err=' + encodeURIComponent('Please enter your reference number or phone number.'))
+    // Everything the contact typed, before any cap or guard touches it. It is
+    // what the page is re-rendered with when a submission is refused, so a
+    // wrong reference or a mistyped number no longer costs somebody the
+    // twenty-four answers underneath it.
+    const submitted = {}
+    for (const { key } of PUBLIC_FIELDS) {
+      const v = req.body[key]
+      if (v == null || typeof v !== 'string') continue
+      const trimmed = v.trim()
+      if (trimmed) submitted[key] = trimmed
+    }
+    // A REJECTION RE-RENDERS RATHER THAN REDIRECTING, deliberately breaking the
+    // post/redirect/get shape the success path keeps. All three call sites
+    // reject BEFORE anything is written, so a browser re-posting on refresh
+    // repeats a request that changed nothing; against that, a redirect drops
+    // every answer, and the sessionStorage draft that used to paper over it
+    // exists only in a browser running this page's JavaScript. The form is a
+    // real form POST and has to survive with scripting off, which is the
+    // condition a fair number of the handsets it is written for are in.
+    //
+    // `showRef` is a parameter and defaults to what the contact actually sent,
+    // never to whatever case the lookup happened to land on: the reference is
+    // the whole access control on this surface, so a page rendered after a
+    // phone-number entry that matched a case the submitter did not open must
+    // not print it. The same rule the success redirect follows.
+    const rejected = (err, { caseRow = null, showRef = ref, status = 400 } = {}) => res.status(status).type('html')
+      .send(publicFormHtml(esc, { ref: showRef, phone: String(req.body.phone || '').slice(0, 30), caseRow, err, values: submitted }))
+    if (!ref && !phoneRaw) return rejected('need_ref_or_phone')
     try {
       let found = null
       // Whether THIS request opened the case it is about to write to. A
@@ -558,11 +728,11 @@ export function postReport({ store }) {
       let openedHere = false
       if (ref) {
         found = await store.getCaseByRef(ref)
-        if (!found) return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent(`Reference "${ref}" was not found. Please check, or enter your phone number instead.`))
+        if (!found) return rejected('ref_unknown')
       } else {
         // Phone-based entry: normalise to +27XXXXXXXXX.
         const validPhone = /^0[0-9]{9}$/.test(phoneRaw) || /^\+27[0-9]{9}$/.test(phoneRaw)
-        if (!validPhone) return res.redirect('/report?err=' + encodeURIComponent('Phone number not recognised. Please use a South African number like 0821234567 or +27821234567.'))
+        if (!validPhone) return rejected('phone_shape')
         const normPhone = phoneRaw.startsWith('0') ? '+27' + phoneRaw.slice(1) : phoneRaw
         // A PHONE NUMBER IS NOT A SECRET, so it may only ever reach a case this
         // same form opened for that number -- never an agent-gathered
@@ -589,12 +759,14 @@ export function postReport({ store }) {
           await store.appendEvent(nc.id, { kind: 'note', actor: 'system', text: 'Case created via public web form (phone number entry)' })
         }
       }
+      // The 4000-character cap is counted, not merely applied. An answer longer
+      // than a field stores used to be shortened in silence under a page that
+      // then said everything had been saved.
+      let cut = 0
       const incoming = {}
-      for (const { key } of PUBLIC_FIELDS) {
-        const v = req.body[key]
-        if (v == null || typeof v !== 'string') continue
-        const trimmed = v.trim().slice(0, 4000)
-        if (trimmed) incoming[key] = trimmed
+      for (const [key, value] of Object.entries(submitted)) {
+        if (value.length > 4000) cut++
+        incoming[key] = value.slice(0, 4000)
       }
       // Someone who typed only a phone number, into a case they did not open,
       // may ADD facts that are missing but never REPLACE one already recorded
@@ -604,10 +776,17 @@ export function postReport({ store }) {
       // silently dropped from a genuine reporter's point of view: every field
       // they fill that the record does not already hold is still saved, and a
       // reporter holding their reference keeps full correction rights.
+      //
+      // What IS said, and used not to be, is that it happened: the count of
+      // held-back answers rides back to the confirmation page, so someone who
+      // has just retyped a corrected death count is told the record already had
+      // one and that this route cannot change it, instead of reading "your
+      // details have been saved".
+      let held = 0
       if (!ref && !openedHere) {
         const already = parseReport(found)
         for (const k of Object.keys(incoming)) {
-          if (already[k] != null && String(already[k]).trim() !== '') delete incoming[k]
+          if (already[k] != null && String(already[k]).trim() !== '') { delete incoming[k]; held++ }
         }
       }
       if (Object.keys(incoming).length) {
@@ -617,12 +796,12 @@ export function postReport({ store }) {
         // submitted the form deserves to know their details were not saved, not a
         // false success page. 'observe' gets its own plain message rather than the
         // generic error string, since nothing actually went wrong on casey's side.
-        if (mergeResult.error === 'observe') {
-          return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('This report is not currently accepting updates online. Please contact the team directly.'))
-        }
-        if (mergeResult.error) {
-          return res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong saving your details. Please try again.'))
-        }
+        // Only a submitter who held the reference, or who just opened this case
+        // here, gets the case echoed back to them.
+        const ownRef = ref || (openedHere ? (found?.ref || '') : '')
+        const ownRow = ownRef ? found : null
+        if (mergeResult.error === 'observe') return rejected('frozen', { caseRow: ownRow, showRef: ownRef })
+        if (mergeResult.error) return rejected('save_failed', { caseRow: ownRow, showRef: ownRef })
         await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated report via web form: ${Object.keys(incoming).join(', ')}`, data: incoming })
         // Tag intake source (add public_form if not already present)
         try {
@@ -635,8 +814,14 @@ export function postReport({ store }) {
       // somebody else opened is what turned a non-secret phone number into a
       // read key for that case's full report on the following GET.
       const showRef = ref || (openedHere ? (found?.ref || '') : '')
-      res.redirect(showRef ? '/report?ref=' + encodeURIComponent(showRef) + '&done=1' : '/report?done=1')
-    } catch (e) { res.redirect('/report?ref=' + encodeURIComponent(ref) + '&err=' + encodeURIComponent('Something went wrong. Please try again.')) }
+      // held/cut ride the redirect as counts so the confirmation can say what
+      // did not land. The success path stays a redirect (post/redirect/get) --
+      // unlike the rejections above, this one HAS written, so a refresh must not
+      // repeat it.
+      const notes = (held ? '&held=' + held : '') + (cut ? '&cut=' + cut : '')
+        + (Object.keys(submitted).length ? '' : '&none=1')
+      res.redirect((showRef ? '/report?ref=' + encodeURIComponent(showRef) + '&done=1' : '/report?done=1') + notes)
+    } catch (e) { rejected('unexpected', { status: 500 }) }
   }
 }
 

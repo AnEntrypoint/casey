@@ -266,6 +266,34 @@ function shellModuleGraph(html, publicDir) {
   return order
 }
 
+// THE THREE BRAND-CARRYING TAGS IN THE SHELL HEAD, resolved from BRAND like
+// the manifest, the generated icon and the offline page already are.
+//
+// index.html ships casey's OWN identity in all three -- <title>casey</title>,
+// apple-mobile-web-app-title "casey", theme-color #3b6ea5 -- and they are the
+// only brand a browser has before a session exists, because the SPA's own
+// rebrand runs off /api/config, which is gated. So on a rebranded deployment
+// the browser tab, the bookmark, the iOS home-screen label and the browser
+// chrome colour all said "casey" in casey's blue while /manifest.json served
+// the deployer's own name and ground from the same process: one product with
+// two identities, and the wrong one on every pre-session surface.
+//
+// Rewritten in the SERVED bytes only, exactly like the modulepreload block
+// above, so index.html stays casey's own default for a bare clone and
+// brand.js's readThemeColor -- which reads that FILE as its fallback ground --
+// cannot end up reading its own output back.
+//
+// A function replacer, not a '$1'-style string: a brand name containing a
+// dollar sign would otherwise be spliced through String.replace's own
+// substitution grammar.
+function brandShellHead(html) {
+  const name = esc(BRAND.name)
+  return html
+    .replace(/<title>[\s\S]*?<\/title>/i, () => `<title>${name}</title>`)
+    .replace(/(<meta\s+name="apple-mobile-web-app-title"\s+content=")[^"]*(")/i, (_m, a, b) => a + name + b)
+    .replace(/(<meta\s+name="theme-color"\s+content=")[^"]*(")/i, (_m, a, b) => a + esc(BRAND.ground) + b)
+}
+
 // Injected into the SERVED bytes, never into the file on disk, so index.html
 // stays the single hand-maintained statement of what the shell links and the
 // generated half cannot drift from the real import graph.
@@ -285,8 +313,16 @@ function injectModulePreloads(html, moduleUrls) {
 // Keyed by URL, not basename: the shell links two different files named
 // leaflet.css and MarkerCluster.css from two different mounts, and a basename
 // key would have let one silently stand in for the other.
+//
+// The resolved brand is hashed in alongside the files. brandShellHead below
+// rewrites the served shell's title, iOS home-screen name and theme colour
+// from BRAND, which comes from report-fields.yml rather than from any file
+// under public/ -- so a deployer changing only their config would otherwise
+// ship new shell bytes under an unchanged cache name and the service worker
+// would go on serving the previous brand.
 function shellBuildId(publicDir, assetUrls) {
   const h = createHash('sha256')
+  h.update('brand:' + BRAND.name + ':' + BRAND.ground + '\n')
   const walk = (dir, rel) => {
     const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
     for (const e of entries) {
@@ -511,7 +547,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   })()
   const SHELL_ASSET_URLS = SHELL_HTML_SOURCE ? shellAssetUrls(SHELL_HTML_SOURCE) : []
   const SHELL_MODULE_URLS = SHELL_HTML_SOURCE ? shellModuleGraph(SHELL_HTML_SOURCE, PUBLIC_DIR) : []
-  const SHELL_HTML = SHELL_HTML_SOURCE ? injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS) : null
+  const SHELL_HTML = SHELL_HTML_SOURCE ? brandShellHead(injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS)) : null
   // The module graph is hashed into the build id but deliberately NOT
   // precached. Two reasons, pulling in opposite directions:
   //
@@ -706,7 +742,11 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   app.get('/manifest.json', (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
     res.json({
-      name: PWA_BRAND, short_name: PWA_BRAND, start_url: '/', display: 'standalone',
+      // scope is stated rather than inferred from start_url. Without it an
+      // installed window that follows a link outside '/' hands the navigation
+      // back to the ordinary browser; with the whole origin in scope the
+      // public /report link an operator opens stays inside the installed app.
+      name: PWA_BRAND, short_name: PWA_BRAND, start_url: '/', scope: '/', display: 'standalone',
       // The splash screen paints background_color before the page's own CSS
       // exists, so this is the installed app's launch ground. It is the light
       // theme's, and it cannot follow the device: the manifest is static JSON
@@ -723,7 +763,14 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       // one sets dashboard_ui.description; otherwise the field is simply
       // absent, which is valid and honest.
       ...(BRAND.description ? { description: BRAND.description } : {}),
-      icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }],
+      // 'any maskable' rather than the default 'any'. Android composites a
+      // home-screen icon inside a platform mask and, with no maskable icon
+      // declared, shrinks the whole image into a white plate -- the brand
+      // ground stops being the icon's ground. The generated icon is safe under
+      // a mask by construction: it is a full-bleed rect and the letter sits
+      // inside the central 80% safe zone, so nothing a mask crops carries
+      // meaning.
+      icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
     })
   })
   // SERVICE WORKER. The previous version's header comment claimed "cache-first
@@ -736,10 +783,11 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   // WHY CACHE-FIRST IS SAFE HERE, on a surveillance dashboard where a stale
   // shell would be a safety problem rather than a cosmetic one:
   //
-  //  1. Nothing under /api/ is ever cached. Every fact an operator READS --
-  //     case rows, the map, health, the queue -- comes from the network on
-  //     every request or fails loudly with the 503 offline envelope. Only
-  //     code, CSS and fonts are cached.
+  //  1. Nothing under /api/ is ever cached, and neither is the public /report
+  //     form. Every fact an operator READS -- case rows, the map, health, the
+  //     queue -- comes from the network on every request or fails loudly with
+  //     the 503 offline envelope, and a reporter's own form is fetched live for
+  //     the same reason. Only code, CSS and fonts are cached.
   //  2. The cache NAME carries SHELL_BUILD_ID, derived from the size and
   //     mtime of every file under public/ plus the design and leaflet bundles
   //     this page links. A changed shell is a different cache, so a cache
@@ -794,6 +842,16 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys()
     .then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    // A worker that used to cache /report leaves those entries behind under a
+    // cache name this build may still be using, and version-scoping alone does
+    // not reach them: the id is derived from public/ and the linked bundles, so
+    // a change to the fetch rule here does not rename the cache. The handler
+    // below no longer reads them, but a report's contents sitting on a shared
+    // handset is the point, so they are deleted rather than orphaned.
+    .then(() => caches.open(CACHE))
+    .then((c) => c.keys().then((rs) => Promise.all(rs
+      .filter((r) => new URL(r.url).pathname === '/report')
+      .map((r) => c.delete(r)))))
     .then(() => self.clients.claim()))
 })
 
@@ -813,32 +871,112 @@ self.addEventListener('fetch', (e) => {
   }
   // The update check must reach the network or the worker can never be replaced.
   if (url.pathname === '/sw.js') return
+  // The public report form is live per-case data on an unauthenticated URL, so
+  // it belongs with /api/ above and not with the shell. Cached, it did two
+  // wrong things at once: a reporter who came back to their own reference was
+  // served the answers as they stood at their first visit, with no sign that
+  // anything had moved since, and a named person's whole report -- species,
+  // place, directions, owner name and number -- stayed readable on the handset
+  // from Cache Storage with no network and no session, which on a shared rural
+  // phone is the exact exposure the form's own sessionStorage draft rule
+  // already refuses to create.
+  if (url.pathname === '/report') {
+    e.respondWith(fetch(req).catch(() => offlineFallback(req)))
+    return
+  }
   e.respondWith(caches.open(CACHE).then((c) => c.match(req, { ignoreVary: true }).then((hit) => {
     if (hit) return hit
     return fetch(req).then((res) => {
       if (res && res.status === 200 && res.type === 'basic') c.put(req, res.clone())
       return res
-    }).catch(() => (req.mode === 'navigate' ? c.match('/offline.html') : Response.error()))
+    }).catch(() => offlineFallback(req))
   })))
 })
+
+// A navigation that cannot reach the network gets the offline page; anything
+// else gets a network error. The cache lookup is guarded because respondWith
+// REJECTS on an undefined resolution -- an install whose /offline.html fetch
+// failed would otherwise turn every offline navigation into the browser's own
+// error page rather than this deployment's.
+function offlineFallback(req) {
+  if (req.mode !== 'navigate') return Response.error()
+  return caches.open(CACHE).then((c) => c.match('/offline.html')).then((hit) => hit || Response.error())
+}
 `)
   })
-  // Reached only when the shell itself has never been cached AND the link is
-  // down -- i.e. a first-ever visit with no connection. Brand and ground track
-  // the real dashboard (it used to be hardcoded "casey" on a near-black page,
-  // which for a deployer with their own brand was a different product's
-  // apology screen).
+  // The answer to any navigation the service worker cannot put on the wire and
+  // cannot serve from its own cache -- most often the public /report form,
+  // which is never cached, and any dashboard URL on a device that has not
+  // loaded the shell before.
+  //
+  // IT IS READ BY TWO DIFFERENT PEOPLE and must not assume either. The service
+  // worker's scope is the whole origin, so a reporter who opens their own form
+  // on a handset where somebody once opened the dashboard lands here. The
+  // previous copy told that reporter that "reports already on this device are
+  // not shown here" and to reconnect "to see the live queue" -- an operator's
+  // sentence about a screen they have no account for -- and its only control
+  // pointed at "/", the staff login, rather than back at the page they asked
+  // for. So the wording names no role and no screen, and the retry reloads the
+  // requested URL.
+  //
+  // IT RECOVERS ON ITS OWN. This is the page most likely to be open on a phone
+  // in a bakkie moving between a farm and a signal, and asking somebody to
+  // notice the moment the bars come back and press a button is asking them to
+  // do the polling themselves. The browser's own `online` event covers an
+  // interface coming back, and a slow poll of /api/ready -- the ungated
+  // liveness probe, a few dozen bytes -- covers the case where the interface
+  // was never down and the server was unreachable. The poll interval is
+  // deliberately no faster than the SPA's own health poll: this runs on a
+  // metered link.
+  //
+  // The script is not a dependency: with JavaScript off the page still states
+  // the situation and the link still works, it just does not retry itself.
   app.get('/offline.html', (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
-    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(PWA_BRAND)} - offline</title>
+    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="${esc(PWA_THEME_COLOR)}"><title>${esc(PWA_BRAND)} - no connection</title>
 <style>${TYPE_SCALE_CSS}body{font-family:system-ui,sans-serif;font-size:var(--fs-body);background:#ffffff;color:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:var(--space-3-5)}
 .card{max-width:360px}.card h1{font-size:var(--fs-xl);margin:0 0 var(--space-2)}p{color:#555c66;line-height:var(--lh-base);margin:0 0 var(--space-3)}
-a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);text-decoration:none;border:1px solid ${PWA_THEME_COLOR};border-radius:6px;padding:var(--space-2) var(--space-3-5);display:inline-block}</style>
+a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);text-decoration:none;border:1px solid ${PWA_THEME_COLOR};border-radius:6px;padding:var(--space-2-75) var(--space-3-5);display:inline-block;min-height:44px;line-height:var(--lh-snug);box-sizing:border-box}
+.fine{font-size:var(--fs-tiny)}</style>
 </head><body><div class="card">
 <h1>${esc(PWA_BRAND)}</h1>
-<p>You are offline. Reports already on this device are not shown here. Reconnect to see the live queue.</p>
-<a href="/">Try again</a>
-</div></body></html>`)
+<p>This phone has no connection to ${esc(PWA_BRAND)} right now, so the page you asked for could not be opened.</p>
+<p>Nothing you have already sent is lost. Move to a spot with signal and this page opens itself as soon as the connection is back.</p>
+<a id="retry" href="/">Try now</a>
+<p class="fine" id="watching"></p>
+</div>
+<script>
+(function () {
+  var retry = document.getElementById('retry');
+  // location is the URL that was actually asked for -- the service worker
+  // answers the failed navigation with this document's bytes without changing
+  // the address -- so reloading returns the reader to their own page rather
+  // than to the dashboard root the static href names for the no-script case.
+  //
+  // Reached at its own address instead, this page is not standing in for
+  // anything and there is nothing to return to: retrying would reload the
+  // apology, and the recovery watch below would do it on a timer forever. So
+  // both are off in that case and the static link to the dashboard stands.
+  var standingIn = location.pathname !== '/offline.html';
+  if (!standingIn) return;
+  retry.setAttribute('href', location.href);
+  retry.addEventListener('click', function (e) { e.preventDefault(); location.reload(); });
+  document.getElementById('watching').textContent = 'Checking for a connection every few seconds.';
+  var checking = false;
+  function probe() {
+    if (checking) return;
+    checking = true;
+    fetch('/api/ready', { cache: 'no-store' })
+      .then(function (r) { if (r && r.status === 200) location.reload(); })
+      .catch(function () {})
+      .then(function () { checking = false; });
+  }
+  addEventListener('online', probe);
+  setInterval(probe, 15000);
+})();
+</script>
+</body></html>`)
   })
   // The dashboard SPA itself: index.html + app.css + app.js served as real
   // static files (see src/dashboard/public/) -- moved out of an inline
