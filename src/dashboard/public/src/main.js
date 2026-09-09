@@ -170,14 +170,21 @@ async function loadCaseyConfig() {
   } catch { /* fall back to shipped defaults already in state */ }
 }
 
+// Resolves true only when the server answered 304 -- i.e. it asserted the list
+// is byte-identical to the one already on screen. Anything else (a real body, a
+// dropped link, a 401) resolves false, so the caller's poll ladder below stays
+// at its floor rather than backing off on a failure.
 async function loadCases() {
   try {
-    const rows = await api.fetchCases();
-    const list = Array.isArray(rows) ? rows : (rows && rows.cases) || [];
+    const { body, unchanged } = await api.pollCases();
+    if (unchanged) return true;
+    const list = Array.isArray(body) ? body : (body && body.cases) || [];
     state.allCases = list;
     checkHandoffs(list);
     schedule();
+    return false;
   } catch { /* connection banner already surfaces the failure via api.js */ }
+  return false;
 }
 
 async function refreshAttention() {
@@ -292,18 +299,25 @@ initRouteSync((r) => {
   maybeShowOnboarding();
 })();
 
-// Background polls: 5s full-list, 15s health, 30s attention + map pins, 60s
-// degraded-turns (feeds notifications-center only, cheap and infrequent).
-// Focus mode suppresses the expensive 5s list poll (a phone runs the cheap
-// attention + health polls only).
+// Background polls: the case list from 5s (see the ladder below), 15s health,
+// 30s attention + map pins, 60s degraded-turns (feeds notifications-center
+// only, cheap and infrequent). Focus mode suppresses the expensive list poll
+// (a phone runs the cheap attention + health polls only).
 //
-// The 5s list poll is ALSO suppressed while the map home view is showing, and
-// that is the single biggest bandwidth item on this dashboard: measured over a
-// 62s idle window on the map landing, /api/cases was 133,140 B/min -- 82.4% of
-// all poll traffic -- for a list state.allCases that the map view never reads.
-// Only the case-list side does. On the rural, metered link this deployment
-// targets, that was most of an idle hour's ~8.7 MB being spent on a screen the
-// operator is not looking at.
+// Every one of these now revalidates rather than re-downloads: api.js sends
+// If-None-Match and the server answers an unchanged body with a 304 (see its
+// conditional-GET header comment). The intervals below therefore describe how
+// often a surface is CHECKED, not how many kilobytes it costs -- an idle check
+// is request and response headers, no body.
+//
+// The list poll is ALSO suppressed while the map home view is showing, for a
+// list state.allCases that the map view never reads -- only the case-list side
+// does. That suppression was worth far more before revalidation than it is
+// now: an unchanged /api/cases poll costs 929 wire bytes rather than 3839, so
+// the saving is a poll's worth of headers, not a poll's worth of case rows.
+// It stays because the cheapest request is still the one not made, and because
+// re-reading a list nothing on screen consumes was never defensible on a
+// metered link.
 //
 // The pins take its place on a 30s tick, matching attention (the two feed the
 // same rail and drifting them apart is how the map and the queue come to
@@ -312,6 +326,15 @@ initRouteSync((r) => {
 // unplotted for an entire shift while a list nobody was reading refreshed 720
 // times an hour. Net effect is still far less traffic, spent on the surface
 // actually in front of the operator.
+//
+// Measured end to end at the socket, same 240s idle window on the case list,
+// service worker live, before and after this file's ladder plus api.js's
+// conditional GET: 48 requests / 51,749 bytes became 30 requests / 34,273
+// bytes -- 0.740 MB/hour down to 0.490, a third of an 8-hour shift's cost
+// (5.9 MB down to 3.9 MB). /api/cases itself fell from 190,410 to 41,805
+// bytes an hour. What is left is dominated by REQUEST headers (327,015 of the
+// remaining 514,095 bytes an hour), so the only lever left on this surface is
+// making fewer requests, not smaller ones.
 const onMapHome = () => !state.activePanel && state.homeView === 'map';
 // The polling cadence, named rather than left as five bare numbers inline.
 // This is not housekeeping: every one of these is traffic on what AGENTS.md
@@ -326,7 +349,46 @@ const HEALTH_POLL_MS = 15000;
 const ATTENTION_POLL_MS = 30000;
 const MAP_POLL_MS = ATTENTION_POLL_MS;
 const DEGRADED_POLL_MS = 60000;
-const _casesIv = setInterval(() => { if (!state.inboxMode && !onMapHome()) loadCases(); }, CASES_POLL_MS);
+
+// The case list is the one poll whose interval is not a fixed number, and the
+// evidence for that is this deployment's own event log rather than a guess:
+// 136 events across 322 hours (0.42 an hour), with 313 of those hours holding
+// no event at all and every event that did happen falling inside 9 clock
+// hours. A flat 5s tick spends 720 requests an hour to observe nothing in 97
+// percent of hours, and 5s is still exactly the right cadence in the hour
+// where 56 things happen at once.
+//
+// So the interval is a ladder, not a constant. It sits at CASES_POLL_MS and
+// DOUBLES on each poll the server answers 304 to, up to CASES_POLL_MAX_MS; the
+// first poll that carries a real body drops it straight back to the floor, so
+// a burst is tracked at 5s from its second event onward. Coming back to a
+// hidden tab resets it too -- an operator returning to the screen must not
+// wait out a ladder that grew while nobody was looking.
+//
+// The ceiling is ATTENTION_POLL_MS, deliberately equal rather than merely
+// similar: the worst-first queue an operator actually triages from already
+// refreshes at 30s, and on the map home view this poll is suppressed
+// completely, so a full case list at most 30s behind cannot be less current
+// than the surface in front of the operator. It is also only ever 30s behind
+// having been TOLD nothing changed -- a 304 is the server's own assertion, not
+// an assumption made here.
+const CASES_POLL_MAX_MS = ATTENTION_POLL_MS;
+let casesPollMs = CASES_POLL_MS;
+let _casesTimer = null;
+function scheduleCasesPoll() {
+  _casesTimer = setTimeout(async () => {
+    if (state.inboxMode || onMapHome()) casesPollMs = CASES_POLL_MS;
+    else {
+      const unchanged = await loadCases();
+      casesPollMs = unchanged ? Math.min(CASES_POLL_MAX_MS, casesPollMs * 2) : CASES_POLL_MS;
+    }
+    scheduleCasesPoll();
+  }, casesPollMs);
+}
+scheduleCasesPoll();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') casesPollMs = CASES_POLL_MS;
+});
 const _healthIv = setInterval(refreshHealth, HEALTH_POLL_MS);
 const _attnIv = setInterval(refreshAttention, ATTENTION_POLL_MS);
 const _mapIv = setInterval(() => { if (onMapHome()) refreshMapData(); }, MAP_POLL_MS);
@@ -337,7 +399,7 @@ const _degradedIv = setInterval(refreshDegradedTurns, DEGRADED_POLL_MS);
 // at all in a throttled tab -- see api.js's startConnectionWatch.
 const _stopConnWatch = api.startConnectionWatch();
 window.addEventListener('beforeunload', () => {
-  clearInterval(_casesIv); clearInterval(_healthIv); clearInterval(_attnIv);
+  clearTimeout(_casesTimer); clearInterval(_healthIv); clearInterval(_attnIv);
   clearInterval(_mapIv); clearInterval(_degradedIv); _stopConnWatch();
 });
 

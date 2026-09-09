@@ -175,6 +175,54 @@ async function json(path, opts) {
   if (!r.ok) throw new ApiError(r.status, body);
   return body;
 }
+
+// ---- conditional GET ----------------------------------------------------
+//
+// The polled read endpoints ARE the standing cost of leaving this dashboard
+// open on the metered rural link AGENTS.md says this deployment targets, and
+// almost none of that traffic carries news: this deployment's own event log
+// holds 136 events across 322 hours, and 313 of those hours contain no event
+// at all.
+//
+// The server has always answered a conditional GET correctly. Express stamps a
+// weak ETag on every res.json body and answers a matching If-None-Match with a
+// bodyless 304, and server.js's gzip middleware skips a 304 deliberately since
+// there is no body to compress. Measured at the socket with a counting proxy
+// in front of the real dashboard: /api/cases costs 3839 wire bytes as a 200
+// (2890 gzipped body + 659 request headers + 290 response headers) and 929 as
+// a 304.
+//
+// What is NOT true is that a browser would never do this by itself. Chrome
+// does: it revalidates these responses heuristically and was already getting
+// 304s back. It is just not a contract. Which polls reach the network at all
+// is browser-internal -- in the measured window roughly one in three did, the
+// rest absorbed by Chrome's own in-memory cache -- it differs between
+// browsers, and none of it is observable from here. This module needs the
+// answer itself, because main.js's poll ladder is driven by whether the list
+// changed. So the revalidation is explicit: keep the ETag and the parsed body
+// of the last 200, send If-None-Match on the next poll, and resolve a 304 to
+// the remembered body.
+//
+// A 304 is the server ASSERTING that the representation is unchanged, so a
+// caller rendering the remembered body is exactly as current as it would have
+// been with a 200 -- this cannot make a stale list look fresh. What it cannot
+// do is survive a shape change: the entry is dropped on any non-2xx, on a
+// response with no ETag, and on logout (clearConditionalCache).
+const condCache = new Map();
+export function clearConditionalCache() { condCache.clear(); }
+
+async function conditional(path) {
+  const prev = condCache.get(path);
+  const r = await api(path, prev ? { headers: { 'if-none-match': prev.etag } } : {});
+  if (r.status === 304 && prev) return { body: prev.body, unchanged: true };
+  let body = null;
+  try { body = await r.json(); } catch { /* no body */ }
+  if (!r.ok) { condCache.delete(path); throw new ApiError(r.status, body); }
+  const etag = r.headers.get('etag');
+  if (etag) condCache.set(path, { etag, body }); else condCache.delete(path);
+  return { body, unchanged: false };
+}
+const condBody = async (path) => (await conditional(path)).body;
 function post(path, body) {
   return json(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
 }
@@ -206,9 +254,17 @@ export const whoami = async () => {
   if (j && j.authed) writeLastKnown('whoami', j); else clearLastKnown('whoami');
   return j;
 };
-export const login = (username, password) => post('/api/login', { username, password });
+// Both ends of a session drop the conditional-GET entries: what one operator's
+// session revalidated against must never be handed to the next one's as a
+// remembered body, and a fresh login must re-fetch rather than 304 against
+// whatever the previous session last saw.
+export const login = async (username, password) => {
+  clearConditionalCache();
+  return post('/api/login', { username, password });
+};
 export const logout = async () => {
   clearLastKnown('whoami');
+  clearConditionalCache();
   return post('/api/logout');
 };
 export const logoutEverywhere = () => post('/api/logout-everywhere');
@@ -278,17 +334,24 @@ export const fetchRunNotes = async (id) => {
     return await r.json();
   } catch { return null; }
 };
-export const fetchHealth = () => json('/api/health');
-export const fetchRuntime = () => json('/api/runtime');
-export const fetchFleetHealth = () => json('/api/fleet-health');
+// All three are polled every 15s and all three have byte-stable bodies on an
+// unchanged deployment (measured: 965 B, 78 B and 241 B on the wire, same ETag
+// across polls), so they revalidate rather than re-download. Same shape out as
+// before -- a 304 resolves to the remembered body.
+export const fetchHealth = () => condBody('/api/health');
+export const fetchRuntime = () => condBody('/api/runtime');
+export const fetchFleetHealth = () => condBody('/api/fleet-health');
 export const runSweepApi = () => post('/api/sweep', {});
 export const runSweep = runSweepApi;
 
 // --- cases ---
-export const fetchCases = (params) => {
-  if (typeof params === 'string') return json('/api/cases' + params);
-  return json('/api/cases' + qs(params));
-};
+const casesPath = (params) => '/api/cases' + (typeof params === 'string' ? params : qs(params));
+export const fetchCases = (params) => condBody(casesPath(params));
+// The polling form. Same request as fetchCases -- it shares the same ETag
+// entry -- but it also reports whether the server answered 304, which is the
+// only honest signal available for "nothing has happened since last time".
+// main.js uses it to widen the poll interval while nothing is changing.
+export const pollCases = (params) => conditional(casesPath(params));
 export const fetchCase = (id) => json('/api/cases/' + encodeURIComponent(id));
 export const fetchCaseEvents = (id, params) => {
   const q = typeof params === 'string' ? params : qs(params);
@@ -338,7 +401,9 @@ export const fetchOperatorWorkload = () => json('/api/operators/workload');
 export const fetchSecretaryQueue = (params) => json('/api/secretary/queue' + qs(params));
 
 // --- map ---
-export const fetchMapCases = (params) => json('/api/map/cases' + qs(params));
+// Polled every 30s while the map home view is showing, and byte-stable
+// between polls (measured 1717 B on the wire, same ETag), so it revalidates.
+export const fetchMapCases = (params) => condBody('/api/map/cases' + qs(params));
 export const fetchMapWorkers = () => json('/api/map/workers');
 export const fetchMapLastReports = () => json('/api/map/last-reports');
 export const fetchOperatorIdentities = () => json('/api/operators/identities');
