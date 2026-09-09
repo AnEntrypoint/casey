@@ -934,8 +934,7 @@ without restart-on-crash.
   `?token=` query param. The only ungated routes -- the literal exemption list
   in `routes/auth.js`'s `authGate()`, plus what `registerAuth` mounts ahead of
   it -- are `/design`, `/vendor/*` (static assets, no case data), `/api/login`,
-  `/api/logout`, `/api/whoami`, `/api/ready` (orchestrator/LB liveness probe --
-  a boolean plus a short error string, no case data), `/api/branding`
+  `/api/logout`, `/api/whoami`, `/api/ready`, `/api/branding`
   (`dashboard_ui.brand`/`leaf` only, so `login-gate.js` can show real branding
   before a session exists; never the full `/api/config` shape), the public
   `/report` form (gated by knowledge of a case ref, not auth), the SPA shell
@@ -947,6 +946,20 @@ without restart-on-crash.
   list: it serves real field-worker photo/voice-note bytes and is mounted after
   the gate. `/api/change-password` is mounted ahead of the gate but does its own
   `req.caseyAccount` check, so it 401s unauthenticated like any gated route.
+  **`/api/ready` says more than a boolean, deliberately.** It reports `degraded`
+  plus a closed set of `degraded_reasons` machine tokens, a `checks` object of
+  fixed state words (store/llm/gateway/runtime), integer queue depths, and a
+  `capabilities` block. That is more disclosure than a bare liveness probe, and
+  it is the point: an orchestrator has no session, so an unauthenticated monitor
+  is the only thing that can tell "processing" from "stalled" without a human
+  already watching the dashboard. The accepted cost, stated rather than implied:
+  an anonymous caller can tell when this deployment's provider is down or its
+  channel is deaf. What the route may never carry is enforced by its own header
+  -- no case content, no ref, no contact identifier, and never the provider
+  model or url, since a url can carry a key. A degraded instance still answers
+  200: `ready` means "may this instance take traffic", and a casey whose
+  provider is down is still the one that accepts the inbound and re-drives it on
+  recovery. Only an unreachable store is a 503.
   Admin-only routes additionally require `role: 'admin'`, read from the live
   `operator_account` row, never from the cookie.
 - All contact-supplied text is HTML-escaped before render.

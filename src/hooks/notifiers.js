@@ -8,6 +8,28 @@ import { buildAlertPayload } from '../report-analytics.js'
 import { stageNote, OPTED_OUT_TAG } from './heuristics.js'
 import { tagList } from '../timestamp.js'
 import { caseDeliveryTarget } from './handler.js'
+import { tsMs } from '../timestamp.js'
+
+// Meta's free-form reply window. A constant rather than an env var on purpose:
+// it is a platform rule, not a tuning knob, and a deployment that "raised" it
+// would only be choosing to have its messages rejected.
+const SESSION_WINDOW_MS = 24 * 3600e3
+// Channels with no such rule. Everything else is treated as windowed, which is
+// the fail-closed direction: a new channel added without thinking about this
+// gets the conservative behaviour rather than silently originating messages.
+const UNWINDOWED_CHANNELS = new Set(['discord', 'sim', 'web'])
+
+function withinSessionWindow(caseRow, recentEvents, now = Date.now()) {
+  if (UNWINDOWED_CHANNELS.has(String(caseRow?.channel || ''))) return true
+  // Keyed on the contact's own last inbound, which is what Meta's rule measures
+  // -- not an outbound, and not the case's updated_at, which an operator's own
+  // edit refreshes without the contact having said anything.
+  const lastIn = (recentEvents || []).find(e => e.kind === 'inbound')
+  if (!lastIn) return false
+  const at = tsMs(lastIn.created_at)
+  if (!at) return false
+  return now - at < SESSION_WINDOW_MS
+}
 
 // Build a CaseStore onTransition hook that sends the contact a proactive,
 // plain-language note when an OPERATOR moves their request to a stage worth
@@ -20,7 +42,28 @@ import { caseDeliveryTarget } from './handler.js'
 // - opted-out tag -- the contact said STOP; stay silent.
 // - stageNote empty -- nothing worth announcing for this stage.
 // - dedup -- skip if the most recent outbound is this exact note.
+// - 24h session window -- see below; the contact must have written recently.
 // "Only on real stage change" is guaranteed by transition() skipping no-ops.
+//
+// THE 24-HOUR WINDOW. dashboard/routes/map.js states casey's own policy in its
+// own words -- "casey must never autonomously originate a WhatsApp message
+// outside the free 24h session window" -- and uses it to justify recording a
+// map dispatch as a queued SUGGESTION rather than an outbound send. This
+// notifier was the one path that broke that policy: every operator stage change
+// sent proactively, on any channel, with no check.
+//
+// It is not only a policy question. Outside that window Meta rejects a
+// free-form send rather than charging for it, so the note simply does not
+// arrive; adapters/whatsapp.js's verifiedSend catches the rejection correctly
+// (it checks messages[0].id, not res.ok), but the only trace an operator got
+// was an observation line on the timeline after the fact. Checking first turns
+// a silent non-delivery into a recorded, visible decision BEFORE the attempt.
+//
+// The window is measured from the contact's own last INBOUND, which is what
+// Meta's rule actually keys on -- not from any outbound, and not from the case's
+// updated_at, which an operator's own edit would refresh without the contact
+// having said anything. Channels other than WhatsApp have no such rule and are
+// unaffected.
 export function makeTransitionNotifier(store, sendReply, { log = console } = {}) {
   if (!sendReply) return null
   return async function onTransition({ caseRow, to, user }) {
@@ -30,11 +73,26 @@ export function makeTransitionNotifier(store, sendReply, { log = console } = {})
     if (tagList(caseRow).includes(OPTED_OUT_TAG)) return
     const text = stageNote(to)
     if (!text) return
+    let recent = []
     try {
-      const recent = await store.listEventsPage(caseRow.id, { limit: 8, offset: 0 })
+      recent = await store.listEventsPage(caseRow.id, { limit: 25, offset: 0 })
       const lastOut = recent.find(e => e.kind === 'outbound')
       if (lastOut && (lastOut.text || '').trim() === text) return
     } catch (e) { log.warn?.('[casey] transition-note dedup check failed', { caseId: caseRow.id, error: e.message }) }
+    if (!withinSessionWindow(caseRow, recent)) {
+      // Recorded, never sent. The operator sees on the timeline that the stage
+      // moved and that casey deliberately did not message the contact, which is
+      // the whole difference between this and the silent non-delivery it
+      // replaces. It is not queued for later: a stage note is only worth
+      // sending while it is news, and a queue that fires the moment a contact
+      // next writes would answer a question they did not ask.
+      await store.appendEvent(caseRow.id, {
+        kind: 'observation', actor: 'system',
+        text: `Stage note not sent -- this contact last wrote more than ${Math.round(SESSION_WINDOW_MS / 3600e3)}h ago, outside WhatsApp's free reply window. Reach them another way if it cannot wait.`,
+        data: { proactive: 'stage-note', stage: to, suppressed: 'session_window' },
+      }).catch(() => {})
+      return
+    }
     try {
       await sendReply(caseRow, text)
       await store.appendEvent(caseRow.id, {
