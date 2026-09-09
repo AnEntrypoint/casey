@@ -7,14 +7,23 @@
 // the fresh report's facts. Split out of case-tools.js verbatim -- names,
 // descriptions, parameter schemas and handler bodies are unchanged.
 
+import { REPORT_ENTITY_LABEL } from './store/report-shape.js'
 import {
   defTool, str, ownsCase, enquiryRow, boundCase, rebindActiveCase,
 } from './case-tools-shared.js'
 
 export function buildBindingTools(store) {
   return [
+    // case_new is one of only four tools a casual reporter's prompt carries
+    // (case-tools-gates.js REPORT_ONLY_TOOLS), so its description is among the
+    // few tool texts the most common tier actually reads. It used to say "case"
+    // three times and "bind it active" -- the first is on the never-say list the
+    // system prompt hands the same model, the second means nothing to anyone.
+    // The entity word comes from the deployment's own report-fields.yml, so this
+    // reads as "report" under uhh and "ticket" under casey's own demo config
+    // instead of teaching a word the reply is then held for using.
     defTool('case_new', 'cases',
-      'Open a NEW case for the worker and bind it active. Use ONLY when the worker is clearly starting a fresh report (a different animal/place/incident), never to auto-open one.',
+      `Start a NEW ${REPORT_ENTITY_LABEL} for this person and record into that one from now on. Use ONLY when they are clearly starting a fresh ${REPORT_ENTITY_LABEL} (different animals, a different place, a different incident), never on your own initiative.`,
       { type: 'object', properties: { subject: str('Optional short subject') } },
       async ({ subject }, ctx) => {
         const author = ctx?.author || ctx?.principal?.id
@@ -48,9 +57,18 @@ export function buildBindingTools(store) {
     // hit whatever case findOrCreateCase happened to bind this turn. Ownership
     // gated the same way case_get/mineRows already are: a worker may only
     // switch onto a case they themselves reported.
+    // The ref examples below carry the full minted shape (store/ref.js mintRef:
+    // CASE-<sequence>-<8-char suffix>), not the old bare "CASE-1042". A bare
+    // one does not match hooks/heuristics.js's CASE_REF_RE, so a model copying
+    // the example into a reply produced a reference sanitizeOutboundRef could
+    // not rewrite to the real one -- the person was handed a code identifying
+    // nothing, and hooks/reply-judge.js's carve-out (which exempts a literal
+    // CASE-1234-abcde and nothing else) then read the bare word as a jargon leak
+    // and held the reply unsent. A full-shape example is both the correct shape
+    // to teach and one the sanitizer actually catches.
     defTool('case_switch', 'cases',
-      'Re-bind the conversation to a DIFFERENT one of the worker\'s own open cases by ref (e.g. "CASE-1042"). Use when the worker names a case they want to continue, other than the one currently active. Confirms the switch back to them.',
-      { type: 'object', properties: { ref: str('The case ref to switch to, e.g. CASE-1042') }, required: ['ref'] },
+      'Re-bind the conversation to a DIFFERENT one of the worker\'s own open cases by ref (e.g. "CASE-1042-K7M2NPQR"). Use when the worker names a case they want to continue, other than the one currently active. Tell them in your own words that you have moved to it.',
+      { type: 'object', properties: { ref: str('The case ref to switch to, e.g. CASE-1042-K7M2NPQR') }, required: ['ref'] },
       async ({ ref }, ctx) => {
         const author = ctx?.author || ctx?.principal?.id
         if (!author) return { error: 'no author on this turn -- cannot resolve ownership for a switch' }
@@ -65,7 +83,14 @@ export function buildBindingTools(store) {
         // the turn bound to the OLD case makes the next case_report (naturally
         // aimed at the switched-to case) bounce off the active-case guard.
         rebindActiveCase(ctx, target)
-        return { ok: true, activeCase: enquiryRow(target), confirm: `Switched to ${target.ref}.` }
+        // No canned sentence in the result. `confirm: "Switched to <ref>."` was
+        // a ready-made English reply nothing in casey consumed, sitting in the
+        // model's context for it to copy verbatim -- the exact "no copyable
+        // reply examples" failure AGENTS.md names, and "Switched to" is internal
+        // vocabulary a person on WhatsApp reads as nothing at all. The
+        // structured fact is enough; the description tells it to write the
+        // sentence itself.
+        return { ok: true, activeCase: enquiryRow(target), switchedToRef: target.ref }
       }),
   ]
 }

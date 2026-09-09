@@ -36,7 +36,18 @@ export function buildLookupTools(store, { stageValues }) {
         return { case: owns ? slimCase(c) : enquiryRow(c), events: events.map(slimEvent) }
       }),
     defTool('case_list', 'cases',
-      'List cases, optionally filtered by status/channel/assignee/location. Use `location` (a town, area, or place a person mentions) to find reports in a place -- this is the place-enquiry tool. Use `near` (your own best-estimate lat/lon for the place the worker said they are at) to find the NEAREST reports -- this is the "closest case" / "cases near me" tool; it returns rows sorted by distance with a distance_km on each, so you can answer "the nearest on record is CASE-xxxx at <place>, about N km away" from the real result, never from memory. Returns most-recently-active first (or nearest-first when `near` is given), PII-free.',
+      // The old description carried a quoted sample reply ("the nearest on
+      // record is CASE-xxxx at <place>, about N km away"). Two failures, both
+      // live: a weak model copies a quoted sample word for word (AGENTS.md, "no
+      // copyable reply examples in the prompt"), and the literal it copies,
+      // CASE-xxxx, does not match hooks/heuristics.js's CASE_REF_RE
+      // (CASE-<digits>-<suffix>) -- so sanitizeOutboundRef cannot rewrite it to
+      // the real ref, and the person is handed a reference that identifies
+      // nothing. hooks/reply-judge.js then reads the bare word "case" in it as a
+      // jargon leak and holds the whole reply as an unsent draft, so the person
+      // gets silence instead. Name the fields to answer FROM; never model the
+      // sentence.
+      'List cases, optionally filtered by status/channel/assignee/location. Use `location` (a town, area, or place a person mentions) to find reports in a place -- this is the place-enquiry tool. Use `near` (your own best-estimate lat/lon for the place the worker said they are at) to find the NEAREST reports -- this is the "closest case" / "cases near me" tool; it returns rows sorted by distance with a distance_km on each. Answer only from the ref, place and distance_km the result actually returns, never from memory, and write the sentence around them yourself. Returns most-recently-active first (or nearest-first when `near` is given), PII-free.',
       {
         type: 'object',
         properties: {

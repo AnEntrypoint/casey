@@ -440,17 +440,38 @@ export function canAgentAct(caseRow, action = 'reply') {
 // There is deliberately no STATUS_STRINGS/plainStatus table: detectContactIntent
 // never returns 'status' -- a status ask is the agent's job via case_get.
 
-// Proactive, contact-safe note sent when a request MOVES to a new stage on an
-// OPERATOR's action. Warm, no jargon, no dashes-as-punctuation (reads as a bot).
-// Internal stages (new, triaging) and closed return '' and are not sent:
+// Proactive, contact-safe note sent when a case MOVES to a new stage on an
+// OPERATOR's action (hooks/notifiers.js sends this text verbatim over the
+// contact's own channel). Internal stages (new, triaging) and closed return ''
+// and are not sent:
 // - new/triaging are internal review steps the contact need not hear about.
 // - closed is silent because `resolved` already told them it is done; an
 //     operator moving resolved->closed seconds later would otherwise double-send.
+//
+// These three strings are the ONLY words casey puts in front of a reporter
+// without the model composing them, so every rule the prompt holds the model to
+// has to hold here too, and nothing downstream checks them:
+// - No helpdesk vocabulary. "your request" is casey's demo domain talking; the
+//   person messaging reported dying animals, not filed a request. Say what they
+//   did ("what you sent us") rather than naming an entity at all, which also
+//   keeps this string correct under every deployment's own entity_label.
+// - No stage names. "in progress" is the literal `in_progress` enum leaking to
+//   the person, in the same breath the prompt forbids the model that vocabulary.
+// - No promise. "We will be in touch" is a guaranteed outcome the reply-style
+//   rules forbid the model from making, and casey has no mechanism behind it.
+// - No corporate opener. "A quick update:" and a repeated "Good news." read as a
+//   template, and "Good news, your request is sorted" is the wrong register
+//   entirely when the outcome was a dead herd.
+// - Plain, short, one idea per sentence, ASCII, no dashes-as-punctuation.
+// Known and NOT fixed here: these are English only and are sent whatever
+// language the person has been writing in. Fixing that needs the real LLM turn
+// (AGENTS.md forbids a hardcoded per-language template anywhere in this repo),
+// and this path deliberately does not run one.
 export function stageNote(status) {
   return ({
-    in_progress: 'Good news. Someone is working on your request now.',
-    waiting:     'A quick update: your request is in progress and we are waiting on one step. We will be in touch.',
-    resolved:    'Good news. Your request is sorted. If anything is still not right, just reply here.',
+    in_progress: 'Someone is looking at what you sent us now.',
+    waiting:     'We are still busy with what you sent us. There is nothing you need to do for now.',
+    resolved:    'What you sent us has been dealt with. If something is still wrong, just reply here.',
   })[status] || ''
 }
 

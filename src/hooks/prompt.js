@@ -33,9 +33,14 @@ export function caseSystemPrompt(caseRow, events, contact) {
   return [
     // --- Private structured context ---
     ...headerSection(persona, caseRow, contact),
-    ...caseContextSection(caseRow, ctx),
+    // contact reaches all four sections now, not just the two that already took
+    // it: three blocks (the multi-report/case_switch line, the case_update
+    // reminder, the before-closing/case_transition block) name tools
+    // case-tools-gates.js reserves for field_worker tier, so the default
+    // reporter tier was being instructed to call tools it cannot see.
+    ...caseContextSection(caseRow, contact, ctx),
     // --- What to gather ---
-    ...gatherSection(persona, caseRow, ctx),
+    ...gatherSection(persona, caseRow, contact, ctx),
     // --- How to reply ---
     ...replySection(persona, caseRow, contact, ctx),
   ].join('\n')
@@ -65,6 +70,13 @@ function selfCheckLoadBearingPromptContent() {
   ]
   const caseRow = { ref: 'SELFCHECK', id: 'selfcheck', status: 'triaging', priority: 'normal', assignee: null, subject: null, summary: null, tags: null, report: null, autonomy: 'auto' }
   const text = caseSystemPrompt(caseRow, events, staleContact)
+  // The same case composed for the OTHER access tier. Three blocks name tools
+  // case-tools-gates.js reserves for field_worker (case_switch, case_update,
+  // case_transition), so they render on this composition and must NOT render on
+  // the reporter-tier one above -- an edit that ungates them puts an
+  // instruction to call an invisible tool back into the default tier's prompt,
+  // and nothing else in the pipeline would notice.
+  const workerText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: 'field_worker' })
   const required = [
     { name: 'two-item question requirement', pattern: /top TWO|TOP TWO|top two/ },
     { name: 'gap-detection instruction (reporter went quiet)', pattern: /person was gone a while/ },
@@ -81,10 +93,38 @@ function selfCheckLoadBearingPromptContent() {
     // rule above contradicts the geo fields, whose own descriptions ask the
     // model to estimate a coordinate from a described place.
     { name: 'estimate-exception carve-out', pattern: /explicitly asks you to estimate/ },
+    // Several nudges (photo, location-confirm, stale check-in) plus the
+    // top-two question can all be live on one turn, each asking to be woven
+    // into the reply. Without this rule the model weaves all of them, which is
+    // a wall of text on a phone and gets none of them answered.
+    { name: 'one-ask-per-reply precedence', pattern: /ONE ASK PER REPLY/ },
+    // The never-say list must stay EQUAL to the literal word list
+    // hooks/reply-judge.js holds a reply for. 'autonomy' is the last word on
+    // the judge's list and the one most recently missing from this one, so it
+    // is the canary: a reply containing a word the judge bans and the prompt
+    // never stated is held as an unsent draft, and the person gets silence.
+    { name: 'never-say list matches the reply judge', pattern: /NEVER say these internal words[\s\S]*autonomy/ },
   ]
   for (const { name, pattern } of required) {
     if (!pattern.test(text)) {
       throw new Error(`caseSystemPrompt regression: required phrase missing (${name}). A prompt rewrite silently dropped a load-bearing behavioral instruction -- see AGENTS.md's prompt-steering notes.`)
+    }
+  }
+  // Tier gating, asserted in both directions: each phrase must be present for a
+  // field_worker and absent for a reporter. Present-only would pass with the
+  // gate deleted.
+  const workerOnly = [
+    { name: 'case_switch multi-report line', pattern: /use case_switch to move to it/ },
+    { name: 'case_update summary reminder', pattern: /Keep case_update summary current/ },
+    { name: 'case_transition before-closing block', pattern: /case_transition to resolved/ },
+    { name: 'enquiry-tool paragraph', pattern: /case_today\/case_mine\/case_list\/case_get\) and answer/ },
+  ]
+  for (const { name, pattern } of workerOnly) {
+    if (!pattern.test(workerText)) {
+      throw new Error(`caseSystemPrompt regression: field_worker-tier instruction missing (${name}). A prompt rewrite dropped it from the tier that CAN call the tool.`)
+    }
+    if (pattern.test(text)) {
+      throw new Error(`caseSystemPrompt regression: field_worker-only instruction leaked to reporter tier (${name}). That tier cannot see or dispatch the tool this names -- see case-tools-gates.js REPORT_ONLY_TOOLS.`)
     }
   }
 }

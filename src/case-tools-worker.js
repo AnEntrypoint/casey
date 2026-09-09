@@ -93,7 +93,12 @@ export function buildWorkerTools(store) {
     // case_checkin (location-only) in that it carries a work-status payload.
     // field_worker-tier only (gated by gateByTier in case-tools-gates.js).
     defTool('case_idle', 'cases',
-      "Record that the worker has nothing to work on right now. Call this when a worker says they have no cases, nothing to do, or asks what they should do next -- this flags them for follow-up by other staff. The agent should reply warmly acknowledging the report and suggesting they check back or ask about nearby cases.",
+      // The trailing sentence used to be reply-composition instruction in the
+      // third person ("The agent should reply warmly ... suggesting they check
+      // back or ask about nearby cases"), which named two things to put in one
+      // reply and so fought the prompt's own one-ask rule. Reply rules live in
+      // the system prompt; a tool description says what the tool records.
+      "Record that the worker has nothing to work on right now. Call this when a worker says they have no cases, nothing to do, or asks what they should do next -- this flags them for follow-up by other staff. Recording it is invisible to them, so still reply warmly in your own words.",
       { type: 'object', properties: { note: str('Optional: what the worker said about their availability') } },
       async ({ note }, ctx) => {
         const id = boundCase(ctx).id
