@@ -16,6 +16,7 @@
 // bare status write does not.
 
 import { createThatcher } from 'thatcher'
+import { eraseCaseSessions } from './store/agent-sessions.js'
 import path from 'node:path'
 import { DEFAULT_THRESHOLDS } from './case-health.js'
 import { mergeThresholds } from './thresholds.js'
@@ -28,7 +29,7 @@ import { load as yamlLoadRaw, YAML11_SCHEMA } from 'js-yaml'
 const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
-import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable } from './store/guards.js'
+import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable, installVersionGuard } from './store/guards.js'
 import { REPORT_KEYS, REPORT_KEY_ORDER } from './store/report-shape.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 import { validateCaseConfig, parseFieldEnums } from './store/config-schema.js'
@@ -243,7 +244,18 @@ export class CaseStore {
     // Every read/write goes through the SQLITE_BUSY retry wrapper (see
     // store/busy-retry.js for why): a transient lock must contend-and-recover
     // rather than surfacing as a turn error and sending the degraded fallback.
-    this._tProxy = createBusyRetryProxy(this.thatcher, this.log)
+    //
+    // installVersionGuard sits OUTSIDE the retry wrapper on purpose. The
+    // number-under-expectedVersion trap is retried by that wrapper only when
+    // thatcher reports BUSY, but the false conflict it produces is one write
+    // landing per attempt at the layers above -- so the refusal has to happen
+    // before any attempt reaches the store at all, not between retries. This
+    // accessor is the single seam every `this.t.*` call in this file and every
+    // external `store.t.*` call (case-tools-record-report.js, case-tools-
+    // worker.js, dashboard/auth.js, hooks/delivery.js) already passes through,
+    // which is what makes the guard structural rather than a convention each
+    // new caller has to be told about.
+    this._tProxy = installVersionGuard(createBusyRetryProxy(this.thatcher, this.log))
     return this._tProxy
   }
 
@@ -1142,7 +1154,19 @@ export class CaseStore {
         }
       } catch { /* best-effort -- the provenance ledger is additive, never load-bearing for the real erasure */ }
     }
-    return { contactId, contactErased: !alreadyErased, alsoErasedContactIds: siblingIds, casesScrubbed: touchedCaseIds, casesFailed: failedCaseIds }
+    // The stored CONVERSATIONS, which live outside data/ entirely and which no
+    // erasure reached until now -- see store/agent-sessions.js for what they
+    // are and why deleting them is correct here and nowhere else. Synchronous
+    // and best-effort: the thatcher-side erasure above has already succeeded,
+    // so a filesystem failure must be reported, never allowed to undo it.
+    const sessions = eraseCaseSessions(touchedCaseIds, { log: this.log || console })
+    return {
+      contactId, contactErased: !alreadyErased, alsoErasedContactIds: siblingIds,
+      casesScrubbed: touchedCaseIds, casesFailed: failedCaseIds,
+      // Named so a caller can tell an operator that a conversation could not be
+      // removed. A compliance action that half-succeeded must say so.
+      sessionsErased: sessions.removed.length, sessionsFailed: sessions.failed,
+    }
   }
 
   // Metadata-only update that does NOT touch last_event_at -- used by the health
