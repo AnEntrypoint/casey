@@ -30,6 +30,8 @@ import { state, setMobilePane } from '../state.js';
 import { MapPanel, MapRail } from '../panels/map-panel.js';
 import { CaseDetailView } from './case-detail-view.js';
 import { openCase, closeCase } from './case-list-detail-layout.js';
+import { ViewTitle } from './view-title.js';
+import { panelTitle } from './nav-config.js';
 
 const h = webjsx.createElement;
 
@@ -59,6 +61,13 @@ export function MapCommandCenter() {
       + (hasActive ? ' has-active' : '')
       + ' m-' + (state.mobilePane === 'list' ? 'list' : 'map'),
   },
+    // The page's name, above its two panes, so the outline reads h1 (this
+    // screen) -> h2 (the map) -> h2 (whatever the rail is showing). Named by
+    // the nav item that lands here, for the same reason a panel page is
+    // (app-view.js): a hardcoded English title ignores the deployer's own
+    // dashboard_ui.nav.relabel and ends up calling the page something the
+    // control that opened it does not say.
+    ViewTitle(panelTitle('home_map') || 'Map'),
     paneToggle(),
     h('div', { class: 'case-list-pane', key: 'map' },
       MapPanel()

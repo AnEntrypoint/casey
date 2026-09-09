@@ -12,6 +12,8 @@ import * as api from '../api.js';
 import { toast } from '../toasts.js';
 import { CaseListView } from './case-list-view.js';
 import { CaseDetailView } from './case-detail-view.js';
+import { ViewTitle } from './view-title.js';
+import { panelTitle } from './nav-config.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 const h = webjsx.createElement;
 
@@ -83,6 +85,12 @@ export function CaseListDetailLayout() {
   // -- found live while building the map-first home view (same .app-two-
   // pane class), confirmed the case list carries the identical gap.
   return h('div', { class: 'app-two-pane grow' + (hasActive ? ' has-active' : '') },
+    // The page's name, above its two panes. Not a brand and not a second copy
+    // of one -- case-list-view.js's own head correctly refuses that; this is
+    // the h1 the outline under it hangs off, and the name <main> carries. It
+    // comes from the nav item that lands here, so a deployer's relabel renames
+    // the page and the control together (same rule as a panel page).
+    ViewTitle(panelTitle('home_cases') || 'Cases'),
     h('div', { class: 'case-list-pane', key: 'list' },
       CaseListView({
         onPromptTag: promptTag,

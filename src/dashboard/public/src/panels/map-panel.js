@@ -3,6 +3,9 @@
 // The canvas is the whole pane, and the ONLY things allowed to sit on it are
 // the legend and an error alert. Everything else -- counts, the worst-first
 // queue, filters, overlays, the no-location list -- is docked in the rail.
+// The pane also carries the map's heading and its text equivalent, both
+// `sr-only`: they occupy no space and cover no pin, and they are what the
+// canvas is named and described by for a reader who cannot see it.
 // That split is not a style preference: mapuipatterns' full-map page states
 // outright that situational-awareness and safety domains must not cover
 // potentially important data with floating panels, and the measurable version
@@ -211,17 +214,7 @@ function timeControl() {
 // The number is the filter, so clicking it applies the filter, to the map and
 // the rail together (one predicate in map-model.js, never two).
 function filterChips() {
-    const pins = livePins();
-    const attentionCount = (state.attention || []).length;
-    const newToday = pins.filter((p) => isToday(p.created_at)).length;
-    const inViewCount = (() => {
-        const ms = mapStateRef.current;
-        if (!ms || !ms.map) return null;
-        try {
-            const b = ms.map.getBounds();
-            return pins.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && b.contains([p.lat, p.lon])).length;
-        } catch { return null; }
-    })();
+    const { attention: attentionCount, today: newToday, inView: inViewCount } = mapCounts();
 
     const chip = (key, label, count, on, onClick, title) => FilterChip({ key, label, count, on, onClick, title });
 
@@ -247,6 +240,43 @@ function filterChips() {
 function applyFilterToMap() {
     if (mapStateRef.current) refilterMarkers(mapStateRef.current, state.mapFilter);
     schedule();
+}
+
+// ---- the counts, derived once -------------------------------------------
+
+// Every number this panel states -- on a chip, in the map's spoken text
+// equivalent, in the state note, in the debug snapshot -- is counted here, in
+// one place, over map-model.js's shared predicate and shared urgency ladder.
+// The chips and the text equivalent are two renderings of the same screen for
+// two different readers, so a second count for either is the same defect as a
+// second copy of the predicate: the map and the words about it would be able
+// to disagree.
+function mapCounts() {
+    const pins = livePins();
+    const urgency = urgencyByCaseId();
+    const extent = currentExtent();
+    const visible = pins.filter((p) => pinMatches(p, state.mapFilter, urgency, extent));
+    const ms = mapStateRef.current;
+    let inView = null;
+    if (ms && ms.map) {
+        try {
+            const b = ms.map.getBounds();
+            inView = pins.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && b.contains([p.lat, p.lon])).length;
+        } catch { inView = null; }
+    }
+    // Band 0 is a real answer, not a gap: a pin absent from the attention list
+    // is one nothing is chasing (map-model.js), so it is counted and named
+    // rather than silently missing from the urgency breakdown.
+    const bands = { 3: 0, 2: 0, 1: 0, 0: 0 };
+    for (const p of visible) bands[urgency.get(p.id) || 0] += 1;
+    return {
+        plotted: pins.length,
+        visible: visible.length,
+        inView,
+        bands,
+        attention: (state.attention || []).length,
+        today: pins.filter((p) => isToday(p.created_at)).length,
+    };
 }
 
 // ---- rail body ----------------------------------------------------------
@@ -431,7 +461,16 @@ function mapCanvas() {
     // and rebuilt it -- refetching tiles and losing the operator's viewport.
     // The live-container guard in onMountCanvas stays as the backstop for the
     // genuine remount case (switching home views and back).
-    const canvas = h('div', { id: 'ds-map-canvas', class: 'ds-map-canvas', key: 'ds-map-canvas' });
+    // The canvas is a named region described by the spoken summary beside it.
+    // Without a role it reached the accessibility tree as one anonymous
+    // `generic` node with no name and no content, so the whole of this
+    // deployment's home view -- every report, every pin, every urgency band --
+    // was simply absent for a screen-reader user. `region` rather than `img`:
+    // the markers inside it are real controls and must stay reachable.
+    const canvas = h('div', {
+        id: 'ds-map-canvas', class: 'ds-map-canvas', key: 'ds-map-canvas',
+        role: 'region', 'aria-labelledby': MAP_HEADING_ID, 'aria-describedby': MAP_SUMMARY_ID,
+    });
     // webjsx has no ref callback; onMountCanvas is idempotent (it guards on the
     // LIVE Leaflet container), so calling it every render is safe.
     queueMicrotask(() => onMountCanvas(document.getElementById('ds-map-canvas')));
@@ -470,8 +509,8 @@ function onMountCanvas(el) {
 function mapStateNote() {
     if (error) return { kind: 'error', text: error };
     if (!loadedOnce) return null;
-    const pins = livePins();
-    if (!pins.length) {
+    const counts = mapCounts();
+    if (!counts.plotted) {
         if (summary.unresolvedCount) {
             return { kind: 'info', text: `Nothing can be placed on the map yet -- all ${summary.unresolvedCount} report(s) are missing a usable location. They are listed below.` };
         }
@@ -486,8 +525,7 @@ function mapStateNote() {
             ? { kind: 'info', text: `No reports in the last ${days} days. Widen the time window to see older ones.` }
             : { kind: 'info', text: 'No reports have come in yet -- nothing has been reported.' };
     }
-    const visible = pins.filter((p) => pinMatches(p, state.mapFilter, urgencyByCaseId(), currentExtent()));
-    if (!visible.length) return { kind: 'info', text: 'No reports match the filters you have on.' };
+    if (!counts.visible) return { kind: 'info', text: 'No reports match the filters you have on.' };
     if (mapStateRef.current && mapStateRef.current.tilesFailing) {
         return { kind: 'warn', text: 'The map background is not loading -- the reports below are still correct and still up to date, only the map picture behind them is missing.' };
     }
@@ -518,9 +556,55 @@ setInterval(() => {
     schedule();
 }, 30e3);
 
+// ---- what the map says to someone who cannot see it ----------------------
+
+// The ids the canvas is named and described by. Named constants because three
+// separate nodes have to agree on them and a typo in any one silently drops
+// the name or the description with nothing on screen to show for it.
+const MAP_HEADING_ID = 'ds-map-heading';
+const MAP_SUMMARY_ID = 'ds-map-summary';
+
+// The map's text equivalent: what it shows, how much of it, and the same
+// counts the rail states as chips -- every one of them from mapCounts(), so
+// the sentence and the numbers beside it cannot disagree. It is visually
+// hidden because the map itself already answers all of this for anyone who
+// can see it; repeating it on screen would be the redundant second copy the
+// rail's chips already rule out.
+function mapTextEquivalent() {
+    if (error) return 'The map could not load: ' + error;
+    if (!loadedOnce) return 'The map is still loading.';
+    const c = mapCounts();
+    const parts = ['Map of where reports came from. Each pin is one report: its colour is the report status, its size and ring say how urgent it is, and a dashed border means the location is an estimate rather than a GPS reading.'];
+    parts.push(c.plotted === 1 ? '1 report is plotted.' : c.plotted + ' reports are plotted.');
+    if (c.visible !== c.plotted) parts.push(c.visible + ' of them match the filters you have on.');
+    if (c.inView != null) parts.push(c.inView + ' are inside the part of the map now on screen.');
+    if (c.visible) {
+        // The same three rungs the pins are sized and ringed by, named with
+        // map-model.js's own labels rather than a second wording of them.
+        parts.push('By urgency: '
+            + [3, 2, 1].map((b) => c.bands[b] + ' marked "' + URGENCY_BAND_LABEL[b] + '"').join(', ')
+            + ', and ' + c.bands[0] + ' with nothing chasing them.');
+    }
+    parts.push(c.attention + ' report(s) are in the "' + QUEUE_NAME + '" list beside the map, and ' + c.today + ' came in today.');
+    // The same sentence the no-location disclosure shows, not a second wording
+    // of it: a report that cannot be plotted is a surveillance blind spot, and
+    // it must be as audible as it is visible.
+    const missing = mapUnresolvedSummaryText();
+    if (missing) parts.push(missing + ' -- these are not on the map.');
+    const note = mapStateNote();
+    if (note) parts.push(note.text);
+    return parts.join(' ');
+}
+
 export function MapPanel() {
     const note = mapStateNote();
     return h('div', { class: 'ds-map-shell' },
+        // The map pane's own heading, and the words the canvas is named and
+        // described by. Both are sr-only: on screen the map, the legend and
+        // the rail already say all of it, and a visible copy would be read
+        // twice by anyone using both channels.
+        h('h2', { id: MAP_HEADING_ID, class: 'sr-only' }, 'Where the reports are'),
+        h('p', { id: MAP_SUMMARY_ID, class: 'sr-only', 'data-map-text-equivalent': '' }, mapTextEquivalent()),
         mapCanvas(),
         h('div', { class: 'ds-map-chrome' }, mapLegend()),
         note
@@ -631,9 +715,9 @@ export function mapDebugSnapshot() {
         mapBounds: bounds,
         mapZoom: ms && ms.map ? ms.map.getZoom() : null,
         filter: { ...state.mapFilter },
-        pinsLoaded: livePins().length,
-        pinsVisible: livePins().filter((p) => pinMatches(p, state.mapFilter, urgencyByCaseId(), currentExtent())).length,
-        attentionTotal: (state.attention || []).length,
+        pinsLoaded: mapCounts().plotted,
+        pinsVisible: mapCounts().visible,
+        attentionTotal: mapCounts().attention,
         queueMatching: queueRows().length,
         queueShown: Math.min(queueShown, queueRows().length),
         unresolvedCount: summary.unresolvedCount || 0,
