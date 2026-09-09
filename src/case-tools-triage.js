@@ -88,7 +88,12 @@ export function buildTriageTools(store) {
         return { ok: true, movedEvents: res.movedEvents, newCase: slimCase(res.newCase) }
       }),
     defTool('case_health', 'cases',
-      'Check whether a case is going wrong over time -- stale (no activity), stuck in a stage too long, an unanswered request for a person, an abandoned intake with on-site facts still missing, or resolved-but-never-closed. Returns the current guardrail breaches with how long each has been true. Use it to decide what needs attention.',
+      // The breach names below are internal enum labels (case-health.js
+      // ALL_HEALTH_TAGS). A model that reads "stale" and "abandoned intake"
+      // here will tell a farmer their report is stale or abandoned, which is
+      // both incomprehensible and alarming; say so where the words are handed
+      // over.
+      'Check whether a case is going wrong over time -- stale (no activity), stuck in a stage too long, an unanswered request for a person, an abandoned intake with on-site facts still missing, or resolved-but-never-closed. Returns the current guardrail breaches with how long each has been true. Use it to decide what needs attention. These breach names are internal: never repeat one to the person, and never tell them their report is stale, stuck or abandoned.',
       { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
       async ({ id }, ctx) => {
         const c = await store().getCase(id)

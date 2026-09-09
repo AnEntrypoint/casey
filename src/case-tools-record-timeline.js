@@ -36,7 +36,14 @@ export function buildCaseTimelineTools(store, { stageValues }) {
     // produced NOTHING. The prompt now directs the model straight to the real data
     // tools: case_today / case_mine / case_list / case_get.)
     defTool('case_transition', 'cases',
-      'Move the case to a new workflow stage. Valid targets depend on current stage (new->triaging->in_progress->waiting->resolved->closed, with reopen paths). Call case_get first if unsure. Honour the case autonomy setting.',
+      // The stage ladder has to be spelled out (it is the enum the model must
+      // pick from), but four of these words -- triaging, status, transition,
+      // workflow -- are on the never-say list the system prompt hands the same
+      // model and hooks/reply-judge.js holds a reply for. Introducing the
+      // vocabulary without saying it is internal is how it ends up in a reply
+      // and the person gets silence instead. Say it where the words are handed
+      // over.
+      'Move the case to a new workflow stage. Valid targets depend on current stage (new->triaging->in_progress->waiting->resolved->closed, with reopen paths). Call case_get first if unsure. Honour the case autonomy setting. Every stage name here is internal bookkeeping: never say one to the person, and never describe what you just did in these words.',
       {
         type: 'object',
         properties: {
