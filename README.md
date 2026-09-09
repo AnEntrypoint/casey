@@ -225,11 +225,11 @@ node bin/casey.js cases         # list cases (empty -> hint on how to make one)
 node bin/casey.js show <ref|id> # show a case + full timeline
 node bin/casey.js attention     # worst-first attention ranking
 node bin/casey.js handover      # shift-handover summary
-node bin/casey.js report        # management report (SLA, response + closure rates)
+node bin/casey.js report        # management report (SLA, response + closure rates) over --days N, default 30
 node bin/casey.js health        # read-only guardrail summary (writes nothing)
 node bin/casey.js sweep         # run the health-guardrail sweep once now (writes tags/observations)
 node bin/casey.js transition <ref|id> <stage> [--reason]   # legality-checked stage move
-node bin/casey.js erase-contact <contact-id> [--reason]    # irreversibly scrub a contact's PII
+node bin/casey.js erase-contact <contact|ref> --yes [--reason]  # irreversibly scrub a contact's PII
 node bin/casey.js operators <add|list|disable|enable> ...  # dashboard login accounts (break-glass)
 node bin/casey.js --version     # print the version  (also --help / -h on any command)
 npm run lint                    # dependency-free preflight; the gate to run before pushing
