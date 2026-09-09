@@ -22,7 +22,7 @@
 //   casey-store-commands.js cases, show, attention, handover, report, health,
 //                           sweep, transition, erase-contact, operators
 //   send-reply.js           the outbound delivery seam shared with bin/worker.js
-import { HELP, parseFlags, pkgVersion, red } from './casey-cli-ui.js'
+import { HELP, USAGE, parseFlags, pkgVersion, red, say, cyan, dim } from './casey-cli-ui.js'
 import { cmdInit, cmdDoctor } from './casey-setup.js'
 import { cmdUp, cmdDashboard } from './casey-serve.js'
 import {
@@ -78,10 +78,30 @@ async function main() {
   if (cmd === 'help' || flags.help && !cmd) { console.log(HELP); return }
 
   const run = COMMANDS[cmd]
+  // --help is answered from the USAGE table BEFORE the handler runs, so asking
+  // how a command works never performs that command's work. `casey sweep --help`
+  // used to run the sweep and `casey transition <ref> <stage> --help` used to
+  // move the case, because only up/dashboard checked the flag for themselves.
+  if (run && flags.help) { console.log(USAGE[cmd] || HELP); return }
   if (run) return run({ flags, rest })
 
+  // An unrecognised name gets a sentence naming it, on stderr, rather than the
+  // whole help text on stdout: the operator needs to see the typo, and a caller
+  // piping this command's output needs not to receive a help screen as data.
+  if (cmd) {
+    say(red(`unknown command: ${cmd}`))
+    say(dim(`  run ${cyan('casey help')} for the list of commands.`))
+    process.exit(1)
+  }
   console.log(HELP)
-  process.exit(cmd ? 1 : 0)
 }
 
-main().catch(e => { console.error(red(e.stack || e.message || e)); process.exit(1) })
+// A stack trace is what casey shows when it has nothing better; every path that
+// knows what went wrong says so in a sentence and exits before reaching here.
+// The trace still goes to stderr with the message first, so an operator reads
+// the reason before the frames, and a pipe reading stdout gets neither.
+main().catch(e => {
+  say(red(`casey failed: ${e?.message || e}`))
+  if (e?.stack) say(dim(e.stack))
+  process.exit(1)
+})

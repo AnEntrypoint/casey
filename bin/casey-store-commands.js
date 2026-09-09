@@ -13,9 +13,9 @@
 import { createCaseStore } from '../src/case-store.js'
 import { fmtTimeSAST, fmtPhone27, isOpenCase } from '../src/format.js'
 import { rankAttention } from '../src/attn.js'
-import { parseReport } from '../src/timestamp.js'
+import { parseReport, tsMs } from '../src/timestamp.js'
 import { randomBytes } from 'node:crypto'
-import { bold, dim, green, red, cyan, bad, closeAndExit } from './casey-cli-ui.js'
+import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
 // Every command here opens its own store first; this is that one line, named.
 async function openStore() {
@@ -24,22 +24,43 @@ async function openStore() {
   return store
 }
 
+// parseFlags yields the boolean `true` for a flag with nothing after it
+// (`--status` at the end of the line, or followed by another --flag). That
+// sentinel is an internal parser detail, and echoing it back as
+// `invalid status: true` told the operator the name of a value they never
+// typed. Both shapes -- no value, and a value this store does not know -- get
+// the real vocabulary printed beside them.
+async function requireOneOf(store, name, raw, allowed) {
+  if (raw === true || raw === '') {
+    say(bad(`--${name} needs a value.`))
+    say(dim('  one of: ') + allowed.map(cyan).join(', '))
+    await closeAndExit(store, 1)
+  }
+  if (!allowed.includes(raw)) {
+    say(bad(`there is no ${name} "${raw}" here.`))
+    say(dim('  one of: ') + allowed.map(cyan).join(', '))
+    await closeAndExit(store, 1)
+  }
+  return raw
+}
+
 export async function cmdCases({ flags }) {
   const store = await openStore()
   const where = {}
-  if (flags.status) {
-    const valid = store.getValidStatuses()
-    if (!valid.includes(flags.status)) { console.log(bad(`invalid status: ${flags.status}, allowed: ${valid.join(', ')}`)); await closeAndExit(store, 1) }
-    where.status = flags.status
+  if (flags.status !== undefined) {
+    where.status = await requireOneOf(store, 'status', flags.status, store.getValidStatuses())
   }
-  if (flags.channel) {
-    const valid = ['discord', 'whatsapp']
-    if (!valid.includes(flags.channel)) { console.log(bad(`invalid channel: ${flags.channel}, allowed: ${valid.join(', ')}`)); await closeAndExit(store, 1) }
-    where.channel = flags.channel
+  if (flags.channel !== undefined) {
+    // The channel vocabulary is whatever this deployment has actually received
+    // on, read from the store -- not a hardcoded discord/whatsapp pair. A store
+    // holding cases from the public web form and the simulator refused
+    // `--channel web` as invalid while listing web cases one line later.
+    const seen = [...new Set((await store.listCases({}, { limit: 10000 })).map(c => c.channel).filter(Boolean))].sort()
+    where.channel = await requireOneOf(store, 'channel', flags.channel, seen)
   }
   const cases = await store.listCases(where)
   if (!cases.length) {
-    const desc = [flags.status && `stage "${flags.status}"`, flags.channel && `channel "${flags.channel}"`].filter(Boolean).join(', ')
+    const desc = [where.status && `stage "${where.status}"`, where.channel && `channel "${where.channel}"`].filter(Boolean).join(', ')
     console.log(desc ? `no cases matching ${desc}.` : 'no cases yet.')
     console.log(dim(`  connect a channel in .env and run ${cyan('casey up')} to create one.`))
     await closeAndExit(store, 0)
@@ -49,15 +70,19 @@ export async function cmdCases({ flags }) {
     const age = dim(fmtTimeSAST(cr.created_at) || '(no date)')
     console.log(`${bold(cr.ref)}\t[${cr.status}]\t${cr.priority}\t${cr.channel}\t${contact}\t${cr.subject || ''}\t${age}`)
   }
+  // listCases pages at 50 by default. A queue truncated with nothing saying so
+  // means case 51 is invisible and no line on screen admits it exists.
+  const total = await store.countCases(where).catch(() => cases.length)
+  if (total > cases.length) console.log(dim(`  showing ${cases.length} of ${total} -- narrow it with --status or --channel.`))
   await closeAndExit(store, 0)
 }
 
 export async function cmdShow({ rest }) {
   const store = await openStore()
   const id = rest.find(a => !a.startsWith('--'))
-  if (!id) { console.log(`usage: casey show <ref|id>`); await closeAndExit(store, 1) }
+  if (!id) { say(`usage: casey show <ref|id>`); await closeAndExit(store, 1) }
   const caseRow = await store.getCase(id) || await store.getCaseByRef(id)
-  if (!caseRow) { console.log(red('case not found:'), id); console.log(dim(`  list cases with ${cyan('casey cases')}.`)); await closeAndExit(store, 1) }
+  if (!caseRow) { say(bad(`no case "${id}".`)); say(dim(`  list cases with ${cyan('casey cases')}.`)); await closeAndExit(store, 1) }
   console.log(`${bold(caseRow.ref)}  [${caseRow.status}]  ${caseRow.priority}  ${caseRow.channel}/${fmtPhone27(caseRow.external_id)}`)
   console.log(`opened: ${fmtTimeSAST(caseRow.created_at) || dim('(no date)')}`)
   console.log(`subject: ${caseRow.subject}\nsummary: ${caseRow.summary}\ntags: ${caseRow.tags}`)
@@ -147,14 +172,25 @@ export async function cmdReport({ flags }) {
   // and per-channel response metrics the dashboard serves at /api/report.json, for
   // an operator who lives in the terminal. Reuses the pure builders verbatim (no DB
   // change, aggregate-only, never an external_id). `--json` emits the machine shape;
-  // `--days N` sets the comparison window (default 30).
+  // `--days N` restricts the population to cases OPENED in the last N days
+  // (default 30). It is applied to `cases` below before any builder sees it:
+  // until it was, --days was parsed, echoed into the header and the JSON, and
+  // then ignored -- `--days 1` and `--days 3650` printed byte-identical bodies.
   const store = await openStore()
   const { buildSLAReportByType, buildCaseTypeMetrics, buildChannelMetrics } = await import('../src/report-analytics.js')
   const days = Number.isFinite(Number(flags.days)) && Number(flags.days) > 0 ? Number(flags.days) : 30
   const now = Date.now()
   const thresholds = await store.resolveThresholds()
   const slaTargetMs = Number.isFinite(thresholds?.handoffMs) ? thresholds.handoffMs : 30 * 60 * 1000
-  const cases = await store.listCases({}, { limit: 10000 })
+  const windowStart = now - days * 24 * 60 * 60 * 1000
+  const cases = (await store.listCases({}, { limit: 10000 }))
+    .filter(c => (tsMs(c.created_at) ?? 0) >= windowStart)
+  if (!cases.length && !flags.json) {
+    console.log(bold('casey management report') + dim(`  window ${days}d`))
+    console.log(`no cases opened in the last ${days} day${days === 1 ? '' : 's'}.`)
+    console.log(dim('  widen it with ') + cyan(`casey report --days ${days * 4}`) + dim('.'))
+    await closeAndExit(store, 0)
+  }
   const eventsByCaseId = new Map()
   for (const cs of cases) eventsByCaseId.set(cs.id, await store.listEvents(cs.id).catch(() => []))
   const slaByType = buildSLAReportByType(cases, eventsByCaseId, slaTargetMs, now)
@@ -165,7 +201,7 @@ export async function cmdReport({ flags }) {
     await closeAndExit(store, 0)
   }
   const ms = (n) => n == null ? dim('n/a') : `${Math.round(n / 1000)}s`
-  console.log(bold('casey management report') + dim(`  SLA target ${Math.round(slaTargetMs / 60000)}min  window ${days}d`) + '\n')
+  console.log(bold('casey management report') + dim(`  SLA target ${Math.round(slaTargetMs / 60000)}min  ${cases.length} case(s) opened in the last ${days}d`) + '\n')
   console.log(bold(`SLA compliance by case type  (overall ${slaByType.overall.met_count}/${slaByType.overall.considered} met, ${slaByType.overall.breach_pct}% breached)`))
   for (const [t, r] of Object.entries(slaByType.by_type)) {
     console.log(`  ${bold(t)}\tmet ${r.met_count}/${r.considered}\t${r.breach_pct}% breach\t${dim(`late ${r.breached_by_reason.answered_late} / unanswered ${r.breached_by_reason.never_answered}`)}`)
@@ -180,6 +216,25 @@ export async function cmdReport({ flags }) {
   }
   console.log(dim(`\n  the same figures are served at ${cyan('/api/report.json')} for dashboards.`))
   await closeAndExit(store, 0)
+}
+
+// The guardrail tags are the enum case-health.js writes onto a case. On the
+// terminal they were the whole answer -- a column of `abandoned_intake` and
+// `incomplete_critical` with nothing saying what an operator is looking at.
+// The tag stays (it is what `casey cases`/the dashboard filter on); the plain
+// sentence sits beside it. An unmapped tag falls back to its own name rather
+// than disappearing, so a new breach type is never silently unlabelled.
+const BREACH_MEANING = {
+  stale: 'no activity for days',
+  stuck: 'sitting in the same stage too long',
+  unanswered_handoff: 'someone asked for a person and nobody has replied',
+  unanswered_handoff_escalated: 'that request for a person is now badly overdue',
+  unsent_draft: 'a reply was drafted and never sent',
+  abandoned_intake: 'the reporter stopped answering mid-report',
+  incomplete_critical: 'facts a field visit needs are still missing',
+  never_closed: 'open far longer than this kind of case should be',
+  timestamp_corrupt: 'the stored dates on this case cannot be read',
+  premature_complete: 'marked done with a visit-critical fact still blank',
 }
 
 export async function cmdHealth({ flags }) {
@@ -202,7 +257,9 @@ export async function cmdHealth({ flags }) {
   console.log(`open cases: ${open.length}   with a guardrail breach: ${breachedCases}` + (corrupt ? red(`   corrupt rows skipped: ${corrupt}`) : ''))
   const entries = Object.entries(breachCounts).sort((a, b) => b[1] - a[1])
   if (!entries.length) console.log(green('  no guardrail breaches.'))
-  for (const [tag, n] of entries) console.log(`  ${tag}\t${n}`)
+  for (const [tag, n] of entries) console.log(`  ${n}\t${tag}\t${dim(BREACH_MEANING[tag] || tag)}`)
+  if (entries.length) console.log(dim(`\n  a case can breach more than one guardrail, so these add up past ${breachedCases}.`))
+  if (entries.length) console.log(dim('  record them on the cases with ') + cyan('casey sweep') + dim('.'))
   await closeAndExit(store, 0)
 }
 
@@ -226,17 +283,28 @@ export async function cmdTransition({ flags, rest }) {
   const store = await openStore()
   const positional = rest.filter(a => !a.startsWith('--'))
   const [ref, stage] = positional
-  if (!ref || !stage) { console.log('usage: casey transition <ref|id> <stage> [--reason "..."]'); console.log(dim('  stages: ') + store.getValidStatuses().map(cyan).join(', ')); await closeAndExit(store, 1) }
+  if (!ref || !stage) { say('usage: casey transition <ref|id> <stage> [--reason "..."]'); say(dim('  stages: ') + store.getValidStatuses().map(cyan).join(', ')); await closeAndExit(store, 1) }
   const caseRow = await store.getCase(ref) || await store.getCaseByRef(ref)
-  if (!caseRow) { console.log(red('case not found:'), ref); await closeAndExit(store, 1) }
+  if (!caseRow) { say(bad(`no case "${ref}".`)); say(dim(`  list cases with ${cyan('casey cases')}.`)); await closeAndExit(store, 1) }
   const OP = { id: 'cli-operator', role: 'operator' }
+  // Moving a case to the stage it is already in wrote a real transition event
+  // and reported `triaging -> triaging` as a change. Nothing moved, so nothing
+  // is recorded and nothing is claimed.
+  if (stage === caseRow.status) {
+    console.log(`${caseRow.ref} is already ${bold(stage)}. Nothing changed.`)
+    await closeAndExit(store, 0)
+  }
   const legal = store.availableTransitions(caseRow, OP)
-  if (stage !== caseRow.status && !legal.includes(stage)) {
-    console.log(red(`cannot move ${caseRow.ref} from '${caseRow.status}' to '${stage}'.`))
-    console.log(dim('  allowed from here: ') + (legal.length ? legal.map(cyan).join(', ') : dim('(none)')))
+  if (!legal.includes(stage)) {
+    say(bad(`cannot move ${caseRow.ref} from '${caseRow.status}' to '${stage}'.`))
+    say(dim('  allowed from here: ') + (legal.length ? legal.map(cyan).join(', ') : '(none)'))
     await closeAndExit(store, 1)
   }
-  const reason = typeof flags.reason === 'string' ? flags.reason : 'cli operator override'
+  // The recorded reason is what an auditor reads off the timeline months later.
+  // Defaulting it to "cli operator override" stamped every ordinary, legal,
+  // workflow-approved move as an override; the default now says only where the
+  // move came from, and --reason still carries the operator's own words.
+  const reason = typeof flags.reason === 'string' ? flags.reason : 'moved from the command line'
   await store.transition(caseRow.id, stage, { user: OP, reason })
   const after = await store.getCase(caseRow.id)
   console.log(green(`${after.ref}: ${caseRow.status} -> ${after.status}`) + dim(`  (${reason})`))
@@ -247,17 +315,66 @@ export async function cmdTransition({ flags, rest }) {
 // the same store.eraseContact the dashboard's admin-gated Reporters panel
 // "Erase PII" button calls -- a break-glass path for a deployment with no
 // dashboard access yet, or a scripted compliance run. Irreversible.
+// store.eraseContact takes the internal contact id -- an opaque string like
+// `mta3r2es-mjgea3m7` that NO casey command prints. `casey cases` and
+// `casey show` show the contact's channel identifier and the case ref, so the
+// documented break-glass erasure path could not be driven from anything the
+// CLI itself puts on screen. All three now resolve to the same contact.
+async function resolveContact(store, needle) {
+  const contacts = await store.t.list('contact', {}, { limit: 10000 })
+  const exact = contacts.find(c => c.id === needle)
+  if (exact) return exact
+  // A phone number is written +27 82 111 0001 on screen, 27821110001 in the
+  // row: compare on the digits and letters, not the spacing an operator copied.
+  const norm = (s) => String(s || '').replace(/[^0-9a-z]/gi, '').toLowerCase()
+  const key = norm(needle)
+  const byExternal = key && contacts.find(c => norm(c.external_id) === key)
+  if (byExternal) return byExternal
+  const caseRow = await store.getCaseByRef(needle) || await store.getCase(needle)
+  if (caseRow?.contact_id) return contacts.find(c => c.id === caseRow.contact_id) || null
+  return null
+}
+
 export async function cmdEraseContact({ flags, rest }) {
   const store = await openStore()
   const id = rest.find(a => !a.startsWith('--'))
-  if (!id) { console.log('usage: casey erase-contact <contact-id> [--reason "..."]'); await closeAndExit(store, 1) }
+  if (!id) {
+    say('usage: casey erase-contact <contact-id|external-id|case-ref> --yes [--reason "..."]')
+    say(dim(`  find the contact on a case with ${cyan('casey cases')} or ${cyan('casey show <ref>')}.`))
+    await closeAndExit(store, 1)
+  }
+  const contact = await resolveContact(store, id)
+  if (!contact) {
+    say(bad(`no contact matches "${id}".`))
+    say(dim('  give the contact id, the phone number or handle shown on a case, or the ref of any case they opened'))
+    say(dim(`  -- list them with ${cyan('casey cases')}.`))
+    await closeAndExit(store, 1)
+  }
+  // Irreversible, and it ran on a bare argument with no confirmation of any
+  // kind: one mistyped ref scrubbed a live reporter's details with nothing to
+  // undo it. --yes keeps the scripted compliance path working (there is no TTY
+  // in a cron job) while making the destruction something the caller states.
+  if (!flags.yes) {
+    say(bad(`this would permanently erase the details of ${contact.display_name || contact.external_id || contact.id}.`))
+    say(dim('  it cannot be undone. Re-run with --yes if that is what you want:'))
+    say(dim('    ') + cyan(`casey erase-contact ${contact.id} --yes --reason "..."`))
+    await closeAndExit(store, 1)
+  }
   const reason = typeof flags.reason === 'string' ? flags.reason : ''
   try {
-    const result = await store.eraseContact(id, { reason, operator: { id: 'cli-operator' } })
-    console.log(green(`erased contact ${id}`) + dim(result.contactErased ? '' : ' (already erased)'))
-    console.log(`cases scrubbed: ${result.casesScrubbed.length}` + (result.casesScrubbed.length ? '  ' + dim(result.casesScrubbed.join(', ')) : ''))
+    const result = await store.eraseContact(contact.id, { reason, operator: { id: 'cli-operator' } })
+    console.log(result.contactErased
+      ? green(`erased ${contact.display_name || contact.external_id || contact.id}`)
+      // Once scrubbed, display_name and external_id are both the literal
+      // '[erased]' -- naming the contact id is the only thing left that
+      // identifies which row this was.
+      : `contact ${contact.id} was already erased. Nothing changed.`)
+    // casesScrubbed carries internal case ids; an operator works in refs.
+    const refs = []
+    for (const cid of result.casesScrubbed) refs.push((await store.getCase(cid).catch(() => null))?.ref || cid)
+    console.log(`cases scrubbed: ${refs.length}` + (refs.length ? '  ' + dim(refs.join(', ')) : ''))
     await closeAndExit(store, 0)
-  } catch (e) { console.log(bad(e.message)); await closeAndExit(store, 1) }
+  } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
 }
 
 // Break-glass account management: talks to the SAME dashboard/auth.js the
@@ -269,38 +386,52 @@ export async function cmdOperators({ flags, rest }) {
   const store = await openStore()
   const sub = rest[0]
   const positional = rest.slice(1).filter(a => !a.startsWith('--'))
+  // dashboard/auth.js's createAccount accepts admin, secretary and operator.
+  // The CLI collapsed everything that was not 'admin' to 'operator', so
+  // `--role secretary` reported "created account (role: operator)" and exited
+  // 0 -- a flag accepted, silently changed, and confirmed as if it had been
+  // honoured. The roles live here once, and an unknown one is refused.
+  const ACCOUNT_ROLES = ['admin', 'operator', 'secretary']
   if (sub === 'add') {
     const username = positional[0]
-    if (!username) { console.log('usage: casey operators add <username> [--password ...] [--name ...] [--role admin|operator]'); await closeAndExit(store, 1) }
-    // Math.random() is not cryptographically secure; every other secret-
-    // generation path in this codebase (session tokens, media filenames,
-    // case reference suffixes) uses node:crypto's randomBytes.
+    if (!username) { say('usage: casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary]'); await closeAndExit(store, 1) }
+    if (flags.role !== undefined) await requireOneOf(store, 'role', flags.role, ACCOUNT_ROLES)
+    if (flags.password === true) { say(bad('--password needs a value (omit it entirely to have one generated).')); await closeAndExit(store, 1) }
     const password = typeof flags.password === 'string' ? flags.password : randomBytes(10).toString('hex')
     try {
-      const acct = await createAccount(store, { username, password, displayName: flags.name, role: flags.role === 'admin' ? 'admin' : 'operator' })
+      const acct = await createAccount(store, { username, password, displayName: typeof flags.name === 'string' ? flags.name : undefined, role: flags.role || 'operator' })
       console.log(green(`created account "${acct.username}" (role: ${acct.role})`))
       if (!flags.password) console.log(dim('  generated password: ') + bold(password) + dim('  -- record this now, it is not shown again'))
       await closeAndExit(store, 0)
-    } catch (e) { console.log(bad(e.message)); await closeAndExit(store, 1) }
+    } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
   }
   if (sub === 'list') {
     const accounts = await listAccounts(store)
     if (!accounts.length) { console.log('no operator accounts yet.'); console.log(dim('  run ' + cyan('casey operators add <username>') + ' to create one.')); await closeAndExit(store, 0) }
     for (const a of accounts) {
-      const status = a.disabled === '1' ? red('disabled') : green('active')
-      console.log(`${bold(a.username)}\t${a.role}\t${status}\t${a.display_name || ''}\t${dim(a.last_login_at || 'never logged in')}`)
+      const status = a.disabled === '1' ? red('[disabled]') : green('[active]')
+      // last_login_at is stored as an ISO-8601 UTC string. Every other date this
+      // CLI prints goes through fmtTimeSAST, so an operator reading two commands
+      // side by side was comparing 2026-09-05T12:30:21.365Z against
+      // "05 Sept 2026, 14:30 SAST" and doing the offset in their head.
+      const seen = a.last_login_at ? fmtTimeSAST(Math.floor(Date.parse(a.last_login_at) / 1000)) : null
+      console.log(`${bold(a.username)}\t${a.role}\t${status}\t${a.display_name || ''}\t${dim(seen || 'never logged in')}`)
     }
     await closeAndExit(store, 0)
   }
   if (sub === 'disable' || sub === 'enable') {
     const username = positional[0]
-    if (!username) { console.log(`usage: casey operators ${sub} <username>`); await closeAndExit(store, 1) }
+    if (!username) { say(`usage: casey operators ${sub} <username>`); await closeAndExit(store, 1) }
     const acct = await findAccountByUsername(store, username)
-    if (!acct) { console.log(bad(`no account "${username}"`)); await closeAndExit(store, 1) }
+    if (!acct) { say(bad(`no account "${username}".`)); say(dim(`  list them with ${cyan('casey operators list')}.`)); await closeAndExit(store, 1) }
+    const already = (acct.disabled === '1') === (sub === 'disable')
     await setAccountDisabled(store, acct.id, sub === 'disable')
-    console.log(green(`account "${acct.username}" ${sub === 'disable' ? 'disabled' : 'enabled'}`))
+    console.log(already
+      ? `account "${acct.username}" was already ${sub === 'disable' ? 'disabled' : 'enabled'}.`
+      : green(`account "${acct.username}" ${sub === 'disable' ? 'disabled' : 'enabled'}`))
     await closeAndExit(store, 0)
   }
-  console.log('usage: casey operators <add|list|disable|enable> ...')
+  if (sub) say(bad(`casey operators has no "${sub}" subcommand.`))
+  say('usage: casey operators <add|list|disable|enable> ...')
   await closeAndExit(store, 1)
 }

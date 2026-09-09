@@ -11,6 +11,59 @@ several describe modules (`src/extract.js`, `src/gazetteer.js`, `test.js`,
 `CASEY_OPERATORS`) that no longer exist, which is what a historical entry is
 supposed to look like once the code moves on.
 
+### Fixed
+- **`--help` no longer runs the command.** The help text advertised
+  `--help`/`-h` on any command, but only `up` and `dashboard` checked the flag;
+  everything else dispatched normally, so `casey sweep --help` ran the sweep and
+  `casey transition <ref> <stage> --help` moved the case. `bin/casey-cli.mjs`
+  now answers out of a `USAGE` table in `bin/casey-cli-ui.js` before the handler
+  runs, one block per dispatchable command.
+- **`casey report --days N` is applied.** It was parsed, printed in the header
+  and emitted in the JSON while every builder received the unfiltered case list,
+  so `--days 1` and `--days 3650` produced byte-identical bodies. It now
+  restricts the population to cases opened inside the window.
+- **`casey cases --channel` reads the store's real channels.** The allowed set
+  was the literal `['discord','whatsapp']`, so `--channel web` was refused as
+  invalid on a deployment whose public form had opened eleven web cases. The
+  flag is also now in the help text, as is `--json` on `health`/`sweep` and
+  `--port` on `doctor`.
+- **`casey erase-contact` can be driven from what casey prints.** It accepted
+  only the internal contact id, which no casey command puts on screen, and
+  failed with `eraseContact: no such contact <x>` -- an internal function name.
+  It now resolves a contact id, the channel identifier shown on a case, or any
+  of that contact's case refs, and reports scrubbed cases by ref rather than by
+  internal id. Being irreversible, it now requires `--yes`.
+- **`casey operators --role secretary` is honoured.** The CLI collapsed every
+  role that was not `admin` to `operator` and then reported success, while
+  `dashboard/auth.js` has always accepted `secretary`. An unknown role is now
+  refused instead of silently changed.
+- **`casey up` refuses a WhatsApp channel with no `WHATSAPP_VERIFY_TOKEN`.**
+  The `--no-supervise` path warned that verification would "use freddie's
+  default token" -- there is no such fallback -- and then died inside the Cordis
+  mount with an eleven-frame stack trace. It now refuses in one sentence, the
+  same shape the supervised path already used.
+- **Diagnostics go to stderr.** Every refusal, usage line and not-found message
+  was written to stdout, so `casey attention --json | jq` could receive prose
+  and an unknown command printed the entire help screen as data. An unknown
+  command now names the typo instead of dumping help.
+- **Smaller CLI truths.** `casey transition` to the stage a case is already in
+  reports "nothing changed" instead of writing a `triaging -> triaging` event;
+  its default recorded reason no longer stamps every legal move as an
+  "override"; `casey health` prints a plain sentence beside each guardrail tag;
+  `casey operators list` renders `last_login_at` in SAST like every other date
+  the CLI prints; `casey cases` states the total when its 50-row page truncates;
+  a flag given with no value says so instead of reporting `invalid status: true`.
+- **`casey init`'s template stopped contradicting the rest of the repo.** It
+  claimed "there is no separate webhook PORT: the webhook shares the dashboard
+  port", which `freddie-bundle/cordis.patch.yml`, this README and `AGENTS.md`
+  all contradict (`CASEY_WEBHOOK_PORT`, default 4001, deliberately clear of the
+  dashboard's 4000). It also omitted `CASEY_SESSION_SECRET`, which the docs said
+  it wrote, and `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS`, which `doctor` checks for.
+- **`casey doctor` says which `.env` it looked for.** It checked casey's own
+  package root and reported ".env missing" on a deployer package (uhh, serpent)
+  that loads its own `.env` before importing casey at all, then recommended a
+  `casey init` that would scaffold a second one in the wrong directory.
+
 ### Changed
 - **freddie is now the agent, not a library casey calls.** Upstream freddie's
   `main` was rewritten from a flat harness+Gateway package into a Cordis

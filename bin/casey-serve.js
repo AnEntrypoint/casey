@@ -10,10 +10,8 @@ import { createDashboard } from '../src/dashboard/server.js'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { ROOT, bold, dim, green, yellow, cyan, bad, warn, pkgVersion, hasCreds, closeAndExit } from './casey-cli-ui.js'
+import { ROOT, bold, dim, green, yellow, cyan, bad, warn, say, pkgVersion, hasCreds, closeAndExit } from './casey-cli-ui.js'
 import { makeSendReply } from './send-reply.js'
-
-const UP_HELP = 'casey up [--channels discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise] [--no-auto-update]\n  Start the gateway (all configured channels) and the dashboard.\n  Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,\n  reopening the same case store so nothing is lost. AUTO-UPDATE is on by default -- it fetches\n  from origin on an interval and fast-forwards (git fetch + merge --ff-only, safe: it never\n  clobbers local edits and refuses to move a diverged tree) so a pushed fix deploys with no\n  manual restart. --no-reload disables the file watcher; --no-auto-update\n  (or CASEY_AUTO_UPDATE=0) disables the origin pull; --no-supervise runs the legacy single-process\n  path for debugging.'
 
 // Which channels this run will actually serve, or null when it must not start.
 // Enforces the WhatsApp-without-an-app-secret refusal (doctor only flags it) and
@@ -30,20 +28,30 @@ function resolveChannels(flags) {
   if (hasCreds('whatsapp') && !process.env.WHATSAPP_APP_SECRET) {
     const idx = requested.indexOf('whatsapp')
     if (idx !== -1 && flags.channels) {
-      console.log(bad('WHATSAPP_APP_SECRET is required to enable WhatsApp (verify inbound webhook signatures) - refusing to serve unsigned inbound'))
+      say(bad('WHATSAPP_APP_SECRET is required to enable WhatsApp (verify inbound webhook signatures) - refusing to serve unsigned inbound'))
       process.exit(1)
     }
-    if (idx !== -1) { requested.splice(idx, 1); console.log(warn('WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')) }
+    if (idx !== -1) { requested.splice(idx, 1); say(warn('WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')) }
   }
   const channels = requested.filter(ch => hasCreds(ch))
   const skipped = requested.filter(ch => !hasCreds(ch))
-  if (!channels.length) { console.log(bad('no channels available - set discord/whatsapp credentials')); process.exit(1) }
-  // Loud, non-fatal warning (see bin/worker.js's matching guard): an unset
-  // WHATSAPP_VERIFY_TOKEN falls back to freddie's own literal 'freddie'
-  // default webhook handshake token, guessable by anyone who has read
-  // freddie's source.
+  if (!channels.length) { say(bad('no channels available - set discord/whatsapp credentials')); process.exit(1) }
+  // WHATSAPP_VERIFY_TOKEN is fatal, not a degraded mode: freddie-bundle's
+  // platform plugin throws 'WhatsappAdapter: WHATSAPP_VERIFY_TOKEN required'
+  // while mounting the Cordis tree, so the whole boot fails a second later.
+  // Refuse here, in the same shape bin/worker-channels.js refuses on the
+  // supervised path, rather than warning and letting the operator read that
+  // throw as an eleven-frame stack trace.
   if (channels.includes('whatsapp') && !process.env.WHATSAPP_VERIFY_TOKEN) {
-    console.log(warn('WHATSAPP_VERIFY_TOKEN is unset - webhook verification will use freddie\'s default token (set WHATSAPP_VERIFY_TOKEN to a real secret)'))
+    const idx = channels.indexOf('whatsapp')
+    if (flags.channels) {
+      say(bad('WHATSAPP_VERIFY_TOKEN is required to enable WhatsApp (Meta\'s webhook handshake) - refusing to start'))
+      process.exit(1)
+    }
+    channels.splice(idx, 1)
+    skipped.push('whatsapp')
+    say(warn('WhatsApp creds present but WHATSAPP_VERIFY_TOKEN unset - skipping WhatsApp (set the token to enable it)'))
+    if (!channels.length) { say(bad('no channels available - set discord/whatsapp credentials')); process.exit(1) }
   }
   return { channels, skipped }
 }
@@ -160,7 +168,7 @@ async function upInProcess(flags, channels, skipped) {
   try {
     dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus: brainResilient.status, runSweep: () => casey.runSweepOnce(), receiveStatus: () => casey.receiveStatus() })
   } catch (e) {
-    console.log(bad(`dashboard failed to bind port ${dashPort}: ${e.message} - start with --port <other>`))
+    say(bad(`dashboard failed to bind port ${dashPort}: ${e.message} - start with --port <other>`))
     try { await casey.stop() } catch (e2) { console.error('shutdown error:', e2.message) }
     process.exit(1)
   }
@@ -188,7 +196,6 @@ async function upInProcess(flags, channels, skipped) {
 }
 
 export async function cmdUp({ flags }) {
-  if (flags.help) { console.log(UP_HELP); return }
   const { channels, skipped } = resolveChannels(flags)
   const supervise = !flags['no-supervise']
   if (supervise) return upSupervised(flags, channels, skipped)
@@ -196,7 +203,6 @@ export async function cmdUp({ flags }) {
 }
 
 export async function cmdDashboard({ flags }) {
-  if (flags.help) { console.log('casey dashboard [--port 4000]\n  Start only the observe/edit dashboard against the existing store.'); return }
   // Same eager-validation discipline as bin/worker.js's own
   // CASEY_EXTRA_DASHBOARD_ROUTES handling: a mistyped path throws a named
   // error at boot rather than silently mounting nothing.
@@ -214,7 +220,7 @@ export async function cmdDashboard({ flags }) {
   try {
     dash = await createDashboard(store, { port: Number(flags.port || 4000) })
   } catch (e) {
-    console.log(bad(`dashboard failed to bind port ${Number(flags.port || 4000)}: ${e.message} - start with --port <other>`))
+    say(bad(`dashboard failed to bind port ${Number(flags.port || 4000)}: ${e.message} - start with --port <other>`))
     await closeAndExit(store, 1)
   }
   if (extraDashboardRoutes) {

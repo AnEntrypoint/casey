@@ -21,18 +21,36 @@ WHATSAPP_API_TOKEN=
 WHATSAPP_PHONE_NUMBER_ID=
 # Required when WhatsApp credentials are set (HMAC-SHA256 webhook signature check):
 WHATSAPP_APP_SECRET=
-# Webhook verification handshake token (set in the Meta developer console):
+# Webhook verification handshake token (set in the Meta developer console).
+# Required too: casey refuses to serve WhatsApp without it.
 WHATSAPP_VERIFY_TOKEN=
 # Fix the public-facing webhook path (useful behind a reverse proxy or ngrok).
-# There is no separate webhook PORT: the webhook shares the dashboard port.
 #WHATSAPP_WEBHOOK_PATH=/webhooks/whatsapp
+
+# Meta posts the webhook to freddie's own socket, NOT the dashboard's --
+# they are two different listeners and sharing a port costs the dashboard
+# EADDRINUSE. This, not --port, is the address you register with Meta.
+#CASEY_WEBHOOK_HOST=127.0.0.1
+#CASEY_WEBHOOK_PORT=4001
+
+# HMAC key signing the dashboard session cookie. Random per process when blank,
+# so every restart logs every operator out. Set it to survive a restart.
+CASEY_SESSION_SECRET=
+
+# Per-provider-hop timeout for the LLM chain. acptoapi's own shipped default is
+# 120000, equal to casey's whole per-attempt budget, so one hung provider can
+# consume an entire turn. Keep this comfortably below it -- casey doctor checks.
+ACPTOAPI_CHAIN_LINK_TIMEOUT_MS=30000
 
 # Public URL of this casey instance (optional). When set, the agent mentions it
 # to the contact on first message so they can fill in more details via the web form:
 #CASEY_PUBLIC_URL=https://your-domain.example.com
+# Set this to the real proxy hop count if a reverse proxy fronts casey, or the
+# public report form's rate limiter sees every reporter as one address:
+#CASEY_TRUST_PROXY_HOPS=1
 
 # Development overrides:
-#CASEY_LOG=silent    # suppress structured JSON logs (used by tests)
+#CASEY_LOG=silent    # suppress structured JSON logs
 `
 
 export async function cmdInit() {
@@ -115,8 +133,18 @@ export async function cmdDoctor({ flags }) {
   const major = Number(process.versions.node.split('.')[0])
   console.log(major >= 22 ? ok(`Node ${process.versions.node}`) : bad(`Node ${process.versions.node} (need >=22)`))
   if (major < 22) problems++
-  // .env presence
-  console.log(existsSync(path.join(ROOT, '.env')) ? ok('.env present') : warn(`.env missing - run ${cyan('casey init')} (channels can still come from the environment)`))
+  // .env presence. ROOT is casey's OWN package root, which is not where a
+  // deployer package keeps its .env: uhh loads <uhh>/.env in bin/uhh.js before
+  // importing casey at all, so `casey doctor` run from uhh reported ".env
+  // missing" against a deployment whose .env was already loaded, and pointed at
+  // a `casey init` that would scaffold a second one in the wrong directory. Say
+  // which file was looked for, and say nothing at all when the environment is
+  // already carrying real configuration from somewhere else.
+  const envFile = path.join(ROOT, '.env')
+  const envFromElsewhere = !!(process.env.DISCORD_BOT_TOKEN || process.env.WHATSAPP_API_TOKEN || process.env.CASEY_CONFIG_DIR)
+  if (existsSync(envFile)) console.log(ok(`.env present (${envFile})`))
+  else if (envFromElsewhere) console.log(ok(`no ${envFile} - configuration is coming from the environment instead`))
+  else console.log(warn(`no .env at ${envFile} - run ${cyan('casey init')} to scaffold one (channels can still come from the environment)`))
   // dependencies resolve
   for (const dep of ['thatcher', 'acptoapi', 'express']) {
     try { await import(dep); console.log(ok(`dependency ${dep} resolves`)) }
