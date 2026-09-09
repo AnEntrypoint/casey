@@ -108,6 +108,28 @@ export class CaseStore {
     this.thatcher = createThatcher({
       config: this.configPath,
       server: { hotReload: false },
+      // Columns casey looks rows up BY, that thatcher's own derivation cannot
+      // know about. thatcher already indexes every `id` and every `<entity>_id`
+      // foreign key from the config (so case.id, event.case_id, case.contact_id
+      // are covered); these are casey's own business/routing keys, each named
+      // for the read path that scans on it today:
+      //   case.ref             getCaseByRef, the UNAUTHENTICATED public /report
+      //                        form's only lookup
+      //   case.external_id     findOpenCase / findOrCreateCase, on every inbound
+      //   case.author_key      case_mine's worker-scoped enquiry
+      //   contact.external_id  findOrCreateContact, on every inbound
+      //   operator_account.username        dashboard login
+      //   operator_identity.operator_id    the per-operator activity rollup
+      // Deliberately NOT here: status, channel, last_event_at, created_at.
+      // Those are read through inequality/ordering predicates on paths that
+      // slice an unsorted set in JS, where the only thing an index could change
+      // is the scan order the page is cut from.
+      indexes: {
+        case: ['ref', 'external_id', 'author_key'],
+        contact: ['external_id'],
+        operator_account: ['username'],
+        operator_identity: ['operator_id'],
+      },
     })
     await this.thatcher.init()
     await this.reportStrandedStages()
@@ -587,14 +609,21 @@ export class CaseStore {
     return this._count('case', where)
   }
 
-  // Count via the public list() API: same module singleton as every other call,
-  // backend-agnostic, and survives `npm ci` (no node_modules edit). The whole
-  // matching set is hauled into JS on every call, and the dashboard polls this
-  // every 5s -- CAP bounds that worst case; see countCases above for its sizing.
+  // Count via thatcher's count(), which reaches a real `SELECT COUNT(*)` where
+  // it provably can and otherwise falls back to the same full read this used to
+  // do itself. Counting through list().length hauled the whole matching set
+  // into JS to read one integer -- measured on a 100x store (2600 cases, 13600
+  // events), 'case' 68ms -> 0.06ms and 'event' 193ms -> 0.07ms -- and the
+  // dashboard polls this every 5s.
+  //
+  // The CAP is kept, and kept as a MINIMUM of the two, so the returned number
+  // is byte-identical to what the list()-length version produced: that version
+  // read at most CAP rows, so it reported min(true count, CAP), and a count
+  // that suddenly started reporting the true value above the cap would change
+  // an answer the dashboard's pagination hints already depend on.
   async _count(entity, where = {}) {
     const CAP = 50000
-    const rows = await this.t.list(entity, where, { limit: CAP })
-    return rows.length
+    return Math.min(await this.t.count(entity, where), CAP)
   }
 
   // Run fn() serialized against every other call sharing the same lock key.

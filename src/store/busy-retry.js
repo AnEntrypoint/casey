@@ -11,7 +11,7 @@
 // lock contends-and-recovers rather than surfacing as a turn error. Bounded
 // (never infinite), and only retries the BUSY/locked class -- any other error
 // propagates immediately.
-const RETRY_METHODS = new Set(['list', 'get', 'create', 'update', 'remove', 'delete'])
+const RETRY_METHODS = new Set(['list', 'get', 'count', 'create', 'update', 'remove', 'delete'])
 const isBusy = (e) => /SQLITE_BUSY|database is locked|database table is locked/i.test(String(e?.message || e))
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
