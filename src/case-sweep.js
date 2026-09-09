@@ -13,6 +13,7 @@
 // drives this (casey.js) owns the interval and clears it on stop.
 
 import { classifyCaseHealth, healthTag, ALL_HEALTH_TAGS, DEFAULT_THRESHOLDS } from './case-health.js'
+import { flushDroppedIntake } from './hooks/dropped-intake.js'
 // tsMs/tagList are timestamp.js's single shared implementation; do not add a
 // local copy here.
 import { tsMs, tagList } from './timestamp.js'
@@ -73,6 +74,15 @@ function detectCoverageGap(cases, eventsByCaseId, roster = [], now = Date.now(),
 // injected. Returns a summary { scanned, flagged, cleared, breaches:{type:count} }.
 export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_THRESHOLDS, { log = null, notifyBreach = null } = {}) {
   const summary = { scanned: 0, flagged: 0, cleared: 0, breaches: {}, errors: [] }
+  // Piggyback the dropped-inbound audit flush on this pass. It is unrelated to
+  // case health, and it is here for one reason stated plainly: this is the only
+  // thing in the process that already runs on a clock AND already holds the
+  // store, and hooks/dropped-intake.js's own header explains why owning a timer
+  // there would be worse. Without it a flood that STOPS never writes its last
+  // partial window, which is precisely the flood an operator most needs the
+  // record of. Fire-and-forget, ahead of everything else, so a failure here
+  // cannot cost the sweep its real work.
+  try { flushDroppedIntake(store, log || console, now) } catch { /* audit only, never blocks the sweep */ }
   // Prefer the live workflow's open-stage set over case-health.js's literal
   // fallback, so a stage added/renamed in thatcher.config.yml is picked up with
   // no code edit here.

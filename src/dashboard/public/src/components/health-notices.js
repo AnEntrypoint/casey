@@ -130,6 +130,25 @@ function guardrailsNotice() {
     'The last check flagged them as stale, stuck or waiting too long for a person. They are at the top of the queue.');
 }
 
+// Reports that never became records. These messages were turned away above
+// recordInbound, so they exist in no case, on no timeline and in no queue --
+// there is nothing for an operator to go and look at, which is exactly why the
+// count has to be said out loud. It sits beside the receiving notice because it
+// is the same fact from the other end: one is casey not hearing, this is casey
+// hearing and discarding.
+//
+// The count is since this process started and names no contact, because
+// hooks/dropped-intake.js records an aggregate rather than a row per message --
+// its header says why, and the honest consequence is stated here rather than
+// implied: an operator learns how many and why, never which.
+function droppedIntakeNotice() {
+  const d = state.health.ai && state.health.ai.dropped_inbound;
+  if (!d || !d.total) return null;
+  const reasons = Object.values(d.reasons || {}).map(r => `${r.count} because ${r.detail}`);
+  return notice('drop', 'error', `${d.total} incoming message(s) were discarded without being recorded`,
+    reasons.join('; ') + '. Counted since this console started; no case or timeline holds them, and the count names no contact.');
+}
+
 export function HealthNotices() {
-  return [receivingNotice(), aiNotice(), guardrailsNotice()].filter(Boolean);
+  return [receivingNotice(), droppedIntakeNotice(), aiNotice(), guardrailsNotice()].filter(Boolean);
 }
