@@ -232,7 +232,14 @@ async function boot() {
     if (decoded) applyView(decoded);
   }
   applyRouteToState();
-  const noDeepLink = !hv.caseId && !hv.view && !hv.inbox && !state.activePanel;
+  // hv.home belongs in this list and was missing from it. `home` is a real
+  // route token -- pushHash writes it and initRouteSync reads it back -- so on a
+  // deployment configuring default_view:'map' (uhh does) a #home=cases link was
+  // applied by applyRouteToState above and then immediately overwritten by the
+  // default below, because noDeepLink did not count it as a deep link. Live
+  // effect: the case-list home view was reachable only by clicking the nav item,
+  // and a bookmark or a shared link to it silently landed on the map instead.
+  const noDeepLink = !hv.caseId && !hv.view && !hv.inbox && !hv.home && !state.activePanel;
   // The secretary role exists to work the follow-up queue -- land them there
   // by default, ahead of the deployment-wide dashboard_ui.default_view, since
   // it is more specific to what this role actually needs to know every time

@@ -29,17 +29,31 @@ function showWorkerPicker(title, message, workers) {
         head.appendChild(mk('h3', 'ds-dialog-title', title));
         card.appendChild(head);
         card.appendChild(mk('p', 'ds-dialog-message', message));
+        // Both controls carry a real <label for>. They had none: the select was
+        // named only by its own first option, and the textarea by nothing at
+        // all, so a screen reader announced an unlabelled edit box in a dialog
+        // whose whole purpose is choosing who goes where. Ids are per-instance
+        // because this dialog is built imperatively and could in principle be
+        // opened twice before the first is torn down.
+        const uid = 'dispatch-' + Math.random().toString(36).slice(2, 9);
         const sel = document.createElement('select');
         sel.className = 'casey-dispatch-select';
+        sel.id = uid + '-worker';
+        const selLabel = mk('label', 'casey-dispatch-label', 'Who should go');
+        selLabel.setAttribute('for', sel.id);
+        card.appendChild(selLabel);
         for (const w of workers) {
             const o = document.createElement('option'); o.value = w.id;
             o.textContent = (w.display_name || 'field worker') + (w.km != null ? ` (${w.km.toFixed(1)}km${w.stale ? ', stale' : ''})` : (w.stale ? ' (stale)' : ''));
             sel.appendChild(o);
         }
         card.appendChild(sel);
-        card.appendChild(mk('label', 'casey-dispatch-label', 'Optional note for the team'));
         const noteInp = document.createElement('textarea'); noteInp.rows = 2;
         noteInp.className = 'casey-dispatch-note';
+        noteInp.id = uid + '-note';
+        const noteLabel = mk('label', 'casey-dispatch-label', 'Optional note for the team');
+        noteLabel.setAttribute('for', noteInp.id);
+        card.appendChild(noteLabel);
         card.appendChild(noteInp);
         const row = mk('div', 'ds-dialog-foot-row');
         const cancelBtn = mk('button', 'casey-dispatch-cancel', 'Cancel');
