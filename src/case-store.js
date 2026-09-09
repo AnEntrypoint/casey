@@ -1039,36 +1039,37 @@ export class CaseStore {
     return out
   }
 
-  async eraseContact(contactId, { reason = '', operator = SYSTEM_USER } = {}) {
-    const contact = await this.getContact(contactId)
-    if (!contact) throw new Error(`eraseContact: no such contact ${contactId}`)
-    const PII_CONTACT_FIELDS = { external_id: '[erased]', display_name: '[erased]', handle: '', notes: '', last_location_lat: null, last_location_lon: null, last_location_at: '', last_report_lat: null, last_report_lon: null, last_report_at: '', last_report_case_id: '' }
-    const alreadyErased = contact.external_id === '[erased]'
-    if (!alreadyErased) {
-      await this.t.update('contact', contactId, PII_CONTACT_FIELDS, SYSTEM_USER)
-    }
-    // Every other row for the same number, erased with the same field set. The
-    // ids are returned so the caller can say how many people-records this
-    // actually touched rather than implying it was one.
-    const siblingIds = await this._siblingContactIds(contact)
-    for (const sid of siblingIds) {
-      try { await this.t.update('contact', sid, PII_CONTACT_FIELDS, SYSTEM_USER) } catch { /* per-row best effort */ }
-    }
-    const PII_REPORT_FIELDS = ['owner_name', 'owner_contact', 'present_person', 'present_person_relation', 'contact_fallback', 'photos', 'audio']
-    const cases = await this.listCases({ contact_id: contactId }, { limit: 10000 })
-    const touchedCaseIds = []
-    const failedCaseIds = []
+  // The identifying report fields, named once. src/retention.js exports the same
+  // list for its own dry-run display and the two are checked against each other
+  // by no mechanism -- they are the same list because both describe the same
+  // decision about which fields identify a person.
+  static PII_REPORT_FIELDS = ['owner_name', 'owner_contact', 'present_person', 'present_person_relation', 'contact_fallback', 'photos', 'audio']
+
+  static PII_CONTACT_FIELDS = { external_id: '[erased]', display_name: '[erased]', handle: '', notes: '', last_location_lat: null, last_location_lon: null, last_location_at: '', last_report_lat: null, last_report_lon: null, last_report_at: '', last_report_case_id: '' }
+
+  // Scrub every identifying field off ONE case: the report blob, the routing key
+  // that carries the number a second and third time, and the delivered-reply
+  // destinations inside its own event log. Extracted from eraseContact's loop so
+  // the retention path (src/retention.js's `erase` action) reaches the SAME
+  // decision about what identifies a person rather than growing a second copy of
+  // it that could drift.
+  //
+  // Returns one of 'scrubbed' | 'nothing-to-do' | 'gone' | 'conflict'. It never
+  // throws on a version conflict: an uncaught throw here would abort an
+  // irreversible, documented "every case scrubbed" action after only some cases
+  // were touched, so the caller records the failure and carries on to the rest.
+  async _erasePiiOnCase(caseRow, { reason = '', operator = SYSTEM_USER } = {}) {
+    const PII_REPORT_FIELDS = CaseStore.PII_REPORT_FIELDS
     const ERASE_RETRY_LIMIT = 3
-    for (const c0 of cases) {
-      // Locked and re-read (same discipline as mergeReport): a concurrent
-      // case_report write landing between the pre-loop snapshot and this
-      // erasure write could otherwise be silently clobbered, or complete
-      // AFTER the erasure and reintroduce a just-nulled PII field with no
-      // error and no audit trail.
-      await this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
-        let c = await this.getCase(c0.id)
-        if (!c) return
-        for (let attempt = 0; attempt <= ERASE_RETRY_LIMIT; attempt++) {
+    // Locked and re-read (same discipline as mergeReport): a concurrent
+    // case_report write landing between the caller's snapshot and this
+    // erasure write could otherwise be silently clobbered, or complete
+    // AFTER the erasure and reintroduce a just-nulled PII field with no
+    // error and no audit trail.
+    return this._withLock(`${caseRow.channel}|${caseRow.external_id}`, async () => {
+      let c = await this.getCase(caseRow.id)
+      if (!c) return 'gone'
+      for (let attempt = 0; attempt <= ERASE_RETRY_LIMIT; attempt++) {
           const { value: report } = this._parseReport(c.report, c.id)
           const hadPII = PII_REPORT_FIELDS.some(k => report[k] != null && report[k] !== '')
           // THE CASE ROW ITSELF CARRIES THE NUMBER, TWICE. `external_id` is the
@@ -1088,7 +1089,7 @@ export class CaseStore {
           // splitExternalId treats that as a Discord container separator.
           const erasedKey = `[erased]-${c.id}`
           const hadKeyPII = c.external_id !== erasedKey || c.author_key !== erasedKey
-          if (!hadPII && !hadKeyPII) return
+          if (!hadPII && !hadKeyPII) return 'nothing-to-do'
           for (const k of PII_REPORT_FIELDS) report[k] = null
           try {
             // writeGuardViolation forbids the system actor from writing `report`
@@ -1109,8 +1110,7 @@ export class CaseStore {
             // its EMISSION is not erasing it, and a right-to-erasure request is
             // about what is held, not only about what is shown.
             await this._scrubEventDestinations(c.id, erasedKey)
-            touchedCaseIds.push(c.id)
-            return
+            return 'scrubbed'
           } catch (e) {
             if (e.code !== 'conflict') throw e
             // Bounded retry against the freshly re-read row, same pattern as
@@ -1121,51 +1121,208 @@ export class CaseStore {
             // documented "every case scrubbed" action after only some cases
             // were touched, surfacing an opaque 400 with touchedCaseIds
             // discarded, so every OTHER case must still get scrubbed.
-            if (attempt === ERASE_RETRY_LIMIT) { failedCaseIds.push(c.id); return }
+            if (attempt === ERASE_RETRY_LIMIT) return 'conflict'
             const fresh = await this.getCase(c.id)
-            if (!fresh) return
+            if (!fresh) return 'gone'
             c = fresh
           }
         }
+      return 'conflict'
+    })
+  }
+
+  // ---- erasure journal: crash recovery for a multi-step, irreversible action --
+  //
+  // eraseContact is NOT ATOMIC and cannot be made so from here: thatcher exposes
+  // create/update/delete/list/get and no transaction, and two of the steps
+  // (redacting the provenance raw log, removing the freddie session transcripts)
+  // are filesystem writes outside the database entirely. So the honest mechanism
+  // is not a transaction but a durable PLAN written before the first mutation and
+  // a matching DONE marker written after the last one.
+  //
+  // The plan is what makes the crash RECOVERABLE rather than merely detectable,
+  // and one crash window is the reason it has to exist at all: the primary
+  // contact row is scrubbed FIRST, and _siblingContactIds matches other rows for
+  // the same person on the DIGITS of external_id. A crash after that scrub and
+  // before the sibling loop finishes destroys the only key by which the siblings
+  // could ever be found again -- a re-run reads '[erased]', sees fewer than seven
+  // digits, and returns an empty sibling list forever. The plan records the
+  // sibling ids (computed before any write), so a re-run recovers them from the
+  // journal instead of from a key that no longer exists.
+  async _erasureJournalCaseId() { return this._systemSingletonCaseId('erasure-journal', 'erasure-journal') }
+
+  async _recordErasureJournal(tag, payload) {
+    try {
+      const id = await this._erasureJournalCaseId()
+      await this.appendEvent(id, {
+        kind: 'observation', actor: 'system',
+        text: `${tag}:${JSON.stringify(payload)}`,
+        data: { erasure_journal: tag, contact_id: payload?.contactId || '' },
       })
+      return true
+    } catch (e) {
+      // Loud, never fatal. A journal that cannot be written means a later crash
+      // would be unrecoverable, which the operator has to know BEFORE the
+      // irreversible part runs -- but refusing the erasure outright would block
+      // a compliance obligation on a bookkeeping failure.
+      this.log?.error?.('[casey] erasure journal write failed -- a crash during this erasure will not be recoverable', { tag, error: e.message })
+      return false
     }
-    // ADDITIVE: also redact the PII-bearing fields (photos/audio) from the
-    // provenance subsystem's Tier 1 raw log (src/core/raw-log.js), which is
-    // structurally append-only and was NOT touched by the thatcher-side scrub
-    // above -- see src/core/write-path.js redactSubjectFields for why this is
-    // a correction-append, not a delete. Best-effort per case: a redaction
-    // failure never blocks or reverts the real erasure above, which already
-    // succeeded; only photos/audio are provenance-pack-declared fields (see
-    // src/packs/animal-health.js) among PII_REPORT_FIELDS, so those are the
-    // only two ever passed through here.
-    const PROVENANCE_PII_FIELDS = PII_REPORT_FIELDS.filter(f => f === 'photos' || f === 'audio')
-    if (PROVENANCE_PII_FIELDS.length && touchedCaseIds.length) {
+  }
+
+  // Every erasure plan with no matching completion: an erasure that started and
+  // did not finish. Each row names exactly what was in flight, so the recovery is
+  // `casey erase-contact <contact_id> --yes` and nothing has to be guessed.
+  async findIncompleteErasures() {
+    let id
+    try { id = await this._erasureJournalCaseId() } catch { return [] }
+    const events = await this.listEvents(id).catch(() => [])
+    const plans = new Map()
+    for (const { payload } of taggedObservations(events, 'erasure-plan')) {
+      try { const p = JSON.parse(payload); if (p?.runId) plans.set(p.runId, p) } catch { continue }
+    }
+    for (const { payload } of taggedObservations(events, 'erasure-done')) {
       try {
-        const { RawLog } = await import('./core/raw-log.js')
-        const { redactSubjectFields } = await import('./core/write-path.js')
-        const rawLog = new RawLog({ dataDir: this.dataDir })
-        for (const caseId of touchedCaseIds) {
-          try {
-            await redactSubjectFields(rawLog, {
-              subjectId: caseId, fields: PROVENANCE_PII_FIELDS,
-              redactedBy: operator?.id || 'system', reason: reason || 'erasure',
-            })
-          } catch { /* best-effort per case -- the real thatcher scrub already succeeded */ }
-        }
-      } catch { /* best-effort -- the provenance ledger is additive, never load-bearing for the real erasure */ }
+        const p = JSON.parse(payload)
+        if (p?.runId) plans.delete(p.runId)
+        // A re-run that RECOVERED an earlier interrupted plan closes that plan
+        // too, not only its own. Without this the crashed run's marker would
+        // stand open forever and --check would keep reporting an erasure that
+        // has in fact been completed -- a detector that cries wolf is a
+        // detector an operator learns to ignore.
+        for (const closed of (p?.closes || [])) plans.delete(closed)
+      } catch { continue }
     }
+    return [...plans.values()]
+  }
+
+  // The retention path's per-case entry point (src/retention.js's `erase`
+  // action): the same scrub eraseContact applies, on one case, with the same
+  // provenance-ledger redaction appended. It deliberately does NOT touch the
+  // contact row -- retention expires a CASE by age; the person may still have
+  // other, live cases, and scrubbing their contact row would silently perform a
+  // right-to-erasure nobody asked for.
+  async retentionEraseCase(caseId, { reason = '', operator = 'system' } = {}) {
+    const c = await this.getCase(caseId)
+    if (!c) return { ok: false, outcome: 'gone' }
+    const outcome = await this._erasePiiOnCase(c, { reason, operator: { id: operator } })
+    if (outcome === 'scrubbed') await this._redactProvenanceFor([caseId], { operator, reason })
+    return { ok: outcome === 'scrubbed' || outcome === 'nothing-to-do', outcome }
+  }
+
+  // ADDITIVE: also redact the PII-bearing fields (photos/audio) from the
+  // provenance subsystem's Tier 1 raw log (src/core/raw-log.js), which is
+  // structurally append-only and is NOT touched by the thatcher-side scrub
+  // -- see src/core/write-path.js redactSubjectFields for why this is
+  // a correction-append, not a delete. Best-effort per case: a redaction
+  // failure never blocks or reverts the real erasure, which already
+  // succeeded; only photos/audio are provenance-pack-declared fields (see
+  // src/packs/animal-health.js) among PII_REPORT_FIELDS, so those are the
+  // only two ever passed through here.
+  async _redactProvenanceFor(caseIds, { operator = SYSTEM_USER, reason = '' } = {}) {
+    const PROVENANCE_PII_FIELDS = CaseStore.PII_REPORT_FIELDS.filter(f => f === 'photos' || f === 'audio')
+    if (!PROVENANCE_PII_FIELDS.length || !caseIds.length) return
+    try {
+      const { RawLog } = await import('./core/raw-log.js')
+      const { redactSubjectFields } = await import('./core/write-path.js')
+      const rawLog = new RawLog({ dataDir: this.dataDir })
+      for (const caseId of caseIds) {
+        try {
+          await redactSubjectFields(rawLog, {
+            subjectId: caseId, fields: PROVENANCE_PII_FIELDS,
+            redactedBy: operator?.id || operator || 'system', reason: reason || 'erasure',
+          })
+        } catch { /* best-effort per case -- the real thatcher scrub already succeeded */ }
+      }
+    } catch { /* best-effort -- the provenance ledger is additive, never load-bearing for the real erasure */ }
+  }
+
+  async eraseContact(contactId, { reason = '', operator = SYSTEM_USER } = {}) {
+    const contact = await this.getContact(contactId)
+    if (!contact) throw new Error(`eraseContact: no such contact ${contactId}`)
+    const PII_CONTACT_FIELDS = CaseStore.PII_CONTACT_FIELDS
+    const alreadyErased = contact.external_id === '[erased]'
+
+    // EVERYTHING THAT HAS TO BE DERIVED FROM THE LIVE KEY IS DERIVED FIRST, and
+    // written down, BEFORE the first mutation. The primary contact scrub below
+    // destroys the digits _siblingContactIds matches on, so deriving the sibling
+    // list afterwards would work only for a run that never crashes. See
+    // _recordErasureJournal for the full argument.
+    let siblingIds = await this._siblingContactIds(contact)
+    let cases = await this.listCases({ contact_id: contactId }, { limit: 10000 })
+    const recoveredRunIds = []
+    if (alreadyErased) {
+      // Re-running against an already-scrubbed contact: the key is gone, so the
+      // sibling scan above can only return []. Recover the real list from the
+      // journal, which is the whole reason it is written. Case ids are unioned
+      // rather than replaced -- a case created since the interrupted run is
+      // still this contact's and still has to be scrubbed.
+      const plans = await this.findIncompleteErasures().catch(() => [])
+      const mine = plans.filter(p => p.contactId === contactId)
+      if (mine.length) {
+        const sib = new Set(siblingIds)
+        const cid = new Set(cases.map(c => c.id))
+        for (const p of mine) {
+          for (const s of (p.siblingIds || [])) sib.add(s)
+          for (const c of (p.caseIds || [])) cid.add(c)
+          recoveredRunIds.push(p.runId)
+        }
+        siblingIds = [...sib]
+        const recovered = []
+        for (const id of cid) { const c = await this.getCase(id).catch(() => null); if (c) recovered.push(c) }
+        cases = recovered
+      }
+    }
+
+    const runId = `${contactId}-${Date.now()}`
+    const journalled = await this._recordErasureJournal('erasure-plan', {
+      runId, contactId, siblingIds, caseIds: cases.map(c => c.id),
+      by: operator?.id || 'system', reason, ts: Date.now(),
+    })
+
+    if (!alreadyErased) {
+      await this.t.update('contact', contactId, PII_CONTACT_FIELDS, SYSTEM_USER)
+    }
+    // Every other row for the same number, erased with the same field set. The
+    // ids are returned so the caller can say how many people-records this
+    // actually touched rather than implying it was one.
+    for (const sid of siblingIds) {
+      try { await this.t.update('contact', sid, PII_CONTACT_FIELDS, SYSTEM_USER) } catch { /* per-row best effort */ }
+    }
+    const touchedCaseIds = []
+    const failedCaseIds = []
+    for (const c0 of cases) {
+      const outcome = await this._erasePiiOnCase(c0, { reason, operator })
+      if (outcome === 'scrubbed') touchedCaseIds.push(c0.id)
+      else if (outcome === 'conflict') failedCaseIds.push(c0.id)
+    }
+    await this._redactProvenanceFor(touchedCaseIds, { operator, reason })
     // The stored CONVERSATIONS, which live outside data/ entirely and which no
     // erasure reached until now -- see store/agent-sessions.js for what they
     // are and why deleting them is correct here and nowhere else. Synchronous
     // and best-effort: the thatcher-side erasure above has already succeeded,
     // so a filesystem failure must be reported, never allowed to undo it.
-    const sessions = eraseCaseSessions(touchedCaseIds, { log: this.log || console })
+    // Driven off the full case list, not only the freshly-scrubbed ones: a case
+    // whose row was already scrubbed by an interrupted earlier run still has its
+    // transcript on disk, and that is precisely the residue a re-run must clear.
+    const sessions = eraseCaseSessions(cases.map(c => c.id), { log: this.log || console })
+    // The DONE marker closes the plan. Nothing else clears it, so a crash
+    // anywhere above leaves the plan standing and findIncompleteErasures reports
+    // it with the full sibling/case list intact.
+    await this._recordErasureJournal('erasure-done', {
+      runId, contactId, closes: recoveredRunIds,
+      casesScrubbed: touchedCaseIds.length, casesFailed: failedCaseIds.length,
+      sessionsErased: sessions.removed.length, sessionsFailed: sessions.failed.length, ts: Date.now(),
+    })
     return {
       contactId, contactErased: !alreadyErased, alsoErasedContactIds: siblingIds,
       casesScrubbed: touchedCaseIds, casesFailed: failedCaseIds,
       // Named so a caller can tell an operator that a conversation could not be
       // removed. A compliance action that half-succeeded must say so.
       sessionsErased: sessions.removed.length, sessionsFailed: sessions.failed,
+      // False means a crash during this run would NOT have been recoverable --
+      // the caller surfaces it rather than letting the erasure look routine.
+      journalled,
     }
   }
 

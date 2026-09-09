@@ -49,6 +49,44 @@ ACPTOAPI_CHAIN_LINK_TIMEOUT_MS=30000
 # public report form's rate limiter sees every reporter as one address:
 #CASEY_TRUST_PROXY_HOPS=1
 
+# Basemap tiles. By default the dashboard serves them from its OWN origin off a
+# bounded on-disk cache, and only fetches a square it has never seen. That is
+# on by default for two reasons: the bytes (a cold map is ~281 KB of tiles,
+# again on every pan) and, more importantly, because a tile request tells the
+# tile server which map square this deployment is looking at and when.
+# Set to 0 to send browsers straight to the upstream instead.
+#CASEY_TILE_PROXY=1
+# The upstream tile template. Point it at your OWN renderer to stop disclosing
+# anything at all; any {z}/{x}/{y} URL works.
+#CASEY_TILE_URL=https://tile.openstreetmap.org/{z}/{x}/{y}.png
+# Cache ceiling in bytes, LRU-evicted. Default 268435456 (256 MB), which is
+# about ten times a typical deployment's whole working set of map squares --
+# eviction stays the exception, because a cache that thrashes re-fetches the
+# same squares and OSM's usage policy asks for the opposite.
+#CASEY_TILE_CACHE_MAX_BYTES=268435456
+# Sent upstream on every tile fetch. OSM's usage policy REQUIRES a string that
+# names this deployment and is contactable, and blocks traffic that uses a
+# library default. Defaults to the brand name plus CASEY_PUBLIC_URL; set this
+# to a real contact URL or address if you run at any volume.
+#CASEY_TILE_USER_AGENT=
+
+# Data retention -- OFF unless you set a number of days here. Unset, casey keeps
+# every case forever, nothing expires, and \`casey retention\` reads nothing. This
+# is a deployment policy decision (how long may identifiable report data be
+# kept?) and casey deliberately ships no default for it.
+# The window is measured from a CLOSED case's LAST ACTIVITY. An open case, one
+# carrying an unresolved health guardrail breach, one tagged needs-human or
+# draft-pending, and one whose timestamps cannot be read are never expired at
+# any age. \`casey retention\` with no --yes reports what this would do and
+# changes nothing.
+#CASEY_RETENTION_DAYS=365
+# archive (default) exports the whole case to a JSON file and takes it out of the
+# live read paths, destroying nothing. erase additionally scrubs the identifying
+# fields and removes the stored conversation. Neither frees bytes in db.sqlite.
+#CASEY_RETENTION_ACTION=archive
+# Where archived cases are written. Default <data dir>/archive.
+#CASEY_RETENTION_ARCHIVE_DIR=
+
 # Development overrides:
 #CASEY_LOG=silent    # suppress structured JSON logs
 `
@@ -286,9 +324,33 @@ export async function cmdDoctor({ flags }) {
   // say out loud that nobody is being told. It stays a warning rather than a
   // problem because a deployment whose team genuinely watches the dashboard is
   // a real, working choice -- it just has to be a choice.
+  // With no webhook, alerts are no longer silent: src/alert-log.js is the
+  // no-URL delivery path, and this row says where to point a watcher at it.
+  // It stays a warning rather than green, because a file on the box only
+  // reaches a human who (or whose cron/systemd unit) is actually reading it --
+  // a webhook is still the one channel that goes to a person unprompted.
+  const alertLogFile = path.join(process.cwd(), 'data', 'alerts', 'alerts.jsonl')
   console.log(alertHook
     ? ok(`breach alerts on${process.env.CASEY_ALERT_WEBHOOK ? ' CASEY_ALERT_WEBHOOK' : ' CASEY_HANDOFF_WEBHOOK (fallback)'}`)
-    : warn('no alert webhook - nothing pages anyone. Breaches, a deaf channel and a dead provider all surface only to someone already looking at the dashboard. Set CASEY_ALERT_WEBHOOK to push them somewhere a person will see.'))
+    : warn(`no alert webhook - alerts fall back to the local alert log at ${alertLogFile} (and stderr). A deaf channel, a dead provider with messages queuing, and a stopped guardrail sweep are written there once per rising edge; read them with ${cyan('casey alerts')} (exits 1 while anything is standing, so cron/systemd can page on it). Set CASEY_ALERT_WEBHOOK to push them somewhere a person will see without watching a file.`))
+  // What the fallback has actually recorded, if anything. A doctor that names
+  // the file but never says whether something is standing in it leaves the
+  // operator one command short of the answer they came for.
+  if (!alertHook && existsSync(alertLogFile)) {
+    try {
+      const { AlertLog, AlertGate } = await import('../src/alert-log.js')
+      const dataDir0 = path.join(process.cwd(), 'data')
+      const st = new AlertLog({ dataDir: dataDir0, stderr: false }).stats()
+      const standing = new AlertGate({ dataDir: dataDir0 }).snapshot()
+      if (standing.length) {
+        console.log(bad(`${standing.length} system alert(s) standing right now: ${standing.map(s => s.condition).join(', ')} - run ${cyan('casey alerts')}`))
+        problems++
+      } else console.log(ok('alert log: nothing standing'))
+      console.log(dim(`  alert log: ${st.archive_count} archive(s), ${Math.round(st.total_bytes / 1024)} KB of a ${Math.round(st.ceiling_bytes / 1024 / 1024)} MB ceiling`))
+    } catch (e) {
+      console.log(warn(`alert log could not be read (${e.message})`))
+    }
+  }
   // data dir -- where the live case store lives (cwd-bound). The actual
   // filename is db.sqlite, not app.db: thatcher's own databasePath option
   // only ever contributes its DIRECTORY to busybase (databasePathToDir()

@@ -20,7 +20,9 @@
 //   casey-setup.js          init, doctor
 //   casey-serve.js          up, dashboard
 //   casey-store-commands.js cases, show, attention, handover, report, health,
-//                           sweep, transition, erase-contact, operators
+//                           sweep, transition, erase-contact, retention,
+//                           backup, restore, operators
+//   casey-alerts-command.js alerts (opens NO store on purpose -- see its header)
 //   send-reply.js           the outbound delivery seam shared with bin/worker.js
 import { HELP, USAGE, parseFlags, pkgVersion, red, say, cyan, dim } from './casey-cli-ui.js'
 import { cmdInit, cmdDoctor } from './casey-setup.js'
@@ -28,7 +30,9 @@ import { cmdUp, cmdDashboard } from './casey-serve.js'
 import {
   cmdCases, cmdShow, cmdAttention, cmdHandover, cmdReport, cmdHealth,
   cmdSweep, cmdTransition, cmdEraseContact, cmdOperators,
+  cmdRetention, cmdBackup, cmdRestore,
 } from './casey-store-commands.js'
+import { cmdAlerts } from './casey-alerts-command.js'
 
 let [, , cmd, ...rest] = process.argv
 // allow `casey --version` / `casey -v` / `casey --help` with no subcommand
@@ -66,9 +70,13 @@ const COMMANDS = {
   handover: cmdHandover,
   report: cmdReport,
   health: cmdHealth,
+  alerts: cmdAlerts,
   sweep: cmdSweep,
   transition: cmdTransition,
   'erase-contact': cmdEraseContact,
+  retention: cmdRetention,
+  backup: cmdBackup,
+  restore: cmdRestore,
   operators: cmdOperators,
 }
 
