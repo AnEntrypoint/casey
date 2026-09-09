@@ -543,12 +543,20 @@ this file mandates, made repeatable, and it skips loudly with exit 0 when no
 chromium binary exists. Every assertion in it is a regression that actually
 shipped at least once, so add to it rather than replacing it.
 
-`src/supervisor-reload-watch.js` builds the hot-reload watch list. The default
-extra path is the sibling `../freddie/src` (outside the repo,
-existence-guarded, skipped with a warning when absent), NOT `deps/freddie` --
-editing `deps/freddie` does not trigger a hot reload by default. To hot-reload
-edits inside the `deps/freddie` submodule, add its path explicitly via
-`CASEY_RELOAD_PATHS=./deps/freddie/src`. Freddie's own
+`src/supervisor-reload-watch.js` builds the hot-reload watch list. It tries
+three candidate freddie source roots in order -- `<caseyRoot>/deps/freddie/
+packages` (the submodule, and the same root `scripts/link-deps.mjs` walks), the
+sibling `../freddie/packages`, then the legacy sibling `../freddie/src` -- and
+watches the first that exists.
+**This paragraph used to say the default was the sibling `../freddie/src` and
+that editing `deps/freddie` would NOT reload.** Both halves were wrong, and the
+truth was worse than either: freddie's current Cordis workspace has no root
+`src/` at all -- it is ~54 package groups under `packages/<group>/<name>/src` --
+so `../freddie/src` existed in NO layout and freddie hot-reload was dead
+everywhere, announced only by a `reload path missing, skipping` line at boot.
+An operator following the old advice and setting
+`CASEY_RELOAD_PATHS=./deps/freddie/src` named a directory that has never
+existed, and still got no reload. Freddie's own
 `@freddie/cordis-plugin-hmr` row exists inside its Cordis tree but casey does
 not enable it, so editing freddie's own source still requires a full `casey up`
 restart.
@@ -632,7 +640,7 @@ from the name alone.
 | `CASEY_RATE_LIMIT_MSGS`/`WINDOW_MS`, `CASEY_GLOBAL_RATE_LIMIT_MSGS`/`WINDOW_MS` | An over-cap message is dropped silently AS FAR AS THE CONTACT IS CONCERNED -- no reply, no synthetic "slow down" text, matching the no-fallback-text discipline -- but it is no longer silent to the operator: `hooks/dropped-intake.js` counts it and `/api/health` reports it (see "Inbound messages that never become records" below). Per-contact and aggregate-across-all-contacts limits are independent. |
 | `CASEY_RECEIVE_SILENCE_MS` | Restarts a channel that went silent this long (zombie-receive self-heal); default 0 = off. |
 | `CASEY_COOKIE_SECURE=0` | Drops the `Secure` flag on the session cookie for a plain-HTTP dev/LAN deployment (Secure is on by default). |
-| `CASEY_RELOAD`, `CASEY_RELOAD_PATHS` | `CASEY_RELOAD=0` disables hot reload (crash-restart stays on). `CASEY_RELOAD_PATHS` is a comma-separated list of extra dirs, deduped against the default `src/` + `../freddie/src`. |
+| `CASEY_RELOAD`, `CASEY_RELOAD_PATHS` | `CASEY_RELOAD=0` disables hot reload (crash-restart stays on). `CASEY_RELOAD_PATHS` is a comma-separated list of extra dirs, deduped against the defaults: casey's own `src/` plus the first freddie source root that exists (`deps/freddie/packages`, else the sibling `../freddie/packages`, else the legacy `../freddie/src`). A named dir that does not exist is skipped with a warning saying edits under it will not reload -- nothing else says so. |
 | `CASEY_TURN_HARD_DEADLINE_MS`, `CASEY_TURN_SOFT_DEADLINE_MS` | The hard deadline bounds total retry budget for a live first-attempt turn only (never a background resume); the soft deadline only picks which of two fallback strings to send once the hard deadline closes out a degraded turn. Pace these together with `ACPTOAPI_AUTO_CHAIN_CAP`/`ACPTOAPI_CHAIN_LINK_TIMEOUT_MS` below. |
 | `ACPTOAPI_AUTO_CHAIN_CAP` | acptoapi's own (`lib/auto-chain.js`). Caps candidate models per `auto` chain build. Too high risks not finishing the walk inside the turn deadline; too low risks exhausting the pool on backed-off providers before reaching a healthy one. |
 | `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS`, `ACPTOAPI_READINESS_PROBE_TIMEOUT_MS`, `ACPTOAPI_EXTRA_PROBE_TIMEOUT_MS`, `ACPTOAPI_REACHABILITY_PROBE_TIMEOUT_MS` | Four independent timeouts across acptoapi and casey's own bridge (chat-completion link, readiness pass, discovery-time probe, and `src/agent/acptoapi-bridge.js`'s reachability check). All four must agree on an outer bound, or a genuinely slow-but-working model gets marked unhealthy at an earlier, tighter layer before its own longer budget ever gets a chance. |

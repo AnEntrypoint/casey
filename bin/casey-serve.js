@@ -104,10 +104,15 @@ async function startAutoUpdate() {
 }
 
 // Supervised path (default): a parent supervisor forks the serving worker
-// (bin/worker.js = gateway + dashboard + store), watches src/ for changes, and
+// (bin/worker.js = gateway + dashboard + store), watches casey's own src/ plus
+// freddie's source root (src/supervisor-reload-watch.js owns that list), and
 // drain-respawns the worker on a source change (live reload) or a crash. The
-// worker reopens the same cwd-bound app.db every time, so the case store
-// survives every restart -- this is the "never manually restart again" path.
+// worker reopens the same cwd-bound store every time -- the real file is
+// <cwd>/data/db.sqlite, never app.db: thatcher's databasePath option contributes
+// only its DIRECTORY (databasePathToDir() strips the filename) and busybase
+// hardcodes db.sqlite as the file it opens, so app.db is never created at all.
+// The store therefore survives every restart -- this is the "never manually
+// restart again" path.
 async function upSupervised(flags, channels, skipped) {
   const { createSupervisor } = await import('../src/supervisor.js')
   const dashPort = Number(flags.port || 4000)
@@ -120,7 +125,7 @@ async function upSupervised(flags, channels, skipped) {
   console.log(`  dashboard: ${cyan(`http://localhost:${dashPort}`)} ${dim('(login required)')}`)
   console.log(`  data: ${dim(path.join(process.cwd(), 'data'))}`)
   console.log(reload
-    ? `  live reload: ${green('on')}${dim('   (edits to src/ restart the worker automatically; same store, no data lost)')}`
+    ? `  live reload: ${green('on')}${dim('   (edits to the source dirs listed below restart the worker automatically; same store, no data lost)')}`
     : `  live reload: ${yellow('off')}${dim('   (--no-reload: restart manually to pick up code changes)')}`)
   console.log(dim('  press ctrl-c to stop'))
   await sup.start()
