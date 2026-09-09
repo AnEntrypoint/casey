@@ -15,6 +15,7 @@ import { fmtTimeSAST, fmtPhone27, isOpenCase } from '../src/format.js'
 import { rankAttention } from '../src/attn.js'
 import { parseReport, tsMs } from '../src/timestamp.js'
 import { randomBytes } from 'node:crypto'
+import path from 'node:path'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
 // Every command here opens its own store first; this is that one line, named.
@@ -335,8 +336,32 @@ async function resolveContact(store, needle) {
   return null
 }
 
+// `casey erase-contact --check` with no contact: the standing detector for an
+// erasure that started and did not finish. eraseContact is a multi-step,
+// partly-filesystem, irreversible action with no transaction available to it
+// (see case-store.js's erasure-journal comment), so what makes a mid-run crash
+// survivable is the durable plan it writes before the first mutation. This is
+// the only thing that reads those plans back to a human.
+async function reportIncompleteErasures(store) {
+  const open = await store.findIncompleteErasures()
+  if (!open.length) {
+    console.log(green('no interrupted erasures.'))
+    console.log(dim('  every erasure that started has a matching completion in the journal.'))
+    await closeAndExit(store, 0)
+  }
+  say(bad(`${open.length} erasure${open.length === 1 ? '' : 's'} started and never completed.`))
+  for (const p of open) {
+    console.log(`${bold(p.contactId)}\tstarted ${fmtTimeSAST(Math.floor((p.ts || 0) / 1000)) || '(no time)'}\tby ${p.by || 'system'}`)
+    console.log(dim(`  ${(p.caseIds || []).length} case(s), ${(p.siblingIds || []).length} other contact row(s) for the same person`))
+    console.log(dim('  re-run it (erasure is idempotent, and the plan above is what a re-run recovers the sibling rows from):'))
+    console.log(dim('    ') + cyan(`casey erase-contact ${p.contactId} --yes --reason "completing an interrupted erasure"`))
+  }
+  await closeAndExit(store, 1)
+}
+
 export async function cmdEraseContact({ flags, rest }) {
   const store = await openStore()
+  if (flags.check) return reportIncompleteErasures(store)
   const id = rest.find(a => !a.startsWith('--'))
   if (!id) {
     say('usage: casey erase-contact <contact-id|external-id|case-ref> --yes [--reason "..."]')
@@ -373,8 +398,181 @@ export async function cmdEraseContact({ flags, rest }) {
     const refs = []
     for (const cid of result.casesScrubbed) refs.push((await store.getCase(cid).catch(() => null))?.ref || cid)
     console.log(`cases scrubbed: ${refs.length}` + (refs.length ? '  ' + dim(refs.join(', ')) : ''))
+    if (result.casesFailed?.length) say(bad(`${result.casesFailed.length} case(s) could not be scrubbed -- re-run this command, it is idempotent.`))
+    if (result.sessionsFailed?.length) say(bad(`${result.sessionsFailed.length} stored conversation(s) could not be removed -- contact content remains on disk at: ${result.sessionsFailed.join(', ')}`))
+    // The journal is what makes a crash mid-erasure recoverable. If it could not
+    // be written, this run had no safety net and the operator has to know.
+    if (result.journalled === false) say(bad('the erasure journal could not be written -- had this run been interrupted, the other contact rows for this person would not have been recoverable. Re-run it once the store is healthy.'))
     await closeAndExit(store, 0)
   } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
+}
+
+// ---- retention -------------------------------------------------------------
+//
+// DRY RUN IS THE VERB. `casey retention` with no flags reports what a configured
+// policy WOULD do and changes nothing; `--yes` is what executes. That split is
+// not politeness -- this deployment's reports dispatch vehicles, so archiving a
+// case an operator still needed costs a field visit that never happens, and the
+// default has to be the harmless one.
+//
+// With no policy configured this command prints how to configure one and exits
+// 0 without opening any write path. See src/retention.js for why "off" is the
+// absence of a policy rather than a flag, and why nothing here is on a timer.
+function retentionPolicyFromFlags(flags) {
+  const overrides = {}
+  if (flags.days !== undefined && flags.days !== true) overrides.days = flags.days
+  if (flags.action !== undefined && flags.action !== true) overrides.action = flags.action
+  if (flags.out !== undefined && flags.out !== true) overrides.archiveDir = flags.out
+  return overrides
+}
+
+export async function cmdRetention({ flags }) {
+  const { resolveRetentionPolicy, planRetention, executeRetention, resolveArchiveRoot, KEEP_REASONS, RETENTION_ACTIONS } = await import('../src/retention.js')
+  let policy
+  try { policy = resolveRetentionPolicy(process.env, retentionPolicyFromFlags(flags)) }
+  catch (e) { say(bad(e.message)); process.exit(1) }
+
+  if (!policy) {
+    // Deliberately BEFORE any store is opened: with no policy this command
+    // touches nothing at all.
+    if (flags.json) { console.log(JSON.stringify({ policy: null, configured: false, eligible: [], kept: [] }, null, 2)); return }
+    console.log(bold('casey retention') + dim('  (no retention policy configured -- nothing expires, nothing was read)'))
+    console.log('Retention is off. Cases are kept forever until a policy says otherwise.')
+    console.log(dim('\n  to see what a policy WOULD do, without changing anything:'))
+    console.log(dim('    ') + cyan('casey retention --days 365'))
+    console.log(dim('  to make it the deployment default, set this in .env:'))
+    console.log(dim('    ') + cyan('CASEY_RETENTION_DAYS=365') + dim('   how long a CLOSED case is kept after its last activity'))
+    console.log(dim('    ') + cyan(`CASEY_RETENTION_ACTION=${RETENTION_ACTIONS[0]}`) + dim(`  one of: ${RETENTION_ACTIONS.join(', ')} (archive is the default and destroys nothing)`))
+    return
+  }
+
+  const store = await openStore()
+  const now = Date.now()
+  const plan = await planRetention(store, now, policy)
+  const archiveRoot = resolveArchiveRoot(store, policy)
+
+  if (!flags.yes) {
+    if (flags.json) {
+      console.log(JSON.stringify({ dry_run: true, policy, archive_root: archiveRoot, scanned: plan.scanned, eligible: plan.eligible, kept: plan.kept }, null, 2))
+      await closeAndExit(store, 0)
+    }
+    console.log(bold('casey retention') + dim(`  DRY RUN -- nothing was changed`))
+    console.log(`policy: cases with no activity for ${bold(policy.days + ' days')}, action ${bold(policy.action)}`)
+    console.log(dim(`archive would be written to ${archiveRoot}`))
+    console.log(`\nscanned ${plan.scanned} case(s): ${bold(String(plan.eligible.length))} would be ${policy.action}d, ${plan.kept.length} kept.\n`)
+    if (plan.eligible.length) {
+      console.log(bold(`would ${policy.action} (${plan.eligible.length})`))
+      for (const c of plan.eligible) console.log(`  ${bold(c.ref)}\t[${c.status}]\t${c.channel}\t${dim(c.detail)}`)
+    }
+    // The kept list is grouped by reason rather than listed flat: an operator
+    // reading a dry-run needs "why is nothing expiring" answered in one glance,
+    // and 400 identical lines does not answer it.
+    const byReason = new Map()
+    for (const c of plan.kept) {
+      if (!byReason.has(c.reason)) byReason.set(c.reason, [])
+      byReason.get(c.reason).push(c.ref)
+    }
+    if (byReason.size) {
+      console.log(bold(`\nkept (${plan.kept.length})`))
+      for (const [reason, refs] of [...byReason.entries()].sort((a, b) => b[1].length - a[1].length)) {
+        console.log(`  ${refs.length}\t${reason}\t${dim(KEEP_REASONS[reason] || reason)}`)
+        console.log(dim(`    ${refs.slice(0, 8).join(', ')}${refs.length > 8 ? `, and ${refs.length - 8} more` : ''}`))
+      }
+    }
+    console.log(dim(`\n  nothing above has happened. Run it for real with `) + cyan('casey retention --yes') + dim('.'))
+    await closeAndExit(store, 0)
+  }
+
+  if (!plan.eligible.length) {
+    console.log(green('nothing has aged past the retention window. Nothing was changed.'))
+    await closeAndExit(store, 0)
+  }
+  const result = await executeRetention(store, plan, { operator: 'cli-operator', log: console })
+  if (flags.json) {
+    console.log(JSON.stringify({ dry_run: false, ...result.manifest }, null, 2))
+    await closeAndExit(store, result.failed.length ? 1 : 0)
+  }
+  console.log(bold('casey retention') + dim(`  (action: ${policy.action})`))
+  console.log(`archive written to ${cyan(result.archiveDir)}`)
+  for (const a of result.archived) console.log(green(`  ${a.ref}`) + dim(`  ${a.events} event(s), ${a.bytes} bytes -> ${a.file.split('/').pop()}`))
+  console.log(`\n${result.archived.length} ${policy.action}d, ${plan.kept.length} kept, ${result.failed.length} failed.`)
+  if (policy.action === 'erase') console.log(dim(`stored conversations removed: ${result.sessionsRemoved}`) + (result.sessionsFailed.length ? red(`  could not remove: ${result.sessionsFailed.length}`) : ''))
+  for (const f of result.failed) say(bad(`${f.ref}: ${f.error}`))
+  console.log(dim('\n  thatcher soft-deletes any row carrying a status column, so these cases have left every'))
+  console.log(dim('  read path but their bytes remain in data/db.sqlite until it is vacuumed. The archive'))
+  console.log(dim('  directory above holds the only complete copy of each one -- back it up or move it off-host.'))
+  await closeAndExit(store, result.failed.length ? 1 : 0)
+}
+
+// ---- backup / restore ------------------------------------------------------
+
+export async function cmdBackup({ flags }) {
+  const { runBackup } = await import('../src/backup.js')
+  const store = await openStore()
+  const dataDir = store.dataDir
+  // Close the store before snapshotting. VACUUM INTO is safe against a live
+  // writer, but the fallback file copy is not, and this command holds the only
+  // handle it can do anything about.
+  await store.close()
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const out = typeof flags.out === 'string' ? flags.out : `backups/casey-${stamp}`
+  let result
+  try { result = await runBackup({ dataDir, outDir: out }) }
+  catch (e) { say(bad(e.message)); process.exit(1) }
+  if (flags.json) { console.log(JSON.stringify(result.manifest, null, 2)); process.exit(result.failed.length ? 1 : 0) }
+  console.log(bold('casey backup') + dim(`  ${result.dir}`))
+  for (const s of result.stores) {
+    const mark = s.status === 'ok' ? green('[ok]') : s.status === 'missing' ? dim('[none]') : red('[x]')
+    // A store that copied fine but held nothing prints "empty" rather than a
+    // blank column: [ok] with nothing beside it reads as "size unknown", and an
+    // operator checking a backup needs to be able to tell an empty store from an
+    // unmeasured one.
+    const size = s.bytes ? dim(`${s.bytes} bytes${s.files ? `, ${s.files} file(s)` : ''}`) : dim(s.status === 'ok' ? 'empty' : '')
+    console.log(`  ${mark} ${bold(s.name)}\t${size}`)
+    if (s.note) console.log(dim(`      ${s.note}`))
+  }
+  console.log(bold('\nnot included, on purpose:'))
+  for (const n of result.manifest.not_included) console.log(dim(`  ${n.name} -- ${n.why}`))
+  if (result.failed.length) {
+    // A backup that quietly missed a store is worse than no backup, so a
+    // failure is loud AND non-zero rather than a line in the middle of a
+    // success report.
+    say('')
+    say(bad(`${result.failed.length} store(s) could NOT be copied -- this backup is INCOMPLETE and must not be relied on.`))
+    for (const f of result.failed) say(bad(`  ${f.name}: ${f.note}`))
+    process.exit(1)
+  }
+  console.log(green('\nbackup complete.') + dim(`  restore it with `) + cyan(`casey restore ${result.dir} --yes`))
+  process.exit(0)
+}
+
+export async function cmdRestore({ flags, rest }) {
+  const { runRestore } = await import('../src/backup.js')
+  const dir = rest.find(a => !a.startsWith('--'))
+  if (!dir) { say('usage: casey restore <backup-dir> --yes'); process.exit(1) }
+  // Resolved without opening the store: restore replaces the very directory the
+  // store would open, so it must not be holding a handle on it.
+  const dataDir = path.resolve(process.cwd(), 'data')
+  if (!flags.yes) {
+    say(bad(`this would replace ${dataDir} with the contents of ${dir}.`))
+    say(dim('  stop casey first -- restoring underneath a running worker leaves it holding a handle on a file that no longer exists.'))
+    say(dim('  the current data directory is MOVED aside rather than deleted, so this is itself recoverable.'))
+    say(dim('  re-run with --yes if that is what you want.'))
+    process.exit(1)
+  }
+  let result
+  try { result = await runRestore({ backupDir: dir, dataDir }) }
+  catch (e) { say(bad(e.message)); process.exit(1) }
+  console.log(bold('casey restore') + dim(`  from ${dir}`))
+  console.log(green(`  data directory restored to ${result.dataDir}`))
+  for (const aside of result.movedAside) console.log(dim(`  previous contents moved aside to ${aside}`))
+  console.log(`  stored conversations: ${result.sessions.status === 'ok' ? green('restored') : dim(result.sessions.status)} ${dim(result.sessions.note)}`)
+  if (result.manifest.complete === false) {
+    say(bad('  the backup manifest records that this backup was INCOMPLETE when it was taken -- one or more stores are missing from it.'))
+  }
+  console.log(bold('\nnot restored (never backed up, on purpose):'))
+  for (const n of result.manifest.not_included) console.log(dim(`  ${n.name} -- ${n.why}`))
+  process.exit(0)
 }
 
 // Break-glass account management: talks to the SAME dashboard/auth.js the
