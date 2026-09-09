@@ -69,7 +69,17 @@ const ROW_LABEL = {
 };
 function rowLabel(e) {
     const pair = e.kind + '/' + e.actor;
-    return ROW_LABEL[pair] || pair;
+    const label = ROW_LABEL[pair] || pair;
+    // An outbound row used to read "Replied automatically" whether or not the
+    // reply reached anyone. When the send fails, hooks/delivery.js marks the
+    // outbound event itself (data.delivered === false) rather than only writing
+    // a separate observation further down the list, because an operator
+    // scanning a conversation reads the reply, not the row below it. Say it on
+    // the reply.
+    if (e.kind === 'outbound' && e.data && e.data.delivered === false) {
+        return label + ' -- NOT DELIVERED';
+    }
+    return label;
 }
 
 function TimelineRow({ e, caseId, key } = {}) {
