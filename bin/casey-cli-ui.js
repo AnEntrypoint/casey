@@ -83,9 +83,15 @@ ${bold('usage:')}
   casey handover [--json] / handover start      shift digest: what to pick up; 'start' stamps a new shift
   casey report [--days N] [--json]              management briefing: SLA compliance, response + closure rates
   casey health [--json]                         read-only guardrail summary (no changes written)
+  casey alerts [--limit N] [--json] [--quiet]   system alerts that fired: what is standing, what cleared
+                                                 exits 1 while anything is standing, so cron can page on it
   casey sweep [--json]                          run the health-guardrail sweep once now (writes tags/observations)
   casey transition <ref|id> <stage> [--reason]  move a case to a stage (legality-checked)
-  casey erase-contact <contact|ref> --yes [--reason]  data retention: irreversibly scrub a contact's PII (POPIA/GDPR)
+  casey erase-contact <contact|ref> --yes [--reason]  right-to-erasure: irreversibly scrub one person's PII (POPIA/GDPR)
+  casey erase-contact --check                   list erasures that started and never finished
+  casey retention [--days N] [--yes] [--json]   age-based retention. OFF unless configured; DRY RUN unless --yes
+  casey backup [--out <dir>] [--json]           consistent copy of every store, including the ones outside data/
+  casey restore <backup-dir> --yes              put a backup back (stop casey first; the live data dir is moved aside)
   casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary]
                                                  create a dashboard login account (break-glass/scripted provisioning)
   casey operators list                          list dashboard login accounts (never prints password hashes)
@@ -156,6 +162,17 @@ export const USAGE = {
   health: `casey health [--json]
   Read-only guardrail summary: how many open cases are breaching, and which
   guardrails. Writes nothing -- use casey sweep to record the breaches.`,
+  alerts: `casey alerts [--limit N] [--json] [--quiet]
+  What casey has raised about ITSELF: a deaf channel, a dead provider with
+  messages queuing behind it, a guardrail sweep that has stopped running, plus
+  per-case breaches and team coverage gaps. Read off the local alert log
+  (data/alerts/alerts.jsonl), which is the delivery channel used when no
+  CASEY_ALERT_WEBHOOK / CASEY_HANDOFF_WEBHOOK is set -- with one of those set,
+  alerts go there instead and this log is not written.
+  Opens no database, so it still answers when the store itself is the problem.
+  --limit N shows the last N entries (default 20); --json emits the machine
+  shape; --quiet prints nothing and speaks only through its exit code.
+  Exit codes: 0 nothing standing, 1 something standing, 2 unreadable.`,
   sweep: `casey sweep [--json]
   Run the health-guardrail sweep once, now. This WRITES: it appends observation
   events and health:* tags for newly-entered breaches and clears cleared ones.`,
@@ -164,10 +181,48 @@ export const USAGE = {
   refused with the legal options if it is not allowed from where the case is.
   --reason is recorded on the timeline beside the change.`,
   'erase-contact': `casey erase-contact <contact-id|external-id|case-ref> --yes [--reason "..."]
-  IRREVERSIBLE. Scrubs one contact's personal details for a retention or
-  right-to-erasure request (POPIA/GDPR). --yes is required: there is nothing to
-  undo it with. Accepts the contact id, the contact's channel identifier, or the
-  ref of any case that contact opened.`,
+casey erase-contact --check
+  IRREVERSIBLE. Scrubs one contact's personal details for a right-to-erasure
+  request (POPIA/GDPR). --yes is required: there is nothing to undo it with.
+  Accepts the contact id, the contact's channel identifier, or the ref of any
+  case that contact opened.
+  This is about a PERSON ASKING; casey retention is about AGE. They stay separate.
+  --check takes no contact and writes nothing: it lists erasures that started and
+  never completed. An erasure touches four stores (contact + case rows, the
+  provenance raw log, and the conversation transcripts outside data/) with no
+  transaction available across them, so it is not atomic -- it writes a durable
+  plan before its first change and a completion marker after its last, and a plan
+  with no completion is what --check reports. Erasure is idempotent: re-running
+  the command named in that report finishes the job.`,
+  retention: `casey retention [--days N] [--action archive|erase] [--out <dir>] [--yes] [--json]
+  Age-based retention over CLOSED cases. Two safeties, both structural:
+  OFF unless configured -- with no CASEY_RETENTION_DAYS and no --days this
+  command reads nothing and changes nothing. Nothing here is on a timer; it runs
+  only when you type it.
+  DRY RUN unless --yes -- with no --yes it reports what the policy would do,
+  naming every case it would touch and, for every case it would not, the reason.
+  A case is never expired while it is open, carries an unresolved health:*
+  guardrail breach, is tagged needs-human or draft-pending, has had any event
+  inside the window, or has timestamps that cannot be read.
+  --action archive (the default) writes the whole case to a JSON file and takes
+  it out of the live read paths; it destroys nothing. --action erase does that
+  and then scrubs the identifying fields and removes the stored conversation.
+  Neither frees bytes in data/db.sqlite -- thatcher soft-deletes.`,
+  backup: `casey backup [--out <dir>] [--json]
+  A consistent, restorable copy of every store: data/db.sqlite (snapshotted with
+  sqlite's own VACUUM INTO, safe against a running casey), everything else under
+  data/ -- the provenance raw log, the media files, the runtime-event sidecar --
+  and the freddie conversation transcripts, which live OUTSIDE data/ and which a
+  data/-scoped backup misses entirely.
+  Any store it cannot copy is named and the command exits 1: a backup that
+  quietly missed one is worse than no backup. The .env and the config package are
+  never copied, on purpose, and the manifest says so.
+  Defaults to backups/casey-<timestamp>.`,
+  restore: `casey restore <backup-dir> --yes
+  Put a backup back. Stop casey first. The live data directory is MOVED aside as
+  data.pre-restore-<timestamp> rather than overwritten, so restoring the wrong
+  backup is itself recoverable, and any stale sqlite -wal/-shm sidecar is removed
+  so the restored database cannot have an old write-ahead log replayed over it.`,
   operators: `casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary]
 casey operators list
 casey operators disable <username>

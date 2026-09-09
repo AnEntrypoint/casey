@@ -65,19 +65,61 @@ function createFramedMap(canvas, pins) {
             map.fitBounds(window.L.latLngBounds(located.map((p) => [p.lat, p.lon])), { maxZoom: 11, padding: [24, 24], animate: false });
         } catch { map.setView([-28.5, 25], 5); }
     }
-    const tiles = window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '(c) OpenStreetMap contributors' });
+    const tiles = window.L.tileLayer(tileUrl(), { maxZoom: 18, attribution: '(c) OpenStreetMap contributors' });
     tiles.addTo(map);
     return { map, tiles };
+}
+
+// WHERE THE TILES COME FROM, and it is not openstreetmap.org any more.
+//
+// The layer used to name https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
+// directly, which cost a cold landing 30 tiles / 281 KB of third-party
+// traffic, again on every pan and zoom, on a link this deployment assumes is
+// metered. The bytes were the smaller half. Every one of those requests also
+// told openstreetmap.org WHICH map square this deployment was looking at and
+// WHEN -- on a disease-surveillance system, the location of an outbreak under
+// investigation, disclosed continuously to a third party with no agreement, by
+// a deployment whose own rules forbid putting a contact's phone number in a
+// Discord message. Nobody chose it; it arrived with Leaflet's default URL.
+//
+// The default is now this dashboard's own /tiles route, which serves the
+// square off a bounded on-disk LRU cache and reaches upstream only for one it
+// has never seen (dashboard/routes/tiles.js carries the cache bound and the
+// full OSM usage-policy argument, including why the {s}. sharding form above
+// was the wrong URL even before this change).
+//
+// READ FROM THE SHELL, never hardcoded here. index.html carries the default in
+// a meta tag and the server rewrites it when CASEY_TILE_PROXY=0 sends a
+// deployment straight to an upstream instead -- so a deployment that genuinely
+// wants direct OSM can have it without a code change, which is also what the
+// OSM policy's own "avoid hard-coding the tile URL" recommendation asks for.
+// The literal fallback is the same-origin route rather than an OSM URL: if the
+// meta tag is ever missing, the safe failure is to keep talking to our own
+// server, not to silently resume narrating locations to a third party.
+function tileUrl() {
+    try {
+        const el = document.querySelector('meta[name="casey-tile-url"]');
+        const v = el && el.getAttribute('content');
+        if (v) return v;
+    } catch { /* no document, or a shell without the tag */ }
+    return '/tiles/{z}/{x}/{y}.png';
 }
 
 // A basemap failure and a data failure are the SAME picture -- pins on grey, or
 // nothing on grey -- and the panel used to render one string for both. On the
 // rural link this deployment targets they are not equally likely and they do
-// not have the same answer: the API is same-origin and small, while the tiles
-// are a third-party CDN pulling an order of magnitude more bytes, so the tiles
-// are what actually goes missing. Telling an operator "could not load the map"
-// when the reports loaded fine and only the backdrop is missing sends them to
-// check the wrong thing.
+// not have the same answer: the API is small and answered from this
+// deployment's own store, while a tile the cache has never seen still costs
+// the SERVER a hop to a third party an order of magnitude larger, so the
+// backdrop is still what actually goes missing. Telling an operator "could not
+// load the map" when the reports loaded fine and only the backdrop is missing
+// sends them to check the wrong thing.
+//
+// The tile requests themselves are same-origin now, so a failure here means
+// one specific thing -- this dashboard could not reach the map service and had
+// no cached copy of that square -- and the server logs exactly that
+// (dashboard/routes/tiles.js, tile_upstream_unreachable). The panel's sentence
+// stays deliberately about the picture rather than about the plumbing.
 //
 // Judged on a RUN of failures, never a single one: one 404 is normal (a tile
 // that genuinely does not exist at that zoom over open sea), and any successful

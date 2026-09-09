@@ -15,6 +15,18 @@
      only the pre-session paint. -->
 <meta name="apple-mobile-web-app-title" content="casey">
 <meta name="theme-color" content="#3b6ea5">
+<!-- Where the map's basemap tiles come from. Same-origin by default: the
+     browser asks this dashboard, which serves the square off its own bounded
+     disk cache and only reaches openstreetmap.org for one it has never seen.
+     A tile request states which map square is being looked at and when, which
+     on this deployment is the location of an outbreak under investigation, so
+     it is not something to hand to a third party by default.
+     dashboard/server.js rewrites this content= in the SERVED bytes when
+     CASEY_TILE_PROXY=0 points the browser straight at an upstream template
+     instead. It is a meta tag rather than an /api/config field because the map
+     is the landing view and must not wait on a session or on the module
+     descent to know its own tile URL. panels/map-leaflet.js reads it. -->
+<meta name="casey-tile-url" content="/tiles/{z}/{x}/{y}.png">
 <link rel="manifest" href="/manifest.json">
 <!-- Self-hosted Ubuntu (app.css's @font-face block says why this is not a
      fonts.googleapis.com link). Both weights are used above the fold, and on

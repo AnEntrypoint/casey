@@ -3,6 +3,15 @@
 // Handoff/breach/transition notifiers, plus the shared webhook POST and its
 // delivery-status tracking. Re-exported through gateway-hooks.js (see
 // AGENTS.md's Source map).
+//
+// This file is the WEBHOOK half of casey's operator notification. Both
+// webhook-driven notifiers below return null when no URL is configured, which
+// used to mean nothing told anyone anything. The other half -- the delivery
+// that needs no URL, for a headless box with no outbound network -- is
+// src/alert-log.js, whose fileAlertNotifier has the same (caseRow, breach,
+// detail) call shape as breachNotifier below so casey.js can substitute one for
+// the other at the same seam. It is a FALLBACK: casey.js builds it only when
+// breachNotifier() here returned null, never alongside a working webhook.
 
 import { buildAlertPayload } from '../report-analytics.js'
 import { stageNote, OPTED_OUT_TAG } from './heuristics.js'

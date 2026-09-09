@@ -55,6 +55,7 @@ import { registerContacts } from './routes/contacts.js'
 import { registerMap } from './routes/map.js'
 import { registerReports } from './routes/reports.js'
 import { registerOperations } from './routes/operations.js'
+import { registerTiles, CLIENT_TILE_URL } from './routes/tiles.js'
 const esc = escapeHtml
 import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
@@ -294,6 +295,25 @@ function brandShellHead(html) {
     .replace(/(<meta\s+name="theme-color"\s+content=")[^"]*(")/i, (_m, a, b) => a + esc(BRAND.ground) + b)
 }
 
+// WHERE THE BASEMAP COMES FROM, resolved server-side and handed to the client
+// in the shell head rather than through /api/config.
+//
+// Two reasons it is a meta tag and not a config field. It has to be readable
+// before the module graph has loaded, since the map is the landing view on a
+// link where the descent costs seconds; and /api/config is gated, while the
+// answer is not case data and the Leaflet layer should not have to wait on a
+// session to know its own tile URL. index.html carries the same-origin default
+// so a bare clone works with no rewrite at all, and this replaces it only when
+// CASEY_TILE_PROXY=0 has pointed the browser somewhere else.
+//
+// Same discipline as brandShellHead: rewritten in the SERVED bytes only, never
+// in the file on disk.
+function tileShellHead(html) {
+  return html.replace(
+    /(<meta\s+name="casey-tile-url"\s+content=")[^"]*(")/i,
+    (_m, a, b) => a + esc(CLIENT_TILE_URL) + b)
+}
+
 // Injected into the SERVED bytes, never into the file on disk, so index.html
 // stays the single hand-maintained statement of what the shell links and the
 // generated half cannot drift from the real import graph.
@@ -323,6 +343,12 @@ function injectModulePreloads(html, moduleUrls) {
 function shellBuildId(publicDir, assetUrls) {
   const h = createHash('sha256')
   h.update('brand:' + BRAND.name + ':' + BRAND.ground + '\n')
+  // The resolved tile URL is hashed in for the same reason the brand is: it is
+  // rewritten into the served shell from an environment variable rather than
+  // read off any file under public/, so flipping CASEY_TILE_PROXY would
+  // otherwise ship new shell bytes under an unchanged cache name and the
+  // service worker would go on serving the previous basemap wiring.
+  h.update('tiles:' + CLIENT_TILE_URL + '\n')
   const walk = (dir, rel) => {
     const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
     for (const e of entries) {
@@ -547,7 +573,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   })()
   const SHELL_ASSET_URLS = SHELL_HTML_SOURCE ? shellAssetUrls(SHELL_HTML_SOURCE) : []
   const SHELL_MODULE_URLS = SHELL_HTML_SOURCE ? shellModuleGraph(SHELL_HTML_SOURCE, PUBLIC_DIR) : []
-  const SHELL_HTML = SHELL_HTML_SOURCE ? brandShellHead(injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS)) : null
+  const SHELL_HTML = SHELL_HTML_SOURCE ? tileShellHead(brandShellHead(injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS))) : null
   // The module graph is hashed into the build id but deliberately NOT
   // precached. Two reasons, pulling in opposite directions:
   //
@@ -715,6 +741,13 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerMap(app, deps)
   registerReports(app, deps)
   registerOperations(app, deps)
+  // The basemap, same-origin, off a bounded on-disk LRU cache -- see
+  // routes/tiles.js for the OSM usage-policy argument and the cache bound.
+  // Registered here rather than in registerAuth's static block on purpose: it
+  // must sit BEHIND the auth gate, because an ungated tile route is an open
+  // proxy onto openstreetmap.org and the blocks for abusing one land on this
+  // deployment. Returns null (and mounts nothing) when CASEY_TILE_PROXY=0.
+  registerTiles(app, deps)
 
   // dashboard_ui.brand, the theme-colour ground and the ink computed from it
   // all now come from dashboard/brand.js -- the same resolution the public
@@ -808,10 +841,15 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   // -version window it opens is bounded by point 2 -- the new worker serves a
   // whole consistent build or nothing from it.
   //
-  // Third-party requests (OpenStreetMap tiles) are passed straight through.
-  // Caching them would help offline, but a tile cache is unbounded by nature
-  // and this is a device with a metered link and a small disk; that is a
-  // separate decision with its own eviction policy, not a side effect here.
+  // Basemap tiles are now same-origin (/tiles, routes/tiles.js) and they are
+  // deliberately NOT put in Cache Storage. The tile cache that exists is the
+  // SERVER's, and it is bounded with real LRU eviction; a second copy in the
+  // browser would be an unbounded store keyed by SHELL_BUILD_ID, so it would
+  // both grow without a ceiling and be thrown away whole on the next deploy --
+  // the worst of both. The tiles are still cheap on a repeat view: the route
+  // passes the upstream freshness through as its own Cache-Control, so the
+  // browser's own HTTP cache (which the browser bounds) answers a re-pan with
+  // no request at all.
   app.get('/sw.js', (_req, res) => {
     res.setHeader('Content-Type', 'application/javascript')
     res.setHeader('Cache-Control', 'no-cache')
@@ -871,6 +909,11 @@ self.addEventListener('fetch', (e) => {
   }
   // The update check must reach the network or the worker can never be replaced.
   if (url.pathname === '/sw.js') return
+  // Basemap tiles: straight to the network, never into this cache. The bounded
+  // cache is the server's; see the note above the /sw.js route. Left entirely
+  // to the browser's own HTTP cache, which honours the Cache-Control the tile
+  // route passes through from upstream and is bounded by the browser itself.
+  if (url.pathname.startsWith('/tiles/')) return
   // The public report form is live per-case data on an unauthenticated URL, so
   // it belongs with /api/ above and not with the shell. Cached, it did two
   // wrong things at once: a reporter who came back to their own reference was

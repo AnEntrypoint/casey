@@ -27,6 +27,7 @@ import { resumePendingTurnsBody } from './casey-resume.js'
 import { drainQueuedTurnsBody } from './casey-drain.js'
 import { makeChannelAdapter } from './casey-adapters.js'
 import { sweepCases } from './case-sweep.js'
+import { AlertLog, AlertGate, fileAlertNotifier, SYSTEM_CONDITIONS } from './alert-log.js'
 import { ALL_HEALTH_TAGS } from './case-health.js'
 import { mergeTag } from './hooks/heuristics.js'
 import { caseDeliveryTarget, splitExternalId } from './hooks/handler.js'
@@ -89,7 +90,13 @@ export class Casey {
     this.adapters = {}
     this._inflight = new Set()      // track in-flight inbound turns for drain-tracking
     this._sweepTimer = null         // periodic health-guardrail interval handle
+    this._alertWatchTimer = null    // periodic system-condition watch interval handle
     this._coverageGapActive = false // rising-edge dedup so a persistent gap pages once
+    // When the last guardrail sweep PASS COMPLETED. The alert watch below reads
+    // it to answer "has the sweep stopped running", which nothing else in the
+    // process could answer: the sweep's own silence is its only symptom.
+    this._lastSweepAt = null
+    this._startedAt = Date.now()
     // Per-channel receive liveness. A gateway WebSocket can go zombie (TCP still
     // ESTABLISHED, gateway-dead) and silently stop delivering inbound while the
     // process, the HTTP server, and outbound send all stay healthy -- the exact
@@ -133,17 +140,7 @@ export class Casey {
       log: this.log,
       notifyHandoff: this.opts.notifyHandoff || discordHandoffNotifier(undefined, this.log),
     })
-    // High-severity guardrail breaches alert the team over the same webhook
-    // transport as a handoff (CASEY_ALERT_WEBHOOK, falling back to the handoff
-    // webhook). Null when neither is set: the sweep still flags every case via
-    // health:* tags, so the dashboard inbox surfaces them regardless.
-    this._notifyBreach = this.opts.notifyBreach || breachNotifier(undefined, this.log)
-    // Distinct supervisor channel for the escalated handoff tier. Falls back to the
-    // ordinary breach notifier when CASEY_ESCALATE_WEBHOOK is unset, so escalation
-    // is never silently dropped -- it just shares the alert channel.
-    this._notifyEscalation = this.opts.notifyEscalation
-      || breachNotifier(process.env.CASEY_ESCALATE_WEBHOOK, this.log)
-      || this._notifyBreach
+    this._wireAlerting()
 
     // 3) build adapters for the requested channels (casey's own DM/mention
     //    filtering, follow-up window, and receive-liveness tracking --
@@ -151,7 +148,53 @@ export class Casey {
     const platforms = {}
     for (const ch of this.channels) platforms[ch] = await makeChannelAdapter(ch, { log: this.log, store: this.store, markConnected: (c) => this._markConnected(c), markInbound: (c) => this._markInbound(c) })
     this.adapters = platforms
+    return this._initFreddieAndHooks(handler)
+  }
 
+  // Everything that decides WHERE an alert goes, in one place so the choice can
+  // be read (and exercised) without booting freddie's whole Cordis tree. Called
+  // once from init(), after the store exists and before any timer starts.
+  _wireAlerting() {
+    // High-severity guardrail breaches alert the team over the same webhook
+    // transport as a handoff (CASEY_ALERT_WEBHOOK, falling back to the handoff
+    // webhook). Null when neither is set: the sweep still flags every case via
+    // health:* tags, so the dashboard inbox surfaces them regardless.
+    this._notifyBreach = this.opts.notifyBreach || breachNotifier(undefined, this.log)
+    // THE PATH THAT NEEDS NO URL. breachNotifier returns null when neither
+    // CASEY_ALERT_WEBHOOK nor CASEY_HANDOFF_WEBHOOK is set, and until now that
+    // meant nothing in this deployment could tell a human anything unless a
+    // human was already looking at the dashboard. src/alert-log.js is the
+    // fallback for exactly that case: a bounded, rotating, greppable JSONL file
+    // plus a stderr line, watchable by cron/systemd/`tail -f` on a box with no
+    // outbound network. It is built ONLY when the webhook notifier is null, so
+    // a configured webhook is never replaced, duplicated or downgraded by it.
+    this._alertLog = null
+    if (!this._notifyBreach) {
+      try {
+        this._alertLog = new AlertLog({ dataDir: this.store.dataDir })
+        this._notifyBreach = fileAlertNotifier(this._alertLog, this.log)
+        this.log?.info?.('[casey] no alert webhook configured; alerts go to the local alert log', { file: this._alertLog.file })
+      } catch (e) {
+        this.log?.warn?.('[casey] alert log unavailable; nothing will page anyone', { error: e.message })
+      }
+    }
+    // The rising-edge state for the system-condition watch below. Built on both
+    // paths (webhook and file), because the "page once per rising edge" rule is
+    // about the CONDITION, not about which channel carries it -- case-sweep.js
+    // holds the same rule for a per-case breach and _coverageGapActive holds it
+    // for the team gap. Durable rather than in-memory so a crash-looping worker
+    // does not re-raise a standing condition on every boot.
+    try { this._alertGate = new AlertGate({ dataDir: this.store.dataDir }) }
+    catch (e) { this._alertGate = null; this.log?.warn?.('[casey] alert gate unavailable; system-condition alerts are off', { error: e.message }) }
+    // Distinct supervisor channel for the escalated handoff tier. Falls back to the
+    // ordinary breach notifier when CASEY_ESCALATE_WEBHOOK is unset, so escalation
+    // is never silently dropped -- it just shares the alert channel.
+    this._notifyEscalation = this.opts.notifyEscalation
+      || breachNotifier(process.env.CASEY_ESCALATE_WEBHOOK, this.log)
+      || this._notifyBreach
+  }
+
+  async _initFreddieAndHooks(handler) {
     // 4) boot freddie's real Cordis tree (freddie-bundle/boot.js): mounts
     //    @freddie/freddie-base's LLM/agent-loop/session/tool plumbing, then
     //    casey's own case-tools/llm-acptoapi/platform plugins, which wire the
@@ -317,6 +360,12 @@ export class Casey {
       // very next sweep without a restart.
       const thresholds = await this.store.resolveThresholds(this.opts.healthThresholds)
       const summary = await sweepCases(this.store, now, thresholds, { log: this.log, notifyBreach })
+      // A completed pass, stamped here rather than in the timer callback: a
+      // pass that threw halfway is not a pass, and the sweep_stalled alert must
+      // fire on a sweep that is being SCHEDULED and failing just as it does on
+      // one whose timer has died. Real wall-clock (not the injectable `now`)
+      // because the watch compares it against real wall-clock.
+      this._lastSweepAt = Date.now()
       // Persist the rich summary as a rolling audited observation so the dashboard
       // can show a trend over time and a degraded-sweep banner -- otherwise the
       // breaches/errors detail is logged once and lost. A persistence failure must
@@ -407,6 +456,136 @@ export class Casey {
     if (this._sweepTimer) { clearInterval(this._sweepTimer); this._sweepTimer = null }
   }
 
+  // Live LLM-backend status, resolved the same way drainQueuedTurns' own hard
+  // status gate resolves it (resilient status first, then the injected
+  // llmStatus, then callLLM.status). Null when this process was never given a
+  // way to ask -- which is a MODE, not a fault, and must never raise an alert.
+  async _llmStatus() {
+    try {
+      const statusFn = this.resilientStatus
+        || this.opts.llmStatus
+        || (typeof this.opts.callLLM?.status === 'function' ? this.opts.callLLM.status.bind(this.opts.callLLM) : null)
+      return statusFn ? await statusFn() : null
+    } catch { return null }
+  }
+
+  // The three system-level failures worth waking someone for, evaluated on one
+  // clock and pushed through the SAME notifyBreach seam the per-case sweep and
+  // the team coverage gap already use -- so with a webhook configured they page
+  // the webhook, and with none configured they land in the alert log
+  // (src/alert-log.js). Every one of them is a failure whose only symptom is
+  // that nothing else has a symptom: the process is up, the dashboard renders,
+  // and /api/ready reports them -- to a monitor that has to be polling.
+  //
+  // Each is gated through AlertGate, so a standing condition writes ONE line
+  // when it starts and one when it clears, never one per tick. The rule is
+  // case-sweep.js's "exactly one observation per newly-entered breach" and
+  // detectCoverageGap's once-per-rising-edge page, made durable across a
+  // restart.
+  async _checkSystemAlerts(now = Date.now()) {
+    if (!this._notifyBreach || !this._alertGate) return null
+    const verdicts = []
+
+    // 1. THE CHANNEL IS DEAF. A configured real-time channel that has never
+    //    connected since start: casey is not hearing the field at all, while
+    //    the process, the HTTP server and outbound send all stay healthy. Same
+    //    signal /api/ready reports as gateway_not_receiving.
+    const rs = this.receiveStatus(now)
+    const deafChannels = Object.entries(rs.channels || {})
+      .filter(([, v]) => v.state === 'never-connected')
+      .map(([k]) => k)
+    verdicts.push({
+      condition: SYSTEM_CONDITIONS.CHANNEL_DEAF,
+      active: rs.state === 'never-connected',
+      detail: `casey is not hearing the field: channel ${deafChannels.join(', ') || 'unknown'} is configured but has never connected since start, so reports are arriving nowhere`,
+    })
+
+    // 2. THE PROVIDER IS DOWN AND MESSAGES ARE QUEUING. Both halves are
+    //    required. A provider outage with an empty queue has cost nobody a
+    //    reply yet (and casey self-heals), and a queue behind a healthy
+    //    provider is already draining on its own -- neither is worth a page.
+    //    Together they mean real people are waiting with nothing coming.
+    const st = await this._llmStatus()
+    const providerDown = !!st && (st.ok === false || st.source === 'none')
+    let q = { pending: 0, deadLettered: 0 }
+    try { q = await this.queueStatus() } catch { q = { pending: 0, deadLettered: 0 } }
+    const backlog = (q.pending || 0) + (q.deadLettered || 0)
+    verdicts.push({
+      condition: SYSTEM_CONDITIONS.PROVIDER_DOWN_BACKLOG,
+      active: providerDown && backlog > 0,
+      detail: `the AI provider is not answering and ${q.pending || 0} message(s) are queued behind it (${q.deadLettered || 0} dead-lettered); contacts are waiting with no reply`,
+    })
+
+    // 3. THE GUARDRAIL SWEEP HAS STOPPED RUNNING. Only meaningful where the
+    //    sweep is actually scheduled (a dashboard-only console never schedules
+    //    it, which is a mode and not a fault -- casey doctor already says so).
+    //    Measured off a COMPLETED pass, so a sweep whose timer still fires but
+    //    whose passes keep throwing counts as stalled too. This watch runs on
+    //    its own timer, deliberately: a check that lived inside the sweep could
+    //    never notice the sweep not running.
+    const interval = this.opts.sweepIntervalMs ?? 15 * 60e3
+    const sweepScheduled = interval > 0 && this._sweepTimer != null
+    const lastPassAt = this._lastSweepAt || this._startedAt
+    // Three intervals, floored at 5 minutes: one missed pass is a slow store or
+    // a long sweep, three in a row is not.
+    const stallMs = Math.max(3 * interval, 5 * 60e3)
+    const stalledFor = now - lastPassAt
+    verdicts.push({
+      condition: SYSTEM_CONDITIONS.SWEEP_STALLED,
+      active: sweepScheduled && stalledFor > stallMs,
+      detail: `the guardrail sweep has not completed a pass in ${Math.round(stalledFor / 60000)} minutes (it runs every ${Math.round(interval / 60000)}); stale, stuck and abandoned cases are going undetected`,
+    })
+
+    const fired = []
+    for (const v of verdicts) {
+      let edge = null
+      try { edge = this._alertGate.evaluate(v.condition, v.active, now) }
+      catch (e) { this.log?.warn?.('[casey] alert gate failed', { condition: v.condition, error: e.message }) }
+      if (!edge) continue
+      // A cleared line must NOT restate the raised line's sentence: that
+      // sentence is rebuilt from the CURRENT state every tick, so by the time
+      // the condition clears it describes a situation that is no longer true
+      // ("channel unknown has never connected" once the channel connected).
+      // Say what actually happened instead -- the condition ended, and how long
+      // it stood.
+      const detail = edge.edge === 'cleared'
+        ? `${v.condition} has resolved; it stood for ${Math.round(edge.forMs / 60000)} minute(s)`
+        : v.detail
+      try {
+        // No contact identifier: a synthetic 'SYSTEM' ref, the same shape
+        // _checkCoverageGap uses for 'TEAM-COVERAGE'. There is no case behind
+        // this alert to open, and there is nothing about a person in it.
+        await this._notifyBreach({ ref: 'SYSTEM' }, v.condition, detail, { event: edge.edge, since: edge.since, forMs: edge.forMs, at: now })
+        fired.push({ condition: v.condition, event: edge.edge })
+      } catch (e) { this.log?.warn?.('[casey] system alert delivery failed', { condition: v.condition, error: e.message }) }
+      if (edge.edge === 'raised') this.log?.error?.('[casey] system alert', { condition: v.condition, detail })
+    }
+    return { verdicts: verdicts.map(v => ({ condition: v.condition, active: v.active })), fired }
+  }
+
+  // Start (or restart) the system-condition watch. Its own timer, not a
+  // piggyback on the sweep: one of the three conditions it reports IS the sweep
+  // having stopped, and a check riding the stalled thing can never fire.
+  // Opt-in the same way the sweep is -- a non-positive interval disables it --
+  // and the handle is stored so stop() can clear it.
+  startAlertWatch(intervalMs = this.opts.alertWatchIntervalMs ?? 60e3) {
+    this.stopAlertWatch()
+    if (!(intervalMs > 0)) return
+    this._alertWatchTimer = setInterval(() => {
+      // Tracked in _inflight like the sweep and drain-poll timers, so drain()
+      // waits out a watch tick's own writes rather than letting stop() close
+      // the store mid-scan on this background path.
+      const p = this._checkSystemAlerts().catch(e => this.log?.warn?.('[casey] alert watch failed', { error: e.message }))
+      this._inflight.add(p)
+      p.finally(() => this._inflight.delete(p))
+    }, intervalMs)
+    this._alertWatchTimer.unref?.()
+  }
+
+  stopAlertWatch() {
+    if (this._alertWatchTimer) { clearInterval(this._alertWatchTimer); this._alertWatchTimer = null }
+  }
+
   // Periodic drain-poll. This timer is the ONLY thing that notices an LLM
   // recovery on its own: the brain's onRecover edge fires only from a real
   // callLLM/status() call (a NEW inbound on the SAME conversation, or a human
@@ -444,6 +623,10 @@ export class Casey {
     if (this.opts.sweepIntervalMs !== 0) this.startSweep()
     // Default-on: enabled unless explicitly disabled (drainPollIntervalMs<=0).
     if (this.opts.drainPollIntervalMs !== 0) this.startDrainPoll()
+    // Default-on: the system-condition watch (deaf channel, provider down with
+    // a backlog, sweep stopped). Started AFTER startSweep so its own
+    // sweepScheduled check sees the real timer state.
+    if (this.opts.alertWatchIntervalMs !== 0) this.startAlertWatch()
     // One-time backfill: tag channel-created cases that predate intake_mode tagging.
     this._backfillIntakeMode().catch(e => this.log?.warn?.('[casey] intake_mode backfill failed', { error: e.message }))
     // One-shot boot recovery: re-drive turns that started but never replied (the
@@ -657,6 +840,7 @@ export class Casey {
   async stop() {
     this.stopSweep()
     this.stopDrainPoll()
+    this.stopAlertWatch()
     await this.gateway?.stop()
     // Wait out the boot-time resume sweep too, not just gateway.handleInbound's
     // own in-flight turns -- see start()'s comment on why this is tracked
