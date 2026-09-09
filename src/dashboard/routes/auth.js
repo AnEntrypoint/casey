@@ -1030,7 +1030,7 @@ export function getBranding() {
 // flag set) can never be used as a standing credential past the first login.
 // Mounted { raw: true }: its own catch answers 400 with the thrown message
 // (a rejected weak/short password), not deps.wrap's 500.
-export function postChangePassword({ store, verifyPassword, changePassword }) {
+export function postChangePassword({ store, verifyPassword, changePassword, issueSession, sessionCookieHeader }) {
   return async (req, res) => {
     if (!req.caseyAccount) return res.status(401).json({ error: 'unauthorized' })
     try {
@@ -1045,7 +1045,14 @@ export function postChangePassword({ store, verifyPassword, changePassword }) {
       if (!verifyPassword(current_password, req.caseyAccount.password_salt, req.caseyAccount.password_hash)) {
         return res.status(401).json({ error: 'current password is incorrect' })
       }
-      await changePassword(store, req.caseyAccount.id, new_password)
+      const { epoch } = await changePassword(store, req.caseyAccount.id, new_password)
+      // Re-issue THIS session's cookie at the new epoch. changePassword bumps
+      // the epoch every outstanding token is validated against, including the
+      // one that carried this very request, so without this line the operator
+      // who just changed their password is logged out by their own successful
+      // change -- witnessed live on the forced-change screen, where it is the
+      // only screen available and there is nothing else to click.
+      res.set('Set-Cookie', sessionCookieHeader(issueSession(req.caseyAccount.id, { epoch })))
       res.json({ ok: true })
     } catch (e) { res.status(400).json({ error: e.message }) }
   }
