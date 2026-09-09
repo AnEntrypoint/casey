@@ -1,6 +1,8 @@
-// The one model the map and the rail both read.
+// RESPONSIBILITY: every derivation over case data that the map and the rail
+// would otherwise each compute for themselves -- the urgency ladder, the shared
+// filter predicate, the filter vocabulary, and the counts both surfaces state.
 //
-// Why this module exists: before it, the two halves of the home view answered
+// Why that is one module: before it, the two halves of the home view answered
 // different questions off different data and visibly disagreed on screen. The
 // map coloured pins by STATUS while the rail ranked rows by attn.js's
 // worst-first SCORE, so an operator looking at a field of green dots had no
@@ -9,9 +11,13 @@
 // slice(0,5), so the same screen stated 14 and showed 5.
 //
 // Both failures have the same shape: two consumers each deriving their own
-// answer. So the derivations live here once -- the urgency ladder, and the
-// filter predicate -- and map-leaflet.js and map-panel.js both import them.
-// Neither is allowed a local copy; that is the whole point.
+// answer. So the derivations live here once and every consumer imports them.
+// None is allowed a local copy; that is the whole point.
+//
+// The line this module is on: nothing here touches the DOM, Leaflet or webjsx.
+// It takes plain pin/row objects and returns plain answers, which is what lets
+// the imperative map driver and the declarative chrome share it without either
+// depending on the other.
 
 import { state } from './state.js';
 
@@ -24,6 +30,17 @@ import { state } from './state.js';
 // names it imports this, for the same reason the urgency ladder below lives
 // here rather than in each consumer.
 export const QUEUE_NAME = 'Needs a person';
+
+// ---- where a coordinate came from ---------------------------------------
+// The provenance ladder a lat/lon arrives on. Three surfaces read it -- the
+// case pin's border treatment, the worker pin's stroke, and the legend that
+// documents both -- and they are on two different modules, so the vocabulary
+// lives here for the same reason QUEUE_NAME does: one name for one thing.
+//
+// 'unset' (a row predating the field) is deliberately unlabelled: it says
+// nothing rather than implying a false certainty either way.
+export const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed', 'unset']);
+export const LOCATION_SOURCE_LABEL = { gps: 'exact GPS', estimated: 'estimated, unconfirmed', confirmed: 'estimated, confirmed by worker' };
 
 // ---- urgency ------------------------------------------------------------
 // attn.js's score, cut into three bands. These exact thresholds were already
@@ -132,4 +149,65 @@ export function isToday(ts) {
 export function filterIsActive(f) {
   const x = f || state.mapFilter;
   return !!(x.species || x.type || x.status || x.band || x.inView);
+}
+
+// ---- the filter's vocabulary --------------------------------------------
+// The option lists the rail's Select controls offer, taken from the pins that
+// actually loaded rather than from a fixed vocabulary -- a filter that offers a
+// species no report has is a control that can only ever empty the map. It is a
+// derivation over the same pin set the predicate above reads, which is why it
+// sits beside it rather than in the Leaflet driver that happens to fetch them.
+export function filterOptionsFrom(pins) {
+  return {
+    species: [...new Set(pins.map((p) => p.species).filter(Boolean))].sort(),
+    types: [...new Set(pins.map((p) => p.case_type).filter((t) => t && t !== 'unset'))].sort(),
+    statuses: [...new Set(pins.map((p) => p.status))].sort(),
+  };
+}
+
+// ---- the counts, derived once -------------------------------------------
+// Every number either surface states -- a rail chip, the map's spoken text
+// equivalent, the state note, the debug snapshot -- is counted here, over the
+// predicate and the urgency ladder above. The chips and the text equivalent are
+// two renderings of the same screen for two different readers, so a second
+// count for either is the same defect as a second copy of the predicate: the
+// map and the words about it would be able to disagree.
+//
+// `bounds` is the map's RAW viewport (or null when no map is mounted). The
+// extent NARROWING is applied only when the operator turned `inView` on, but
+// the "in this view" count is stated whether or not it is on -- that number is
+// what the chip offers, so it has to be knowable before the chip is pressed.
+export function mapCounts(pins, bounds) {
+  const f = state.mapFilter;
+  const urgency = urgencyByCaseId();
+  const visible = pins.filter((p) => pinMatches(p, f, urgency, f.inView ? bounds : null));
+  let inView = null;
+  if (bounds) {
+    inView = pins.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && bounds.contains([p.lat, p.lon])).length;
+  }
+  // Band 0 is a real answer, not a gap: a pin absent from the attention list is
+  // one nothing is chasing, so it is counted and named rather than silently
+  // missing from the urgency breakdown.
+  const bands = { 3: 0, 2: 0, 1: 0, 0: 0 };
+  for (const p of visible) bands[urgency.get(p.id) || 0] += 1;
+  return {
+    plotted: pins.length,
+    visible: visible.length,
+    inView,
+    bands,
+    attention: (state.attention || []).length,
+    today: pins.filter((p) => isToday(p.created_at)).length,
+  };
+}
+
+// The rail's side of the same count: which attention rows survive the filter
+// now in force. Same predicate, same urgency ladder, same extent rule as
+// mapCounts above -- that is the point of them being neighbours.
+export function queueRows(pins, bounds) {
+  const f = state.mapFilter;
+  const urgency = urgencyByCaseId();
+  const byId = new Map();
+  for (const p of pins) byId.set(p.id, p);
+  const extent = f.inView ? bounds : null;
+  return (state.attention || []).filter((c) => rowMatches(c, byId, f, urgency, extent));
 }
