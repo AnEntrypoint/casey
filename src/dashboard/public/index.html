@@ -132,5 +132,12 @@
 })();
 </script>
 <script type="module" src="/src/main.js"></script>
-<script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{})</script>
+<script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(function(){
+  var reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function(){
+    if (reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
+}).catch(()=>{})</script>
 </body></html>
