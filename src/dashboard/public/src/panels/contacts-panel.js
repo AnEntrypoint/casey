@@ -1,6 +1,18 @@
 // Contacts/Reporters panel -- reporter/field_worker tier promote/demote +
 // admin-only PII erasure. Content-swap panel (state.activePanel ===
-// 'contacts'). Table-based, per-row MenuButton -> postContactTier.
+// 'contacts'). Table-based; each row carries a Promote/Demote button and, for
+// an admin, an Erase control.
+//
+// THE ERASE CONTROL IS DELIBERATELY NOT A FILLED DANGER BUTTON. It used to be:
+// the kit's highest-emphasis style, in red, repeated on all 20 rows, one
+// row-height from Promote, which is a routine everyday triage action. That made
+// the most destructive and rarest action on the screen also the loudest and the
+// most repeated, and put it a mis-click away from the most common one. It is
+// low-emphasis text now, and the guard that matters -- an explicit confirm
+// naming what is scrubbed, with a reason field for the audit trail -- is
+// unchanged. Do not raise its emphasis back: nothing is safer for being
+// shouted, and an operator scanning this table is looking for people, not for
+// the erase column.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
@@ -64,6 +76,34 @@ async function erase(c) {
     busyIds.delete(c.id); schedule();
 }
 
+// The "Who" cell. Three genuinely different facts, and rendering all three as
+// one string is what put `web-1787845705110` in the column as if it were a
+// person's name on 12 of 20 live rows.
+//
+// The server derives `named` and `has_number` from the stored columns
+// (routes/contacts.js's publicContact) precisely so this function does not have
+// to guess from the rendered value.
+function who(c) {
+    if (c.named) return c.display_name;
+    // No name, but a number an operator can ring: the number IS the identity
+    // here, and it is the actionable one -- this is the person reporting.
+    if (c.has_number) return c.external_id_formatted;
+    // Neither. Saying so, and saying how and when they arrived, is more use
+    // than a routing key: these rows are distinguishable by time and by nothing
+    // else, and pretending otherwise invites an operator to read a machine
+    // token as an identifier they could look up.
+    //
+    // The second line names the CHANNEL rather than asserting "public form" for
+    // every such row -- only channel 'web' is the form (routes/auth.js's
+    // postReport opens those), and an unnamed contact on any other channel
+    // would have been mislabelled by a fixed string.
+    const arrived = c.created_at ? fmtTime(c.created_at) : 'date unknown';
+    const via = c.channel === 'web' ? 'Public form' : (c.channel ? 'Via ' + c.channel : 'Channel not recorded');
+    return h('div', { class: 'ds-contact-anon' },
+        h('span', {}, 'No name or number given'),
+        h('span', { class: 'ds-contact-anon-sub' }, via + ', ' + arrived));
+}
+
 export function ContactsPanel() {
     loader.ensureLoaded();
     const isAdmin = state.currentUser && state.currentUser.role === 'admin';
@@ -76,7 +116,7 @@ export function ContactsPanel() {
                 const isField = c.tier === 'field_worker';
                 const erased = c.external_id_formatted === '[erased]';
                 return [
-                    c.display_name || c.external_id_formatted,
+                    who(c),
                     c.channel || '',
                     // Only the exception gets chip chrome. Nearly every row is
                     // a plain reporter, and a chip repeated down the whole
@@ -87,7 +127,7 @@ export function ContactsPanel() {
                     c.last_location_at ? fmtTime(c.last_location_at) : 'never',
                     h('div', { class: 'ds-contact-actions' },
                         Btn({ size: 'sm', disabled: busyIds.has(c.id), children: isField ? 'Demote' : 'Promote', onClick: () => toggleTier(c) }),
-                        (isAdmin && !erased) ? Btn({ size: 'sm', variant: 'danger', disabled: busyIds.has(c.id), children: 'Erase PII', onClick: () => erase(c) }) : null),
+                        (isAdmin && !erased) ? Btn({ size: 'sm', variant: 'link', class: 'ds-contact-erase', disabled: busyIds.has(c.id), children: 'Erase personal details', onClick: () => erase(c) }) : null),
                 ];
             }),
         });
