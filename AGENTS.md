@@ -461,7 +461,9 @@ centre entirely.
   rail. The rail shows the worst-first queue (or a spatial rollup) when nothing
   is open, and the case detail when something is.
 - `panels/map-panel.js` -- the map shell and the rail. The canvas is the whole
-  pane; only the legend and an error/empty note may sit on it. Counts, filters,
+  pane; only the legend, an error/empty note, and the two `sr-only` nodes that
+  name and describe the map for a screen reader (they occupy no space and cover
+  no pin) may sit on it. Counts, filters,
   overlays and the queue are docked in the rail, never floated over the map
   (mapuipatterns' rule for situational-awareness domains: do not cover
   potentially important data with floating panels).
