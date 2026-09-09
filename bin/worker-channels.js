@@ -43,10 +43,17 @@ function gateWhatsappAppSecret(requested, flags, forked) {
   console.error('[worker] WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')
 }
 
-// casey's own WhatsappAdapter (src/adapters/whatsapp.js) requires
-// WHATSAPP_VERIFY_TOKEN and throws at start() when unset -- no silent
-// guessable-default fallback. Refuse the same way WHATSAPP_APP_SECRET is refused
-// above, rather than letting the adapter crash start() later.
+// WHATSAPP_VERIFY_TOKEN is fatal whenever WhatsApp is actually enabled, but the
+// throw is NOT the adapter's: src/adapters/whatsapp.js has no start() and owns
+// no listening socket (freddie's ctx.webServer holds the only one), so it never
+// gets a chance to refuse. What throws is freddie-bundle/src/platform
+// ('WhatsappAdapter: WHATSAPP_VERIFY_TOKEN required') while mounting the Cordis
+// tree, seconds after this point and as an eleven-frame boot stack trace.
+// Refuse here in the same shape WHATSAPP_APP_SECRET is refused above, and the
+// same shape bin/casey-serve.js refuses on the unsupervised path, so the
+// operator reads one line. The guard is load-bearing -- do not drop it reasoning
+// that the adapter validates its own token, because nothing does until the tree
+// mounts.
 function gateWhatsappVerifyToken(channels, flags, forked) {
   if (!channels.includes('whatsapp') || process.env.WHATSAPP_VERIFY_TOKEN) return
   const idx = channels.indexOf('whatsapp')

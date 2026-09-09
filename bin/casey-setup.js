@@ -185,12 +185,18 @@ export async function cmdDoctor({ flags }) {
     console.log(bad('WHATSAPP_APP_SECRET is required to enable WhatsApp (verify inbound webhook signatures)'))
     problems++
   }
-  // casey's own WhatsappAdapter (src/adapters/whatsapp.js) requires
-  // WHATSAPP_VERIFY_TOKEN and throws at start() when unset -- no silent
-  // guessable-default fallback (the old freddie adapter's 'freddie' literal
-  // default is gone). A hard problem, not just a warning.
+  // WHATSAPP_VERIFY_TOKEN is fatal whenever WhatsApp is actually enabled, but
+  // the throw is NOT the adapter's: src/adapters/whatsapp.js has no start() and
+  // owns no listening socket, so it never validates anything. What throws is
+  // freddie-bundle/src/platform ('WhatsappAdapter: WHATSAPP_VERIFY_TOKEN
+  // required') while mounting the Cordis tree, well after this preflight. Both
+  // live paths refuse first in the same shape (bin/casey-serve.js unsupervised,
+  // bin/worker-channels.js supervised); this row is the preflight that says so
+  // before the operator gets there. The guard is load-bearing -- do not drop it
+  // reasoning that the adapter checks its own token, because nothing does until
+  // the tree mounts. A hard problem, not just a warning.
   if (hasCreds('whatsapp') && !process.env.WHATSAPP_VERIFY_TOKEN) {
-    console.log(bad('WHATSAPP_VERIFY_TOKEN is unset - webhook verification will fail to start (set WHATSAPP_VERIFY_TOKEN to a real secret)'))
+    console.log(bad('WHATSAPP_VERIFY_TOKEN is unset - casey will not serve WhatsApp without it (freddie\'s platform plugin throws while mounting the Cordis tree); set WHATSAPP_VERIFY_TOKEN to the token you set in the Meta developer console'))
     problems++
   }
   // Not counted as a problem: `casey dashboard` is a legitimate way to run
