@@ -30,12 +30,19 @@ const h = webjsx.createElement;
 // operator nothing about which of the four to touch.
 const THRESH_META = {
     handoffMs: ['Unanswered request for a person (hours)', 'A contact asked for a real person. This is how long the team has to reply before the case is raised.'],
-    escalateHandoffMs: ['Escalated unanswered handoff (hours)', 'The second, louder deadline on that same request. Set it above the one above, or it fires first.'],
+    // "Escalated unanswered handoff" was the only label on this form written
+    // in the store's vocabulary rather than the operator's -- the row directly
+    // above it calls the same event "a request for a person", and nothing on
+    // any other screen calls it a handoff.
+    escalateHandoffMs: ['Second, later deadline on that request (hours)', 'The louder deadline on the same unanswered request. Set it above the one above, or it fires first.'],
     staleMs: ['Case with no activity (hours)', 'An open case nobody has touched for this long is called going cold. 48 is two days.'],
     abandonMs: ['Half-finished intake left sitting (hours)', 'Intake started and stopped with on-site facts never gathered. Short values chase a reporter who may still be reachable.'],
     incompleteCriticalMs: ['Missing essential visit details (hours)', 'Work has started but the facts a field visit cannot proceed without are still blank.'],
     neverClosedMs: ['Marked done but never closed (hours)', 'How long a resolved case may sit unclosed. 168 is one week.'],
-    unsentDraftMs: ['Unsent AI draft waiting (hours)', 'In assisted mode the contact waits on a person to release the draft. This is how long that wait may run.'],
+    // 'assisted' is the stored key for the Who answers setting, whose options
+    // an operator reads as "Draft, then I send" (see fields-editor.js). Naming
+    // the key here sent them looking for a mode that is not on the form.
+    unsentDraftMs: ['Unsent AI draft waiting (hours)', 'When Who answers is set to "Draft, then I send", the contact waits on a person to release the draft. This is how long that wait may run.'],
 };
 
 // Milliseconds in, hours on screen: one decimal place, so 90 minutes reads

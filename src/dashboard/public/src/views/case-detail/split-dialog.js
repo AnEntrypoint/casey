@@ -11,6 +11,16 @@ import { toast, failMsg } from '../../toasts.js';
 import { fetchCaseEvents, postSplit } from '../../api.js';
 const h = webjsx.createElement;
 
+// Only these four kinds are offered (see the filter in openSplitDialog), and
+// each is prefixed the way a transcript prefixes a speaker rather than the
+// way the store keys a row. An unlisted kind still shows its own key.
+const SPLIT_KIND = {
+    inbound: 'From the reporter',
+    outbound: 'Reply sent',
+    note: 'Note',
+    observation: 'Observation',
+};
+
 function openSplitDialog(caseId) {
     state._splitDialogFor = caseId;
     state._splitSelected = new Set();
@@ -55,10 +65,13 @@ export function SplitDialog({ onReload, key } = {}) {
             TextField({ key: 'subj', label: 'Subject for new case (optional)', value: state._splitSubject || '', placeholder: 'e.g. sheep Upington outbreak', onInput: (v) => { state._splitSubject = v; schedule(); } }),
             h('div', { key: 'evbox', class: 'casey-split-evbox' },
                 events == null ? h('div', { class: 'casey-hint' }, 'Loading...') :
-                    !events.length ? h('div', { class: 'casey-hint' }, 'no events to split off') :
+                    !events.length ? h('div', { class: 'casey-hint' }, 'Nothing on this timeline can be moved to another case.') :
                         events.map(e => h('label', { key: e.id, class: 'casey-split-row' },
                             h('input', { type: 'checkbox', checked: selected.has(e.id), onchange: () => toggle(e.id) }),
-                            h('span', {}, '[' + e.kind + '] ' + (e.text || '').slice(0, 120))
+                            // Was '[' + e.kind + '] ' -- the store's own key,
+                            // in brackets, in front of every line an operator
+                            // is being asked to read and choose between.
+                            h('span', {}, SPLIT_KIND[e.kind] || e.kind, ': ', (e.text || '').slice(0, 120))
                         ))
             ),
             TextField({ key: 'reason', label: 'Reason (optional)', multiline: true, rows: 2, value: state._splitReason || '', placeholder: 'e.g. different species, separate location', onInput: (v) => { state._splitReason = v; schedule(); } }),

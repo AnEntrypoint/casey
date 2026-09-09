@@ -84,7 +84,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
             else if (j.sent) toast('Saved to the timeline, but the channel refused it. The contact has NOT received this. Check the timeline.', 'warn');
             else toast('Saved to the timeline only. This console is not attached to the messaging channels, so nothing was sent to the contact.', 'warn');
             if (onReload) await onReload(c.id);
-        } catch (e) { state._replySending = false; toast('send error: ' + e.message, 'err'); schedule(); }
+        } catch (e) { state._replySending = false; toast('The reply did not go out. ' + e.message, 'err'); schedule(); }
     };
 
     const cans = cannedReplies(c);
@@ -119,7 +119,11 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
         h('label', { class: 'casey-reply-label' }, 'Reply to contact on ' + c.channel),
         TextField({
             multiline: true, rows: 3, value: text, maxLength: REPLY_MAXLEN,
-            placeholder: 'Send a message as a human operator... (Ctrl+Enter to send)',
+            // "Send a message as a human operator..." was the box explaining
+            // its own role in the system to the human sitting in front of it.
+            // They know they are a person; what they need from a placeholder
+            // is the keyboard shortcut.
+            placeholder: 'Type your reply here. Ctrl+Enter sends it.',
             onInput: setText,
         }),
         contactMaybeNonEnglish(events) ? Alert({ kind: 'warn', children: 'This person may not be writing in English. Please reply in their language.' }) : null,

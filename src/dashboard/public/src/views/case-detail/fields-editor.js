@@ -10,7 +10,7 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
 import { TextField, Select } from '/design/src/components/content.js';
-import { AutonomyBadge } from './autonomy-badge.js';
+import { autonomyExplanation } from './autonomy-badge.js';
 import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { patchCaseApi } from '../../api.js';
@@ -19,6 +19,32 @@ const h = webjsx.createElement;
 const DEFAULT_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
 const DEFAULT_CASE_TYPES = ['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'];
 const AUTONOMY_OPTS = ['auto', 'assisted', 'observe'];
+
+// The dropdowns used to render the stored keys straight onto the screen, so
+// an operator picked between "follow_up", "lab_sample" and "import_alert" --
+// underscores, lower case, a database column read out loud. Select() takes
+// {value,label} pairs, so the key still goes to the server and the person
+// reads English. A value with no entry here falls back to its own key, which
+// is what a deployment-added case type should do: show as itself rather than
+// vanish from the list.
+const OPTION_LABEL = {
+    unset: 'Not set yet',
+    outbreak: 'Outbreak',
+    follow_up: 'Follow-up',
+    lab_sample: 'Lab sample',
+    import_alert: 'Import alert',
+    low: 'Low',
+    normal: 'Normal',
+    high: 'High',
+    urgent: 'Urgent',
+    auto: 'Answer on its own',
+    assisted: 'Draft, then I send',
+    observe: 'Log only, I reply',
+};
+
+function labelled(values) {
+    return values.map(v => ({ value: v, label: OPTION_LABEL[v] || v }));
+}
 const INTERNAL_TAG_PREFIXES = ['health:', 'intake_mode:', 'snoozed-until:'];
 const INTERNAL_TAG_EXACT = new Set(['needs-human', 'draft-pending', 'unsent_draft', 'ai-offline', 'degraded-turn-seen']);
 
@@ -38,9 +64,18 @@ function draftFor(c) {
 // paradigm -- see case-tools.js), so an agent-set value is still unverified
 // until a human confirms it. Renders nothing once an operator has confirmed
 // (edited/saved) it, since 'operator' becomes the source at that point.
-function SourceBadge({ source }) {
+//
+// It read "unverified: agent-reported" at 10px: a colon taxonomy and two enum
+// words, set smaller than anything else on the form, saying a thing that
+// changes whether you trust the value above it. The words that were hidden in
+// its `title` were the ones worth reading, and a title is a hover affordance
+// -- it does not exist on a phone. Now it is one sentence, at the size the
+// rest of the form's help text uses, with nothing behind a hover.
+function SourceNote({ source }) {
+    const brand = state.config?.dashboard_ui?.brand || 'casey';
     if (source !== 'agent') return null;
-    return h('span', { class: 'casey-source-badge casey-source-badge--agent', title: 'casey recorded this from what was said -- not yet reviewed by a technician' }, 'unverified: agent-reported');
+    return h('p', { class: 'casey-source-note casey-hint' },
+        brand + ' filled this in from what the reporter said. Nobody has checked it yet.');
 }
 
 export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
@@ -79,19 +114,34 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
 
     return h('div', { key, class: 'casey-fields-editor' },
         h('div', { class: 'casey-fields-row' },
-            Select({ label: 'Priority', value: d.priority, options: priorities, onChange: (v) => set('priority', v) }),
-            h('div', {},
-                Select({ label: 'Autonomy', value: d.autonomy, options: AUTONOMY_OPTS, onChange: (v) => set('autonomy', v) }),
-                AutonomyBadge({ autonomy: d.autonomy })
-            ),
+            Select({ label: 'Priority', value: d.priority, options: labelled(priorities), onChange: (v) => set('priority', v) }),
+            Select({
+                label: 'Who answers', value: d.autonomy, options: labelled(AUTONOMY_OPTS),
+                onChange: (v) => set('autonomy', v), hint: autonomyExplanation(d.autonomy)
+            }),
             TextField({ label: 'Assignee', value: d.assignee, onInput: (v) => set('assignee', v) }),
             h('div', {},
-                Select({ label: 'Case type', value: d.case_type, options: caseTypes, onChange: (v) => set('case_type', v), hint: 'Segments every report aggregate. Changing it records a case_type a -> b audit event.' }),
-                SourceBadge({ source: caseTypeSource })
+                // The old hint was written for whoever wrote the endpoint:
+                // "Segments every report aggregate. Changing it records a
+                // case_type a -> b audit event." An operator does not have a
+                // report aggregate, and case_type is the column name, not the
+                // field they are looking at.
+                Select({
+                    label: 'Case type', value: d.case_type, options: labelled(caseTypes),
+                    onChange: (v) => set('case_type', v),
+                    hint: 'Groups this report in the totals. Changing it is written to the timeline.'
+                }),
+                SourceNote({ source: caseTypeSource })
             )
         ),
         TextField({ label: 'Subject', value: d.subject, onInput: (v) => set('subject', v) }),
-        TextField({ label: 'Tags', value: d.tags, onInput: (v) => set('tags', v), hint: 'Your own labels for this case. System-tracked status (health/intake/snooze) is already shown above as badges and is not edited here.' }),
+        // The hint used to end "...is already shown above as badges", which
+        // described the page's own chrome to the person looking at it -- and
+        // stopped being true the moment those badges became sentences. What an
+        // operator needs from this field is that their tags are kept apart
+        // from the ones the system keeps for itself, and that editing here
+        // cannot wipe those.
+        TextField({ label: 'Tags', value: d.tags, onInput: (v) => set('tags', v), hint: 'Your own labels for this case. The ones the system keeps for itself are held separately and cannot be lost by editing here.' }),
         TextField({ label: 'Summary', multiline: true, rows: 3, value: d.summary, onInput: (v) => set('summary', v) }),
         Btn({ variant: 'primary', disabled: saving, children: saving ? 'Saving...' : 'Save edits', onClick: save })
     );

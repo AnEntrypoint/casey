@@ -28,16 +28,30 @@ function isSnoozed(id) {
   return m[id] && m[id] > Date.now();
 }
 
+// EVERY LINE IN THIS MENU IS A THING THAT HAPPENED TO A REPORT, so each one
+// names the report and says what happened, as a sentence.
+//
+// It used to read "Turn failed: <reason>" -- "turn" is what the LLM loop calls
+// one exchange, "failed" is its return status, and the case it happened to was
+// nowhere in the line. When the store had no reason recorded it read "Turn
+// failed: unknown reason", which is a machine admitting to itself that a field
+// was null. An operator reading that learns nothing and cannot act on it; what
+// they need to know is that a specific farmer asked something and did not get
+// an answer.
 function degradedTurnAlerts() {
   return (state.degradedTurns || []).map(t => ({
     id: 'degraded-' + t.case_id + '-' + t.at,
     caseId: t.case_id, ref: t.ref,
-    label: 'Turn failed: ' + (t.reason || 'unknown reason'),
+    label: (t.ref || t.case_id) + ' got no answer'
+      + (t.reason ? ' -- ' + t.reason : '') + '. Reply to them yourself.',
   }));
 }
 
 function handoffAlerts() {
-  return state.handoffQueue.map(c => ({ id: 'handoff-' + c.id, caseId: c.id, ref: c.ref, label: 'Needs a person: ' + (c.ref || c.id) }));
+  return state.handoffQueue.map(c => ({
+    id: 'handoff-' + c.id, caseId: c.id, ref: c.ref,
+    label: (c.ref || c.id) + ' asked for a real person',
+  }));
 }
 
 export function activeAlerts() {
@@ -48,7 +62,11 @@ export function NotificationsCenter() {
   const alerts = activeAlerts();
   const items = alerts.length
     ? alerts.map(a => ({ id: a.id, label: a.label }))
-    : [{ id: 'none', label: 'No active alerts', disabled: true }];
+    // Deliberately a flat statement of fact, not reassurance. "Nothing needs
+    // you right now" is the kind of standing green health-notices.js took out
+    // of the appbar: it is a promise this menu cannot keep, since it only sees
+    // handoffs and failed turns.
+    : [{ id: 'none', label: 'No alerts', disabled: true }];
   items.push({ separator: true });
   if (alerts.length) items.push({ id: 'snooze-all', label: 'Snooze all for 1 hour' });
   return Dropdown({
