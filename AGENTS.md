@@ -627,7 +627,7 @@ from the name alone.
 | `CASEY_DRAIN_DEADLINE_MS` vs `CASEY_DRAIN_TURN_TIMEOUT_MS` | Two distinct drain timeouts -- the former bounds the supervisor's reload-time drain of the whole worker; the latter bounds `casey.js`'s own in-process `drain()` await used for shutdown determinism. |
 | `CASEY_RESUME_MAX_REDRIVES`, `CASEY_RESUME_SPACING_MS`, `CASEY_RESUME_MAX_AGE_MS` | Bound the boot-time stuck-turn resume sweep so it cannot starve a genuinely new contact's message by exhausting provider rate limits, and so a stuck message is not retried forever across restarts once aged past usefulness. |
 | `CASEY_DRAIN_POLL_INTERVAL_MS` | Background poll that drains LLM-down-queued turns once the provider recovers, independent of any new inbound arriving on the same conversation -- without it a queued contact can wait indefinitely even after the backend is healthy again. |
-| `CASEY_RATE_LIMIT_MSGS`/`WINDOW_MS`, `CASEY_GLOBAL_RATE_LIMIT_MSGS`/`WINDOW_MS` | An over-cap message is dropped silently (no reply, no synthetic "slow down" text), matching the no-fallback-text discipline. Per-contact and aggregate-across-all-contacts limits are independent. |
+| `CASEY_RATE_LIMIT_MSGS`/`WINDOW_MS`, `CASEY_GLOBAL_RATE_LIMIT_MSGS`/`WINDOW_MS` | An over-cap message is dropped silently AS FAR AS THE CONTACT IS CONCERNED -- no reply, no synthetic "slow down" text, matching the no-fallback-text discipline -- but it is no longer silent to the operator: `hooks/dropped-intake.js` counts it and `/api/health` reports it (see "Inbound messages that never become records" below). Per-contact and aggregate-across-all-contacts limits are independent. |
 | `CASEY_RECEIVE_SILENCE_MS` | Restarts a channel that went silent this long (zombie-receive self-heal); default 0 = off. |
 | `CASEY_COOKIE_SECURE=0` | Drops the `Secure` flag on the session cookie for a plain-HTTP dev/LAN deployment (Secure is on by default). |
 | `CASEY_RELOAD`, `CASEY_RELOAD_PATHS` | `CASEY_RELOAD=0` disables hot reload (crash-restart stays on). `CASEY_RELOAD_PATHS` is a comma-separated list of extra dirs, deduped against the default `src/` + `../freddie/src`. |
@@ -820,7 +820,22 @@ without restart-on-crash.
   review rather than silently actioned and forgotten.
 - **A fast message burst is buffered and replayed, never silently
   dropped.** A message that hits the per-contact in-flight guard is queued
-  and replayed as a full turn once the in-flight turn clears.
+  and replayed as a full turn once the in-flight turn clears. The buffer is
+  bounded (`BUFFER_CAP`, 20 per contact) and over the cap the OLDEST is
+  discarded -- the one real exception to this guarantee, and it is counted
+  rather than merely logged (see below).
+- **A message casey throws away is counted, even though it reaches no case.**
+  Four paths turn an inbound away ABOVE `recordInbound`, so the message exists
+  in no case, on no timeline and in no queue: the two rate limits, a full burst
+  buffer, and an uninitialized store. `hooks/dropped-intake.js` counts all four
+  and `/api/health` reports them as `dropped_inbound`, with a bounded audit
+  trail appended to a singleton `channel:'system'` case. It is an AGGREGATE by
+  construction -- one summary per reason per window, never one row per message
+  -- because the rate limiters exist precisely to stop a flood driving unbounded
+  store writes, and a per-message record would hand the flood that exact
+  amplification. The stated cost: an operator learns how many were lost and why,
+  never which. The periodic sweep (`case-sweep.js`) flushes the last partial
+  window, without which a flood that STOPS would never write its remainder.
 - **No deterministic text processing.** No keyword intent classifier, no
   province->town gazetteer -- place understanding and report extraction are
   entirely the model reading and calling the right tool.

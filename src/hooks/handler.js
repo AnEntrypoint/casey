@@ -42,7 +42,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
   // guarantees they own (a burst is buffered not dropped, an over-cap message is
   // dropped silently, and the claim is taken with no await between the has() and
   // the add()).
-  const admission = makeAdmissionControl({ log })
+  const admission = makeAdmissionControl({ log, store })
   const deps = { store, callLLM, llmStatus, autoRespond, log, notifyHandoff, admission }
 
   // Claims inFlight SYNCHRONOUSLY, before runInboundTurn's first await

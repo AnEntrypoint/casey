@@ -14,6 +14,7 @@ import { observation, flagNeedsHuman } from './case-writes.js'
 import { applyServiceControls, isLlmDown } from './service-controls.js'
 import { describeMedia, recordInboundMedia } from './media-intake.js'
 import { truncate, stripChannelMarkup, mergeTag, dropTag } from './heuristics.js'
+import { recordDroppedInbound } from './dropped-intake.js'
 import { tagList } from '../timestamp.js'
 
 // Platform message id for dedup: Discord/WhatsApp put it on raw.id; fall back to
@@ -37,17 +38,29 @@ export function messageId(msg) {
 // something a scripted apology should paper over (USER DIRECTIVE: no
 // mocks/fallbacks/stubs, only singular working mechanisms and loud errors). Log
 // loud, send nothing.
+// Each of the three drops below is COUNTED (hooks/dropped-intake.js) as well as
+// logged. A log line on a headless deployment is not a record: it was previously
+// the only trace that a report had arrived and been thrown away, which in a
+// disease-surveillance deployment is the one failure that must never be silent.
+// The count is aggregate and bounded by design -- one summary written per reason
+// per window, never one row per message -- precisely so recording the flood
+// cannot become the store-write amplification these limiters exist to deny. The
+// store-not-ready case can write nothing at all, by definition; it still
+// increments the in-memory tally, so /api/health reports it.
 export function checkAdmission({ admission, store, log, msg, channel, external_id, replyTo, platform }) {
   if (!msg.burstReplay && admission.rateLimited(external_id)) {
     log.error?.('[casey] rate limit: skipping turn, no store write, no reply sent', { channel })
+    recordDroppedInbound('rate_limited_contact', { channel, store, log })
     return { to: replyTo, text: '', platform, rateLimited: true }
   }
   if (admission.globallyRateLimited()) {
     log.error?.('[casey] global rate limit: skipping turn, no store write, no reply sent', { channel })
+    recordDroppedInbound('rate_limited_global', { channel, store, log })
     return { to: replyTo, text: '', platform, rateLimited: true }
   }
   if (!store) {
     log?.error?.('[casey] store not initialized; dropping inbound')
+    recordDroppedInbound('store_not_ready', { channel, store: null, log })
     return { to: replyTo, text: '', platform, error: 'store_not_ready' }
   }
   return null

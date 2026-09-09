@@ -19,7 +19,9 @@
 //     Under JS's cooperative concurrency that pair IS the critical section; any
 //     await placed between them reopens the race it exists to close.
 
-export function makeAdmissionControl({ log = console } = {}) {
+import { recordDroppedInbound } from './dropped-intake.js'
+
+export function makeAdmissionControl({ log = console, store = null } = {}) {
   // Per-contact in-flight guard, keyed on external_id (the canonical contact
   // key): while a turn is running for a contact, a second arrival must not race
   // a concurrent LLM call against the same case.
@@ -77,6 +79,11 @@ export function makeAdmissionControl({ log = console } = {}) {
       if (buf.length > BUFFER_CAP) {
         buf.shift()
         log.warn?.('[casey] burst buffer cap exceeded, oldest message dropped', { channel, cap: BUFFER_CAP })
+        // This is the one place the "buffered, never dropped" guarantee above
+        // genuinely does not hold, and until now it said so only to a log file.
+        // Counting it here puts the exception on the same operator surface as
+        // the two rate limits (hooks/dropped-intake.js).
+        recordDroppedInbound('burst_buffer_full', { channel, store, log })
       }
       pendingBuffer.set(id, buf)
     },

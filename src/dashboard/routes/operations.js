@@ -8,6 +8,7 @@
 //   getWebhookDeliveryStatus, SAST_TZ, llmStatus, runSweep, receiveStatus,
 //   runtimeStatus, queueStatus, alertWebhookUrl
 import { tagList, parseReport } from '../../timestamp.js'
+import { snapshotDroppedIntake } from '../../hooks/dropped-intake.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
 import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI } from '../../store/report-shape.js'
 import { mountRoutes } from './register.js'
@@ -166,6 +167,12 @@ export function getHealth({ store, llmStatus, receiveStatus, queueStatus, runSwe
       },
       alert_webhook: alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus),
       degradation_rate: degradationRate,
+      // Inbound messages casey turned away BEFORE recordInbound, so they exist
+      // in no case and on no timeline. Counting them is the only way an
+      // operator can learn a report was lost at all -- see hooks/
+      // dropped-intake.js for why this is an aggregate and never one row per
+      // message. Since process start, aggregate, and carrying no contact key.
+      dropped_inbound: snapshotDroppedIntake(),
     })
   }
 }
