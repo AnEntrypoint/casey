@@ -460,14 +460,27 @@ centre entirely.
 - `views/map-command-center.js` -- the map home view: the map pane plus ONE
   rail. The rail shows the worst-first queue (or a spatial rollup) when nothing
   is open, and the case detail when something is.
-- `panels/map-panel.js` -- the map shell and the rail. The canvas is the whole
-  pane; only the legend, an error/empty note, and the two `sr-only` nodes that
-  name and describe the map for a screen reader (they occupy no space and cover
-  no pin) may sit on it. Counts, filters,
-  overlays and the queue are docked in the rail, never floated over the map
-  (mapuipatterns' rule for situational-awareness domains: do not cover
+- The map feature is SEVEN modules on three layers, and the layer boundary is
+  the rule that decides which file a change belongs in. `map-model.js` and
+  `panels/map-view-state.js` touch no DOM, no Leaflet and no webjsx.
+  `panels/map-leaflet.js`, `-markers.js` and `-overlays.js` touch `window.L` and
+  never webjsx. `panels/map-panel.js` and `-rail.js` touch webjsx and never
+  `window.L`. Keep a new derivation out of the driver and out of the chrome.
+- `panels/map-panel.js` -- the pane's chrome, and the feature's single import
+  surface: it re-exports what `main.js`, `case-detail-view.js` and
+  `map-command-center.js` use, so those never reach past it. The canvas is the
+  whole pane; only the legend, an error/empty note, and the two `sr-only` nodes
+  that name and describe the map for a screen reader (they occupy no space and
+  cover no pin) may sit on it. Counts, filters,
+  overlays and the queue are docked in `panels/map-rail.js`, never floated over
+  the map (mapuipatterns' rule for situational-awareness domains: do not cover
   potentially important data with floating panels).
-- `panels/map-leaflet.js` -- the imperative Leaflet driver. A pin encodes three
+- `panels/map-view-state.js` -- the view's live state, the one data load, and
+  every count read off them. `panels/map-markers.js` -- the pin's three visual
+  channels and the clustered layer. `panels/map-overlays.js` -- the four
+  toggleable layers drawn beside the pins.
+- `panels/map-leaflet.js` -- the Leaflet instance: create it framed, keep the
+  viewport honest, load the pins. A pin encodes three
   independent channels in three different visual dimensions, deliberately:
   fill colour = status, border style = where the coordinate came from,
   size + ring = urgency from `attn.js`'s score. Urgency is size-and-geometry
