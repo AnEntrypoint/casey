@@ -22,6 +22,28 @@
    under .ds-247420 and not re-bound per theme, so naming them here is a token
    reference and not a second definition of the ground. */
 body { background: var(--bg); color: var(--fg); }
+
+/* ---- SEAMS ARE GROUND, NOT HAIRLINES ------------------------------------
+   Measured on the running page, the app drew four one-sided borders, and the
+   grounds either side of three of them were IDENTICAL white -- so the line was
+   the only thing separating a region from its neighbour, which is precisely
+   the job a ground tier does without drawing anything. connection-banner.js
+   already states the rule for its own band ("a one-sided border is decoration
+   the ground already does better"); this applies it to the frame.
+
+   The fourth was a real defect rather than a style choice: .case-list-pane
+   drew a border-right and .case-detail-pane a border-left, so the seam BETWEEN
+   the two panes carried two hairlines stacked into one 2px line, darker than
+   either rule intended and darker than every other edge on the screen.
+
+   The tier is the whole mechanism now: chrome bands and docked rails sit on
+   --bg-2, the content they frame sits on --bg. Nothing draws an edge, so no
+   edge can double, and a theme that changes its grounds carries the frame with
+   it instead of leaving a hardcoded rule behind. Scope-prefixed because the
+   kit's own .app-chrome/.app-status rules are prefixed and would otherwise win
+   whatever order this sheet loads in. */
+.ds-247420 header.app-chrome { border-bottom: none; background: var(--bg-2); }
+.ds-247420 footer.app-status { border-top: none; background: var(--bg-2); }
 html.ds-247420[data-casey-theme="herd"] { background: var(--paper); }
 html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-app-root, .ds-app-surface { display: flex; flex-direction: column; min-height: 100vh; }
@@ -35,11 +57,11 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 /* ---- two-pane case list / case detail split (architecture spec section 5) */
 .app-two-pane { display: flex; width: 100%; height: 100%; min-height: 0; }
-.app-two-pane > .case-list-pane { flex: 0 0 380px; border-right: 1px solid var(--border); overflow: auto; min-height: 0; }
+.app-two-pane > .case-list-pane { flex: 0 0 380px; background: var(--bg-2); overflow: auto; min-height: 0; }
 .app-two-pane > .case-detail-pane { flex: 1; overflow: auto; min-height: 0; }
 @container (max-width: 900px) {
   .app-two-pane { flex-direction: column; }
-  .app-two-pane > .case-list-pane { flex: 1 1 auto; border-right: none; }
+  .app-two-pane > .case-list-pane { flex: 1 1 auto; }
   .app-two-pane.has-active > .case-list-pane { display: none; }
   .app-two-pane.has-active > .case-detail-pane { position: fixed; inset: 0; z-index: var(--z-overlay, 40); background: var(--bg); }
 }
@@ -66,7 +88,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .app-two-pane-map > .case-detail-pane {
   flex: 0 0 clamp(320px, 26vw, 400px); max-width: clamp(320px, 26vw, 400px);
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
-  background: var(--bg); border-left: 1px solid var(--border);
+  background: var(--bg-2);
 }
 /* The map/list toggle is phone-only chrome: above the breakpoint both panes
    are on screen, so a control for choosing between them would be a control for
@@ -100,7 +122,9 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .app-two-pane-map { flex-direction: column; }
   .app-two-pane-map > .case-list-pane,
   .app-two-pane-map > .case-detail-pane { flex: 1 1 auto; min-height: 0; max-width: none; }
-  .app-two-pane-map > .case-detail-pane { border-left: none; }
+  /* Stacked at this width, so the tint that separates the two columns side by
+     side would read as an unexplained grey block instead. */
+  .app-two-pane-map > .case-detail-pane { background: var(--bg); }
   .app-two-pane-map.m-map > .case-detail-pane { display: none; }
   .app-two-pane-map.m-list > .case-list-pane { display: none; }
   /* An open case still takes over the whole screen with its own worded back
@@ -579,9 +603,31 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    than by line number: the numbers this comment used to carry, 254-255 and
    447-450, had drifted about 215 and 440 lines out of date, which is what a
    line reference in a 1200-line sheet does on its second edit.) */
-.tcase.heat-3 { box-shadow: inset 3px 0 0 var(--danger); }
-.tcase.heat-2 { box-shadow: inset 3px 0 0 var(--warn, var(--accent)); }
-.tcase.heat-1 { box-shadow: inset 3px 0 0 var(--border); }
+/* The stripe is INSET FROM THE ROW'S TOP AND BOTTOM, and that is the whole
+   point of drawing it as a pseudo-element instead of the inset box-shadow it
+   used to be. A full-height stripe on stacked rows with no gap between them
+   merges into one unbroken vertical bar: on this deployment's own rail, 18
+   consecutive "needs a person" rows rendered a single 3px red line down the
+   entire pane, which reads as a pane border rather than as per-row urgency.
+   The signal was destroyed by its own repetition -- the same failure the
+   standing-green health pills had, where a mark that never varies stops being
+   read at all.
+   Inset by --space-2 top and bottom, each row's mark is separate, so the column
+   scans as a run of urgency marks with visible breaks and can never be mistaken
+   for an edge. Urgency still travels in words too (.tcase-why's lead sentence
+   and the row's aria-label), so the colour remains an accelerator rather than
+   the only carrier. */
+.tcase { position: relative; }
+.tcase.heat-3::before, .tcase.heat-2::before, .tcase.heat-1::before {
+  content: '';
+  position: absolute;
+  left: 0; top: var(--space-2); bottom: var(--space-2);
+  width: 3px;
+  border-radius: 0 var(--r-pill) var(--r-pill) 0;
+}
+.tcase.heat-3::before { background: var(--danger); }
+.tcase.heat-2::before { background: var(--warn, var(--accent)); }
+.tcase.heat-1::before { background: var(--border); }
 .tcase.claimed-other { opacity: .62; }
 
 @media (prefers-reduced-motion: reduce) { .case-row, .tcase { transition: none; } }
