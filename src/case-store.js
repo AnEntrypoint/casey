@@ -977,6 +977,56 @@ export class CaseStore {
   // never repeating the erased values. Idempotent: re-running against an
   // already-erased contact is a no-op (already-blank fields do not get a
   // second scrub event).
+  // Replace a destination address held in an event's `data.to` with the case's
+  // erasure tombstone. The event row itself is never deleted -- the log is
+  // append-only and the fact that a reply was delivered is real history worth
+  // keeping; it is the address inside it that the person asked to have removed.
+  // Best-effort per event: a failure here must never revert an erasure that has
+  // already succeeded on the case row.
+  async _scrubEventDestinations(caseId, erasedKey) {
+    try {
+      const events = await this.t.list('event', { case_id: caseId }, { limit: 1000 })
+      for (const e of events) {
+        if (!e.data || typeof e.data !== 'string' || !e.data.includes('"to"')) continue
+        let parsed
+        try { parsed = JSON.parse(e.data) } catch { continue }
+        if (!parsed || typeof parsed !== 'object' || parsed.to == null) continue
+        if (parsed.to === erasedKey) continue
+        parsed.to = erasedKey
+        try { await this.t.update('event', e.id, { data: JSON.stringify(parsed) }, SYSTEM_USER) } catch { /* per-event best effort */ }
+      }
+    } catch { /* the real erasure already landed; this is additive */ }
+  }
+
+  // ONE PERSON CAN HOLD SEVERAL CONTACT ROWS. A contact is keyed per
+  // channel+external_id, so the same human reaching casey over WhatsApp and
+  // then through the public web form has two rows -- witnessed in this
+  // deployment's own store as `whatsapp/27821110001` and `web/+27821110001`,
+  // differing only by the leading '+'. Erasing the row an operator happened to
+  // click left the other one holding the number, INCLUDING soft-deleted rows,
+  // which thatcher's list filters out of every read path but which are still
+  // sitting on disk. A right-to-erasure request is about a person, not a row.
+  //
+  // Siblings are matched on the DIGITS of the external_id, which is what makes
+  // '+27...' and '27...' the same number, and only when there are at least
+  // seven of them -- a short or non-numeric key (a Discord snowflake, a
+  // `web-<timestamp>`, an already-erased tombstone) is not a phone number and
+  // must never be fuzzy-matched into somebody else's erasure.
+  async _siblingContactIds(contact) {
+    const digits = String(contact?.external_id || '').replace(/[^0-9]/g, '')
+    if (digits.length < 7) return []
+    const rows = await this.t.list('contact', {}, { limit: 5000 })
+    const deleted = await this.t.list('contact', { status: 'deleted' }, { limit: 5000 }).catch(() => [])
+    const seen = new Set()
+    const out = []
+    for (const r of [...rows, ...deleted]) {
+      if (!r || r.id === contact.id || seen.has(r.id)) continue
+      seen.add(r.id)
+      if (String(r.external_id || '').replace(/[^0-9]/g, '') === digits) out.push(r.id)
+    }
+    return out
+  }
+
   async eraseContact(contactId, { reason = '', operator = SYSTEM_USER } = {}) {
     const contact = await this.getContact(contactId)
     if (!contact) throw new Error(`eraseContact: no such contact ${contactId}`)
@@ -984,6 +1034,13 @@ export class CaseStore {
     const alreadyErased = contact.external_id === '[erased]'
     if (!alreadyErased) {
       await this.t.update('contact', contactId, PII_CONTACT_FIELDS, SYSTEM_USER)
+    }
+    // Every other row for the same number, erased with the same field set. The
+    // ids are returned so the caller can say how many people-records this
+    // actually touched rather than implying it was one.
+    const siblingIds = await this._siblingContactIds(contact)
+    for (const sid of siblingIds) {
+      try { await this.t.update('contact', sid, PII_CONTACT_FIELDS, SYSTEM_USER) } catch { /* per-row best effort */ }
     }
     const PII_REPORT_FIELDS = ['owner_name', 'owner_contact', 'present_person', 'present_person_relation', 'contact_fallback', 'photos', 'audio']
     const cases = await this.listCases({ contact_id: contactId }, { limit: 10000 })
@@ -1002,7 +1059,24 @@ export class CaseStore {
         for (let attempt = 0; attempt <= ERASE_RETRY_LIMIT; attempt++) {
           const { value: report } = this._parseReport(c.report, c.id)
           const hadPII = PII_REPORT_FIELDS.some(k => report[k] != null && report[k] !== '')
-          if (!hadPII) return
+          // THE CASE ROW ITSELF CARRIES THE NUMBER, TWICE. `external_id` is the
+          // raw routing key and `author_key` is the same value again, and
+          // neither is inside `report`, so scrubbing the report blob alone left
+          // the phone number on every case of a contact who had exercised their
+          // right to erasure -- and `caseDetailProjection` emits it to any
+          // authed operator as `external_id_formatted`. Witnessed: after a
+          // successful erase the contact row read [erased] while the case row
+          // still read 27821110001, and `casey show <ref>` printed the number.
+          //
+          // The replacement is per-case rather than a bare '[erased]' because
+          // both values are keys: `_withLock` keys on `channel|external_id`, and
+          // findOpenCase matches on channel+external_id, so a shared literal
+          // would collide erased cases onto one lock and could let a NEW
+          // inbound match an erased case. It carries no ':' because
+          // splitExternalId treats that as a Discord container separator.
+          const erasedKey = `[erased]-${c.id}`
+          const hadKeyPII = c.external_id !== erasedKey || c.author_key !== erasedKey
+          if (!hadPII && !hadKeyPII) return
           for (const k of PII_REPORT_FIELDS) report[k] = null
           try {
             // writeGuardViolation forbids the system actor from writing `report`
@@ -1010,13 +1084,19 @@ export class CaseStore {
             // only ever NULLs existing PII fields, never invents text, so it goes
             // straight to thatcher rather than through updateCase/updateCaseQuiet's
             // guard.
-            await this.t.update('case', c.id, { report: JSON.stringify(report) }, SYSTEM_USER,
+            await this.t.update('case', c.id, { report: JSON.stringify(report), external_id: erasedKey, author_key: erasedKey }, SYSTEM_USER,
               c._version != null ? { expectedVersion: c._version } : {})
             await this.appendEvent(c.id, {
               kind: 'action', actor: 'system', touch: false,
-              text: `PII erasure: contact data and report identifying fields scrubbed${reason ? ` (${reason})` : ''}`,
-              data: { erasure: true, by: operator?.id || 'system', fields: PII_REPORT_FIELDS },
+              text: `PII erasure: contact data, report identifying fields and the case routing key scrubbed${reason ? ` (${reason})` : ''}`,
+              data: { erasure: true, by: operator?.id || 'system', fields: [...PII_REPORT_FIELDS, 'external_id', 'author_key'] },
             })
+            // The number survives a third time inside the event log: a delivered
+            // reply records its destination as `data.to`. AGENTS.md's
+            // aggregate rule already forbids emitting that field, but forbidding
+            // its EMISSION is not erasing it, and a right-to-erasure request is
+            // about what is held, not only about what is shown.
+            await this._scrubEventDestinations(c.id, erasedKey)
             touchedCaseIds.push(c.id)
             return
           } catch (e) {
@@ -1062,7 +1142,7 @@ export class CaseStore {
         }
       } catch { /* best-effort -- the provenance ledger is additive, never load-bearing for the real erasure */ }
     }
-    return { contactId, contactErased: !alreadyErased, casesScrubbed: touchedCaseIds, casesFailed: failedCaseIds }
+    return { contactId, contactErased: !alreadyErased, alsoErasedContactIds: siblingIds, casesScrubbed: touchedCaseIds, casesFailed: failedCaseIds }
   }
 
   // Metadata-only update that does NOT touch last_event_at -- used by the health
