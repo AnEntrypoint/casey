@@ -97,10 +97,26 @@ export async function sendGuaranteedFallback({
 // the send POSTs to /channels/{to}/messages, so `to` must be the channel id; on
 // WhatsApp it falls back to the phone number. msg.from (author id) silently 404s
 // on Discord and the contact never sees the reply.
+// Rewrite an already-written outbound event to say the send did not land. The
+// row is not deleted: casey did compose and attempt that reply, and the attempt
+// is real history. Only the claim that it reached the contact is withdrawn.
+async function markOutboundUndelivered(store, ev, replyTo, isFallback, error, log) {
+  if (!ev?.id) return
+  try {
+    await store.t.update('event', ev.id, {
+      data: JSON.stringify({ to: replyTo, fallback: isFallback, delivered: false, send_error: String(error || '').slice(0, 300) }),
+    }, { id: 'system', role: 'system' })
+  } catch (e) { log?.warn?.('[casey] could not mark outbound as undelivered', { error: e.message }) }
+}
+
 export async function sendAgentReply({
   store, log, adapter, fresh, channel, replyTo, platform, text, isFallback, degraded,
 }) {
-  await store.appendEvent(fresh.id, {
+  // Appended BEFORE the send attempt on purpose: a crash between the write and
+  // the send leaves a record of what casey was about to say, which is the right
+  // bias for an audit log. The cost is that this row exists whether or not the
+  // send lands, so a failure has to come back and say so -- see below.
+  const outboundEvent = await store.appendEvent(fresh.id, {
     kind: 'outbound', actor: 'agent', channel,
     text, data: { to: replyTo, fallback: isFallback },
   })
@@ -120,7 +136,32 @@ export async function sendAgentReply({
       delivered = false
       log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message })
       await store.appendEvent(fresh.id, observation(`send failed on ${channel}: ${e.message}`))
+      // MARK THE OUTBOUND ROW ITSELF. The observation above is a separate line
+      // further down the timeline, so an operator scanning the conversation saw
+      // "Replied automatically" and had to notice a second row elsewhere to
+      // learn the contact never got it. The timeline renders this flag on the
+      // reply it belongs to.
+      //
+      // Best-effort: the send has already failed and the observation is already
+      // written, so a failure to annotate must not throw on top of it.
+      await markOutboundUndelivered(store, outboundEvent, replyTo, isFallback, e.message, log)
     }
+  } else {
+    // NO ADAPTER RESOLVED AT ALL. Nothing was sent, and this is the exact case
+    // this module's own header warns about: a turn with no resolved adapter
+    // must not record itself as having replied. It reached the timeline as
+    // "Replied automatically" with no qualification, which is the same untruth
+    // as a failed send and arrives more quietly, because there is no thrown
+    // error and no observation row beside it.
+    await markOutboundUndelivered(store, outboundEvent, replyTo, isFallback,
+      `no adapter for channel "${channel}" -- nothing was sent`, log)
+    await store.appendEvent(fresh.id, observation(`reply not sent: no adapter for channel "${channel}"`))
   }
+  // `delivered` is returned for the caller that wants it and is NOT attached to
+  // `reply`. Both call sites of this turn -- freddie-bundle's platform plugin
+  // for WhatsApp and for Discord -- invoke the handler as
+  // `handleInbound(...).catch(...)` and discard what it resolves to, so a field
+  // on the returned object would be data nobody reads. The place a delivery
+  // failure has to reach is a person, and that is the event above.
   return { reply, delivered }
 }
