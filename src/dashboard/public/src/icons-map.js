@@ -5,7 +5,11 @@
 // -- an unknown name renders an empty span, a silent bug, so keep this list
 // checked against that registry.
 
-export const SOURCE_LABEL = { ai: 'AI', manual: 'Manual', both: 'Both' };
+// What an operator reads, not what the column stores. 'manual' and 'ai' are the
+// stored keys; a person reading a report field wants to know who put the value
+// there and whether anybody has checked it, which is the whole reason this
+// marker exists on 28 rows.
+export const SOURCE_LABEL = { ai: 'AI collected', manual: 'Operator entered', both: 'AI, then checked' };
 
 // Event-timeline kind -> icon/tone pairing (ux-case-detail-timeline-visual-distinction).
 // tone matches the Chip/Alert tone vocabulary ('' | 'ok' | 'warn' | 'error' | 'accent').

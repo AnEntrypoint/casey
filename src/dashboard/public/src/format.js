@@ -122,7 +122,19 @@ const HEALTH_LABEL = {
   'health:incomplete_critical': 'Working but visit-critical facts still missing',
   'health:never_closed': 'Resolved but never closed',
   'health:timestamp_corrupt': 'Case time data looks wrong',
+  // These three were missing while the sweep emitted all ten, so healthLabel
+  // fell through to its raw-key branch and an operator read
+  // "health:premature_complete." as a sentence on a real case. inbox-panel.js
+  // has always carried all ten; two tables for one vocabulary is how they came
+  // to disagree. Keep this table equal to case-health.js's ALL_HEALTH_TAGS.
+  'health:unanswered_handoff_escalated': 'Still waiting for a person, well past the first deadline',
+  'health:unsent_draft': 'A reply is written but nobody has sent it',
+  'health:premature_complete': 'Marked done with facts a field visit needs still blank',
 };
+// The fallback returns the raw tag deliberately -- a tag with no entry here has
+// to be VISIBLE so it gets a label, rather than disappearing into a blank cell
+// and taking its case's problem with it. It is a bug when it fires, not a
+// design; the comment above says how to stop it firing.
 export function healthLabel(t) { return HEALTH_LABEL[t] || t; }
 
 // Stage tone for the quick-filter pill strip -- stages are config-driven
