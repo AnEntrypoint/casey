@@ -43,7 +43,10 @@ async function startShift() {
 }
 
 function hoSection(title, rows, render) {
-    if (!rows || !rows.length) return Section({ title, children: [Alert({ kind: 'info', children: SECTION_EMPTY_TEXT[title] || 'None.' })] });
+    // The fallback is a sentence for the same reason each named one is: a bare
+    // "None." leaves the reader to work out none of WHAT, under a heading they
+    // may have skimmed past.
+    if (!rows || !rows.length) return Section({ title, children: [Alert({ kind: 'info', children: SECTION_EMPTY_TEXT[title] || `Nothing under ${title.toLowerCase()} right now.` })] });
     return Section({ title: `${title} (${rows.length})`, children: rows.map(render) });
 }
 

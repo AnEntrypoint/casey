@@ -9,11 +9,16 @@ import { state } from '../state.js';
 import { dismissToast } from '../toasts.js';
 const h = webjsx.createElement;
 
+const TOAST_KIND = { err: 'error', warn: 'warn' };
+
 export function ToastTray() {
   return h('div', { id: 'toasts', class: 'ds-toast-tray', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'false' },
     ...state.toasts.map((t) => h('div', { key: t.id, class: 'ds-toast-item' },
       Alert({
-        kind: t.kind === 'err' ? 'error' : 'success',
+        // toasts.js takes kind 'err' | 'warn' | anything-else (default 'ok').
+        // An ordinary confirmation is neutral, not a green success tick, and a
+        // 'warn' toast must not render as one -- callers do send them.
+        kind: TOAST_KIND[t.kind] || 'info',
         onDismiss: () => dismissToast(t.id),
         children: [
           h('span', { key: 'm' }, t.msg),

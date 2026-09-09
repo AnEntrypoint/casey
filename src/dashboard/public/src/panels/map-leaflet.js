@@ -281,8 +281,12 @@ async function renderMapWorkers(mapState) {
         mapState.workers = j.workers || [];
         const layer = window.L.layerGroup();
         for (const w of (j.workers || [])) {
-            const ageText = w.age_ms != null ? fmtDur(w.age_ms) + ' ago' : 'unknown';
-            const staleNote = w.stale ? ` (stale: ${ageText})` : ` (here now, ${ageText})`;
+            // No age recorded drops the clause rather than printing a bare
+            // "unknown" where a time belongs.
+            const ageText = w.age_ms != null ? fmtDur(w.age_ms) + ' ago' : null;
+            const staleNote = w.stale
+                ? (ageText ? ` (stale: ${ageText})` : ' (stale)')
+                : (ageText ? ` (here now, ${ageText})` : ' (here now)');
             const overdueNote = w.overdue_checkin ? ' OVERDUE check-in' : '';
             // HOW this position was arrived at, on the pin itself. case_checkin's
             // own lat is documented as the worker's "best estimate for a described

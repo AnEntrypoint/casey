@@ -113,7 +113,9 @@ export function SecretaryPanel() {
     const body = loader.slot(() => {
         const j = state._secretary;
         const places = (j && j.places) || [];
-        if (!places.length) return Alert({ kind: 'success', children: 'Nothing waiting on a call right now.' });
+        // Neutral, not green: an empty call queue is a fact about the queue,
+        // not a standing "everything is fine" about the deployment.
+        if (!places.length) return Alert({ kind: 'info', children: 'Nothing waiting on a call right now.' });
         return h('div', {}, ...places.map(placeSection));
     });
     return Panel({ children: [filterBar(), body] });

@@ -23,8 +23,22 @@ const loader = createPanelLoader({
 
 function mixOf(p) {
     return Object.entries(p.species || {}).sort((a, b) => b[1] - a[1]).slice(0, 3)
-        .map(([s, n]) => `${s} x${n}`).join(', ') || '--';
+        .map(([s, n]) => `${s} x${n}`).join(', ') || 'none recorded';
 }
+
+// geo.js sends two bucket KEYS in the place column, and both mean something an
+// operator has to be told in words rather than left to decode:
+//   'unknown'      no location token at all (geo.js bumps it so a report with
+//                  nowhere to put it is never silently dropped)
+//   'other/sparse' every place under privacy.js's k-anonymity floor, folded
+//                  together so naming a rare report's one place cannot name
+//                  the report itself
+// Display only -- the keys themselves are untouched.
+const PLACE_LABEL = {
+    unknown: 'No area given',
+    'other/sparse': 'Areas with too few reports to name',
+};
+const placeLabel = (place) => PLACE_LABEL[place] || place;
 
 // railed=true renders the table alone, for the map view's rail (see
 // map-panel.js MapRail). Hotspots answers a WHERE question, so swapping the
@@ -38,7 +52,7 @@ export function GeoPanel({ railed = false } = {}) {
         return places.length
             ? Table({
                 headers: ['Place', 'Count', 'Species mix', 'Latest'],
-                rows: places.map((p) => [p.place, String(p.count), mixOf(p), p.latest ? fmtTime(p.latest) : '']),
+                rows: places.map((p) => [placeLabel(p.place), String(p.count), mixOf(p), p.latest ? fmtTime(p.latest) : '']),
             })
             : Alert({ kind: 'info', children: 'No location data yet.' });
     });

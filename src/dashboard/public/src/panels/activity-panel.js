@@ -17,6 +17,16 @@ import { eventIcon, eventTone } from '../icons-map.js';
 const h = webjsx.createElement;
 
 const ACT_KIND_LABEL = { inbound: 'Inbound', outbound: 'Reply', transition: 'Stage change', note: 'Note', observation: 'Note', action: 'Action', autonomy_change: 'Autonomy' };
+
+// The store carries kinds this map does not name (degraded_turn is one that
+// reaches the screen today). An unmapped kind reads as a word, never as the
+// raw snake_case key sitting beside humanised labels in the same column.
+function kindLabel(kind) {
+    if (ACT_KIND_LABEL[kind]) return ACT_KIND_LABEL[kind];
+    const words = String(kind || '').replace(/[_-]+/g, ' ').trim();
+    return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Event';
+}
+
 // Config-driven brand label for the 'agent' actor (dashboard_ui.brand, same
 // fallback as app-view.js/case-list-view.js) -- a function, not a module-
 // level constant, since state.config isn't populated yet at module-eval
@@ -50,7 +60,7 @@ function ActivityRow(e, i) {
         h('span', { class: 'ds-activity-icon' }, Icon(eventIcon(e.kind), { size: 14 })),
         h('div', { class: 'ds-activity-body' },
             h('div', { class: 'ds-activity-top' },
-                Chip({ tone: eventTone(e.kind), size: 'sm', children: ACT_KIND_LABEL[e.kind] || e.kind }),
+                Chip({ tone: eventTone(e.kind), size: 'sm', children: kindLabel(e.kind) }),
                 h('span', { class: 'ds-activity-who' }, actorLabels()[e.actor] || e.actor || ''),
                 h('span', { class: 'ds-activity-when', title: fmtTime(e.created_at) }, rel(e.created_at))),
             (e.text || '').trim() ? h('div', { class: 'ds-activity-text' }, (e.text || '').slice(0, 200)) : null));
