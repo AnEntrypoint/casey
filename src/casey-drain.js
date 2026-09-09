@@ -12,6 +12,38 @@
 // the same msgId.
 import { tagList, tsMs } from './timestamp.js'
 import { splitExternalId } from './hooks/handler.js'
+// mergeTag, imported explicitly. This file called it WITHOUT an import once
+// before: lint only runs node --check, so a missing import is a clean syntax
+// tree and a ReferenceError that only fires on the dead-letter path -- the
+// rarest path in the file, and the one that exists to make sure a lost report
+// is not lost silently. It threw instead of escalating.
+import { mergeTag } from './hooks/heuristics.js'
+
+// A dead-lettered queued message means the LLM-down queue has given up on a
+// report a contact already sent. hooks/case-intake.js's queue gate deliberately
+// sends that contact NOTHING and relies on the re-drive -- a standing directive,
+// and it is not in question here. What IS in question is what happens when the
+// re-drive itself gives up: relying on the queue is over at that point, and the
+// contact has had silence and will keep having it.
+//
+// So the case is surfaced to a human, exactly as the SIBLING dead-letter path
+// already does. casey-resume-redrive.js's deadLetterExhaustedCase tags
+// needs-human for the identical situation on the resume side; this path wrote
+// only an observation, so a message lost to a provider outage reached nobody
+// while a message lost to a stuck turn reached the triage inbox. Same loss, two
+// different outcomes, decided by which retry loop happened to be running.
+//
+// This sends no fallback text and invents nothing about the report -- it puts
+// the case in front of an operator who can reply as a person, which is the same
+// remedy hooks/case-intake.js's observe-mode branch already applies for a
+// contact who would otherwise wait silently.
+async function surfaceDeadLetteredCase(store, log, caseRow) {
+  try {
+    const fresh = await store.getCase(caseRow.id)
+    if (!fresh) return
+    await store.updateCase(fresh.id, { tags: mergeTag(fresh.tags, 'needs-human') })
+  } catch (e) { log?.warn?.('[casey] could not flag dead-lettered case for a human', { caseId: caseRow.id, error: e.message }) }
+}
 
 export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { maxCases, maxRedrives, retryCap }) {
   const handle = gateway?.handleInbound
@@ -86,6 +118,7 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
               // data.dead_lettered rides alongside it so GET /api/turns/degraded
               // can also surface this as an explicit, queryable terminal state.
               try { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-failed:${id}`, data: { dead_lettered: true, reason: 'queue-drive-degraded-exhausted', msg_id: id } }) } catch { /* best effort */ }
+              await surfaceDeadLetteredCase(store, log, c)
             } else {
               try { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-retry:${id}` }) } catch { /* best effort */ }
             }
@@ -102,6 +135,7 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
           // Dead-letter after retryCap so a permanently-failing message stops.
           if (n >= retryCap) {
             try { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `queue-drive-failed:${id}`, data: { dead_lettered: true, reason: 'queue-drive-error-exhausted', msg_id: id, error: String(e.message || e).slice(0, 500) } }) } catch { /* best effort */ }
+            await surfaceDeadLetteredCase(store, log, c)
           } else {
             // Record the failed attempt so the count advances toward the cap, but do
             // NOT mark drive-attempted (that only lands on success).
