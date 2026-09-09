@@ -989,6 +989,20 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 /* ---- contacts/reporters panel (contacts-panel.js) ------------------------- */
 .ds-contact-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+/* Low emphasis, still unmistakably destructive: the danger token in the text
+   rather than a filled red box repeated down every row. contacts-panel.js's
+   header says why the emphasis must not go back up.
+   SCOPE-PREFIXED deliberately. The kit styles .btn-link through its own
+   .ds-247420-prefixed rule, which outranks a bare class selector however late
+   this sheet loads -- measured, not assumed: without the prefix the control
+   rendered the brand accent (rgb(180,96,15)) rather than the danger token. */
+.ds-247420 .ds-contact-erase { color: var(--danger); }
+.ds-247420 .ds-contact-erase:hover { text-decoration: underline; }
+/* A contact who gave neither a name nor a number: the fact on the first line,
+   how they reached us and when on the second, since time is the only thing
+   distinguishing these rows from each other. */
+.ds-contact-anon { display: flex; flex-direction: column; gap: var(--space-hair); }
+.ds-contact-anon-sub { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
 
 /* ---- shift handover panel (handover-panel.js) ---------------------------- */
 .ds-ho-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }

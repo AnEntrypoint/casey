@@ -30,11 +30,31 @@ import { mountRoutes } from './register.js'
 // If a panel does need to show where a worker is, it should go through the map
 // projection, which carries the provenance -- or this allowlist should gain
 // last_location_source at the same time as the coordinates, never before.
-export const publicContact = (c) => ({
-  id: c.id, channel: c.channel, external_id_formatted: fmtPhone27(c.external_id),
-  display_name: c.display_name || null, tier: c.tier === 'field_worker' ? 'field_worker' : 'reporter',
-  last_location_at: c.last_location_at || null, created_at: c.created_at,
-})
+//
+// `named` and `has_number` are DERIVED HERE, from the stored columns, rather
+// than left to the client to infer from the rendered string. The public form
+// opens a contact with no name entry by writing the generated routing key into
+// display_name as well, so `display_name || external_id_formatted` put a
+// machine token -- web-1787845705110 -- in the operator's "Who" column on 12 of
+// 20 live rows, presented exactly like a person's name. Comparing the two
+// stored columns is a fact about the data; matching the rendered string against
+// a /^web-/ shape would be a guess about it, and would break the moment the
+// routing-key format changed.
+export const publicContact = (c) => {
+  const formatted = fmtPhone27(c.external_id)
+  return {
+    id: c.id, channel: c.channel, external_id_formatted: formatted,
+    display_name: c.display_name || null, tier: c.tier === 'field_worker' ? 'field_worker' : 'reporter',
+    // A name somebody gave, as opposed to the routing key echoed into the
+    // column because nobody gave one.
+    named: !!(c.display_name && c.display_name !== c.external_id),
+    // fmtPhone27 returns its input unchanged when the value is not a number it
+    // recognises, so a formatted value that DIFFERS from the raw one is exactly
+    // "this is a phone number an operator can ring back".
+    has_number: formatted !== String(c.external_id || ''),
+    last_location_at: c.last_location_at || null, created_at: c.created_at,
+  }
+}
 
 export function getContacts({ store, authed }) {
   return async (req, res) => {
