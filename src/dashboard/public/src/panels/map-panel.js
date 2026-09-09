@@ -387,7 +387,10 @@ function mapUnresolvedList() {
             onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveId(p.id); } },
         },
             h('b', {}, p.ref),
-            ' ', h('span', { class: 'ds-muted' }, p.status),
+            // Same humanisation the legend on this screen already applies to
+            // the identical values -- a stage never reaches the operator as
+            // its stored snake_case key.
+            ' ', h('span', { class: 'ds-muted' }, String(p.status || '').replace(/_/g, ' ')),
             p.species ? ' -- ' + p.species : '',
             p.location ? ` (${p.location})` : '',
             p.symptoms ? ' -- ' + p.symptoms : '')));

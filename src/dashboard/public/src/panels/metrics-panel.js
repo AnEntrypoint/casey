@@ -54,9 +54,13 @@ function atRiskByType(risk) {
     const types = Object.keys(bt).filter((t) => (bt[t] || 0) > 0).sort((a, b) => (bt[b] || 0) - (bt[a] || 0));
     if (!types.length) return null;
     const tgt = risk.sla_target_ms != null ? fmtDur(risk.sla_target_ms) : '';
+    const parts = [];
+    types.forEach((t, i) => {
+        if (i) parts.push(h('span', { key: 'sep' + i }, ', '));
+        parts.push(h('b', { key: 'n' + t }, String(bt[t])), h('span', { key: 'l' + t }, ' ' + ctLabel(t)));
+    });
     return Section({ title: `At risk now (reply target ${tgt})`, children: [
-        h('div', { class: 'ds-risk-strip' }, ...types.map((t) =>
-            h('span', { key: t, class: 'ds-risk-chip' }, ctLabel(t) + ' ', h('b', {}, String(bt[t])))))
+        h('div', { class: 'ds-risk-strip' }, ...parts)
     ]});
 }
 

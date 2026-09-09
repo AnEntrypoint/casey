@@ -10,10 +10,6 @@ import { createPanelLoader } from './panel-load.js';
 import { fetchUnreplied } from '../api.js';
 import { fmtTime } from '../format.js';
 
-// The product name is the deployment's own (dashboard_ui.brand), never the
-// literal 'casey' -- same lookup app-view.js and todo-hint.js use.
-const brand = () => state.config?.dashboard_ui?.brand || 'casey';
-
 const h = webjsx.createElement;
 
 // The count in the nav badge is a second consumer of this same response, so it
@@ -33,7 +29,11 @@ export function OfflinePanel() {
     const body = loader.slot(() => {
         const j = state._offline;
         const rows = (j && j.items) || [];
-        if (!rows.length) return Alert({ kind: 'success', children: 'Nothing waiting. ' + brand() + ' is answering normally.' });
+        // Empty is a plain statement about the queue, never a green
+        // reassurance about the system: this console reads the store and, in
+        // dashboard-only mode, is not attached to the agent at all, so it
+        // cannot honestly say anything is "answering normally".
+        if (!rows.length) return Alert({ kind: 'info', children: 'Nothing came in while nobody was watching.' });
         const capped = j.total > rows.length;
         return h('div', {},
             capped ? Alert({ kind: 'info', children: `Showing the newest ${rows.length} of ${j.total}. Use Search, or claim these first, to bring the rest into view.` }) : null,

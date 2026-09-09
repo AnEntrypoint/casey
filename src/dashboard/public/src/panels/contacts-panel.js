@@ -78,7 +78,12 @@ export function ContactsPanel() {
                 return [
                     c.display_name || c.external_id_formatted,
                     c.channel || '',
-                    isField ? Chip({ tone: 'accent', children: 'field worker' }) : Chip({ children: 'reporter' }),
+                    // Only the exception gets chip chrome. Nearly every row is
+                    // a plain reporter, and a chip repeated down the whole
+                    // column stops marking anything; plain text keeps the
+                    // value present without competing with the one row that
+                    // differs.
+                    isField ? Chip({ tone: 'accent', children: 'field worker' }) : 'reporter',
                     c.last_location_at ? fmtTime(c.last_location_at) : 'never',
                     h('div', { class: 'ds-contact-actions' },
                         Btn({ size: 'sm', disabled: busyIds.has(c.id), children: isField ? 'Demote' : 'Promote', onClick: () => toggleTier(c) }),

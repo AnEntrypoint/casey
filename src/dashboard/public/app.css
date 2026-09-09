@@ -457,18 +457,12 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-stat-value { font-size: var(--fs-xl); font-weight: 700; color: var(--fg); line-height: 1.15; }
 .ds-stat-sub { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
 
-/* ---- at-risk-by-case-type strip (metrics-panel.js) ----------------------- */
-.ds-risk-strip { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-2); }
-.ds-risk-chip {
-  display: inline-flex; align-items: center; gap: var(--space-1);
-  background: var(--warn-bg, color-mix(in oklab, var(--amber) 12%, var(--bg)));
-  border: 1px solid var(--warn-border, color-mix(in oklab, var(--amber) 35%, transparent));
-  border-radius: var(--r-pill, var(--r-1));
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--fs-sm);
-  color: var(--fg);
-}
-.ds-risk-chip b { color: var(--warn, var(--amber)); font-weight: 700; }
+/* ---- at-risk-by-case-type line (metrics-panel.js) ------------------------
+   A sentence, not a pill strip: the section heading above it already says
+   these are at risk and against which reply target, so pill chrome round a
+   short "type count" list adds shape without adding a fact. */
+.ds-risk-strip { margin-top: var(--space-2); color: var(--fg); }
+.ds-risk-strip b { font-weight: 700; }
 
 /* ---- intake-stats modal wrapper (stats-panel.js) ------------------------- */
 .ds-stats-panel { display: flex; flex-direction: column; gap: var(--space-3); }
@@ -674,7 +668,10 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    'needs a person' alert read as gray/beige with no urgency. Override the
    background locally to a real warm tint, using the same --warn-bg pattern
    app.css already uses for .draft-banner/.health-chip. */
-.ds-handoff-banner { display: flex; align-items: center; gap: var(--space-3); cursor: pointer; animation: ds-handoff-pulse 1.3s ease-in-out infinite; }
+/* No pulse: the banner is persistent until dismissed, and a permanent
+   opacity animation is fatigue rather than signal. The warm tint plus the
+   sentence in it carry the urgency. */
+.ds-handoff-banner { display: flex; align-items: center; gap: var(--space-3); cursor: pointer; }
 .ds-handoff-banner .ds-alert-warn {
   flex: 1; min-width: 0;
   background: var(--warn-bg, color-mix(in oklab, var(--warn, var(--amber)) 14%, var(--bg)));
@@ -683,8 +680,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-handoff-banner .ds-alert-warn .ds-alert-icon { color: var(--warn, var(--amber)); }
 .ds-handoff-banner-hide { flex-shrink: 0; }
 .ds-handoff-banner:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
-@media (prefers-reduced-motion: reduce) { .ds-handoff-banner { animation: none; } }
-@keyframes ds-handoff-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .85; } }
 
 /* ---- connection-lost banner --------------------------------------------- */
 .ds-conn-banner { position: sticky; top: 0; z-index: var(--z-banner, var(--z-toast, 30)); }
