@@ -1,8 +1,14 @@
 // Field-worker dispatch picker: a small imperative modal (not webjsx --
 // raised alongside the map's own imperative Leaflet driver, see
 // map-leaflet.js) letting an operator suggest a worker for a case. Split out
-// of map-leaflet.js: distinct responsibility (a picker dialog) from map
-// rendering, and kept map-leaflet.js under the 200-line component cap.
+// of map-leaflet.js because a picker dialog is a distinct responsibility from
+// map rendering.
+//
+// The previous version of this line justified the split by "kept map-leaflet.js
+// under the 200-line component cap". There is no 200-line cap anywhere in this
+// repo, and map-leaflet.js was 655 lines when that was written, so the stated
+// reason was false at the time it was written as well as now. The real reason
+// is the one above, and it stands on its own.
 
 import { toast } from '../toasts.js';
 import { postDispatch } from '../api.js';
