@@ -12,6 +12,7 @@
 // sweep layer turns that list into observable tags and notes.
 
 import { tsMs, tagList, parseReport } from './timestamp.js'
+import { fieldLabel } from './store/report-shape.js'
 import { CRITICAL_FIELDS } from './store/report-shape.js'
 
 // Default thresholds, in milliseconds, tuned for a rural one-shot reporting
@@ -152,7 +153,12 @@ export function classifyCaseHealth(caseRow, now, thresholds = DEFAULT_THRESHOLDS
     const resolvedCritical = Array.isArray(thresholds?.visitCritical) ? thresholds.visitCritical : VISIT_CRITICAL
     const blank = resolvedCritical.filter(k => resolvedRep[k] == null || String(resolvedRep[k]).trim() === '')
     if (blank.length) {
-      out.push({ breach: 'premature_complete', since_ms: Number.isFinite(touched) ? idle : 0, detail: `marked resolved with ${blank.length} of ${resolvedCritical.length} visit-critical fact(s) still blank: ${blank.join(', ')}` })
+      // The field's LABEL, not its storage key. This detail is rendered verbatim
+    // on the operator's timeline, and "how_to_find, contact_fallback" is the
+    // column name; "How to find the place" is what the dashboard calls the same
+    // field everywhere else. fieldLabel falls back to the key, so a field with
+    // no declared label degrades to today's behaviour rather than to nothing.
+    out.push({ breach: 'premature_complete', since_ms: Number.isFinite(touched) ? idle : 0, detail: `marked resolved with ${blank.length} of ${resolvedCritical.length} visit-critical fact(s) still blank: ${blank.map(fieldLabel).join(', ')}` })
     }
     return out
   }
@@ -232,6 +238,33 @@ function hours(msVal) {
 
 // Stable tag name for a breach, so the sweep can set/clear them idempotently.
 export function healthTag(breach) { return 'health:' + breach }
+// What a breach is CALLED in text a person reads. The sweep writes an
+// observation onto the case timeline for every newly-entered breach, and that
+// text used to be `GUARDRAIL [never_closed]: ... Needs attention.` -- a
+// bracketed storage key and a filler sentence, on the one surface where an
+// operator reads what happened to a case in their own language.
+//
+// The machine key is unchanged and still travels in the event's `data.guardrail`,
+// which is what every consumer actually reads; only the prose changed.
+//
+// Kept in step with ALL_HEALTH_TAGS below, and deliberately NOT shared with
+// dashboard/public/src/views/case-list/inbox-panel.js's own BREACH_FACT table:
+// that one runs in the browser, a separate bundle with no import path to this
+// module, the same split timestamp.js's tagList documents for the same reason.
+// Two tables, one vocabulary -- change both or neither.
+export const BREACH_LABEL = {
+  stale: 'has gone quiet',
+  stuck: 'has been sitting in this stage too long',
+  unanswered_handoff: 'asked for a person and nobody has answered',
+  unanswered_handoff_escalated: 'still has nobody on it, well past the first deadline',
+  unsent_draft: 'has a written reply nobody has sent',
+  abandoned_intake: 'was left part-way through with on-site facts missing',
+  incomplete_critical: 'is being worked on with visit-critical facts still missing',
+  never_closed: 'was resolved but never closed',
+  timestamp_corrupt: 'has timestamps of its own that look wrong',
+  premature_complete: 'was marked done with facts a field visit needs still blank',
+}
+
 export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'unanswered_handoff_escalated', 'unsent_draft', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt', 'premature_complete'].map(healthTag)
 
 // Worker check-in baseline: every field_worker should check in at least once per

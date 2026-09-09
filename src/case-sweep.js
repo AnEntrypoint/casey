@@ -12,7 +12,7 @@
 // A leaked or runaway sweep is itself an over-time failure, so the scheduler that
 // drives this (casey.js) owns the interval and clears it on stop.
 
-import { classifyCaseHealth, healthTag, ALL_HEALTH_TAGS, DEFAULT_THRESHOLDS } from './case-health.js'
+import { classifyCaseHealth, healthTag, ALL_HEALTH_TAGS, BREACH_LABEL, DEFAULT_THRESHOLDS } from './case-health.js'
 import { flushDroppedIntake } from './hooks/dropped-intake.js'
 // tsMs/tagList are timestamp.js's single shared implementation; do not add a
 // local copy here.
@@ -173,7 +173,14 @@ export async function sweepCases(store, now = Date.now(), thresholds = DEFAULT_T
         if (added.includes(healthTag(b.breach))) {
           await store.appendEvent(c.id, {
             kind: 'observation', actor: 'system', touch: false,
-            text: `GUARDRAIL [${b.breach}]: ${b.detail}. Needs attention.`,
+            // A sentence, not `GUARDRAIL [never_closed]: ... Needs attention.`
+            // The bracketed key was the storage word on a surface an operator
+            // reads in their own language, and "Needs attention" was filler:
+            // every guardrail observation needs attention by definition, so
+            // saying it adds nothing and dilutes the detail beside it. The
+            // machine key still travels in `data.guardrail` below, which is what
+            // every consumer actually reads.
+            text: `This report ${BREACH_LABEL[b.breach] || b.breach} -- ${b.detail}.`,
             data: { guardrail: b.breach, since_ms: b.since_ms },
           })
           summary.breaches[b.breach] = (summary.breaches[b.breach] || 0) + 1
