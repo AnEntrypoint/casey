@@ -168,17 +168,25 @@ export async function createAccount(store, { username, password, displayName, ro
 // success so the forced flow is a one-time gate, not a recurring one.
 // Also bumps session_epoch: a password change is exactly the moment a
 // leaked/shared old cookie should stop working, matching standard
-// "changing your password logs you out everywhere else" behaviour -- the
-// account holder's OWN current session keeps working because the login flow
-// re-issues a fresh cookie carrying the new epoch on every login, and this
-// change is itself driven from an already-authed request whose cookie gets
-// replaced by the caller's own next issueSession() call site, not this one.
+// "changing your password logs you out everywhere else" behaviour.
+//
+// THE CALLER MUST RE-ISSUE THE COOKIE. This function invalidates every
+// outstanding token for the account INCLUDING the one on the request that
+// asked for the change, because the epoch it bumps is the epoch that token
+// carries. An earlier version of this comment claimed the caller's session
+// "keeps working ... whose cookie gets replaced by the caller's own next
+// issueSession() call site" -- there was no such call site, and the live
+// effect was an operator completing a forced password change and being
+// silently logged out mid-flow, on the one screen with no other way forward.
+// The new epoch is returned so the caller has what it needs to mint the
+// replacement rather than re-reading the row to find out.
 export async function changePassword(store, id, newPassword) {
   if (!newPassword || String(newPassword).length < 8) throw new Error('password must be at least 8 characters')
   const { hash, salt } = hashPassword(newPassword)
   const acct = await getAccount(store, id)
   const nextEpoch = (Number(acct?.session_epoch) || 0) + 1
-  return store.t.update('operator_account', id, { password_hash: hash, password_salt: salt, must_change_password: '0', session_epoch: nextEpoch }, SYSTEM)
+  await store.t.update('operator_account', id, { password_hash: hash, password_salt: salt, must_change_password: '0', session_epoch: nextEpoch }, SYSTEM)
+  return { epoch: nextEpoch }
 }
 
 export async function setAccountDisabled(store, id, disabled) {
