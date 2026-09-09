@@ -51,7 +51,12 @@ export async function gatherReport({ store, isOpenCase, getRoster }, days) {
   const thresholds = await store.resolveThresholds()
   const now = Date.now()
   const cases = await store.listCases({}, { limit: 10000, offset: 0 })
-  const eventsByCaseId = new Map(await Promise.all(cases.map(async c => [c.id, await store.listEvents(c.id).catch(() => [])])))
+  // One query, not one per case. This line was a measured N+1: 21 concurrent
+  // unindexed full scans of the event table at 23 cases, on a route that also
+  // backs /api/report.csv, /api/report.json, /api/report.html and /api/audit.csv.
+  // listEventsByCase groups the single result per case in each case's own
+  // ascending order, which is exactly what the fan-out produced.
+  const eventsByCaseId = await store.listEventsByCase(cases.map(c => c.id)).catch(() => new Map())
   const breachRows = cases
     .filter(isOpenCase)
     .flatMap(c => classifyCaseHealth(c, now, thresholds))
@@ -84,15 +89,18 @@ export async function gatherHandover({ store, isOpenCase, rankAttention }) {
     .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel }))
   // Cases touched since the shift began, with their last action, newest-first.
   const dueSince = open.filter(c => since && (c.last_event_at || c.updated_at || c.created_at || 0) >= since)
-  const touched = (await Promise.all(dueSince.map(async c => {
-    const evs = await store.listEvents(c.id).catch(() => [])
+  // Same single-query grouping as the routes above: this loop only ever reads
+  // each case's LAST event, so a query per case bought nothing.
+  const touchedEvents = await store.listEventsByCase(dueSince.map(c => c.id)).catch(() => new Map())
+  const touched = dueSince.map((c) => {
+    const evs = touchedEvents.get(c.id) || []
     const last = evs.length ? evs[evs.length - 1] : null
     return {
       id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
       at: c.last_event_at || c.updated_at || c.created_at || 0,
       last_kind: last?.kind || '', last_actor: last?.actor || '',
     }
-  }))).sort((a, b) => b.at - a.at)
+  }).sort((a, b) => b.at - a.at)
   return { generated_at: now, since, since_by: marker?.by || null, attention, handoffs, drafts, touched: touched.slice(0, 50) }
 }
 
@@ -156,7 +164,9 @@ export function getOverview({ store, authed }) {
     const { buildOverview } = await import('../../overview.js')
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
     const cases = await store.listCases({}, { limit: 10000, offset: 0 })
-    const eventsByCaseId = new Map(await Promise.all(cases.map(async c => [c.id, await store.listEvents(c.id).catch(() => [])])))
+    // One query, not one per case -- see gatherReport above and
+    // case-store.js's listEventsByCase for why the grouping is exact.
+    const eventsByCaseId = await store.listEventsByCase(cases.map(c => c.id)).catch(() => new Map())
     const overview = buildOverview(cases, eventsByCaseId, Date.now(), days * 24 * 3600 * 1000)
     res.json({ days, ...overview })
   }
@@ -173,7 +183,9 @@ export function getWorkload({ store, authed, getRoster }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildWorkload } = await import('../../workload.js')
     const cases = await store.listCases({}, { limit: 10000, offset: 0 })
-    const eventsByCaseId = new Map(await Promise.all(cases.map(async c => [c.id, await store.listEvents(c.id).catch(() => [])])))
+    // One query, not one per case -- see gatherReport above and
+    // case-store.js's listEventsByCase for why the grouping is exact.
+    const eventsByCaseId = await store.listEventsByCase(cases.map(c => c.id)).catch(() => new Map())
     const th = (store.resolveThresholds ? await store.resolveThresholds() : null) || {}
     const staleMs = Number.isFinite(th.staleMs) ? th.staleMs : 24 * 3600 * 1000
     const out = buildWorkload(cases, eventsByCaseId, await getRoster(), Date.now(), staleMs)
@@ -389,8 +401,9 @@ export function getFlaggedReplies({ store, authed }) {
     flagged.sort((a, b) => (b.last_event_at || b.updated_at || 0) - (a.last_event_at || a.updated_at || 0))
     const page = flagged.slice(0, FLAGGED_ROW_CAP)
     const items = []
+    const pageEvents = await store.listEventsByCase(page.map(c => c.id), { perCaseLimit: 500 }).catch(() => new Map())
     for (const c of page) {
-      const events = await store.listEvents(c.id, { limit: 500 })
+      const events = pageEvents.get(c.id) || []
       const flags = events.filter(e => e.kind === 'observation' && e.text?.startsWith('FLAGGED REPLY'))
       for (const f of flags) {
         const data = evData(f)

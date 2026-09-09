@@ -1426,6 +1426,38 @@ export class CaseStore {
     return { rows: rows.slice(0, cappedLimit), truncated: rows.length > cappedLimit }
   }
 
+  // Every event for a SET of cases, in one query, already grouped and already in
+  // each case's own ascending order -- i.e. exactly what a `cases.map(c =>
+  // listEvents(c.id))` fan-out produces, from one round trip instead of one per
+  // case. /api/overview and /api/operators/workload were measured issuing 44 and
+  // 50 queries respectively at 23 cases, every one of them an unindexed full
+  // scan of the event table, and both are polled.
+  //
+  // Grouping in JS reproduces the fan-out exactly rather than approximately:
+  // byCreatedAscList is the same stable coarse-seconds sort listEvents applies,
+  // and it is applied PER CASE after grouping, so same-second ordering within a
+  // case is identical and no case can be reordered by another case's events.
+  //
+  // Cases with no events get an empty array, not a missing key: a caller doing
+  // `map.get(id).length` must not have to know which shape it is getting, and
+  // the fan-out it replaces always produced an entry per case.
+  //
+  // The limit is per-case-average rather than flat for a reason casey.js's
+  // queueStatus documents from experience: one flat budget over a newest-first
+  // cross-case read lets a single busy case consume the whole allowance and
+  // starve every other case's history.
+  async listEventsByCase(caseIds, { perCaseLimit = 10000 } = {}) {
+    const out = new Map(caseIds.map(id => [id, []]))
+    if (!caseIds.length) return out
+    const rows = await this.t.list('event', { case_id: { $in: caseIds } }, { limit: caseIds.length * perCaseLimit })
+    for (const r of rows) {
+      const bucket = out.get(r.case_id)
+      if (bucket) bucket.push(r)
+    }
+    for (const [id, bucket] of out) out.set(id, byCreatedAscList(bucket))
+    return out
+  }
+
   // Has this exact platform message already been recorded? Used to dedup webhook
   // / gateway redeliveries so a retried message is not answered twice.
   async hasInboundMessage(caseId, msgId) {
