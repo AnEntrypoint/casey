@@ -19,6 +19,7 @@ import { LoginGate } from './login-gate.js';
 import { Dialog } from '../components/dialog-shell.js';
 import { CaseListDetailLayout } from './case-list-detail-layout.js';
 import { MapCommandCenter } from './map-command-center.js';
+import { ViewTitle, VIEW_TITLE_ID } from './view-title.js';
 const h = webjsx.createElement;
 
 // The single modal-rendering code path: every activeModal value maps to a
@@ -109,7 +110,9 @@ function PanelSwap() {
   return h('div', { class: 'ds-panel-swap' },
     h('div', { class: 'ds-panel-swap-head' },
       Btn({ variant: 'ghost', children: backLabel, onClick: backToCases }),
-      h('h1', { class: 'ds-panel-swap-title' }, panelPageTitle(name))),
+      // The same h1 the two home views render, carrying the same id, so
+      // <main> is named by whichever of the three is on screen.
+      ViewTitle(panelPageTitle(name), 'ds-panel-swap-title')),
     h('div', { class: 'ds-panel-swap-body' }, body)
   );
 }
@@ -243,6 +246,28 @@ function MainContent() {
   return MapCommandCenter();
 }
 
+// The kit's AppShell hardcodes its three landmarks -- <header role="banner">,
+// <main> and <footer role="contentinfo"> -- and takes no name for any of them
+// (deps/design's app-shell.js), so all three reached the accessibility tree
+// unnamed while the two navigations beside them were named. A screen reader's
+// landmark list then reads "banner, main, contentinfo": three regions with
+// nothing to tell an operator which is which or what is in them.
+//
+// casey cannot pass a name the kit does not accept and does not edit the kit
+// from here, so it names them on the tree the kit hands back, keyed on the
+// roles the kit itself sets. <main> is named by the page's own <h1> rather
+// than a literal, so the landmark and the heading can never say different
+// things about the same screen.
+function nameLandmarks(node, names) {
+  if (!node || typeof node !== 'object') return node;
+  const props = node.props || {};
+  const named = names[props.role || (node.type === 'main' ? 'main' : '')];
+  if (named) Object.assign(props, named);
+  const kids = props.children;
+  if (Array.isArray(kids)) for (const kid of kids) nameLandmarks(kid, names);
+  return node;
+}
+
 export function App() {
   // The banner renders WITH the gate, not below it. This early return used to
   // hand back LoginGate() alone, and ConnectionBanner() sits further down this
@@ -311,7 +336,11 @@ export function App() {
     // the health data behind these notices is current, so it speaks first.
     ...HealthNotices(),
     HandoffBanner(),
-    AppShell({ topbar, crumb, side, status, main: [MainContent()] }),
+    nameLandmarks(AppShell({ topbar, crumb, side, status, main: [MainContent()] }), {
+      banner: { 'aria-label': 'Top bar' },
+      main: { 'aria-labelledby': VIEW_TITLE_ID },
+      contentinfo: { 'aria-label': 'Status bar' },
+    }),
     ModalMount(),
     LogoutEverywhereConfirmDialog(),
     ToastTray()
