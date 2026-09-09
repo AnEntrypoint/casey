@@ -38,9 +38,12 @@ export function Transitions({ c, transitions, onReload, key } = {}) {
                 key: t, size: 'sm', variant: 'ghost', children: '-> ' + stageLabel(t), title: t,
                 onClick: () => openFor(t)
             })))
-            : h('span', { class: 'casey-hint' }, 'no transitions available'),
+            // "no transitions available" is the API's word for it. What an
+            // operator is being told is that this one has nowhere left to go,
+            // which is a fact about the case, not about a transitions list.
+            : h('span', { class: 'casey-hint' }, 'There is nowhere for this one to move from here.'),
         Dialog({
-            open, title: 'Move to: ' + (target ? stageLabel(target) : ''), onClose: close,
+            open, title: target ? 'Move this to ' + stageLabel(target) : 'Move this case', onClose: close,
             children: [
                 TextField({ key: 'reason', label: 'Reason (optional)', multiline: true, rows: 2, value: reason, placeholder: 'e.g. operator contacted farmer directly', onInput: (v) => { state._transitionReason = v; schedule(); } }),
                 h('div', { key: 'acts', class: 'ds-dialog-actions' },

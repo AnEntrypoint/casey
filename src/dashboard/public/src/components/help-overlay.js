@@ -66,17 +66,17 @@ export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
 
             h('h3', { key: 'h-open' }, 'What you can do on an open report'),
             h('ul', { key: 'ul-buttons' },
-                h('li', { key: '1' }, h('b', {}, 'Claim'), ' - takes it as yours, so nobody else answers the same person. Once it is yours the button is replaced by your name.'),
+                h('li', { key: '1' }, h('b', {}, 'Claim'), ' - takes it as yours, so nobody else answers the same person. Once it is yours the button is replaced by the word ', h('b', {}, 'Yours'), '; on somebody else\'s report it says who has it.'),
                 h('li', { key: '2' }, h('b', {}, 'Snooze'), ' - hides it from the list for a set number of minutes. A report where someone asked for a real person is never hidden.'),
                 h('li', { key: '3' }, h('b', {}, 'Change the stage'), ' - the row of arrow buttons under the report, one per stage it can move to next, such as ', h('b', {}, '-> Done'), '. Moving it by hand does not message the person.'),
                 h('li', { key: '4' }, h('b', {}, 'Reply to contact on whatsapp'), ' - the message box further down (it names whichever app they wrote from). Type there and press ', h('b', {}, 'Send reply'), ', then read the note that comes back: it says whether the message reached them.'),
                 h('li', { key: '5' }, h('b', {}, 'note'), ' - the small button at the end of every report line. It attaches a note to that one fact without changing it.'),
-                h('li', { key: '6' }, h('b', {}, 'Save edits'), ' - the form near the bottom, where you set ', h('b', {}, 'Priority'), ' (how urgent), ', h('b', {}, 'Autonomy'), ' (who answers this person: ', h('b', {}, 'auto'), ', ', h('b', {}, 'assisted'), ' or ', h('b', {}, 'observe'), '), the assignee, the subject and your own tags.')
+                h('li', { key: '6' }, h('b', {}, 'Save edits'), ' - the form near the bottom, where you set ', h('b', {}, 'Priority'), ' (how urgent), ', h('b', {}, 'Who answers'), ' (', h('b', {}, 'Answer on its own'), ', ', h('b', {}, 'Draft, then I send'), ' or ', h('b', {}, 'Log only, I reply'), '), the assignee, the subject and your own tags.')
             ),
 
             h('h3', { key: 'h-answer' }, 'How do I answer someone?'),
             h('p', { key: 'p-answer' }, 'Open the report. Scroll to ', h('b', {}, 'Reply to contact'), ', type your message, and press ', h('b', {}, 'Send reply'), '. It goes out on whichever app they wrote from, and the note that appears afterwards tells you whether it actually reached them. Read it: a reply is always added to the timeline, even on the occasions it could not be delivered.'),
-            h('p', { key: 'p-draft' }, 'When a report is set to ', h('b', {}, 'assisted'), ', ' + brand + ' writes the reply and holds it. A banner at the top of the message box shows the draft with ', h('b', {}, 'Approve & send'), ' and ', h('b', {}, 'Discard'), '. Nothing goes out until you press one.'),
+            h('p', { key: 'p-draft' }, 'When ', h('b', {}, 'Who answers'), ' is set to ', h('b', {}, 'Draft, then I send'), ', ' + brand + ' writes the reply and holds it. A banner at the top of the message box shows the draft with ', h('b', {}, 'Approve & send'), ' and ', h('b', {}, 'Discard'), '. Nothing goes out until you press one.'),
 
             h('h3', { key: 'h-keys' }, 'Keyboard shortcuts (for fast triage)'),
             h('ul', { key: 'ul-keys', class: 'ds-help-keys' },

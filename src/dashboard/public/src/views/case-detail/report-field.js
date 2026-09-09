@@ -16,6 +16,15 @@ const h = webjsx.createElement;
 
 const REPORT_FIELD_MAXLEN = 2000;
 
+// Who put this value here, in the words a person would use. Falls through to
+// icons-map.js's SOURCE_LABEL, and then to the raw key, for any source value
+// added later without a word here.
+const SOURCE_WORDS = {
+    ai: 'AI collected',
+    manual: 'Operator entered',
+    both: 'AI, then checked',
+};
+
 function fieldEditKey(caseId, k) { return caseId + ':' + k; }
 
 export function ReportField({ caseId, k, label, value, source, notes, multiline, onSaved, sayMissing = true, key } = {}) {
@@ -89,7 +98,22 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             value ? value : (sayMissing ? h('span', { class: 'casey-rep-missing ds-print-blank' }, 'not given yet') : null),
             value ? null : FillLines({ lines: multiline ? 3 : 1 }),
             Icon('pencil', { size: 12 }),
-            source ? Chip({ size: 'sm', tone: source === 'ai' ? 'accent' : (source === 'manual' ? 'ok' : ''), children: SOURCE_LABEL[source] || source }) : null
+            // THIS MARKER STAYS, and it is the one place in the case view
+            // where a chip passes the test the header's four failed. There
+            // are twenty-eight of these rows. Who put a fact there -- the AI
+            // from what someone said, or a person who typed it -- is what an
+            // operator weighs before driving two hours on it, and it differs
+            // row by row. A shape you can pick out while running your eye
+            // down a long column is doing work no sentence per row could do
+            // without tripling the column's height.
+            //
+            // What it said was wrong, though. icons-map.js's SOURCE_LABEL
+            // renders 'manual' as "Manual" and 'ai' as "AI" -- the storage
+            // words -- while report-sections.js's legend above it called the
+            // same two things "Operator entered" and "AI collected". One
+            // screen, one fact, two vocabularies. The legend is gone and this
+            // row now carries the readable half of that pair.
+            source ? Chip({ size: 'sm', tone: source === 'ai' ? 'accent' : (source === 'manual' ? 'ok' : ''), children: SOURCE_WORDS[source] || SOURCE_LABEL[source] || source }) : null
         );
 
     // The row itself is the kit's DetailRow: a record field is label + value +

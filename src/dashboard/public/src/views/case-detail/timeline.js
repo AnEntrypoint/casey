@@ -36,12 +36,48 @@ async function flagReply(caseId, e) {
 // The per-kind class this used to emit (casey-ev--<kind>) was never styled by
 // anything; LogRow's data-kind is the same targeting hook without pretending
 // to be a style.
+//
+// THE ROW LABEL WAS `e.kind + '/' + e.actor`, so twenty-one rows of a real
+// case read action/system, note/operator, transition/operator,
+// observation/agent, inbound/contact -- two database columns joined with a
+// slash, at 10px. That is a machine's own index of its event table shown to
+// somebody trying to work out what happened to a farmer's cattle.
+//
+// The label itself is NOT cut, and that is the judgement: this is a dense
+// list of many rows, the label is per-row, and it is what you scan the column
+// by. It is the vocabulary that was wrong, not the position. So every pair
+// gets the words a person would use for it, and an unmapped pair still
+// degrades to kind/actor rather than to nothing -- a new event kind should
+// look unfamiliar, not invisible.
+const ROW_LABEL = {
+    'inbound/contact': 'From the reporter',
+    'outbound/agent': 'Replied automatically',
+    'outbound/operator': 'Operator replied',
+    'note/operator': 'Operator note',
+    'note/system': 'System note',
+    'note/agent': 'Note',
+    'action/operator': 'Operator edit',
+    'action/contact': 'Reporter update',
+    'action/agent': 'Recorded automatically',
+    'action/system': 'System action',
+    'observation/agent': 'Observed',
+    'observation/system': 'Guardrail check',
+    'observation/operator': 'Observation',
+    'transition/operator': 'Stage change',
+    'transition/agent': 'Stage change',
+    'transition/system': 'Stage change',
+};
+function rowLabel(e) {
+    const pair = e.kind + '/' + e.actor;
+    return ROW_LABEL[pair] || pair;
+}
+
 function TimelineRow({ e, caseId, key } = {}) {
     const flagged = e._flagged || e.data?.flagged_reply;
     return LogRow({
         key, kind: e.kind, tone: eventTone(e.kind),
         leading: Icon(eventIcon(e.kind), { size: 13 }),
-        label: e.kind + '/' + e.actor,
+        label: rowLabel(e),
         text: e.text || '',
         trailing: e.kind === 'outbound' && !flagged
             ? IconButton({ icon: Icon('warn', { size: 12 }), title: 'Flag this reply as bad/off-target', onClick: () => flagReply(caseId, e) })
@@ -54,8 +90,13 @@ function TimelineRow({ e, caseId, key } = {}) {
 
 export function Timeline({ caseId, events, eventsTotal, key } = {}) {
     const q = (state.timelineSearch || '').toLowerCase().trim();
+    // Search the words on screen AND the underlying kind/actor keys: an
+    // operator types what they can see ("reporter"), a maintainer types what
+    // the store calls it ("inbound"), and both were true of this box before
+    // the labels were rewritten. Only the first would be after, if the keys
+    // were dropped from the haystack.
     const filtered = q
-        ? events.filter(e => (e.kind + ' ' + e.actor + ' ' + (e.text || '')).toLowerCase().includes(q))
+        ? events.filter(e => (e.kind + ' ' + e.actor + ' ' + rowLabel(e) + ' ' + (e.text || '')).toLowerCase().includes(q))
         : events;
     const hasMore = eventsTotal != null && events.length < eventsTotal;
 
@@ -68,7 +109,13 @@ export function Timeline({ caseId, events, eventsTotal, key } = {}) {
     };
 
     return h('div', { key, class: 'casey-timeline-wrap' },
-        h('h3', { class: 'casey-timeline-head' }, 'Timeline', eventsTotal != null ? ' (' + events.length + '/' + eventsTotal + ')' : ''),
+        // "Timeline (21/21)" on a fully loaded case is a fraction whose two
+        // halves are always equal -- a loading statistic left on the screen
+        // after loading finished. The count only says something while there
+        // is more behind the "Load older events" button, so it is only shown
+        // then, and then it is said rather than divided.
+        h('h3', { class: 'casey-timeline-head' }, 'Timeline',
+            hasMore ? ' -- showing the latest ' + events.length + ' of ' + eventsTotal : ''),
         SearchInput({ value: state.timelineSearch || '', placeholder: 'Search timeline...', onInput: setTimelineSearch, resultCount: q ? filtered.length + ' matching' : null }),
         h('div', { class: 'casey-timeline', id: 'timeline' }, ...filtered.map((e, i) => TimelineRow({ key: e.id || i, e, caseId }))),
         hasMore ? h('button', { type: 'button', class: 'casey-load-older', onclick: loadMore }, 'Load older events') : null

@@ -35,7 +35,9 @@ export function DedupPanel({ caseId, onReload, key } = {}) {
 
     return h('div', { key, class: 'casey-dedup-panel' },
         h('h3', {}, 'Possibly the same case'),
-        h('p', { class: 'casey-hint' }, 'casey thinks these reports may be the same outbreak. Merge folds the other case into this one (you can review before confirming).'),
+        // Same fix as site-history.js: 'casey' is the software this is built
+        // on, not the name on the door of the deployment reading it.
+        h('p', { class: 'casey-hint' }, (state.config?.dashboard_ui?.brand || 'casey') + ' thinks these reports may be the same outbreak. Merge folds the other case into this one (you can review before confirming).'),
         ...suggestions.map(s => h('div', { key: s.id, class: 'casey-dup-row' },
             h('b', {}, s.ref), ' ', s.subject || '',
             h('span', { class: 'casey-hint' }, ' -- ' + (s.reasons || []).join(', ')),

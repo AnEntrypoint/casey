@@ -7,7 +7,6 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Section, Alert } from '/design/src/components/content.js';
-import { Chip } from '/design/src/components/shell.js';
 import { ReportField } from './report-field.js';
 import { state } from '../../state.js';
 const h = webjsx.createElement;
@@ -70,10 +69,19 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
     const any = sections.some(sec => sec.keys.some(([k]) => has(r, k)));
     const missingVC = visitCritical().filter(([k]) => !has(r, k));
 
-    const readyBanner = any
-        ? (missingVC.length
-            ? Alert({ kind: 'warn', title: 'Still missing for a visit', children: missingVC.map(([, l]) => l).join(', ') + ' -- ask now while still reachable.' })
-            : Alert({ kind: 'success', children: 'Has what a field visit needs.' }))
+    // EXCEPTION-ONLY, like health-notices.js: this banner exists to say a
+    // visit cannot go ahead yet, and when it can, it says nothing at all.
+    //
+    // There used to be a standing green "Has what a field visit needs." on
+    // every complete report. Three arguments against it, and the third is the
+    // one that matters. It is unfalsifiable praise -- the six visit-critical
+    // keys being non-blank is not the same claim as a visit being possible,
+    // and "Where: somewhere near Warden" satisfies the check. It appears on
+    // the ordinary case, which is the definition of noise. And an operator
+    // who sees a green banner on every healthy report stops reading the
+    // banner, which is precisely the reading habit the amber one depends on.
+    const readyBanner = (any && missingVC.length)
+        ? Alert({ kind: 'warn', title: 'Still missing for a visit', children: missingVC.map(([, l]) => l).join(', ') + ' -- ask now while still reachable.' })
         : null;
 
     const audioVal = has(r, 'audio') ? String(r.audio).trim() : '';
@@ -81,19 +89,20 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
         ? Alert({ kind: 'warn', title: 'Voice note on record', children: audioVal + ' -- listen and update the fields below from what you hear.' })
         : null;
 
-    const srcVals = Object.values(src);
-    const srcLegend = srcVals.length
-        ? h('div', { class: 'casey-rep-src-legend' },
-            'Fields from: ',
-            srcVals.some(v => v === 'ai' || v === 'both') ? Chip({ size: 'sm', tone: 'accent', children: 'AI collected' }) : null,
-            srcVals.some(v => v === 'manual' || v === 'both') ? Chip({ size: 'sm', tone: 'ok', children: 'Operator entered' }) : null)
-        : null;
+    // The per-field source marker stays -- see report-field.js for why a
+    // marker earns its shape on a row of a 28-row list where the header of
+    // this same block does not. What went was the LEGEND that used to sit
+    // here: a line reading "Fields from:" followed by one chip per value the
+    // rows below already spell out in full, directly above the rows that
+    // spell them out. Chrome explaining chrome, in the position a reader
+    // gives most weight to, restating nothing they had not already been told
+    // two lines later.
 
     const entityLabel = activeConfig()?.entity_label || 'report';
     return h('div', { key, class: 'casey-report' },
         h('div', { class: 'casey-report-head' }, `${entityLabel[0].toUpperCase()}${entityLabel.slice(1)} details`),
         any ? null : h('p', { class: 'casey-hint' }, 'Nothing has been recorded on this ' + entityLabel + ' yet. Tap any line below to fill it in.'),
-        srcLegend, readyBanner, audioBanner,
+        readyBanner, audioBanner,
         ...sections.map(sec => h('div', { key: sec.title }, Section({
             title: sec.title,
             children: sec.keys.map(([k, label, multiline]) => ReportField({

@@ -55,8 +55,15 @@
 .casey-linklike{background:transparent;border:0;color:var(--accent-ink, var(--accent));cursor:pointer;padding:0;font-weight:600;text-decoration:underline}
 .casey-linklike:focus-visible{outline:var(--focus-w) solid var(--focus-color, var(--accent));outline-offset:2px}
 
-.casey-health-badges{display:flex;flex-wrap:wrap;gap:var(--space-1, 6px)}
-.casey-intake-badge{display:inline-flex;gap:var(--space-1, 4px)}
+/* The header's four chip families are gone (see header.js for the argument);
+   what is left is prose, so the rules are about line rhythm, not badges.
+   .casey-health-badges / .casey-intake-badge were flex rows holding Chips and
+   nothing in the tree emits either class any more. */
+.casey-health-notes{display:flex;flex-direction:column;gap:var(--space-1, 4px)}
+.casey-health-notes p{margin:0}
+/* The claimed-by line sits in the button row where the Claim button was, so
+   it aligns with the controls rather than baselining against the heading. */
+.casey-claimed{font-size:var(--fs-nano);color:var(--fg-2, var(--muted));white-space:nowrap;align-self:center}
 
 .casey-case-meta{font-size:var(--fs-nano);color:var(--fg-3, var(--muted))}
 .casey-meta-toggle{display:inline-flex;align-items:center;gap:var(--space-1, 4px);background:transparent;border:0;color:var(--fg-3, var(--muted));cursor:pointer;padding:var(--space-1) 0;font-size:inherit;transition:color var(--dur-snap) var(--ease)}
@@ -82,7 +89,14 @@
 .casey-progress-line{flex:0 0 var(--space-3-5);width:var(--space-3-5);min-width:var(--space-3-5);height:2px;background:var(--border);margin:0 var(--space-1-75, 6px);transition:background var(--dur-base) var(--ease)}
 .casey-progress-step--done .casey-progress-line,.casey-progress-step--active .casey-progress-line{background:var(--accent)}
 
-.casey-autonomy-badge{display:inline-block}
+/* .casey-autonomy-badge held the "Who answers: auto" Pill. The sentence it
+   was hiding in a tooltip is now the Select's own hint, styled by the kit's
+   .ds-field-hint, so neither the class nor a rule for it survives. */
+
+/* A case whose status is not one of the six pipeline stages gets a sentence
+   where the rail would be (progress.js); it needs the rail's own vertical
+   rhythm so the pane does not jump between the two shapes. */
+.casey-progress-offpipeline{padding:var(--space-2, 8px) 0;margin:0}
 
 /* .casey-todo-hint is gone with the component that emitted it. todo-hint.js is
    pure text now (its own header records the TodoHint component being removed as
@@ -90,8 +104,11 @@
    which carries no casey- class. Nothing in the tree writes the name, and it
    never matched in 34 live views, panels and modals. */
 
-.casey-source-badge{display:inline-block;font-size:var(--fs-pico);margin-top:var(--space-1, 4px)}
-.casey-source-badge--agent{color:var(--fg-3, var(--muted))}
+/* Was .casey-source-badge at --fs-pico: the smallest step on the scale, for
+   the line telling you whether to trust the case type above it. It is a
+   sentence now, at the size the rest of the form's help text uses, sitting
+   under the field it is about. */
+.casey-source-note{margin:var(--space-1, 4px) 0 0}
 .casey-ev-flagged{display:inline-flex;color:var(--fg-3, var(--muted))}
 
 .casey-report{display:flex;flex-direction:column;gap:var(--space-3, 10px);border:1px solid var(--border);border-radius:var(--r-md, 8px);padding:var(--space-3, 12px)}
@@ -102,7 +119,9 @@
    so they take the next step of the app scale. */
 .casey-detail-pane .casey-report .ds-section > h2{font-size:var(--fs-h3-app)}
 .casey-rep-missing{color:var(--fg-3, var(--muted))}
-.casey-rep-src-legend{font-size:var(--fs-nano);color:var(--fg-3, var(--muted));display:flex;align-items:center;gap:var(--space-1-75, 6px)}
+/* .casey-rep-src-legend held the "Fields from: [AI collected][Operator
+   entered]" chip row above the report. Removed with it -- the per-row marker
+   says the same thing on the row it is true of. */
 
 /* The report field row, its label column, its value column and the hairline
    that separates one field from the next are all the kit's DetailRow now

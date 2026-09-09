@@ -33,7 +33,11 @@ export function todoHintText(c) {
     if (c.status === 'waiting' && ageHoursOf(c) >= 24) return 'No answer for over a day. A check-in may help -- reply below.';
     if (tags.includes('health:stuck')) return 'This case has been in the same stage for a while. Check if it needs a push or can be closed.';
     if (tags.includes('health:stale')) return 'No activity for a while. Check if anything needs following up.';
-    if (c.autonomy === 'observe') return `This one is waiting for you. Read it and reply, or set Who answers to auto so ${brand} can answer.`;
+    // "set Who answers to auto" named the stored key. The control is now
+    // labelled "Who answers" (it was "Autonomy", so this line pointed at a
+    // control that did not exist under that name) and its options are worded,
+    // so this points at the wording the operator will actually see.
+    if (c.autonomy === 'observe') return `This one is waiting for you. Read it and reply, or set Who answers to "Answer on its own" so ${brand} can handle it.`;
     if (c.autonomy === 'assisted') return `${brand} can draft, but you send. Open it and check the draft.`;
     if (c.status === 'resolved') return 'This one is marked done. Close it if you are finished.';
     if (c.status === 'waiting') return 'Waiting on the person to reply. Nothing to do until they answer.';
