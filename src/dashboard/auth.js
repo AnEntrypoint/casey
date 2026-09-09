@@ -185,7 +185,14 @@ export async function changePassword(store, id, newPassword) {
   const { hash, salt } = hashPassword(newPassword)
   const acct = await getAccount(store, id)
   const nextEpoch = (Number(acct?.session_epoch) || 0) + 1
-  await store.t.update('operator_account', id, { password_hash: hash, password_salt: salt, must_change_password: '0', session_epoch: nextEpoch }, SYSTEM)
+  // String, not a raw JS number. busybase binds every column as TEXT, so a
+  // number here is coerced anyway and the column's type is merely dishonest --
+  // but the moment any caller adds an expectedVersion to this write, a JS
+  // number makes the optimistic-concurrency check fail every time WHILE THE
+  // WRITE STILL LANDS (AGENTS.md, busybase chain). store/guards.js now refuses
+  // that combination structurally; writing the string keeps this call correct
+  // on its own terms rather than relying on nobody adding a version guard here.
+  await store.t.update('operator_account', id, { password_hash: hash, password_salt: salt, must_change_password: '0', session_epoch: String(nextEpoch) }, SYSTEM)
   return { epoch: nextEpoch }
 }
 
@@ -204,7 +211,8 @@ export async function revokeAccountSessions(store, id) {
   const acct = await getAccount(store, id)
   if (!acct) throw new Error('account not found')
   const nextEpoch = (Number(acct.session_epoch) || 0) + 1
-  return store.t.update('operator_account', id, { session_epoch: nextEpoch }, SYSTEM)
+  // String for the same reason as changePassword above.
+  return store.t.update('operator_account', id, { session_epoch: String(nextEpoch) }, SYSTEM)
 }
 
 // Deletion is irreversible (unlike disable, which the sibling route already
