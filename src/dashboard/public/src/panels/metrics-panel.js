@@ -14,7 +14,7 @@ import { fmtDur } from '../format.js';
 const h = webjsx.createElement;
 
 const STAGE_LABELS_M = { new: 'New', triaging: 'Triage', in_progress: 'In progress', waiting: 'Waiting', resolved: 'Resolved', closed: 'Closed' };
-const CASE_TYPE_LABEL = { unset: 'Unclassified', outbreak: 'Outbreak', follow_up: 'Follow-up', lab_sample: 'Lab sample', import_alert: 'Import alert' };
+const CASE_TYPE_LABEL = { unset: 'Unclassified', outbreak: 'Symptom cluster', follow_up: 'Follow-up', lab_sample: 'Lab sample', import_alert: 'Import alert' };
 const ctLabel = (t) => CASE_TYPE_LABEL[t] || t;
 const slaMetPct = (s) => (s && s.considered ? Math.round(((s.met_count || 0) / s.considered) * 100) + '%' : '--');
 

@@ -29,7 +29,7 @@ const AUTONOMY_OPTS = ['auto', 'assisted', 'observe'];
 // vanish from the list.
 const OPTION_LABEL = {
     unset: 'Not set yet',
-    outbreak: 'Outbreak',
+    outbreak: 'Symptom cluster',
     follow_up: 'Follow-up',
     lab_sample: 'Lab sample',
     import_alert: 'Import alert',

@@ -62,7 +62,7 @@ export function SplitDialog({ onReload, key } = {}) {
         key, open, title: 'Split case', wide: true, onClose: close,
         children: !open ? null : [
             h('p', { key: 'lead', class: 'casey-hint' }, 'Select events to move into a new case. The rest stay here.'),
-            TextField({ key: 'subj', label: 'Subject for new case (optional)', value: state._splitSubject || '', placeholder: 'e.g. sheep Upington outbreak', onInput: (v) => { state._splitSubject = v; schedule(); } }),
+            TextField({ key: 'subj', label: 'Subject for new case (optional)', value: state._splitSubject || '', placeholder: 'e.g. sheep Upington cluster', onInput: (v) => { state._splitSubject = v; schedule(); } }),
             h('div', { key: 'evbox', class: 'casey-split-evbox' },
                 events == null ? h('div', { class: 'casey-hint' }, 'Loading...') :
                     !events.length ? h('div', { class: 'casey-hint' }, 'Nothing on this timeline can be moved to another case.') :
