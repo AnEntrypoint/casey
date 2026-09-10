@@ -29,6 +29,7 @@ import { OfflinePanel } from './panels/offline-panel.js';
 import { TeamPanel } from './panels/team-panel.js';
 import { ContactsPanel } from './panels/contacts-panel.js';
 import { SecretaryPanel } from './panels/secretary-panel.js';
+import { ExternalLinksPanel } from './panels/external-links-panel.js';
 
 import { OnboardingOverlay, onboarded, markOnboarded } from './components/onboarding-overlay.js';
 import { SkillsOverlay, skillsDismissed } from './components/skills-overlay.js';
@@ -66,6 +67,7 @@ registerPanelBody('offline', OfflinePanel);
 registerPanelBody('team', TeamPanel);
 registerPanelBody('contacts', ContactsPanel);
 registerPanelBody('secretary', SecretaryPanel);
+registerPanelBody('external_links', ExternalLinksPanel);
 
 // Dialog-shaped modals (settings/stats are quick-glance overlays that never
 // displace the case queue; help/onboarding/skills share the same Dialog

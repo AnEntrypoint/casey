@@ -396,6 +396,11 @@ export const fetchDistribution = () => json('/api/distribution');
 export const fetchActivity = (params) => json('/api/activity' + qs(params));
 export const fetchHandover = () => json('/api/handover');
 export const postStartShift = () => post('/api/handover/start-shift', {});
+
+// ---- cross-system links (see EXTERNAL-SYNC.md) --------------------------
+export const fetchExternalLinks = (status) => json('/api/external-links' + (status ? '?status=' + encodeURIComponent(status) : ''));
+export const postExternalLinkConfirm = (id) => post('/api/external-links/' + encodeURIComponent(id) + '/confirm', {});
+export const postExternalLinkReject = (id) => post('/api/external-links/' + encodeURIComponent(id) + '/reject', {});
 export const fetchUnreplied = () => json('/api/unreplied');
 export const fetchOperatorWorkload = () => json('/api/operators/workload');
 export const fetchSecretaryQueue = (params) => json('/api/secretary/queue' + qs(params));

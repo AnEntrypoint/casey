@@ -128,6 +128,7 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
         { key: 'team', glyph: Icon('members', { size: 15 }), label: 'Team workload', onClick: () => openPanel('team'), active: state.activePanel === 'team' },
         { key: 'contacts', glyph: Icon('members', { size: 15 }), label: 'Reporters', onClick: () => openPanel('contacts'), active: state.activePanel === 'contacts' },
         { key: 'secretary', glyph: Icon('external-link', { size: 15 }), label: 'Follow-up calls', onClick: () => openPanel('secretary'), active: state.activePanel === 'secretary' },
+        { key: 'external_links', glyph: Icon('link', { size: 15 }), label: 'Cross-system links', onClick: () => openPanel('external_links'), active: state.activePanel === 'external_links' },
       ],
     },
   ];
