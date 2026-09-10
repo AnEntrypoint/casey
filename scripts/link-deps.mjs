@@ -86,12 +86,15 @@ for (const [name, spec] of Object.entries(pkg.dependencies || {})) {
 // CASEY's code (freddie-bundle/boot.js, the case-tools/llm-acptoapi/platform
 // plugins) -- scan every packages/<group>/<name>/package.json under
 // deps/freddie and symlink node_modules/@freddie/<pkg-name> straight at it.
-// packages/<group>/<name>/, vendor/<name>/ (the vendored @freddie/cordis
-// runtime + cordis-plugin-* + schemastery), and native/<name>/ (native
-// addons apps/cli depends on) each hold their own real @freddie/* package.json
-// at a different nesting depth -- walk each root to a bounded depth (3
-// levels covers every real layout observed) rather than hardcoding one
-// group/name shape.
+// packages/<group>/<name>/, framework/<name>/ (the vendored @freddie/cordis
+// runtime + cordis-plugin-* + schemastery -- moved here from a since-removed
+// vendor/<name>/ in a freddie release that rescoped/squashed its history;
+// vendor/ may still exist on disk as untracked leftover node_modules cruft
+// but no longer carries a package.json), and native/<name>/ (native addons
+// apps/cli depends on) each hold their own real @freddie/* package.json at a
+// different nesting depth -- walk each root to a bounded depth (3 levels
+// covers every real layout observed) rather than hardcoding one group/name
+// shape.
 function scanFreddiePackages(rootDir, maxDepth) {
   const found = []
   function walk(dir, depth) {
@@ -116,7 +119,7 @@ function scanFreddiePackages(rootDir, maxDepth) {
 const freddieRoot = resolve(repoRoot, 'deps/freddie')
 if (existsSync(freddieRoot)) {
   let freddieLinked = 0
-  for (const sub of ['packages', 'vendor', 'native']) {
+  for (const sub of ['packages', 'vendor', 'native', 'framework']) {
     const subDir = join(freddieRoot, sub)
     if (!existsSync(subDir)) continue
     for (const [pkgName, pkgDir] of scanFreddiePackages(subDir, 3)) {

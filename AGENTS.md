@@ -302,7 +302,7 @@ correctly-pnpm-linked `node_modules` once `pnpm install` runs there once.
 `link-deps.mjs`) runs that `pnpm install`, degrading to a loud warning
 (never a hard failure) when the submodule is not checked out or `pnpm` is not
 installed. `scripts/link-deps.mjs` then scans
-`deps/freddie/{packages,vendor,native}` to any depth for a real `@freddie/*`
+`deps/freddie/{packages,vendor,native,framework}` to any depth for a real `@freddie/*`
 `package.json` and symlinks `node_modules/@freddie/<pkg-name>` straight at it
 (Windows: NTFS junction, not a plain directory symlink -- the latter needs
 elevated privileges/Developer Mode, EPERM otherwise). casey needs `pnpm` on
