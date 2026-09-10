@@ -33,6 +33,7 @@ import {
   cmdRetention, cmdBackup, cmdRestore,
 } from './casey-store-commands.js'
 import { cmdAlerts } from './casey-alerts-command.js'
+import { cmdSyncImport } from './casey-sync-import-command.js'
 
 let [, , cmd, ...rest] = process.argv
 // allow `casey --version` / `casey -v` / `casey --help` with no subcommand
@@ -78,6 +79,7 @@ const COMMANDS = {
   backup: cmdBackup,
   restore: cmdRestore,
   operators: cmdOperators,
+  'sync-import': cmdSyncImport,
 }
 
 async function main() {
