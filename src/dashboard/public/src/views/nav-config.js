@@ -101,8 +101,12 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
       group: 'Day-to-day',
       items: [
         { key: 'home_map', glyph: Icon('globe', { size: 15 }), label: 'Map', onClick: (e) => navClick(e, openQueue), active: onMapHome && state.railMode === 'queue', ariaLabel: 'Map view (home)' },
-        { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: (e) => navClick(e, () => openOnMap('geo')), active: onMapHome && state.railMode === 'geo' },
-        { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: (e) => navClick(e, () => openOnMap('clusters')), active: onMapHome && state.railMode === 'clusters', count: clustersCount },
+        // Both open ON the map (openOnMap sets homeView='map' + railMode), so
+        // they are MODES of Map, never their own destination -- indent marks
+        // that in the nav instead of letting them read as equal-weight
+        // siblings of it.
+        { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: (e) => navClick(e, () => openOnMap('geo')), active: onMapHome && state.railMode === 'geo', indent: true },
+        { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: (e) => navClick(e, () => openOnMap('clusters')), active: onMapHome && state.railMode === 'clusters', count: clustersCount, indent: true },
         { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: (e) => navClick(e, () => { closePanel(); setHomeViewRoute('cases'); }), active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },
       ],
     },
