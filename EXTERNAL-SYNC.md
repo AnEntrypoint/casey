@@ -74,6 +74,50 @@ normalized external-record shape the correlation engine expects, so
 correlation can run against real exported data today with zero live
 integration.
 
+## Querying and provisioning: the /api/sync/* surface
+
+`src/dashboard/routes/sync-api.js` exposes a machine-authenticated API so an
+external system (or a script standing in for one, until a real adapter
+exists) can reach this seam directly over HTTP, not only through
+`CASEY_EXTERNAL_SYNC_ADAPTER`/`casey sync-import`.
+
+**This is a bounded exception to the dashboard's "no bearer token" invariant,
+scoped to this one path prefix.** `routes/auth.js`'s `authGate()` (the
+session-cookie gate every other dashboard route sits behind) explicitly
+exempts `/api/sync/*` -- not because it is unauthenticated, but because it
+runs a *different* gate: a bearer `Authorization` header checked against
+`sync_api_key` rows the same way an operator's password is checked (scrypt
+hash, `timingSafeEqual`, never a plain compare). Every other dashboard route
+remains exactly as bearer-token-refusing as before; see `AGENTS.md`'s
+Security invariants section for the full statement.
+
+### Provisioning a key
+
+```
+casey sync-apikey create --label meat-naturally-prod --scope read:cases,read:links,write:links,import:records
+casey sync-apikey list
+casey sync-apikey revoke <id>
+```
+
+`create` prints the raw key to stdout exactly once -- it is scrypt-hashed
+before being stored and is never retrievable again. `list` shows only the
+label, a display-safe prefix, scopes, status and last-used time, never the
+key or its hash.
+
+### Scopes and endpoints
+
+| Method | Path                       | Scope            | Does                                                                 |
+|--------|----------------------------|------------------|-----------------------------------------------------------------------|
+| GET    | `/api/sync/cases`          | `read:cases`     | Paginated, PII-safe case list (same projection as the dashboard).     |
+| GET    | `/api/sync/external-links` | `read:links`     | Proposed/confirmed/rejected links, PII-safe (`?status=` filter).      |
+| POST   | `/api/sync/external-links` | `write:links`    | Propose a link from the caller's own correlation guess -- always lands `status=proposed`; a machine caller can never confirm one. |
+| POST   | `/api/sync/import`         | `import:records` | Push a batch of normalized external records for the next correlation pass to consume (same shape/storage as the manual-import CLI). |
+
+An unrecognized or revoked key gets 401; a valid key missing the route's
+scope gets 403. Requests are rate-limited per key
+(`CASEY_SYNC_API_RATE_LIMIT`, default 120/`CASEY_SYNC_API_RATE_WINDOW_MS`,
+default 60000ms).
+
 ## Wiring a real adapter later
 
 1. Confirm the other app's actual schema against a real API response --

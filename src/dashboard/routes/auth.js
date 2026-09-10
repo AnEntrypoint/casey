@@ -1083,6 +1083,15 @@ export function authGate() {
     // since the tree is 50+ files and grows as other builders land views.
     if (req.path.startsWith('/src/')) return next()
     if (req.path === '/icon.svg' || req.path === '/manifest.json' || req.path === '/sw.js' || req.path === '/offline.html') return next()
+    // /api/sync/* is a SEPARATE, narrowly-scoped machine API (routes/sync-api.js,
+    // EXTERNAL-SYNC.md) with its own bearer-token gate -- exempted from THIS
+    // session-cookie gate specifically so that gate can run instead, not because
+    // this route set is unauthenticated. A request with no/bad/revoked/
+    // under-scoped key still 401s/403s there, on its own auth path. Every other
+    // route in this list is exempted because it carries no case data or must load
+    // before a session can exist; this one is exempted because it is gated by a
+    // DIFFERENT mechanism, not because it needs none.
+    if (req.path.startsWith('/api/sync/')) return next()
     if (!req.caseyAccount) return res.status(401).json({ error: 'unauthorized' })
     // A must_change_password account is authed but locked to ONLY the
     // change-password route until it clears the flag -- every other route
