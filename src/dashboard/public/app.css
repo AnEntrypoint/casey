@@ -612,17 +612,26 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    The signal was destroyed by its own repetition -- the same failure the
    standing-green health pills had, where a mark that never varies stops being
    read at all.
-   Inset by --space-2 top and bottom, each row's mark is separate, so the column
-   scans as a run of urgency marks with visible breaks and can never be mistaken
-   for an edge. Urgency still travels in words too (.tcase-why's lead sentence
-   and the row's aria-label), so the colour remains an accelerator rather than
-   the only carrier. */
+   Inset by --space-2 top and bottom, each row's mark is separate -- but on a
+   real "needs a person" queue almost every row shares the SAME band, and a
+   near-full-height mark repeated down consecutive same-colour rows with only
+   an 8px gap between them still reads, on the rendered screenshot, as one
+   continuous rule rather than discrete per-row accents (measured: 8px gaps
+   against ~80-100px marks read as a hairline border with tick marks, not a
+   row of flags). Pinned to a short, fixed-height flag at the row's top
+   instead of spanning it fixes the same failure this comment already names
+   ("the signal was destroyed by its own repetition") without removing the
+   channel: a short mark repeated down a column reads as a column of tags,
+   never as an edge, at any row height or gap. Urgency still travels in words
+   too (.tcase-why's lead sentence and the row's aria-label), so the colour
+   remains an accelerator rather than the only carrier. */
 .tcase { position: relative; }
 .tcase.heat-3::before, .tcase.heat-2::before, .tcase.heat-1::before {
   content: '';
   position: absolute;
-  left: 0; top: var(--space-2); bottom: var(--space-2);
+  left: 0; top: var(--space-2);
   width: 3px;
+  height: 20px;
   border-radius: 0 var(--r-pill) var(--r-pill) 0;
 }
 .tcase.heat-3::before { background: var(--danger); }
