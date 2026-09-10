@@ -97,6 +97,9 @@ ${bold('usage:')}
   casey operators list                          list dashboard login accounts (never prints password hashes)
   casey operators disable <username>            disable a login without deleting its history
   casey operators enable <username>             re-enable a disabled login
+  casey sync-import <file> --kind field_visit|farmer|association|follow_up
+                                                 read a manually-exported external-system file into the cross-app
+                                                 correlation engine's normalized shape (no live adapter needed)
 
 ${bold('flags:')} --help / -h on any command, --version / -v
 
