@@ -53,6 +53,7 @@ import { registerCases } from './routes/cases.js'
 import { registerAccounts } from './routes/accounts.js'
 import { registerContacts } from './routes/contacts.js'
 import { registerExternalLinks } from './routes/external-links.js'
+import { registerSyncApi } from './routes/sync-api.js'
 import { registerMap } from './routes/map.js'
 import { registerReports } from './routes/reports.js'
 import { registerOperations } from './routes/operations.js'
@@ -740,6 +741,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerAccounts(app, deps)
   registerContacts(app, deps)
   registerExternalLinks(app, deps)
+  registerSyncApi(app, deps)
   registerMap(app, deps)
   registerReports(app, deps)
   registerOperations(app, deps)

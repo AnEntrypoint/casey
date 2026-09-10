@@ -100,6 +100,10 @@ ${bold('usage:')}
   casey sync-import <file> --kind field_visit|farmer|association|follow_up
                                                  read a manually-exported external-system file into the cross-app
                                                  correlation engine's normalized shape (no live adapter needed)
+  casey sync-apikey create --label <name> --scope read:cases,read:links,write:links,import:records
+                                                 provision a machine credential for /api/sync/* (printed once)
+  casey sync-apikey list                        list sync API keys (never prints the key itself)
+  casey sync-apikey revoke <id>                 revoke a sync API key without deleting its history
 
 ${bold('flags:')} --help / -h on any command, --version / -v
 
@@ -234,6 +238,14 @@ casey operators enable <username>
   the admin password is lost, and the scripted-provisioning path. Without
   --password a random one is generated and printed once. Password hashes are
   never printed.`,
+  'sync-apikey': `casey sync-apikey create --label <name> --scope read:cases,read:links,write:links,import:records
+casey sync-apikey list
+casey sync-apikey revoke <id>
+  Machine credentials for the /api/sync/* API (see EXTERNAL-SYNC.md) -- a
+  SEPARATE credential class from dashboard operator logins, scoped to that one
+  route prefix only. The raw key is printed exactly once on create and is
+  never stored or shown again; only its hash and a display-safe prefix are
+  kept. Revoke sets disabled without deleting the row's history.`,
 }
 
 // Every one-shot CLI subcommand (cases/show/attention/handover/report/health/

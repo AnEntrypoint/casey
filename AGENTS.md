@@ -952,20 +952,28 @@ without restart-on-crash.
   `operator_account`, scrypt-hashed via `crypto.scryptSync(password, salt, 64,
   {N:16384,...})`, stateless HMAC-signed session cookie of the form
   `base64url(json).hmac_sha256(secret)`). No route accepts a bearer token or a
-  `?token=` query param. The only ungated routes -- the literal exemption list
-  in `routes/auth.js`'s `authGate()`, plus what `registerAuth` mounts ahead of
-  it -- are `/design`, `/vendor/*` (static assets, no case data), `/api/login`,
-  `/api/logout`, `/api/whoami`, `/api/ready`, `/api/branding`
-  (`dashboard_ui.brand`/`leaf` only, so `login-gate.js` can show real branding
-  before a session exists; never the full `/api/config` shape), the public
-  `/report` form (gated by knowledge of a case ref, not auth), the SPA shell
-  itself (`/`, `/index.html`, `/app.js`, `/app.css` and the whole `/src/*`
-  module tree -- shell code with no case data; gating it would 401 before the
-  browser could render a login form) and the PWA assets (`/icon.svg`,
-  `/manifest.json`, `/sw.js`, `/offline.html` -- a service worker cannot
-  register if fetching its own script needs a session). `/media` is NOT on that
-  list: it serves real field-worker photo/voice-note bytes and is mounted after
-  the gate. `/api/change-password` is mounted ahead of the gate but does its own
+  `?token=` query param, ON THIS ROUTE SET. The only ungated routes -- the
+  literal exemption list in `routes/auth.js`'s `authGate()`, plus what
+  `registerAuth` mounts ahead of it -- are `/design`, `/vendor/*` (static
+  assets, no case data), `/api/login`, `/api/logout`, `/api/whoami`,
+  `/api/ready`, `/api/branding` (`dashboard_ui.brand`/`leaf` only, so
+  `login-gate.js` can show real branding before a session exists; never the
+  full `/api/config` shape), the public `/report` form (gated by knowledge of
+  a case ref, not auth), the SPA shell itself (`/`, `/index.html`, `/app.js`,
+  `/app.css` and the whole `/src/*` module tree -- shell code with no case
+  data; gating it would 401 before the browser could render a login form),
+  the PWA assets (`/icon.svg`, `/manifest.json`, `/sw.js`, `/offline.html` --
+  a service worker cannot register if fetching its own script needs a
+  session), and `/api/sync/*` (`routes/sync-api.js`, `EXTERNAL-SYNC.md`) --
+  the last is exempted because it runs a DIFFERENT gate, not because it needs
+  none: a bearer `Authorization` header checked (scrypt hash +
+  `timingSafeEqual`, same discipline as a password) against `sync_api_key`
+  rows, scope-checked per route, provisioned via `casey sync-apikey`. This is
+  the one place a bearer token is accepted anywhere in casey, and it is
+  confined to this one path prefix -- every session-gated route above remains
+  exactly as bearer-token-refusing as before. `/media` is NOT on that list:
+  it serves real field-worker photo/voice-note bytes and is mounted after the
+  gate. `/api/change-password` is mounted ahead of the gate but does its own
   `req.caseyAccount` check, so it 401s unauthenticated like any gated route.
   **`/api/ready` says more than a boolean, deliberately.** It reports `degraded`
   plus a closed set of `degraded_reasons` machine tokens, a `checks` object of
