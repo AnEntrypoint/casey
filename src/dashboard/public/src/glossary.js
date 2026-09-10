@@ -28,7 +28,7 @@ const GLOSSARY_TEMPLATE = {
     handoff: 'This case has been handed to a person. {brand} will not reply on its own until you do.',
     priority: 'How urgent this case is, so the team knows what to work on first.',
     channel: 'Which app the person is messaging from (WhatsApp or Discord), or how the report was entered (by hand, or the public form).',
-    case_type: 'What kind of report this is: an outbreak, a routine follow-up, a lab sample, or an import alert.',
+    case_type: 'What kind of report this is: a cluster of symptom reports, a routine follow-up, a lab sample, or an import alert. Casey records what was reported, not a diagnosis.',
     sla: 'The time target the team has set for replying to a waiting case.',
     breach: 'A case that has gone past its reply-time target and needs attention.',
     draft: 'A reply {brand} has written but not sent yet. It is waiting for you to send or discard it.',

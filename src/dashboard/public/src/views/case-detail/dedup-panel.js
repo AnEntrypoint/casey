@@ -37,7 +37,7 @@ export function DedupPanel({ caseId, onReload, key } = {}) {
         h('h3', {}, 'Possibly the same case'),
         // Same fix as site-history.js: 'casey' is the software this is built
         // on, not the name on the door of the deployment reading it.
-        h('p', { class: 'casey-hint' }, (state.config?.dashboard_ui?.brand || 'casey') + ' thinks these reports may be the same outbreak. Merge folds the other case into this one (you can review before confirming).'),
+        h('p', { class: 'casey-hint' }, (state.config?.dashboard_ui?.brand || 'casey') + ' thinks these reports may be about the same event. Merge folds the other case into this one (you can review before confirming).'),
         ...suggestions.map(s => h('div', { key: s.id, class: 'casey-dup-row' },
             h('b', {}, s.ref), ' ', s.subject || '',
             h('span', { class: 'casey-hint' }, ' -- ' + (s.reasons || []).join(', ')),
@@ -47,7 +47,7 @@ export function DedupPanel({ caseId, onReload, key } = {}) {
             open: mergeOpen, title: 'Merge ' + (target.ref || '') + ' into this case?', onClose: closeMerge,
             children: [
                 h('p', { key: 'lead' }, 'The other case becomes a redirect. This is lossless and can be reviewed on the timeline.'),
-                TextField({ key: 'reason', label: 'Why are these the same outbreak? (optional)', multiline: true, rows: 2, placeholder: 'e.g. same farm, same symptoms reported separately', value: state._mergeReason || '', onInput: (v) => { state._mergeReason = v; schedule(); } }),
+                TextField({ key: 'reason', label: 'Why are these the same event? (optional)', multiline: true, rows: 2, placeholder: 'e.g. same farm, same symptoms reported separately', value: state._mergeReason || '', onInput: (v) => { state._mergeReason = v; schedule(); } }),
                 h('div', { key: 'acts', class: 'ds-dialog-actions' },
                     Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: closeMerge }),
                     Btn({ key: 'ok', variant: 'danger', children: 'Merge cases', onClick: confirmMerge })

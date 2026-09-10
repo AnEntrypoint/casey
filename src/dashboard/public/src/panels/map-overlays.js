@@ -28,7 +28,7 @@ function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// The lines between reports that look like the same outbreak. The linkage
+// The lines between reports that look like the same event. The linkage
 // itself (p.cluster, indexed by clusters.js buildClusters server-side and
 // shipped in /api/map/cases) answers "what is going on HERE" rather than "what
 // is this one pin" -- Ushahidi's cluster-summary pattern.

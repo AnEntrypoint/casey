@@ -203,7 +203,7 @@ function mapOverlayRow() {
         }, label),
     });
     return h('div', { class: 'ds-map-overlays' },
-        tog('cl', 'Clusters', 'Draw a line between reports that look like the same outbreak',
+        tog('cl', 'Clusters', 'Draw a line between reports that look like the same event',
             !!(ms && ms.showClusters), () => { toggleClusters(ms, state.mapFilter); schedule(); }),
         tog('cov', 'Coverage', 'Ring the areas each operator has been working in',
             !!(ms && ms.showCoverage), async () => { await toggleCoverage(ms); schedule(); }),
