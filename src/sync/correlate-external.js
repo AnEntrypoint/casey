@@ -105,6 +105,41 @@ export function scoreCandidate(localKind, localRow, externalRecord) {
   return { confidence: Math.min(1, Math.round(score * 1000) / 1000), match_basis: bases.join('+') || 'none' };
 }
 
+// normalizeManualImportRecord: bridges bin/casey-sync-import-command.js's
+// loadManualImport() output ({kind, association, farmer_name, farmer_phone,
+// visit_date, purpose, activities, outcome_notes, follow_up_required,
+// province, raw}) into this module's own normalized-external-record shape
+// (name/phone/location/date). The two shapes diverged because the CLI keeps
+// the field-tracker's own column names for display/debugging while this
+// module's scorer only cares about the four matching axes -- this is the one
+// place that reconciles them, so findCandidatesFromManualImport is the
+// correct entry point for CLI-imported data rather than calling
+// findCandidates directly with unmapped rows.
+function normalizeManualImportRecord(row, index) {
+  return {
+    system: 'meat_naturally',
+    kind: row.kind,
+    external_id: `manual-import-${row.kind}-${index}`,
+    external_ref: row.farmer_name || row.association || `${row.kind} #${index}`,
+    name: row.farmer_name || null,
+    phone: row.farmer_phone || null,
+    location: row.association || null,
+    date: row.visit_date || null,
+  };
+}
+
+// findCandidatesFromManualImport: loads a manually-imported file (see
+// bin/casey-sync-import-command.js) and runs it through findCandidates
+// against real case/contact rows -- the actual consumer of
+// loadManualImport(), so a sync-import'd file is reachable by the
+// correlation engine end to end, not just parsed and left on disk.
+export async function findCandidatesFromManualImport({ file, kind, cases = [], contacts = [] }) {
+  const { loadManualImport } = await import('../../bin/casey-sync-import-command.js');
+  const rows = loadManualImport(file, kind);
+  const externalRecords = rows.map((row, i) => normalizeManualImportRecord(row, i));
+  return findCandidates({ cases, contacts, externalRecords });
+}
+
 // findCandidates: cross-product local rows x external records, keeping only
 // scores at/above MIN_CONFIDENCE_TO_PROPOSE. O(n*m) -- fine at casey's real
 // scale (hundreds of cases, tens of external records per sync pass); a
