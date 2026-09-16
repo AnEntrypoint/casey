@@ -82,12 +82,20 @@ export async function api(path, opts = {}) {
   const timeoutController = new AbortController();
   const timeoutId = setTimeout(() => timeoutController.abort(), FETCH_TIMEOUT_MS);
   // A caller-supplied signal (none today) must still be able to abort its own
-  // request -- chain rather than clobber opts.signal wholesale.
+  // request -- chain rather than clobber opts.signal wholesale. Both listeners
+  // are torn down in the `finally` below: an unremoved listener on a
+  // long-lived caller-owned controller would leak for the life of that
+  // controller, one leak per api() call reusing it. And a signal that is
+  // ALREADY aborted at call time never fires its own 'abort' event again (the
+  // event already happened before this code ran), so that case is checked
+  // up front rather than relying on the listener.
   const passedSignal = opts.signal;
+  let onAbort = null;
   const signal = passedSignal
     ? (() => {
         const merged = new AbortController();
-        const onAbort = () => merged.abort();
+        if (passedSignal.aborted) { merged.abort(); return merged.signal; }
+        onAbort = () => merged.abort();
         passedSignal.addEventListener('abort', onAbort);
         timeoutController.signal.addEventListener('abort', onAbort);
         return merged.signal;
@@ -100,6 +108,10 @@ export async function api(path, opts = {}) {
     throw e;
   } finally {
     clearTimeout(timeoutId);
+    if (onAbort) {
+      passedSignal.removeEventListener('abort', onAbort);
+      timeoutController.signal.removeEventListener('abort', onAbort);
+    }
   }
   if (await isOfflineResponse(res)) {
     setConnLost(true);
