@@ -4,8 +4,8 @@
 
 import { Icon } from 'ds/components/shell.js';
 import { state, setInboxMode, setRailMode } from '../state.js';
-import { openPanel, openModal, closePanel } from '../state.js';
-import { setHomeViewRoute } from '../route.js';
+import { openModal } from '../state.js';
+import { setHomeViewRoute, openPanelRoute, closePanelRoute } from '../route.js';
 import * as api from '../api.js';
 import { toast } from '../toasts.js';
 
@@ -61,7 +61,7 @@ function navClick(e, fn) {
 // hotspots" and the UI removed the only thing that can show where. These land
 // on the map home view with the rollup docked in the rail beside it.
 function openOnMap(mode) {
-  closePanel();
+  closePanelRoute();
   setHomeViewRoute('map');
   setRailMode(mode);
 }
@@ -107,28 +107,28 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
         // siblings of it.
         { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: (e) => navClick(e, () => openOnMap('geo')), active: onMapHome && state.railMode === 'geo', indent: true },
         { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: (e) => navClick(e, () => openOnMap('clusters')), active: onMapHome && state.railMode === 'clusters', count: clustersCount, indent: true },
-        { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: (e) => navClick(e, () => { closePanel(); setHomeViewRoute('cases'); }), active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },
+        { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: (e) => navClick(e, () => { closePanelRoute(); setHomeViewRoute('cases'); }), active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },
       ],
     },
     {
       group: 'Reports & Admin',
       items: [
         { key: 'stats', glyph: Icon('activity', { size: 15 }), label: 'Stats', onClick: () => openModal('stats') },
-        { key: 'metrics', glyph: Icon('page', { size: 15 }), label: 'Metrics', onClick: () => openPanel('metrics'), active: state.activePanel === 'metrics' },
-        { key: 'distribution', glyph: Icon('grid', { size: 15 }), label: 'Distribution', onClick: () => openPanel('distribution'), active: state.activePanel === 'distribution' },
-        { key: 'activity', glyph: Icon('thread', { size: 15 }), label: 'Activity', onClick: () => openPanel('activity'), active: state.activePanel === 'activity' },
-        { key: 'handover', glyph: Icon('external-link', { size: 15 }), label: 'Shift handover', onClick: () => openPanel('handover'), active: state.activePanel === 'handover' },
-        { key: 'offline', glyph: Icon('warn', { size: 15 }), label: 'Missed while offline', onClick: () => openPanel('offline'), active: state.activePanel === 'offline', count: offlineCount, color: offlineCount ? 'var(--warn)' : undefined },
+        { key: 'metrics', glyph: Icon('page', { size: 15 }), label: 'Metrics', onClick: (e) => navClick(e, () => openPanelRoute('metrics')), active: state.activePanel === 'metrics' },
+        { key: 'distribution', glyph: Icon('grid', { size: 15 }), label: 'Distribution', onClick: (e) => navClick(e, () => openPanelRoute('distribution')), active: state.activePanel === 'distribution' },
+        { key: 'activity', glyph: Icon('thread', { size: 15 }), label: 'Activity', onClick: (e) => navClick(e, () => openPanelRoute('activity')), active: state.activePanel === 'activity' },
+        { key: 'handover', glyph: Icon('external-link', { size: 15 }), label: 'Shift handover', onClick: (e) => navClick(e, () => openPanelRoute('handover')), active: state.activePanel === 'handover' },
+        { key: 'offline', glyph: Icon('warn', { size: 15 }), label: 'Missed while offline', onClick: (e) => navClick(e, () => openPanelRoute('offline')), active: state.activePanel === 'offline', count: offlineCount, color: offlineCount ? 'var(--warn)' : undefined },
         { key: 'settings', glyph: Icon('settings', { size: 15 }), label: 'Settings', onClick: () => openModal('settings') },
       ],
     },
     {
       group: 'Team',
       items: [
-        { key: 'team', glyph: Icon('members', { size: 15 }), label: 'Team workload', onClick: () => openPanel('team'), active: state.activePanel === 'team' },
-        { key: 'contacts', glyph: Icon('members', { size: 15 }), label: 'Reporters', onClick: () => openPanel('contacts'), active: state.activePanel === 'contacts' },
-        { key: 'secretary', glyph: Icon('external-link', { size: 15 }), label: 'Follow-up calls', onClick: () => openPanel('secretary'), active: state.activePanel === 'secretary' },
-        { key: 'external_links', glyph: Icon('link', { size: 15 }), label: 'Cross-system links', onClick: () => openPanel('external_links'), active: state.activePanel === 'external_links' },
+        { key: 'team', glyph: Icon('members', { size: 15 }), label: 'Team workload', onClick: (e) => navClick(e, () => openPanelRoute('team')), active: state.activePanel === 'team' },
+        { key: 'contacts', glyph: Icon('members', { size: 15 }), label: 'Reporters', onClick: (e) => navClick(e, () => openPanelRoute('contacts')), active: state.activePanel === 'contacts' },
+        { key: 'secretary', glyph: Icon('external-link', { size: 15 }), label: 'Follow-up calls', onClick: (e) => navClick(e, () => openPanelRoute('secretary')), active: state.activePanel === 'secretary' },
+        { key: 'external_links', glyph: Icon('link', { size: 15 }), label: 'Cross-system links', onClick: (e) => navClick(e, () => openPanelRoute('external_links')), active: state.activePanel === 'external_links' },
       ],
     },
   ];
@@ -237,7 +237,7 @@ export function buildActionItems(opts = {}) {
   return applyItemConfig(applyCapabilityScope(rawActionItems(opts)), state.currentUser?.role, state.config?.dashboard_ui?.nav);
 }
 
-export function backToCases() { closePanel(); }
+export function backToCases() { closePanelRoute(); }
 
 // The title a content-swap panel page carries, taken from the nav item the
 // operator clicked to get there rather than from a second title table. Every
