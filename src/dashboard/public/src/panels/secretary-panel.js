@@ -21,6 +21,7 @@ import { Table } from '/design/src/components/content/table.js';
 import { DetailRow } from '/design/src/components/content/row.js';
 import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
+import { SearchInput } from 'ds/components/content.js';
 import { state, setActiveId, schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchSecretaryQueue } from '../api.js';
@@ -42,6 +43,7 @@ const WIDE_ENOUGH = matchMedia('(min-width: 1201px)');
 WIDE_ENOUGH.addEventListener('change', schedule);
 
 let filter = 'all';
+let query = '';
 
 // The assignee filter is a SERVER-side narrowing, so changing it is a refetch
 // rather than a filter over what is already loaded -- which is why this fetch
@@ -57,6 +59,23 @@ function setFilter(f) {
     if (f === filter) return;
     filter = f;
     loader.reload();
+}
+
+// Client-side only: the assignee filter above is the server-side narrowing
+// (a refetch), but nothing narrows the 40+ rows already on screen by who the
+// farmer is or where -- a secretary working the phone queue has no way to
+// jump straight to "the Bizana one" without scanning every place section.
+// Matches ref/subject/reason/assignee/place, the same fields already visible
+// in the table, so a hit is never surprising.
+function setQuery(v) {
+    query = v;
+    schedule();
+}
+
+function matchesQuery(c, place) {
+    if (!query) return true;
+    const hay = [c.ref, c.subject, c.reason, c.assignee, place].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(query.toLowerCase());
 }
 
 function filterBar() {
@@ -95,7 +114,7 @@ function caseCard(c, key) {
 }
 
 function placeSection(group) {
-    const title = `${group.place} (${group.count})`;
+    const title = `${group.place} (${group.cases.length})`;
     if (!WIDE_ENOUGH.matches) {
         return Section({ title, children: group.cases.map((c, i) => caseCard(c, c.id || i)) });
     }
@@ -108,15 +127,31 @@ function placeSection(group) {
     ]});
 }
 
+function searchBar(resultCount) {
+    return h('div', { class: 'ds-secretary-search' }, SearchInput({
+        value: query,
+        placeholder: 'Search a reference, farmer, place or reason',
+        label: 'Search the follow-up queue',
+        resultCount: resultCount + ' result' + (resultCount === 1 ? '' : 's'),
+        onInput: setQuery,
+    }));
+}
+
 export function SecretaryPanel() {
     loader.ensureLoaded();
+    let total = 0;
     const body = loader.slot(() => {
         const j = state._secretary;
-        const places = (j && j.places) || [];
+        const allPlaces = (j && j.places) || [];
         // Neutral, not green: an empty call queue is a fact about the queue,
         // not a standing "everything is fine" about the deployment.
-        if (!places.length) return Alert({ kind: 'info', children: 'Nothing waiting on a call right now.' });
+        if (!allPlaces.length) return Alert({ kind: 'info', children: 'Nothing waiting on a call right now.' });
+        const places = allPlaces
+            .map((group) => ({ ...group, cases: group.cases.filter((c) => matchesQuery(c, group.place)) }))
+            .filter((group) => group.cases.length);
+        total = places.reduce((n, g) => n + g.cases.length, 0);
+        if (!places.length) return Alert({ kind: 'info', children: 'No follow-up case matches "' + query + '".' });
         return h('div', {}, ...places.map(placeSection));
     });
-    return Panel({ children: [filterBar(), body] });
+    return Panel({ children: [filterBar(), searchBar(total), body] });
 }
