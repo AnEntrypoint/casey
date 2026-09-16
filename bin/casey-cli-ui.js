@@ -100,6 +100,10 @@ ${bold('usage:')}
   casey sync-import <file> --kind field_visit|farmer|association|follow_up
                                                  read a manually-exported external-system file into the cross-app
                                                  correlation engine's normalized shape (no live adapter needed)
+  casey sync-correlate [--kind field_visit|farmer|association|follow_up]
+                                                 score cached sync-import file(s) against real cases/contacts and
+                                                 write proposed external_link rows for operator review (all kinds
+                                                 with a cached file if --kind is omitted)
   casey sync-apikey create --label <name> --scope read:cases,read:links,write:links,import:records
                                                  provision a machine credential for /api/sync/* (printed once)
   casey sync-apikey list                        list sync API keys (never prints the key itself)
@@ -246,6 +250,13 @@ casey sync-apikey revoke <id>
   route prefix only. The raw key is printed exactly once on create and is
   never stored or shown again; only its hash and a display-safe prefix are
   kept. Revoke sets disabled without deleting the row's history.`,
+  'sync-correlate': `casey sync-correlate [--kind field_visit|farmer|association|follow_up]
+  Scores the cached sync-import file(s) under data/sync-import/ (written by
+  \`casey sync-import\` or POST /api/sync/import) against every real open
+  case/contact, and writes proposed external_link rows for anything at or
+  above the confidence floor. Never confirms a link -- review and confirm in
+  the dashboard cross-link panel. Omit --kind to run every kind that has a
+  cached file.`,
 }
 
 // Every one-shot CLI subcommand (cases/show/attention/handover/report/health/

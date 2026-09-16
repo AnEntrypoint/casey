@@ -34,6 +34,7 @@ import {
 } from './casey-store-commands.js'
 import { cmdAlerts } from './casey-alerts-command.js'
 import { cmdSyncImport } from './casey-sync-import-command.js'
+import { cmdSyncCorrelate } from './casey-sync-correlate-command.js'
 import { cmdSyncApiKey } from './casey-sync-apikey-command.js'
 
 let [, , cmd, ...rest] = process.argv
@@ -81,6 +82,7 @@ const COMMANDS = {
   restore: cmdRestore,
   operators: cmdOperators,
   'sync-import': cmdSyncImport,
+  'sync-correlate': cmdSyncCorrelate,
   'sync-apikey': cmdSyncApiKey,
 }
 
