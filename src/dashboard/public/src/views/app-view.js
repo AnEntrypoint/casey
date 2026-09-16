@@ -237,35 +237,13 @@ function StatusBar() {
       : (gw && gw.ok ? h('span', { key: 'rx' }, 'Receiving reports') : null),
     h('span', { key: 'conn' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected'),
   ].filter(Boolean);
-  return Status({ left, right });
+  return Status({ left, right, ariaLabel: 'Status bar' });
 }
 
 function MainContent() {
   if (state.activePanel) return PanelSwap();
   if (state.homeView === 'cases') return CaseListDetailLayout();
   return MapCommandCenter();
-}
-
-// The kit's AppShell hardcodes its three landmarks -- <header role="banner">,
-// <main> and <footer role="contentinfo"> -- and takes no name for any of them
-// (deps/design's app-shell.js), so all three reached the accessibility tree
-// unnamed while the two navigations beside them were named. A screen reader's
-// landmark list then reads "banner, main, contentinfo": three regions with
-// nothing to tell an operator which is which or what is in them.
-//
-// casey cannot pass a name the kit does not accept and does not edit the kit
-// from here, so it names them on the tree the kit hands back, keyed on the
-// roles the kit itself sets. <main> is named by the page's own <h1> rather
-// than a literal, so the landmark and the heading can never say different
-// things about the same screen.
-function nameLandmarks(node, names) {
-  if (!node || typeof node !== 'object') return node;
-  const props = node.props || {};
-  const named = names[props.role || (node.type === 'main' ? 'main' : '')];
-  if (named) Object.assign(props, named);
-  const kids = props.children;
-  if (Array.isArray(kids)) for (const kid of kids) nameLandmarks(kid, names);
-  return node;
 }
 
 export function App() {
@@ -336,11 +314,14 @@ export function App() {
     // the health data behind these notices is current, so it speaks first.
     ...HealthNotices(),
     HandoffBanner(),
-    nameLandmarks(AppShell({ topbar, crumb, side, status, main: [MainContent()] }), {
-      banner: { 'aria-label': 'Top bar' },
-      main: { 'aria-labelledby': VIEW_TITLE_ID },
-      contentinfo: { 'aria-label': 'Status bar' },
-    }),
+    // Landmark names go straight through the kit's own props (app-shell.js's
+    // bannerLabel/mainLabelledby) rather than a post-render DOM/vnode walk --
+    // this composition runs on every App() call (initial load, panel swap,
+    // hash-route change, map/case home-view toggle all re-render through
+    // main.js's diff loop), so the names are re-applied every time, with no
+    // separate re-run step to remember or drift out of sync with a future
+    // kit change to landmark roles.
+    AppShell({ topbar, crumb, side, status, main: [MainContent()], bannerLabel: 'Top bar', mainLabelledby: VIEW_TITLE_ID }),
     ModalMount(),
     LogoutEverywhereConfirmDialog(),
     ToastTray()
