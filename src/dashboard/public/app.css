@@ -1543,85 +1543,23 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   }
 }
 
-/* ---- the map as a full-bleed background (desktop) -----------------------
-   On desktop the map stops being a pane inside the layout and becomes the
-   page's ground: fixed to the viewport, behind everything, with the chrome
-   and the rail floating over it. This is the full-map pattern the reference
-   consoles use (Liveuamap, Watch Duty, FlightRadar24 all render the map
-   edge-to-edge and dock the UI on top of it) and it is what makes the map
-   the answer to "what is going on where" rather than a widget beside it.
-
-   The canvas is fixed at z-index 0 and everything else is lifted above it.
-   Leaflet is told about the resize by the ResizeObserver already wired in
-   map-leaflet.js, so the container going from a flex pane to the viewport
-   does not leave it rendering at a stale size.
-
-   Floating chrome over a light basemap needs its own ground or the text sits
-   on map detail and becomes unreadable -- hence the translucent fill plus a
-   blur, with a solid fallback first for engines without backdrop-filter. */
-@media (min-width: 901px) {
-  /* --z-base, deliberately NOT --z-below. --z-below is -1, which would put
-     the canvas behind the root element's own background and paint the map
-     out of existence entirely. Base is the ground floor; everything else
-     here is lifted above it by a named rung. Giving the canvas a z-index
-     also creates a stacking context, which is what contains Leaflet's own
-     internal pane values (400-1000) so they cannot punch through the app
-     chrome above. */
-  /* A transformed ancestor becomes the containing block for a fixed-position
-     descendant, so `inset: 0` stops meaning "the viewport". Measured by
-     walking the canvas's ancestor chain live: .app-two-pane-map carries a
-     transform, and with it in place the "fullscreen" canvas resolved to
-     208,61 at 1222x813 inside a 1440x900 window -- the content region, not
-     the screen. Dropping the transform for this one view is what actually
-     makes the map full-bleed; it is scoped to desktop map-home, so no other
-     layout or animation loses it. */
-  .ds-app-root.is-map-home .app-two-pane-map { transform: none; }
-  .ds-app-root.is-map-home .ds-map-shell > .ds-map-canvas {
-    position: fixed;
-    inset: 0;
-    z-index: var(--z-base);
-  }
-  /* The pane the canvas used to fill keeps its place in the flex row but
-     claims no width, so the rail sits where it always did and the fixed
-     canvas shows through everywhere else. */
-  .ds-app-root.is-map-home .app-two-pane-map > .case-list-pane {
-    flex: 1 1 auto;
-    min-width: 0;
-    pointer-events: none;
-  }
-  .ds-app-root.is-map-home .ds-map-shell { pointer-events: none; }
-  .ds-app-root.is-map-home .ds-map-shell > .ds-map-canvas,
-  .ds-app-root.is-map-home .ds-map-shell > .ds-map-chrome,
-  .ds-app-root.is-map-home .ds-map-shell > .ds-map-overlay-error { pointer-events: auto; }
-
-  /* Everything that is not the map floats above it. */
-  .ds-app-root.is-map-home .app-topbar,
-  .ds-app-root.is-map-home .app-crumb,
-  .ds-app-root.is-map-home .app-side-shell,
-  .ds-app-root.is-map-home .app-status,
-  .ds-app-root.is-map-home .ds-conn-banner,
-  .ds-app-root.is-map-home .ds-handoff-banner { position: relative; z-index: var(--z-header); }
-  .ds-app-root.is-map-home .app-two-pane-map > .case-detail-pane { position: relative; z-index: var(--z-raised); }
-  .ds-app-root.is-map-home .ds-map-shell > .ds-map-chrome,
-  .ds-app-root.is-map-home .ds-map-shell > .ds-map-overlay-error { z-index: var(--z-raised); }
-  .ds-app-root.is-map-home .app-topbar,
-  .ds-app-root.is-map-home .app-crumb,
-  .ds-app-root.is-map-home .app-side-shell,
-  .ds-app-root.is-map-home .app-status,
-  .ds-app-root.is-map-home .app-two-pane-map > .case-detail-pane {
-    background: var(--bg);
-    background: color-mix(in oklab, var(--bg) 88%, transparent);
-  }
-  @supports (backdrop-filter: blur(8px)) {
-    .ds-app-root.is-map-home .app-topbar,
-    .ds-app-root.is-map-home .app-crumb,
-    .ds-app-root.is-map-home .app-side-shell,
-    .ds-app-root.is-map-home .app-status,
-    .ds-app-root.is-map-home .app-two-pane-map > .case-detail-pane {
-      backdrop-filter: blur(8px);
-    }
-  }
-}
+/* ---- full-bleed-map-with-floating-chrome was tried and rejected (desktop) -
+   An earlier iteration made the map fixed to the viewport with the topbar,
+   crumb, side-shell (rail) and status banners rendered on top of it at
+   position:relative + z-index, given a translucent (0.88 alpha) blurred
+   background so their text stayed legible over map detail underneath.
+   Measured live at 1280x900: the rail (.app-side-shell, 208px wide) and the
+   case-detail rail both sat directly on top of the fixed map canvas with a
+   partially-transparent background -- map content visibly bled through them.
+   That is exactly the floating-panels-over-data pattern
+   mapuipatterns.com's own rule says a situational-awareness/safety domain
+   (animal-disease surveillance) must never use: it can cover a pin or a
+   cluster with UI chrome. casey's design decision (see AGENTS.md's "Dashboard
+   structure" section) chose the opposite on purpose -- the rail is DOCKED
+   beside the map, never floated over it -- so this pattern does not belong
+   here regardless of how mainstream the full-bleed reference consoles make it
+   look. Desktop map-home now stays on the same contained, docked-pane layout
+   as every other width; there is no width-scoped full-bleed override. */
 
 /* ---- mobile: the map keeps its block, the icon grid sits over it ---------
    Explicitly NOT full-bleed here. The phone already shows one pane at a time
