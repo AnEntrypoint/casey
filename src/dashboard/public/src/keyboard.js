@@ -4,7 +4,8 @@
 // registerKeyboardHandlers so main.js can wire this before views exist.
 
 import { state } from './state.js';
-import { openModal, closeModal, closePanel } from './state.js';
+import { openModal, closeModal } from './state.js';
+import { closePanelRoute } from './route.js';
 
 let handlers = {
   moveDown: () => {}, moveUp: () => {}, openHighlighted: () => {}, claim: () => {},
@@ -37,7 +38,7 @@ export function onGlobalKeyDown(e) {
     case '?': openModal('help'); break;
     case 'Escape':
       if (state.activeModal) { closeModal(); break; }
-      if (state.activePanel) { closePanel(); break; }
+      if (state.activePanel) { closePanelRoute(); break; }
       handlers.back();
       break;
     default: return;

@@ -1,5 +1,5 @@
 // Deep-link + hash-state sync: #home=<map|cases>, #case=<id>, #ref=<ref>,
-// #inbox, #view=<b64>.
+// #inbox, #view=<b64>, #panel=<key>.
 // pushHash(partial) writes back without a full reload, preserving whichever
 // other hash tokens are already present. No secrets ever ride the hash --
 // auth is the session cookie, so a shared link grants nothing on its own: the
@@ -13,18 +13,19 @@
 // done with a link: "look at the map" was not expressible in a URL, and the
 // browser back button could not undo a view switch.
 
-import { state, setActiveId, setInboxMode, setHomeView } from './state.js';
+import { state, setActiveId, setInboxMode, setHomeView, openPanel, closePanel } from './state.js';
 
 function parseHash() {
   const raw = (location.hash || '').replace(/^#/, '');
   const parts = raw.split('&').filter(Boolean);
-  const out = { caseId: null, ref: null, inbox: false, view: null, home: null };
+  const out = { caseId: null, ref: null, inbox: false, view: null, home: null, panel: null };
   for (const p of parts) {
     if (p === 'inbox') out.inbox = true;
     else if (p.startsWith('case=')) out.caseId = decodeURIComponent(p.slice(5));
     else if (p.startsWith('ref=')) out.ref = decodeURIComponent(p.slice(4));
     else if (p.startsWith('view=')) out.view = p.slice(5);
     else if (p.startsWith('home=')) out.home = p.slice(5) === 'cases' ? 'cases' : 'map';
+    else if (p.startsWith('panel=')) out.panel = decodeURIComponent(p.slice(6));
   }
   return out;
 }
@@ -42,6 +43,7 @@ export function pushHash(partial) {
   if (next.caseId) tokens.push('case=' + encodeURIComponent(next.caseId));
   if (next.ref) tokens.push('ref=' + encodeURIComponent(next.ref));
   if (next.view) tokens.push('view=' + next.view);
+  if (next.panel) tokens.push('panel=' + encodeURIComponent(next.panel));
   const want = tokens.length ? '#' + tokens.join('&') : location.pathname + location.search;
   if (location.hash !== (tokens.length ? '#' + tokens.join('&') : '')) {
     history.replaceState(null, '', want);
@@ -53,15 +55,20 @@ export function applyRouteToState() {
   // home first: setHomeView clears activePanel/activeModal, so applying it
   // after the case id would be harmless today but is exactly the ordering trap
   // that makes a later addition to setHomeView silently clobber a deep link.
+  // panel is applied AFTER home for the same reason -- setHomeView would wipe
+  // a just-applied panel.
   if (r.home) setHomeView(r.home);
   if (r.caseId) setActiveId(r.caseId);
   if (r.inbox) setInboxMode(true);
+  if (r.panel) openPanel(r.panel);
   return r;
 }
 
 export function initRouteSync(onChange) {
   window.addEventListener('hashchange', () => {
     const r = parseHash();
+    if (r.panel) openPanel(r.panel);
+    else closePanel();
     if (onChange) onChange(r);
   });
 }
@@ -76,3 +83,10 @@ export function setHomeViewRoute(v) {
   pushHash({ home });
   setHomeView(home);
 }
+
+// The routed way to open/close a content-swap panel -- same shape as
+// openCaseRoute/closeCaseRoute above. Every nav caller uses these; openPanel/
+// closePanel alone remain the unrouted primitives the route layer itself
+// calls when APPLYING a hash (applyRouteToState, initRouteSync).
+export function openPanelRoute(name) { pushHash({ panel: name }); openPanel(name); }
+export function closePanelRoute() { pushHash({ panel: null }); closePanel(); }
