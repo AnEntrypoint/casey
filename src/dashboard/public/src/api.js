@@ -49,20 +49,57 @@ export function isOfflineError(e) {
 
 // Fires on the connLost true -> false EDGE, so a session restored from the
 // last-known cache can re-verify itself against the real server the moment
-// the link comes back, with no page reload. auth.js is the only subscriber.
+// the link comes back, with no page reload. auth.js is one subscriber (the
+// session re-check); map-view-state.js is another (retrying a failed map
+// load immediately instead of waiting out its own 30s poll) -- any surface
+// whose own error state can outlive the link outage it was caused by belongs
+// on this list, not just auth.
 const restoredListeners = new Set();
 export function onConnectionRestored(fn) {
   restoredListeners.add(fn);
   return () => restoredListeners.delete(fn);
 }
 
+// Every request gets a hard worst-case bound. Without one, a request to an
+// origin whose TCP connection is accepted but never answered -- exactly what
+// a degrading rural link produces, as opposed to a clean interface-down or a
+// clean 5xx -- never resolves OR rejects, so it never reaches setConnLost, the
+// service worker's 503 envelope, or any caller's own catch. A single-flight
+// caller keyed on that promise settling (map-view-state.js's `inFlight`,
+// among others) then latches permanently: one hung request wedges every
+// future retry for the life of the page, and the connection banner clearing
+// on a real 'online' event cannot unwedge it, since nothing here observed
+// that event -- witnessed live: the top banner recovered correctly while the
+// map stayed on "Could not load the reports" indefinitely, no request ever
+// reaching the wire again. AbortController turns "never settles" into "settles
+// no later than FETCH_TIMEOUT_MS", which restores the invariant api()'s own
+// callers already assume: every request is a rejection or a response, never
+// neither.
+const FETCH_TIMEOUT_MS = 20000;
+
 export async function api(path, opts = {}) {
   let res;
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), FETCH_TIMEOUT_MS);
+  // A caller-supplied signal (none today) must still be able to abort its own
+  // request -- chain rather than clobber opts.signal wholesale.
+  const passedSignal = opts.signal;
+  const signal = passedSignal
+    ? (() => {
+        const merged = new AbortController();
+        const onAbort = () => merged.abort();
+        passedSignal.addEventListener('abort', onAbort);
+        timeoutController.signal.addEventListener('abort', onAbort);
+        return merged.signal;
+      })()
+    : timeoutController.signal;
   try {
-    res = await fetch(path, Object.assign({ credentials: 'include' }, opts));
+    res = await fetch(path, Object.assign({ credentials: 'include' }, opts, { signal }));
   } catch (e) {
     setConnLost(true);
     throw e;
+  } finally {
+    clearTimeout(timeoutId);
   }
   if (await isOfflineResponse(res)) {
     setConnLost(true);

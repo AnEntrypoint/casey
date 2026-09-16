@@ -84,9 +84,33 @@ function mapCanvas() {
 // while the SAME persisted element across a no-op re-render is left alone. A
 // one-shot `mounted` boolean (an earlier version) latched on first render and
 // the map vanished within one poll interval.
+//
+// A SECOND guard is required alongside the live-element one, and its absence
+// was a genuine tab-freezing bug, not a cosmetic gap: mapStateRef.current is
+// null throughout a failed load (loadMap's own `if (!j)` branch never creates
+// one), so the live-element check above is permanently false, and this
+// function called refresh() unconditionally on EVERY render. refresh()'s own
+// onError callback calls schedule(), and mountKit's schedule() is a bare
+// `queueMicrotask(render)` with no macrotask boundary -- so a failing load
+// produced render -> mount -> refresh (fails) -> schedule -> render -> mount
+// -> refresh (fails) -> schedule -> ... as an unbroken microtask chain, which
+// starves the event loop of everything else (timers, real fetch resolution,
+// the devtools/CDP transport) for as long as the link stays down. Witnessed
+// live: the tab became unresponsive to further CDP commands specifically
+// during a simulated outage, which is this bug, not a tooling flake --
+// contradicting the banner's own promise that "the page catches up on its
+// own" (it cannot catch up on anything while its own render loop is spinning
+// on itself). Tracking the element actually ATTEMPTED (independent of
+// mapStateRef.current, which the failure path leaves null) restores the
+// intended behaviour: retry once per genuine remount, and otherwise leave
+// retries to refresh()'s own callers (the 30s poll, onConnectionRestored)
+// rather than to every render this failure itself is now causing.
+let lastAttemptedEl = null;
 function onMountCanvas(el) {
     if (!el) return;
     if (mapStateRef.current && mapStateRef.current.map.getContainer() === el) return;
+    if (el === lastAttemptedEl) return;
+    lastAttemptedEl = el;
     if (mapStateRef.current) discardMap();
     refresh();
 }

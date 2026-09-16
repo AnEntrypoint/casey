@@ -12,6 +12,7 @@
 import {
     state, schedule, onActiveIdChange, onAttentionChange, onMobilePaneChange,
 } from '../state.js';
+import { onConnectionRestored } from '../api.js';
 import { urgencyByCaseId, mapCounts, queueRows as queueRowsFor } from '../map-model.js';
 import { loadMap, focusCaseOnMap, refilterMarkers } from './map-leaflet.js';
 import { setSelectedCase } from './map-markers.js';
@@ -55,9 +56,42 @@ export const setQueueShown = (n) => { queueShown = n; schedule(); };
 // On the rural link this deployment targets, paying for the same payload three
 // times before the operator sees anything is not a rounding error.
 let inFlight = false;
+// The collapse-guard's own worst case: api.js now bounds every fetch to
+// FETCH_TIMEOUT_MS (20s), so `loadMap`'s promise always settles and clears
+// this flag on its own -- but this guard has no other route to safety if a
+// future change to loadMap ever adds an await that can hang without going
+// through api() (a direct fetch, a Leaflet tile wait, anything). A collapse
+// guard with no ceiling is a liveness bug waiting for exactly one unbounded
+// await; INFLIGHT_STALE_MS is comfortably above api.js's own bound so it
+// never fires on a request that is merely slow, only on one that never
+// reached api.js's settlement guarantee at all.
+const INFLIGHT_STALE_MS = 30000;
+let inFlightSince = 0;
+// A SECOND, time-based throttle independent of the element-identity guard
+// map-panel.js's onMountCanvas keeps: that guard assumes a distinct DOM
+// element means a distinct genuine remount, which held until a failing load
+// itself started causing one -- when the connection banner appears/disappears
+// around the whole app tree, the remount this causes can hand mapCanvas() a
+// BRAND NEW element on literally every render (webjsx has no stable ancestor
+// to key the subtree against across that shape change), so an element-only
+// dedup sees a "new" canvas every time and never dedups at all. Witnessed
+// live: with only the element guard, the render -> mount -> refresh(fails) ->
+// schedule -> render cycle from the comment above still spun the tab
+// unresponsive. A minimum gap between actual attempts, independent of how
+// many times onMountCanvas is invoked or what element it names, is the one
+// guard that holds regardless of which upstream identity churns -- no attempt
+// this function makes can itself trigger another attempt sooner than
+// RETRY_MIN_GAP_MS after the last one started, so the schedule()-in-onError
+// feedback loop can propagate at most once per gap instead of once per
+// microtask.
+const RETRY_MIN_GAP_MS = 3000;
+let lastAttemptAt = 0;
 export function refresh() {
-    if (inFlight) return;
+    if (inFlight && (Date.now() - inFlightSince) < INFLIGHT_STALE_MS) return;
+    if (Date.now() - lastAttemptAt < RETRY_MIN_GAP_MS) return;
+    lastAttemptAt = Date.now();
     inFlight = true;
+    inFlightSince = Date.now();
     error = null;
     // finally, not a callback: loadMap returns early without calling ANY
     // callback when the canvas element is not in the DOM yet, and clearing the
@@ -166,6 +200,21 @@ setInterval(() => {
 }, 30e3);
 
 // ---- subscriptions ------------------------------------------------------
+
+// The map's own retry is otherwise entirely poll-driven (30s, only while
+// onMapHome()) or remount-driven (a canvas swap), so a failed load's error
+// note can sit on screen for up to a full poll interval after the link
+// genuinely returns -- and on the map home view specifically, where nothing
+// else forces a re-render in between, "up to 30s" is the OBSERVED number,
+// not a worst case with slack in it. Witnessed live: the top connection
+// banner cleared (connLost -> false, a real response reached the origin)
+// while the map pane still read "Could not load the reports. The map could
+// not reach this dashboard's own server" -- the two halves of one screen
+// contradicting each other about whether the link is up, for exactly the
+// operator this deployment serves. api.js already raises this precise EDGE
+// for auth.js's session re-check; the map needed the same subscription so
+// its own error clears on the same edge instead of waiting out its own poll.
+onConnectionRestored(() => { if (error) refresh(); });
 
 // One subscription, registered at module load: every path that opens a case --
 // the queue, a pin, the unresolved list, the case list, keyboard Enter, a hash
