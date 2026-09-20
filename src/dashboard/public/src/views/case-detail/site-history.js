@@ -8,6 +8,7 @@ import { Table } from '/design/src/components/content.js';
 import { state, setSiteHistory } from '../../state.js';
 import { fetchSiteHistory } from '../../api.js';
 import { rel, stageLabel } from '../../format.js';
+import { brandName } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
 export function loadSiteHistory(caseId) {
@@ -17,7 +18,7 @@ export function loadSiteHistory(caseId) {
 export function SiteHistoryPanel({ onOpenCase, key } = {}) {
     const visits = state.siteHistory;
     if (!visits || !visits.length) return null;
-    const brand = state.config?.dashboard_ui?.brand || 'casey';
+    const brand = brandName();
     // The middle column was `channel + ' - ' + status`, and status is the raw
     // thatcher key: this table printed "discord - triaging - reported 14d ago"
     // beside a case-detail view whose own rail says "Looking into it" for the

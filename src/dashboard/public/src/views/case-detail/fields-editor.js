@@ -13,7 +13,8 @@ import { TextField, Select } from '/design/src/components/content.js';
 import { autonomyExplanation } from './autonomy-badge.js';
 import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
-import { patchCaseApi } from '../../api.js';
+import { patchCaseApi, fetchCase } from '../../api.js';
+import { brandName } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
 const DEFAULT_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
@@ -72,7 +73,7 @@ function draftFor(c) {
 // -- it does not exist on a phone. Now it is one sentence, at the size the
 // rest of the form's help text uses, with nothing behind a hover.
 function SourceNote({ source }) {
-    const brand = state.config?.dashboard_ui?.brand || 'casey';
+    const brand = brandName();
     if (source !== 'agent') return null;
     return h('p', { class: 'casey-source-note casey-hint' },
         brand + ' filled this in from what the reporter said. Nobody has checked it yet.');
@@ -81,9 +82,14 @@ function SourceNote({ source }) {
 export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
     if (!state._fieldsDraft || state._fieldsDraftFor !== c.id) {
         state._fieldsDraft = draftFor(c);
+        // The values this form was SEEDED from, kept beside the live draft.
+        // save() diffs against these rather than sending the whole form, so a
+        // field this operator never touched is never written -- see save().
+        state._fieldsBase = draftFor(c);
         state._fieldsDraftFor = c.id;
     }
     const d = state._fieldsDraft;
+    const base = state._fieldsBase || draftFor(c);
     const set = (k, v) => { d[k] = v; schedule(); };
     const cfg = state.config || {};
     const priorities = (cfg.priority && cfg.priority.length) ? cfg.priority : DEFAULT_PRIORITIES;

@@ -28,6 +28,7 @@ import { SnoozeDialog, openSnoozeDialog } from './case-detail/snooze-dialog.js';
 import { ShareDialog, openShareDialog } from './case-detail/share-dialog.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 import { clusterNoteFor, canDispatchFor, dispatchWorkerFor } from '../panels/map-panel.js';
+import { brandName, entityLabel, entityLabelPlural, countOf } from '../vocabulary.js';
 const h = webjsx.createElement;
 
 let _loadedFor = null;
@@ -46,7 +47,7 @@ export async function loadCaseDetail(id) {
         // the global config exactly as before this existed.
         fetchRunConfig(id).then((cfg) => { if (state.activeId === id) setRunConfig(cfg); });
     } catch (e) {
-        setCaseDetailError((e && e.message) || 'Could not load this case.');
+        setCaseDetailError((e && e.message) || ('Could not load this ' + entityLabel() + '. It may have been merged or removed -- go back to the list and open it again.'));
     }
 }
 
@@ -78,7 +79,7 @@ function LinkedReportsNote({ caseId }) {
         title: names
             ? 'Reports nearby that may be the same or a related situation. The names were given by the worker or farmer, not confirmed by a lab.'
             : 'Reports nearby that may be the same or a related situation',
-    }, `Linked to ${note.others} other report(s) nearby${names}`);
+    }, `Linked to ${countOf(note.others, 'other ' + entityLabel(), 'other ' + entityLabelPlural())} nearby${names}`);
 }
 
 function pauseWhileEditing(el) {
@@ -166,15 +167,15 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
             canDispatchFor(id)
                 ? Btn({
                     size: 'sm', variant: 'ghost', children: 'Dispatch a worker',
-                    title: 'Suggest a field worker for this case -- casey never messages them directly, they hear about it on their own next reply-in',
+                    title: 'Suggest a field worker for this ' + entityLabel() + '. ' + brandName() + ' never messages the worker directly -- they are told the next time they message in themselves.',
                     onClick: () => dispatchWorkerFor(id),
                 })
                 : null,
             Btn({ size: 'sm', variant: 'ghost', children: '+ Note', onClick: async () => {
-                const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Add a note to this case' })) || '').trim();
+                const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Add a note to this ' + entityLabel() })) || '').trim();
                 if (!text) return;
-                try { await postNote(id, text); toast('note saved', 'ok'); await reload(id); }
-                catch (e) { toast(await failMsg(e, 'note failed'), 'err'); }
+                try { await postNote(id, text); toast('Note added to the timeline.', 'ok'); await reload(id); }
+                catch (e) { toast(await failMsg(e, 'The note was not saved. Nothing was added to the timeline -- try again.'), 'err'); }
             } })
         ),
         Timeline({ caseId: id, events, eventsTotal: events_total }),

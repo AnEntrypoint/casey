@@ -22,7 +22,7 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Lede } from '/design/src/components/shell/atoms.js';
 import { Dialog } from './dialog-shell.js';
 import { glossary } from '../glossary.js';
-import { state } from '../state.js';
+import { brandName } from '../vocabulary.js';
 import { QUEUE_NAME } from '../map-model.js';
 const h = webjsx.createElement;
 
@@ -47,7 +47,7 @@ function KeyRow({ k, desc }) {
  * @param {Function} [props.onShowOnboarding] - "Show me the first-shift steps again" callback.
  */
 export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
-    const brand = state.config?.dashboard_ui?.brand || 'casey';
+    const brand = brandName();
     return Dialog({
         open, onClose,
         id: 'help',

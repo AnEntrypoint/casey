@@ -23,7 +23,7 @@
 // device. This module is now the copy table and nothing else; fields-editor.js
 // passes what it returns straight to Select({ hint }).
 
-import { state } from '../../state.js';
+import { brandName } from '../../vocabulary.js';
 
 // The product name is the deployment's own (dashboard_ui.brand), never the
 // literal 'casey', and the prose reads as prose rather than carrying the
@@ -35,6 +35,6 @@ const AUTONOMY_COPY = {
 };
 
 export function autonomyExplanation(autonomy) {
-    const brand = state.config?.dashboard_ui?.brand || 'casey';
+    const brand = brandName();
     return (AUTONOMY_COPY[autonomy] || 'Sets who answers the contact.').replace(/\{brand\}/g, brand);
 }

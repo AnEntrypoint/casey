@@ -13,6 +13,7 @@ import { createPanelLoader } from './panel-load.js';
 import { fetchActivity } from '../api.js';
 import { fmtTime, rel } from '../format.js';
 import { eventIcon, eventTone } from '../icons-map.js';
+import { brandName } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
@@ -33,7 +34,7 @@ function kindLabel(kind) {
 // time. Casey's own default and uhh declare no dashboard_ui, so this stays
 // the literal 'casey' for them.
 function actorLabels() {
-    return { agent: state.config?.dashboard_ui?.brand || 'casey', operator: 'Operator', contact: 'Contact', system: 'System' };
+    return { agent: brandName(), operator: 'Operator', contact: 'Contact', system: 'System' };
 }
 
 let filters = { kind: '', actor: '' };
