@@ -138,3 +138,10 @@ bbwork/
 *.zip
 kimi-debug-session_*
 config.bat
+
+# gm's own dream-rsi replay/strategy state churns every dispatch this session
+# makes -- same transient-runtime-state class as the .gm/exec-spool/ entries
+# above, tracked by mistake until now, and a permanent source of "submodule
+# has modified content" noise for casey's own consuming projects (e.g. uhh)
+# every time a gm session runs against this tree.
+.gm/dream-rsi/
