@@ -44,6 +44,17 @@ body { background: var(--bg); color: var(--fg); }
    whatever order this sheet loads in. */
 .ds-247420 header.app-chrome { border-bottom: none; background: var(--bg-2); }
 .ds-247420 footer.app-status { border-top: none; background: var(--bg-2); }
+/* The kit tints .app-status .item:first-of-type with --accent-ink
+   unconditionally -- fine for a highlighted lead item, but the first item
+   here is StatusBar's plain report count ("36 report(s) loaded"), not an
+   alert or a call to action. In the herd theme --accent-ink (#B4600F) on
+   --bg-2 (#F4F5F6) measures 4.16:1, under WCAG AA's 4.5:1 floor for 14px
+   text, and the amber tone itself reads as a warning on a neutral fact --
+   witnessed live via headless contrast audit. Overriding to --fg-2 keeps the
+   report count legible outdoors on a phone and tonally neutral in every
+   theme, without touching the kit's own first-of-type accent for callers
+   that actually want it. */
+.ds-247420 .app-status .item:first-of-type { color: var(--fg-2); }
 html.ds-247420[data-casey-theme="herd"] { background: var(--paper); }
 html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-app-root, .ds-app-surface { display: flex; flex-direction: column; min-height: 100vh; }
