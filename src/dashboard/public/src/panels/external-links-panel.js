@@ -49,10 +49,22 @@ function confidenceTone(c) {
     return 'dim';
 }
 
+function localRefLabel(l) {
+    if (l.local_ref) return (l.local_entity === 'case' ? 'Case ' : l.local_entity === 'contact' ? 'Contact ' : '') + l.local_ref;
+    return l.local_entity ? `(${l.local_entity} no longer found)` : '(local record unknown)';
+}
+
 function linkRow(l) {
     const rowBusy = busyId === l.id;
     return h('div', { key: l.id, class: 'ds-el-row' },
         h('div', { class: 'ds-el-main' },
+            // WHICH local case/contact this proposal would merge into, always
+            // shown before the two buttons that act on it -- Confirm is the
+            // only path that ever merges external data into a local record,
+            // so an operator must see the local side, not just the external
+            // system's own label, before pressing it.
+            h('span', { class: 'ds-el-local' }, localRefLabel(l)),
+            ' -> ',
             h('span', { class: 'ds-el-ref' }, l.external_ref || l.external_entity),
             ' ',
             Chip({ tone: confidenceTone(l.confidence), size: 'sm', children: Math.round(l.confidence * 100) + '%' }),
