@@ -23,7 +23,7 @@
 //   issueSession, verifySession, findAccountByUsername, verifyPassword,
 //   markLogin, getAccount, changePassword, esc, wrap
 import { mergeTag } from '../../hooks/heuristics.js'
-import { DASHBOARD_UI, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
+import { DASHBOARD_UI, REPORT_FIELD_DEFS, fieldLabel } from '../../store/report-shape.js'
 import { BRAND, TYPE_SCALE_CSS } from '../brand.js'
 import { parseReport } from '../../timestamp.js'
 import { mountRoutes } from './register.js'
@@ -95,6 +95,13 @@ export function csrfGuard() {
 // entity_label (uhh: "report"; casey's own bundled helpdesk demo: "ticket").
 // BRAND carries it alongside the colours so a page has one import, not two.
 const ENTITY = BRAND.entityLabel || 'report'
+
+// The most characters one answer can hold. Named because four places have to
+// agree on it and one of them is COPY: the confirmation that tells a reporter
+// their long answer was truncated now states the limit, and a number stated in
+// a sentence that drifts from the number actually enforced is worse than no
+// number at all.
+const FIELD_MAXLEN = 4000
 
 // Fields shown on the public contact form -- the deployment's OWN declared
 // report vocabulary (report-fields.yml, via report-shape.js), never a second
@@ -235,9 +242,16 @@ const ERROR_SENTENCES = {
   need_ref_or_phone: () => 'Please enter your reference number, or your phone number.',
   ref_unknown: (ref, esc) => `We could not find the reference "${esc(ref)}". Please check it against your messages, or enter your phone number instead.`,
   phone_shape: () => 'That does not look like a South African phone number. Please write it as 0821234567 or +27821234567.',
-  frozen: () => 'This report is not taking updates online at the moment. Please contact the team directly.',
-  save_failed: () => 'Your details could not be saved. Please try again in a moment.',
-  unexpected: () => 'Something went wrong at our end. Please try again in a moment.',
+  // Each of these three used to stop at the failure and leave the reader with
+  // nothing to do but guess. The two things a person filling in this form needs
+  // to know on a failure are whether their typing survived -- it does, the form
+  // re-renders with their answers in the boxes (see publicFormHtml's `values`)
+  // -- and that the messaging channel they first reported on still works when
+  // this page does not. Neither was said. "Something went wrong at our end" said
+  // less than that again: it named no fault, no consequence and no next step.
+  frozen: () => `This ${ENTITY} is not taking updates on this page at the moment. Reply on the same app you first reported from and the team will get it.`,
+  save_failed: () => 'Your answers were not saved. They are still in the boxes below, so you can press Send details again. If it keeps failing, reply on the app you first reported from instead.',
+  unexpected: () => `This page could not finish that. Your answers are still in the boxes below -- press Send details to try again. If it keeps failing, reply on the app you first reported from and your ${ENTITY} will still reach the team.`,
 }
 function errorSentence(code, ref, esc, retryAfter) {
   if (code === 'rate') {
@@ -307,7 +321,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
     const placeholder = hint ? ` placeholder="${esc(hint)}"` : ''
     const describedBy = hintId ? ` aria-describedby="${hintId}"` : ''
     const inp = multiline
-      ? `<textarea id="${id}" name="${esc(key)}" rows="3"${placeholder}${describedBy} maxlength="4000">${val}</textarea>`
+      ? `<textarea id="${id}" name="${esc(key)}" rows="3"${placeholder}${describedBy} maxlength="${FIELD_MAXLEN}">${val}</textarea>`
       : `<input id="${id}" type="text" name="${esc(key)}"${placeholder}${describedBy} value="${val}" maxlength="500">`
     const vcMark = critical ? ' <span class="req" aria-hidden="true">*</span><span class="vh"> (essential)</span>' : ''
     const hintHtml = hint ? `<span class="vh" id="${hintId}">${esc(hint)}</span>` : ''
@@ -340,16 +354,28 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
   // when it was not, is worse than refusing them outright.
   const heldNote = held > 0
     ? (held === 1
-      ? ' One of your answers was for a question we already have an answer to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so please contact the team if that answer is wrong.'
-      : ` ${held} of your answers were for questions we already have answers to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so please contact the team if any of them are wrong.`)
+      // "please contact the team" named no way of doing it, on the one page
+      // whose reader has no other instruction to fall back on. The person
+      // reading this reached us on a messaging app; that app is the answer.
+      ? ' One of your answers was for a question we already have an answer to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so if that answer is wrong, reply on the app you first reported from and say so.'
+      : ` ${held} of your answers were for questions we already have answers to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so if any of them are wrong, reply on the app you first reported from and say so.`)
     : ''
+  // Says the limit and what to do with the rest. It used to state only that the
+  // end was cut off, which tells somebody who has just written a long account of
+  // an outbreak that part of it is gone and nothing about how to send the rest.
   const cutNote = cut > 0
-    ? ` ${cut} of your answers ${cut === 1 ? 'was' : 'were'} longer than we can store and had the end cut off.`
+    ? ` ${cut} of your answers ${cut === 1 ? 'was' : 'were'} longer than the ${FIELD_MAXLEN} characters a field holds, so the end ${cut === 1 ? 'was' : 'were'} cut off. Send anything that is missing as a message on the app you first reported from.`
     : ''
   const banner = done
     ? (none
       ? `<div class="banner ok" role="status">We found your ${esc(ENTITY)}. You did not fill in any answers this time, so nothing on it has changed.</div>`
-      : `<div class="banner ok" role="status">Your details have been saved. The team will be in touch.${heldNote}${cutNote}</div>`)
+      // "The team will be in touch" was a promise of contact, and this page's
+      // own stated rule (see the .next comment in the stylesheet below) is that
+      // it promises no time, no visit and no named person, because none of the
+      // three can be committed to. A saved answer is the fact; who reads it and
+      // when is not this page's to say. What IS useful and true is that the
+      // reference still works and that more can be added later.
+      : `<div class="banner ok" role="status">Your answers are saved on ${esc(ENTITY === 'report' ? 'your report' : `your ${ENTITY}`)}. Keep your reference -- you can come back to this page and add more at any time.${heldNote}${cutNote}</div>`)
     : err ? `<div class="banner err" role="alert">${errorSentence(err, ref, esc, retryAfter)}</div>` : ''
   const caseInfo = caseRow
     ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || `Field ${ENTITY}`)}
@@ -364,10 +390,10 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
       <section class="grp vc">
       <h2 class="grp-head"><span class="grp-n" aria-hidden="true">1</span><span class="grp-title">Find your ${esc(ENTITY)}</span><span class="grp-count">2 questions</span></h2>
       <div class="field"><label for="f-find-ref">Your reference number</label>
-      <input id="f-find-ref" type="text" name="ref" value="${esc(ref)}" placeholder="e.g. CASE-001" maxlength="50" aria-describedby="f-find-ref-hint">
-      <div class="hint" id="f-find-ref-hint">This was shared with you when you first reported. Check your messages. If you do not have one, enter your phone number below instead.</div></div>
+      <input id="f-find-ref" type="text" name="ref" value="${esc(ref)}" maxlength="50" aria-describedby="f-find-ref-hint">
+      <div class="hint" id="f-find-ref-hint">Copy it from the message you were sent when you first reported. If you do not have it, enter your phone number below instead.</div></div>
       <div class="field"><label for="f-find-phone">Or your phone number</label>
-      <input id="f-find-phone" type="tel" name="phone" value="${esc(phone)}" placeholder="+27 82 123 4567" maxlength="30" autocomplete="tel" aria-describedby="f-find-phone-hint">
+      <input id="f-find-phone" type="tel" name="phone" value="${esc(phone)}" placeholder="0821234567" maxlength="30" autocomplete="tel" aria-describedby="f-find-phone-hint">
       <div class="hint" id="f-find-phone-hint">A South African number. We use this to find your ${esc(ENTITY)}.</div></div>
       </section>`
   return `<!doctype html><html lang="en"><head>
@@ -759,14 +785,14 @@ export function postReport({ store, esc }) {
           await store.appendEvent(nc.id, { kind: 'note', actor: 'system', text: 'Case created via public web form (phone number entry)' })
         }
       }
-      // The 4000-character cap is counted, not merely applied. An answer longer
-      // than a field stores used to be shortened in silence under a page that
-      // then said everything had been saved.
+      // The per-field cap is counted, not merely applied. An answer longer than
+      // a field stores used to be shortened in silence under a page that then
+      // said everything had been saved.
       let cut = 0
       const incoming = {}
       for (const [key, value] of Object.entries(submitted)) {
-        if (value.length > 4000) cut++
-        incoming[key] = value.slice(0, 4000)
+        if (value.length > FIELD_MAXLEN) cut++
+        incoming[key] = value.slice(0, FIELD_MAXLEN)
       }
       // Someone who typed only a phone number, into a case they did not open,
       // may ADD facts that are missing but never REPLACE one already recorded
@@ -802,7 +828,14 @@ export function postReport({ store, esc }) {
         const ownRow = ownRef ? found : null
         if (mergeResult.error === 'observe') return rejected('frozen', { caseRow: ownRow, showRef: ownRef })
         if (mergeResult.error) return rejected('save_failed', { caseRow: ownRow, showRef: ownRef })
-        await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated report via web form: ${Object.keys(incoming).join(', ')}`, data: incoming })
+        // fieldLabel, not the bare keys. This line is read by an OPERATOR on the
+        // case timeline, and it was listing stored column names
+        // ("dead_count, suspected_disease") next to timeline rows that name the
+        // same fields in words. report-shape.js already exports the mapping the
+        // rest of the dashboard renders those fields with; the raw keys stay in
+        // `data` for anything that needs them.
+        const changedFields = Object.keys(incoming).map((k) => fieldLabel(k) || k).join(', ')
+        await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated ${ENTITY} via web form: ${changedFields}`, data: incoming })
         // Tag intake source (add public_form if not already present)
         try {
           await store.updateCase(found.id, { tags: mergeTag(found.tags, 'intake_mode:public_form') }, { id: 'contact', role: 'contact' })

@@ -8,7 +8,7 @@ import { Icon, IconButton } from '/design/src/components/shell.js';
 import { SearchInput, LogRow } from '/design/src/components/content.js';
 import { state, schedule, appendTimelineEvents, setTimelineSearch } from '../../state.js';
 import { fetchCaseEvents, postFlagReply } from '../../api.js';
-import { rel, fmtTime } from '../../format.js';
+import { rel, fmtTime, reportValue } from '../../format.js';
 import { eventIcon, eventTone } from '../../icons-map.js';
 import { confirmDialog } from '../../components/dialog-shell.js';
 const h = webjsx.createElement;
@@ -89,7 +89,14 @@ function TimelineRow({ e, caseId, key } = {}) {
         key, kind: e.kind, tone: eventTone(e.kind),
         leading: Icon(eventIcon(e.kind), { size: 13 }),
         label: rowLabel(e),
-        text: e.text || '',
+        // Bounded for the same reason a report value is: a timeline row's text
+        // is store free-text of contact-influenced length, LogRow places it in
+        // a flex row, and an oversized unbreakable run there is the shape that
+        // froze the renderer (see format.js's reportValue). The bound is the
+        // server's own 4000-character write cap, so nothing any operator or
+        // reporter could send through casey is ever cut, and the true length is
+        // stated when it is.
+        text: reportValue(e.text || ''),
         trailing: e.kind === 'outbound' && !flagged
             ? IconButton({ icon: Icon('warn', { size: 12 }), title: 'Flag this reply as bad/off-target', onClick: () => flagReply(caseId, e) })
             : (e.kind === 'outbound' && flagged ? h('span', { class: 'casey-ev-flagged', title: 'Flagged for review' }, Icon('warn', { size: 12 })) : null),

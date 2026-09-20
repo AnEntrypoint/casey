@@ -58,14 +58,24 @@ const local = {
 function loginMessage(e) {
   if (isOfflineError(e)) return 'This device cannot reach the dashboard right now, so it could not check your details. Try again once you have signal.';
   if (e instanceof ApiError && e.status === 401) return 'That username and password do not match. Check both and try again -- if you cannot get in, ask whoever set up your account.';
-  return 'Log in did not work. Please try again in a moment.';
+  // The catch-all. It reaches here only when the server answered with something
+  // other than 401 -- a 500, a 503 that was not the offline envelope -- so the
+  // honest statement is that the fault is the dashboard's, not the operator's
+  // typing, which is the one thing they would otherwise start doubting and
+  // retrying. Naming the status gives whoever runs the deployment something to
+  // go on.
+  const status = (e instanceof ApiError && e.status) ? ' (error ' + e.status + ')' : '';
+  return 'Your details were not checked -- the dashboard itself returned an error' + status + '. This is not your password. Try again in a moment, and tell whoever runs this deployment if it keeps happening.';
 }
 
 function changeMessage(e) {
   if (isOfflineError(e)) return 'This device cannot reach the dashboard right now, so the new password was not set. Try again once you have signal.';
   if (e instanceof ApiError && e.status === 401) return 'The password you were given is not right. Check it and try again.';
   if (e instanceof ApiError && e.body && e.body.error) return e.body.error;
-  return 'The new password could not be set. Please try again in a moment.';
+  // Same shape as loginMessage's catch-all, and the same reason: the operator
+  // needs to know their old password still works and they are not locked out.
+  const status = (e instanceof ApiError && e.status) ? ' (error ' + e.status + ')' : '';
+  return 'The new password was not set' + status + ', so the one you were given still works. Try again in a moment, and tell whoever runs this deployment if it keeps happening.';
 }
 
 // Routed through api() rather than a bare fetch so the connection-lost banner

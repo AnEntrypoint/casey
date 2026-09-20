@@ -89,7 +89,10 @@ async function confirmLogoutEverywhere() {
     await doLogoutEverywhere();
     toast('Logged out everywhere else. This device stays signed in.');
   } catch (e) {
-    toast('Could not log out other sessions: ' + e.message, 'err');
+    // A security action that silently did not happen is the worst kind to
+    // report vaguely: the operator pressed this because they believe a session
+    // somewhere else should not exist, so they have to be told it still does.
+    toast(await failMsg(e, 'The other sessions were not signed out and are still active. Try again, and change your password if you need them gone now.'), 'err');
   }
   closeLogoutEverywhereConfirm();
 }
