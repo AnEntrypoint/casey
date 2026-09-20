@@ -57,11 +57,13 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             savingSet.delete(editKey);
             state._reportFieldEditing = null;
             delete errMap[editKey];
-            toast('saved', 'ok');
+            toast('Saved.', 'ok');
             if (onSaved) await onSaved();
         } catch (e) {
             savingSet.delete(editKey);
-            errMap[editKey] = (e && e.body && e.body.error) || 'Save failed';
+            // Rendered inline under the field, so it stays short -- but it has
+            // to say the value did not land, not merely that something failed.
+            errMap[editKey] = (e && e.body && e.body.error) || 'Not saved -- your text is still here, press Save again.';
             schedule();
         }
     };
@@ -71,9 +73,9 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
         if (!text) return;
         try {
             await postNote(caseId, text, k);
-            toast('note saved', 'ok');
+            toast('Note added to this field.', 'ok');
             if (onSaved) await onSaved();
-        } catch (e) { toast(await failMsg(e, 'note failed'), 'err'); }
+        } catch (e) { toast(await failMsg(e, 'The note was not saved, so nothing was added to this field. Try again.'), 'err'); }
     };
 
     const valueNode = editing
