@@ -107,7 +107,9 @@ function PanelSwap() {
   const body = known
     ? panelBodies[name]()
     : h('p', {}, 'This screen is not available in this deployment.');
-  const backLabel = state.homeView === 'cases' ? 'Back to cases' : 'Back to the map';
+  // Names the destination as the destination names itself: the list it returns
+  // to is headed with the record's configured plural, not the literal "cases".
+  const backLabel = state.homeView === 'cases' ? 'Back to ' + EntityLabelPlural().toLowerCase() : 'Back to the map';
   return h('div', { class: 'ds-panel-swap' },
     h('div', { class: 'ds-panel-swap-head' },
       Btn({ variant: 'ghost', children: backLabel, onClick: backToCases }),

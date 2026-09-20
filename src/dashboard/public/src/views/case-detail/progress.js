@@ -23,6 +23,7 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Dot } from '/design/src/components/shell.js';
 import { stageLabel } from '../../format.js';
+import { entityLabel } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
 const PIPELINE = ['new', 'triaging', 'in_progress', 'waiting', 'resolved', 'closed'];
@@ -32,10 +33,12 @@ export function CaseProgress({ status, key } = {}) {
     if (idx < 0) {
         return h('p', { key, class: 'casey-progress-offpipeline casey-hint' },
             status
-                ? 'This report is at ' + stageLabel(status) + ', which is not one of the usual stages.'
-                : 'This report has no stage recorded.');
+                ? 'This ' + entityLabel() + ' is at ' + stageLabel(status) + ', which is not one of the usual stages.'
+                : 'This ' + entityLabel() + ' has no stage recorded.');
     }
-    return h('div', { key, class: 'casey-progress', role: 'group', 'aria-label': 'case stage progress' },
+    // The two visible sentences in this module say "This report is at ...";
+    // the accessible name for the same widget said "case stage progress".
+    return h('div', { key, class: 'casey-progress', role: 'group', 'aria-label': entityLabel() + ' stage progress' },
         ...PIPELINE.map((s, i) => {
             const state = i < idx ? 'done' : (i === idx ? 'active' : 'pending');
             return h('div', { key: s, class: 'casey-progress-step casey-progress-step--' + state },
