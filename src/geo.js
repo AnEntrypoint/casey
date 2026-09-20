@@ -8,7 +8,7 @@
 // wrote the town or the district. No new data is created -- only stored location
 // is re-grouped.
 
-import { tokens } from './correlate.js'
+import { tokens, nameTokens } from './correlate.js'
 // parseReport (tolerant-of-already-parsed variant) moved to timestamp.js --
 // was independently duplicated here/clusters.js/correlate.js.
 import { parseReportTolerant as parseReport } from './timestamp.js'
@@ -38,7 +38,7 @@ export function buildGeo(cases) {
     let g = places.get(place)
     if (!g) { g = { place, count: 0, species: {}, latest: null }; places.set(place, g) }
     g.count++
-    for (const sp of tokens(rep.species)) g.species[sp] = (g.species[sp] || 0) + 1
+    for (const sp of nameTokens(rep.species)) g.species[sp] = (g.species[sp] || 0) + 1
     const t = Number(c.created_at)
     if (Number.isFinite(t) && (g.latest == null || t > g.latest)) g.latest = t
   }

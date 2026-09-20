@@ -12,7 +12,7 @@
 // That is fine on the few-hundred open cases casey holds; it is computed
 // on-demand, not on every dashboard poll.
 
-import { correlationScore, SUGGEST_THRESHOLD, tokens } from './correlate.js'
+import { correlationScore, SUGGEST_THRESHOLD, tokens, nameTokens } from './correlate.js'
 // parseReport (tolerant-of-already-parsed variant) moved to timestamp.js --
 // was independently duplicated here/geo.js/correlate.js.
 import { parseReportTolerant as parseReport } from './timestamp.js'
@@ -28,10 +28,10 @@ function makeUF(n) {
 
 // Most-frequent tokens of a report field across a component's members, so the
 // panel can name the shared place/species rather than echo a raw case.
-function dominantTokens(members, field, max = 3) {
+function dominantTokens(members, field, max = 3, tokenize = tokens) {
   const freq = new Map()
   for (const c of members) {
-    for (const t of tokens(parseReport(c)[field])) freq.set(t, (freq.get(t) || 0) + 1)
+    for (const t of tokenize(parseReport(c)[field])) freq.set(t, (freq.get(t) || 0) + 1)
   }
   return [...freq.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, max).map(([t]) => t)
 }
@@ -84,9 +84,9 @@ export function buildClusters(cases, threshold = SUGGEST_THRESHOLD) {
       count: members.length,
       members: members.map(c => ({ id: c.id, ref: c.ref, status: c.status, subject: c.subject || '', case_type: c.case_type || 'unset' })),
       location: dominantTokens(members, 'location'),
-      species: dominantTokens(members, 'species'),
-      symptoms: dominantTokens(members, 'symptoms'),
-      reported_disease_names: dominantTokens(members, 'suspected_disease'),
+      species: dominantTokens(members, 'species', 3, nameTokens),
+      symptoms: dominantTokens(members, 'symptoms', 3, nameTokens),
+      reported_disease_names: dominantTokens(members, 'suspected_disease', 3, nameTokens),
       span: { from: created.length ? Math.min(...created) : null, to: created.length ? Math.max(...created) : null },
     }
     clusters.push(cluster)

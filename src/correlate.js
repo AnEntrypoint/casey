@@ -33,6 +33,21 @@ export function tokens(s) {
   )
 }
 
+// A bare number legitimately overlaps for correlate.js's own similarity
+// matching ("12 cattle" vs "12 goats" sharing a count is weak evidence, but
+// evidence), so tokens() keeps it. A NAME token set -- species, symptom, any
+// field read back as a label rather than matched for overlap -- never wants
+// a headcount digit or its unit word standing in for a name: "cattle (12
+// head)" is one species mention, not three. distribution.js's species/symptom
+// rollup and geo.js's per-place species mix both read species this way; kept
+// here so the noise list has one copy instead of two independently-drifting
+// ones.
+const NAME_TOKEN_NOISE = /^\d+$/;
+const NAME_TOKEN_UNIT_WORDS = new Set(['head', 'heads']);
+export function nameTokens(s) {
+  return [...tokens(s)].filter(t => !NAME_TOKEN_NOISE.test(t) && !NAME_TOKEN_UNIT_WORDS.has(t))
+}
+
 // Jaccard overlap of two token sets: |A & B| / |A | B|, in [0,1]. Empty-vs-anything
 // is 0 (no evidence is not evidence of sameness).
 function tokenOverlap(a, b) {
