@@ -20,7 +20,8 @@ const h = webjsx.createElement;
 // outbound (casey's own sent replies) can be flagged -- flagging an inbound
 // contact message or an internal action/observation makes no sense here.
 async function flagReply(caseId, e) {
-    const reason = (await confirmDialog({ title: 'Flag this reply', inputLabel: 'What was wrong with this reply? (optional)' })) || '';
+    const reason = await confirmDialog({ title: 'Flag this reply', inputLabel: 'What was wrong with this reply? (optional)' });
+    if (reason === null) return; // cancelled -- do not flag
     try {
         await postFlagReply(caseId, e.id, reason);
         e._flagged = true;
