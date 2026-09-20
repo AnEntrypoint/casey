@@ -203,7 +203,7 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
             ),
             disclosed ? h('div', { class: 'casey-meta-body' },
                 contact ? contactNode(contact) : null,
-                contact ? h('button', { type: 'button', class: 'casey-copy-btn', onclick: () => { try { navigator.clipboard.writeText(contact); toast('copied'); } catch { toast('copy failed', 'err'); } } }, 'copy contact') : null,
+                contact ? h('button', { type: 'button', class: 'casey-copy-btn', onclick: async () => { try { await navigator.clipboard.writeText(contact); toast('copied'); } catch { toast('copy failed', 'err'); } } }, 'copy contact') : null,
                 h('span', {}, 'created ', rel(c.created_at))
             ) : null
         )
