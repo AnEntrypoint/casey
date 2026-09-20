@@ -15,7 +15,7 @@
 // Entries carry a {brand} placeholder and are resolved at read time, since
 // the config arrives after this module loads.
 
-import { state } from './state.js';
+import { brandName } from './vocabulary.js';
 
 const BRAND_TOKEN = /\{brand\}/g;
 
@@ -28,7 +28,7 @@ const GLOSSARY_TEMPLATE = {
     handoff: 'This case has been handed to a person. {brand} will not reply on its own until you do.',
     priority: 'How urgent this case is, so the team knows what to work on first.',
     channel: 'Which app the person is messaging from (WhatsApp or Discord), or how the report was entered (by hand, or the public form).',
-    case_type: 'What kind of report this is: a cluster of symptom reports, a routine follow-up, a lab sample, or an import alert. Casey records what was reported, not a diagnosis.',
+    case_type: 'What kind of report this is: a cluster of symptom reports, a routine follow-up, a lab sample, or an import alert. {brand} records what was reported, not a diagnosis.',
     sla: 'The time target the team has set for replying to a waiting case.',
     breach: 'A case that has gone past its reply-time target and needs attention.',
     draft: 'A reply {brand} has written but not sent yet. It is waiting for you to send or discard it.',
@@ -40,8 +40,6 @@ const GLOSSARY_TEMPLATE = {
     field_worker: 'A reporter an operator has trusted with extra access: their own open cases, "near me" lookups, and location check-ins.',
     reporter: 'The default access level for anyone who messages {brand}. Report-only, casual, public.',
 };
-
-function brandName() { return state.config?.dashboard_ui?.brand || 'casey'; }
 
 /**
  * The glossary with this deployment's own product name filled in.

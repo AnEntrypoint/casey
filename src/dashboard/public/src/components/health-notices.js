@@ -43,6 +43,7 @@
 import * as webjsx from 'webjsx';
 import { Alert } from 'ds/components/content.js';
 import { state } from '../state.js';
+import { brandName, countOf } from '../vocabulary.js';
 const h = webjsx.createElement;
 
 // Same band treatment connection-banner.js uses, for the same reason stated
@@ -66,7 +67,7 @@ function notice(key, kind, title, body) {
 function receivingNotice() {
   const gw = state.health.ai && state.health.ai.gateway;
   if (!gw || gw.ok !== false) return null;
-  return notice('rx', 'error', 'casey is not receiving reports',
+  return notice('rx', 'error', brandName() + ' is not receiving reports',
     gw.detail || 'A message channel is not receiving. Contacts may be sending with no reply.');
 }
 
@@ -107,9 +108,14 @@ function aiNotice() {
   // a diagnosis. The server owns the real wording (operations.js's
   // LLM_HEALTH_VIEWS); the fallback below only covers a response that carried no
   // label at all, so it says exactly that and claims nothing about the helper.
+  // The webhook title has to say a FAULT. It used to read "Nothing is paging
+  // anyone", which is the literal truth and exactly backwards in tone: on a
+  // tinted warning band that sentence reads as the calm state an operator can
+  // skip, when what it means is that the one channel for raising an alert is
+  // broken.
   const title = !hl.ok ? (hl.label || 'The AI helper reported no state')
     : queued ? 'Messages are backing up'
-      : 'Nothing is paging anyone';
+      : 'System alerts are reaching no one';
   return notice('ai', hl.ok ? 'warn' : 'error', title, parts.join(' ').trim());
 }
 
@@ -126,7 +132,7 @@ function guardrailsNotice() {
     return notice('gr', 'error', 'Reports are not being checked',
       `The last sweep scanned ${fh.latest.scanned || 0} and flagged ${flagged}. Reports are not being checked for going stale or stuck.`);
   }
-  return notice('gr', 'warn', `${flagged} report(s) going wrong`,
+  return notice('gr', 'warn', `${countOf(flagged)} going wrong`,
     'The last check flagged them as stale, stuck or waiting too long for a person. They are at the top of the queue.');
 }
 
@@ -145,7 +151,7 @@ function droppedIntakeNotice() {
   const d = state.health.ai && state.health.ai.dropped_inbound;
   if (!d || !d.total) return null;
   const reasons = Object.values(d.reasons || {}).map(r => `${r.count} because ${r.detail}`);
-  return notice('drop', 'error', `${d.total} incoming message(s) were discarded without being recorded`,
+  return notice('drop', 'error', `${countOf(d.total, 'incoming message')} ${d.total === 1 ? 'was' : 'were'} discarded without being recorded`,
     reasons.join('; ') + '. Counted since this console started; no case or timeline holds them, and the count names no contact.');
 }
 

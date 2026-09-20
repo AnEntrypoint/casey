@@ -20,6 +20,7 @@ import { Dialog } from '../components/dialog-shell.js';
 import { CaseListDetailLayout } from './case-list-detail-layout.js';
 import { MapCommandCenter } from './map-command-center.js';
 import { ViewTitle, VIEW_TITLE_ID } from './view-title.js';
+import { brandName, EntityLabelPlural, countOf } from '../vocabulary.js';
 const h = webjsx.createElement;
 
 // The single modal-rendering code path: every activeModal value maps to a
@@ -230,7 +231,7 @@ function StatusBar() {
   const total = state.allCasesTotal || (state.allCases || []).length;
   const hl = state.health.ai;
   const gw = hl && hl.gateway;
-  const left = [h('span', { key: 'c' }, `${total} report(s) loaded`)];
+  const left = [h('span', { key: 'c' }, `${countOf(total)} loaded`)];
   const right = [
     hl && hl.source === 'unwired'
       ? h('span', { key: 'mode' }, 'Reading the store only -- not attached to the running agent')
@@ -258,11 +259,16 @@ export function App() {
 
   // brand/leaf are config-driven (dashboard_ui.brand/dashboard_ui.leaf, see
   // report-shape.js's DASHBOARD_UI, threaded through /api/config) so a
-  // deployer whose domain isn't "casey"/"Cases" (e.g. serpent's research
-  // runs) can rebrand the app shell without a fork. Absent (casey's own
-  // default, uhh) -- falls back to today's exact literals.
-  const brand = state.config?.dashboard_ui?.brand || 'casey';
-  const leaf = state.config?.dashboard_ui?.leaf || 'Cases';
+  // deployer whose domain isn't "casey"/"Reports" (e.g. serpent's research
+  // runs) can rebrand the app shell without a fork.
+  //
+  // The leaf's fallback is the RECORD'S OWN CONFIGURED NAME, pluralised, not
+  // the literal "Cases". A deployment that sets entity_label and no leaf used
+  // to get a breadcrumb reading "Cases" over a pane headed "All reports" --
+  // the shell contradicting the view beneath it, in the one place a reader
+  // looks to learn what they are looking at.
+  const brand = brandName();
+  const leaf = state.config?.dashboard_ui?.leaf || EntityLabelPlural();
 
   const side = Side({ sections: buildSideSections({}) });
   const topbar = Topbar({

@@ -30,6 +30,7 @@ import { api, ApiError, isOfflineError, fetchBranding } from '../api.js';
 import { checkSession } from '../auth.js';
 import { state, schedule, setAuthed, setConfig } from '../state.js';
 import { runRefreshAll } from './nav-config.js';
+import { brandName } from '../vocabulary.js';
 const h = webjsx.createElement;
 
 const local = {
@@ -184,7 +185,7 @@ export function LoginGate() {
   // before this ever renders, see main.js's pre-login branch) so a
   // rebranded deployment (e.g. "Herd Health") never shows the literal
   // 'casey' on the very first screen a user sees. Absent -- unchanged.
-  const brand = state.config?.dashboard_ui?.brand || 'casey';
+  const brand = brandName();
   // ONE ELEMENT TYPE FOR THE MESSAGE SLOT, and a stable key. A change that has
   // landed is not an error and must not be dressed as one, but rendering the
   // notice as a <p> where the error is a <div> put two different element types

@@ -12,11 +12,11 @@
 
 import { toast } from '../toasts.js';
 import { postDispatch } from '../api.js';
-import { state } from '../state.js';
+import { brandName } from '../vocabulary.js';
 
 // The deployment's own product name (dashboard_ui.brand), never the literal
 // 'casey' -- an operator never meets the name of the software underneath.
-const brand = () => state.config?.dashboard_ui?.brand || 'casey';
+const brand = brandName;
 
 function haversineKm(lat1, lon1, lat2, lon2) {
     const R = 6371, toRad = (d) => (d * Math.PI) / 180;

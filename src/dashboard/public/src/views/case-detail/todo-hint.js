@@ -12,11 +12,12 @@
 // last need for webjsx and the design kit in this file.
 import { ageHoursOf } from '../../format.js';
 import { state } from '../../state.js';
+import { brandName } from '../../vocabulary.js';
 
 function tagList(c) { return String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean); }
 
 export function todoHintText(c) {
-    const brand = state.config?.dashboard_ui?.brand || 'casey';
+    const brand = brandName();
     const tags = tagList(c);
     // 'opted-out' is a legal control (the contact said STOP). Its one
     // definition is src/hooks/heuristics.js's OPTED_OUT_TAG, which a browser
