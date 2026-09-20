@@ -96,23 +96,75 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
     const caseTypes = (cfg.case_type && cfg.case_type.length) ? cfg.case_type : DEFAULT_CASE_TYPES;
     const saving = !!state._fieldsSaving;
 
+    // ONLY THE FIELDS THIS OPERATOR ACTUALLY CHANGED ARE SENT, and each one
+    // carries the value the form was seeded with so the server can refuse a
+    // genuine collision. This form used to POST every field on every save,
+    // built from the case as it looked when the pane was opened -- and the
+    // pane is fetched once on activeId change and never polled, so that
+    // snapshot goes stale as soon as anyone else touches the case. Two
+    // operators on one case, witnessed live: B set priority, assignee and
+    // summary, then A fixed a typo in the subject and saved. A's stale form
+    // silently reverted all three of B's fields, wiped the summary, and
+    // dropped the health:stale guardrail tag the sweep had written -- against
+    // a Tags hint that promises internal tags "cannot be lost by editing
+    // here". The operator saw a green "saved" and no warning. The server's own
+    // expectedVersion guard cannot catch this: it re-reads the row itself
+    // immediately before writing, so it only ever sees a fresh version.
+    //
+    // Diffing against the seeded values fixes the whole class -- an untouched
+    // field is absent from the patch, so it cannot be written at all -- and
+    // `expected` turns the remaining case (both operators edited the SAME
+    // field) into a real 409 the operator is told about instead of a silent
+    // overwrite.
     const save = async () => {
         state._fieldsSaving = true; schedule();
-        const internalTags = String(c.tags || '').split(',').map(s => s.trim()).filter(t => t && isInternalTag(t));
-        const editedTags = d.tags.split(',').map(s => s.trim()).filter(Boolean);
-        const body = {
-            subject: d.subject, summary: d.summary, priority: d.priority,
-            tags: [...internalTags, ...editedTags].join(','), assignee: d.assignee, autonomy: d.autonomy,
-        };
-        if (d.case_type !== (c.case_type || 'unset')) body.case_type = d.case_type;
+        const patch = {};
+        const expected = {};
+        for (const k of ['subject', 'summary', 'priority', 'assignee', 'autonomy']) {
+            if (d[k] === base[k]) continue;
+            patch[k] = d[k];
+            expected[k] = base[k];
+        }
+        if (d.case_type !== base.case_type) { patch.case_type = d.case_type; expected.case_type = base.case_type; }
         try {
-            await patchCaseApi(c.id, body);
+            // Tags are sent only when the operator actually edited them, and
+            // the internal tags they must be recombined with are read FRESH at
+            // save time rather than off the pane's stale `c` -- a health:* tag
+            // the sweep wrote while this pane sat open is on the current row,
+            // not on the snapshot this form was built from.
+            if (d.tags !== base.tags) {
+                const fresh = await fetchCase(c.id).catch(() => null);
+                const tagSource = (fresh && fresh.case && fresh.case.tags != null) ? fresh.case.tags : c.tags;
+                const internalTags = String(tagSource || '').split(',').map(s => s.trim()).filter(t => t && isInternalTag(t));
+                const editedTags = d.tags.split(',').map(s => s.trim()).filter(Boolean);
+                patch.tags = [...internalTags, ...editedTags].join(',');
+                expected.tags = [...internalTags, ...base.tags.split(',').map(s => s.trim()).filter(Boolean)].join(',');
+            }
+            if (!Object.keys(patch).length) {
+                state._fieldsSaving = false;
+                toast('nothing to save -- no field was changed', 'ok');
+                schedule();
+                return;
+            }
+            await patchCaseApi(c.id, { ...patch, expected });
             state._fieldsSaving = false;
             toast('saved', 'ok');
             state._fieldsDraft = null;
+            state._fieldsBase = null;
             if (onSaved) await onSaved();
         } catch (e) {
             state._fieldsSaving = false;
+            // A 409 is somebody else's edit, not a failure of this one: drop
+            // the stale draft and reload so the operator sees the current
+            // values before deciding again, rather than being left holding a
+            // form that will 409 on every further attempt.
+            if (e && e.status === 409) {
+                state._fieldsDraft = null;
+                state._fieldsBase = null;
+                toast(await failMsg(e, 'someone else changed this case -- reloaded with their values'), 'warn');
+                if (onSaved) await onSaved();
+                return;
+            }
             toast(await failMsg(e, 'save failed'), 'err');
             schedule();
         }

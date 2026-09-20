@@ -7,6 +7,8 @@ import * as webjsx from 'webjsx';
 import { Alert } from 'ds/components/content.js';
 import { Btn } from 'ds/components/shell.js';
 import { state, setHandoffQueue } from '../state.js';
+import { channelLabel } from '../format.js';
+import { entityLabel } from '../vocabulary.js';
 import { openCaseRoute } from '../route.js';
 const h = webjsx.createElement;
 
@@ -101,7 +103,7 @@ export function HandoffBanner() {
   const extra = q.length > 1 ? (' (and ' + (q.length - 1) + ' more)') : '';
   return h('div', {
     class: 'ds-handoff-banner', id: 'handoff', tabindex: '0', role: 'button',
-    'aria-label': 'Open case ' + (c.ref || '') + ' - someone needs a person',
+    'aria-label': 'Open ' + entityLabel() + ' ' + (c.ref || '') + ' - someone needs a person',
     onclick: () => openCaseRoute(c.id),
     onkeydown: (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); openCaseRoute(c.id); } },
   },
@@ -109,7 +111,7 @@ export function HandoffBanner() {
       kind: 'warn',
       title: 'Someone needs a person',
       children: [
-        h('span', { key: 'm', dangerouslySetInnerHTML: { __html: esc(c.ref) + ' - ' + esc(c.subject || c.external_id || c.channel) + esc(extra) + '. Click to open it.' } }),
+        h('span', { key: 'm', dangerouslySetInnerHTML: { __html: esc(c.ref) + ' - ' + esc(c.subject || channelLabel(c.channel)) + esc(extra) + '. Click to open it.' } }),
       ],
     }),
     Btn({ size: 'sm', variant: 'ghost', class: 'ds-handoff-banner-hide', 'aria-label': 'Hide this message', onClick: (e) => { e.stopPropagation(); clearHandoffQueue(); }, children: 'Hide' })

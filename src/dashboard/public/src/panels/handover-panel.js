@@ -8,7 +8,8 @@ import { Btn, Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule, setActiveId } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchHandover, postStartShift } from '../api.js';
-import { fmtTime } from '../format.js';
+import { fmtTime, eventKindLabel, actorLabel } from '../format.js';
+import { entityLabel } from '../vocabulary.js';
 import { QUEUE_NAME } from '../map-model.js';
 import { toast } from '../toasts.js';
 
@@ -53,7 +54,7 @@ function hoSection(title, rows, render) {
 function refLink(ref, id) {
     if (!id) return h('span', { class: 'ds-ho-ref' }, ref || '');
     return h('span', {
-        class: 'ds-ho-ref', tabindex: '0', role: 'button', 'aria-label': 'open case ' + (ref || ''),
+        class: 'ds-ho-ref', tabindex: '0', role: 'button', 'aria-label': 'Open ' + entityLabel() + ' ' + (ref || ''),
         onclick: () => setActiveId(id),
         onkeydown: (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); setActiveId(id); } },
     }, ref || '');
@@ -71,7 +72,7 @@ function handoverBody(j) {
             refLink(r.ref, r.id), ' ', h('span', { class: 'ds-muted' }, r.subject || ''), ' ', h('span', { class: 'ds-ho-why' }, (r.text || '').slice(0, 120)))),
         hoSection('Changed this shift', j.touched, (r, i) => h('div', { key: i, class: 'ds-ho-row' },
             refLink(r.ref, r.id), ' ', h('span', { class: 'ds-muted' }, r.subject || ''),
-            ' ', h('span', { class: 'ds-ho-why' }, (r.last_kind || '') + (r.last_actor ? ' by ' + r.last_actor : '')),
+            ' ', h('span', { class: 'ds-ho-why' }, (r.last_kind ? eventKindLabel(r.last_kind) : '') + (r.last_actor ? ' by ' + actorLabel(r.last_actor) : '')),
             ' ', h('span', { class: 'ds-act-when' }, r.at ? fmtTime(r.at) : ''))));
 }
 

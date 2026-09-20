@@ -12,6 +12,7 @@
 import { setActiveId } from '../state.js';
 import { LOCATION_SOURCE_LABEL } from '../map-model.js';
 import { fmtDur } from '../format.js';
+import { countOf } from '../vocabulary.js';
 import { fetchMapWorkers, fetchMapLastReports, fetchOperatorIdentities } from '../api.js';
 
 // Reads a design-token value off the live document, so an overlay drawn into an
@@ -71,7 +72,7 @@ export async function renderMapCoverage(mapState) {
             const lat = matched.reduce((s, p) => s + p.lat, 0) / matched.length;
             const lon = matched.reduce((s, p) => s + p.lon, 0) / matched.length;
             window.L.circle([lat, lon], { radius: 25000, color: cssVar('--accent'), weight: 1, fillOpacity: .06 })
-                .bindTooltip(esc(idOp.name) + ' -- ' + idOp.case_count + ' case action(s)')
+                .bindTooltip(esc(idOp.name) + ' -- ' + countOf(idOp.case_count, 'action', 'actions') + ' here')
                 .addTo(layer);
         }
         layer.addTo(map);

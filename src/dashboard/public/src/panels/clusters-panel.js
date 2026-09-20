@@ -10,12 +10,16 @@ import { Chip } from '/design/src/components/shell/atoms.js';
 import { state, setActiveId } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchClusters } from '../api.js';
+import { caseTypeLabel } from '../format.js';
+import { countOf, entityLabelPlural } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
 const loader = createPanelLoader({
-    what: 'the related reports',
-    label: 'loading related-case groups',
+    // Both strings named the same thing two ways -- "related reports" loading
+    // "related-case groups" -- in one call to one loader.
+    what: () => 'the related ' + entityLabelPlural(),
+    label: () => 'Looking for related ' + entityLabelPlural(),
     fetch: fetchClusters,
     apply: (j) => { state._clusters = j; },
 });
@@ -27,7 +31,7 @@ function clusterRow(c, i) {
     const reported = (c.reported_disease_names || []).join(', ');
     return h('div', { key: i, class: 'ds-cluster-row' },
         h('div', { class: 'ds-cluster-head' },
-            h('b', {}, `${c.count} cases`),
+            h('b', {}, countOf(c.count)),
             loc ? h('span', {}, ' near ' + loc) : null,
             sp ? h('span', {}, ' -- ' + sp) : null),
         sym ? h('div', { class: 'ds-cluster-sub' }, 'symptoms: ' + sym) : null,
@@ -37,7 +41,7 @@ function clusterRow(c, i) {
                 key: j, tone: 'accent',
                 children: h('button', {
                     type: 'button', class: 'ds-chip-btn',
-                    title: (m.case_type && m.case_type !== 'unset' ? m.case_type + ': ' : '') + (m.subject || ''),
+                    title: (m.case_type && m.case_type !== 'unset' ? caseTypeLabel(m.case_type) + ': ' : '') + (m.subject || ''),
                     onclick: () => { setActiveId(m.id); },
                 }, m.ref),
             }))));

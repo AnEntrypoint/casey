@@ -8,7 +8,8 @@ import { Alert } from '/design/src/components/content/feedback.js';
 import { state, setActiveId, setOfflineQueueCount } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchUnreplied } from '../api.js';
-import { fmtTime } from '../format.js';
+import { fmtTime, channelLabel } from '../format.js';
+import { entityLabelPlural } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
@@ -33,13 +34,15 @@ export function OfflinePanel() {
         // reassurance about the system: this console reads the store and, in
         // dashboard-only mode, is not attached to the agent at all, so it
         // cannot honestly say anything is "answering normally".
-        if (!rows.length) return Alert({ kind: 'info', children: 'Nothing came in while nobody was watching.' });
+        // "Nothing came in while nobody was watching" was cute and said neither
+        // what this list holds nor what an empty one means.
+        if (!rows.length) return Alert({ kind: 'info', children: 'Nothing is waiting for a first reply. This list holds ' + entityLabelPlural() + ' that arrived and have had no answer yet.' });
         const capped = j.total > rows.length;
         return h('div', {},
             capped ? Alert({ kind: 'info', children: `Showing the newest ${rows.length} of ${j.total}. Use Search, or claim these first, to bring the rest into view.` }) : null,
             Table({
                 headers: ['Ref', 'Subject', 'Channel', 'Owner', 'Last event'],
-                rows: rows.map((r) => [r.ref || '', r.subject || '(no subject)', r.channel || '', (r.assignee && r.assignee !== 'agent') ? r.assignee : '', fmtTime(r.last_event_at)]),
+                rows: rows.map((r) => [r.ref || '', r.subject || '(no subject)', channelLabel(r.channel), (r.assignee && r.assignee !== 'agent') ? r.assignee : '', fmtTime(r.last_event_at)]),
                 onRowClick: (i) => { if (rows[i].id) setActiveId(rows[i].id); },
             }));
     });

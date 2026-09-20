@@ -37,7 +37,16 @@ import { panelError } from './panel-error.js';
 //        requests here when the panel needs more than one
 // apply  receives the resolved value; writes it wherever the panel's render
 //        reads it from, and does any post-success bookkeeping
+//
+// `what` and `label` may each be a STRING or a FUNCTION returning one, and a
+// panel naming the record ("the related reports") has to use the function form.
+// A panel's createPanelLoader({...}) call runs at MODULE EVAL -- before the
+// /api/config fetch resolves -- so a string built from the config-declared
+// entity_label there would freeze the pre-config default and keep saying
+// "reports" for the life of the page on a deployment whose records are tickets.
+// Resolved at the point of use instead, which is after config has landed.
 export function createPanelLoader({ what, label, fetch, apply }) {
+    const resolve = (v) => (typeof v === 'function' ? v() : v);
     let loaded = false;
     let loading = false;
     let error = null;
@@ -52,7 +61,7 @@ export function createPanelLoader({ what, label, fetch, apply }) {
             loaded = true; loading = false; error = null; schedule();
         }).catch((e) => {
             if (gen !== generation) return;
-            loaded = true; loading = false; error = panelError(what, e); schedule();
+            loaded = true; loading = false; error = panelError(resolve(what), e); schedule();
         });
     }
 
@@ -85,7 +94,7 @@ export function createPanelLoader({ what, label, fetch, apply }) {
         // own content. Returns a node for whatever wrapper the panel puts it in
         // -- this owns the three-way choice, never the wrapper.
         slot(content) {
-            if (loading && !loaded) return Spinner({ label });
+            if (loading && !loaded) return Spinner({ label: resolve(label) });
             if (error) return Alert({ kind: 'error', children: error });
             return content();
         },

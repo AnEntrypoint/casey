@@ -33,6 +33,7 @@ import { ClustersPanel } from './clusters-panel.js';
 // on one of them -- the same rule map-model.js enforces for the derivations
 // these chips apply.
 import { FilterChip, ClearChip } from '../components/filter-chip.js';
+import { headline } from '../format.js';
 
 const h = webjsx.createElement;
 
@@ -147,7 +148,13 @@ function attentionFeed() {
                 // six of eight rows opened with the identical sentence
                 // ("A new message came in.") and the one line that told them
                 // apart rendered at the smallest size on the page.
-                h('div', { class: 'tcase-why' }, c.subject || c.ref),
+                // Bounded through headline() for the same reason the case
+                // heading is: .tcase-why is a wrapping flex box and this is its
+                // bare text child, the shape that froze the renderer on a long
+                // unbreakable subject (see format.js's headline()). The rail is
+                // the map home view's standing queue, so an unbounded subject
+                // here takes the landing screen down, not just one open case.
+                h('div', { class: 'tcase-why' }, headline(c.subject || c.ref)),
                 h('div', { class: 'tcase-meta' }, c.ref),
                 c.reason ? h('div', { class: 'tcase-reason' }, c.reason) : null);
         }),

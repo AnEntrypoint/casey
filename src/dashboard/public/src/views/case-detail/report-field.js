@@ -11,6 +11,7 @@ import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { postIntake, postNote } from '../../api.js';
 import { SOURCE_LABEL } from '../../icons-map.js';
+import { reportValue } from '../../format.js';
 import { confirmDialog } from '../../components/dialog-shell.js';
 const h = webjsx.createElement;
 
@@ -95,7 +96,11 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             // print (the kit's own rule) and FillLines supplies the ruled
             // writing space instead -- more lines where the config says the
             // answer is a paragraph, one where it is a species or a count.
-            value ? value : (sayMissing ? h('span', { class: 'casey-rep-missing ds-print-blank' }, 'not given yet') : null),
+            // The value is its OWN span, not a bare text child of this
+            // inline-flex box: an anonymous flex item cannot be given
+            // min-width:0 and is measured at max-content, which is what froze
+            // the renderer on an oversized field (see format.js reportValue).
+            value ? h('span', { class: 'casey-rep-value' }, reportValue(value)) : (sayMissing ? h('span', { class: 'casey-rep-missing ds-print-blank' }, 'not given yet') : null),
             value ? null : FillLines({ lines: multiline ? 3 : 1 }),
             Icon('pencil', { size: 12 }),
             // THIS MARKER STAYS, and it is the one place in the case view

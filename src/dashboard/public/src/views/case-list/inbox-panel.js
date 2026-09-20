@@ -19,7 +19,7 @@
 import * as webjsx from 'webjsx';
 import { Chip, Badge, Heading } from 'ds/components/shell.js';
 import { state, setActiveId, setInboxMode, schedule } from '../../state.js';
-import { rel, waitFmt, isMine } from '../../format.js';
+import { rel, waitFmt, isMine, channelLabel } from '../../format.js';
 import { urgencyBand, URGENCY_BAND_LABEL, QUEUE_NAME } from '../../map-model.js';
 import { pushHash } from '../../route.js';
 const h = webjsx.createElement;
@@ -101,7 +101,7 @@ function InboxRow(e) {
     h('div', { key: 'r', class: 'tcase-reason' }, e.reason || 'This one is worth a look.'),
     breachDetail ? h('div', { key: 'b', class: 'tcase-breach-detail' }, breachDetail) : null,
     h('div', { key: 'meta', class: 'tcase-meta' },
-      e.ref + ' - ' + e.channel + ' - ' + rel(e.updated_at)
+      e.ref + ' - ' + channelLabel(e.channel) + ' - ' + rel(e.updated_at)
     )
   );
 }
