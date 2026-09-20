@@ -47,7 +47,8 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, IconButton, Icon } from '/design/src/components/shell.js';
 import { state, schedule } from '../../state.js';
 import { toast, undoToast } from '../../toasts.js';
-import { fmtTime, rel, healthLabel } from '../../format.js';
+import { fmtTime, rel, healthLabel, headline, channelLabel } from '../../format.js';
+import { entityLabel } from '../../vocabulary.js';
 import { postClaim, postSnooze } from '../../api.js';
 import { todoHintText } from './todo-hint.js';
 
@@ -131,12 +132,12 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
         : Btn({
             size: 'sm', variant: 'primary', children: 'Claim',
             onClick: async () => {
-                if (!state.currentUser) { toast('Log in to claim a case.', 'warn'); return; }
+                if (!state.currentUser) { toast('Log in to claim a ' + entityLabel() + '.', 'warn'); return; }
                 try {
                     await postClaim(c.id);
                     undoToast(c.id, 'Claimed -- this one is yours now', () => reloadCase(c.id, onReload));
                     await reloadCase(c.id, onReload);
-                } catch (e) { toast('Could not claim this case', 'warn'); }
+                } catch (e) { toast('Could not claim this ' + entityLabel() + ' -- somebody else may have taken it first. Reload to see who has it.', 'warn'); }
             }
         });
 
@@ -144,8 +145,8 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
         ? Btn({
             size: 'sm', variant: 'ghost', children: 'Snoozed', 'aria-label': 'Snoozed until ' + fmtTime(snoozeUntil) + ' -- click to clear',
             onClick: async () => {
-                try { await postSnooze(c.id, 0); toast('Snooze cleared'); await reloadCase(c.id, onReload); }
-                catch (e) { toast('Could not clear snooze', 'warn'); }
+                try { await postSnooze(c.id, 0); toast('Snooze cleared -- this is back in the queue.'); await reloadCase(c.id, onReload); }
+                catch (e) { toast('The snooze could not be cleared, so this is still hidden from the queue. Try again.', 'warn'); }
             }
         })
         : Btn({ size: 'sm', variant: 'ghost', children: 'Snooze', onClick: () => onOpenSnooze && onOpenSnooze(c) });
@@ -163,10 +164,16 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
             // name ("Cattle drooling and limping - possibly FMD WORKING ON
             // IT") and said, in a second vocabulary, exactly what the
             // progress rail below says with the sequence intact.
-            h('h2', { class: 'casey-case-ref' }, c.subject || c.ref),
+            // The subject sits in its OWN span rather than as bare text beside
+            // the buttons: a bare text child of this flex row is an anonymous
+            // flex item, which cannot be given min-width:0 and so is measured
+            // at max-content. That is the shape that froze the renderer on a
+            // long subject (see format.js's headline()); headline() bounds the
+            // text and the span gives the box a real, shrinkable item.
+            h('span', { class: 'casey-case-ref-text' }, headline(c.subject || c.ref)),
             claimBtn,
             snoozeBtn,
-            IconButton({ icon: Icon('external-link'), title: 'Print report', onClick: () => window.open('/api/cases/' + encodeURIComponent(c.id) + '/report.html', '_blank') }),
+            IconButton({ icon: Icon('external-link'), title: 'Print this ' + entityLabel(), onClick: () => window.open('/api/cases/' + encodeURIComponent(c.id) + '/report.html', '_blank') }),
             IconButton({ icon: Icon('link'), title: 'Share form with contact', onClick: () => onOpenShare && onOpenShare(c) }),
             // "suggested: k-dlamini" was a colon and a username. It is a
             // recommendation about a person, so it is worded as one, and the
@@ -199,11 +206,11 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
                 onclick: () => setDisclosed(!disclosed)
             },
                 Icon(disclosed ? 'chevron-down' : 'chevron-right', { size: 13 }),
-                ' ', c.channel, ' details'
+                ' ', channelLabel(c.channel), ' details'
             ),
             disclosed ? h('div', { class: 'casey-meta-body' },
                 contact ? contactNode(contact) : null,
-                contact ? h('button', { type: 'button', class: 'casey-copy-btn', onclick: async () => { try { await navigator.clipboard.writeText(contact); toast('copied'); } catch { toast('copy failed', 'err'); } } }, 'copy contact') : null,
+                contact ? h('button', { type: 'button', class: 'casey-copy-btn', onclick: async () => { try { await navigator.clipboard.writeText(contact); toast('Contact copied to the clipboard.'); } catch { toast('This browser would not let the page copy. Select the number above and copy it by hand.', 'err'); } } }, 'Copy contact') : null,
                 h('span', {}, 'created ', rel(c.created_at))
             ) : null
         )

@@ -7,9 +7,11 @@ import { Select } from 'ds/components/content.js';
 import { state, clearBulkSelect } from '../../state.js';
 import { postBulk } from '../../api.js';
 import { toast, failMsg } from '../../toasts.js';
+import { stageLabel } from '../../format.js';
+import { entityLabel, entityLabelPlural } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
-const VERB = { claim: 'claimed', transition: 'moved', tag: 'tagged', untag: 'untagged', note: 'noted', draft_approve: 'sent', draft_discard: 'discarded' };
+const VERB = { claim: 'Claimed', transition: 'Moved', tag: 'Tagged', untag: 'Untagged', note: 'Noted', draft_approve: 'Sent', draft_discard: 'Discarded' };
 
 async function runBulk(action, extra, onDone) {
   const ids = [...state.bulkSelected];
@@ -20,12 +22,22 @@ async function runBulk(action, extra, onDone) {
   }
   try {
     const j = await postBulk(ids, action, extra);
+    // A bulk result has two numbers and the failure half used to be stated as
+    // "moved 7, 2 could not be moved" -- a count with no reason, which leaves
+    // an operator unable to tell a permissions refusal from a stage that does
+    // not exist from a row somebody else had already moved. The server does
+    // not itemise, so this says plainly where to look instead of implying the
+    // two are interchangeable.
     const verb = VERB[action] || action;
-    toast(verb + ' ' + (j.ok || 0) + (j.failed ? (', ' + j.failed + ' could not be ' + verb) : ''), j.failed ? 'warn' : 'ok');
+    const noun = (j.ok === 1) ? entityLabel() : entityLabelPlural();
+    const ok = verb + ' ' + (j.ok || 0) + ' ' + noun + '.';
+    toast(j.failed
+      ? ok + ' ' + j.failed + ' did not change -- open those to see why.'
+      : ok, j.failed ? 'warn' : 'ok');
     clearBulkSelect();
     onDone && onDone();
   } catch (e) {
-    toast('Bulk error: ' + (await failMsg(e, 'bulk action failed')), 'err');
+    toast(await failMsg(e, 'Nothing was changed -- the bulk action did not reach the server. Your selection is still here, so try again.'), 'err');
   }
 }
 
@@ -37,14 +49,19 @@ export function BulkBar({ stages, onDone, onPromptTag, onPromptNote }) {
     Btn({ key: 'claim', size: 'sm', onClick: () => runBulk('claim', null, onDone), children: 'Claim' }),
     Select({
       key: 'stage', size: 'sm', placeholder: 'Move to...',
-      options: (stages || []).map((s) => ({ value: s, label: s })),
+      // label: s rendered the raw thatcher enum, so this dropdown offered
+      // "in_progress" and "triaging" while every other stage surface on the
+      // same screen -- the row, the pill strip, the case header -- said
+      // "Working on it" and "Looking into it" through stageLabel(). One
+      // vocabulary, and this was the one control still speaking the database's.
+      options: (stages || []).map((s) => ({ value: s, label: stageLabel(s) })),
       onChange: (v) => { if (v) runBulk('transition', { to: v }, onDone); },
     }),
     Btn({ key: 'tag', size: 'sm', variant: 'ghost', onClick: () => onPromptTag && onPromptTag((tag) => runBulk('tag', { tag }, onDone)), children: 'Tag' }),
     Btn({ key: 'untag', size: 'sm', variant: 'ghost', onClick: () => onPromptTag && onPromptTag((tag) => runBulk('untag', { tag }, onDone)), children: 'Untag' }),
     Btn({ key: 'note', size: 'sm', variant: 'ghost', onClick: () => onPromptNote && onPromptNote((text) => runBulk('note', { text }, onDone)), children: 'Note' }),
-    Btn({ key: 'draft-approve', size: 'sm', variant: 'ghost', title: "Send each selected case's pending draft as composed", onClick: () => runBulk('draft_approve', null, onDone), children: 'Send drafts' }),
-    Btn({ key: 'draft-discard', size: 'sm', variant: 'ghost', title: "Discard each selected case's pending draft", onClick: () => runBulk('draft_discard', null, onDone), children: 'Discard drafts' }),
+    Btn({ key: 'draft-approve', size: 'sm', variant: 'ghost', title: 'Send the waiting draft on each selected ' + entityLabel() + ', exactly as written', onClick: () => runBulk('draft_approve', null, onDone), children: 'Send drafts' }),
+    Btn({ key: 'draft-discard', size: 'sm', variant: 'ghost', title: 'Discard the waiting draft on each selected ' + entityLabel(), onClick: () => runBulk('draft_discard', null, onDone), children: 'Discard drafts' }),
     Btn({ key: 'clear', size: 'sm', variant: 'ghost', title: 'Clear selection', onClick: () => clearBulkSelect(), children: 'Clear' })
   );
 }

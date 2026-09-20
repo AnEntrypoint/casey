@@ -330,6 +330,43 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
     // changes); not a stored field, so it is read off the body directly.
     const patchReason = str(res, req.body, 'reason', { required: false }); if (patchReason === undefined) return
     const prior = await store.getCase(req.params.id)
+    // OPTIONAL PER-FIELD PRECONDITION. `expected` carries, for each field in
+    // the patch, the value the caller's form was seeded with; a field whose
+    // stored value has moved since then is a genuine collision between two
+    // operators editing the SAME field, and it 409s rather than overwriting.
+    // This is the half the expectedVersion guard below CANNOT provide: that
+    // token is read from the row on this very request (`prior`, two lines up),
+    // so it is always fresh and only ever catches a write racing inside these
+    // few milliseconds. An operator's pane, by contrast, is fetched once when
+    // the case is opened and never polled, so the view a patch is based on can
+    // be minutes or hours old. Both guards are kept: this one compares against
+    // what the operator SAW, the version token protects the write itself.
+    // Absent (any caller that does not send it), behavior is exactly as before.
+    if (req.body && req.body.expected != null) {
+      if (typeof req.body.expected !== 'object' || Array.isArray(req.body.expected)) {
+        return res.status(400).json({ error: 'expected must be an object of field -> prior value' })
+      }
+      // Compared as strings because busybase hands every column back as text
+      // and a blank column arrives as null/undefined/'' interchangeably -- an
+      // untouched empty field must not read as a conflict.
+      // Two columns are read through a default by every client that renders
+      // them (an unset autonomy IS 'auto', an unset case_type IS 'unset'), so
+      // the comparison applies the same default to the stored side -- without
+      // this a case whose column was never written 409s against a form that
+      // faithfully showed the default it was told to show.
+      const COLUMN_DEFAULT = { autonomy: 'auto', case_type: 'unset' }
+      const norm = (v, k) => {
+        const s = v == null ? '' : String(v)
+        return (s === '' && k in COLUMN_DEFAULT) ? COLUMN_DEFAULT[k] : s
+      }
+      const stale = Object.keys(patch).filter(k => k in req.body.expected && norm(prior?.[k], k) !== norm(req.body.expected[k], k))
+      if (stale.length) {
+        return res.status(409).json({
+          error: `this case was changed by someone else (${stale.join(', ')}) -- reload and try again`,
+          conflicted_fields: stale,
+        })
+      }
+    }
     if (Object.keys(patch).some(k => k !== 'autonomy')) {
       if (prior?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy setting can be changed' })
     }

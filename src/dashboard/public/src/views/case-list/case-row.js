@@ -21,8 +21,9 @@
 import * as webjsx from 'webjsx';
 import { Chip, Pill } from 'ds/components/shell.js';
 import { state, toggleBulkSelect, setActiveId } from '../../state.js';
-import { rel, fmtTime, tagList, stageLabel, stageTone, healthLabel } from '../../format.js';
+import { rel, fmtTime, tagList, stageLabel, stageTone, healthLabel, channelLabel, priorityLabel } from '../../format.js';
 import { urgencyBand, URGENCY_BAND_LABEL } from '../../map-model.js';
+import { entityLabel } from '../../vocabulary.js';
 import { pushHash } from '../../route.js';
 const h = webjsx.createElement;
 
@@ -128,7 +129,7 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
   },
     h('input', {
       key: 'cb', type: 'checkbox', class: 'case-row-cb', title: 'Select for a bulk action',
-      'aria-label': 'Select case ' + c.ref + ' for a bulk action',
+      'aria-label': 'Select ' + entityLabel() + ' ' + c.ref + ' for a bulk action',
       checked: selected,
       onclick: (e) => { e.stopPropagation(); toggleBulkSelect(c.id, e.target.checked); },
     }),
@@ -140,7 +141,7 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
         // Only when it is actually raised: a "normal" chip on every row is
         // noise that makes the raised ones harder to spot.
         c.priority === 'urgent' || c.priority === 'high'
-          ? Chip({ key: 'pri', tone: 'warn', size: 'sm', children: c.priority })
+          ? Chip({ key: 'pri', tone: 'warn', size: 'sm', children: priorityLabel(c.priority) })
           : null,
         owner ? Chip({ key: 'own', tone: mine ? 'accent' : '', size: 'sm', children: mine ? 'you' : owner }) : null,
         h('span', { key: 'when', class: 'case-row-when', title: fmtTime(c.updated_at || c.created_at) }, rel(c.updated_at || c.created_at))
@@ -149,7 +150,7 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
         src ? Chip({ key: 'src', tone: src.tone, size: 'sm', tag: true, children: src.label }) : null,
         // The subject still shows when the lead line was given to the reason,
         // so no row ever hides what the report is actually about.
-        h('span', { key: 'meta' }, lead === subject ? c.channel : c.channel + ' - ' + subject),
+        h('span', { key: 'meta' }, lead === subject ? channelLabel(c.channel) : channelLabel(c.channel) + ' - ' + subject),
         fillPill(c.fill_rate),
         GuardrailChip({ c, expanded: expandedGuardrails })
       ),

@@ -9,6 +9,7 @@ import { Lede } from '/design/src/components/shell/atoms.js';
 import { state } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchDistribution } from '../api.js';
+import { countOf, entityLabel, entityLabelPlural } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
@@ -38,7 +39,7 @@ export function DistributionPanel() {
         const maxSp = species.length ? species[0].count : 0;
         const maxSym = symptoms.length ? symptoms[0].count : 0;
         return h('div', {},
-            Lede({ children: `${j.total_cases} open case(s), ${j.cases_with_species_or_symptom} with species or symptoms recorded` }),
+            Lede({ children: `${countOf(j.total_cases, 'open ' + entityLabel(), 'open ' + entityLabelPlural())}, ${j.cases_with_species_or_symptom} with species or symptoms recorded` }),
             species.length ? Section({ title: 'Species', children: [barRows(species, maxSp)] }) : null,
             symptoms.length ? Section({ title: 'Symptoms', children: [barRows(symptoms, maxSym)] }) : null);
     });

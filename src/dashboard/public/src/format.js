@@ -7,6 +7,7 @@
 // consumer view/panel module imports is present here.
 
 import { state } from './state.js';
+import { brandName } from './vocabulary.js';
 
 function tz() { return (state.config && state.config.tz) || 'Africa/Johannesburg'; }
 function tzLabel() { return (state.config && state.config.tz_label != null) ? state.config.tz_label : 'SAST'; }
@@ -137,6 +138,93 @@ const HEALTH_LABEL = {
 // design; the comment above says how to stop it firing.
 export function healthLabel(t) { return HEALTH_LABEL[t] || t; }
 
+// ---- the enums an operator reads -------------------------------------------
+//
+// A stored key is not a word. stageLabel and healthLabel above already hold
+// that line for two vocabularies; these three hold it for the rest, and they
+// are here rather than beside each caller because every one of them had
+// already been mapped SOMEWHERE and left raw somewhere else:
+//
+//   channel   -- mapped nowhere, rendered raw in eight places, including a
+//                reply box whose label read "Reply to contact on whatsapp"
+//                and, on a case taken by hand or through the public form,
+//                "Reply to contact on manual" / "on form" -- naming a channel
+//                that does not exist and cannot be replied on.
+//   priority  -- mapped in fields-editor.js's dropdown, raw in the case row's
+//                chip, so one screen showed "Urgent" and "urgent".
+//   case_type -- mapped in metrics-panel.js, raw in the clusters tooltip.
+//
+// An unmapped value falls through to a de-snaked form of its own key rather
+// than vanishing: a deployment-added channel or type must show as itself.
+
+function deSnake(s) { return String(s || '').replace(/_/g, ' '); }
+
+// 'manual' and 'form' are not apps and have no inbound channel -- they are how
+// a record came to exist. Naming them as places to reply is the bug this map
+// closes; callers that need the "reply on X" phrasing ask replyChannelLabel
+// below, which answers null for exactly those two.
+const CHANNEL_LABEL = {
+  whatsapp: 'WhatsApp',
+  discord: 'Discord',
+  manual: 'entered by hand',
+  form: 'the public form',
+  web: 'the public form',
+};
+export function channelLabel(c) { return CHANNEL_LABEL[c] || deSnake(c); }
+
+// The app to reply ON, or null when there is no such app. A case opened by an
+// operator or through the public web form has no channel back to the person.
+const REPLYABLE = { whatsapp: 'WhatsApp', discord: 'Discord' };
+export function replyChannelLabel(c) { return REPLYABLE[c] || null; }
+
+const PRIORITY_LABEL = { low: 'Low', normal: 'Normal', high: 'High', urgent: 'Urgent' };
+export function priorityLabel(p) { return PRIORITY_LABEL[p] || deSnake(p); }
+
+// Kept equal to fields-editor.js's own OPTION_LABEL for these five keys and to
+// metrics-panel.js's CASE_TYPE_LABEL -- 'unset' included, since a tooltip or a
+// table cell has to say something for a type nobody has set.
+const CASE_TYPE_LABEL = {
+  unset: 'Not set yet',
+  outbreak: 'Symptom cluster',
+  follow_up: 'Follow-up',
+  lab_sample: 'Lab sample',
+  import_alert: 'Import alert',
+};
+export function caseTypeLabel(t) { return CASE_TYPE_LABEL[t] || deSnake(t); }
+
+// Event kind and actor. These two lived in activity-panel.js, which is a panel
+// -- so handover-panel.js, rendering the same two vocabularies in its "Changed
+// this shift" rows, could not reach them and printed the raw keys instead
+// ("autonomy_change by agent"). They are labels, so they live with the labels
+// and the panel imports them like everyone else.
+//
+// The store carries kinds this map does not name (degraded_turn reaches the
+// screen today), so an unmapped kind reads as a WORD rather than as snake_case
+// sitting beside humanised labels in the same column.
+const EVENT_KIND_LABEL = {
+  inbound: 'Inbound', outbound: 'Reply', transition: 'Stage change',
+  note: 'Note', observation: 'Note', action: 'Action', autonomy_change: 'Autonomy',
+};
+export function eventKindLabel(kind) {
+  if (EVENT_KIND_LABEL[kind]) return EVENT_KIND_LABEL[kind];
+  const words = deSnake(String(kind || '').replace(/-+/g, ' ')).trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Event';
+}
+// The kinds a filter control can offer. Only the named ones: an unmapped kind
+// is something the store happens to hold, not a choice to put in a dropdown.
+export function eventKindOptions() {
+  return Object.entries(EVENT_KIND_LABEL).map(([id, label]) => ({ id, label }));
+}
+
+// 'agent' is the product, so it is named the way every other surface names it.
+// A function rather than a constant: state.config is not populated at module
+// eval time.
+export function actorLabel(actor) {
+  if (actor === 'agent') return brandName();
+  const known = { operator: 'Operator', contact: 'Contact', system: 'System' };
+  return known[actor] || deSnake(actor);
+}
+
 // Stage tone for the quick-filter pill strip -- stages are config-driven
 // (thatcher.config.yml), not a fixed enum, so this maps common stage name
 // shapes to a distinct tone each rather than an exhaustive per-stage table;
@@ -162,3 +250,57 @@ export function ageHoursOf(c) {
   const d = toDate(c.updated_at || c.created_at);
   return d ? (Date.now() - d.getTime()) / 3600000 : 0;
 }
+
+// ---- headline text: bounded, so one malformed record cannot take the screen
+//      down -----------------------------------------------------------------
+//
+// A subject is written by the agent from what a reporter said, so its length is
+// contact-influenced and nothing upstream bounds it. Rendered as the bare text
+// child of a WRAPPING FLEX container -- which is what both the case-detail
+// heading (h2.casey-case-ref, subject plus its action buttons on one line) and
+// the map rail's queue row (.tcase-why) are -- a long string with no break
+// opportunity in it becomes an anonymous flex item that the engine has to
+// measure at max-content and then re-wrap, and the cost is superlinear.
+//
+// Measured live over CDP against this dashboard: a 15,000-character subject
+// renders in about zero time, a 30,000-character one FREEZES the renderer
+// permanently -- the tab never recovers, no console error, nothing on screen.
+// The same 30,000 characters broken by spaces every ten render instantly, and
+// the same case with display:block on that heading renders instantly too, so
+// the trigger is the unbreakable run inside the wrapping flex box, not the
+// byte count. It is reachable from a single inbound message, so it is an
+// availability property of the operator console, not a cosmetic one.
+//
+// Even below the freeze it is not a heading: 30,000 characters measured 41,686
+// pixels tall, pushing every control on the case off the screen.
+//
+// So a headline is bounded here, once, for every surface that renders one. The
+// cap is far above any real subject (the seeded corpus's longest is 46
+// characters) and the truncation is STATED rather than silent -- the full value
+// is never the only copy on screen: the case-detail form's own Subject field is
+// an <input>, which is single-line, cheap at any length, and editable.
+const HEADLINE_MAX = 300;
+
+// Every text field the dashboard itself can write is capped at 4000 characters
+// server-side (server.js's MAX_LEN) and at 2000 in the report-field editor, so
+// a stored value longer than this did not come from any operator write and is
+// already outside the contract. The display bound sits AT the server's own cap
+// rather than below it: nothing a person could have typed here is ever cut.
+const FIELD_MAX = 4000;
+
+function bounded(s, max) {
+  const t = String(s == null ? '' : s);
+  if (t.length <= max) return t;
+  return t.slice(0, max) + '... (shortened for display, ' + t.length + ' characters in full)';
+}
+
+export function headline(s) { return bounded(s, HEADLINE_MAX); }
+
+// A report field's own value. Same failure mode as a heading and the same
+// bound-plus-real-flex-item fix: .casey-rep-editable is an inline-flex box
+// (value, pencil, provenance chip) and the value used to be its bare text
+// child, so a 200,000-character field measured at max-content on one
+// unbreakable line and froze the renderer -- witnessed live on a case carrying
+// one. Unlike a heading this is content an operator has to READ, so the bound
+// is the server's own write cap and the true length is stated.
+export function reportValue(s) { return bounded(s, FIELD_MAX); }

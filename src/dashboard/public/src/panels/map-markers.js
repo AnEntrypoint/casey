@@ -11,6 +11,8 @@
 import { setActiveId } from '../state.js';
 import { urgencyByCaseId, pinMatches, LOCATION_SOURCE_VALUES } from '../map-model.js';
 import { renderClusterLines } from './map-overlays.js';
+import { stageLabel } from '../format.js';
+import { EntityLabel } from '../vocabulary.js';
 
 // GREEN APPEARS ON EXACTLY ONE STATE, AND IT MEANS DONE.
 //
@@ -136,7 +138,7 @@ export function renderMapMarkers(mapState, filters) {
             // IMG; ours is a divIcon, so an `alt` option is silently dropped --
             // measured, not assumed (the first witness of this change came back
             // with alt null on a marker that did have role and tabindex).
-            title: `${p.ref} -- ${p.status}`,
+            title: `${p.ref} -- ${stageLabel(p.status)}`,
         });
         // The accessible NAME, set on the element Leaflet actually focuses.
         // Without it a screen reader announces eight identical "button"s and
@@ -146,7 +148,11 @@ export function renderMapMarkers(mapState, filters) {
         // store-owned enums/identifiers, never contact-authored text.
         m.on('add', () => {
             const el = m.getElement();
-            if (el) el.setAttribute('aria-label', `Report ${p.ref}, ${p.status}`);
+            // stageLabel, not the raw enum: the legend and the rail beside this
+            // map both say "in progress" / "Working on it" for the same value,
+            // and a pin that announces "in_progress" is the third vocabulary on
+            // one screen -- read aloud, to the reader least able to guess at it.
+            if (el) el.setAttribute('aria-label', `${EntityLabel()} ${p.ref}, ${stageLabel(p.status)}`);
         });
         // Select, never pop up. This is the queue-row click and the pin click
         // converging on ONE publisher (state.setActiveId), which is also what

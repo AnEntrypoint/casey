@@ -21,7 +21,8 @@ import * as webjsx from 'webjsx';
 import { SearchInput, Select, FilterPills } from 'ds/components/content.js';
 import { Dropdown } from 'ds/components/overlay-primitives.js';
 import { state, setFilt } from '../../state.js';
-import { stageLabel, stageTone } from '../../format.js';
+import { stageLabel, stageTone, channelLabel } from '../../format.js';
+import { entityLabelPlural } from '../../vocabulary.js';
 import { pushRecentSearch, loadRecentSearches, listNamedViews } from '../../saved-views.js';
 const h = webjsx.createElement;
 
@@ -35,7 +36,7 @@ function truncateLabel(label, max = 28) {
 
 function channelOptions() {
   const channels = [...new Set(state.allCases.map((c) => c.channel).filter(Boolean))].sort();
-  return channels.map((c) => ({ value: c, label: truncateLabel(c) }));
+  return channels.map((c) => ({ value: c, label: truncateLabel(channelLabel(c)) }));
 }
 const SOURCE_OPTIONS = [
   { value: 'manual', label: 'Manual (operator)' },
@@ -102,7 +103,7 @@ export function SearchBar({ resultCount = 0 } = {}) {
       SearchInput({
         value: state.filt.q,
         placeholder: 'Search a reference or what it is about ( / )',
-        label: 'Search cases',
+        label: 'Search ' + entityLabelPlural(),
         resultCount: countLabel,
         onInput: (v) => setFilt({ q: v }),
         onSubmit: (v) => { if (v) remember(v); },

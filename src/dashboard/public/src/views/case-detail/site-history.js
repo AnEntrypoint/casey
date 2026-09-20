@@ -7,8 +7,8 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Table } from '/design/src/components/content.js';
 import { state, setSiteHistory } from '../../state.js';
 import { fetchSiteHistory } from '../../api.js';
-import { rel, stageLabel } from '../../format.js';
-import { brandName } from '../../vocabulary.js';
+import { rel, stageLabel, channelLabel } from '../../format.js';
+import { brandName, entityLabelPlural } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
 export function loadSiteHistory(caseId) {
@@ -26,7 +26,7 @@ export function SiteHistoryPanel({ onOpenCase, key } = {}) {
     // and it belongs here too.
     const rows = visits.map(v => [
         h('button', { type: 'button', class: 'casey-linklike', onclick: () => onOpenCase && onOpenCase(v.id) }, v.ref),
-        (v.channel || '') + ' - ' + (v.status ? stageLabel(v.status) : '') + ' - reported ' + rel(v.reported_at),
+        channelLabel(v.channel) + ' - ' + (v.status ? stageLabel(v.status) : '') + ' - reported ' + rel(v.reported_at),
         (v.reasons || []).join(', ')
     ]);
     return h('div', { key, class: 'casey-site-history' },
@@ -35,7 +35,8 @@ export function SiteHistoryPanel({ onOpenCase, key } = {}) {
         // logged into -- every other operator-facing surface reads
         // dashboard_ui.brand, and this line was rendering "casey thinks" on a
         // screen branded Herd Health.
-        h('p', { class: 'casey-hint' }, 'Other reports ' + brand + ' thinks are the same place, most recent first -- any reporter may have visited, not only whoever opened this case.'),
-        Table({ headers: ['ref', 'when', 'why'], rows })
+        h('p', { class: 'casey-hint' }, 'Other ' + entityLabelPlural() + ' ' + brand + ' thinks are the same place, most recent first -- any reporter may have visited, not only whoever opened this one.'),
+        // Lower-case column headers read as field names rather than as words.
+        Table({ headers: ['Reference', 'When', 'Why it matched'], rows })
     );
 }

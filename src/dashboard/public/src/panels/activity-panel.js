@@ -11,30 +11,19 @@ import { Icon } from '/design/src/components/shell.js';
 import { state, setActiveId } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchActivity } from '../api.js';
-import { fmtTime, rel } from '../format.js';
+import { fmtTime, rel, eventKindLabel, eventKindOptions, actorLabel } from '../format.js';
 import { eventIcon, eventTone } from '../icons-map.js';
-import { brandName } from '../vocabulary.js';
+import { entityLabel } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
-const ACT_KIND_LABEL = { inbound: 'Inbound', outbound: 'Reply', transition: 'Stage change', note: 'Note', observation: 'Note', action: 'Action', autonomy_change: 'Autonomy' };
-
-// The store carries kinds this map does not name (degraded_turn is one that
-// reaches the screen today). An unmapped kind reads as a word, never as the
-// raw snake_case key sitting beside humanised labels in the same column.
-function kindLabel(kind) {
-    if (ACT_KIND_LABEL[kind]) return ACT_KIND_LABEL[kind];
-    const words = String(kind || '').replace(/[_-]+/g, ' ').trim();
-    return words ? words.charAt(0).toUpperCase() + words.slice(1) : 'Event';
-}
-
-// Config-driven brand label for the 'agent' actor (dashboard_ui.brand, same
-// fallback as app-view.js/case-list-view.js) -- a function, not a module-
-// level constant, since state.config isn't populated yet at module-eval
-// time. Casey's own default and uhh declare no dashboard_ui, so this stays
-// the literal 'casey' for them.
+// kindLabel and the actor vocabulary used to live here, which meant
+// handover-panel.js -- rendering the same two enums in its "Changed this shift"
+// rows -- could not reach them and printed the raw keys. They are in format.js
+// now, beside stageLabel and healthLabel, and this panel reads them from there.
+const kindLabel = eventKindLabel;
 function actorLabels() {
-    return { agent: brandName(), operator: 'Operator', contact: 'Contact', system: 'System' };
+    return { agent: actorLabel('agent'), operator: 'Operator', contact: 'Contact', system: 'System' };
 }
 
 let filters = { kind: '', actor: '' };
@@ -54,7 +43,7 @@ function ActivityRow(e, i) {
         class: 'ds-activity-row ds-activity-tone--' + eventTone(e.kind),
         tabindex: e.case_id ? '0' : null,
         role: e.case_id ? 'button' : null,
-        'aria-label': e.case_id ? 'open case for this event' : null,
+        'aria-label': e.case_id ? ('Open the ' + entityLabel() + ' this happened on') : null,
         onclick: e.case_id ? () => setActiveId(e.case_id) : null,
         onkeydown: e.case_id ? (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); setActiveId(e.case_id); } } : null,
     },
@@ -62,7 +51,7 @@ function ActivityRow(e, i) {
         h('div', { class: 'ds-activity-body' },
             h('div', { class: 'ds-activity-top' },
                 Chip({ tone: eventTone(e.kind), size: 'sm', children: kindLabel(e.kind) }),
-                h('span', { class: 'ds-activity-who' }, actorLabels()[e.actor] || e.actor || ''),
+                h('span', { class: 'ds-activity-who' }, actorLabel(e.actor)),
                 h('span', { class: 'ds-activity-when', title: fmtTime(e.created_at) }, rel(e.created_at))),
             (e.text || '').trim() ? h('div', { class: 'ds-activity-text' }, (e.text || '').slice(0, 200)) : null));
 }
@@ -72,7 +61,7 @@ export function ActivityPanel() {
     const filterRow = h('div', { class: 'ds-activity-filters' },
         Select({
             key: 'k', placeholder: 'all kinds', value: filters.kind,
-            options: Object.entries(ACT_KIND_LABEL).map(([id, label]) => ({ id, label })),
+            options: eventKindOptions(),
             onChange: (v) => { filters.kind = v; loader.reload(); },
         }),
         Select({

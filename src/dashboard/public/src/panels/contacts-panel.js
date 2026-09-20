@@ -22,8 +22,9 @@ import { Btn, Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchContacts, postContactTier, postContactErase } from '../api.js';
-import { fmtTime } from '../format.js';
-import { toast } from '../toasts.js';
+import { fmtTime, channelLabel } from '../format.js';
+import { countOf, entityLabelPlural } from '../vocabulary.js';
+import { toast, failMsg } from '../toasts.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 
 const h = webjsx.createElement;
@@ -47,7 +48,7 @@ async function toggleTier(c) {
         // disagrees with the server.
         loader.reload();
     } catch (e) {
-        toast('Could not change tier: ' + (e.message || ''), 'err');
+        toast(await failMsg(e, 'The access level was not changed, so it is still ' + (c.tier === 'field_worker' ? 'field worker' : 'reporter') + '. Try again.'), 'err');
     }
     busyIds.delete(c.id); schedule();
 }
@@ -55,9 +56,14 @@ async function toggleTier(c) {
 async function erase(c) {
     const reason = await confirmDialog({
         title: "Erase this contact's data?",
-        message: "Irreversibly scrubs their identifying info (name, id, location check-ins) and any owner/present-person/photo/audio fields on their cases. The case reports themselves and the audit trail stay -- this only removes what could identify a specific person. This cannot be undone.",
+        // One noun for one thing: this said "their cases" and "the case reports"
+        // in consecutive clauses. And "PII" on the confirm button is the one
+        // piece of jargon in a dialog written for secretarial staff -- the
+        // button that opens this says "Erase personal details", so the button
+        // that commits it says the same words.
+        message: 'Irreversibly scrubs their identifying details (name, id, location check-ins) and any owner, present-person, photo and audio fields on their ' + entityLabelPlural() + '. What was reported and the audit trail stay -- this removes only what could identify a specific person. This cannot be undone.',
         inputLabel: 'Reason (optional, for the audit trail)',
-        confirmLabel: 'Erase PII', danger: true,
+        confirmLabel: 'Erase personal details', danger: true,
     });
     if (reason === null) return;
     busyIds.add(c.id); schedule();
@@ -65,13 +71,19 @@ async function erase(c) {
         const j = await postContactErase(c.id, reason || '');
         const scrubbedN = j.casesScrubbed ? j.casesScrubbed.length : 0;
         const failedN = j.casesFailed ? j.casesFailed.length : 0;
-        toast(failedN > 0 ? `Erased -- ${scrubbedN} case(s) scrubbed, ${failedN} FAILED (retry needed)` : `Erased -- ${scrubbedN} case(s) scrubbed`, failedN > 0 ? 'err' : 'ok');
+        // The failure half used to read "N FAILED (retry needed)" -- shouted,
+        // and vague about what is still on disk. A half-finished erasure is a
+        // privacy fact, so it says plainly that identifying details remain and
+        // that pressing the same button again is what finishes the job.
+        toast(failedN > 0
+            ? `Partly erased: ${countOf(scrubbedN)} scrubbed, ${failedN} not. Identifying details are still stored on those -- run Erase again to finish.`
+            : `Erased. ${countOf(scrubbedN)} scrubbed.`, failedN > 0 ? 'err' : 'ok');
         // The name/number cell for this row is exactly what was just scrubbed,
         // so leaving the old value on screen would show identifying text the
         // server no longer holds.
         loader.reload();
     } catch (e) {
-        toast('Could not erase contact: ' + (e.message || ''), 'err');
+        toast(await failMsg(e, 'Nothing was erased -- this contact\'s details are all still stored. Try again.'), 'err');
     }
     busyIds.delete(c.id); schedule();
 }
@@ -98,7 +110,7 @@ function who(c) {
     // postReport opens those), and an unnamed contact on any other channel
     // would have been mislabelled by a fixed string.
     const arrived = c.created_at ? fmtTime(c.created_at) : 'date unknown';
-    const via = c.channel === 'web' ? 'Public form' : (c.channel ? 'Via ' + c.channel : 'Channel not recorded');
+    const via = c.channel === 'web' ? 'Public form' : (c.channel ? 'Via ' + channelLabel(c.channel) : 'Channel not recorded');
     return h('div', { class: 'ds-contact-anon' },
         h('span', {}, 'No name or number given'),
         h('span', { class: 'ds-contact-anon-sub' }, via + ', ' + arrived));
@@ -117,7 +129,7 @@ export function ContactsPanel() {
                 const erased = c.external_id_formatted === '[erased]';
                 return [
                     who(c),
-                    c.channel || '',
+                    channelLabel(c.channel),
                     // Only the exception gets chip chrome. Nearly every row is
                     // a plain reporter, and a chip repeated down the whole
                     // column stops marking anything; plain text keeps the

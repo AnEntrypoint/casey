@@ -10,6 +10,8 @@ import { state, schedule } from '../../state.js';
 import { toast, replyUndoToast, failMsg } from '../../toasts.js';
 import { api, postDraftApprove, postDraftDiscard } from '../../api.js';
 import { confirmDialog } from '../../components/dialog-shell.js';
+import { channelLabel, replyChannelLabel } from '../../format.js';
+import { entityLabel } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
 const REPLY_MAXLEN = 4096;
@@ -70,7 +72,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
         try {
             const r = await api('/api/cases/' + encodeURIComponent(c.id) + '/reply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t }) });
             state._replySending = false;
-            if (!r.ok) { toast(await failMsg(r, 'send failed'), 'err'); schedule(); return; }
+            if (!r.ok) { toast(await failMsg(r, 'The reply was not sent and nothing was recorded. Your text is still in the box -- try again.'), 'err'); schedule(); return; }
             const j = await r.json().catch(() => ({}));
             state._replyDraft = '';
             // Three genuinely different outcomes, and only one of them is
@@ -98,17 +100,17 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
                     const t = text.trim();
                     try {
                         const j = await postDraftApprove(c.id, t);
-                        if (j.delivered) toast('Draft sent', 'ok');
+                        if (j.delivered) toast('Draft sent to the contact.', 'ok');
                         else toast(j.sent
                             ? 'Saved to the timeline, but the channel refused it. The contact has NOT received this.'
                             : 'Saved to the timeline only. This console is not attached to the messaging channels, so nothing was sent to the contact.', 'warn');
                         if (onReload) await onReload(c.id);
-                    } catch (e) { toast(await failMsg(e, 'approve failed'), 'err'); }
+                    } catch (e) { toast(await failMsg(e, 'The draft was not sent and is still waiting here. Try again.'), 'err'); }
                 } }),
                 Btn({ size: 'sm', variant: 'ghost', children: 'Discard', onClick: async () => {
                     if (await confirmDialog({ title: 'Discard this draft?', message: 'It will not be sent. The case stays flagged for a human.', confirmLabel: 'Discard', danger: true }) === null) return;
-                    try { await postDraftDiscard(c.id); toast('draft discarded', 'ok'); if (onReload) await onReload(c.id); }
-                    catch (e) { toast(await failMsg(e, 'discard failed'), 'err'); }
+                    try { await postDraftDiscard(c.id); toast('Draft discarded. Nothing was sent, and this still needs a person.', 'ok'); if (onReload) await onReload(c.id); }
+                    catch (e) { toast(await failMsg(e, 'The draft could not be discarded, so it is still waiting here. Try again.'), 'err'); }
                 } })
             )
         })
@@ -116,7 +118,17 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
 
     return h('div', { key, class: 'casey-reply-box' },
         draftBanner,
-        h('label', { class: 'casey-reply-label' }, 'Reply to contact on ' + c.channel),
+        // The channel is a stored key, and two of its values are not apps at
+        // all. This read 'Reply to contact on ' + c.channel, so it rendered
+        // "on whatsapp" in lower case, and on a record entered by hand or
+        // through the public form it read "Reply to contact on manual" /
+        // "on form" -- naming a channel that does not exist and that nothing
+        // typed here can reach. When there is no app to reply on, the label
+        // says so instead of inventing one.
+        h('label', { class: 'casey-reply-label' }, replyChannelLabel(c.channel)
+            ? 'Reply to contact on ' + replyChannelLabel(c.channel)
+            : 'Reply to contact'),
+        replyChannelLabel(c.channel) ? null : Alert({ kind: 'warn', children: 'This ' + entityLabel() + ' came in ' + channelLabel(c.channel) + ', so there is no app to reply on. Anything sent here is recorded on the timeline only -- reach the person another way.' }),
         TextField({
             multiline: true, rows: 3, value: text, maxLength: REPLY_MAXLEN,
             // "Send a message as a human operator..." was the box explaining

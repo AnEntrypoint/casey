@@ -36,6 +36,7 @@ import {
     mapStateRef, refresh, discardMap, counts, loadSummary, loadError, hasLoadedOnce,
     unresolvedSummaryText,
 } from './map-view-state.js';
+import { countOf } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
@@ -153,7 +154,7 @@ function mapStateNote() {
     if (!c.plotted) {
         const summary = loadSummary();
         if (summary.unresolvedCount) {
-            return { kind: 'info', text: `Nothing can be placed on the map yet -- all ${summary.unresolvedCount} report(s) are missing a usable location. They are listed below.` };
+            return { kind: 'info', text: `Nothing can be placed on the map yet -- all ${countOf(summary.unresolvedCount)} ${summary.unresolvedCount === 1 ? 'is' : 'are'} missing a usable location. They are listed below.` };
         }
         // "No reports in this time window yet" names the time window as the
         // reason. On All time -- the default -- there is no window, so that
@@ -168,7 +169,12 @@ function mapStateNote() {
     }
     if (!c.visible) return { kind: 'info', text: 'No reports match the filters you have on.' };
     if (mapStateRef.current && mapStateRef.current.tilesFailing) {
-        return { kind: 'warn', text: 'The map background is not loading -- the reports below are still correct and still up to date, only the map picture behind them is missing.' };
+        // "still correct and still up to date" was a claim this panel cannot
+        // make: the tiles and the pin data are separate fetches, and
+        // map-view-state.js has its own stale-data notice precisely because the
+        // pins CAN be out of date. What is actually known is which of the two
+        // failed, so that is what it says.
+        return { kind: 'warn', text: 'The map background is not loading. The pins and the list below come from this dashboard and are unaffected -- only the map picture behind them is missing.' };
     }
     return null;
 }
@@ -197,7 +203,7 @@ function mapTextEquivalent() {
             + [3, 2, 1].map((b) => c.bands[b] + ' marked "' + URGENCY_BAND_LABEL[b] + '"').join(', ')
             + ', and ' + c.bands[0] + ' with nothing chasing them.');
     }
-    parts.push(c.attention + ' report(s) are in the "' + QUEUE_NAME + '" list beside the map, and ' + c.today + ' came in today.');
+    parts.push(countOf(c.attention) + (c.attention === 1 ? ' is' : ' are') + ' in the "' + QUEUE_NAME + '" list beside the map, and ' + c.today + ' came in today.');
     // The same sentence the no-location disclosure shows, not a second wording
     // of it: a report that cannot be plotted is a surveillance blind spot, and
     // it must be as audible as it is visible.

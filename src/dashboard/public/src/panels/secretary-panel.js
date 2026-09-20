@@ -25,7 +25,7 @@ import { SearchInput } from 'ds/components/content.js';
 import { state, setActiveId, schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchSecretaryQueue } from '../api.js';
-import { fmtDur, fmtTime } from '../format.js';
+import { fmtDur, fmtTime, channelLabel } from '../format.js';
 
 const h = webjsx.createElement;
 
@@ -93,7 +93,7 @@ function caseValues(c) {
     return [
         c.ref || '',
         c.subject || '(no subject)',
-        c.channel || '',
+        channelLabel(c.channel),
         c.assignee || h('span', { class: 'ds-muted' }, 'unassigned'),
         fmtDur(c.wait_ms),
         c.reason || '',

@@ -18,7 +18,17 @@
 // server, and telling someone to check their connection when the server is
 // broken sends them to fix the wrong thing. The sentence states only what is
 // actually known.
+// The one exception to "keep the detail verbatim": the header above cites
+// "Failed to fetch" as a browser internal an operator should never have been
+// shown, and this function was still passing that exact string through into its
+// own parenthetical. It is the browser's way of saying the request never left
+// the device, which IS a fact worth stating -- in words, once, rather than as
+// the engine's own phrasing. Every other message is a real sentence from this
+// dashboard's own server and passes through untouched.
+const BROWSER_INTERNAL = /^(failed to fetch|networkerror.*|load failed|the operation was aborted.*|signal is aborted.*)$/i;
+
 export function panelError(what, e) {
-  const detail = String((e && e.message) || '').trim()
-  return `Could not load ${what}. Try again in a moment.` + (detail ? ` (${detail})` : '')
+  const raw = String((e && e.message) || '').trim();
+  const detail = BROWSER_INTERNAL.test(raw) ? 'the request never reached the server' : raw;
+  return `Could not load ${what}. Try again in a moment.` + (detail ? ` (${detail})` : '');
 }
