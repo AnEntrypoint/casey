@@ -48,18 +48,27 @@ async function promptNewCase() {
   } catch (e) { toast('Could not create case: ' + (e.message || ''), 'err'); }
 }
 
-async function promptTag(id) {
+// BulkBar's own onPromptTag/onPromptNote contract: prompt for the text, then
+// invoke the caller's callback with it (the callback runs the actual bulk
+// tag/untag/note dispatch and owns the ids). These two used to take an `id`
+// and dispatch the API call themselves -- a leftover from a single-case
+// shape BulkBar never called them with. BulkBar always calls
+// onPromptTag/onPromptNote with a CALLBACK, never an id, so that old
+// signature ran api.postBulk([callback], ...): the function argument silently
+// serialized to `ids:[null]` over JSON, dispatching a tag/untag/note bulk
+// action against no case at all while still showing a success toast --
+// witnessed live: selecting a case, choosing Tag, confirming, and inspecting
+// the actual POST /api/cases/bulk body sent `{"ids":[null],...}`.
+async function promptTag(onTag) {
   const tag = ((await confirmDialog({ title: 'Add a tag', inputLabel: 'Tag' })) || '').trim();
   if (!tag) return;
-  try { await api.postBulk([id], 'tag', { tag }); toast('Tagged', 'ok'); await reloadCases(); }
-  catch (e) { toast('Could not tag: ' + (e.message || ''), 'err'); }
+  onTag(tag);
 }
 
-async function promptNote(id) {
+async function promptNote(onNote) {
   const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Note' })) || '').trim();
   if (!text) return;
-  try { await api.postNote(id, text); toast('Note saved', 'ok'); }
-  catch (e) { toast('Could not save note: ' + (e.message || ''), 'err'); }
+  onNote(text);
 }
 
 // setCases, not a bare field assignment: /api/cases has always returned the
