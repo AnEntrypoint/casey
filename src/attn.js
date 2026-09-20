@@ -208,18 +208,21 @@ function caseHints(c, now = Date.now()) {
   if (tags.includes(healthTag('unanswered_handoff_escalated'))) return { reason: 'A person was asked for a long time ago and still no one has replied. Please step in.', todo: 'A person was asked for a long time ago and still no one has replied. Step in below.' }
   if (tags.includes(healthTag('unanswered_handoff'))) return { reason: 'A person was asked for and no one has replied yet.', todo: 'A person was asked for and no one has replied. Reply below to take this one on.' }
   if (tags.includes('draft-pending') || tags.includes('unsent_draft') || tags.includes(healthTag('unsent_draft'))) return { reason: 'The AI helper drafted a reply. Review it, then send or change it.', todo: 'The AI helper prepared a reply but waits for a person. Check it, then send.' }
-  if (tags.includes(healthTag('incomplete_critical'))) return { reason: 'Active case but the visit-critical facts are still missing. Reach the farmer now.', todo: 'The visit-critical facts are still missing and the case is active. Try to reach the farmer now -- once they leave the site some facts cannot be recovered.' }
+  if (tags.includes(healthTag('incomplete_critical'))) return { reason: `Still active but the visit-critical facts are missing. Reach the reporter now.`, todo: 'The visit-critical facts are still missing and this one is still active. Try to reach the reporter now -- once they move on some facts cannot be recovered.' }
   if (tags.includes(healthTag('premature_complete'))) return { reason: 'The AI helper marked this done, but most of the visit facts are still blank. Worth a check.', todo: 'The conversation was marked complete, but most of the visit-critical facts were never recorded. Check the report -- it may need a follow-up message.' }
-  if (tags.includes(healthTag('abandoned_intake'))) return { reason: 'The farmer may have left. On-site facts are still missing.', todo: 'On-site facts are still missing and the farmer may be gone. Check if they are still reachable and ask for the most important detail (location or how to find the place).' }
+  if (tags.includes(healthTag('abandoned_intake'))) return { reason: 'The reporter may have moved on. On-site facts are still missing.', todo: 'On-site facts are still missing and the reporter may be gone. Check if they are still reachable and ask for the most important detail (location or how to find the place).' }
   if (c.status === 'waiting' && ageHours(c, now) >= 24) return { reason: 'No answer for over a day. A check-in may help.', todo: 'No answer for over a day. A check-in may help -- reply below.' }
   // Ahead of stuck and stale because it is the reason those two cannot be
   // trusted on this case: with unreadable timestamps neither was ever evaluated.
   // Says what the operator can actually act on -- the age is unknown, so read it
   // rather than wait for a clock that is not running.
-  if (tags.includes(healthTag('timestamp_corrupt'))) return { reason: 'This case\'s own dates are unreadable, so nothing can tell how long it has been waiting.', todo: 'The stored dates on this case are unreadable, so the usual "going cold" and "stuck too long" checks never ran on it. Open it and judge it by its messages instead.' }
-  if (tags.includes(healthTag('stuck'))) return { reason: 'This one has been in the same stage too long.', todo: 'This case has been in the same stage for a while. Check if it needs a push or can be closed.' }
+  if (tags.includes(healthTag('timestamp_corrupt'))) return { reason: 'This one\'s own dates are unreadable, so nothing can tell how long it has been waiting.', todo: 'The stored dates on this one are unreadable, so the usual "going cold" and "stuck too long" checks never ran on it. Open it and judge it by its messages instead.' }
+  if (tags.includes(healthTag('stuck'))) return { reason: 'This one has been in the same stage too long.', todo: 'This one has been in the same stage for a while. Check if it needs a push or can be closed.' }
   if (tags.includes(healthTag('stale'))) return { reason: 'No activity in a while. A check may be due.', todo: 'No activity for a while. Check if anything needs following up.' }
-  if (c.autonomy === 'observe') return { reason: 'The AI helper is only listening here. A reply has to come from you.', todo: 'This one is waiting for you. Read it and reply, or set Who answers to auto so it can answer.' }
+  // 'set Who answers to auto' named the stored enum value. The control's own
+  // option is worded "Answer on its own", which is what an operator following
+  // this instruction will actually be looking for in the dropdown.
+  if (c.autonomy === 'observe') return { reason: 'The AI helper is only listening here. A reply has to come from you.', todo: 'This one is waiting for you. Read it and reply, or set Who answers to "Answer on its own" so it can answer.' }
   if (c.autonomy === 'assisted') return { reason: 'The AI helper can draft, but you send. Open it to check.', todo: 'The AI helper can draft, but you send. Open it and check the draft.' }
   // Trailing detail-only states.
   if (c.status === 'resolved') return { reason: 'This one is marked done.', todo: 'This one is marked done. Close it if you are finished.' }
