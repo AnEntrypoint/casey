@@ -117,9 +117,39 @@
      full-width at the viewport bottom instead of near its trigger. #app keeps
      its own copy for the non-portaled component CSS that keys off a nearer
      ancestor. -->
+<div id="app" class="ds-247420 ds-app-surface"></div>
+<!-- FIRST PAINT ON A SLOW LINK. #app is empty until the module tree has
+     descended, and app.css is 97KB, so on the metered rural link this
+     deployment targets there was nothing at all on screen for the first ten to
+     twelve seconds -- a white page, no branding, no indicator, measured at
+     ~120kbps/400ms on a 360x640 viewport. An operator cannot tell that from a
+     broken deployment or a dead link, and the honest thing to show while the
+     shell is still arriving is that it is still arriving.
+     Hidden by a sibling selector the moment #app has any content of its own, so
+     it needs no JavaScript to clear and cannot be left behind by a render that
+     never happens. It sits AFTER #app for that selector to reach it, and it is
+     the only thing on screen while #app is empty. Its styles are inline
+     because the stylesheet that would style it is the slow download in
+     question. -->
+<style>
+#ds-boot{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  min-height:60vh;gap:10px;font:500 15px/1.4 system-ui,sans-serif;text-align:center;padding:24px}
+#ds-boot b{font-size:20px;font-weight:600}
+#ds-boot span{opacity:.7;font-weight:400;font-size:13px;max-width:24em}
+#app:not(:empty) ~ #ds-boot{display:none}
+</style>
+<div id="ds-boot" role="status" aria-live="polite">
+  <b>Herd Health</b>
+  <span>Still loading. On a slow connection this first load can take a while -- it is quicker next time.</span>
+</div>
+<!-- Leaflet is two classic parser-blocking scripts totalling ~150KB, and they
+     used to sit ABOVE #app, so the blank screen lasted until both had arrived
+     even though no map is needed to show a login form. Moved below the boot
+     notice so the first paint no longer waits on them; they stay ahead of
+     /src/main.js in document order, which is what guarantees window.L exists
+     before any module that reads it runs. -->
 <script src="/vendor/leaflet/leaflet.js"></script>
 <script src="/vendor/leaflet.markercluster/leaflet.markercluster.js"></script>
-<div id="app" class="ds-247420 ds-app-surface"></div>
 <!-- Copy the already-resolved root theme down onto the two elements that
      could not carry it at parse time. Placed after #app rather than in the
      head so both elements exist, and synchronous so it runs during parse,

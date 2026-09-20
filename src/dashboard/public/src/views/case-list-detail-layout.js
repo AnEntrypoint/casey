@@ -9,7 +9,8 @@
 import * as webjsx from 'webjsx';
 import { state, schedule, setActiveId, setCases } from '../state.js';
 import * as api from '../api.js';
-import { toast } from '../toasts.js';
+import { toast, failMsg } from '../toasts.js';
+import { entityLabel, EntityLabel, EntityLabelPlural } from '../vocabulary.js';
 import { CaseListView } from './case-list-view.js';
 import { CaseDetailView } from './case-detail-view.js';
 import { ViewTitle } from './view-title.js';
@@ -38,14 +39,17 @@ function openCase(id) {
 }
 
 async function promptNewCase() {
-  const subject = ((await confirmDialog({ title: 'New case', inputLabel: 'What is it about? (e.g. "sick cattle near Musina")' })) || '').trim();
+  // 'New case' here while help-overlay.js teaches the same control as the
+  // "new report" shortcut and the list it lands in is headed "All reports".
+  // The record has one configured name; every control that names it asks for it.
+  const subject = ((await confirmDialog({ title: 'New ' + entityLabel(), inputLabel: 'What is it about? (e.g. "sick cattle near Musina")' })) || '').trim();
   if (!subject) return;
   try {
     const created = await api.createCase({ subject });
-    toast('Case created', 'ok');
+    toast(EntityLabel() + ' created.', 'ok');
     await reloadCases();
     if (created && created.id) openCase(created.id);
-  } catch (e) { toast('Could not create case: ' + (e.message || ''), 'err'); }
+  } catch (e) { toast(await failMsg(e, 'The ' + entityLabel() + ' was not created. Nothing was saved -- try again.'), 'err'); }
 }
 
 // BulkBar's own onPromptTag/onPromptNote contract: prompt for the text, then
@@ -99,7 +103,11 @@ export function CaseListDetailLayout() {
     // the h1 the outline under it hangs off, and the name <main> carries. It
     // comes from the nav item that lands here, so a deployer's relabel renames
     // the page and the control together (same rule as a panel page).
-    ViewTitle(panelTitle('home_cases') || 'Cases'),
+    // The fallback was the literal 'Cases', directly above a pane whose own
+    // head reads "All reports" -- the page's h1 and the section under it naming
+    // one list two ways. It falls back to the record's configured name now, so
+    // the two agree by construction on any deployment.
+    ViewTitle(panelTitle('home_cases') || EntityLabelPlural()),
     h('div', { class: 'case-list-pane', key: 'list' },
       CaseListView({
         onPromptTag: promptTag,

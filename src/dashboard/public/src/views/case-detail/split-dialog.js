@@ -9,6 +9,7 @@ import { Dialog } from '../../components/dialog-shell.js';
 import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { fetchCaseEvents, postSplit } from '../../api.js';
+import { entityLabel } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
 // Only these four kinds are offered (see the filter in openSplitDialog), and
@@ -52,20 +53,20 @@ export function SplitDialog({ onReload, key } = {}) {
         if (!event_ids.length) { toast('Select at least one event to move', 'warn'); return; }
         try {
             const sj = await postSplit(caseId, event_ids, (state._splitSubject || '').trim(), (state._splitReason || '').trim());
-            toast('split: new case ' + sj.new_case_ref + ' (' + sj.moved_events + ' events moved)', 'ok');
+            toast('Split done. ' + sj.moved_events + ' timeline entries moved to a new ' + entityLabel() + ', ' + sj.new_case_ref + '.', 'ok');
             close();
             if (onReload) await onReload(caseId);
-        } catch (e) { toast(await failMsg(e, 'split failed'), 'err'); }
+        } catch (e) { toast(await failMsg(e, 'Nothing was split. Every entry is still on this ' + entityLabel() + ' -- try again.'), 'err'); }
     };
 
     return Dialog({
-        key, open, title: 'Split case', wide: true, onClose: close,
+        key, open, title: 'Split ' + entityLabel(), wide: true, onClose: close,
         children: !open ? null : [
-            h('p', { key: 'lead', class: 'casey-hint' }, 'Select events to move into a new case. The rest stay here.'),
-            TextField({ key: 'subj', label: 'Subject for new case (optional)', value: state._splitSubject || '', placeholder: 'e.g. sheep Upington cluster', onInput: (v) => { state._splitSubject = v; schedule(); } }),
+            h('p', { key: 'lead', class: 'casey-hint' }, 'Select the timeline entries to move into a new ' + entityLabel() + '. The rest stay here.'),
+            TextField({ key: 'subj', label: 'Subject for the new ' + entityLabel() + ' (optional)', value: state._splitSubject || '', placeholder: 'e.g. sheep Upington cluster', onInput: (v) => { state._splitSubject = v; schedule(); } }),
             h('div', { key: 'evbox', class: 'casey-split-evbox' },
-                events == null ? h('div', { class: 'casey-hint' }, 'Loading...') :
-                    !events.length ? h('div', { class: 'casey-hint' }, 'Nothing on this timeline can be moved to another case.') :
+                events == null ? h('div', { class: 'casey-hint' }, 'Loading the timeline...') :
+                    !events.length ? h('div', { class: 'casey-hint' }, 'Nothing on this timeline can be moved to another ' + entityLabel() + '.') :
                         events.map(e => h('label', { key: e.id, class: 'casey-split-row' },
                             h('input', { type: 'checkbox', checked: selected.has(e.id), onchange: () => toggle(e.id) }),
                             // Was '[' + e.kind + '] ' -- the store's own key,
@@ -77,7 +78,7 @@ export function SplitDialog({ onReload, key } = {}) {
             TextField({ key: 'reason', label: 'Reason (optional)', multiline: true, rows: 2, value: state._splitReason || '', placeholder: 'e.g. different species, separate location', onInput: (v) => { state._splitReason = v; schedule(); } }),
             h('div', { key: 'acts', class: 'ds-dialog-actions' },
                 Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: close }),
-                Btn({ key: 'ok', variant: 'primary', children: 'Split case', onClick: confirm })
+                Btn({ key: 'ok', variant: 'primary', children: 'Split ' + entityLabel(), onClick: confirm })
             )
         ]
     });

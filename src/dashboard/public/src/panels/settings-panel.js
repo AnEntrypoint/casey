@@ -10,7 +10,7 @@ import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { state, schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchThresholds, putThresholds } from '../api.js';
-import { toast } from '../toasts.js';
+import { toast, failMsg } from '../toasts.js';
 
 const h = webjsx.createElement;
 
@@ -85,7 +85,7 @@ async function save() {
         // draft on screen is what was stored.
         loader.reload();
     } catch (e) {
-        toast('Save failed: ' + (e.message || ''), 'err');
+        toast(await failMsg(e, 'The deadlines were not saved, so the sweep is still using the previous values. Try again.'), 'err');
     }
     saving = false; schedule();
 }

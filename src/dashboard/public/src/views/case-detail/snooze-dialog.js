@@ -9,6 +9,8 @@ import { Dialog } from '../../components/dialog-shell.js';
 import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { postSnooze } from '../../api.js';
+import { entityLabel } from '../../vocabulary.js';
+import { QUEUE_NAME } from '../../map-model.js';
 const h = webjsx.createElement;
 
 export function openSnoozeDialog(c) { state._snoozeDialogFor = c.id; state._snoozeMinutes = ''; schedule(); }
@@ -22,15 +24,17 @@ export function SnoozeDialog({ onReload, key } = {}) {
         if (!Number.isFinite(minutes) || minutes <= 0) { toast('Enter a positive number of minutes', 'warn'); return; }
         try {
             await postSnooze(caseId, minutes);
-            toast('Snoozed');
+            toast('Snoozed. It is out of the "' + QUEUE_NAME + '" list until then.');
             close();
             if (onReload) await onReload(caseId);
-        } catch (e) { toast(await failMsg(e, 'Could not snooze this case'), 'warn'); }
+        } catch (e) { toast(await failMsg(e, 'The snooze was not set, so this is still in the "' + QUEUE_NAME + '" list. Try again.'), 'warn'); }
     };
     return Dialog({
-        key, open, title: 'Snooze this case', onClose: close,
+        key, open, title: 'Snooze this ' + entityLabel(), onClose: close,
         children: !open ? null : [
-            h('p', { key: 'lead' }, 'Hide it from the "Needs a person" list for a while without losing it. A case where someone asked for a person is never hidden, even snoozed.'),
+            // QUEUE_NAME, not a hand-typed copy of it: map-model.js owns the
+            // list's one name precisely so a dialog cannot drift from it.
+            h('p', { key: 'lead' }, 'Hide it from the "' + QUEUE_NAME + '" list for a while without losing it. A ' + entityLabel() + ' where someone asked for a person is never hidden, even snoozed.'),
             TextField({ key: 'minutes', label: 'Minutes from now (e.g. 60 for 1 hour, 1440 for a day)', type: 'number', value: state._snoozeMinutes || '', placeholder: '240', onInput: (v) => { state._snoozeMinutes = v; schedule(); } }),
             h('div', { key: 'acts', class: 'ds-dialog-actions' },
                 Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: close }),

@@ -29,10 +29,13 @@ export function todoHintText(c) {
     if (tags.includes('draft-pending')) return `${brand} drafted a reply -- review it before it sends. Approve or discard it below.`;
     if (tags.includes('health:unanswered_handoff_escalated')) return 'A person was asked for a long time ago and still no one has replied. Step in below.';
     if (tags.includes('health:unanswered_handoff')) return 'A person was asked for and no one has replied. Reply below to take this one on.';
-    if (tags.includes('health:incomplete_critical')) return 'Some critical facts are still missing and the case is active. Try to reach the reporter now -- once they move on some facts cannot be recovered.';
+    if (tags.includes('health:incomplete_critical')) return 'Some critical facts are still missing and this one is still active. Try to reach the reporter now -- once they move on some facts cannot be recovered.';
     if (tags.includes('health:abandoned_intake')) return 'Critical facts are still missing and the reporter may be gone. Check if they are still reachable and ask for the most important detail.';
     if (c.status === 'waiting' && ageHoursOf(c) >= 24) return 'No answer for over a day. A check-in may help -- reply below.';
-    if (tags.includes('health:stuck')) return 'This case has been in the same stage for a while. Check if it needs a push or can be closed.';
+    // Every other line in this ladder says "this one"; these two said "the case"
+    // and "this case", which is the record's other name arriving inside a single
+    // list of sentences an operator reads one of.
+    if (tags.includes('health:stuck')) return 'This one has been in the same stage for a while. Check if it needs a push or can be closed.';
     if (tags.includes('health:stale')) return 'No activity for a while. Check if anything needs following up.';
     // "set Who answers to auto" named the stored key. The control is now
     // labelled "Who answers" (it was "Autonomy", so this line pointed at a

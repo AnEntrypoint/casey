@@ -8,13 +8,14 @@ import { openModal } from '../state.js';
 import { setHomeViewRoute, openPanelRoute, closePanelRoute } from '../route.js';
 import * as api from '../api.js';
 import { toast, failMsg } from '../toasts.js';
+import { entityLabel, EntityLabel, EntityLabelPlural } from '../vocabulary.js';
 
 // main.js registers case-list-detail-layout.js's promptNewCase() here at boot;
 // the indirection avoids a circular import (nav-config -> case-list-detail-
 // layout -> case-list-view -> filters-bar -> nav-config). The fallback only
 // fires if the New case control is pressed before boot has registered it,
 // which is why it says what happened rather than doing nothing.
-let _openIntakeNew = () => toast('The dashboard is still starting up. Try New case again in a moment.', 'err');
+let _openIntakeNew = () => toast('The dashboard is still starting up. Try New ' + entityLabel() + ' again in a moment.', 'err');
 export function registerOpenIntakeNew(fn) { _openIntakeNew = fn; }
 function openIntakeNew() { _openIntakeNew(); }
 
@@ -110,7 +111,10 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
         // siblings of it.
         { key: 'geo', glyph: Icon('hash', { size: 15 }), label: 'Hotspots', onClick: (e) => navClick(e, () => openOnMap('geo')), active: onMapHome && state.railMode === 'geo', indent: true },
         { key: 'clusters', glyph: Icon('link', { size: 15 }), label: 'Related reports', onClick: (e) => navClick(e, () => openOnMap('clusters')), active: onMapHome && state.railMode === 'clusters', count: clustersCount, indent: true },
-        { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: 'Cases', onClick: (e) => navClick(e, () => { closePanelRoute(); setHomeViewRoute('cases'); }), active: state.homeView === 'cases' && !state.activePanel, ariaLabel: 'Case list view' },
+        // Was labelled 'Cases' with ariaLabel 'Case list view', landing on a
+        // pane headed "All reports" that the help card teaches as the report
+        // list. Every label naming the record asks the config for its name.
+        { key: 'home_cases', glyph: Icon('rows', { size: 15 }), label: EntityLabelPlural(), onClick: (e) => navClick(e, () => { closePanelRoute(); setHomeViewRoute('cases'); }), active: state.homeView === 'cases' && !state.activePanel, ariaLabel: EntityLabel() + ' list view' },
       ],
     },
     {
@@ -144,7 +148,10 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
 // moved house.
 function rawActionItems({ refreshAll } = {}) {
   return [
-    { key: 'new_case', glyph: Icon('plus', { size: 15 }), label: 'New case', onClick: openIntakeNew, ariaLabel: 'Add a case manually', primary: true },
+    // help-overlay.js teaches this control's keyboard shortcut as "n - new
+    // report" while the button itself read "New case", so the help card named a
+    // control that does not exist under that name.
+    { key: 'new_case', glyph: Icon('plus', { size: 15 }), label: 'New ' + entityLabel(), onClick: openIntakeNew, ariaLabel: 'Add a ' + entityLabel() + ' by hand', primary: true },
     { key: 'focus', glyph: Icon('activity', { size: 15 }), label: 'Focus', onClick: toggleInboxMode, active: state.inboxMode, ariaLabel: 'Show only what needs attention' },
     { key: 'export', glyph: Icon('download', { size: 15 }), label: 'Export', href: '/api/cases/export.csv' },
     { key: 'sweep', glyph: Icon('refresh', { size: 15 }), label: 'Sweep now', onClick: runSweep, ariaLabel: 'Run health-guardrail sweep now' },

@@ -19,7 +19,10 @@ const loader = createPanelLoader({
     // Both strings named the same thing two ways -- "related reports" loading
     // "related-case groups" -- in one call to one loader.
     what: () => 'the related ' + entityLabelPlural(),
-    label: () => 'Looking for related ' + entityLabelPlural(),
+    // Lower case to match the other twelve panel spinner labels, which are all
+    // "loading <thing>". The old one said "related-case groups" while `what`
+    // above said "related reports" -- one loader naming one thing two ways.
+    label: () => 'loading related ' + entityLabelPlural(),
     fetch: fetchClusters,
     apply: (j) => { state._clusters = j; },
 });

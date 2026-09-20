@@ -91,5 +91,8 @@ export async function openDispatchPicker(mapState, caseId, caseLat, caseLon) {
     try {
         await postDispatch(caseId, { worker_id: picked.workerId, note: picked.note });
         toast('Dispatch suggested. ' + ((worker && worker.display_name) || 'The worker') + ' will hear about it on their own next reply-in.', 'ok');
-    } catch (e) { toast('Dispatch error: ' + e.message, 'err'); }
+    // 'Dispatch error: ' + e.message was a bare "error" plus a raw exception.
+    // Nothing was suggested and nobody was told, which is what the operator has
+    // to know before they go and phone the worker themselves.
+    } catch (e) { toast('The suggestion was not recorded, so nobody has been told. Try again, or contact the worker directly.', 'err'); }
 }

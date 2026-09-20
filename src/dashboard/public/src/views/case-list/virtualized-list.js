@@ -6,6 +6,7 @@
 import * as webjsx from 'webjsx';
 import { CaseRow } from './case-row.js';
 import { schedule } from '../../state.js';
+import { EntityLabelPlural } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
 const ROW_HEIGHT = 64;      // px, matches .case-row's min-height in app.css
@@ -59,7 +60,7 @@ export function VirtualizedCaseList({ cases, containerHeight = 560, expandedGuar
 
   return h('div', {
     class: 'ds-case-list-scroll', style: 'max-height:' + containerHeight + 'px',
-    role: 'list', 'aria-label': 'Cases', ref: refFn, onscroll: onScroll,
+    role: 'list', 'aria-label': EntityLabelPlural(), ref: refFn, onscroll: onScroll,
   },
     h('div', { key: 'spine', class: 'ds-case-list-spine', style: 'height:' + totalHeight + 'px' },
       h('div', { key: 'window', style: 'transform:translateY(' + topPad + 'px)' },
@@ -73,7 +74,7 @@ export function VirtualizedCaseList({ cases, containerHeight = 560, expandedGuar
 // the list is small enough that virtualization overhead isn't worth it (a
 // short list renders every row directly -- no scroll-window bookkeeping).
 export function PlainCaseList({ cases, expandedGuardrails, onToggleGuardrails }) {
-  return h('div', { class: 'ds-case-list-plain', role: 'list', 'aria-label': 'Cases' },
+  return h('div', { class: 'ds-case-list-plain', role: 'list', 'aria-label': EntityLabelPlural() },
     ...cases.map((c) => CaseRow({ c, expandedGuardrails: expandedGuardrails === c.id, onToggleGuardrails })));
 }
 
