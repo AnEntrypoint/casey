@@ -295,6 +295,12 @@ function brandShellHead(html) {
     .replace(/<title>[\s\S]*?<\/title>/i, () => `<title>${name}</title>`)
     .replace(/(<meta\s+name="apple-mobile-web-app-title"\s+content=")[^"]*(")/i, (_m, a, b) => a + name + b)
     .replace(/(<meta\s+name="theme-color"\s+content=")[^"]*(")/i, (_m, a, b) => a + esc(BRAND.ground) + b)
+    // The pre-JS boot notice (index.html's #ds-boot) is the FIRST thing an
+    // operator sees on a slow link, seconds before the SPA can read the gated
+    // /api/config, so the deployer's brand is rewritten into it here with the
+    // title and the apple-mobile title. Without this the one screen that is up
+    // for ten seconds is the one screen still saying casey.
+    .replace(/(<b id="ds-boot-brand">)[^<]*(<\/b>)/i, (_m, a, b) => a + name + b)
 }
 
 // WHERE THE BASEMAP COMES FROM, resolved server-side and handed to the client

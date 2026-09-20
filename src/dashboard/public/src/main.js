@@ -15,6 +15,7 @@ import * as api from './api.js';
 import { checkHandoffs, setInboxBadge, setBaseTitle } from './components/handoff-banner.js';
 import { registerRefreshAll, registerOpenIntakeNew } from './views/nav-config.js';
 import { openCase, closeCase, reloadCases as reloadCaseListRows, promptNewCase } from './views/case-list-detail-layout.js';
+import { brandName, entityLabelPlural } from './vocabulary.js';
 
 import { StatsPanel } from './panels/stats-panel.js';
 import { SettingsPanel } from './panels/settings-panel.js';
@@ -166,9 +167,13 @@ async function loadCaseyConfig() {
     // refresh, silently reverting any direct assignment made here. Live-
     // witnessed: a direct document.title= here appeared to work for one
     // instant then reverted to "casey - cases" on the next badge/poll tick.
+    // Both halves come from the config, and the leaf's fallback is the RECORD'S
+    // own configured name rather than the literal "cases" -- a deployment that
+    // sets entity_label and no leaf used to get a browser tab reading
+    // "<brand> - cases" over a dashboard whose every heading says reports.
     const brand = cfg?.dashboard_ui?.brand;
     const leaf = cfg?.dashboard_ui?.leaf;
-    if (brand || leaf) setBaseTitle(`${brand || 'casey'} - ${(leaf || 'cases').toLowerCase()}`);
+    if (brand || leaf) setBaseTitle(`${brand || brandName()} - ${(leaf || entityLabelPlural()).toLowerCase()}`);
   } catch { /* fall back to shipped defaults already in state */ }
 }
 

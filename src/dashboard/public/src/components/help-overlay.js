@@ -40,6 +40,11 @@ function KeyRow({ k, desc }) {
     return h('li', { key: k }, h('kbd', { class: 'ds-kbd' }, k), ' - ', desc);
 }
 
+// A glossary key as a reader sees it. Only the acronyms need naming; everything
+// else is a real word once the underscores are spaces.
+const TERM_WORD = { sla: 'SLA', external_id: 'external ID' };
+function termWord(term) { return TERM_WORD[term] || term.replace(/_/g, ' '); }
+
 /**
  * @param {Object} props
  * @param {boolean} props.open
@@ -69,7 +74,7 @@ export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
                 h('li', { key: '1' }, h('b', {}, 'Claim'), ' - takes it as yours, so nobody else answers the same person. Once it is yours the button is replaced by the word ', h('b', {}, 'Yours'), '; on somebody else\'s report it says who has it.'),
                 h('li', { key: '2' }, h('b', {}, 'Snooze'), ' - hides it from the list for a set number of minutes. A report where someone asked for a real person is never hidden.'),
                 h('li', { key: '3' }, h('b', {}, 'Change the stage'), ' - the row of arrow buttons under the report, one per stage it can move to next, such as ', h('b', {}, '-> Done'), '. Moving it by hand does not message the person.'),
-                h('li', { key: '4' }, h('b', {}, 'Reply to contact on whatsapp'), ' - the message box further down (it names whichever app they wrote from). Type there and press ', h('b', {}, 'Send reply'), ', then read the note that comes back: it says whether the message reached them.'),
+                h('li', { key: '4' }, h('b', {}, 'Reply to contact on WhatsApp'), ' - the message box further down. It names whichever app they wrote from, so on a Discord report it reads ', h('b', {}, 'Reply to contact on Discord'), ', and on one entered by hand or through the public form it reads just ', h('b', {}, 'Reply to contact'), ' and warns you there is no app to reply on. Type there and press ', h('b', {}, 'Send reply'), ', then read the note that comes back: it says whether the message reached them.'),
                 h('li', { key: '5' }, h('b', {}, 'note'), ' - the small button at the end of every report line. It attaches a note to that one fact without changing it.'),
                 h('li', { key: '6' }, h('b', {}, 'Save edits'), ' - the form near the bottom, where you set ', h('b', {}, 'Priority'), ' (how urgent), ', h('b', {}, 'Who answers'), ' (', h('b', {}, 'Answer on its own'), ', ', h('b', {}, 'Draft, then I send'), ' or ', h('b', {}, 'Log only, I reply'), '), the assignee, the subject and your own tags.')
             ),
@@ -98,8 +103,13 @@ export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
 
             h('h3', { key: 'h-gloss' }, 'Words this screen uses'),
             h('dl', { key: 'dl-gloss', class: 'ds-help-glossary' },
+                // The key is a snake_case identifier, so it is de-snaked for
+                // reading -- but a bare replace() rendered the one acronym in
+                // the list as "sla", which is not a word and is not how the
+                // glossary entry itself, or the rest of the dashboard, writes
+                // it.
                 ...Object.entries(glossary()).map(([term, explain]) => [
-                    h('dt', { key: 'dt-' + term }, term.replace(/_/g, ' ')),
+                    h('dt', { key: 'dt-' + term }, termWord(term)),
                     h('dd', { key: 'dd-' + term }, explain),
                 ]).flat()
             ),
