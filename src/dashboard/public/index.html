@@ -134,12 +134,12 @@
 <style>
 #ds-boot{display:flex;flex-direction:column;align-items:center;justify-content:center;
   min-height:60vh;gap:10px;font:500 15px/1.4 system-ui,sans-serif;text-align:center;padding:24px}
-#ds-boot b{font-size:20px;font-weight:600}
+#ds-boot #ds-boot-brand{font-size:20px;font-weight:600}
 #ds-boot span{opacity:.7;font-weight:400;font-size:13px;max-width:24em}
 #app:not(:empty) ~ #ds-boot{display:none}
 </style>
 <div id="ds-boot" role="status" aria-live="polite">
-  <b>Herd Health</b>
+  <b id="ds-boot-brand">casey</b>
   <span>Still loading. On a slow connection this first load can take a while -- it is quicker next time.</span>
 </div>
 <!-- Leaflet is two classic parser-blocking scripts totalling ~150KB, and they
