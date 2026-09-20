@@ -96,21 +96,38 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
         ? Alert({
             kind: 'warn', title: 'The AI helper drafted a reply. Review it before it sends.',
             children: h('div', { class: 'casey-draft-actions' },
-                Btn({ size: 'sm', variant: 'primary', children: 'Approve & send', onClick: async () => {
+                // GUARDED BY THE SAME IN-FLIGHT FLAG THE FREE-TEXT SEND USES.
+                // These two buttons send to the same contact on the same
+                // channel as send() above, and they had no guard at all while
+                // send() has had one all along: no disabled state, no busy
+                // label, nothing rendered while the request was out. On the
+                // metered rural link this deployment targets, that request
+                // takes seconds, the button looks untouched the whole time, and
+                // a second tap posts /draft-approve again -- the contact gets
+                // the message TWICE, and a duplicate message to a real person
+                // is not a recoverable error. The flag is shared rather than a
+                // second one of its own because it means one thing: a send to
+                // this contact is already in flight.
+                Btn({ size: 'sm', variant: 'primary', disabled: sending, children: sending ? 'Sending...' : 'Approve & send', onClick: async () => {
                     const t = text.trim();
+                    if (sending) return;
+                    state._replySending = true; schedule();
                     try {
                         const j = await postDraftApprove(c.id, t);
+                        state._replySending = false;
                         if (j.delivered) toast('Draft sent to the contact.', 'ok');
                         else toast(j.sent
                             ? 'Saved to the timeline, but the channel refused it. The contact has NOT received this.'
                             : 'Saved to the timeline only. This console is not attached to the messaging channels, so nothing was sent to the contact.', 'warn');
                         if (onReload) await onReload(c.id);
-                    } catch (e) { toast(await failMsg(e, 'The draft was not sent and is still waiting here. Try again.'), 'err'); }
+                    } catch (e) { state._replySending = false; toast(await failMsg(e, 'The draft was not sent and is still waiting here. Try again.'), 'err'); schedule(); }
                 } }),
-                Btn({ size: 'sm', variant: 'ghost', children: 'Discard', onClick: async () => {
+                Btn({ size: 'sm', variant: 'ghost', disabled: sending, children: 'Discard', onClick: async () => {
+                    if (sending) return;
                     if (await confirmDialog({ title: 'Discard this draft?', message: 'It will not be sent. The case stays flagged for a human.', confirmLabel: 'Discard', danger: true }) === null) return;
-                    try { await postDraftDiscard(c.id); toast('Draft discarded. Nothing was sent, and this still needs a person.', 'ok'); if (onReload) await onReload(c.id); }
-                    catch (e) { toast(await failMsg(e, 'The draft could not be discarded, so it is still waiting here. Try again.'), 'err'); }
+                    state._replySending = true; schedule();
+                    try { await postDraftDiscard(c.id); state._replySending = false; toast('Draft discarded. Nothing was sent, and this still needs a person.', 'ok'); if (onReload) await onReload(c.id); }
+                    catch (e) { state._replySending = false; toast(await failMsg(e, 'The draft could not be discarded, so it is still waiting here. Try again.'), 'err'); schedule(); }
                 } })
             )
         })

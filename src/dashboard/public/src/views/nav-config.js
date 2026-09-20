@@ -7,7 +7,7 @@ import { state, setInboxMode, setRailMode } from '../state.js';
 import { openModal } from '../state.js';
 import { setHomeViewRoute, openPanelRoute, closePanelRoute } from '../route.js';
 import * as api from '../api.js';
-import { toast } from '../toasts.js';
+import { toast, failMsg } from '../toasts.js';
 
 // main.js registers case-list-detail-layout.js's promptNewCase() here at boot;
 // the indirection avoids a circular import (nav-config -> case-list-detail-
@@ -30,7 +30,10 @@ export function runRefreshAll() { return _refreshAll(); }
 
 export async function runSweep() {
   try { await api.runSweepApi(); toast('Sweep started.'); }
-  catch (e) { toast('Sweep failed: ' + e.message, 'err'); }
+  // 'Sweep failed: ' + e.message put a raw exception ("Failed to fetch") behind
+  // a bare "failed". What an operator needs is that nothing was re-checked, so
+  // the guardrail flags on screen are as old as they were a moment ago.
+  catch (e) { toast(await failMsg(e, 'The sweep did not run, so nothing was re-checked. The flags on screen are unchanged. Try again in a moment.'), 'err'); }
 }
 
 export function toggleInboxMode() { setInboxMode(!state.inboxMode); }
