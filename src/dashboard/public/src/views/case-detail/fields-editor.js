@@ -14,7 +14,7 @@ import { autonomyExplanation } from './autonomy-badge.js';
 import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { patchCaseApi, fetchCase } from '../../api.js';
-import { brandName } from '../../vocabulary.js';
+import { brandName, entityLabel, EntityLabel } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
 const DEFAULT_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
@@ -142,16 +142,24 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
             }
             if (!Object.keys(patch).length) {
                 state._fieldsSaving = false;
-                toast('nothing to save -- no field was changed', 'ok');
+                toast('Nothing to save -- no field was changed.', 'ok');
                 schedule();
                 return;
             }
             await patchCaseApi(c.id, { ...patch, expected });
             state._fieldsSaving = false;
-            toast('saved', 'ok');
+            toast('Your edits are saved.', 'ok');
+            // RELOAD FIRST, THEN DROP THE DRAFT. Clearing it before the reload
+            // lets the very next render re-seed the form from the `c` this
+            // render still closes over -- the pre-save snapshot -- and once
+            // _fieldsDraftFor matches this case id again the fresh row can no
+            // longer re-seed it, so the form sits showing values that are
+            // neither this operator's nor the ones now stored. Clearing after
+            // the reload means the re-seed reads the row that just came back.
+            if (onSaved) await onSaved();
             state._fieldsDraft = null;
             state._fieldsBase = null;
-            if (onSaved) await onSaved();
+            schedule();
         } catch (e) {
             state._fieldsSaving = false;
             // A 409 is somebody else's edit, not a failure of this one: drop
@@ -159,13 +167,20 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
             // values before deciding again, rather than being left holding a
             // form that will 409 on every further attempt.
             if (e && e.status === 409) {
+                toast(await failMsg(e, 'Somebody else edited this ' + entityLabel() + ' while you were typing. Your edits were not saved -- their values are on screen now, so check them and edit again if you still need to.'), 'warn');
+                // Same ordering as the success path above, and it matters more
+                // here: the whole point of a 409 is to put the OTHER operator's
+                // values in front of this one before they decide again, so the
+                // draft is dropped only once the fresh row has landed. Cleared
+                // first, the form re-seeded from the pre-save snapshot and the
+                // toast promised values that were not on screen.
+                if (onSaved) await onSaved();
                 state._fieldsDraft = null;
                 state._fieldsBase = null;
-                toast(await failMsg(e, 'someone else changed this case -- reloaded with their values'), 'warn');
-                if (onSaved) await onSaved();
+                schedule();
                 return;
             }
-            toast(await failMsg(e, 'save failed'), 'err');
+            toast(await failMsg(e, 'Your edits were not saved. They are still on the form, so press Save edits again.'), 'err');
             schedule();
         }
     };
@@ -185,9 +200,11 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
                 // report aggregate, and case_type is the column name, not the
                 // field they are looking at.
                 Select({
-                    label: 'Case type', value: d.case_type, options: labelled(caseTypes),
+                    // The label said "Case type" over a hint that said "this
+                    // report" -- two nouns for one record, one line apart.
+                    label: EntityLabel() + ' type', value: d.case_type, options: labelled(caseTypes),
                     onChange: (v) => set('case_type', v),
-                    hint: 'Groups this report in the totals. Changing it is written to the timeline.'
+                    hint: 'Groups this ' + entityLabel() + ' in the totals. Changing it is written to the timeline.'
                 }),
                 SourceNote({ source: caseTypeSource })
             )
@@ -199,7 +216,7 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
         // operator needs from this field is that their tags are kept apart
         // from the ones the system keeps for itself, and that editing here
         // cannot wipe those.
-        TextField({ label: 'Tags', value: d.tags, onInput: (v) => set('tags', v), hint: 'Your own labels for this case. The ones the system keeps for itself are held separately and cannot be lost by editing here.' }),
+        TextField({ label: 'Tags', value: d.tags, onInput: (v) => set('tags', v), hint: 'Your own labels for this ' + entityLabel() + '. The ones the system keeps for itself are held separately and cannot be lost by editing here.' }),
         TextField({ label: 'Summary', multiline: true, rows: 3, value: d.summary, onInput: (v) => set('summary', v) }),
         Btn({ variant: 'primary', disabled: saving, children: saving ? 'Saving...' : 'Save edits', onClick: save })
     );
