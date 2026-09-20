@@ -13,20 +13,48 @@
 //
 // deps: store, wrap, actingOperator, authed
 import { mountRoutes } from './register.js';
+import { fmtPhone27 } from '../../format.js';
 
 export const publicExternalLink = (l) => ({
   id: l.id, system: l.system, local_entity: l.local_entity,
+  // local_ref is the DISPLAY-SAFE resolution of local_entity+local_id (a case
+  // ref like CASE-1005-XXXX, or a contact's given name/formatted number) --
+  // never the raw local_id join key. Without this an operator confirming a
+  // link (the only path that ever merges data into a local record) had no way
+  // to tell WHICH case or contact was about to be touched before pressing
+  // Confirm; they saw only the external system's own label and a confidence
+  // score. null when the local record could not be resolved (deleted/missing).
+  local_ref: l.local_ref || null,
   external_entity: l.external_entity, external_ref: l.external_ref,
   match_basis: l.match_basis, confidence: Number(l.confidence) || 0,
   status: l.status, created_at: l.created_at,
 });
+
+async function resolveLocalRef(store, l) {
+  try {
+    if (l.local_entity === 'case') {
+      const c = await store.t.get('case', l.local_id);
+      return c ? (c.ref || null) : null;
+    }
+    if (l.local_entity === 'contact') {
+      const ct = await store.t.get('contact', l.local_id);
+      if (!ct) return null;
+      const named = ct.display_name && ct.display_name !== ct.external_id;
+      if (named) return ct.display_name;
+      const formatted = fmtPhone27(ct.external_id);
+      return formatted !== String(ct.external_id || '') ? formatted : 'unnamed contact';
+    }
+  } catch { /* best-effort resolution; the row still renders without it */ }
+  return null;
+}
 
 export function getExternalLinks({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' });
     const status = ['proposed', 'confirmed', 'rejected'].includes(req.query.status) ? req.query.status : 'proposed';
     const rows = await store.t.list('external_link', { status }, { limit: 500, sort: [{ field: 'created_at', dir: 'DESC' }] });
-    res.json({ links: rows.map(publicExternalLink) });
+    const links = await Promise.all(rows.map(async (l) => publicExternalLink({ ...l, local_ref: await resolveLocalRef(store, l) })));
+    res.json({ links });
   };
 }
 
