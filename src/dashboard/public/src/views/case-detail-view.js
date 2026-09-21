@@ -34,11 +34,18 @@ const h = webjsx.createElement;
 let _loadedFor = null;
 
 export async function loadCaseDetail(id) {
+    // Set BEFORE the await, not just on success: the render loop below re-checks
+    // `_loadedFor !== id && !state.caseDetailLoading` on every schedule() tick,
+    // and setCaseDetailError() clears caseDetailLoading. A case that genuinely
+    // 404s (merged, removed, a stale link) left _loadedFor unset on the error
+    // path, so the very next render saw the loading flag already false and
+    // re-fired this same failing fetch -- an unbounded retry loop against a
+    // dead endpoint, measured live at ~30 requests in 4 seconds.
+    _loadedFor = id;
     setCaseDetailLoading(true);
     try {
         const data = await fetchCase(id);
         setCaseDetail(data);
-        _loadedFor = id;
         loadDuplicateSuggestions(id);
         loadSiteHistory(id);
         // Best-effort per-run config override (see fetchRunConfig) -- resolves
