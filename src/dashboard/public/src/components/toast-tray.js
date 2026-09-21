@@ -22,7 +22,22 @@ export function ToastTray() {
         onDismiss: () => dismissToast(t.id),
         children: [
           h('span', { key: 'm' }, t.msg),
-          t.undo ? Btn({ key: 'u', size: 'sm', variant: 'ghost', onClick: () => { t.onUndo && t.onUndo(); dismissToast(t.id); }, children: t.undoLabel || 'Undo' }) : null,
+          // THE SHAPE toasts.js ACTUALLY BUILDS is `undo: {label, busy, run}`.
+          // Read as `t.onUndo`/`t.undoLabel` -- two properties nothing in this
+          // app ever sets -- the button rendered, said "Undo" whatever the
+          // action was, and on click only dismissed the toast: the /undo POST
+          // never fired and a sent reply's correction was never queued, while
+          // the toast disappeared as if it had worked. That is the worst
+          // possible failure for the one affordance that reverses an action a
+          // contact can already see. run() dismisses the row itself once the
+          // network call resolves, so this does not also dismiss it early --
+          // doing so would remove the busy state mid-request.
+          t.undo ? Btn({
+            key: 'u', size: 'sm', variant: 'ghost',
+            disabled: !!t.undo.busy,
+            onClick: () => { if (!t.undo.busy) t.undo.run(); },
+            children: t.undo.busy ? 'Working...' : (t.undo.label || 'Undo'),
+          }) : null,
         ].filter(Boolean),
       })
     ))

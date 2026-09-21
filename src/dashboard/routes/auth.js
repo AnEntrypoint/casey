@@ -340,8 +340,14 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
   const groupCards = PUBLIC_GROUPS.map((g, i) => {
     const n = i + 1 + stepOffset
     const count = `${g.fields.length} question${g.fields.length === 1 ? '' : 's'}`
+    // THE SPACE BEFORE .grp-count IS LOAD-BEARING. A heading's accessible name
+    // is its text content with no separator inserted between adjacent inline
+    // children, so without it the announced heading was "Animal & symptoms13
+    // questions". .grp-head is display:flex, where whitespace between items is
+    // not rendered, so the space costs nothing on screen. Same in refBlock's
+    // own copy of this heading below.
     return `<section class="grp${g.critical ? ' vc' : ''}">
-      <h2 class="grp-head"><span class="grp-n" aria-hidden="true">${n}</span><span class="grp-title">${esc(g.title)}</span><span class="grp-count">${count}</span></h2>
+      <h2 class="grp-head"><span class="grp-n" aria-hidden="true">${n}</span><span class="grp-title">${esc(g.title)}</span> <span class="grp-count">${count}</span></h2>
       ${g.fields.map(fieldHtml).join('')}
     </section>`
   }).join('')
@@ -388,7 +394,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
   // profile would put someone else's last answer into this report.
   const refBlock = caseRow ? `<input type="hidden" name="ref" value="${esc(ref)}">` : `
       <section class="grp vc">
-      <h2 class="grp-head"><span class="grp-n" aria-hidden="true">1</span><span class="grp-title">Find your ${esc(ENTITY)}</span><span class="grp-count">2 questions</span></h2>
+      <h2 class="grp-head"><span class="grp-n" aria-hidden="true">1</span><span class="grp-title">Find your ${esc(ENTITY)}</span> <span class="grp-count">2 questions</span></h2>
       <div class="field"><label for="f-find-ref">Your reference number</label>
       <input id="f-find-ref" type="text" name="ref" value="${esc(ref)}" maxlength="50" aria-describedby="f-find-ref-hint">
       <div class="hint" id="f-find-ref-hint">Copy it from the message you were sent when you first reported. If you do not have it, enter your phone number below instead.</div></div>
@@ -489,6 +495,14 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
 </style></head><body>
 <header class="topbar"><div class="topbar-in">${esc(BRAND.name)}</div></header>
 <div class="wrap">
+  <!-- A real <main> landmark, so the page has one. The header above it is a
+       banner and the footer below it a contentinfo, but the twenty-six
+       questions between them were in an unnamed div: a screen reader's
+       landmark list offered no way to jump to the form, and there is no skip
+       link on this page either. <main> is a block element with no styling of
+       its own here, so the layout is unchanged; the footer stays OUTSIDE it,
+       since a <footer> nested in <main> stops being a contentinfo landmark. -->
+  <main>
   <h1>Your ${esc(ENTITY)} details</h1>
   <p class="sub">Please fill in as many details as you can. Fields marked * are needed before a team can visit. You can leave anything you do not know blank.</p>
   ${banner}${caseInfo}${progressBar}
@@ -500,6 +514,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
     <button type="submit">Send details</button>
     <p class="next">Your answers go onto your ${esc(ENTITY)} for the team who work these. If they need to ask you something they will use the phone number on it. You can open this page again with your reference number and add more whenever you find something out.</p>
   </form>
+  </main>
   <footer>${esc(BRAND.description || BRAND.name)}</footer>
 </div>
 <script>

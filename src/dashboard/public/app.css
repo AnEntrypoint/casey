@@ -1590,3 +1590,90 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   }
   .ds-247420 .ds-appbar { position: relative; z-index: var(--z-raised); }
 }
+
+/* ---- CONTRAST: THE KIT'S ALWAYS-DARK --panel-* TIER, READ AS CHROME ------
+   --panel-0/-1/-2 are a fixed DARK surface family with their own light
+   companions (--panel-text/-2/-3). They are not theme-bound: every theme,
+   light included, resolves --panel-1 to #333333 and --panel-2 to #4D4D4D. Two
+   kit components paint themselves from that family while taking their TEXT
+   from the active theme, which is only legible on a dark ground:
+
+     .ds-alert            background --panel-1, color --fg, message --fg-2
+     .ds-dropdown-trigger background --panel-2, color inherit
+
+   Measured live in the herd (light) theme: an alert's message read #333333 on
+   #333333 -- ratio 1.00, invisible -- its title 1.38:1, its icon 1.94:1, and
+   the "Saved views" dropdown trigger 2.06:1. That covers every empty state in
+   the app, the case pane's "Still missing for a visit" warning (the one thing
+   a field worker must read before driving out), the offline banner and every
+   toast. Repointing both at the theme's own --bg-2 tier keeps the herd-ink
+   rendering byte-identical (--bg-2 IS #333333 there) and makes the light theme
+   legible. The one place an alert must NOT paint its own ground is inside a
+   banner whose wrapper already carries a tinted band; .ds-handoff-banner
+   already states that for itself, and the connection banner needs the same. */
+.ds-247420 .ds-alert {
+  background: var(--bg-2);
+  border-color: var(--border);
+  color: var(--fg);
+}
+.ds-247420 .ds-alert-message { color: var(--fg-2); }
+.ds-247420 .ds-conn-banner .ds-alert-warn {
+  background: var(--warn-bg, color-mix(in oklab, var(--warn, var(--amber)) 14%, var(--bg)));
+  border-color: var(--warn-border, color-mix(in oklab, var(--warn, var(--amber)) 35%, transparent));
+}
+.ds-247420 .ds-dropdown-trigger {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+}
+.ds-247420 .ds-dropdown-trigger:hover {
+  background: var(--bg-2);
+  border-color: var(--fg-3, var(--border));
+}
+
+/* ---- CONTRAST: THE ACCENT AS TEXT ON THE SECOND GROUND TIER -------------
+   --accent-ink is the kit's darkened companion for "the accent has to BE
+   text", and the herd preset measured it against --bg (#FFFFFF), where it
+   passes at 4.60:1. Four controls put it on --bg-2 (#F4F5F6) instead -- the
+   rail's "Show all N" button, a count badge, a filter pill and a source chip
+   -- where the same colour measures 4.16:1 and fails AA for their 12-13px
+   type. The status bar's own first item hit this exact pair and was fixed in
+   place by dropping to --fg-2; these four are accent-coloured affordances, so
+   they keep the accent and darken it instead, which is a mix of two live
+   tokens rather than a second literal orange this sheet is not allowed to
+   hold. In herd-ink --fg is the light end of the ladder, so the same mix
+   LIGHTENS --accent-ink there, which is the correction that theme would need
+   for the same reason. */
+.ds-247420 {
+  --casey-accent-ink-on-bg2: color-mix(in oklab, var(--accent-ink, var(--accent)) 78%, var(--fg));
+}
+.ds-247420 .ds-queue-more,
+.ds-247420 .ds-map-rail .ds-badge.tone-blue,
+.ds-247420 .case-list-view .ds-badge.tone-blue,
+.ds-247420 .ds-filter-pill.tone-accent,
+.ds-247420 .chip.tone-accent {
+  color: var(--casey-accent-ink-on-bg2);
+}
+
+/* ---- CONTRAST: A DANGER/WARN FILL USED AS TEXT --------------------------
+   Both themes define a *-ink companion for exactly this case and both of
+   these controls reach past it for the FILL colour. Measured live: the
+   contacts panel's "Erase personal details" link is --danger (#FF001D) on
+   #FFFFFF at 3.99:1 in herd, and the appbar's attention lead is --warn
+   (#FF5C6B) on the bar's own --bg-2 (#333333) at 4.21:1 in herd-ink -- the
+   herd-ink preset's own note says --warn was measured against --bg and that
+   --danger-ink exists because a text token has to survive all three ground
+   tiers. The border and the tint stay on the fill colour; only the type
+   moves. */
+.ds-247420 .ds-contact-erase { color: var(--danger-ink, var(--danger)); }
+.ds-247420 .ds-attn-lead.is-waiting { color: var(--danger-ink, var(--warn)); }
+
+/* ---- TARGET SIZE: THE BULK-SELECT CHECKBOX ------------------------------
+   16x16 is under WCAG 2.5.8's 24x24 floor, and the spacing exception does not
+   apply: the row it sits in is itself a target, so there is no 24px clearance
+   around it. This is the control an operator taps repeatedly, one-handed, to
+   act on several reports at once -- the one place on the screen where a missed
+   tap costs a wrong selection rather than a re-tap. The box grows to the floor
+   without moving the row: the label beside it is vertically centred on the
+   same line either way. */
+.case-row-cb { width: 24px; height: 24px; }

@@ -18,6 +18,32 @@ import { trapTab } from 'ds/components/overlay-primitives.js';
 import { Icon } from 'ds/components/shell.js';
 const h = webjsx.createElement;
 
+const DIALOG_FOCUSABLE_SEL = 'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+// WHERE FOCUS GOES WHEN A DIALOG CLOSES. A modal takes focus on open, so
+// closing it has to hand focus back to the control that opened it; left alone,
+// focus falls to <body> and the next Tab restarts at the top of the document --
+// past the skip link, the whole appbar and the whole nav -- which for a
+// keyboard-only operator is the difference between closing a snooze prompt and
+// losing their place in a 200-stop page. One module-scope slot, because exactly
+// one modal is open at a time in this app (state.activeModal is a single value,
+// and confirmDialog is awaited by its caller).
+let _openerEl = null;
+function rememberOpener() {
+  const a = document.activeElement;
+  _openerEl = (a && a !== document.body && typeof a.focus === 'function') ? a : null;
+}
+function restoreOpenerFocus() {
+  const el = _openerEl;
+  _openerEl = null;
+  if (!el) return;
+  // The opener may have been re-rendered away while the dialog was open (a
+  // reply-box button whose case reloaded); focusing a detached node silently
+  // does nothing, so only a node still in the document is worth the call.
+  if (!document.contains(el)) return;
+  try { el.focus(); } catch { /* a control that refuses focus is not a failure to report */ }
+}
+
 /**
  * @param {Object} props
  * @param {boolean} props.open
@@ -32,12 +58,18 @@ export function Dialog({ open, title, onClose, children, wide = false, id, foote
   if (!open) return null;
   const slug = id || 'dlg-' + String(title || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40);
   const titleId = slug + '-title';
-  const close = () => onClose && onClose();
+  const close = () => { restoreOpenerFocus(); if (onClose) onClose(); };
   const onBackdropDown = (e) => { if (e.target === e.currentTarget) close(); };
+  // trapTab takes the CONTAINER to confine focus to, and that container is the
+  // element this handler is bound to -- the panel itself. Asking the panel for
+  // a `.ds-dialog-panel` DESCENDANT always answers null (an element is not its
+  // own descendant), so the trap never ran on any dialog in this app: Tab from
+  // the last control inside a modal walked straight out into the page behind
+  // it, which the modal is covering. The kit's own SettingsShell keeps the
+  // container in a ref for the same reason; currentTarget already is it here.
   const onKeydown = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); close(); return; }
-    const panel = e.currentTarget.querySelector('.ds-dialog-panel');
-    if (panel) trapTab(panel, e);
+    trapTab(e.currentTarget, e);
   };
   // ref fires on every applyDiff pass that touches this node, not only
   // mount -- autofocus-every-render would steal focus back out of a form
@@ -46,12 +78,13 @@ export function Dialog({ open, title, onClose, children, wide = false, id, foote
   const focusPanel = (el) => {
     if (!el || el._dsDialogInit) return;
     el._dsDialogInit = true;
+    rememberOpener();
     // Macrotask, not microtask: the triggering click's own default
     // focus-on-click can otherwise win the race and leave focus outside
     // the dialog, breaking Escape/Tab-trap for a keyboard user (same
     // reasoning as the SDK's own Popover/_anchoredOverlayLifecycle).
     setTimeout(() => {
-      const first = el.querySelector('a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])');
+      const first = el.querySelector(DIALOG_FOCUSABLE_SEL);
       (first || el).focus();
     }, 0);
   };
@@ -85,8 +118,10 @@ export function Dialog({ open, title, onClose, children, wide = false, id, foote
 // action). Resolves the input string ('' if none given) on confirm, or
 // null on cancel/escape. Uses raw DOM (not webjsx) since it is a one-shot
 // imperative overlay, matching the legacy showDialog()'s own shape.
+let _confirmSeq = 0;
 export function confirmDialog({ title, message, inputLabel, inputPlaceholder, inputDefault, confirmLabel = 'Confirm', danger = false }) {
   return new Promise((resolve) => {
+    rememberOpener();
     const backdrop = document.createElement('div');
     backdrop.className = 'ds-dialog-backdrop';
     backdrop.setAttribute('role', 'presentation');
@@ -98,6 +133,15 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
     const h2 = document.createElement('h2');
     h2.className = 'ds-dialog-title';
     h2.textContent = title || 'Confirm';
+    // A role=dialog with no accessible name reaches the accessibility tree as
+    // an unnamed dialog: a screen reader announces "dialog" and nothing else,
+    // so the one question being asked ("Flag this reply", "Erase personal
+    // details") is only readable by exploring the panel. Dialog() above names
+    // itself through its own titleId for the same reason; this overlay is the
+    // route four flows take (flag a reply, add a field note, discard a draft,
+    // erase a contact) and had no name at all.
+    h2.id = 'ds-confirm-title-' + (++_confirmSeq);
+    panel.setAttribute('aria-labelledby', h2.id);
     panel.appendChild(h2);
     if (message) {
       const p = document.createElement('p');
@@ -135,11 +179,19 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
     panel.appendChild(row);
     backdrop.appendChild(panel);
     document.body.appendChild(backdrop);
-    const close = (val) => { backdrop.remove(); resolve(val); };
+    const close = (val) => { backdrop.remove(); restoreOpenerFocus(); resolve(val); };
     okBtn.onclick = () => close(input ? input.value : '');
     cancelBtn.onclick = () => close(null);
     backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(null); });
-    backdrop.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
+    // Escape AND Tab, on the panel rather than the backdrop: this overlay sits
+    // over a page holding 200-plus other focusable controls and had no Tab
+    // trap, so a keyboard user leaving the Confirm button landed on controls
+    // the panel is covering -- typing into a case row they cannot see. Same
+    // trapTab the webjsx Dialog above uses, so both modal shapes behave alike.
+    panel.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(null); return; }
+      trapTab(panel, e);
+    });
     setTimeout(() => { (input || okBtn).focus(); if (input && inputDefault !== undefined) input.select(); }, 60);
   });
 }
