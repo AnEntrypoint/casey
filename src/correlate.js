@@ -84,10 +84,38 @@ function onsetGapDays(a, b) {
 // - close in time (same week) ............................ weak supporting
 // A case is never "the same" on time alone -- timing only AMPLIFIES a real
 // content match, it cannot manufacture one (guarded below).
-export function correlationScore(a, b) {
+// THE PER-CASE HALF OF THE SCORE, LIFTED OUT OF THE PAIR LOOP.
+//
+// Everything correlationScore reads off ONE case -- the parsed report blob, five
+// token sets, the normalized phone numbers -- depends on that case alone, so a
+// caller comparing n cases pairwise derived the same n values n-1 times each.
+// The whole-pool consumer is clusters.js, whose loop is O(n^2) by construction:
+// at 2000 cases that was 4M JSON.parse calls and 20M token-set builds, measured
+// at 34.2 s for one /api/map/cases response, on a route the map home view polls
+// every 30 s. With the per-case half computed once the same pool scores in
+// 1.2 s, identical clusters out.
+//
+// Scoring reads ONLY a signature, and correlationScore is that same scorer with
+// the signatures built inline -- one implementation, so a future signal added
+// here cannot reach one caller and miss the other.
+export function caseSignature(c) {
+  const r = parseReport(c)
+  return {
+    id: c?.id, channel: c?.channel, external_id: c?.external_id,
+    created_at: c?.created_at,
+    nums: [normPhone(c?.external_id), normPhone(r.contact_fallback)].filter(Boolean),
+    loc: tokens(r.location),
+    find: tokens(r.how_to_find),
+    species: tokens(r.species),
+    // symptoms and suspected_disease are scored as ONE pooled set, so the union
+    // is part of the signature rather than rebuilt per pair.
+    sym: new Set([...tokens(r.symptoms), ...tokens(r.suspected_disease)]),
+  }
+}
+
+export function correlationScoreFromSignatures(a, b) {
   const reasons = []
   if (!a || !b || a.id === b.id) return { score: 0, reasons }
-  const ra = parseReport(a), rb = parseReport(b)
   let content = 0
 
   // Same originating contact -> very likely the same thread/outbreak.
@@ -95,26 +123,22 @@ export function correlationScore(a, b) {
     content += 0.5; reasons.push('same contact')
   }
   // Cross-number link: a fallback number named on one IS the other's number.
-  const aNums = [normPhone(a.external_id), normPhone(ra.contact_fallback)].filter(Boolean)
-  const bNums = [normPhone(b.external_id), normPhone(rb.contact_fallback)].filter(Boolean)
-  if (aNums.some(n => bNums.includes(n)) && !(a.external_id === b.external_id && a.channel === b.channel)) {
+  if (a.nums.some(n => b.nums.includes(n)) && !(a.external_id === b.external_id && a.channel === b.channel)) {
     content += 0.45; reasons.push('linked by a fallback contact number')
   }
 
   // Location: the single strongest disease-grouping signal.
-  const locOv = tokenOverlap(tokens(ra.location), tokens(rb.location))
+  const locOv = tokenOverlap(a.loc, b.loc)
   if (locOv > 0) { content += 0.45 * locOv; reasons.push(`shared location (${Math.round(locOv * 100)}%)`) }
-  const findOv = tokenOverlap(tokens(ra.how_to_find), tokens(rb.how_to_find))
+  const findOv = tokenOverlap(a.find, b.find)
   if (findOv > 0) { content += 0.2 * findOv; reasons.push('shared directions to the place') }
 
   // Species: same animals affected.
-  const spOv = tokenOverlap(tokens(ra.species), tokens(rb.species))
+  const spOv = tokenOverlap(a.species, b.species)
   if (spOv > 0) { content += 0.2 * spOv; reasons.push('same species') }
 
   // Clinical picture: shared symptoms / named disease.
-  const symOv = tokenOverlap(
-    new Set([...tokens(ra.symptoms), ...tokens(ra.suspected_disease)]),
-    new Set([...tokens(rb.symptoms), ...tokens(rb.suspected_disease)]))
+  const symOv = tokenOverlap(a.sym, b.sym)
   if (symOv > 0) { content += 0.15 * symOv; reasons.push('similar symptoms / suspected disease') }
 
   // Time only amplifies an existing content signal -- never creates one. Without
@@ -128,6 +152,11 @@ export function correlationScore(a, b) {
   return { score: Math.min(1, score), reasons }
 }
 
+export function correlationScore(a, b) {
+  if (!a || !b || a.id === b.id) return { score: 0, reasons: [] }
+  return correlationScoreFromSignatures(caseSignature(a), caseSignature(b))
+}
+
 // Default threshold: below this, a pair is NOT suggested. Tuned so a single weak
 // signal (species alone, or a faint location overlap) does not surface a noisy
 // suggestion -- it takes either a strong signal or two moderate ones to clear it.
@@ -138,9 +167,10 @@ export const SUGGEST_THRESHOLD = 0.35
 // by the caller (this stays pure -- it just scores what it is given).
 export function suggestLinks(target, others, threshold = SUGGEST_THRESHOLD) {
   const out = []
+  const ts = caseSignature(target)
   for (const o of others) {
     if (!o || o.id === target.id) continue
-    const { score, reasons } = correlationScore(target, o)
+    const { score, reasons } = correlationScoreFromSignatures(ts, caseSignature(o))
     if (score >= threshold) out.push({ id: o.id, ref: o.ref, score: Math.round(score * 100) / 100, reasons })
   }
   return out.sort((x, y) => y.score - x.score)

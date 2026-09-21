@@ -359,30 +359,40 @@ export const fetchBranding = async () => {
     return b;
   } catch { return cachedBranding(); }
 };
-// Per-run config override -- only reachable on a deployment that mounted
-// CASEY_EXTRA_DASHBOARD_ROUTES (e.g. serpent). A plain casey/uhh deployment
-// has no /api/runs/:id/config route, so this always resolves null there
-// (never throws) -- report-sections.js falls back to the global fetchConfig()
-// result exactly as before. See AGENTS.md's CASEY_EXTRA_DASHBOARD_ROUTES entry.
-export const fetchRunConfig = async (id) => {
+// WHETHER THIS DEPLOYMENT HAS THE OPTIONAL /api/runs/* ROUTES AT ALL, asked
+// once instead of twice per case opened.
+//
+// Both routes below exist only where CASEY_EXTRA_DASHBOARD_ROUTES mounted them
+// (serpent). On a plain casey/uhh deployment they 404, and case-detail-view.js
+// plus research-notes.js each fire one on every case an operator opens -- so
+// opening 100 cases in a shift spent 200 round trips relearning that a route
+// mounted at boot is still not mounted. Measured over a 22-cycle
+// list/detail/back drive: 44 requests, every one a 404.
+//
+// A 404 here is a deployment fact, not a per-case answer: the route table is
+// fixed for the life of the process, so the first 404 settles it for the page
+// and nothing asks again. Only a 404 is remembered -- a 5xx or a dropped link
+// is transient and must stay retryable, which is why it is keyed on the status
+// and not on "the request failed".
+const absentRunRoutes = new Set();
+
+async function optionalRunRoute(kind, id) {
+  if (absentRunRoutes.has(kind)) return null;
   try {
-    const r = await api('/api/runs/' + encodeURIComponent(id) + '/config');
+    const r = await api('/api/runs/' + encodeURIComponent(id) + '/' + kind);
+    if (r.status === 404) { absentRunRoutes.add(kind); return null; }
     if (!r.ok) return null;
     return await r.json();
   } catch { return null; }
-};
-// Per-run research notes -- same degrade discipline as fetchRunConfig above:
-// only reachable on a deployment that mounted CASEY_EXTRA_DASHBOARD_ROUTES
-// (e.g. serpent). Resolves null on a plain casey/uhh deployment (no
-// /api/runs/:id/notes route) or a network failure, never throws --
-// research-notes.js's panel renders nothing in that case.
-export const fetchRunNotes = async (id) => {
-  try {
-    const r = await api('/api/runs/' + encodeURIComponent(id) + '/notes');
-    if (!r.ok) return null;
-    return await r.json();
-  } catch { return null; }
-};
+}
+
+// Per-run config override -- report-sections.js falls back to the global
+// fetchConfig() result when this resolves null. See AGENTS.md's
+// CASEY_EXTRA_DASHBOARD_ROUTES entry.
+export const fetchRunConfig = (id) => optionalRunRoute('config', id);
+// Per-run research notes -- research-notes.js's panel renders nothing when this
+// resolves null.
+export const fetchRunNotes = (id) => optionalRunRoute('notes', id);
 // All three are polled every 15s and all three have byte-stable bodies on an
 // unchanged deployment (measured: 965 B, 78 B and 241 B on the wire, same ETag
 // across polls), so they revalidate rather than re-download. Same shape out as

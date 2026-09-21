@@ -162,12 +162,24 @@
 })();
 </script>
 <script type="module" src="/src/main.js"></script>
-<script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').then(function(){
-  var reloaded = false;
-  navigator.serviceWorker.addEventListener('controllerchange', function(){
-    if (reloaded) return;
-    reloaded = true;
-    location.reload();
-  });
-}).catch(()=>{})</script>
+<!-- The reload puts a page running an OLD build under the new worker, so it is
+     gated on there having BEEN an old build. navigator.serviceWorker.controller
+     is null on a first-ever visit: nothing has been superseded, the bytes on
+     screen are the ones the new worker just cached, and reloading re-parsed and
+     re-executed the whole 125-module graph and re-ran every boot API call for no
+     change in what the operator sees -- on the one load this deployment's boot
+     notice exists for, on the modest handset it targets. Captured before
+     register() resolves, because clients.claim() can land between the two. -->
+<script>if('serviceWorker' in navigator) (function(){
+  var hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('/sw.js').then(function(){
+    if (!hadController) return;
+    var reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if (reloaded) return;
+      reloaded = true;
+      location.reload();
+    });
+  }).catch(()=>{})
+})()</script>
 </body></html>
