@@ -1591,36 +1591,24 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-247420 .ds-appbar { position: relative; z-index: var(--z-raised); }
 }
 
-/* ---- CONTRAST: THE KIT'S ALWAYS-DARK --panel-* TIER, READ AS CHROME ------
-   --panel-0/-1/-2 are a fixed DARK surface family with their own light
-   companions (--panel-text/-2/-3). They are not theme-bound: every theme,
-   light included, resolves --panel-1 to #333333 and --panel-2 to #4D4D4D. Two
-   kit components paint themselves from that family while taking their TEXT
-   from the active theme, which is only legible on a dark ground:
-
-     .ds-alert            background --panel-1, color --fg, message --fg-2
-     .ds-dropdown-trigger background --panel-2, color inherit
-
-   Measured live in the herd (light) theme: an alert's message read #333333 on
-   #333333 -- ratio 1.00, invisible -- its title 1.38:1, its icon 1.94:1, and
-   the "Saved views" dropdown trigger 2.06:1. That covers every empty state in
-   the app, the case pane's "Still missing for a visit" warning (the one thing
-   a field worker must read before driving out), the offline banner and every
-   toast. Repointing both at the theme's own --bg-2 tier keeps the herd-ink
-   rendering byte-identical (--bg-2 IS #333333 there) and makes the light theme
-   legible. The one place an alert must NOT paint its own ground is inside a
-   banner whose wrapper already carries a tinted band; .ds-handoff-banner
-   already states that for itself, and the connection banner needs the same. */
-.ds-247420 .ds-alert {
-  background: var(--bg-2);
-  border-color: var(--border);
-  color: var(--fg);
-}
-.ds-247420 .ds-alert-message { color: var(--fg-2); }
+/* ---- AN ALERT INSIDE A BANNER THAT ALREADY CARRIES ITS OWN BAND ----------
+   .ds-alert paints its own --panel-1 ground, which is right for a standalone
+   alert and wrong inside a wrapper that already tints a band of its own --
+   two grounds then stack and the band reads as a box on a box.
+   .ds-handoff-banner states that for itself above; the connection banner
+   needs the same. */
 .ds-247420 .ds-conn-banner .ds-alert-warn {
   background: var(--warn-bg, color-mix(in oklab, var(--warn, var(--amber)) 14%, var(--bg)));
   border-color: var(--warn-border, color-mix(in oklab, var(--warn, var(--amber)) 35%, transparent));
 }
+
+/* ---- A BORDERED, GROUNDLESS DROPDOWN TRIGGER ----------------------------
+   The kit fills its trigger with the --panel-2 tier; this dashboard's
+   triggers read as chrome affordances on whatever surface they sit on (the
+   appbar, a filter bar), so they carry a border and no ground of their own.
+   The bare `.ds-dropdown-trigger` rule further up states the same intent but
+   loses to the kit's own scope-prefixed `.ds-247420 .ds-dropdown-trigger`;
+   this is that intent at a specificity that actually wins. */
 .ds-247420 .ds-dropdown-trigger {
   background: transparent;
   border: 1px solid var(--border);
