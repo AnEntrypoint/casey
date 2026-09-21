@@ -591,19 +591,16 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   //    bytes under an unchanged cache name and the worker went on serving the
   //    old ones. A change to any byte the shell executes must change the id, or
   //    version-scoping is not version-scoping.
-  //  - OUT of the precache, because 125 extra install-time requests buy nothing
-  //    the page has not already fetched. The modules still join the same
-  //    versioned cache the first time they are asked for, so the offline
-  //    guarantee is unchanged and the first visit pays for each module once.
-  //
-  // The reason this bullet used to give -- that install fetches with
-  // cache: 'reload', so precaching the graph would download all of it a second
-  // time -- was true, and it was true of the SHELL ASSETS still on the list
-  // too: 247420.css, both Ubuntu weights, both Leaflet bundles and app.css were
-  // each arriving twice on a first visit, for 488,853 wasted bytes of the
-  // 1,328,304 measured at the socket. The install fetch is a default one now
-  // (see the /sw.js route), so the hazard is gone for both halves rather than
-  // avoided for one of them.
+  //  - and INTO the precache as well, which it did not used to be. Both halves
+  //    of that used to pull the same way: the id had to cover the graph, but
+  //    precaching it would have downloaded all of it a second time, because
+  //    install fetched with cache: 'reload'. That was true of the shell assets
+  //    on the list too -- 247420.css, both Ubuntu weights, both Leaflet bundles
+  //    and app.css each arrived twice on a first visit, 488,853 wasted bytes of
+  //    the 1,328,304 measured at the socket. The install fetch is a default one
+  //    now (see the /sw.js route), so precaching the graph costs conditional
+  //    requests rather than bodies, and the offline guarantee stops depending on
+  //    a reload firing to populate it. See the PRECACHE comment there.
   const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS])
   // First in the chain, so it wraps every downstream response -- the API
   // routes, the SPA shell, and the /design + /vendor static mounts alike.
@@ -874,14 +871,30 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     res.send(`
 const VERSION = '${SHELL_BUILD_ID}'
 const CACHE = 'casey-shell-' + VERSION
-// Derived at boot from index.html's own stylesheet/preload/script tags, not
-// written out by hand -- the hand-written copy had already drifted from the
-// page. Everything else same-origin (the ES modules, which resolve through the
-// import map) joins the same versioned cache the first time it is asked for, so
-// the operator never pays for a module this deployment does not actually open.
+// Derived at boot from index.html's own stylesheet/preload/script tags and its
+// resolved module graph, not written out by hand -- the hand-written copy had
+// already drifted from the page.
+//
+// THE MODULE GRAPH IS IN HERE, and it has to be. It used to be left out, on the
+// argument that a module joins this cache the first time it is asked for. What
+// actually asked for it on a first visit was the unconditional reload that
+// index.html fired when the worker claimed the page -- and that reload is gone,
+// because on a first visit nothing has been superseded and reloading cost a
+// second parse and execute of the whole graph. Witnessed after removing it,
+// server killed following one online visit: the reload served the cached shell
+// (title, boot notice, DOMContentLoaded 218 ms) while #app had 0 children and no
+// header rendered, because Cache Storage held 16 entries and not one module. An
+// operator whose first visit is their only online moment had a shell and no app.
+//
+// Precaching the graph was ruled out before because install fetched with
+// cache: 'reload', which made it a second full download of everything. The
+// install fetch is a default one now (see the handler below), so these are
+// conditional requests against the entries the page has just filled: the
+// operator pays request headers and a 304, not a body. That is what makes the
+// offline guarantee affordable rather than theoretical.
 const PRECACHE = ${JSON.stringify([
       '/', '/offline.html', '/icon.svg', '/manifest.json',
-      ...SHELL_ASSET_URLS,
+      ...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS,
     ])}
 
 // A DEFAULT fetch, deliberately NOT cache: 'reload'.
