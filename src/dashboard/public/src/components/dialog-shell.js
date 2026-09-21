@@ -28,19 +28,40 @@ const DIALOG_FOCUSABLE_SEL = 'a[href],button:not([disabled]),textarea:not([disab
 // losing their place in a 200-stop page. One module-scope slot, because exactly
 // one modal is open at a time in this app (state.activeModal is a single value,
 // and confirmDialog is awaited by its caller).
-let _openerEl = null;
+// THE NODE IS NOT ENOUGH TO REMEMBER. Every panel in this app re-renders on its
+// own poll (attention, health, the case row itself), and applyDiff may replace
+// the very button that opened the dialog while the dialog is still up --
+// measured: a field's note button was detached within two seconds of opening
+// its prompt, so restoring to the captured node silently did nothing and focus
+// stayed on <body>. So a signature is remembered beside the node and the
+// equivalent control is re-found when the original is gone. The signature is
+// tag + accessible-name-ish text + class, which is exactly enough here because
+// the controls that open dialogs are uniquely named (that is the other half of
+// this same pass).
+let _opener = null;
+function openerSignature(el) {
+  return [
+    el.tagName,
+    (el.getAttribute('aria-label') || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+    (el.className || '').toString(),
+  ].join('|');
+}
 function rememberOpener() {
   const a = document.activeElement;
-  _openerEl = (a && a !== document.body && typeof a.focus === 'function') ? a : null;
+  _opener = (a && a !== document.body && typeof a.focus === 'function')
+    ? { el: a, sig: openerSignature(a) }
+    : null;
 }
 function restoreOpenerFocus() {
-  const el = _openerEl;
-  _openerEl = null;
+  const remembered = _opener;
+  _opener = null;
+  if (!remembered) return;
+  let el = remembered.el;
+  if (!document.contains(el)) {
+    el = [...document.querySelectorAll(remembered.el.tagName)]
+      .find((c) => openerSignature(c) === remembered.sig) || null;
+  }
   if (!el) return;
-  // The opener may have been re-rendered away while the dialog was open (a
-  // reply-box button whose case reloaded); focusing a detached node silently
-  // does nothing, so only a node still in the document is worth the call.
-  if (!document.contains(el)) return;
   try { el.focus(); } catch { /* a control that refuses focus is not a failure to report */ }
 }
 
@@ -67,8 +88,15 @@ export function Dialog({ open, title, onClose, children, wide = false, id, foote
   // the last control inside a modal walked straight out into the page behind
   // it, which the modal is covering. The kit's own SettingsShell keeps the
   // container in a ref for the same reason; currentTarget already is it here.
+  // stopPropagation as well as preventDefault: preventDefault suppresses the
+  // browser's own default and nothing else, so the same Escape kept bubbling to
+  // keyboard.js's document listener, which -- the dialog having already closed
+  // itself -- saw no modal open and ran its `back()` branch. One Escape closed
+  // the prompt AND the case behind it, so cancelling a snooze threw away the
+  // case the operator was reading. The dialog owns Escape; nothing below it
+  // needs to see the same press.
   const onKeydown = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
     trapTab(e.currentTarget, e);
   };
   // ref fires on every applyDiff pass that touches this node, not only
@@ -189,7 +217,7 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
     // the panel is covering -- typing into a case row they cannot see. Same
     // trapTab the webjsx Dialog above uses, so both modal shapes behave alike.
     panel.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); close(null); return; }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(null); return; }
       trapTab(panel, e);
     });
     setTimeout(() => { (input || okBtn).focus(); if (input && inputDefault !== undefined) input.select(); }, 60);
