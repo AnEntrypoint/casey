@@ -32,11 +32,20 @@ export function ToastTray() {
           // contact can already see. run() dismisses the row itself once the
           // network call resolves, so this does not also dismiss it early --
           // doing so would remove the busy state mid-request.
+          // THE LABEL DOES NOT CHANGE WHILE THE UNDO IS IN FLIGHT. Swapping the
+          // string child for 'Working...' rendered an EMPTY button for the
+          // duration -- the same bare-string-child diff webjsx cannot morph in
+          // place that login-gate.js documents for its message slot, and a
+          // control that goes blank mid-request is worse than one that does not
+          // move. The busy state is carried by `disabled` (the kit's
+          // .is-disabled treatment) and the title, neither of which touches the
+          // child list.
           t.undo ? Btn({
             key: 'u', size: 'sm', variant: 'ghost',
             disabled: !!t.undo.busy,
+            title: t.undo.busy ? 'Working...' : null,
             onClick: () => { if (!t.undo.busy) t.undo.run(); },
-            children: t.undo.busy ? 'Working...' : (t.undo.label || 'Undo'),
+            children: t.undo.label || 'Undo',
           }) : null,
         ].filter(Boolean),
       })
