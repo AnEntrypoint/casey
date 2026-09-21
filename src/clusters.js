@@ -8,11 +8,13 @@
 // span of report dates. The merge action stays per-pair and human-confirmed
 // (correlate.js's whole point) -- this is a VIEW, never an auto-merge.
 //
-// Cost: O(n^2) correlationScore calls over a bounded pool (the caller caps it).
-// That is fine on the few-hundred open cases casey holds; it is computed
-// on-demand, not on every dashboard poll.
+// Cost: O(n^2) pair scorings over a bounded pool (the caller caps it -- the map
+// route's MAP_CASE_CAP is 2000). Measured at that cap: 2.1 s. It is NOT
+// on-demand-only -- /api/map/cases is on the map home view's 30 s poll -- so the
+// route memoizes its whole response on the pool's own id/_version/updated_at
+// fingerprint rather than recomputing this for a pool that did not move.
 
-import { correlationScore, SUGGEST_THRESHOLD, tokens, nameTokens } from './correlate.js'
+import { caseSignature, correlationScoreFromSignatures, SUGGEST_THRESHOLD, tokens, nameTokens } from './correlate.js'
 // parseReport (tolerant-of-already-parsed variant) moved to timestamp.js --
 // was independently duplicated here/geo.js/correlate.js.
 import { parseReportTolerant as parseReport } from './timestamp.js'
@@ -62,10 +64,17 @@ export function buildClusters(cases, threshold = SUGGEST_THRESHOLD) {
   const pool = (cases || []).filter(Boolean)
   const n = pool.length
   const uf = makeUF(n)
+  // Signatures once per case, never once per pair -- see correlate.js's
+  // caseSignature. The pair loop below is O(n^2) by construction and cannot be
+  // anything else (connected components over a pairwise judgement), so the only
+  // lever is what each pair costs, and rebuilding both sides' parsed report and
+  // token sets inside it made one /api/map/cases response 34.2 s at a 2000-case
+  // pool. Same edges, same components, same output.
+  const sigs = pool.map(caseSignature)
   const edges = []
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
-      const { score, reasons } = correlationScore(pool[i], pool[j])
+      const { score, reasons } = correlationScoreFromSignatures(sigs[i], sigs[j])
       if (score >= threshold) { uf.union(i, j); edges.push({ a: i, b: j, score, reasons }) }
     }
   }

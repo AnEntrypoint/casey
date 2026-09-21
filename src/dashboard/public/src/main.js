@@ -343,6 +343,23 @@ initRouteSync((r) => {
 // remaining 514,095 bytes an hour), so the only lever left on this surface is
 // making fewer requests, not smaller ones.
 const onMapHome = () => !state.activePanel && state.homeView === 'map';
+// EVERY POLL BELOW IS GATED ON A SESSION, and it was not. The five timers are
+// started at module scope, which runs before checkSession() has resolved and
+// keeps running while the login gate is the only thing on screen -- so a
+// dashboard sitting logged out polled four gated endpoints forever and was
+// answered 401 every time. Measured at the socket over a 60 s logged-out idle
+// window: 19 requests, 15 of them 401s that could not carry news to a screen
+// showing a login form -- about 900 wasted round trips an hour, roughly 0.9 MB,
+// on a metered link, with nobody signed in. The remaining four are api.js's own
+// ungated /api/ready connection probe, which is the one thing a logged-out page
+// legitimately still asks (it is what clears the offline banner).
+//
+// Gated rather than started-on-login: state.authed is already the single
+// authority on whether a session exists, login-gate.js's post-login refreshAll()
+// repopulates every surface these feed, and a tick that skips costs nothing --
+// so there is no second place that has to remember to start a timer, and a
+// session lost mid-shift stops the traffic by itself.
+const polling = () => state.authed;
 // The polling cadence, named rather than left as five bare numbers inline.
 // This is not housekeeping: every one of these is traffic on what AGENTS.md
 // describes as a metered, intermittent rural link, so how often each surface
@@ -384,7 +401,7 @@ let casesPollMs = CASES_POLL_MS;
 let _casesTimer = null;
 function scheduleCasesPoll() {
   _casesTimer = setTimeout(async () => {
-    if (state.inboxMode || onMapHome()) casesPollMs = CASES_POLL_MS;
+    if (!polling() || state.inboxMode || onMapHome()) casesPollMs = CASES_POLL_MS;
     else {
       const unchanged = await loadCases();
       casesPollMs = unchanged ? Math.min(CASES_POLL_MAX_MS, casesPollMs * 2) : CASES_POLL_MS;
@@ -396,10 +413,10 @@ scheduleCasesPoll();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') casesPollMs = CASES_POLL_MS;
 });
-const _healthIv = setInterval(refreshHealth, HEALTH_POLL_MS);
-const _attnIv = setInterval(refreshAttention, ATTENTION_POLL_MS);
-const _mapIv = setInterval(() => { if (onMapHome()) refreshMapData(); }, MAP_POLL_MS);
-const _degradedIv = setInterval(refreshDegradedTurns, DEGRADED_POLL_MS);
+const _healthIv = setInterval(() => { if (polling()) refreshHealth(); }, HEALTH_POLL_MS);
+const _attnIv = setInterval(() => { if (polling()) refreshAttention(); }, ATTENTION_POLL_MS);
+const _mapIv = setInterval(() => { if (polling() && onMapHome()) refreshMapData(); }, MAP_POLL_MS);
+const _degradedIv = setInterval(() => { if (polling()) refreshDegradedTurns(); }, DEGRADED_POLL_MS);
 // Not one of the polls above: it fetches no data and exists only so that
 // "Connected" cannot outlive the last response that reached the origin. The
 // polls are a side-effect detector with a 15s floor on this view and no floor

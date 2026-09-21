@@ -5,6 +5,7 @@
 //
 // deps: store, wrap, authed, actingOperator, isOpenCase, parseJsonArraySafe,
 //   getRoster
+import { createHash } from 'node:crypto'
 import { classifyWorkerCheckins, WORKER_CHECKIN_WINDOW_MS } from '../../case-health.js'
 import { rowInt } from '../../safe.js'
 import { tsMs, parseReport } from '../../timestamp.js'
@@ -97,6 +98,36 @@ export function getOperatorIdentities({ store, authed, parseJsonArraySafe, getRo
 // come ONLY from the agent's own case_report call -- its own best-effort
 // estimate from the location the worker described, using the model's own world
 // knowledge (see caseSystemPrompt); casey never looks anything up server-side.
+// THE ONE-ENTRY MEMO BEHIND THIS ROUTE, and why a pure route needs one.
+//
+// The whole response is a pure function of the case pool, and the pool changes
+// when a report comes in -- 0.42 events an hour on this deployment's own event
+// log. The map home view polls this route every 30 s (public/src/main.js's
+// MAP_POLL_MS), so 120 responses an hour are recomputed for a pool that moved
+// at most once. Recomputing is not free at the cap: buildClusters is O(n^2) over
+// the open pool by construction and measures 1.8 s at 2000 cases even with
+// correlate.js's per-case signatures lifted out of the pair loop. Two operators
+// on a single-core host then hold a core between them permanently, to answer
+// with bytes express's own weak ETag was about to turn into a 304 anyway.
+//
+// The key is the pool's own identity, never a clock: the row count plus every
+// row's id/_version/updated_at. A write bumps _version (thatcher's optimistic
+// lock) and updated_at, so any change to any row in the pool misses the memo --
+// there is no staleness window to tune and no invalidation call site to forget.
+// Hashing 2000 of those triples costs ~1 ms against the 1.8 s it guards.
+//
+// One entry, not a map: the only caller is the map view's own poll, always with
+// the same `days`. A second `days` value alternating against the first degrades
+// to today's behaviour (every response computed), never to unbounded memory.
+let mapCasesMemo = null
+
+function mapPoolFingerprint(days, rows) {
+  const h = createHash('sha1')
+  h.update('days:' + days + ':n:' + rows.length + '\n')
+  for (const r of rows) h.update(r.id + ' ' + r._version + ' ' + r.updated_at + '\n')
+  return h.digest('hex')
+}
+
 export function getMapCases({ store, authed, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -104,6 +135,8 @@ export function getMapCases({ store, authed, isOpenCase }) {
     const where = {}
     if (days > 0) where.created_at = { $gte: Math.floor(Date.now() / 1000) - days * 86400 }
     const all = await store.listCases(where, { limit: MAP_CASE_CAP + 1, offset: 0 })
+    const fingerprint = mapPoolFingerprint(days, all)
+    if (mapCasesMemo && mapCasesMemo.fingerprint === fingerprint) return res.json(mapCasesMemo.payload)
     const truncated = all.length > MAP_CASE_CAP
     const pool = truncated ? all.slice(0, MAP_CASE_CAP) : all
     const { buildClusters } = await import('../../clusters.js')
@@ -123,14 +156,16 @@ export function getMapCases({ store, authed, isOpenCase }) {
         unresolved.push(row)
       }
     }
-    res.json({
+    const payload = {
       pins, unresolved, unresolved_count: unresolved.length,
       clusters: clusters.map((cl, i) => ({
         index: i, count: cl.count, location: cl.location,
         species: cl.species, symptoms: cl.symptoms, reported_disease_names: cl.reported_disease_names,
       })),
       truncated, cap: MAP_CASE_CAP, total_considered: all.length,
-    })
+    }
+    mapCasesMemo = { fingerprint, payload }
+    res.json(payload)
   }
 }
 
