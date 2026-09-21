@@ -40,6 +40,19 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
         delete errMap[editKey];
         state._reportFieldEditing = editKey;
         schedule();
+        // FOCUS HAS TO FOLLOW THE SWAP. Opening the editor replaces the
+        // role=button span with a TextField, which destroys the node the
+        // keyboard user was standing on -- focus falls to <body>, so the
+        // operator who pressed Enter to edit a field has to Tab in from the top
+        // of a 200-stop document to reach the box they just opened. Deferred a
+        // macrotask because schedule() renders asynchronously, so the input
+        // does not exist yet on this tick. Scoped by data-field to THIS row:
+        // twenty-eight of these render at once.
+        setTimeout(() => {
+            const row = document.querySelector('[data-field="' + CSS.escape(k) + '"]');
+            const box = row && row.querySelector('input,textarea');
+            if (box) { box.focus(); if (box.select) box.select(); }
+        }, 0);
     };
     const cancelEdit = () => { state._reportFieldEditing = null; schedule(); };
 
@@ -90,7 +103,14 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             class: 'casey-rep-editable', tabindex: '0', role: 'button',
             title: 'Click to edit', 'aria-label': 'Edit ' + label,
             onclick: startEdit,
-            onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); startEdit(); } }
+            // Space as well as Enter: a role=button must answer both (a native
+            // <button> does, and every other role=button in this app -- the
+            // rail's queue rows, the handoff banner, the handover refs, the
+            // activity rows -- accepts both). With Enter alone, Space on the
+            // focused field scrolled the page instead of opening the editor.
+            onkeydown: (e) => {
+                if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); startEdit(); }
+            }
         },
             // On paper this page is often a form to complete by hand, so an
             // empty field must not print the word "not given yet" into the
@@ -136,7 +156,15 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
                 Btn({ size: 'sm', variant: 'primary', disabled: savingSet.has(editKey), children: savingSet.has(editKey) ? 'Saving...' : 'Save', onClick: save }),
                 Btn({ size: 'sm', variant: 'ghost', children: 'Cancel', onClick: cancelEdit })
             )
-            : h('button', { type: 'button', class: 'casey-rep-note-btn', title: 'Add a note to this field', onclick: addNote }, Icon('pencil', { size: 11 }), ' note'),
+            // NAMED BY ITS FIELD, like the edit control beside it. The visible
+            // word stays "note" -- it sits in a column of twenty-eight rows
+            // where the label already says which field it belongs to -- but the
+            // accessible name cannot borrow that column: read aloud, the page
+            // was twenty-eight consecutive "note, button" with nothing to tell
+            // them apart, while the value beside each already said "Edit
+            // <field>". title is not a substitute: it is only consulted when an
+            // element has no text content, and this one has text.
+            : h('button', { type: 'button', class: 'casey-rep-note-btn', 'aria-label': 'Add a note to ' + label, title: 'Add a note to ' + label, onclick: addNote }, Icon('pencil', { size: 11 }), ' note'),
         notes: (notes || []).map((n, i) => h('div', { key: 'n' + i, class: 'casey-rep-field-note' }, n.text)),
     });
 }

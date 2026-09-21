@@ -105,9 +105,11 @@ function caseCard(c, key) {
     const vals = caseValues(c);
     const open = () => { if (c.id) setActiveId(c.id); };
     return h('div', { key }, Panel({
-        // headingLevel 4: this card sits under the place Section's own
-        // heading, which is itself under the panel's.
-        title: vals[0] || '(no reference)', headingLevel: 4,
+        // headingLevel 3: the place Section's heading is an h2 and the only
+        // thing above it is the panel page's own h1 -- this panel's outer Panel
+        // carries no title of its own, so there is no third level between them
+        // and a 4 skipped one (measured: h1 -> h2 -> h4 on every place group).
+        title: vals[0] || '(no reference)', headingLevel: 3,
         right: Btn({ size: 'sm', variant: 'ghost', children: 'Open', onClick: open }),
         children: HEADERS.slice(1).map((label, i) => DetailRow({ key: label, label, value: vals[i + 1] })),
     }));

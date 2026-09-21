@@ -53,8 +53,13 @@ function operatorValues(o) {
 
 function operatorCard(o, key) {
     const vals = operatorValues(o);
+    // headingLevel 2, not 3: the only heading above these cards is the panel
+    // page's own h1 (app-view.js's ViewTitle), so a 3 skipped a level and a
+    // screen reader's heading list read the roster as nested one deep under
+    // nothing. The card branch is the one that carries a heading at all -- the
+    // wide branch is a table with real column headers.
     return h('div', { key }, Panel({
-        title: vals[0], headingLevel: 3,
+        title: vals[0], headingLevel: 2,
         children: HEADERS.slice(1).map((label, i) => DetailRow({ key: label, label, value: vals[i + 1] })),
     }));
 }
