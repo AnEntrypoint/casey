@@ -11,6 +11,8 @@
 import { runTurn } from '../agent/run-turn.js'
 import { observation } from './case-writes.js'
 import { caseSystemPrompt } from './prompt.js'
+import { buildPromptContext } from './prompt-context.js'
+import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
 import { stripThinkingBlock } from './heuristics.js'
 import { mutatingActions, hadSuccessfulWrite } from './turn-results.js'
@@ -251,6 +253,37 @@ export function buildTurnRequest({
   }
 }
 
+// The two structural facts about the RECORD that reply-judge.js's shapes 9
+// (farewell with facts still missing) and 10 (repeated ask) are checked against.
+// Derived from the same pure function the prompt itself composes from
+// (prompt-context.js), so the judge is handed exactly the facts the model was
+// told about -- one derivation, not two that can drift.
+//
+// Read from a FRESH row, per attempt, never from the pre-turn snapshot: this
+// attempt's own case_report has already landed by the time its reply is judged,
+// so a turn where the person gave every mandatory fact and the agent recorded
+// them would otherwise be judged against a report that still looks empty -- a
+// false farewell-gap on exactly the turns that went perfectly. A failed re-read
+// degrades to the pre-turn row rather than throwing: a stale list can only cost
+// one wasted retry, while a throw here would lose the whole reply.
+//
+// missingFacts is ORDERED: the mandatory minimum first, then the rest of the
+// visit-critical set, because that is the precedence prompt-sections.js states
+// for which single item the one last-chance ask is spent on. LABELS, not storage
+// keys: the retry feedback is a sentence the model paraphrases to a person, and
+// "how_to_find" is not a phrase anybody says out loud.
+export async function reportFactsForJudge(store, fallbackRow, events, caseId = fallbackRow?.id) {
+  const row = (await store.getCase(caseId).catch(() => null)) || fallbackRow
+  const { reportObj, missingCritical, missingMandatory } = buildPromptContext(row, events)
+  return {
+    missingFacts: [
+      ...missingMandatory,
+      ...missingCritical.map(fieldLabel).filter(l => !missingMandatory.includes(l)),
+    ],
+    knownFacts: reportObj ? Object.keys(reportObj).filter(k => reportObj[k] != null).map(fieldLabel) : [],
+  }
+}
+
 // Judge one attempt's candidate reply. Returns `{ done: false, retryFeedback }`
 // to retry, or `{ done: true, text, jargonReasons?, falseConfirmReasons? }`.
 //
@@ -275,7 +308,7 @@ export function buildTurnRequest({
 // "I have recorded it" on attempt 3 was judged a false confirmation, the retry
 // budget was spent, and the reply was held as a draft, leaving a real reporter
 // with total silence on a complete, correctly-stored report.
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null }) {
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, missingFacts = [], knownFacts = [] }) {
   const note = async (text) => {
     try { await store.appendEvent(fresh.id, observation(text)) }
     catch (e) { log.warn?.('[casey] failed to record attempt observation', { caseId: fresh.id, error: e.message }) }
@@ -355,7 +388,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // reply MEANS is judged by the single real-LLM judgeReply call
   // (hooks/reply-judge.js), never a regex/word-list.
   const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result)
-  const verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText })
+  const verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts })
   if (verdict.clean) return { done: true, text: candidate }
   // INTERNAL JARGON LEAK (reply-judge.js shape 6) is the shape whose fix is the
   // most purely mechanical of all of them: the reply's content is already right
@@ -405,6 +438,57 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it claimed something was recorded or opened when nothing actually was. If the contact reported something new, call the case_new or case_report tool FIRST and wait for its result before replying. Never claim an action you did not actually perform.]' }
     }
     return { done: true, text: candidate, falseConfirmReasons: verdict.reasons }
+  }
+  // FAREWELL WITH FACTS STILL MISSING (reply-judge.js shape 9): the reply signed
+  // off while a fact that cannot be got once the person leaves the animals is
+  // still blank. The on-site window is unrepeatable, so this is retried with the
+  // push restated and the FIRST missing fact named -- the prompt's own ordering
+  // (mandatory minimum ahead of the wider critical set) is already baked into
+  // missingFacts, so naming its head is naming the right one.
+  //
+  // MUST sit above the blanking branch below: this verdict's own reason word is
+  // routed by /farewell.?gap/, but a judge that also writes "repeated" anywhere
+  // in its reasons would otherwise be caught by that branch and BLANK a warm,
+  // genuine goodbye -- total silence at the exact moment the person is leaving.
+  //
+  // SENT ANYWAY on a spent budget, the same trade the multi-ask branch states in
+  // its own words: a goodbye that failed to ask one more question is still a real
+  // answer to a real person, and silence is worse. The record simply stays open,
+  // which is the truthful state (AGENTS.md's mandatory-minimum bullet).
+  if (verdict.reasons?.some(r => /farewell.?gap/i.test(r))) {
+    if (canRetry) {
+      log.warn?.('[casey] reply said goodbye with on-site-critical facts still missing; retrying turn with feedback', { caseId: fresh.id, attempt, missing: missingFacts })
+      await note(`FAREWELL-GAP: reply closed the conversation with ${missingFacts.join(', ')} still blank; retrying turn with feedback (attempt ${attempt})`)
+      return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it said goodbye while '
+        + `${missingFacts.join(', ')} ${missingFacts.length === 1 ? 'is' : 'are'} still missing, and nobody can answer that once this person leaves the animals. `
+        + `Send the same warm goodbye again, and weave ONE gentle ask for ${missingFacts[0]} into it as a single natural sentence -- not a list, not a second question, and never say any of this to them. If they cannot say, or they have already gone, that is fine; ask once and let them go.]` }
+    }
+    log.warn?.('[casey] reply said goodbye with facts still missing on a spent retry budget; sending anyway', { caseId: fresh.id, missing: missingFacts })
+    await store.appendEvent(fresh.id, observation(`FAREWELL-GAP-BUT-SENT: goodbye sent with ${missingFacts.join(', ')} still blank`))
+    return { done: true, text: candidate }
+  }
+  // REPEATED ASK IN NEW WORDS (reply-judge.js shape 10): the same ask again,
+  // rephrased, which both prior repeat guards pass by construction -- the
+  // verbatim guard above compares strings, and the judge's own REPEATED REPLY
+  // shape is anchored on the reply being essentially identical to the last one.
+  //
+  // Also MUST sit above the blanking branch: a judge writing the reason as
+  // "repeated ask" matches /repeated/ and would be blanked, leaving silence on a
+  // real message whose only fault is asking the wrong thing. Retried with the
+  // already-known facts named back, then SENT ANYWAY -- being asked twice is an
+  // irritation, being answered with nothing is a lost report.
+  if (verdict.reasons?.some(r => /repeat.?ask|already (asked|recorded|known)/i.test(r))) {
+    if (canRetry) {
+      log.warn?.('[casey] reply re-asked something already asked or already recorded; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
+      await note(`REPEAT-ASK: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
+      return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it asked again for something this person has already been asked or has already told you'
+        + (knownFacts.length ? ` -- these are already recorded: ${knownFacts.join(', ')}` : '')
+        + (missingFacts.length ? `. Ask instead about ${missingFacts[0]}, which is genuinely still missing` : '. Ask about something genuinely still missing, or simply acknowledge what they said and ask nothing')
+        + '. Rewording the same question does not make it a new one.]' }
+    }
+    log.warn?.('[casey] reply re-asked a known fact on a spent retry budget; sending anyway', { caseId: fresh.id, reasons: verdict.reasons })
+    await store.appendEvent(fresh.id, observation(`REPEAT-ASK-BUT-SENT: ${verdict.reasons.join('; ')}`))
+    return { done: true, text: candidate }
   }
   if (verdict.reasons?.some(r => /repeated|echo|stock|meta.?commentary|planning narration/i.test(r))) {
     // Blankable shapes -- a fresh attempt with the reasons fed back has a real
@@ -548,9 +632,13 @@ export async function runAgentTurn({
     for (const action of mutatingActions(result)) completedActions.push(action)
     // Cumulative, not per-attempt: see evaluateCandidate's priorAttemptWrote note.
     if (hadSuccessfulWrite(result)) turnWroteSomething = true
+    // Re-read AFTER this attempt's writes and against the case the attempt ended
+    // bound to (case_new/case_switch can have moved it) -- see
+    // reportFactsForJudge for why a pre-turn snapshot is the wrong input here.
+    const { missingFacts, knownFacts } = await reportFactsForJudge(store, fresh, events, turnBinding.id)
     const verdict = await evaluateCandidate({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
-      priorAttemptWrote: turnWroteSomething, systemPromptText,
+      priorAttemptWrote: turnWroteSomething, systemPromptText, missingFacts, knownFacts,
     })
     if (!verdict.done) { retryFeedback = verdict.retryFeedback; continue }
     text = verdict.text
