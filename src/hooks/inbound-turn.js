@@ -132,6 +132,10 @@ async function driveAgentTurn(deps, {
   // Falls back to the original id if the rebound case cannot be read, so a
   // failed lookup degrades to the previous behaviour rather than losing `fresh`.
   const endedOnId = turn.activeCase?.id || fresh.id
+  // The case the turn STARTED on, kept before `fresh` is rebound: a case_new
+  // leaves it behind, and it may hold a full report the reporter just gave. See
+  // the advanceIntake call below for why it still needs advancing.
+  const startedOnId = fresh.id
   fresh = await store.getCase(endedOnId).catch(() => null) || await store.getCase(fresh.id).catch(() => fresh)
 
   // Reaching here with empty text means the whole genuine retry budget (attempts
@@ -156,6 +160,20 @@ async function driveAgentTurn(deps, {
   // report was received. `fresh` is the post-turn re-read, so its report column is
   // exactly what this turn's own case_report left behind.
   await advanceIntake({ store, log, fresh, inboundText, media, reportLanded: !!fresh?.report, replySending: !isFallback })
+  // A case_new mid-turn leaves the case the turn STARTED on behind, and one
+  // message carrying two separate situations records the first situation into it
+  // and then departs -- so that case holds a real report and has never had a turn
+  // end on it. Without this it sits at `new` indefinitely, reading as an intake
+  // nobody has begun while holding facts somebody gave, until the 24h
+  // abandoned_intake sweep notices. Gated on reportLanded alone: no reply is going
+  // out on THIS case, its report is the whole warrant, and advanceIntake is a
+  // no-op for a case already past `new` or holding nothing.
+  if (startedOnId && startedOnId !== fresh?.id) {
+    const departed = await store.getCase(startedOnId).catch(() => null)
+    if (departed?.report) {
+      await advanceIntake({ store, log, fresh: departed, inboundText, media, reportLanded: true, replySending: false })
+    }
+  }
   if (degraded) await tagAiOffline({ store, log, fresh })
 
   // A QUEUED message re-driven (msg.queuedRedrive, set only by drainQueuedTurns)
