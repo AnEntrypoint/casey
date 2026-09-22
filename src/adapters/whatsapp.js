@@ -115,18 +115,64 @@ export class WhatsappAdapter extends EventEmitter {
 // media field vocabulary, and NOT in the freddie-bundle platform plugin that
 // calls it. Do not grow a second copy there: a duplicate on the live path
 // drifts off emitWithDetachedMedia and stops detaching media hydration.
+// Meta nests every inbound message's payload under `m.<type>`, one documented
+// shape per type, and THREE of those shapes carry the words a person typed
+// alongside the file they sent: `image.caption`, `video.caption` and
+// `document.caption`. None of them is on `m.text`, so reading `m.text?.body`
+// alone downloads a photo's bytes perfectly and silently discards the sentence
+// describing what the photo shows -- on a disease report, the half a vet reads
+// first. `audio` and `sticker` have no caption field at all (audio carries
+// `voice`, sticker carries `animated`), so there is nothing to read there.
+// A `reaction`'s only content IS its emoji, which likewise reached the turn as
+// empty text with no branch for it.
+function inboundMessageText(m) {
+  return m.text?.body
+    || m.image?.caption || m.video?.caption || m.document?.caption
+    || m.reaction?.emoji
+    || ''
+}
+
+// A shared location pin arrives COMPLETE in the webhook body -- Meta's
+// documented shape is `{type:'location', location:{latitude, longitude, name,
+// address, url}}` with latitude/longitude as JSON numbers, not a media id. So
+// it must never enter the media path: there is nothing to fetch, and
+// `mediaObj?.id` is undefined on it, which is exactly why an unhandled pin used
+// to reach the turn as a no-text no-media event with the coordinates thrown
+// away. Normalised here, beside the rest of this adapter's field vocabulary, so
+// the deterministic ingress capture (hooks/media-intake.js) reads ONE shape
+// instead of Meta's raw message. Numbers are coerced (not trusted) and a
+// non-numeric pair yields null rather than a NaN coordinate that would read as
+// a real position downstream; range validation belongs with the write, in
+// media-intake.js, alongside every other case-layer coordinate check.
+function inboundLocation(m) {
+  const l = m.location
+  if (!l) return null
+  const lat = Number(l.latitude)
+  const lon = Number(l.longitude)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+  return { lat, lon, name: String(l.name || ''), address: String(l.address || ''), url: String(l.url || '') }
+}
+
 export function dispatchWhatsappWebhookBody(adapter, body) {
   const events = []
   for (const e of (body?.entry || [])) for (const c of (e.changes || [])) {
     for (const m of (c.value?.messages || [])) {
+      const location = inboundLocation(m)
       const event = {
         from: m.from,
         // `id` is lifted out for dedup upstream; `raw` is Meta's own message
         // object as it arrived, which already carries id and type.
-        text: m.text?.body || '',
+        text: inboundMessageText(m),
         id: m.id,
         raw: m,
+        ...(location ? { location } : {}),
       }
+      // `sticker` is deliberately NOT in this list. It is image/webp and would
+      // download like a photo, but hooks/media-intake.js records a photo only
+      // for a real image, so the bytes would be fetched on every sticker and
+      // then dropped -- two Graph API hops and a Meta rate-limit slot spent on
+      // nothing. A sticker still reaches the turn: describeMedia() names it
+      // from `raw.type`, which is the whole of what a sticker tells us.
       const mediaObj = m.image || m.audio || m.document || m.video
       const type = m.image ? 'image' : m.audio ? 'audio' : m.document ? 'document' : m.video ? 'video' : null
       events.push({ event, pending: mediaObj?.id ? { mediaObj, type } : null })

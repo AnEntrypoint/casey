@@ -49,20 +49,26 @@ export function buildCaseReportTools(store) {
         id = target.id
         const args = validateReportArgs({ fields, lat, lon, location_source })
         if (args.error) return { error: args.error, ...(args.allowed ? { allowed: args.allowed } : {}) }
-        const { incoming, hasLatLon, resolvedLocationSource } = args
+        const { incoming, resolvedLocationSource } = args
+        let { hasLatLon } = args
 
         const merged = await mergeIncomingReport(store, id, incoming)
         if (merged.error) return { error: merged.error }
         const { res, priorReport } = merged
 
+        let locationKept = ''
         if (hasLatLon) {
           const wrote = await writeReportLocation(store, id, { lat, lon, resolvedLocationSource })
           if (wrote.error) return { error: wrote.error }
+          // The coordinate was refused, so nothing downstream may claim it was
+          // written: not the audit event, not the provenance ledger (which has
+          // no delete), not the fieldsRecorded list the model reads back.
+          if (wrote.locationKept) { locationKept = wrote.locationKept; hasLatLon = false }
         }
         await syncDerivedLocation(store, id, incoming)
         await auditReportWrite(store, id, { incoming, priorReport, hasLatLon, lat, lon })
         await wireProvenance(store, ctx, id, { incoming, res, hasLatLon, lat, lon })
-        return { ok: true, report: res.report, fieldsRecorded: recordedFields(incoming, hasLatLon), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
+        return { ok: true, report: res.report, fieldsRecorded: recordedFields(incoming, hasLatLon), ...(locationKept ? { locationKept } : {}), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
       }),
   ]
 }
@@ -167,6 +173,29 @@ async function mergeIncomingReport(store, id, incoming) {
 // rather than a raw getCase-then-check-then-write -- that stale-read-then-write
 // shape is exactly the TOCTOU race updateCaseChecked was introduced to close.
 async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource }) {
+  // AN ESTIMATE NEVER REPLACES A REAL READING. The provenance subsystem already
+  // enforces this for its own ledger (core/provenance.js canReplace: inferred
+  // can never overwrite measured); the case's own lat/lon columns had no such
+  // rule, so a real GPS fix -- a WhatsApp location pin recorded at ingress
+  // (hooks/media-intake.js), or an exact reading a worker read out -- was
+  // silently downgraded to the model's own guess the moment any later
+  // case_report mentioned a place name. The stored position and its
+  // location_source both changed, so the map then drew a guess where it had a
+  // fix and nothing anywhere said the fix had been thrown away.
+  //
+  // Only the DOWNGRADE is refused: a 'gps' or 'confirmed' write still replaces
+  // anything, and an 'estimated' write is unaffected while the case holds no
+  // better position (the ordinary first-estimate path). The read is taken
+  // outside updateCaseChecked's own lock, so it is a precedence rule and not an
+  // atomicity guarantee -- the writer it genuinely races is a dashboard operator
+  // editing the same row in the same instant, which won before this existed too.
+  if (resolvedLocationSource === 'estimated') {
+    const prior = await store().getCase(id).catch(() => null)
+    const priorSource = prior?.location_source
+    if ((priorSource === 'gps' || priorSource === 'confirmed') && prior?.lat != null && prior?.lon != null) {
+      return { locationKept: `this report already holds a ${priorSource} position (lat ${prior.lat}, lon ${prior.lon}); your estimate was not recorded over it. Ask them to confirm or correct that position instead.` }
+    }
+  }
   const latLonResult = await store().updateCaseChecked(id, { lat, lon, location_source: resolvedLocationSource }, AGENT_USER)
   if (latLonResult.error === 'observe') return { error: OBSERVE_BLOCKED.error }
   if (latLonResult.error) return { error: latLonResult.error }

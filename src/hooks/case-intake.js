@@ -12,7 +12,7 @@
 
 import { observation, flagNeedsHuman } from './case-writes.js'
 import { applyServiceControls, isLlmDown } from './service-controls.js'
-import { describeMedia, recordInboundMedia } from './media-intake.js'
+import { describeMedia, recordInboundMedia, recordInboundLocation } from './media-intake.js'
 import { truncate, stripChannelMarkup, mergeTag, dropTag } from './heuristics.js'
 import { recordDroppedInbound } from './dropped-intake.js'
 import { tagList } from '../timestamp.js'
@@ -161,6 +161,12 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   // the WhatsApp shape strands a Discord photo at the text-only floor with real
   // downloaded bytes sitting right there. Append-only and best-effort.
   await recordInboundMedia({ store, log, caseId: caseRow.id, msg })
+  // A shared location pin is the same class of unrecapturable on-site artifact
+  // and is captured the same way -- before the agent turn, deterministically,
+  // because the model never sees the webhook payload the coordinates arrive in.
+  // Runs BEFORE inbound-turn.js re-reads the case, so this turn's prompt already
+  // carries the real position and its provenance.
+  await recordInboundLocation({ store, log, caseId: caseRow.id, msg })
   if (!created) return
   if (!caseRow.subject) {
     const subj = truncate(inboundText || media || 'New conversation', 80)

@@ -12,6 +12,33 @@ several describe modules (`src/extract.js`, `src/gazetteer.js`, `test.js`,
 supposed to look like once the code moves on.
 
 ### Fixed
+- **A WhatsApp location pin is recorded instead of discarded.**
+  `dispatchWhatsappWebhookBody` branched only on `m.image`/`m.audio`/
+  `m.document`/`m.video`, so Meta's documented `{type:'location',
+  location:{latitude,longitude,name,address,url}}` message reached the turn as a
+  no-text, no-media event with the coordinates thrown away -- a field worker
+  sharing where the animals are got a "what can I help with?" reply. The adapter
+  now normalises the pin (it carries no media id and must never enter the
+  two-hop download path) and `hooks/media-intake.js`'s `recordInboundLocation`
+  writes it to the case's lat/lon columns with `location_source: 'gps'`
+  deterministically at ingress, plus a timeline observation naming WhatsApp as
+  the author of the place label. An out-of-range pair records no coordinate and
+  says so on the timeline.
+- **A photo's caption is no longer discarded.** `image`/`video`/`document`
+  carry the words typed alongside the file on `m.<type>.caption`, never on
+  `m.text`, so a photo of lesions sent WITH a description downloaded its bytes
+  perfectly and lost the description. The caption is now the turn's inbound
+  text, the recorded inbound, and the new case's subject. A `reaction`'s emoji
+  -- the whole content of that message -- reaches the turn for the same reason.
+- **An estimated coordinate no longer overwrites a real reading.**
+  `case_report`'s `writeReportLocation` wrote lat/lon unconditionally, so any
+  later call mentioning a place name replaced a real GPS fix with the model's own
+  guess and flipped `location_source` with it -- the map drew a guess where it
+  had a fix and nothing said the fix was gone. An `estimated` write over a stored
+  `gps`/`confirmed` position is now refused and returns `locationKept` so the
+  agent asks the person to confirm or correct that position. Only the downgrade
+  is refused; a `gps`/`confirmed` write still replaces anything, and a first
+  estimate on a position-less report is unaffected.
 - **`--help` no longer runs the command.** The help text advertised
   `--help`/`-h` on any command, but only `up` and `dashboard` checked the flag;
   everything else dispatched normally, so `casey sweep --help` ran the sweep and
