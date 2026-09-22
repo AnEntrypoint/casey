@@ -64,6 +64,7 @@ export function createSupervisor(opts = {}) {
     reloadQueued: false,    // a reload requested mid-restart is held, not dropped or stacked
     draining: false,
     resolveDrain: null,
+    keepAlive: null,        // the parent's own event-loop handle -- see armKeepAlive
   }
 
   // Durable runtime-lifecycle events (CRASH / RELOAD / DEGRADED / BUDGET) that must
@@ -112,9 +113,37 @@ export function createSupervisor(opts = {}) {
   }
 
   // --- public control -------------------------------------------------------
+  // The supervisor owns no socket, no file watch it can rely on, and no timer of
+  // its own: every long-lived handle in a healthy runtime belongs to the WORKER
+  // (dashboard socket, gateway socket, sweep timers). So in every window where
+  // the worker is gone -- between a crash and its respawn, and permanently once
+  // the crash budget has stopped respawning -- the parent can be holding nothing
+  // at all, and Node exits a process holding nothing. That turns two documented
+  // behaviours into silent exits: the crash-restart itself (see the restart timer
+  // in supervisor-worker-process.js) and the budget-exceeded hold, which
+  // supervisor-crash-policy.js describes as "hold the process alive in
+  // 'degraded' (the dashboard pill + /api/runtime show it)" -- a state nobody can
+  // observe on a process that has ended. Live reload happens to mask it, because
+  // its fs.watch watchers hold the loop; `casey up --no-reload` does not.
+  //
+  // One ref'd, never-firing timer from start() to stop() makes the supervisor's
+  // own lifetime independent of what it is currently supervising. Cleared in
+  // stop(), so an intentional shutdown still exits promptly.
+  const KEEPALIVE_TICK_MS = 1 << 30   // ~12.4 days; a handle, not a schedule
+  function armKeepAlive() {
+    if (rt.keepAlive) return
+    rt.keepAlive = setInterval(() => {}, KEEPALIVE_TICK_MS)
+  }
+  function releaseKeepAlive() {
+    if (!rt.keepAlive) return
+    clearInterval(rt.keepAlive)
+    rt.keepAlive = null
+  }
+
   async function start() {
     if (rt.worker) return
     sup.ctx.since = Date.now()
+    armKeepAlive()
     workerProcess.spawn(Date.now())
     armWatcher()
   }
@@ -127,6 +156,7 @@ export function createSupervisor(opts = {}) {
     rt.watchers = []
     await restart.drainWorker()
     sup.fire('STOPPED', Date.now())
+    releaseKeepAlive()
   }
 
   return {

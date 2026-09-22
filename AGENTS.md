@@ -1014,6 +1014,26 @@ without restart-on-crash.
   into the same held port repeatedly.
 - The watch list is a fixed allowlist, never derived from contact input; the
   fork takes an argv array, never an interpolated shell string.
+- **The supervisor holds its own event-loop handle, and the crash-restart timer
+  is the one timer here that is NOT unref'd.** Every long-lived handle in a
+  healthy runtime belongs to the worker (dashboard socket, gateway socket, sweep
+  timers), so between a crash and its respawn -- and permanently once the crash
+  budget has stopped respawning -- the parent can hold nothing at all, and Node
+  exits a process holding nothing. With live reload on, its fs.watch watchers
+  mask that; with `--no-reload`/`CASEY_RELOAD=0` they do not, and an unref'd
+  backoff timer means the supervisor exits 0, announcing success, one second
+  after the first crash with nothing restarted. `armKeepAlive` (start to stop)
+  plus a ref'd restart timer is what makes both the restart ladder and the
+  documented "hold the process alive in degraded" true.
+- **A crashed worker's cause is captured from its own stderr, and a FATAL reason
+  belongs to one child.** The worker's stderr is piped and written straight
+  through unchanged; the last few lines are kept so a worker that dies BEFORE
+  `bin/worker.js`'s crash net is installed -- a syntax error or a missing export
+  anywhere in its static import graph, which is what a save landing mid-edit
+  produces -- still records WHY in `data/runtime-events.jsonl` instead of a bare
+  `worker exited code=1 signal=`. `sup.ctx.lastCrashReason` is a DISPLAY field
+  (`/api/runtime`) that nothing clears, so it is never read back as the cause of
+  a later exit; a reported fatal is stored on the child that reported it.
 - The supervisor is only HALF the live-reload story: freddie's plugin packages
   and casey's own `freddie-bundle/` plugins hot-swap inside the running worker
   through Cordis HMR and never reach this restart path, while the worker can ASK
@@ -1173,6 +1193,21 @@ without restart-on-crash.
   discipline covers closing: on a `case_transition` to `resolved` with no
   outcome recorded, the agent asks once what happened and records it via
   `case_report`'s `notes` field.
+  **The push is a GATE, not only an instruction.** Being named in the prompt is
+  what every other reply rule this system rests on also has, and it is not
+  enough on a weak model: a warm goodbye that asks for none of the blanks is
+  on-topic, genuine and CLEAN under every other judge shape, so nothing caught
+  it. `hooks/reply-judge.js`'s shape 9 is handed the still-blank facts as a
+  system fact -- the same class of input as `hadSuccessfulWrite`, computed by
+  `hooks/turn-attempts.js`'s `reportFactsForJudge` from the same
+  `prompt-context.js` derivation the prompt itself renders, mandatory minimum
+  first -- and flags a reply that closes the conversation while asking for none
+  of them. `evaluateCandidate` retries with the push restated and the first
+  missing fact named, then sends the goodbye ANYWAY once the budget is spent:
+  a farewell that failed to ask one more question is still a real answer, and
+  silence is worse. Read from a FRESH row per attempt, never the pre-turn
+  snapshot, or a turn that recorded everything correctly is judged against a
+  report that still looks empty.
 - **No worker-volunteered fact is silently discarded.** Photo/audio/site
   fields append rather than overwrite. A dashboard operator's concurrent
   edit is detected via optimistic locking and the merge retries against the

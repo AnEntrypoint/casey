@@ -20,15 +20,59 @@ export const WORKER_ENTRY = path.join(__dirname, '..', 'bin', 'worker.js')
 // `restart` is passed as a thunk rather than a value: the restart cycle is built
 // from this module's own spawn(), so the two are mutually dependent and only the
 // call is deferred, never the wiring.
+// How much of a dying worker's own stderr is kept to explain its exit. Small on
+// purpose: this is the last few lines before death, not a log buffer, and it
+// ends up inside a crash `reason` string that supervisor-state.js truncates to
+// 300 chars for /api/runtime anyway.
+const STDERR_TAIL_LINES = 12
+const STDERR_TAIL_BYTES = 8192
+
+// The line that actually names the cause, which is never the literal last line
+// of output. Node's fatal-startup shape is: the offending file:line, the source
+// line, a caret, the `Error: message`, the `    at ...` frames, and finally a
+// bare `Node.js v24.20.0` banner. So the frames and that banner are dropped, and
+// an Error/Exception line is preferred over whatever else survives -- taking the
+// last remaining line instead reported the Node VERSION as the crash reason
+// (witnessed live against a deliberately poisoned worker).
+function causeFromStderrTail(lines) {
+  const meaningful = lines.filter(l => l.trim() && !/^\s+at\s/.test(l) && !/^Node\.js v/.test(l.trim()))
+  const named = meaningful.filter(l => /(?:^|\s)[A-Za-z]*(?:Error|Exception)\b/.test(l))
+  const pick = named.length ? named[named.length - 1] : meaningful[meaningful.length - 1]
+  return pick ? pick.trim().slice(0, 200) : null
+}
+
 export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, onHealth, restart }) {
   function spawn() {
     rt.booted = false
     const child = fork(WORKER_ENTRY, workerArgs, {
       // Inherit env (tokens, CASEY_*). No shell -- fork never interpolates a string,
       // so untrusted data can never reach a shell here (security invariant).
-      stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+      //
+      // stderr is PIPED rather than inherited, and every chunk is written straight
+      // through to this process's own stderr below, so the operator-visible output
+      // is unchanged. The pipe exists because of what an inherited stderr costs:
+      // a worker that dies before its own crash net is installed -- a SyntaxError
+      // or a missing export in any module bin/worker.js statically imports, which
+      // is what a save landing mid-edit produces -- never reaches
+      // `main().catch()` and never sends WORKER_MSG.FATAL, so the exit is
+      // recorded as a bare `worker exited code=1 signal=` with the actual cause
+      // living only in whatever the parent's stdout happened to be attached to at
+      // the time. Thirteen such crashes were audited after the fact with no cause
+      // recoverable for twelve of them. Keeping the tail makes the ONE question an
+      // operator has -- was that a real bug or a half-written file -- answerable
+      // from data/runtime-events.jsonl instead of a lost terminal.
+      stdio: ['inherit', 'inherit', 'pipe', 'ipc'],
     })
     rt.worker = child
+    child._stderrTail = []
+    child.stderr?.on('data', (chunk) => {
+      // Pass through FIRST and unmodified: the supervisor is not a log filter,
+      // and a worker's stderr must keep reaching wherever it was already going.
+      process.stderr.write(chunk)
+      const text = chunk.toString('utf8').slice(-STDERR_TAIL_BYTES)
+      child._stderrTail.push(...text.split(/\r?\n/))
+      if (child._stderrTail.length > STDERR_TAIL_LINES) child._stderrTail = child._stderrTail.slice(-STDERR_TAIL_LINES)
+    })
     child.on('message', (m) => {
       if (!m || typeof m !== 'object') return
       if (m.type === WORKER_MSG.READY) handleReady(child, m.payload || {})
@@ -45,8 +89,15 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
       }
       else if (m.type === WORKER_MSG.FATAL) {
         log.error?.('[supervisor] worker fatal', { reason: m.payload?.reason })
-        // A fatal is treated as a crash on exit below; record the reason now.
-        sup.ctx.lastCrashReason = m.payload?.reason || 'fatal'
+        // A fatal is treated as a crash on exit below; record the reason now --
+        // on THIS CHILD, not on sup.ctx. sup.ctx.lastCrashReason is a display
+        // field (/api/runtime, the dashboard pill) that handleExit overwrites on
+        // every crash and nothing ever clears, so reading it back as the CAUSE of
+        // a later exit reports the first crash's reason for every crash after it,
+        // for the whole life of the supervisor. A fatal belongs to exactly one
+        // worker process, so it is stored on exactly one worker process.
+        child._fatalReason = m.payload?.reason || 'fatal'
+        sup.ctx.lastCrashReason = child._fatalReason
       }
     })
     child.on('exit', (code, signal) => handleExit(code, signal, child))
@@ -80,7 +131,18 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
       code, signal, now,
       crashes: sup.ctx.crashes,
       restarts: sup.ctx.restarts,
-      lastCrashReason: sup.ctx.lastCrashReason,
+      // This child's OWN fatal report if it managed to send one, else the cause
+      // read off its own dying stderr. Never sup.ctx.lastCrashReason: see the
+      // FATAL handler above for why that field cannot answer "why did THIS
+      // worker exit".
+      // The exit code stays in the string when the cause comes from stderr --
+      // `classifyWorkerExit` uses lastCrashReason INSTEAD of its own
+      // `worker exited code=...` sentence, and a cause with no code is a worse
+      // record than a code with no cause.
+      lastCrashReason: child._fatalReason || (() => {
+        const cause = causeFromStderrTail(child._stderrTail || [])
+        return cause ? `worker exited code=${code} signal=${signal || ''} -- ${cause}` : null
+      })(),
     })
     if (decision.kind === 'config-fatal') {
       sup.fire('BUDGET_EXCEEDED', now, decision.reason)
@@ -101,7 +163,17 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
       return
     }
     log.info?.('[supervisor] restarting after crash', { backoffMs: decision.backoffMs })
-    setTimeout(() => restart().respawn(Date.now()), decision.backoffMs).unref?.()
+    // NOT unref'd, unlike every other timer in this runtime. Between the dead
+    // worker and the respawn, this timer is frequently the ONLY handle the parent
+    // holds: the dashboard and the gateway live in the worker, and with live
+    // reload off (`casey up --no-reload` / CASEY_RELOAD=0) there are no fs.watch
+    // watchers either. Unref'd, Node then drains the loop and the supervisor
+    // EXITS 0 -- announcing success -- one second after the first crash, having
+    // restarted nothing. Witnessed live against a deliberately poisoned worker:
+    // one CRASH row, `restarting after crash { backoffMs: 300 }`, then a clean
+    // exit and silence. The whole purpose of this process is to still be here
+    // when this timer fires.
+    setTimeout(() => restart().respawn(Date.now()), decision.backoffMs)
   }
 
   return { spawn }
