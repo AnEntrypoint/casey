@@ -14,7 +14,8 @@ import { caseSystemPrompt } from './prompt.js'
 import { buildPromptContext } from './prompt-context.js'
 import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
-import { stripThinkingBlock } from './heuristics.js'
+import { stripThinkingBlock, OPTED_OUT_TAG } from './heuristics.js'
+import { tagList } from '../timestamp.js'
 import { mutatingActions, hadSuccessfulWrite } from './turn-results.js'
 import { buildCaseToolset, reporterTierExcludedToolNames } from '../case-tools.js'
 import { resolveContactTier, canQueryCases } from '../contact-tiers.js'
@@ -275,8 +276,21 @@ export function buildTurnRequest({
 export async function reportFactsForJudge(store, fallbackRow, events, caseId = fallbackRow?.id) {
   const row = (await store.getCase(caseId).catch(() => null)) || fallbackRow
   const { reportObj, missingCritical, missingMandatory } = buildPromptContext(row, events)
+  // STOP MEANS STOP, and this is the one place the farewell gate would break it.
+  // A STOP tags the case opted-out and then falls through to an ordinary agent
+  // turn to compose the acknowledgement in the person's own language
+  // (hooks/service-controls.js) -- and that acknowledgement is, by its nature, a
+  // reply that closes the conversation on a report whose facts are mostly blank.
+  // Handing the judge a missing-fact list there produces a farewell-gap verdict
+  // whose retry instruction is "ask them one more thing", aimed at somebody who
+  // has just exercised an irreversible legal control. An empty list makes shape 9
+  // unrenderable, exactly as it is for a report with nothing missing.
+  // The handoff tag is deliberately NOT included: a person asking for a human is
+  // still standing next to the animals and has not asked to be left alone, so the
+  // single gentle ask the push allows is still right for them.
+  const optedOut = tagList(row).includes(OPTED_OUT_TAG)
   return {
-    missingFacts: [
+    missingFacts: optedOut ? [] : [
       ...missingMandatory,
       ...missingCritical.map(fieldLabel).filter(l => !missingMandatory.includes(l)),
     ],

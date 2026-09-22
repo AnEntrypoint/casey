@@ -33,7 +33,7 @@
 import path from 'node:path'
 import { buildSupervisorMachine } from './supervisor-machine.js'
 import { PARENT_MSG, ipcSend } from './supervisor-ipc.js'
-import { armReloadWatchers } from './supervisor-reload-watch.js'
+import { armReloadWatchers, armReloadMtimeBackstop } from './supervisor-reload-watch.js'
 import { createRuntimeEventBuffer } from './supervisor-runtime-events.js'
 import { createSupervisorState } from './supervisor-state.js'
 import { createWorkerProcess } from './supervisor-worker-process.js'
@@ -105,11 +105,18 @@ export function createSupervisor(opts = {}) {
   // a debounced change actually means here, which is requestReload.
   function armWatcher() {
     if (!enableReload) { log.info?.('[supervisor] live reload disabled'); return }
-    rt.watchers = armReloadWatchers({
-      log,
-      debounceMs: RELOAD_DEBOUNCE_MS,
-      onChange: () => restart.requestReload(Date.now()),
-    })
+    const onChange = () => restart.requestReload(Date.now())
+    rt.watchers = armReloadWatchers({ log, debounceMs: RELOAD_DEBOUNCE_MS, onChange })
+    // Second mechanism, not a nicety: a recursive fs.watch that stops delivering
+    // events reports nothing at all, and the runtime then serves stale code
+    // indefinitely while still claiming live reload is on. See
+    // armReloadMtimeBackstop for the witnessed failure. The floor it compares a
+    // source mtime against is the last real reload, or the first worker spawn
+    // before any reload has happened.
+    rt.watchers.push(armReloadMtimeBackstop({
+      log, onChange,
+      lastReloadAt: () => sup.ctx.lastReloadAt || sup.ctx.since || 0,
+    }))
   }
 
   // --- public control -------------------------------------------------------

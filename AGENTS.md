@@ -795,6 +795,21 @@ side, and both are structural, not cautious:
   cache, but nothing re-imports them, so every live reference in the booted
   worker keeps running the old code behind a cache that looks fresh.
 
+**The supervisor half has a SECOND mechanism behind it, because a dead file
+watcher is invisible.** `fs.watch`'s `error` event is the only failure
+`supervisor-reload-watch.js` could see, and it is not the failure that happens:
+witnessed live on Linux, a watcher that armed cleanly at boot and never logged an
+error stopped delivering events after about half an hour of heavy editor and
+`git fetch`/merge churn in the watched tree, while the process stayed healthy and
+a fresh `fs.watch` on the same directory in another process saw the same touch
+immediately. The worker served half-hour-old code the whole time and every save
+appeared to do nothing. `armReloadMtimeBackstop` compares the newest reloadable
+source mtime against the last real reload on an interval
+(`CASEY_RELOAD_SWEEP_MS`, default 20s) and requests the reload the watcher
+missed. It stays silent while the watchers work -- a healthy save reloads inside
+the debounce window, so the reload is newer than the file -- and it says
+explicitly, when it does fire, that the watcher has stopped delivering.
+
 **Nothing falls between the two.** `freddie-bundle/boot.js`'s
 `installHmrEscalation()` subscribes to `hmr/journal` and escalates the two
 outcomes that mean the edit did not actually land -- `kind: 'failed'` (the
@@ -1256,6 +1271,16 @@ without restart-on-crash.
   silence is worse. Read from a FRESH row per attempt, never the pre-turn
   snapshot, or a turn that recorded everything correctly is judged against a
   report that still looks empty.
+  **The gate is OFF for an opted-out contact, and that exemption is the point.**
+  A STOP tags the record opted-out and then falls through to an ordinary agent
+  turn to compose the acknowledgement in the person's own language, so that
+  acknowledgement is by its nature a closing reply on a mostly-blank report --
+  precisely the shape this gate flags, and its retry instruction would be "ask
+  them one more thing", aimed at somebody who has just exercised an irreversible
+  legal control. `reportFactsForJudge` returns an empty missing-fact list for such
+  a record, which makes the shape unrenderable. A handoff request is deliberately
+  NOT exempted: that person is still standing next to the animals and has not
+  asked to be left alone.
 - **No worker-volunteered fact is silently discarded.** Photo/audio/site
   fields append rather than overwrite. A dashboard operator's concurrent
   edit is detected via optimistic locking and the merge retries against the
