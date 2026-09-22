@@ -12,15 +12,18 @@
 // judgeReply(callLLM, replyText, { lastOutboundText, hadSuccessfulWrite, latestInbound }) ->
 // real LLM verdict. Returns { clean: boolean, reasons: string[], category:
 // 'jargon'|'other'|null }. clean:false means the reply must not be sent as-
-// is. category:'jargon' is the ONE recoverable shape -- real content that
-// just needs a human to reword a word -- and turn-outcome.js holds such a reply as
-// a DRAFT rather than blanking it. Every other shape is category:'other'.
+// is. category:'jargon' is the shape with the most mechanical fix -- real
+// content that just needs one internal word said in plain language -- so
+// turn-attempts.js RETRIES it with the offending words named back to the model,
+// and only a retry-budget-exhausted leak reaches turn-outcome.js's DRAFT hold
+// for a human to reword. Every other shape is category:'other'.
 //
 // The SHAPE HEADING WORDS below are a wire protocol, not prose: turn-attempts.js
-// routes a category:'other' verdict by regex over `reasons` -- /false.?confirm|
-// claims?.*record/ retries then holds as a draft, /repeated|echo|stock|
-// meta.?commentary|planning narration/ retries then BLANKS the reply,
-// /multi.?ask|wall of text/ retries then SENDS ANYWAY, and
+// routes a category:'jargon' verdict by category and a category:'other' verdict
+// by regex over `reasons` -- 'jargon' retries then holds as a draft,
+// /false.?confirm|claims?.*record/ retries then holds as a draft,
+// /repeated|echo|stock|meta.?commentary|planning narration/ retries then BLANKS
+// the reply, /multi.?ask|wall of text/ retries then SENDS ANYWAY, and
 // anything matching neither (TOOL REFUSAL) is sent as-is. Renaming a heading
 // here silently reroutes that reply to the send-anyway branch.
 //

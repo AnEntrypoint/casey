@@ -89,7 +89,7 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
   // instead of vanishing at the guard. `this` is preserved via .call so the
   // adapter lookup inside the turn still resolves (casey.js binds handleInbound
   // to the gateway instance).
-  return async function handleInbound(platform, msg) {
+  async function handleInbound(platform, msg) {
     // Crash-safety backstop for the guaranteed-response FSM's typing indicator:
     // the turn body has no try/finally of its own around most of itself, so an
     // unhandled throw deep inside bypasses every stopTyping() call threaded
@@ -140,6 +140,16 @@ export function makeCaseHandler(store, { callLLM = null, llmStatus = null, autoR
     }
     return result
   }
+
+  // The per-contact claim, published for the ONE reader outside a turn that
+  // genuinely needs it: casey.js's boot-time resume sweep. The sweep's whole
+  // premise is "this inbound started a turn that nobody is running any more",
+  // and the claim is the only thing that can tell that apart from a live turn
+  // still inside its hard deadline -- the event log cannot, since both look
+  // identical (an inbound with no outbound after it). Read-only by contract: a
+  // sweep may ask whether a conversation is busy, never claim or release it.
+  handleInbound.isClaimed = (externalId) => admission.isClaimed(externalId)
+  return handleInbound
 }
 
 // The conversation/case IDENTITY -- per CONTACT, not per channel. A Discord server

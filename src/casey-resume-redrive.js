@@ -73,10 +73,21 @@ function resumeMessage(c, pending) {
 // call as a permanent success silently abandons a contact whose reply was
 // correctly blanked by the degraded-turn guards and never actually sent.
 // Returns true when the turn was actually driven (counts toward maxRedrives),
-// false when the call itself threw.
+// false when the call itself threw or when the per-contact claim turned the
+// re-drive away instead of running it.
 export async function redrivePendingTurn({ store, log, gateway, handle }, c, pending) {
   try {
     const res = await handle.call(gateway, c.channel, resumeMessage(c, pending))
+    // A message hooks/handler.js turned away at the per-contact claim was NOT
+    // driven -- it was buffered for replay. casey-resume.js skips a claimed
+    // conversation before it ever gets here, but the claim can still be taken in
+    // the window between that check and this call, so the outcome is read rather
+    // than assumed: counting a buffered non-drive as `resumed` both burns a slot
+    // out of maxRedrives and reports a re-drive that never happened.
+    if (res && res.buffered) {
+      log?.info?.('[casey] resume re-drive was buffered behind a live turn; not counted as resumed', { caseId: c.id, channel: c.channel })
+      return false
+    }
     if (res && res.degraded) {
       log?.warn?.('[casey] resumed turn came back degraded; still no reply', { caseId: c.id, channel: c.channel })
       try { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-degraded:${pending.id}` }) }
