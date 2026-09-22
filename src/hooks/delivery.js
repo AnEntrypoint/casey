@@ -12,7 +12,6 @@
 
 import { observation } from './case-writes.js'
 import { synthesizeVoice } from './media.js'
-import { recordDegradedTurn, FAILURE_REASONS } from '../degraded-turns.js'
 import { TURN_SOFT_DEADLINE_MS, STILL_WORKING_TEXT, TURN_TIMEOUT_TEXT } from './turn-deadlines.js'
 
 // Resolve the outbound adapter for a platform from the receiver the handler is
@@ -42,23 +41,19 @@ export function resolveAdapter(receiver, platform) {
 // deadline -- vs TURN_TIMEOUT_TEXT once it has). A background redrive
 // (msg.resume / msg.queuedRedrive) stays SILENT on degrade and never reaches
 // this function; the caller owns that guard.
+// THE degraded_turn MARKER IS NOT WRITTEN HERE, and must not be added back. This
+// function used to call recordDegradedTurn for it, on top of the two rows
+// hooks/turn-outcome.js's recordDegradedOutcome had already written moments
+// earlier on the same turn -- three counted rows for one failure, tripling the
+// /api/health degradation rate and listing each failure three times in
+// /api/turns/degraded (live-witnessed: 9 counted for 3 real). recordDegradedOutcome
+// now owns the single marker, and it runs on EVERY degraded path rather than only
+// the live-fallback one this function serves, so there is nothing left here to
+// record. This function's job is the SEND.
 export async function sendGuaranteedFallback({
   store, log, adapter, fresh, channel, replyTo, platform,
-  turnStartedAt, degradedReason, errored, result, stopTyping,
+  turnStartedAt, stopTyping,
 }) {
-  // Classify from the final state when the attempt loop did not already name a
-  // more specific reason (timeout/provider).
-  const reason = degradedReason
-    || (!errored && result?.error ? FAILURE_REASONS.LLM_REFUSAL : FAILURE_REASONS.RETRY_EXHAUSTED)
-  try {
-    await recordDegradedTurn(store, {
-      caseId: fresh.id,
-      contactId: fresh.contact_id,
-      reason,
-      turnStartMs: turnStartedAt,
-      channel,
-    })
-  } catch (e) { log.warn?.('[casey] failed to record degraded-turn event', { caseId: fresh.id, error: e.message }) }
   // Message tone is picked by the soft deadline alone -- see
   // TURN_SOFT_DEADLINE_MS's own declaration (hooks/turn-deadlines.js) for why
   // fast-degrade reads as "still working" and long-degrade as "having trouble".

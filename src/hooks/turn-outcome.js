@@ -9,22 +9,52 @@ import { observation, flagNeedsHuman } from './case-writes.js'
 import { sanitizeOutboundRef, mergeTag, dropTag, canAgentAct } from './heuristics.js'
 import { toolCaseRefs } from './turn-results.js'
 import { tagList } from '../timestamp.js'
+import { recordDegradedTurn, FAILURE_REASONS } from '../degraded-turns.js'
 
 // A turn that reaches the post-loop with empty text spent its whole genuine
 // retry budget (attempts x hard deadline). Never send a raw error string to the
 // contact: USER DIRECTIVE, no fallback text -- record loudly instead.
-export async function recordDegradedOutcome({ store, log, fresh, result, errored }) {
+// ONE data.degraded_turn MARKER PER DEGRADED TURN, written here and nowhere else
+// on this path. The marker is not a log line, it is a COUNTED row: both
+// degraded-turns.js's calculateDegradationRate (the /api/health degradation
+// percentage) and GET /api/turns/degraded (operations.js) take each marker to BE
+// one degraded turn, against a denominator of one TURN-START per turn. This
+// function used to stamp the marker on its own two diagnostic rows AND
+// hooks/delivery.js's sendGuaranteedFallback then called recordDegradedTurn for a
+// third, so a single timed-out turn counted three times: live-witnessed at 9
+// degraded / 33 turns = 27.27% for 3 real failures out of 33 (the true 9.09%),
+// with each failure listed three times in the operator's degraded-turns view. A
+// health metric that triples its own numerator is worse than no metric -- it
+// reports a broken backend to an operator whose backend is fine, and the rate can
+// exceed 100%.
+//
+// So the two rows below keep their prose and their detail but NOT the marker, and
+// the single marker is delegated to degraded-turns.js's recordDegradedTurn -- the
+// canonical writer named in that module's own header, which validates the reason
+// against FAILURE_REASONS and carries the contact_id/turn_ts the operator view
+// needs. This function runs on EVERY degraded path (hooks/inbound-turn.js calls it
+// under the one `isFallback` gate, before the background-redrive and
+// queuedRedrive branches return), which is why the marker belongs here and not in
+// the live-only fallback sender.
+export async function recordDegradedOutcome({ store, log, fresh, result, errored, degradedReason, contactId, turnStartedAt, channel }) {
   if (!errored && result?.error) {
     log.error?.('[casey] agent returned error result', { caseId: fresh.id, error: result.error })
-    // Structured data.degraded_turn marker, not just free-form text: a
-    // cross-case aggregate query (GET /api/turns/degraded, operations.js) has to
-    // find every degraded turn across the whole system without already knowing
-    // which case to look at, and prose alone is queryable only by fragile
-    // substring matching.
-    await store.appendEvent(fresh.id, observation(`agent result error: ${result.error}`, { degraded_turn: true, reason: 'error', error: String(result.error).slice(0, 500) }))
+    await store.appendEvent(fresh.id, observation(`agent result error: ${result.error}`, { turn_error: String(result.error).slice(0, 500) }))
   }
   log.error?.('[casey] degraded turn produced no reply', { caseId: fresh.id })
-  await store.appendEvent(fresh.id, observation('degraded turn (empty/error/echo/stock-ack/repeat); no reply sent.', { degraded_turn: true, reason: 'empty' }))
+  await store.appendEvent(fresh.id, observation('degraded turn (empty/error/echo/stock-ack/repeat); no reply sent.'))
+  // The classification that used to live at the fallback sender, moved with the
+  // marker so the reason an operator reads is still the specific one
+  // (timeout/provider from the attempt loop, llm-refusal for a result the model
+  // returned as an error, retry-exhausted otherwise) rather than a bare "empty".
+  await recordDegradedTurn(store, {
+    caseId: fresh.id,
+    contactId: contactId || fresh.contact_id,
+    reason: degradedReason || (!errored && result?.error ? FAILURE_REASONS.LLM_REFUSAL : FAILURE_REASONS.RETRY_EXHAUSTED),
+    turnStartMs: turnStartedAt,
+    channel,
+    error: !errored && result?.error ? String(result.error).slice(0, 500) : null,
+  })
   // Plain (non-health-sweep) tag, read synchronously by attn.js alongside every
   // other tag-based signal -- a case with a prior degraded turn is a priori more
   // likely to degrade again (context corruption, a stuck conversation), so the
@@ -134,7 +164,28 @@ export async function holdReplyForHuman({
 // content-free social/empty turns (those never reach a substantive reply with a
 // recorded report). Best-effort: a transition failure must never block the
 // reply. Observe mode returned far earlier, so acting here is always permitted.
-export async function advanceIntake({ store, log, fresh, inboundText, media }) {
+//
+// A DEGRADED TURN THAT RECORDED NOTHING MAY NOT ADVANCE THE CASE, which is what
+// the paragraph above already says ("a real report has landed and a reply is going
+// out", "skipped for the content-free social/empty turns") and what the call site
+// did not enforce: hooks/inbound-turn.js called this unconditionally, ABOVE its own
+// `isFallback` branch, so a turn that burned its whole hard-deadline budget,
+// recorded no report at all and said only "Sorry, I'm having trouble right now"
+// still moved the case out of `new` with the audited reason "first report received
+// (auto)". Live-witnessed on a timed-out Discord turn: report null, no action event,
+// and a transition row asserting a first report had been received. On an
+// append-only audited timeline for animal-disease reports, a stage change carrying
+// a reason that did not happen is not a cosmetic problem -- and the case then reads
+// as past intake in the operator pipeline while holding nothing.
+//
+// The two admissible warrants are passed in explicitly rather than re-derived here,
+// because only the caller knows whether a real reply is about to be sent:
+//   reportLanded  -- the post-turn row actually carries a report (so the stage
+//                    change is true even if the reply itself was blanked/held)
+//   replySending  -- a real agent reply is going out (not the guaranteed fallback)
+// Either one warrants the advance; neither means nothing observable happened.
+export async function advanceIntake({ store, log, fresh, inboundText, media, reportLanded, replySending }) {
+  if (!reportLanded && !replySending) return
   const latest = await store.getCase(fresh.id).catch(() => fresh)
   if (!latest || latest.status !== 'new' || !(inboundText || media)) return
   try { await store.transition(fresh.id, 'triaging', { reason: 'first report received (auto)' }) }

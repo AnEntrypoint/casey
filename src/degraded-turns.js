@@ -30,8 +30,22 @@ const FAILURE_REASONS = Object.freeze({
   LLM_REFUSAL: 'llm-refusal',     // model refused to produce tool call (refusal/partial/blocked)
 })
 
-// Record a degraded turn event when a turn fails
-export async function recordDegradedTurn(store, { caseId, contactId, reason, turnStartMs, channel }) {
+// Record a degraded turn event when a turn fails.
+//
+// EXACTLY ONE OF THESE ROWS PER DEGRADED TURN. Both readers -- calculateDegradation
+// Rate below and GET /api/turns/degraded (dashboard/routes/operations.js) -- treat
+// each data.degraded_turn row as ONE degraded turn, against a denominator of one
+// TURN-START marker per turn, so a second row for the same turn does not add
+// detail, it inflates the rate. The live path's single caller is
+// hooks/turn-outcome.js's recordDegradedOutcome (see its header for the three-rows-
+// per-turn defect that rule exists to close); hooks/service-controls.js's two
+// llm_down_on_irreversible_control rows are their own separate turns, on paths that
+// never reach recordDegradedOutcome.
+//
+// `error` is optional and carries the provider/agent error string /api/turns/
+// degraded renders beside the reason, so the diagnostic detail lives on the one
+// counted row instead of needing a second row to hold it.
+export async function recordDegradedTurn(store, { caseId, contactId, reason, turnStartMs, channel, error = null }) {
   if (!store || !caseId || !contactId || !FAILURE_REASONS[reason?.toUpperCase().replace(/-/g, '_')]) {
     return null
   }
@@ -49,7 +63,7 @@ export async function recordDegradedTurn(store, { caseId, contactId, reason, tur
         contact_id: contactId,
         reason: normalizedReason,
         turn_ts: turnStartMs || Date.now(),
-        recovery_ts: null,  // Updated on next successful turn
+        ...(error ? { error: String(error).slice(0, 500) } : {}),
       },
     })
     return event

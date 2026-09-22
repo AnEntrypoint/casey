@@ -137,7 +137,7 @@ async function driveAgentTurn(deps, {
   // Reaching here with empty text means the whole genuine retry budget (attempts
   // x hard deadline) was spent.
   const isFallback = !text
-  if (isFallback) await recordDegradedOutcome({ store, log, fresh, result, errored })
+  if (isFallback) await recordDegradedOutcome({ store, log, fresh, result, errored, degradedReason, contactId: contact?.id, turnStartedAt, channel })
   // Surfaced on the reply object so drainQueuedTurns can treat a degraded
   // re-drive as a failed attempt instead of burning the queued message.
   const degraded = errored || isFallback
@@ -151,7 +151,11 @@ async function driveAgentTurn(deps, {
   })
   if (held) { stopTyping(); return held }
 
-  await advanceIntake({ store, log, fresh, inboundText, media })
+  // reportLanded/replySending: see advanceIntake's own header for why a degraded
+  // turn that recorded nothing may not move the case out of `new` claiming a first
+  // report was received. `fresh` is the post-turn re-read, so its report column is
+  // exactly what this turn's own case_report left behind.
+  await advanceIntake({ store, log, fresh, inboundText, media, reportLanded: !!fresh?.report, replySending: !isFallback })
   if (degraded) await tagAiOffline({ store, log, fresh })
 
   // A QUEUED message re-driven (msg.queuedRedrive, set only by drainQueuedTurns)
@@ -174,7 +178,7 @@ async function driveAgentTurn(deps, {
     }
     return await sendGuaranteedFallback({
       store, log, adapter, fresh, channel, replyTo, platform,
-      turnStartedAt, degradedReason, errored, result, stopTyping,
+      turnStartedAt, stopTyping,
     })
   }
 

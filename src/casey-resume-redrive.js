@@ -30,15 +30,20 @@ export async function deadLetterExhaustedCase(store, log, c) {
   } catch (e) { log?.warn?.('[casey] resume-exhausted tag failed', { caseId: c.id, error: e.message }) }
 }
 
-// Mark BEFORE re-drive -- at-most-once PER BOOT. A crash now leaves
-// attempted-not-done, and the next boot within the SAME resume pass would
-// otherwise re-drive the same msgId twice; the per-boot marker prevents that
-// immediate double-drive. It does NOT mean permanently done -- redrivePendingTurn
-// appends a SEPARATE resume-degraded:<id> marker when the redrive itself comes
-// back degraded (blanked, no real reply), so a LATER boot's sweep still sees this
-// msgId as pending (resume-attempted alone does not make it
-// completedAfter-equivalent) and gets another shot once the underlying
-// model/provider issue clears.
+// Mark BEFORE re-drive, so a re-drive that dies mid-flight is still counted. The
+// marker does NOT mean permanently done; it is one of the two counters
+// casey-resume-scan.js's selectPendingTurn reads, and a msgId stays pending for a
+// LATER boot on either of two signals:
+//   - redrivePendingTurn below appends a SEPARATE resume-degraded:<id> marker when
+//     the re-drive comes back degraded (blanked, no real reply), so it gets another
+//     shot once the underlying model/provider issue clears;
+//   - the re-drive's own TURN-START with nothing completing it means the attempt was
+//     interrupted (reload, crash, a throw after the turn began) -- the failure this
+//     sweep exists for, recognised by scanTurnMarkers' `interrupted` set.
+// Attempts are capped at RESUME_DEGRADED_RETRY_CAP across all boots, so a
+// permanently-broken msgId still stops. The one attempt outcome that IS terminal is
+// a return with neither signal: nothing started and nothing reported, so there is no
+// evidence a further attempt would differ.
 export async function markResumeAttempted(store, log, c, msgId) {
   try {
     await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `resume-attempted:${msgId}` })

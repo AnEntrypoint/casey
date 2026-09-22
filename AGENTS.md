@@ -1010,7 +1010,21 @@ the backend is healthy but slow.
 **Layer 4: background queue re-drives (separate budget)**
 - Queue re-drives and resume-sweep turns are NOT subject to the hard deadline; they use `CASEY_LLM_TURN_TIMEOUT_MS` alone
 - No guaranteed-fallback text is sent on a background degrade -- it stays silent
-- Retry cap: 5 per msgId before dead-letter (queue) or 5 + 24h age (resume)
+- Retry cap: 5 per msgId before dead-letter (queue) or 5 + 24h age (resume). The
+  resume counter is ATTEMPTS, not reported degrades, so a re-drive that keeps
+  getting interrupted mid-turn is capped like any other.
+- **What makes a msgId still pending is "started and not answered", and a
+  guaranteed-fallback status message is not an answer.** `casey-resume-scan.js`'s
+  `completesTurn` -- the one predicate both the resume scan and
+  `casey-drain.js`'s queue scan read -- excludes an outbound carrying
+  `data.guaranteedFallback`, so a live turn that burned its hard deadline is
+  re-driven on the next boot instead of being written off by the very message
+  telling the person casey could not answer. A re-drive that is itself
+  interrupted (its own `TURN-START` with nothing completing it -- a reload, a
+  crash, a throw after the turn began) likewise stays pending: that is the
+  failure the sweep exists for, not evidence of an answer. The one attempt
+  outcome that IS terminal is a return with neither signal, where nothing
+  started and nothing reported.
 
 **Ordering that must hold:** hard deadline >= soft deadline; hard deadline >=
 per-attempt timeout; per-attempt timeout > per-link timeout (with room for
@@ -1019,7 +1033,7 @@ does not leave); per-link timeout >= readiness/discovery timeouts.
 
 **Health monitoring:**
 - `GET /api/health` returns `degraded:true` if recent turns were slow (rolling window, `MIN_SAMPLES_FOR_DEGRADED=2`)
-- `GET /api/turns/degraded` lists all degraded turns across all cases (queryable by structured data)
+- `GET /api/turns/degraded` lists all degraded turns across all cases (queryable by structured data). **Exactly one `data.degraded_turn` row is written per degraded turn**, by `hooks/turn-outcome.js`'s `recordDegradedOutcome` delegating to `degraded-turns.js`'s `recordDegradedTurn` -- it is a COUNTED row, not a log line, and both this route and `calculateDegradationRate` take each row to BE one turn against a denominator of one `TURN-START` per turn. A second row for the same turn does not add detail, it multiplies the reported rate (which can then exceed 100%). Diagnostic prose about the same failure goes in an ordinary observation with no marker.
 - `GET /api/health/provider` shows pending queue depth and dead-lettered count (`queued_turn_count`/`dead_lettered_count`, from `casey.queueStatus()`). There is no `/api/queue` route.
 - `GET /api/health/cases` returns live case-level health signals (breaches per case + sweep status)
 
