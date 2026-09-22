@@ -80,7 +80,18 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
   try {
     ;({ case: caseRow, created } = await store.findOrCreateCase({
       channel, external_id,
-      contact: { display_name: msg.raw?.author?.username, handle: msg.raw?.author?.username },
+      // Each adapter names the sender in its own vocabulary and neither is a
+      // guess: Discord's gateway puts it on the message author, WhatsApp's
+      // webhook puts it once per change in value.contacts[].profile.name, which
+      // src/adapters/whatsapp.js lifts onto the event as profileName. Reading
+      // only the Discord shape left every WhatsApp contact named after their own
+      // phone number (findOrCreateContact falls back handle -> external_id), so
+      // the contacts panel, the map label and the operator's call-back list all
+      // showed a number Meta had already sent a name for.
+      contact: {
+        display_name: msg.profileName || msg.raw?.author?.username,
+        handle: msg.profileName || msg.raw?.author?.username,
+      },
     }))
   } catch (e) {
     log.error?.('[casey] findOrCreateCase failed; dropping inbound', { channel, error: e.message })

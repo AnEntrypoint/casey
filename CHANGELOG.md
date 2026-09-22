@@ -30,6 +30,14 @@ supposed to look like once the code moves on.
   perfectly and lost the description. The caption is now the turn's inbound
   text, the recorded inbound, and the new case's subject. A `reaction`'s emoji
   -- the whole content of that message -- reaches the turn for the same reason.
+- **A WhatsApp contact is named, not numbered.** Meta sends the sender's
+  profile name once per change in `value.contacts[].profile.name`, keyed by
+  `wa_id` -- never on the message -- and `hooks/case-intake.js` read only
+  Discord's `raw.author.username`, so every WhatsApp contact fell back to
+  `display_name` = their own phone number. The adapter now lifts it onto the
+  event as `profileName`, and `findOrCreateContact` additionally learns a real
+  name onto a row that still carries only the fallback, without ever
+  overwriting a name already learned or an operator's own correction.
 - **An estimated coordinate no longer overwrites a real reading.**
   `case_report`'s `writeReportLocation` wrote lat/lon unconditionally, so any
   later call mentioning a place name replaced a real GPS fix with the model's own

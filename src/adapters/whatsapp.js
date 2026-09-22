@@ -153,13 +153,33 @@ function inboundLocation(m) {
   return { lat, lon, name: String(l.name || ''), address: String(l.address || ''), url: String(l.url || '') }
 }
 
+// The sender's own WhatsApp profile name. It is NOT on the message -- Meta puts
+// it once per change, in `value.contacts[]` keyed by `wa_id`, as a sibling of
+// `value.messages[]`. hooks/case-intake.js seeds the contact row's display_name
+// from the event, and its only reader was Discord's `raw.author.username`, so
+// every WhatsApp contact fell back to display_name = the phone number: the
+// contacts panel showed them as unnamed, the map called them "a field worker",
+// and an operator ringing back about a dying herd had a number and no name Meta
+// had already sent.
+// Matched by wa_id rather than taken positionally, since one change may carry
+// several senders' messages; the single-contact case is the fallback because
+// wa_id and `from` can differ for a number whose display form Meta rewrote.
+function profileNameFor(value, from) {
+  const list = value?.contacts || []
+  if (!list.length) return ''
+  const hit = list.find(c => c?.wa_id === from) || (list.length === 1 ? list[0] : null)
+  return String(hit?.profile?.name || '')
+}
+
 export function dispatchWhatsappWebhookBody(adapter, body) {
   const events = []
   for (const e of (body?.entry || [])) for (const c of (e.changes || [])) {
     for (const m of (c.value?.messages || [])) {
       const location = inboundLocation(m)
+      const profileName = profileNameFor(c.value, m.from)
       const event = {
         from: m.from,
+        ...(profileName ? { profileName } : {}),
         // `id` is lifted out for dedup upstream; `raw` is Meta's own message
         // object as it arrived, which already carries id and type.
         text: inboundMessageText(m),

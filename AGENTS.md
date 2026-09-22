@@ -328,6 +328,19 @@ alongside freddie's `@freddie/freddie-base` bundle:
     `raw.type` with their type-specific detail (e.g. `errors[]`) unread.
   An unbranched type is never silently dropped: `describeMedia()` falls through
   to "a `<type>` message" and the turn proceeds.
+
+  **The sender's NAME is not on the message.** Meta puts it once per change, in
+  `value.contacts[]` keyed by `wa_id`, as a sibling of `value.messages[]` --
+  so the adapter lifts it onto the event as `profileName` and
+  `hooks/case-intake.js` seeds the contact row from `msg.profileName ||
+  msg.raw?.author?.username` (Discord's own vocabulary for the same fact).
+  Reading only the Discord shape left every WhatsApp contact named after their
+  own phone number, since `findOrCreateContact` falls back handle ->
+  external_id: the contacts panel showed them unnamed, the map called them "a
+  field worker", and an operator ringing back about a dying herd had a number
+  and no name Meta had already sent. `findOrCreateContact` also LEARNS a real
+  name onto a row that still carries only that fallback -- narrowly, so a name
+  already learned and an operator's own correction are never overwritten.
 - `src/agent/run-turn.js` -- the thin adapter `hooks/turn-attempts.js` calls as
   `runTurn(...)`: it creates/reuses a real freddie `Agent` per case
   (`ctx.agents.create()`), submits the inbound via
