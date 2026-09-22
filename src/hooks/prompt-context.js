@@ -9,7 +9,7 @@
 
 import { truncate } from './heuristics.js'
 import { tsMs } from '../timestamp.js'
-import { CRITICAL_FIELDS } from '../store/report-shape.js'
+import { CRITICAL_FIELDS, fieldLabel, missingMandatoryMinimum } from '../store/report-shape.js'
 
 // 3 hours, the same value as case-health.js DEFAULT_THRESHOLDS
 // .workerLocationStaleMs, which governs when a field worker's self-reported
@@ -95,6 +95,20 @@ export function buildPromptContext(caseRow, events) {
   // own critical_for_visit flags), never a hardcoded field list, so a
   // deployment with a different vocabulary gets its own.
   const missingCritical = CRITICAL_FIELDS.filter(k => !haveFields.includes(k))
+  // The MANDATORY MINIMUM still blank, as PLAIN LABELS rather than storage keys.
+  // A strict subset of missingCritical above and a materially different
+  // instruction: missingCritical is the on-site window's "ask once for the first
+  // of these before they leave" list, which the agent may legitimately finish a
+  // conversation without -- an absent owner cannot give a phone number. This list
+  // is the floor the record is worthless below, and the same floor
+  // case-tools-record-timeline.js's case_transition gate REFUSES on, so the model
+  // is told the same thing the tool will tell it, in the same words, before it
+  // composes a goodbye rather than after. Labels not keys because this sentence
+  // is the one the model paraphrases into a question for the person; a storage
+  // key ("how_to_find") is not a phrase anyone says out loud. Config-derived and
+  // empty when no mandatory minimum is declared, in which case the sentence is
+  // simply not rendered at all.
+  const missingMandatory = missingMandatoryMinimum(reportObj).map(fieldLabel)
   return {
     recent,
     firstMessage: inboundEvents.length <= 1,
@@ -102,5 +116,6 @@ export function buildPromptContext(caseRow, events) {
     reportObj,
     reportLine,
     missingCritical,
+    missingMandatory,
   }
 }

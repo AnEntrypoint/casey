@@ -15,6 +15,7 @@
 // from under it, and a dropped instruction still throws at module load.
 
 import { loadDomainConfig } from '../config-loader.js'
+import { MANDATORY_MINIMUM_FIELDS } from '../store/report-shape.js'
 import { buildPromptContext } from './prompt-context.js'
 import { headerSection, caseContextSection, gatherSection, replySection } from './prompt-sections.js'
 
@@ -108,6 +109,18 @@ function selfCheckLoadBearingPromptContent() {
     // behaviours they describe were absent under real inference until the
     // prompt stated them outright.
     { name: 'on-site-window last-chance push', pattern: /LAST-CHANCE PUSH/ },
+    // The MANDATORY MINIMUM sentence is a DIFFERENT instruction from the push
+    // above, not a rewording of it: the push ranks the whole critical set and
+    // asks for its first item, which is satisfiable while the record still has
+    // no animal, no sign and no place in it. This names only the floor, and the
+    // same floor case-tools-record-timeline.js's case_transition gate refuses on
+    // -- so a rewrite that drops this line leaves the model composing a farewell
+    // around a record the tool will then refuse to mark done, with nothing
+    // having warned it. Asserted only when the active config declares a
+    // mandatory minimum (the synthetic caseRow above carries report:null, so
+    // every declared field is blank and the sentence must render); casey's own
+    // bundled default config declares none and must still boot.
+    ...(MANDATORY_MINIMUM_FIELDS.length ? [{ name: 'mandatory-minimum floor named before a farewell is final', pattern: /MANDATORY MINIMUM -- still blank:/ }] : []),
     { name: 'complete-report-is-not-a-dead-end invitation', pattern: /NOT A DEAD-END/ },
     // The never-say list must stay EQUAL to the literal word list
     // hooks/reply-judge.js holds a reply for. 'autonomy' is the last word on

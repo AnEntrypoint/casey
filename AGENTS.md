@@ -66,7 +66,17 @@ resolved by `src/config-loader.js` at process start:
   magnitude, so "1 dead" and "400 dead" score identically, and it lives
   inside the URGENCY score. It is not a severity axis and cannot drive a
   graded severity ramp -- see `.gm/research/severity-route.md` in `uhh`).
-  Alongside `fields[]`, `report-fields.yml` may also declare `geo_fields`
+  Alongside `fields[]`, `report-fields.yml` may also declare a top-level
+  `mandatory_minimum` block -- `{fields: [...], blocks_transition_to: [...]}`
+  -- the ACTIVE floor beneath which the agent may not conclude a record (see
+  the Design principles bullet of the same name for what it enforces and
+  why it is a different, smaller thing than `critical_for_visit`). Both keys
+  are required once the block exists and every named field must be a real
+  declared field; `report-shape.js` throws at module load otherwise rather
+  than running with the floor silently disabled. Absent entirely -- as in
+  casey's own bundled default config -- `MANDATORY_MINIMUM_FIELDS` is empty
+  and every consumer is a no-op, so this is purely additive. Alongside
+  `fields[]`, `report-fields.yml` may also declare `geo_fields`
   (read as `REPORT_GEO_FIELD_DEFS`): the `lat`/`lon` args `case_report`
   accepts as siblings of the report blob rather than as report fields,
   since they are case-level columns.
@@ -84,6 +94,8 @@ resolved by `src/config-loader.js` at process start:
 
 `src/store/report-shape.js` is the single choke point: `REPORT_KEYS`/
 `REPORT_KEY_ORDER`/`CRITICAL_FIELDS`/`APPEND_FIELDS`/`NEVER_INFERRED_FIELDS`/
+`MANDATORY_MINIMUM_FIELDS`/`MANDATORY_MINIMUM_BLOCKED_STATUSES`/
+`missingMandatoryMinimum`/
 `ENQUIRY_HEADLINE_FIELDS`/`REPORT_SECTIONS`/`fieldLabel` all derive from the
 loaded config; every consumer (`case-store.js`, `case-tools.js`,
 `case-health.js`, `dashboard/routes/operations.js`) imports these derived
@@ -898,10 +910,49 @@ without restart-on-crash.
 - **A complete report is not a dead-end.** The agent invites a fresh report
   for any other animal or place rather than ending on "your reference is
   X" -- there is no state that traps the conversation.
+- **There is a MANDATORY MINIMUM the agent may not conclude a record below,
+  and it is enforced in code, not only asked for in the prompt.** A
+  refinement of the bullet above, not a contradiction of it: the
+  conversation still never dead-ends, but the FORMAL move to a done stage
+  does. `report-fields.yml`'s `mandatory_minimum` block declares the floor
+  (`fields` plus the `blocks_transition_to` stages that mean "considered
+  done"), and three independent points enforce it -- `case_transition`'s
+  handler REFUSES the move while any declared field is blank, returning a
+  tool-result error the agent has to resolve by asking and retrying;
+  `case_transition`'s own description names that refusal so the model knows
+  the floor before it ever attempts the call; and the prompt's MANDATORY
+  MINIMUM line names exactly the still-blank ones so a farewell is not
+  treated as final while one is missing. All three derive from the same
+  config list, so a deployment sets its own floor without touching casey's
+  source, and a deployment that declares none is unaffected.
+  **Why it is a separate, smaller list than `critical_for_visit`:** those six
+  feed a PASSIVE, sweep-driven operator guardrail (`incomplete_critical` on an
+  8h window, `premature_complete` on a resolved case), which is right for
+  them because several may genuinely never be obtainable -- `how_to_find`
+  when nobody knows the route yet, `farmer_available`/`contact_fallback` when
+  the owner is not there -- and blocking on an unobtainable fact would trap a
+  real, honestly-incomplete report. `uhh`'s floor is `species, symptoms,
+  location`: what animal, what is wrong with it, where it is, without which
+  the record describes nothing anybody can act on and nothing further happens
+  to it on its own.
+  **Two boundaries the gate deliberately does not cross.** It gates the
+  AGENT's tool surface only -- an operator on the dashboard or `casey
+  transition` never reaches that handler and can still close a
+  genuinely-incomplete-but-real report on their own judgement. And it gates
+  only the formal transition, never the conversation: nothing in casey forces
+  a case out of `new`/`open`, so a blocked transition leaves the agent
+  completely free to say goodbye warmly and the case simply stays open, which
+  is the truthful state. It also lives entirely in the shared agent/tool
+  layer, so it holds identically for WhatsApp, Discord and every reporter
+  tier rather than being a property of one adapter.
 - **The on-site window is the only chance to capture more.** A single
   last-chance push fires on any farewell-shaped cue, before the agent
   declares the case complete, naming the fields that matter most once the
-  worker leaves. Still one gentle ask, never a list, never pushy. The same
+  worker leaves. Still one gentle ask, never a list, never pushy. Where a
+  `mandatory_minimum` field is among the blanks, a second narrower line names
+  those specifically and takes precedence for WHICH single item that one ask
+  is spent on -- it never licenses a second ask or a harder tone, and it
+  explicitly permits letting a person who cannot or will not answer go. The same
   discipline covers closing: on a `case_transition` to `resolved` with no
   outcome recorded, the agent asks once what happened and records it via
   `case_report`'s `notes` field.

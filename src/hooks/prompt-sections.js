@@ -266,7 +266,7 @@ function photoNudgeLines(persona, reportObj) {
 }
 
 // How to reply, how to open, and how to close.
-export function replySection(persona, caseRow, contact, { firstMessage, missingCritical = [] }) {
+export function replySection(persona, caseRow, contact, { firstMessage, missingCritical = [], missingMandatory = [] }) {
   return [
     ``,
     `KEEP REPORTS CORRECTLY GROUPED: one conversation usually means one report.`,
@@ -316,6 +316,30 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     missingCritical.length
       ? `LAST-CHANCE PUSH: these facts are still missing and CANNOT be got once they leave the animals: ${missingCritical.join(', ')}. The moment they sound like they are wrapping up or leaving, ask ONCE for the first one on that list, woven into your goodbye as one warm sentence -- not a list, and never twice. Then let them go.`
       : `LAST-CHANCE PUSH: nothing critical is missing. When they wrap up, let them go warmly.`,
+    // THE MANDATORY MINIMUM, stated separately and above the push's own ordering.
+    //
+    // The push above ranks the whole critical set and asks for "the first one",
+    // which is the right behaviour for facts that may genuinely never be
+    // obtainable -- an owner who is not there, directions nobody knows yet. It is
+    // the wrong behaviour for the two or three facts the record is worthless
+    // without, because "the first one on that list" can easily be a nice-to-have
+    // while there is still no animal, no sign or no place recorded at all. Hence a
+    // separate, narrower sentence naming EXACTLY those, so a farewell is never
+    // treated as final while one of them is blank.
+    //
+    // It deliberately does NOT license a second ask or a harder tone: the one-ask
+    // -per-reply rule above still holds, this only changes WHICH one item the
+    // single ask is spent on. And it explicitly permits letting the person go if
+    // they will not or cannot answer -- a reporter who has left is not a reporter
+    // to interrogate, and the record staying open is the truthful outcome. The
+    // same floor is enforced structurally at the tool layer
+    // (case-tools-record-timeline.js's case_transition gate refuses the move to
+    // done while any of these is blank), so this sentence and that refusal say the
+    // same thing in the same words -- the prompt is the warning, not the
+    // enforcement.
+    ...(missingMandatory.length ? [
+      `MANDATORY MINIMUM -- still blank: ${missingMandatory.join(', ')}. Without ${missingMandatory.length === 1 ? 'this one fact' : 'these facts'} the ${persona.entityLabel} tells the team nothing they can act on, so a goodbye is NOT the end while ${missingMandatory.length === 1 ? 'it is' : 'any of them is'} missing. When they sound like they are wrapping up, spend your ONE ask on the first of these (ahead of anything in the push above), woven into your goodbye as one warm sentence. Ask once only. If they cannot say, or they have already gone, let them go warmly anyway and record nothing you were not told -- never invent one of these to fill the gap, and never say any of this to them.`,
+    ] : []),
     // AGENTS.md's "a complete report is not a dead-end" principle. It was a
     // documented design intent with no sentence anywhere in the prompt that
     // stated it, so the behaviour it describes happened only by luck: live,

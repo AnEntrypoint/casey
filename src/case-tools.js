@@ -31,7 +31,7 @@
 // keeps a future edit from silently dropping a load-bearing phrase from one.
 
 import { getCaseStore } from './case-runtime.js'
-import { REPORT_TOOL_NAME, NEVER_INFERRED_FIELDS } from './store/report-shape.js'
+import { REPORT_TOOL_NAME, NEVER_INFERRED_FIELDS, MANDATORY_MINIMUM_FIELDS } from './store/report-shape.js'
 import {
   fieldEnumHint, stageHint,
   FALLBACK_CASE_TYPE_VALUES, FALLBACK_PRIORITY_VALUES,
@@ -92,6 +92,21 @@ function selfCheckLoadBearingToolDescriptions() {
       pattern: new RegExp(f.never_inferred_guard_pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       name: `${f.key} must be agent-stated-only, never inferred`,
     })),
+    // The mandatory minimum has to be SCHEMA-VISIBLE, not only enforced at call
+    // time: a model that first learns the floor exists by having a transition
+    // refused has already composed a farewell around a record it believed was
+    // finished. So case_transition's own description names the refusal, and this
+    // row is what stops a future description rewrite from dropping it while the
+    // handler keeps refusing -- which would leave the model guessing why. Only
+    // asserted when the active config actually declares a mandatory minimum;
+    // absent one the clause is deliberately empty (see
+    // case-tools-record-timeline.js's mandatoryMinimumDescriptionClause) and
+    // casey's own bundled default config must still boot.
+    ...(MANDATORY_MINIMUM_FIELDS.length ? [{
+      tool: 'case_transition', field: null,
+      pattern: /this tool REFUSES a move to/,
+      name: 'case_transition must name the mandatory-minimum refusal in its own description',
+    }] : []),
   ]
   for (const { tool, field, pattern, name } of required) {
     const desc = byName[tool]?.schema?.parameters?.properties?.[field]?.description
