@@ -169,9 +169,14 @@ async function upInProcess(flags, channels, skipped) {
   await casey.start()
   const dashPort = Number(flags.port || 4000)
   const sendReply = makeSendReply(casey)
+  // resolveWhatsappAdapter mirrors bin/worker-dashboard.js: the same live
+  // adapter off casey.adapters, so `--no-supervise` serves the WhatsApp webhook
+  // on the dashboard port exactly as the supervised worker does. Resolved before
+  // the try, so a module-resolution failure is not misreported as a bind failure.
+  const { resolveAdapter } = await import('../src/hooks/delivery.js')
   let dash
   try {
-    dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus: brainResilient.status, runSweep: () => casey.runSweepOnce(), receiveStatus: () => casey.receiveStatus() })
+    dash = await createDashboard(casey.store, { port: dashPort, sendReply, llmStatus: brainResilient.status, runSweep: () => casey.runSweepOnce(), receiveStatus: () => casey.receiveStatus(), resolveWhatsappAdapter: () => resolveAdapter(casey, 'whatsapp') })
   } catch (e) {
     say(bad(`dashboard failed to bind port ${dashPort}: ${e.message} - start with --port <other>`))
     try { await casey.stop() } catch (e2) { console.error('shutdown error:', e2.message) }

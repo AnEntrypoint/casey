@@ -279,19 +279,67 @@ alongside freddie's `@freddie/freddie-base` bundle:
   freddie's tree, on its OWN port (`CASEY_WEBHOOK_PORT`, default
   `127.0.0.1:4001`). **Keep it clear of the dashboard's 4000:** `bin/worker.js`
   boots the Cordis tree first, so a shared port means freddie takes it and the
-  dashboard dies behind it with EADDRINUSE / exit 44. casey's Discord adapter
+  dashboard dies behind it with EADDRINUSE / exit 44.
+
+  **THE SAME WEBHOOK IS ALSO REACHABLE ON THE DASHBOARD'S PORT, and that is the
+  answer for a proxy that forwards only one port.** The port-separation rule
+  above is about two LISTENING SOCKETS in one process; it says nothing about
+  which socket Meta can reach from outside, and an internet-facing deployment
+  sits behind a reverse proxy it does not control. A proxy forwarding the public
+  domain to one port forwards it to the dashboard's -- that is where the operator
+  SPA and every `/api/*` route live -- so Meta's calls land on the dashboard app,
+  which answers `401 {"error":"unauthorized"}` from `routes/auth.js`'s
+  `authGate()` and no message reaches casey at all. Live-witnessed on a real
+  deployment: an empty webhook access log, no case in the store, a public GET
+  returning that exact 401, and the same path on `127.0.0.1:4001` correctly
+  returning Meta's 403. `src/dashboard/routes/whatsapp-webhook.js` mounts the
+  same path on the dashboard app for exactly that topology.
+  - **No env var to set.** The dashboard-side mount is on whenever a WhatsApp
+    channel is serving, at the same `WHATSAPP_WEBHOOK_PATH`, taken off
+    `adapter.path` like freddie's own mount. `CASEY_WEBHOOK_PORT` and the
+    freddie-side mount are untouched -- this is purely ADDITIVE, so a deployment
+    whose proxy already forwards both ports keeps two equivalent paths and
+    regresses in no way. Publish whichever port your proxy actually forwards.
+  - **BEHAVIOUR IS IDENTICAL EITHER WAY, structurally, not by convention.** Both
+    mounts are handed the one LIVE `WhatsappAdapter` off `casey.js`'s
+    `this.adapters` -- the dashboard side through `hooks/delivery.js`'s own
+    `resolveAdapter`, the same lookup the outbound send path uses -- and both
+    call `whatsapp.js`'s single exported `serveWhatsappWebhook`. So the challenge
+    comparison, the HMAC check and the `'message'` emitter that feeds the real
+    turn pipeline are the same code and the same object on both ports. A second
+    `WhatsappAdapter` construction here would be the silent failure this shape
+    exists to prevent: its own EventEmitter with nothing listening, every
+    signature verifying, every ack a 200, and no message ever becoming a case.
+  - **It is registered FIRST on the dashboard app, and registration order is the
+    whole mechanism.** Express matches in order, so mounting ahead of
+    `express.json()`, `registerAuth`'s session middleware, its CSRF guard and
+    `authGate()` is what exempts this one path from all four -- the same category
+    as the public `/report` form, which `registerAuth` likewise mounts ahead of
+    the gate, and for the same reason: it carries its OWN authentication. Meta
+    sends no session cookie; it signs the raw bytes. `express.raw({type: () =>
+    true})` is scoped to that one POST route so the bytes the HMAC covers arrive
+    unparsed while every other dashboard route's JSON parsing is untouched --
+    `express.json()` would consume the stream and hand on an object whose
+    re-serialisation is not byte-identical, failing the signature on a legitimate
+    call.
+
+  casey's Discord adapter
   (`src/adapters/discord.js`) is an outbound gateway-websocket client needing
   no listening socket at all. `WhatsappAdapter` therefore owns NO listening
-  socket and has no `start()`; entry-parsing and media hydration live once, in
-  `whatsapp.js`'s exported `dispatchWhatsappWebhookBody(adapter, body)`, which
-  the platform plugin calls -- the plugin is transport plumbing only (read
-  body, verify, dispatch, ack). Do not grow a second copy of that parsing in
-  the plugin. The webhook path is `adapter.path` (`WHATSAPP_WEBHOOK_PATH`,
-  default `/webhooks/whatsapp`) on `CASEY_WEBHOOK_PORT` -- one answer to
-  "where does Meta POST", not an env read in each file with different
-  defaults. There is no `WHATSAPP_WEBHOOK_PORT`. Dispatch is synchronous and
-  media hydration is detached, so the caller MUST ack as soon as it returns or
-  Meta redelivers.
+  socket and has no `start()`; the whole webhook contract (GET challenge, POST
+  signature check, parse, dispatch, ack) lives once in `whatsapp.js`'s exported
+  `serveWhatsappWebhook(adapter, req, res)`, and entry-parsing plus media
+  hydration once in the `dispatchWhatsappWebhookBody(adapter, body)` it calls.
+  Both mount points only ADAPT their transport to the express-SHAPED `req`/`res`
+  pair that function takes (`method`/`query`/`rawBody`/`get`, and
+  `sendStatus`/`sendText`/`json`) -- the platform plugin wraps freddie's raw node
+  req/res, the dashboard route wraps a real express one. Do not grow a second
+  copy of either function at either mount. The webhook path is `adapter.path`
+  (`WHATSAPP_WEBHOOK_PATH`, default `/webhooks/whatsapp`), served on
+  `CASEY_WEBHOOK_PORT` AND on the dashboard's `--port` -- one answer to "where
+  does Meta POST", not an env read in each file with different defaults. There is
+  no `WHATSAPP_WEBHOOK_PORT`. Dispatch is synchronous and media hydration is
+  detached, so the caller MUST ack as soon as it returns or Meta redelivers.
 
   **Inbound message-type coverage, against Meta's own webhook reference (one
   documented page per type under `webhooks/reference/messages/<type>`).** Every
@@ -868,7 +916,7 @@ from the name alone.
 | Variable | Non-obvious behavior |
 |----------|-----------------------|
 | `WHATSAPP_APP_SECRET` | Required (not merely recommended) when WhatsApp credentials are configured, but the REFUSAL DEPENDS ON HOW WHATSAPP WAS ASKED FOR, and this line used to say "hard-fail" flatly, which is only half true. Named explicitly (`--channels whatsapp`), an unset secret is fatal and casey refuses to start rather than serve unsigned inbound. Arriving only from the default channel list, WhatsApp is dropped with a warning and casey serves the remaining channels. That split is deliberate -- an operator who asked for WhatsApp gets a loud refusal, an operator who did not gets a working deployment -- and both `bin/casey-serve.js` and `bin/worker-channels.js` implement it identically. `WHATSAPP_VERIFY_TOKEN` is different again: it is fatal on both paths whenever WhatsApp is actually enabled, because freddie's platform plugin throws while mounting the Cordis tree a second later. |
-| `CASEY_WEBHOOK_HOST`, `CASEY_WEBHOOK_PORT` | The freddie Cordis tree's own WebServer row (`freddie-bundle/cordis.patch.yml`, `casey-webserver`), default `127.0.0.1:4001`. A DIFFERENT socket from the operator dashboard, which keeps 4000 via `--port`; `bin/worker.js` boots the Cordis tree first, so sharing a port costs the dashboard EADDRINUSE and exit 44. The row carries exactly one route -- `WhatsappAdapter`'s webhook -- so a WhatsApp deployment publishes THIS port to Meta as the callback URL, not the dashboard's. There is no `WHATSAPP_WEBHOOK_PORT`; `WHATSAPP_WEBHOOK_PATH` names the path on this port. |
+| `CASEY_WEBHOOK_HOST`, `CASEY_WEBHOOK_PORT` | The freddie Cordis tree's own WebServer row (`freddie-bundle/cordis.patch.yml`, `casey-webserver`), default `127.0.0.1:4001`. A DIFFERENT socket from the operator dashboard, which keeps 4000 via `--port`; `bin/worker.js` boots the Cordis tree first, so sharing a port costs the dashboard EADDRINUSE and exit 44. The row carries exactly one route -- `WhatsappAdapter`'s webhook. **Either port is a valid callback URL to publish to Meta:** the SAME webhook is also mounted on the dashboard's `--port` (`src/dashboard/routes/whatsapp-webhook.js`), off the same live adapter and the same `serveWhatsappWebhook`, so a deployment behind a reverse proxy that forwards only one port publishes that one. No env var switches it on. There is no `WHATSAPP_WEBHOOK_PORT`; `WHATSAPP_WEBHOOK_PATH` names the path, and it is the same path on both ports. |
 | `CASEY_SESSION_SECRET` | Random per process start when unset, so a restart invalidates every session. Set explicitly for sessions to survive a restart. |
 | `CASEY_OPERATORS` | Removed. The roster reads from the `operator_account` table directly; setting this has no effect. |
 | `CASEY_LLM_MODEL` | Default `claude/sonnet` (`src/llm.js`), chosen because a weaker model has repeatedly dropped tool calls or repeated questions during casey's multi-step extraction+tool-orchestration turn. `auto` builds acptoapi's real fallback chain rather than pinning one model. |
@@ -1426,7 +1474,18 @@ without restart-on-crash.
   rows, scope-checked per route, provisioned via `casey sync-apikey`. This is
   the one place a bearer token is accepted anywhere in casey, and it is
   confined to this one path prefix -- every session-gated route above remains
-  exactly as bearer-token-refusing as before. `/media` is NOT on that list:
+  exactly as bearer-token-refusing as before. The WhatsApp webhook
+  (`WHATSAPP_WEBHOOK_PATH`, default `/webhooks/whatsapp`) is on that list too, on
+  the same terms as `/api/sync/*`: it runs a DIFFERENT gate, not none. Meta's
+  calls carry no session cookie and are authenticated by
+  `X-Hub-Signature-256` -- an HMAC-SHA256 over the RAW request bytes compared
+  with `timingSafeEqual` -- and that check is literally the same code as the
+  freddie-side mount's, `whatsapp.js`'s `_verifySignature` via
+  `serveWhatsappWebhook`, so the dashboard-port mount is exactly as strong as the
+  freddie-port one rather than a weaker second door. It is registered ahead of
+  the gate (see "freddie integration"), which is what exempts it; a GET with a
+  wrong `hub.verify_token` answers 403 and an unsigned or wrongly-signed POST
+  answers 401. `/media` is NOT on that list:
   it serves real field-worker photo/voice-note bytes and is mounted after the
   gate. `/api/change-password` is mounted ahead of the gate but does its own
   `req.caseyAccount` check, so it 401s unauthenticated like any gated route.

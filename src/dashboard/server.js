@@ -49,6 +49,7 @@ import { getWebhookDeliveryStatus } from '../gateway-hooks.js'
 import { escapeHtml } from 'anentrypoint-design/html-escape.js'
 import { parseJsonArraySafe, parseEventData } from '../safe.js'
 import { registerAuth } from './routes/auth.js'
+import { registerWhatsappWebhook } from './routes/whatsapp-webhook.js'
 import { registerCases } from './routes/cases.js'
 import { registerAccounts } from './routes/accounts.js'
 import { registerContacts } from './routes/contacts.js'
@@ -561,7 +562,14 @@ function compressResponses(req, res, next) {
 // live provider chain instead of resolving a second backend of its own. Null in
 // dashboard-only mode (`casey dashboard`), where every consumer of it degrades to
 // its own manual path.
-export function createDashboard(store, { port = 4000, sendReply = null, llmStatus = null, callLLM = null, runSweep = null, receiveStatus = null, runtimeStatus = null, queueStatus = null, alertWebhookUrl = null } = {}) {
+// resolveWhatsappAdapter is a `() => WhatsappAdapter|null` returning the LIVE
+// adapter off casey.js's this.adapters (bin/worker-dashboard.js passes
+// hooks/delivery.js's own resolveAdapter, the same lookup the outbound send path
+// uses). Given one, the SAME WhatsApp webhook freddie's ctx.webServer serves on
+// CASEY_WEBHOOK_PORT is also mounted on THIS port -- see
+// routes/whatsapp-webhook.js for why. Null (dashboard-only mode, or a
+// deployment with no WhatsApp channel) mounts nothing and changes nothing.
+export function createDashboard(store, { port = 4000, sendReply = null, llmStatus = null, callLLM = null, runSweep = null, receiveStatus = null, runtimeStatus = null, queueStatus = null, alertWebhookUrl = null, resolveWhatsappAdapter = null } = {}) {
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   // Trust-proxy is env-driven and defaults OFF (req.ip stays the raw socket
@@ -608,8 +616,20 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   //    requests rather than bodies, and the offline guarantee stops depending on
   //    a reload firing to populate it. See the PRECACHE comment there.
   const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS])
-  // First in the chain, so it wraps every downstream response -- the API
-  // routes, the SPA shell, and the /design + /vendor static mounts alike.
+  // FIRST, ahead of everything: the WhatsApp webhook. Registration order IS the
+  // exemption -- express matches in order, so mounting here is what keeps this
+  // one path clear of compressResponses, express.json() (which would consume the
+  // raw bytes the HMAC is computed over), registerAuth's session middleware, its
+  // CSRF guard, and authGate()'s session-cookie requirement. It is not
+  // unauthenticated: it carries Meta's X-Hub-Signature-256 HMAC instead of a
+  // browser session, checked by the same code as the freddie-side mount. Same
+  // category as the public /report form, which registerAuth likewise mounts
+  // ahead of the gate. Mounts nothing when this deployment serves no WhatsApp
+  // channel.
+  registerWhatsappWebhook(app, { express, resolveWhatsappAdapter })
+  // First in the chain for everything else, so it wraps every downstream
+  // response -- the API routes, the SPA shell, and the /design + /vendor static
+  // mounts alike.
   app.use(compressResponses)
   app.use(express.json())
   app.use(express.urlencoded({ extended: false }))
