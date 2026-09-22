@@ -9,6 +9,7 @@
 
 import { truncate } from './heuristics.js'
 import { tsMs } from '../timestamp.js'
+import { CRITICAL_FIELDS } from '../store/report-shape.js'
 
 // 3 hours, the same value as case-health.js DEFAULT_THRESHOLDS
 // .workerLocationStaleMs, which governs when a field worker's self-reported
@@ -83,11 +84,23 @@ export function buildPromptContext(caseRow, events) {
   // could shape as fake instructions, and it persists across the whole case
   // lifetime, re-entering the model's own context on every subsequent turn.
   const reportLine = haveFields.length ? haveFields.map(k => `${k}=${fenced(reportObj[k], 80)}`).join('; ') : '(nothing recorded yet)'
+  // The visit-critical facts still blank, by KEY, for the on-site-window
+  // last-chance push. The push existed as a rule the model had to satisfy from
+  // its own reading of "report so far" against a priority order expressed in
+  // prose -- and live, against the configured free-tier chain, it simply did
+  // not: a farewell on a report missing how_to_find and contact_fallback got
+  // "You're welcome, stay safe... Goodbye for now." Naming the actual missing
+  // keys turns the push from an inference the model has to make into a fact it
+  // is handed. Config-derived (CRITICAL_FIELDS comes from report-fields.yml's
+  // own critical_for_visit flags), never a hardcoded field list, so a
+  // deployment with a different vocabulary gets its own.
+  const missingCritical = CRITICAL_FIELDS.filter(k => !haveFields.includes(k))
   return {
     recent,
     firstMessage: inboundEvents.length <= 1,
     returnedAfterGap: detectReturnedAfterGap(inboundEvents),
     reportObj,
     reportLine,
+    missingCritical,
   }
 }

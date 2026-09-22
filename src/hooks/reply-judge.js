@@ -19,7 +19,8 @@
 // The SHAPE HEADING WORDS below are a wire protocol, not prose: turn-attempts.js
 // routes a category:'other' verdict by regex over `reasons` -- /false.?confirm|
 // claims?.*record/ retries then holds as a draft, /repeated|echo|stock|
-// meta.?commentary|planning narration/ retries then BLANKS the reply, and
+// meta.?commentary|planning narration/ retries then BLANKS the reply,
+// /multi.?ask|wall of text/ retries then SENDS ANYWAY, and
 // anything matching neither (TOOL REFUSAL) is sent as-is. Renaming a heading
 // here silently reroutes that reply to the send-anyway branch.
 //
@@ -88,8 +89,28 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   message is STILL flagged the instant one of these exact words appears --`,
     `   naturalness of the phrasing is irrelevant to this specific shape; only`,
     `   whole-word presence matters.`,
+    // The reply-shape rule the system prompt states THREE separate times (the
+    // persona's ONE-QUESTION rule, GATHER's TOP TWO paragraph, and ONE ASK PER
+    // REPLY) had no judge shape at all, so it was the one load-bearing reply rule
+    // with no gate behind it -- and it is the rule a weak model breaks most.
+    // Witnessed live against the configured free-tier chain, with the full domain
+    // prompt in force: a first inbound about sick cattle came back as a
+    // six-item numbered list of questions, twice in a row. The person reading
+    // that is on a phone, in a hurry, in their second or third language; the
+    // prompt's own words for what happens next are "answers two asks by
+    // answering neither". Retryable with the reasons fed back (see
+    // turn-attempts.js's multi-ask branch), and sent anyway once the budget is
+    // spent -- a wall of text is still a real answer, and silence is worse.
+    `7. MULTI-ASK WALL OF TEXT: the reply asks THREE OR MORE distinct questions,`,
+    `   or presents what it wants to know as a numbered or bulleted LIST, or as a`,
+    `   form of separate lines to fill in. This person is reading on a phone, in`,
+    `   a hurry, often in their second or third language, and the assistant is`,
+    `   allowed at most ONE question naming at most TWO still-missing things,`,
+    `   woven into one natural sentence. A warm single sentence that happens to`,
+    `   mention two things is CLEAN; a list, a form, or a third question is not.`,
+    `   Judge the SHAPE only -- never whether the questions are good ones.`,
     hadSuccessfulWrite === false ? [
-      `7. FALSE CONFIRMATION: NO field/report/detail was actually recorded this`,
+      `8. FALSE CONFIRMATION: NO field/report/detail was actually recorded this`,
       `   turn (a system fact, given to you directly -- trust it over the reply's`,
       `   own words). If the reply nonetheless confidently confirms something was`,
       `   recorded, noted, saved, or written down ("I've noted that", "got it,`,
@@ -117,9 +138,11 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `...]} if one or more apply. Use category "jargon" ONLY when failure shape 6`,
     `(internal jargon leak) is the ONLY thing wrong -- the reply is otherwise a`,
     `genuine, on-topic message that just needs its jargon word(s) reworded by a`,
-    `human, not discarded. Use category "other" for every other shape (1-5, and`,
-    `7 when present), or when jargon is combined with any other shape (the reply`,
-    `has no real content worth saving in that case).`,
+    `human, not discarded. Use category "other" for every other shape (1-5, 7,`,
+    `and 8 when present), or when jargon is combined with any other shape (the`,
+    `reply has no real content worth saving in that case). For shape 7 write the`,
+    `reason as "multi-ask" so the caller can route it (see this file's header:`,
+    `the shape heading words are a wire protocol, not prose).`,
   ].filter(Boolean).join('\n')
 
   let raw

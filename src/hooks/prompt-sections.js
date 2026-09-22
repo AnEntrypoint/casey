@@ -153,6 +153,28 @@ export function gatherSection(persona, caseRow, contact, { returnedAfterGap, rep
     `correct and expected, and far better than a plausible guess someone later`,
     `acts on as fact. The ONLY exception is a field whose own description`,
     `explicitly asks you to estimate.`,
+    // "Their own words" was stated but never defined across a language
+    // boundary, and a model reads an English-language field description as an
+    // instruction to write English. Live-witnessed on a fresh case with the
+    // full prompt in force: an isiXhosa first message ("zikhupha amathe
+    // amaninzi") was recorded as symptoms "drooling a lot, producing a lot of
+    // saliva" -- the model's English paraphrase, not the reporter's words --
+    // and the NEXT isiXhosa message ("zingamashumi amabini", "there are
+    // twenty of them") came back as onset "Two weeks, it started yesterday
+    // morning": a mistranslation, in the wrong field, recorded as fact.
+    // Translating is how a report stops being evidence: an operator reading
+    // the dashboard cannot tell a reporter's own term from the model's gloss
+    // of it, and the gloss is what a later case is matched against. This is
+    // also the specific accuracy concern raised for isiXhosa symptom
+    // terminology (see report-fields.yml's `symptoms` note) -- the answer is
+    // not a vocabulary list, which nobody can verify, but not translating.
+    `RECORD IT IN THE LANGUAGE THEY WROTE IT IN. Do not translate, paraphrase`,
+    `or tidy a person's words into English (or into any other language) before`,
+    `putting them in a field -- copy the words they actually used. If you are`,
+    `not sure what a word means, record it as they wrote it anyway and leave`,
+    `the rest of the field out; a term you cannot translate is still evidence,`,
+    `and your translation of it is not. Your REPLY mirrors their language too`,
+    `(see the reply rules below) -- this rule is about the recorded fields.`,
     ...persona.gatherLeadText,
     // case_update is field_worker-gated (case-tools-gates.js REPORT_ONLY_TOOLS),
     // so telling the default reporter tier to keep its summary current named a
@@ -217,7 +239,7 @@ function photoNudgeLines(persona, reportObj) {
 }
 
 // How to reply, how to open, and how to close.
-export function replySection(persona, caseRow, contact, { firstMessage }) {
+export function replySection(persona, caseRow, contact, { firstMessage, missingCritical = [] }) {
   return [
     ``,
     `KEEP REPORTS CORRECTLY GROUPED: one conversation usually means one report.`,
@@ -258,9 +280,23 @@ export function replySection(persona, caseRow, contact, { firstMessage }) {
     // Worker catch-up
     ...(contact?.tier === 'field_worker' ? [persona.workerCatchUpText] : []),
     ``,
-    `LAST-CHANCE PUSH: if they seem to be wrapping up and a priority fact is missing,`,
-    `gently ask once for the highest-ranked missing item before letting them go.`,
-    `If nothing is missing, let them go warmly.`,
+    // The on-site window is the only chance to capture these: once the worker
+    // drives away, nobody can answer them at all, and a visit is dispatched on
+    // them. The list is computed (prompt-context.js's missingCritical, derived
+    // from report-fields.yml's own critical_for_visit flags) rather than left
+    // for the model to work out from "report so far" against a prose priority
+    // order -- which is what it was before, and what it did not do.
+    missingCritical.length
+      ? `LAST-CHANCE PUSH: these facts are still missing and CANNOT be got once they leave the animals: ${missingCritical.join(', ')}. The moment they sound like they are wrapping up or leaving, ask ONCE for the first one on that list, woven into your goodbye as one warm sentence -- not a list, and never twice. Then let them go.`
+      : `LAST-CHANCE PUSH: nothing critical is missing. When they wrap up, let them go warmly.`,
+    // AGENTS.md's "a complete report is not a dead-end" principle. It was a
+    // documented design intent with no sentence anywhere in the prompt that
+    // stated it, so the behaviour it describes happened only by luck: live,
+    // a farewell closed with "Goodbye for now" and nothing else.
+    `NOT A DEAD-END: when a ${persona.entityLabel} is done, never close as though`,
+    `the conversation is over. In your own words, leave the door open for a fresh`,
+    `${persona.entityLabel} about any OTHER ${persona.entitySubjectPlural} or any`,
+    `other place, any time -- one short warm clause, never a second question.`,
     // case_transition is field_worker-gated (case-tools-gates.js), so on the
     // default reporter tier this block instructed a call that tier cannot make.
     ...(contact?.tier === 'field_worker' ? [
