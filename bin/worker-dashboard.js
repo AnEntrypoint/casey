@@ -10,6 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createDashboard } from '../src/dashboard/server.js'
+import { resolveAdapter } from '../src/hooks/delivery.js'
 import { WORKER_MSG, ipcSend } from '../src/supervisor-ipc.js'
 
 // A deployer package (e.g. serpent) can mount its OWN routes directly onto
@@ -88,6 +89,13 @@ export async function startWorkerDashboard({ casey, port, sendReply, llmStatus, 
       // CASEY_HANDOFF_WEBHOOK) so the lookup targets the URL actually in use.
       queueStatus: () => casey.queueStatus(),
       alertWebhookUrl: process.env.CASEY_ALERT_WEBHOOK || process.env.CASEY_HANDOFF_WEBHOOK || null,
+      // Mounts the SAME WhatsApp webhook on THIS port as well as freddie's
+      // CASEY_WEBHOOK_PORT, for a deployment whose reverse proxy forwards only
+      // one port (see src/dashboard/routes/whatsapp-webhook.js). resolveAdapter
+      // is hooks/delivery.js's own -- the lookup the outbound send path uses --
+      // so the route gets the one LIVE adapter instance freddie's platform
+      // plugin already wired handleInbound to, never a second construction.
+      resolveWhatsappAdapter: () => resolveAdapter(casey, 'whatsapp'),
     })
   } catch (e) {
     if (forked) ipcSend(process, WORKER_MSG.FATAL, { reason: `dashboard bind failed: ${e.message}` })

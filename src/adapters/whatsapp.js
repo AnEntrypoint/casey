@@ -2,7 +2,7 @@
 // AGENTS.md's WhatsApp HMAC verification security invariant.
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMedia } from './webhook-platform-base.js'
+import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMedia, verifyWebhookOr401 } from './webhook-platform-base.js'
 
 // Outbound send/media-upload bound: a bare, unbounded fetch() can leave a
 // guaranteed-fallback reply composed and recorded but never actually delivered
@@ -21,11 +21,13 @@ export class WhatsappAdapter extends EventEmitter {
     // (not optional) when WhatsApp credentials are configured -- see AGENTS.md
     // Security invariants.
     this.appSecret = opts.appSecret || process.env.WHATSAPP_APP_SECRET || ''
-    // The webhook path freddie's ctx.webServer registers this adapter on
-    // (freddie-bundle/src/platform). This adapter owns no listening socket of
-    // its own -- freddie's boot() assembles the whole transport, and the
-    // socket the webhook lands on is freddie's, configured once in
-    // freddie-bundle/cordis.patch.yml (CASEY_WEBHOOK_PORT), so there is no
+    // The webhook path, registered on BOTH sockets casey listens on: freddie's
+    // own ctx.webServer (freddie-bundle/src/platform, CASEY_WEBHOOK_PORT) and
+    // the operator dashboard's Express app (src/dashboard/routes/
+    // whatsapp-webhook.js, --port). This adapter owns no listening socket of
+    // its own -- both mounts are handed this same live instance and both call
+    // serveWhatsappWebhook below, so there is one path, one verifier and one
+    // event emitter regardless of which socket Meta reaches. There is no
     // WHATSAPP_WEBHOOK_PORT of its own.
     this.path = opts.path || process.env.WHATSAPP_WEBHOOK_PATH || '/webhooks/whatsapp'
     this.api = opts.api || 'https://graph.facebook.com/v20.0'
@@ -216,5 +218,51 @@ export function dispatchWhatsappWebhookBody(adapter, body) {
     )
   }
   return events.length
+}
+
+// THE webhook request handler -- the whole Cloud API contract (GET verify
+// challenge, POST signature-verified receive) in one place, called by BOTH
+// mount points: freddie's ctx.webServer route (freddie-bundle/src/platform, on
+// CASEY_WEBHOOK_PORT) and the dashboard's Express route
+// (src/dashboard/routes/whatsapp-webhook.js, on --port). Neither owns a second
+// copy of this logic and neither builds a second WhatsappAdapter: both are
+// handed the SAME live instance off casey.js's this.adapters, so the signature
+// check, the challenge comparison and the 'message' emitter that feeds the real
+// turn pipeline are identical whichever socket Meta reached.
+//
+// `req`/`res` are an express-SHAPED pair, never necessarily a real express
+// request -- req.method, req.query, req.rawBody and req.get(name); res
+// .sendStatus(code), .sendText(text) and .json(obj). The dashboard route wraps
+// a real express req/res in that shape; the platform plugin wraps freddie's raw
+// node req/res in it. Adapting at each call site rather than forking the
+// handler is what keeps this the only implementation.
+//
+// Two ordering rules the shape below encodes, both live-witnessed:
+//  - the HMAC is over the raw bytes, so NOTHING is parsed before the signature
+//    is consulted. Parsing first meant an unsigned POST of non-JSON bytes threw
+//    out of the handler with no status written at all, leaving the socket
+//    unanswered where it should have read 401.
+//  - dispatchWhatsappWebhookBody is synchronous and detaches media hydration,
+//    so the ack goes out the instant it returns. Awaiting the emitted work
+//    would let a two-hop Meta media fetch (~20s) outlast Meta's own patience
+//    and earn a redelivery.
+export function serveWhatsappWebhook(adapter, req, res) {
+  if (req.method === 'GET') {
+    const challenge = adapter.verifyChallenge(req.query['hub.verify_token'], req.query['hub.challenge'])
+    if (challenge === null) { res.sendStatus(403); return }
+    res.sendText(challenge)
+    return
+  }
+  if (!verifyWebhookOr401(req, res, (r) => adapter._verifySignature(r))) return
+  let body
+  try {
+    body = JSON.parse((req.rawBody || Buffer.alloc(0)).toString('utf8') || '{}')
+  } catch {
+    // Signed by Meta and still unparseable: answer, do not hang the socket.
+    res.sendStatus(400)
+    return
+  }
+  dispatchWhatsappWebhookBody(adapter, body)
+  res.json({ ok: true })
 }
 

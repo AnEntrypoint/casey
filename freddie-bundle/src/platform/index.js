@@ -6,9 +6,13 @@
 // handler}) for WhatsApp's inbound Cloud API webhook (see deps/freddie's
 // packages/host/webserver -- the only standing listening-socket seam in the
 // tree). That socket is freddie's own, on freddie-bundle/cordis.patch.yml's
-// CASEY_WEBHOOK_PORT, and is NOT the dashboard's -- the dashboard is a
-// separate Express app bin/worker.js binds for itself. Discord needs no
-// listening socket at all: its own gateway connection is an OUTBOUND
+// CASEY_WEBHOOK_PORT, and is a DIFFERENT socket from the dashboard's, which is
+// a separate Express app bin/worker.js binds for itself on --port. The SAME
+// webhook path is also mounted on that dashboard app
+// (src/dashboard/routes/whatsapp-webhook.js) off this same adapter instance, so
+// a deployment whose reverse proxy forwards only one port can still be reached;
+// both mounts call src/adapters/whatsapp.js's one serveWhatsappWebhook. Discord
+// needs no listening socket at all: its own gateway connection is an OUTBOUND
 // websocket CLIENT the adapter opens itself.
 //
 // Adapter CONSTRUCTION (including casey's own DM/mention filtering, the
@@ -21,8 +25,7 @@
 // ignorant of casey's case-store/domain logic. Discord is built but not yet
 // connected when this runs: src/casey.js opens its gateway later, in start().
 import { setAgentContext } from '../../../src/agent/run-turn.js'
-import { dispatchWhatsappWebhookBody } from '../../../src/adapters/whatsapp.js'
-import { verifyWebhookOr401 } from '../../../src/adapters/webhook-platform-base.js'
+import { serveWhatsappWebhook } from '../../../src/adapters/whatsapp.js'
 
 export const name = 'casey-platform'
 // 'agents' alongside 'webServer': this plugin hands its own ctx to
@@ -76,51 +79,31 @@ export async function apply(ctx) {
   }
 }
 
-// Adapts the Cloud API webhook contract (GET verify challenge, POST
-// signature-verified receive) to freddie's raw (req, res) webServer handler
-// shape. Verification and parsing/emission both live on the adapter
-// (src/adapters/whatsapp.js); this function is transport plumbing only --
-// read the body, hand it over, ack.
+// Adapts freddie's raw (req, res) webServer handler shape to the express-SHAPED
+// pair serveWhatsappWebhook speaks, and nothing else. The whole webhook
+// contract -- challenge comparison, HMAC verification, parse, dispatch, ack --
+// lives once in src/adapters/whatsapp.js and is shared verbatim with the
+// dashboard-side mount (src/dashboard/routes/whatsapp-webhook.js). This
+// function is transport plumbing only: read the query and the raw bytes, hand
+// them over, translate the three response verbs back onto node's writeHead/end.
 async function webhookHandler(adapter, req, res) {
-  if (req.method === 'GET') {
-    const url = new URL(req.url, 'http://localhost')
-    const challenge = adapter.verifyChallenge(url.searchParams.get('hub.verify_token'), url.searchParams.get('hub.challenge'))
-    if (challenge === null) { res.writeHead(403); res.end(); return }
-    res.writeHead(200, { 'content-type': 'text/plain' })
-    res.end(challenge)
-    return
+  const url = new URL(req.url, 'http://localhost')
+  // Only a POST has a body to read. Draining a GET's (empty) stream is
+  // pointless, and the verify handshake must answer before any await.
+  let rawBody = Buffer.alloc(0)
+  if (req.method !== 'GET') {
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    rawBody = Buffer.concat(chunks)
   }
-  const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
-  const rawBody = Buffer.concat(chunks)
-  // verifyWebhookOr401 and _verifySignature both speak express's
-  // req.get()/req.rawBody and res.sendStatus() shape, which freddie's raw
-  // node req/res does not have -- adapt rather than fork the verifier.
-  const asExpressReq = {
-    get: (h) => req.headers[h.toLowerCase()],
+  serveWhatsappWebhook(adapter, {
+    method: req.method,
+    query: Object.fromEntries(url.searchParams),
     rawBody,
-  }
-  const asExpressRes = {
+    get: (h) => req.headers[h.toLowerCase()],
+  }, {
     sendStatus: (code) => { res.writeHead(code); res.end() },
+    sendText: (text) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end(text) },
     json: (obj) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)) },
-  }
-  // The HMAC is over rawBody, so nothing here needs the payload parsed to
-  // decide whether to trust it. Parsing it up front, as part of building the
-  // request shim, meant an anonymous POST of any non-JSON bytes threw out of
-  // this handler with no status written at all, before the signature was ever
-  // consulted -- live-witnessed: an unsigned "not json at all" body left the
-  // socket unanswered where it should have read 401.
-  if (!verifyWebhookOr401(asExpressReq, asExpressRes, (r) => adapter._verifySignature(r))) return
-  let body
-  try {
-    body = JSON.parse(rawBody.toString('utf8') || '{}')
-  } catch {
-    // Signed by Meta and still unparseable: answer, do not hang the socket.
-    asExpressRes.sendStatus(400)
-    return
-  }
-  // Emission is detached inside dispatchWhatsappWebhookBody, so this returns
-  // before any media download -- ack immediately, or Meta redelivers.
-  dispatchWhatsappWebhookBody(adapter, body)
-  asExpressRes.json({ ok: true })
+  })
 }
