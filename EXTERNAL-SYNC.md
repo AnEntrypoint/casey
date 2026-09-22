@@ -10,13 +10,62 @@ without a redesign.
 
 ## The other app's schema is unconfirmed
 
-`src/sync/external-schema-map.js`'s `EXTERNAL_SCHEMA` is synthesized from
-screenshots, terminal sessions, and meeting discussion the user supplied --
-not a real API contract. Treat every field name and type there as a
-hypothesis. `FIELD_CROSSWALK` maps only the fields that plausibly correlate
-with casey's own vocabulary; `NO_CASEY_COUNTERPART` lists what is
-deliberately never imported (vehicle logbook, monthly targets, analytics,
-user roles, resource library, document-vault metadata beyond a photo URL).
+`src/sync/external-schema-map.js`'s `EXTERNAL_SCHEMA` is reconstructed from a
+live demo walkthrough of the other app plus screenshots, terminal sessions,
+and meeting discussion the user supplied -- not a real API contract. The field
+NAMES there are this side's normalization of what the demo showed, not the
+remote system's wire names, so treat every name and type as a hypothesis. It
+covers nine record kinds: `aht_user`, `association`, `farmer`, `field_visit`,
+`vehicle_trip_log`, `daily_accountability`, `document_vault`, `follow_up`,
+`targets_analytics`.
+
+Every field of every kind is classified exactly once, and the two lists are
+exhaustive over `EXTERNAL_SCHEMA` by construction:
+
+- `FIELD_CROSSWALK` maps only the fields that plausibly correlate with casey's
+  own vocabulary, and only onto an existing `report-fields.yml` REPORT_KEY or
+  `contact.external_id`. The mapped set is: the technician (`aht_name`/
+  `aht_id` -> `present_person`), place names (`association.name`,
+  `field_visit.association_name`, `follow_up.assigned_association`, and
+  `association.province` as a coarse last-resort fallback -> `location`), the
+  farmer's identity (`first_name`/`last_name` -> `owner_name`,
+  `phone_number` -> `owner_contact` and `contact.external_id`), the visit's
+  prose (`purpose_of_visit`, `activities_conducted`, `outcome_notes`,
+  `challenges_encountered`, `proposed_solutions`, `follow_up.issue_summary`,
+  `follow_up.resolution_notes` -> `notes`), the attachment
+  (`field_visit.photo_url` -> `photos`), and `visit_date` -> `onset` as a weak
+  temporal signal only, never a direct overwrite.
+- `NO_CASEY_COUNTERPART` lists what is deliberately never imported, each row
+  carrying its own one-line reason: the vehicle/trip logbook and per-technician
+  monthly kilometres (logistics and expense, no animal-health meaning); the
+  whole daily-accountability surface (visits/admin days logged, Submitted /
+  Missing / On Leave / Sick, compliance percent -- management performance about
+  their staff, not a fact about a case); the whole document vault (operational
+  templates, training material, meeting registers, herd-health and production
+  plans, plus uploader/timestamp/size metadata -- an office artefact is not a
+  field photo of an affected animal, so it is explicitly NOT routed to
+  `report.photos`); targets, totals, coverage counts and leaderboard metrics
+  (derived analytics, and casey computes its own from its own event log, so
+  importing theirs would double-count); the organizational hierarchy above a
+  place name (`district_municipality`, `project_phase`, `target_scope`,
+  technician allocation mapping); their user role/active flags (the casey-side
+  contact tier is operator-assigned and fails closed); their workflow and SLA
+  fields (`follow_up_required`, `follow_up.status`, the target-resolution date
+  range -- the casey-side lifecycle machine and `attn.js` SLA clock are never
+  driven from outside); their own record ids and FKs (`batch_visit_id`,
+  `follow_up_id`, `linked_visit_id`, `field_visit_id` -- correlation metadata
+  belonging in `external_link`, never in a report field); meeting attendance
+  head counts (`male_attendees`/`female_attendees` -- people at a meeting, and
+  putting them in `affected_count`/`herd_total` would feed human attendance
+  into an animal-count field that drives the attention ranking); and the
+  farmer's production census (`cattle_count`/`sheep_count`/`goat_count` -- a
+  census of a whole holding is not `herd_total` at the visited location, and
+  deriving `species` from a nonzero count is exactly the guess
+  `report-fields.yml` forbids).
+
+`external_link.external_entity` stays free text rather than becoming an enum
+over these nine kinds: the remote schema is still unconfirmed, so an enum here
+would only harden a guess.
 
 ## Additive-only guarantee
 
@@ -121,9 +170,11 @@ default 60000ms).
 ## Wiring a real adapter later
 
 1. Confirm the other app's actual schema against a real API response --
-   correct `EXTERNAL_SCHEMA`/`FIELD_CROSSWALK` in
+   correct `EXTERNAL_SCHEMA`/`FIELD_CROSSWALK`/`NO_CASEY_COUNTERPART` in
    `src/sync/external-schema-map.js` to match reality, not the current
-   guess.
+   guess. Their side's own dashboard/database integration item is not built
+   yet either, so the real next step is an API contract exchange, not a
+   further round of refining this hypothesis from demo screenshots.
 2. Implement `src/sync/adapters/meat-naturally.js` against
    `src/sync/adapters/base.js`'s contract (`fetchRemoteRecords`,
    `pushLocalUpdate`), reading its own auth/endpoint env vars.
