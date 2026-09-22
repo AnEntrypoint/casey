@@ -6,13 +6,15 @@
 // both, in this order, to every tool it builds.
 
 import { boundCase } from './case-tools-shared.js'
+import { canQueryCases } from './contact-tiers.js'
 
 // Tier gate: a 'reporter'-tier contact (casual/public, report-only per the
 // operator-assignable access-tier design) can report an incident and use the
 // two irreversible safety controls, but cannot agentically QUERY the case
 // database -- case_list with a location filter, for instance, would let an
 // anonymous public contact enumerate other reporters' case locations even
-// through the PII-free projection. Only 'field_worker'-tier contacts (and the
+// through the PII-free projection. Only contacts at or above 'field_worker'
+// tier (and the
 // dashboard/CLI, which never go through this per-turn toolCtx path at all)
 // reach the query/mutation tools. REPORT_ONLY_TOOLS are available at every
 // tier: case_report (the whole point of a reporter existing), case_stop/
@@ -34,10 +36,18 @@ export function gateByTier(tool) {
     handler: async (args, ctx) => {
       // FAIL CLOSED: allow-list, not deny-list. A ctx built with no tier at all
       // (a missing/undefined value, not merely a wrong one) must NOT fall through
-      // to full access -- only an EXPLICIT 'field_worker' tier proceeds. An
-      // `if (ctx?.tier && ctx.tier !== 'field_worker')` shape denies only when a
+      // to full access -- only a tier that EXPLICITLY names a rung at or above
+      // field_worker proceeds. An
+      // `if (ctx?.tier && !canQueryCases(ctx.tier))` shape denies only when a
       // tier is present and wrong, and silently grants full access to any caller
-      // whose ctx carries no tier property whatsoever.
+      // whose ctx carries no tier property whatsoever; canQueryCases resolves an
+      // unknown/absent value to the lowest rung first (contact-tiers.js), so the
+      // fail-closed direction lives in one place rather than in this expression.
+      //
+      // A RANK test, not an equality test: animal_health_technician sits ABOVE
+      // field_worker, so an equality comparison here would deny the system's
+      // highest-privilege contact every query tool while granting them to the
+      // rung below. See contact-tiers.js for the ladder.
       //
       // The result text is deliberately NOT an explanation of internal
       // permissions/tools/tiers -- a model that sees a tool-shaped "requires
@@ -48,7 +58,7 @@ export function gateByTier(tool) {
       // tells the model plainly, in conversational terms, to drop the query and
       // keep going -- nothing here is safe or useful to relay to the person
       // messaging in.
-      if (ctx?.tier !== 'field_worker') {
+      if (!canQueryCases(ctx?.tier)) {
         return { unavailable: true, note: 'This is not something you can look up for this person. Do not mention tools, permissions, or access -- just continue the conversation naturally: report their case, or answer using what you already know from this conversation.' }
       }
       return handler(args, ctx)

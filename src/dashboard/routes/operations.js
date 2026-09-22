@@ -5,12 +5,13 @@
 // working, and what needs attention right now" routes.
 //
 // deps: store, wrap, authed, actingOperator, isOpenCase, rankAttention,
-//   getWebhookDeliveryStatus, SAST_TZ, llmStatus, runSweep, receiveStatus,
-//   runtimeStatus, queueStatus, alertWebhookUrl
+//   getWebhookDeliveryStatus, SAST_TZ, llmStatus, callLLM, runSweep,
+//   receiveStatus, runtimeStatus, queueStatus, alertWebhookUrl
 import { tagList, parseReport } from '../../timestamp.js'
 import { snapshotDroppedIntake } from '../../hooks/dropped-intake.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
 import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI } from '../../store/report-shape.js'
+import { KNOWN_VALUE_FIELDS, isKnownValueField, readKnownValues, canonicalizeFieldValue } from '../../field-values.js'
 import { mountRoutes } from './register.js'
 
 // Same default casey.js's startSweep uses when no CASEY_SWEEP_INTERVAL_MS is
@@ -378,6 +379,13 @@ export function getConfig({ store, authed, SAST_TZ }) {
       // already gives for the on-site-visit guardrail. Empty array when the
       // active config declares none (casey's own generic default).
       severity_signal_fields: SEVERITY_SIGNAL_FIELDS.map(k => ({ key: k, label: fieldLabel(k) })),
+      // Which report fields the SPA should edit through a known-value combo box
+      // (the live vocabulary from GET /api/field-values) rather than a bare text
+      // box -- see field-values.js for why this set is the config's own
+      // enquiry_headline_fields and not every free-text field. Empty array under
+      // a config that declares none, in which case every field stays a plain
+      // TextField exactly as before this existed.
+      known_value_fields: KNOWN_VALUE_FIELDS.map(k => ({ key: k, label: fieldLabel(k) })),
       // Dashboard shell shape (brand/leaf + which sidebar nav items to
       // hide/relabel) -- see report-shape.js's DASHBOARD_UI. null when the
       // active config declares none (casey's own default, uhh), in which
@@ -679,6 +687,56 @@ export function getDegradedTurns({ store, authed }) {
   }
 }
 
+// The live vocabulary of one report field: every distinct value this
+// deployment's own reports already carry, most-used first. This is what turns a
+// bare text box in the case detail into a picklist -- see field-values.js for
+// the field gate (the config's own enquiry_headline_fields) and for why values
+// equal under the shared surface-form rule are folded into one entry.
+//
+// Aggregate-only and PII-free by construction: it emits values of a field the
+// config has declared safe to show across workers, never a ref, a case id or
+// anything that says which report a value came from.
+export function getFieldValues({ store, authed }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const field = typeof req.query.field === 'string' ? req.query.field : ''
+    if (!field) return res.status(400).json({ error: 'field required' })
+    if (!isKnownValueField(field)) {
+      return res.status(400).json({ error: `no known-value list for field: ${field}`, fields: KNOWN_VALUE_FIELDS })
+    }
+    const values = await readKnownValues(store, field)
+    res.json({ field, label: fieldLabel(field), count: values.length, values })
+  }
+}
+
+// "Is what the operator just typed one of those values written differently?"
+//
+// Called by the SPA between the operator's Save and the actual write, and only
+// for a value their own copy of the list does not already contain. The answer is
+// advisory: the client is told which value to store and how that was decided,
+// and it says so on screen rather than substituting silently.
+//
+// Never fails the request. An unreachable/slow/unwired provider answers
+// matched:false with the reason, so the caller's next move is the same as for a
+// genuinely new value -- store what the operator typed. This is the
+// established shape for casey's opt-in LLM-touching paths (AGENTS.md's
+// CASEY_TRANSCRIBE_VOICE_NOTES et al: "any failure degrades silently to the
+// original manual path, never blocking"), not a mock or a canned answer: there
+// is exactly one real mechanism here and it is a real model call.
+export function postFieldValueCanonicalize({ store, authed, str, callLLM }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const field = str(res, req.body, 'field'); if (field === undefined) return
+    const value = str(res, req.body, 'value'); if (value === undefined) return
+    if (!isKnownValueField(field)) {
+      return res.status(400).json({ error: `no known-value list for field: ${field}`, fields: KNOWN_VALUE_FIELDS })
+    }
+    const known = await readKnownValues(store, field)
+    const r = await canonicalizeFieldValue({ field, value, known, callLLM })
+    res.json({ field, ...r })
+  }
+}
+
 const ROUTES = [
   // /api/health is deliberately the one route here with no per-handler
   // authed() check: registerAuth's session gate is installed ahead of every
@@ -698,6 +756,8 @@ const ROUTES = [
   ['get', '/api/clusters', getClusters],
   ['get', '/api/geo', getGeo],
   ['get', '/api/distribution', getDistribution],
+  ['get', '/api/field-values', getFieldValues],
+  ['post', '/api/field-values/canonicalize', postFieldValueCanonicalize],
   ['get', '/api/activity', getActivity],
   ['get', '/api/turns/degraded', getDegradedTurns],
 ]

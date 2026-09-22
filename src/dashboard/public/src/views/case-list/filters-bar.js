@@ -20,10 +20,11 @@
 import * as webjsx from 'webjsx';
 import { SearchInput, Select, FilterPills } from 'ds/components/content.js';
 import { Dropdown } from 'ds/components/overlay-primitives.js';
-import { state, setFilt } from '../../state.js';
+import { state, setFilt, schedule } from '../../state.js';
 import { stageLabel, stageTone, channelLabel } from '../../format.js';
 import { entityLabelPlural } from '../../vocabulary.js';
 import { pushRecentSearch, loadRecentSearches, listNamedViews } from '../../saved-views.js';
+import { knownValues, loadKnownValues } from '../../known-values.js';
 const h = webjsx.createElement;
 
 // Truncate a long option label to a fixed budget so a Select never blows out
@@ -113,8 +114,37 @@ export function SearchBar({ resultCount = 0 } = {}) {
   );
 }
 
+// One Select per known-value report field (species/location -- see
+// known-values.js), offering the SAME live vocabulary the case-detail combo box
+// offers, so "filter by species" and "type a species" can never disagree about
+// what the values are. The options come from the server list rather than from
+// the loaded page, deliberately: the vocabulary is a property of the deployment,
+// not of whichever 200 rows happen to be in memory, and the list head already
+// states how much of the deployment is loaded.
+function knownValueFilters() {
+  const fields = ((state.runConfig || state.config || {}).known_value_fields) || [];
+  return fields.map((f) => {
+    const values = knownValues(f.key);
+    // Nothing recorded for this field yet (or the list has not arrived): render
+    // no control at all rather than an empty dropdown.
+    if (!values.length) { loadKnownValues(f.key).then(schedule); return null; }
+    const anyLabel = 'any ' + String(f.label || f.key).toLowerCase();
+    return Select({
+      key: 'fv-' + f.key,
+      value: (state.filt.fv && state.filt.fv[f.key]) || '',
+      title: 'Filter by ' + f.label, ariaLabel: 'Filter by ' + f.label,
+      // "any" is a real selectable option rather than the kit's `placeholder`,
+      // which renders a DISABLED option -- with that, an operator who picks a
+      // species has no way back to unfiltered short of reloading the page.
+      options: [{ value: '', label: anyLabel }, ...values.map((v) => ({ value: v, label: truncateLabel(v) }))],
+      onChange: (v) => setFilt({ fv: { ...(state.filt.fv || {}), [f.key]: v } }),
+    });
+  }).filter(Boolean);
+}
+
 export function MoreFilters({ onOpenSavedViews, onSaveView }) {
   return h('div', { class: 'ds-case-more-filters' },
+    ...knownValueFilters(),
     Select({
       key: 'channel', value: state.filt.channel, placeholder: 'all channels',
       title: 'Filter by channel', ariaLabel: 'Filter by channel',

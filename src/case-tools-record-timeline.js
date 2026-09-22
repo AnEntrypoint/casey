@@ -9,6 +9,7 @@
 import { AGENT_USER } from './case-store.js'
 import { defTool, str, ownsCase, OBSERVE_TEXT_MAX_LEN } from './case-tools-shared.js'
 import { parseReport } from './timestamp.js'
+import { canSignOff } from './contact-tiers.js'
 import {
   MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES,
   missingMandatoryMinimum, fieldLabel, REPORT_TOOL_NAME, REPORT_ENTITY_LABEL,
@@ -23,6 +24,29 @@ import {
 function mandatoryMinimumDescriptionClause() {
   if (!MANDATORY_MINIMUM_FIELDS.length) return ''
   return ` A ${REPORT_ENTITY_LABEL} is not finished until ${MANDATORY_MINIMUM_FIELDS.map(fieldLabel).join(', ')} are all recorded: this tool REFUSES a move to ${MANDATORY_MINIMUM_BLOCKED_STATUSES.join('/')} while any one of them is blank. Ask the person for the missing one and record it with ${REPORT_TOOL_NAME} first.`
+}
+
+// The SECOND condition on a move to a done stage, named in the same description
+// for the same reason: so the model knows before it calls rather than by having
+// the call refused. Separate clause, separate sentence, because the two
+// conditions fail for unrelated reasons and a model that cannot tell them apart
+// composes the wrong next move -- it keeps asking a person for facts that are
+// already recorded, or it goes silent on a record it could have finished.
+//
+// Deliberately says what to DO instead (leave it open; a person will sign it
+// off) rather than naming the tier, the authority, or the gate. Anything the
+// model reads here it may paraphrase into a reply, and "you are not authorised"
+// is exactly the internal-permissions language the outbound jargon scrub holds a
+// reply for -- see gateByTier's own result text (case-tools-gates.js) for the
+// same reasoning applied to the tier gate.
+//
+// Empty string (byte-identical description) when this config declares no
+// mandatory minimum: with no declared done-stage list there is nothing for
+// either condition to gate, so a deployment that has not opted in is unaffected
+// by both.
+function signOffAuthorityDescriptionClause() {
+  if (!MANDATORY_MINIMUM_BLOCKED_STATUSES.length) return ''
+  return ` Marking a ${REPORT_ENTITY_LABEL} ${MANDATORY_MINIMUM_BLOCKED_STATUSES.join('/')} is ALSO restricted to the animal health technician who signs it off, so this tool refuses that move for anyone else even when every fact is recorded. When it does, leave the ${REPORT_ENTITY_LABEL} as it is and say nothing about it: it stays open and the right person finishes it.`
 }
 
 export function buildCaseTimelineTools(store, { stageValues }) {
@@ -60,7 +84,8 @@ export function buildCaseTimelineTools(store, { stageValues }) {
       // and the person gets silence instead. Say it where the words are handed
       // over.
       'Move the case to a new workflow stage. Valid targets depend on current stage (new->triaging->in_progress->waiting->resolved->closed, with reopen paths). Call case_get first if unsure. Honour the case autonomy setting. Every stage name here is internal bookkeeping: never say one to the person, and never describe what you just did in these words.'
-      + mandatoryMinimumDescriptionClause(),
+      + mandatoryMinimumDescriptionClause()
+      + signOffAuthorityDescriptionClause(),
       {
         type: 'object',
         properties: {
@@ -104,6 +129,36 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         if (blockedBy.length) {
           const labels = blockedBy.map(fieldLabel).join(', ')
           return { error: `this ${REPORT_ENTITY_LABEL} cannot be marked done yet: ${labels} ${blockedBy.length === 1 ? 'is' : 'are'} still blank, and ${blockedBy.length === 1 ? 'that fact is' : 'those facts are'} the minimum anyone needs to act on it. Say NOTHING about this to the person -- no stage, no tool, no refusal. Ask them once, warmly, for the missing one, record it with ${REPORT_TOOL_NAME}, then call this again. If they cannot or will not answer, leave it as it is and let them go kindly; it stays open and a person will look at it.` }
+        }
+        // SIGN-OFF AUTHORITY, the second condition on the same move -- checked
+        // here, AFTER the field-completeness gate above, and returning its own
+        // textually distinct error.
+        //
+        // BOTH conditions must hold: every mandatory fact recorded AND the acting
+        // contact holding sign-off authority. This does not replace the gate above
+        // and does not weaken it; a record with a blank species is no more
+        // finishable by an animal health technician than by anyone else.
+        //
+        // WHY THE FIELD CHECK GOES FIRST when both are unmet. The two refusals ask
+        // completely different things of the model. A blank field is something it
+        // can still act on -- ask once, warmly, record it, and the record moves
+        // one step closer to being finishable by whoever does finish it. Missing
+        // authority is something no amount of conversation changes. Checking
+        // authority first would answer an eco ranger's incomplete record with "not
+        // your call" and spend the one last-chance ask on nothing, losing the
+        // facts while the person is still standing next to the animals -- which is
+        // the exact harm the mandatory minimum exists to prevent. So the gathering
+        // gate keeps precedence and the authority gate is what is left when there
+        // is nothing further to gather.
+        //
+        // FAIL CLOSED. canSignOff (contact-tiers.js) resolves an absent, empty,
+        // pre-migration or corrupt tier to the lowest rung before comparing, so a
+        // toolCtx carrying no tier at all is never sign-off eligible -- the same
+        // direction gateByTier fails in, and for the same reason: the value is
+        // operator-assigned and never contact-self-service or LLM-settable, so a
+        // turn that cannot prove the tier has no claim to it.
+        if (MANDATORY_MINIMUM_BLOCKED_STATUSES.includes(to) && !canSignOff(ctx?.tier)) {
+          return { error: `this ${REPORT_ENTITY_LABEL} is complete but signing it off is not yours to do -- only the animal health technician marks one ${MANDATORY_MINIMUM_BLOCKED_STATUSES.join('/')}. Nothing is missing and nothing needs asking: every fact is already recorded. Say NOTHING about this to the person -- no stage, no tool, no permission, no refusal. Thank them warmly for what they gave you and let them go; it stays open, and the person who signs these off will finish it.` }
         }
         try {
           await store().transition(id, to, { user: AGENT_USER, reason })

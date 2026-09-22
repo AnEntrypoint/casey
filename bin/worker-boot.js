@@ -38,6 +38,11 @@ export async function bootServingCasey(channels) {
   // reads it too, so the dashboard shows recovery the instant the provider comes back
   // -- no separate probe to drift from reality.
   casey.resilientStatus = brain.status
+  // The backend itself, published beside its status for the same reason: a
+  // non-turn caller that legitimately needs ONE model call (bin/worker.js hands
+  // this to the dashboard for the field-value canonicalize check) must reuse
+  // this resolved, self-healing backend rather than resolve a second one.
+  casey.resilientCallLLM = brain.callLLM
   // COLD-START RACE, fixed here: makeResilientCallLLM never eagerly resolves at
   // construction -- the backend only actually resolves (and, transitively, the
   // acptoapi readiness prober only actually STARTS, see llm.js resolveCallLLM ->

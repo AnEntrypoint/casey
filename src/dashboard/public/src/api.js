@@ -452,6 +452,9 @@ export const fetchSlaAtRiskByType = () => json('/api/sla-at-risk/by-type');
 export const fetchClusters = () => json('/api/clusters');
 export const fetchGeo = () => json('/api/geo');
 export const fetchDistribution = () => json('/api/distribution');
+// --- known field values (the report-field combo box, see known-values.js) ---
+export const fetchFieldValues = (field) => json('/api/field-values?field=' + encodeURIComponent(field));
+export const postCanonicalizeValue = (field, value) => post('/api/field-values/canonicalize', { field, value });
 export const fetchActivity = (params) => json('/api/activity' + qs(params));
 export const fetchHandover = () => json('/api/handover');
 export const postStartShift = () => post('/api/handover/start-shift', {});

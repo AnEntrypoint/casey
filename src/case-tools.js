@@ -106,6 +106,16 @@ function selfCheckLoadBearingToolDescriptions() {
       tool: 'case_transition', field: null,
       pattern: /this tool REFUSES a move to/,
       name: 'case_transition must name the mandatory-minimum refusal in its own description',
+    }, {
+      // The SECOND condition on the same move, guarded for the same reason and
+      // gated on the same config key: a model that learns only about the field
+      // floor reads an authority refusal as "some fact must still be missing"
+      // and goes back to a person who has already told it everything. Both
+      // clauses are keyed on the declared done-stage list, so a deployment with
+      // no mandatory_minimum block asserts neither and boots unchanged.
+      tool: 'case_transition', field: null,
+      pattern: /restricted to the animal health technician who signs it off/,
+      name: 'case_transition must name the sign-off-authority refusal in its own description',
     }] : []),
   ]
   for (const { tool, field, pattern, name } of required) {

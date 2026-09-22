@@ -71,12 +71,12 @@ async function mountExtraRoutes(dash, casey) {
   })
 }
 
-export async function startWorkerDashboard({ casey, port, sendReply, llmStatus, runtimeStatus, forked }) {
+export async function startWorkerDashboard({ casey, port, sendReply, llmStatus, callLLM, runtimeStatus, forked }) {
   await ensureLoginExists(casey)
   let dash
   try {
     dash = await createDashboard(casey.store, {
-      port, sendReply, llmStatus,
+      port, sendReply, llmStatus, callLLM,
       runSweep: () => casey.runSweepOnce(),
       receiveStatus: () => casey.receiveStatus(),
       runtimeStatus,

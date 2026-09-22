@@ -10,8 +10,9 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Icon } from '/design/src/components/shell.js';
 import { Skeleton } from '/design/src/components/content.js';
-import { state, setCaseDetail, setCaseDetailLoading, setCaseDetailError, setEditing, setRunConfig } from '../state.js';
+import { state, schedule, setCaseDetail, setCaseDetailLoading, setCaseDetailError, setEditing, setRunConfig } from '../state.js';
 import { fetchCase, fetchRunConfig, postNote } from '../api.js';
+import { knownValueFields, loadKnownValues } from '../known-values.js';
 import { toast, failMsg } from '../toasts.js';
 import { CaseHeader } from './case-detail/header.js';
 import { CaseProgress } from './case-detail/progress.js';
@@ -53,6 +54,12 @@ export async function loadCaseDetail(id) {
         // or a network failure, in which case report-sections.js falls back to
         // the global config exactly as before this existed.
         fetchRunConfig(id).then((cfg) => { if (state.activeId === id) setRunConfig(cfg); });
+        // Warm the known-value lists behind the report fields that edit as combo
+        // boxes, so the options are already on screen the moment an operator
+        // clicks one instead of a request firing under their cursor. Cached and
+        // shared across cases, so this is one request per field per minute at
+        // most, and a failure leaves those fields plain text boxes.
+        for (const f of knownValueFields()) loadKnownValues(f).then(schedule);
     } catch (e) {
         setCaseDetailError((e && e.message) || ('Could not load this ' + entityLabel() + '. It may have been merged or removed -- go back to the list and open it again.'));
     }

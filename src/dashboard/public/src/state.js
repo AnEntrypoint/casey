@@ -42,7 +42,12 @@ export const state = {
   // core data
   allCases: [], allCasesTotal: 0, attention: [], activeId: null,
   // filters
-  filt: { q: '', status: '', channel: '', source: '', mine: false },
+  // fv: per-report-field known-value narrowing, { <field>: <value> } -- the
+  // case-list counterpart of the case-detail combo box (filters-bar.js's
+  // knownValueFilters, known-values.js). Keyed by field rather than a fixed
+  // species/location pair because which fields have a known-value list is
+  // config-declared, not baked into the SPA.
+  filt: { q: '', status: '', channel: '', source: '', mine: false, fv: {} },
   mineOnly: false, inboxMode: false, theme: 'dark',
   // 'map'|'cases' -- which view MainContent() renders when no panel is open
   homeView: readHomeView(),

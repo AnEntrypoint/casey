@@ -151,7 +151,7 @@ export class Casey {
     //    filtering, follow-up window, and receive-liveness tracking --
     //    unchanged from before the freddie port, see _makeDiscordAdapter).
     const platforms = {}
-    for (const ch of this.channels) platforms[ch] = await makeChannelAdapter(ch, { log: this.log, store: this.store, markConnected: (c) => this._markConnected(c), markInbound: (c) => this._markInbound(c) })
+    for (const ch of this.channels) platforms[ch] = await makeChannelAdapter(ch, { log: this.log, store: this.store, dataDir: this.store.dataDir, markConnected: (c) => this._markConnected(c), markInbound: (c) => this._markInbound(c) })
     this.adapters = platforms
     return this._initFreddieAndHooks(handler)
   }
