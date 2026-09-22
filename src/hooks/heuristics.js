@@ -363,6 +363,25 @@ const HUMAN_EXCLUDE = [
   // short-circuits the turn instead of recording the answer.
   'person is with', 'person feeding', 'person minding', 'person watching',
   'person taking care', 'person herding', 'a person now',
+  // The SAME answers in the languages the bare person tokens above are listed
+  // for. AMBIGUOUS_HUMAN_KEYS gates those tokens to messages of at most
+  // AMBIGUOUS_MAX_WORDS (3) words, and its own comment names
+  // "umuntu ukhona nezinkomo" ("a person is here with the cattle") as the
+  // false positive it exists to stop -- but that phrase is exactly 3 words, so
+  // the gate lets it through and it fired 'human' on a plain answer to casey's
+  // own who-is-on-site question. These are the PRESENCE/CARE verbs, never a
+  // request: 'ukhona'/'ikhona' (is present), 'unabo'/'unazo' (is with them),
+  // 'wayeka'/'welusa'/'alusa' (is herding), 'o teng' (is there, st/tn),
+  // 'u kona'/'ri na' (ts/ve). A REQUEST in these languages is a
+  // concord-prefixed multi-word form already in HUMAN_KEYS
+  // ('ngicela ukukhuluma nomuntu', 'ndicela ukuthetha nomntu'), and none of
+  // those contain one of these verbs, so a genuine handoff still fires.
+  'umuntu ukhona', 'umntu ukhona', 'umuntfu ukhona',
+  'umuntu ikhona', 'umntu ikhona',
+  'umuntu unabo', 'umntu unabo', 'umuntu unazo', 'umntu unazo',
+  'umuntu welusa', 'umntu welusa', 'umuntu alusa', 'umntu alusa',
+  'motho o teng', 'motho teng', 'mongwe o teng',
+  'munhu u kona', 'munhu kona', 'muthu u hone', 'muthu hone',
 ]
 
 // RESUME set: the small multi-language "help" vocabulary that opts a STOPPED
