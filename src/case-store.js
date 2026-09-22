@@ -292,7 +292,32 @@ export class CaseStore {
 
   async findOrCreateContact({ channel, external_id, display_name, handle }) {
     const [existing] = await this.t.list('contact', { channel, external_id }, { limit: 1 })
-    if (existing) return existing
+    if (existing) {
+      // Learn a real name onto a row that only ever had the fallback. The
+      // create below names an unnamed contact after their own external_id (a
+      // phone number on WhatsApp), and that row is then returned unchanged
+      // forever -- so a name that arrives later (a contact whose first message
+      // predates the adapter reading it, or who renames themselves on WhatsApp)
+      // never lands, and the operator ringing back about a dying herd keeps
+      // seeing a number. Deliberately narrow: it fires ONLY while the stored
+      // value is still that fallback, so a name already learned, and an
+      // operator's own correction, are never overwritten. Best-effort -- a
+      // failed rename must never block the inbound that carried it.
+      const stored = existing.display_name
+      const learned = display_name || handle
+      if (learned && (!stored || stored === external_id)) {
+        try {
+          await this.t.update('contact', existing.id, { display_name: learned, handle: handle || existing.handle || '' }, SYSTEM_USER)
+          // Re-read rather than patching the in-hand copy: thatcher's update()
+          // return shape is not relied on anywhere else here either (updateCase
+          // re-reads too), and a caller handed a row with a stale _version would
+          // fail its next optimistic-concurrency write.
+          const [fresh] = await this.t.list('contact', { channel, external_id }, { limit: 1 })
+          return fresh || existing
+        } catch { return existing }
+      }
+      return existing
+    }
     return this.t.create('contact', {
       channel, external_id,
       display_name: display_name || handle || external_id,
