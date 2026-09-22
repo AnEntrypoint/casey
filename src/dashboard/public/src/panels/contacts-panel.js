@@ -1,4 +1,5 @@
-// Contacts/Reporters panel -- reporter/field_worker tier promote/demote +
+// Contacts/Reporters panel -- contact access-tier promote/demote across the
+// whole three-rung ladder (vocabulary.js's TIER_ORDER) +
 // admin-only PII erasure. Content-swap panel (state.activePanel ===
 // 'contacts'). Table-based; each row carries a Promote/Demote button and, for
 // an admin, an Erase control.
@@ -23,7 +24,7 @@ import { state, schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchContacts, postContactTier, postContactErase } from '../api.js';
 import { fmtTime, channelLabel } from '../format.js';
-import { countOf, entityLabelPlural } from '../vocabulary.js';
+import { countOf, entityLabelPlural, tierLabel, tierValue, tierAbove, tierBelow, TIER_ORDER } from '../vocabulary.js';
 import { toast, failMsg } from '../toasts.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 
@@ -38,17 +39,26 @@ const loader = createPanelLoader({
     apply: (j) => { state._contacts = j; },
 });
 
-async function toggleTier(c) {
-    const to = c.tier === 'field_worker' ? 'reporter' : 'field_worker';
+// ONE RUNG AT A TIME, in a named direction -- not a toggle.
+//
+// This was `c.tier === 'field_worker' ? 'reporter' : 'field_worker'`, which is a
+// two-position switch. The ladder has three rungs, and a switch over three
+// positions has no correct behaviour: whichever pair it flips between, one rung
+// is unreachable, and the button's own label can no longer say what pressing it
+// will do. So the caller names the target rung and the button is the one that
+// knows which rung that is -- which also makes the confirmation and the failure
+// message able to name the real rung by its real label.
+async function setTier(c, to) {
+    if (!to) return;
     busyIds.add(c.id); schedule();
     try {
         await postContactTier(c.id, to);
-        toast(to === 'field_worker' ? 'Promoted to field worker' : 'Demoted to reporter', 'ok');
+        toast('Access level is now ' + tierLabel(to), 'ok');
         // The tier is a column in the table below, so the row on screen now
         // disagrees with the server.
         loader.reload();
     } catch (e) {
-        toast(await failMsg(e, 'The access level was not changed, so it is still ' + (c.tier === 'field_worker' ? 'field worker' : 'reporter') + '. Try again.'), 'err');
+        toast(await failMsg(e, 'The access level was not changed, so it is still ' + tierLabel(c.tier) + '. Try again.'), 'err');
     }
     busyIds.delete(c.id); schedule();
 }
@@ -125,7 +135,9 @@ export function ContactsPanel() {
         return Table({
             headers: ['Who', 'Channel', 'Tier', 'Last check-in', ''],
             rows: contacts.map((c) => {
-                const isField = c.tier === 'field_worker';
+                const tier = tierValue(c.tier);
+                const up = tierAbove(tier);
+                const down = tierBelow(tier);
                 const erased = c.external_id_formatted === '[erased]';
                 return [
                     who(c),
@@ -135,10 +147,24 @@ export function ContactsPanel() {
                     // column stops marking anything; plain text keeps the
                     // value present without competing with the one row that
                     // differs.
-                    isField ? Chip({ tone: 'accent', children: 'field worker' }) : 'reporter',
+                    // Only a rung ABOVE the default gets chip chrome. Nearly every
+                    // row is a plain reporter, and a chip repeated down the whole
+                    // column stops marking anything; plain text keeps the value
+                    // present without competing with the rows that differ. The
+                    // top rung reads as the strongest chip because it is the one
+                    // an operator scans for -- a complete report that is still
+                    // not signed off is waiting for exactly these people.
+                    tier === TIER_ORDER[0]
+                        ? tierLabel(tier)
+                        : Chip({ tone: tier === TIER_ORDER[TIER_ORDER.length - 1] ? 'blue' : 'accent', children: tierLabel(tier) }),
                     c.last_location_at ? fmtTime(c.last_location_at) : 'never',
                     h('div', { class: 'ds-contact-actions' },
-                        Btn({ size: 'sm', disabled: busyIds.has(c.id), children: isField ? 'Demote' : 'Promote', onClick: () => toggleTier(c) }),
+                        // Two buttons, each naming the rung it moves TO, each
+                        // absent at the end of the ladder it cannot move past --
+                        // so the control never offers a move that does not exist
+                        // and never hides a rung behind a toggle's other half.
+                        up ? Btn({ size: 'sm', disabled: busyIds.has(c.id), children: 'Make ' + tierLabel(up), onClick: () => setTier(c, up) }) : null,
+                        down ? Btn({ size: 'sm', variant: 'ghost', disabled: busyIds.has(c.id), children: 'Make ' + tierLabel(down), onClick: () => setTier(c, down) }) : null,
                         (isAdmin && !erased) ? Btn({ size: 'sm', variant: 'link', class: 'ds-contact-erase', disabled: busyIds.has(c.id), children: 'Erase personal details', onClick: () => erase(c) }) : null),
                 ];
             }),

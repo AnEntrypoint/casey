@@ -68,3 +68,46 @@ export function countOf(n, one, many) {
   const s = one || entityLabel();
   return k === 1 ? `${k} ${s}` : `${k} ${many || (s + 's')}`;
 }
+
+// THE CONTACT ACCESS LADDER, lowest rung to highest -- the browser-side mirror of
+// casey's src/contact-tiers.js TIER_ORDER, and the third noun this file exists
+// for. Two copies, one vocabulary: this bundle has no import path into casey's
+// server modules (the same split timestamp.js's tagList documents), so the order
+// is stated here and must be changed in both places or neither.
+//
+// The stored VALUES are the ladder. What each rung is CALLED is config, served
+// resolved on /api/config as `tier_labels` (report-shape.js derives it from
+// dashboard_ui.tier_labels with casey's own generic labels as the fallback), so
+// this deployment's "Eco Ranger" reaches the screen without any rename of the
+// value underneath it. A view that spells "field worker" is wrong the moment a
+// deployment renames the rung; ask for the label, never spell it.
+export const TIER_ORDER = ['reporter', 'field_worker', 'animal_health_technician'];
+
+/** @returns {string} the stored rung, coerced to a real one (fail-closed to the lowest). */
+export function tierValue(tier) {
+  return TIER_ORDER.includes(tier) ? tier : TIER_ORDER[0];
+}
+
+/** @returns {string} what this deployment calls that rung, e.g. "Eco Ranger". */
+export function tierLabel(tier) {
+  const t = tierValue(tier);
+  const labels = activeConfig()?.tier_labels || state.config?.tier_labels || null;
+  if (labels && typeof labels[t] === 'string' && labels[t].trim()) return labels[t].trim();
+  // Last-resort fallback for a config that has not arrived yet -- same role the
+  // literal 'casey' plays in brandName above, never a word to build a sentence
+  // around. Derived from the value so a rung added server-side still renders as
+  // something readable here before this file is updated.
+  return t.replace(/_/g, ' ').replace(/^./, (ch) => ch.toUpperCase());
+}
+
+/** @returns {string|null} the rung one step up, or null at the top. */
+export function tierAbove(tier) {
+  const i = TIER_ORDER.indexOf(tierValue(tier));
+  return i >= 0 && i < TIER_ORDER.length - 1 ? TIER_ORDER[i + 1] : null;
+}
+
+/** @returns {string|null} the rung one step down, or null at the bottom. */
+export function tierBelow(tier) {
+  const i = TIER_ORDER.indexOf(tierValue(tier));
+  return i > 0 ? TIER_ORDER[i - 1] : null;
+}

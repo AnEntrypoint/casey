@@ -432,6 +432,13 @@ export const postSplit = (id, bodyOrEventIds, subject, reason) => {
 };
 export const postDraftApprove = (id, text) => post('/api/cases/' + encodeURIComponent(id) + '/draft/approve', text != null && typeof text !== 'object' ? { text } : (text || {}));
 export const postDraftDiscard = (id) => post('/api/cases/' + encodeURIComponent(id) + '/draft/discard', {});
+// The operator-initiated reminder. `text` is OPTIONAL and is the operator's own
+// words replacing the composed ones -- omitted, the server composes a message
+// naming this record's own reference and its own real silence, which is what the
+// bulk path always does. Refusals (opted out, outside the channel's reply window,
+// already reminded and not answered) come back as a real status with a sentence
+// the operator reads, never as a silent success.
+export const postCaseRemind = (id, text) => post('/api/cases/' + encodeURIComponent(id) + '/remind', text != null && String(text).trim() ? { text } : {});
 export const fetchSuggestions = (id) => json('/api/cases/' + encodeURIComponent(id) + '/suggestions');
 export const fetchSiteHistory = (id) => json('/api/cases/' + encodeURIComponent(id) + '/site-history');
 export const postBulk = (ids, action, extra) => post('/api/cases/bulk', Object.assign({ ids, action }, extra || {}));

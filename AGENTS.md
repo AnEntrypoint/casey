@@ -17,11 +17,55 @@ default. The animal-disease-surveillance-for-rural-South-Africa domain this
 project was first built for lives as a separate, fully self-contained config
 package: `AnEntrypoint/uhh` (private).
 
-A reporter defaults to the `reporter` tier (casual, public, report-only); an
-operator may promote a trusted reporter to `field_worker`, which unlocks
-agentic case-query access and location check-ins so they show up on the
-operator map. This tier mechanism is domain-independent and unchanged by which
-config package is loaded. casey amplifies the team's workflow -- it does not
+### The contact access ladder (three rungs)
+
+`src/contact-tiers.js` is the one authority: `TIER_ORDER` is the ladder, lowest
+to highest, and every tier question in casey asks "does this contact reach at
+least rung N" (`atLeast`/`canQueryCases`), never "is this contact exactly rung
+N". Resolution is fail-closed in ONE place -- `resolveTierValue` maps a missing,
+empty, pre-migration or corrupt value to the lowest rung -- so no call site
+carries its own default.
+
+| Stored value | What it reaches | Notes |
+|---|---|---|
+| `reporter` | Report-only: file/amend their own report plus the two irreversible service controls (`REPORT_ONLY_TOOLS`). | The default, and the far more common tier. |
+| `field_worker` | Everything above, plus agentic case-query access (`case_list`/`case_mine`/`case_today`/`case_get`), `case_switch`/`case_update`/`case_split`, and casual location check-ins so they appear on the operator map for dispatch. | Operator-promoted. A deployment may CALL this rung something else -- `uhh` calls it an "Eco Ranger" (see below). |
+| `animal_health_technician` | Everything above, plus the EXCLUSIVE authority to move a report to a done stage. | See the AHT-exclusive-signoff principle under Design principles. |
+
+Promotion is operator-assigned via the dashboard (`POST
+/api/contacts/:id/tier`, any authed operator, not admin-only) and
+`case-store.js`'s `setContactTier`. No `case_*` tool touches `contact.tier`, so
+it is never contact-self-service or LLM-settable. The WRITE boundary REFUSES an
+unrecognised value (validated against `TIER_ORDER`); the READ path COERCES one
+to the lowest rung. Both directions are deliberate: coercing on write would
+silently store something the operator did not ask for and report success, while
+refusing on read would make a corrupt row un-displayable.
+
+**Adding a rung is additive; renaming one is a migration.** Two live enum
+columns hold these strings -- `contact.tier` and `case.reporter_tier`, the
+second a creation-time HISTORICAL snapshot that must keep meaning what it meant
+when it was written -- and the value is compared against by name across the
+agent tool gate, prompt composer, attention scorer, health sweep and map
+projection. So a deployment that wants different WORDS gets a label, not a
+rename: `report-fields.yml`'s `dashboard_ui.tier_labels` declares them,
+`report-shape.js` derives `TIER_LABELS` (every rung resolved, casey's own
+generic label as the fallback), `/api/config` serves it, and
+`public/src/vocabulary.js`'s `tierLabel()` is the one browser-side reader.
+`uhh` renames `field_worker` to "Eco Ranger" entirely this way, with no value
+changed anywhere. `animal_health_technician` is the one rung whose enum value is
+also a deployment's own domain word -- adopted because there is no shorter
+established internal term for sign-off authority, unlike `field_worker`, which
+already serves as the internal name for the rung `uhh` calls an Eco Ranger.
+
+**A tier comparison written as `=== 'field_worker'` is a bug the moment a rung
+sits above it**, and it is a SILENT one: the highest-privilege contact in the
+system fails the equality test and is treated as anonymous public. That was the
+state of all twenty comparisons before `contact-tiers.js` existed. Use
+`canQueryCases`/`atLeast`; `hooks/prompt.js`'s `selfCheckLoadBearingPromptContent`
+composes the TOP rung's prompt and throws if an elevated instruction is missing
+from it, which is what catches a branch rewritten back into an equality.
+
+casey amplifies the team's workflow -- it does not
 impose domain-specific rules or escalation; priority stays with people.
 
 ## Configuration architecture
@@ -80,6 +124,14 @@ resolved by `src/config-loader.js` at process start:
   (read as `REPORT_GEO_FIELD_DEFS`): the `lat`/`lon` args `case_report`
   accepts as siblings of the report blob rather than as report fields,
   since they are case-level columns.
+  `report-fields.yml`'s `dashboard_ui` block additionally carries
+  `tier_labels` -- what this deployment CALLS each rung of the contact access
+  ladder (`uhh`: `field_worker: Eco Ranger`). `report-shape.js` derives
+  `TIER_LABELS` from it with casey's own generic labels as the per-rung fallback
+  and `/api/config` serves the resolved map, so a rung a deployment does not
+  rename is unaffected and a deployment declaring none behaves identically. These
+  are labels, never a rename of the stored enum value -- see "Adding a rung is
+  additive; renaming one is a migration" under the ladder.
 - `persona.cjs` (CommonJS `module.exports`, not ES `export` -- it must load
   synchronously via `createRequire`) declares the agent's system-prompt text:
   `domainIntro`, `gatherPriorityOrder`, `gatherLeadText`, `photoNudge`,
@@ -92,7 +144,7 @@ resolved by `src/config-loader.js` at process start:
 - `thatcher.config.yml` is written/adapted the same way any
   thatcher-consuming project would (see "thatcher / busybase chain" below).
 
-`src/store/report-shape.js` is the single choke point: `REPORT_KEYS`/
+`src/store/report-shape.js` is the single choke point: `TIER_LABELS`/`REPORT_KEYS`/
 `REPORT_KEY_ORDER`/`CRITICAL_FIELDS`/`APPEND_FIELDS`/`NEVER_INFERRED_FIELDS`/
 `MANDATORY_MINIMUM_FIELDS`/`MANDATORY_MINIMUM_BLOCKED_STATUSES`/
 `missingMandatoryMinimum`/
@@ -450,7 +502,8 @@ src/
   case-store.js            thatcher wrapper: find-or-create (locked), events, transitions, paging, optimistic-lock report merge
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
   provenance-wire.js       additive bridge from case_report into the provenance subsystem (src/core/, src/packs/)
-  case-tools.js            composes the 18 case_* tools from case-tools-{lookup,record,triage,worker,binding,control}.js; -record composes three of its own (case-tools-record-{fields,report,timeline}.js); gateByTier wraps every query/mutation tool behind field_worker tier
+  contact-tiers.js         THE contact access ladder: TIER_ORDER, fail-closed resolveTierValue, the atLeast/canQueryCases rank tests and canSignOff (see "The contact access ladder")
+  case-tools.js            composes the 18 case_* tools from case-tools-{lookup,record,triage,worker,binding,control}.js; -record composes three of its own (case-tools-record-{fields,report,timeline}.js); gateByTier wraps every query/mutation tool behind at-least-field_worker tier, and case_transition additionally behind AHT-only sign-off
   dashboard/auth.js        per-operator login: scrypt hashing, stateless HMAC-signed session cookies, operator_account CRUD
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
@@ -472,6 +525,7 @@ src/
   hooks/turn-attempts.js   the bounded retry loop: per-attempt runTurn request (incl. the enabledToolsets/toolCtx security surface) and the in-loop reply judgement
   hooks/turn-outcome.js    post-turn, pre-delivery: degraded-turn recording, ref correction, ai-offline tag/clear, jargon+assisted draft holds, intake advance
   hooks/delivery.js        resolveAdapter plus the two send paths (guaranteed fallback, agent reply); both delivery flags start FALSE below their own send guard
+  hooks/operator-reminder.js  the operator-initiated nudge: the four guards and the composed text for POST /api/cases/:id/remind (send itself reuses sendReply, never a second mechanism)
   hooks/turn-deadlines.js  CASEY_TURN_HARD/SOFT_DEADLINE_MS and the two truthful status strings
   hooks/typing.js          the typing indicator start/stop pair, best-effort by construction
   hooks/media.js           voice-note/photo/voice-reply media tools, all opt-in and fail-open
@@ -978,6 +1032,87 @@ without restart-on-crash.
   is the truthful state. It also lives entirely in the shared agent/tool
   layer, so it holds identically for WhatsApp, Discord and every reporter
   tier rather than being a property of one adapter.
+- **SIGNING A RECORD OFF IS ONE ROLE'S JOB, and that is enforced in code ON TOP
+  of the mandatory minimum, not instead of it.** A direct extension of the
+  bullet above: the SAME `blocks_transition_to` stages that gate on field
+  completeness are also restricted to the `animal_health_technician` tier (see
+  the contact access ladder under "What casey is"). BOTH conditions must hold --
+  every mandatory fact recorded AND the acting contact holding sign-off
+  authority -- and `case-tools-record-timeline.js`'s `case_transition` handler
+  checks them in that order, returning two textually DISTINCT tool-result errors
+  so the model can tell which one it is looking at and answer correctly ("these
+  facts are still missing" versus "this is complete and not yours to finish").
+  Both conditions are named in `case_transition`'s own description too, and
+  `case-tools.js`'s `selfCheckLoadBearingToolDescriptions` guards both phrases --
+  a model that learns only about the field floor reads an authority refusal as
+  "some fact must still be missing" and goes back to a person who has already
+  told it everything.
+  **Why the field check keeps precedence when both are unmet.** The two refusals
+  ask completely different things of the model. A blank field is something the
+  conversation can still fix while the person is standing next to the animals;
+  missing authority is not. Checking authority first would answer an eco ranger's
+  incomplete record with "not your call" and spend the single last-chance ask on
+  nothing, losing facts that are unrecoverable the moment they walk away --
+  exactly the harm the mandatory minimum exists to prevent.
+  **Fail-closed, at two independent layers.** `canSignOff` (contact-tiers.js)
+  resolves an absent, empty or corrupt tier to the lowest rung before comparing,
+  so a `toolCtx` carrying no tier is never sign-off eligible. And `gateByTier`
+  rejects a `reporter`-tier or tier-less caller before this handler runs at all,
+  so for such a caller the sign-off check is the SECOND gate they fail, never the
+  first. `canSignOff` is deliberately an EQUALITY test where every other
+  capability on the ladder is a rank test: sign-off is a named clinical
+  responsibility held by exactly one role, not "enough privilege", so a rung
+  added above AHT must not inherit it silently.
+  **Scope, unchanged from the bullet above:** this gates the AGENT's tool surface
+  only. An operator on the dashboard or `casey transition` never reaches the
+  handler and can still finish a report on their own judgement -- a human looking
+  at the row is exactly who should be able to.
+  **For an existing deployment this is additive except in one respect, and it is
+  worth stating plainly rather than implying:** every already-promoted
+  `field_worker` contact keeps every capability it had, and the new enum option
+  changes no stored row. What such a contact loses is the ability to COMPLETE a
+  sign-off transition -- a move nothing previously gated at all. That is the
+  intended behaviour change, not a side effect of adding a rung.
+- **The operator's own half of the role model is an ACTION, not another
+  notification.** casey already NOTICES silence -- `case-health.js`'s `stale`,
+  `unanswered_handoff` and `unanswered_handoff_escalated`, the sweep's `health:*`
+  tags, `attn.js`'s ranking, the team-coverage-gap pager -- and every one of those
+  is passive and operator-facing: it tells the team a record has gone quiet and
+  then waits for a human. Nothing reached back out to the person who went quiet.
+  `hooks/operator-reminder.js` plus `POST /api/cases/:id/remind` (and `remind` in
+  the bulk action set) is that reach: ONE real outbound message asking a specific
+  contact to report back, through the SAME `sendReply(caseRow, text)` seam the
+  dashboard's reply and draft-approve already send on -- never a second outbound
+  mechanism, or a reminder's delivery failures would look different from every
+  other outbound on the timeline.
+  **Operator-initiated, never automatic.** Nothing here runs on a timer. Every
+  send is one operator pressing one button on one record they have looked at. A
+  sweep that nudged people on its own would be casey originating contact on its
+  own judgement, which no other path in this system does.
+  **The audit trail distinguishes it from both an agent reply and a typed
+  operator reply.** `kind: 'outbound'`, `actor: 'operator'` (never `'agent'` --
+  nothing the agent decided produced the sentence) plus
+  `data.operator_reminder: true`, `data.by`, `data.operator_authored` and the
+  measured `data.quiet_for_ms`. `actor` alone is not enough: an operator's own
+  typed reply is also an operator outbound.
+  **Four guards, each a refusal an operator READS, never a silent no-op:** an
+  opted-out contact (STOP means stop), a finished record (nothing to report back
+  about), a channel outside its own reply window (`withinSessionWindow`, shared
+  with `makeTransitionNotifier` rather than reimplemented), and one-nudge-per-
+  silence -- the test being "has the contact written since the last reminder",
+  not a cooldown clock, because a person who answered may be asked about the NEW
+  silence and a person who has not has already been asked.
+  **The composed text names only what is true:** their own reference, how long it
+  has genuinely been (suppressed entirely below 15 minutes rather than rounded to
+  "0 minutes"), and one plain invitation. It invents no context about the
+  animals, claims no progress, asks for no specific field, and carries none of
+  the internal vocabulary the never-say list forbids the agent. It is English
+  only -- a hardcoded per-language template is forbidden and the honest
+  alternative is the real agent turn, which this path deliberately does not run
+  (an operator pressing a button must know exactly what is about to be sent), so
+  an operator who knows the contact's language passes their own text instead.
+  The bulk path takes no text argument at all: one hand-typed sentence sent
+  verbatim to 500 different silent contacts is a form letter by construction.
 - **The on-site window is the only chance to capture more.** A single
   last-chance push fires on any farewell-shaped cue, before the agent
   declares the case complete, naming the fields that matter most once the

@@ -1,5 +1,6 @@
 // Bulk selection toolbar: claim / move to stage / tag / untag / note / send
-// drafts / discard drafts / clear. Renders only while something is selected.
+// drafts / discard drafts / remind / clear. Renders only while something is
+// selected.
 
 import * as webjsx from 'webjsx';
 import { Btn } from 'ds/components/shell.js';
@@ -7,11 +8,12 @@ import { Select } from 'ds/components/content.js';
 import { state, clearBulkSelect } from '../../state.js';
 import { postBulk } from '../../api.js';
 import { toast, failMsg } from '../../toasts.js';
+import { confirmDialog } from '../../components/dialog-shell.js';
 import { stageLabel } from '../../format.js';
 import { entityLabel, entityLabelPlural } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
-const VERB = { claim: 'Claimed', transition: 'Moved', tag: 'Tagged', untag: 'Untagged', note: 'Noted', draft_approve: 'Sent', draft_discard: 'Discarded' };
+const VERB = { claim: 'Claimed', transition: 'Moved', tag: 'Tagged', untag: 'Untagged', note: 'Noted', draft_approve: 'Sent', draft_discard: 'Discarded', remind: 'Asked' };
 
 async function runBulk(action, extra, onDone) {
   const ids = [...state.bulkSelected];
@@ -62,6 +64,31 @@ export function BulkBar({ stages, onDone, onPromptTag, onPromptNote }) {
     Btn({ key: 'note', size: 'sm', variant: 'ghost', onClick: () => onPromptNote && onPromptNote((text) => runBulk('note', { text }, onDone)), children: 'Note' }),
     Btn({ key: 'draft-approve', size: 'sm', variant: 'ghost', title: 'Send the waiting draft on each selected ' + entityLabel() + ', exactly as written', onClick: () => runBulk('draft_approve', null, onDone), children: 'Send drafts' }),
     Btn({ key: 'draft-discard', size: 'sm', variant: 'ghost', title: 'Discard the waiting draft on each selected ' + entityLabel(), onClick: () => runBulk('draft_discard', null, onDone), children: 'Discard drafts' }),
+    // THE ONLY ACTION ON THIS BAR THAT REACHES A PERSON RATHER THAN A ROW, which
+    // is why it is the only one behind a confirm. Claim, tag, untag, note and
+    // move are all recoverable bookkeeping on records; this sends real messages
+    // to as many real people as are selected, and an accidental press cannot be
+    // taken back. Each one is composed for its own record and each one passes its
+    // own guards, so a selection of 40 may legitimately send 31 and refuse 9 --
+    // which is what runBulk's own failed-count sentence already tells the
+    // operator to go and read.
+    Btn({
+      key: 'remind', size: 'sm', variant: 'ghost',
+      title: 'Ask the person behind each selected ' + entityLabel() + ' to report back',
+      onClick: async () => {
+        const n = state.bulkSelected.size;
+        if (!n) return;
+        if (await confirmDialog({
+          title: 'Ask ' + n + ' ' + (n === 1 ? 'person' : 'people') + ' to report back?',
+          message: 'Sends ONE short message per selected ' + entityLabel() + ', on the channel that ' + entityLabel()
+            + ' came in on, asking if anything has changed. Each names its own reference and how long it has been quiet.'
+            + ' Anyone who asked us to stop, is outside their channel\'s reply window, or has already been asked without writing back is skipped and reported.',
+          confirmLabel: 'Send the reminders',
+        }) === null) return;
+        runBulk('remind', null, onDone);
+      },
+      children: 'Ask to report back',
+    }),
     Btn({ key: 'clear', size: 'sm', variant: 'ghost', title: 'Clear selection', onClick: () => clearBulkSelect(), children: 'Clear' })
   );
 }
