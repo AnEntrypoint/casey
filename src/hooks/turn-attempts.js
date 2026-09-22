@@ -16,7 +16,7 @@ import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
 import { stripThinkingBlock, OPTED_OUT_TAG } from './heuristics.js'
 import { tagList } from '../timestamp.js'
-import { mutatingActions, hadSuccessfulWrite } from './turn-results.js'
+import { mutatingActions, hadSuccessfulWrite, refusedWrites } from './turn-results.js'
 import { buildCaseToolset, reporterTierExcludedToolNames } from '../case-tools.js'
 import { resolveContactTier, canQueryCases } from '../contact-tiers.js'
 import { FAILURE_REASONS } from '../degraded-turns.js'
@@ -134,7 +134,7 @@ export function classifyTurnError(message) {
 // One attempt's runTurn request. Built fresh per attempt because the prompt
 // carries this attempt's own retry feedback and already-completed actions.
 export function buildTurnRequest({
-  prompt, retryFeedback, completedActions, fresh, events, contact, turnCallLLM,
+  prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
   resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
 }) {
   return {
@@ -142,7 +142,12 @@ export function buildTurnRequest({
     // reasons back to the model as a system note, so the next attempt corrects
     // the actual defect instead of re-rolling blind.
     prompt: (retryFeedback ? prompt + retryFeedback : prompt)
-      + (completedActions.length ? `\n\n[System note: these actions are ALREADY DONE from your earlier attempt -- do NOT call those tools again for the same facts: ${completedActions.join('; ')}.]` : ''),
+      + (completedActions.length ? `\n\n[System note: these actions are ALREADY DONE from your earlier attempt -- do NOT call those tools again for the same facts: ${completedActions.join('; ')}.]` : '')
+      // The refusal names what WOULD have worked (see refusedWrites), so it is
+      // carried across the attempt boundary verbatim rather than paraphrased --
+      // the retry's whole problem is that it cannot see the tool result the
+      // previous attempt was given.
+      + (refusedActions?.length ? `\n\n[System note: these tool calls from your earlier attempt were REFUSED and nothing was recorded by them: ${refusedActions.join('; ')}. Read the refusal, fix the argument it names, and call the tool again so the facts this person gave are actually recorded. Never tell them something is recorded until a tool call has succeeded.]` : ''),
     messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact) }],
     sessionKey: `case:${fresh.id}`,
     callLLM: turnCallLLM,
@@ -643,6 +648,10 @@ export async function runAgentTurn({
   // Human-readable record of successful mutating tool calls across attempts, fed
   // into retry prompts ("already DONE -- do not repeat").
   const completedActions = []
+  // The mirror of completedActions: mutating calls this turn made that were
+  // REFUSED, carried forward verbatim so a retry can act on the refusal instead
+  // of repeating the call that earned it (see turn-results.js's refusedWrites).
+  const refusedActions = []
   // Did ANY attempt of this turn land a real write? The judge's false-confirmation
   // ground truth, cumulative across attempts (see evaluateCandidate's note).
   let turnWroteSomething = false
@@ -659,7 +668,7 @@ export async function runAgentTurn({
     }
     try {
       result = await runTurn(buildTurnRequest({
-        prompt, retryFeedback, completedActions, fresh, events, contact, turnCallLLM,
+        prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
         resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
       }))
     } catch (e) {
@@ -684,8 +693,31 @@ export async function runAgentTurn({
     // Record this attempt's successful mutating tool calls BEFORE any retry
     // decision, so a retry's prompt can name them as already-done.
     for (const action of mutatingActions(result)) completedActions.push(action)
+    const refusedThisAttempt = refusedWrites(result)
+    for (const r of refusedThisAttempt) if (!refusedActions.includes(r)) refusedActions.push(r)
     // Cumulative, not per-attempt: see evaluateCandidate's priorAttemptWrote note.
     if (hadSuccessfulWrite(result)) turnWroteSomething = true
+    // A REFUSED WRITE WITH NOTHING RECORDED IS NOT A TURN TO REPLY ON, and the
+    // judge cannot be relied on to notice: it reads the reply's WORDS, and a
+    // reply that asks a polite question instead of claiming a write is clean
+    // under every judge shape while the facts the person just gave are recorded
+    // nowhere. This is the same class of ground truth as hadSuccessfulWrite --
+    // read off the real tool results, never inferred from text -- so it belongs
+    // here, above the judge, next to the write-truth it mirrors.
+    // Only when NOTHING was written: a refusal beside a successful write is an
+    // argument the model already corrected, not a lost report. Bounded by the
+    // same MAX_TOOL_CHOICE_ATTEMPTS budget as every other retry, so the final
+    // attempt still goes to the judge and still sends -- a reply is never
+    // withheld over this, the turn is only given another chance to record first.
+    if (refusedThisAttempt.length && !turnWroteSomething && attempt < MAX_TOOL_CHOICE_ATTEMPTS) {
+      try {
+        await store.appendEvent(fresh.id, observation(`WRITE REFUSED: ${refusedThisAttempt.join('; ')} -- nothing was recorded; retrying the turn so the facts are not lost (attempt ${attempt})`))
+      } catch (e) { log.warn?.('[casey] could not record write-refused observation', { caseId: fresh.id, error: e.message }) }
+      // The refusedActions system note carries the refusal itself into the next
+      // attempt; no judge feedback applies, so do not leave a stale one on.
+      retryFeedback = null
+      continue
+    }
     const verdict = await evaluateCandidate({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
       priorAttemptWrote: turnWroteSomething, systemPromptText,
