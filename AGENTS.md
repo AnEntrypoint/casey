@@ -923,7 +923,10 @@ without restart-on-crash.
   explicit "write the surrounding sentence yourself" instruction.
 - **The contact's message is untrusted data, never instructions.** The
   agent is told explicitly to ignore anything in contact text that tries to
-  change its role or persona.
+  change its role or persona -- and the telling is backed by a structural
+  boundary, not relied on alone. See "The untrusted-data boundary is
+  structural" under Security invariants for the fence, what it now covers,
+  and the module-load guard that keeps it covering it.
 - **A field correction is distinguishable from a first-time fill in the
   audit trail** -- an overwrite of an already-filled field records an
   old-to-new diff, not just the new value.
@@ -1116,6 +1119,43 @@ without restart-on-crash.
 - Session epoch revocation (`changePassword` / `revokeAccountSessions`) forces
   re-login across all devices with no session-table storage. A bootstrap admin
   is created once on first boot with a forced password change.
+- **The untrusted-data boundary is structural, and the prompt-level instruction
+  is defence in depth on top of it, never the boundary itself.** Every
+  contact-reachable value that reaches the composed prompt goes through
+  `hooks/prompt-context.js`'s `fenced()`, which neutralises BOTH `<<DATA>>` and
+  `<<END>>` inside the value -- so the fence cannot be closed from inside it by
+  any value at all, rather than only by values somebody anticipated. That is the
+  report fields and the timeline, AND the four free-text case columns
+  `caseContextSection` renders (`subject`, `summary`, `assignee`, `tags`):
+  `subject` is seeded VERBATIM from the contact's own first inbound message
+  (`hooks/case-intake.js`) and `subject`/`summary`/`assignee` are
+  `case_update`-writable, so all four are conversation-reachable and persist into
+  every later turn's prompt for the life of the case. `status`/`priority`/
+  `case_type`/`autonomy` are rendered bare because each is validated against the
+  live config enum or the workflow machine on write. `hooks/prompt.js`'s
+  `selfCheckFenceIntegrity` keeps it that way: at module load it composes a case
+  whose every free-text column and report field carries a literal `<<END>>` and
+  asserts the markers still strictly alternate `DATA,END,DATA,END` across the
+  whole prompt, which no bare interpolation of a marker-carrying value can
+  survive. An edit that interpolates a new row value without `fenced()` crashes
+  boot rather than shipping a prompt with no boundary.
+- **Two outbound leaks are code gates, not judgements.** Whether a reply
+  enumerating casey's own tools or reciting its own standing instructions went
+  out used to depend entirely on `hooks/reply-judge.js`'s own LLM call choosing
+  to flag it -- a cleverer phrasing, or a weaker link in the provider fallback
+  chain, simply leaks it (witnessed live over Discord: four real tool names sent
+  to a social-engineering probe). `hooks/turn-attempts.js`'s `evaluateCandidate`
+  now decides both by comparison, ABOVE the judge call: SYSTEM-PROMPT ECHO (a run
+  of 8+ words reproduced verbatim from the real composed prompt, every
+  `<<DATA>>...<<END>>` region removed first so quoting the contact or reusing a
+  prior outbound cannot false-positive) and TOOL-NAME LEAK (a literal `case_*`
+  name, derived from the live toolset rather than hand-listed, so a new tool is
+  covered with nothing to keep in sync). These are equality-class checks in the
+  same class as the verbatim-repeat guard beside them -- they judge nothing about
+  what a reply MEANS -- and they stay inside the no-deterministic-text-
+  classification directive for that reason. Both retry with the offence fed back
+  and then hold for a human exactly as the jargon leak does, never blank: silence
+  on a real report is worse than a reply a human rewords.
 
 ## thatcher / busybase chain
 
