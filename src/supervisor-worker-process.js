@@ -34,6 +34,15 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
       if (m.type === WORKER_MSG.READY) handleReady(child, m.payload || {})
       else if (m.type === WORKER_MSG.HEALTH) onHealth(m.payload || {}, Date.now())
       else if (m.type === WORKER_MSG.DRAIN_COMPLETE) restart().completeDrain()
+      // The worker's own Cordis HMR declined a source change. Its watch covers
+      // the trees this supervisor deliberately stopped watching (freddie's
+      // plugin packages, freddie-bundle's plugin sources), so this request is
+      // the only thing that keeps such an edit from silently doing nothing.
+      // Same entry the fs.watch callback uses, so it coalesces identically.
+      else if (m.type === WORKER_MSG.RELOAD_REQUEST) {
+        log.info?.('[supervisor] worker asked for a full restart (its in-process hot reload could not apply the change)', { reason: m.payload?.reason })
+        restart().requestReload(Date.now())
+      }
       else if (m.type === WORKER_MSG.FATAL) {
         log.error?.('[supervisor] worker fatal', { reason: m.payload?.reason })
         // A fatal is treated as a crash on exit below; record the reason now.
