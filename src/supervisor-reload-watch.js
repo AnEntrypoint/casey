@@ -101,8 +101,11 @@ export function armReloadWatchers({ log, debounceMs, onChange }) {
         if (!isReloadableChange(file)) return
         // Debounce: an editor save-all writes N files; coalesce into ONE reload.
         if (timer) clearTimeout(timer)
+        // NOT unref'd: this timer IS the pending reload. Unref'd, a save whose
+        // debounce window is the only thing left on the loop is silently dropped
+        // -- the same class of loss as the crash-restart timer in
+        // supervisor-worker-process.js. 300ms of extra shutdown latency at worst.
         timer = setTimeout(() => { timer = null; onChange() }, debounceMs)
-        timer.unref?.()
       })
       // An FSWatcher can emit 'error' ASYNCHRONOUSLY after a successful fs.watch()
       // call (dir deleted, permission change mid-run -- common on Windows recursive
@@ -122,4 +125,79 @@ export function armReloadWatchers({ log, debounceMs, onChange }) {
     }
   }
   return watchers
+}
+
+// How often the mtime backstop below looks, and the walk's own bounds.
+export const RELOAD_SWEEP_INTERVAL_MS = Number(process.env.CASEY_RELOAD_SWEEP_MS || 20_000)
+const SWEEP_MAX_FILES = 20_000
+const SWEEP_SKIP_DIR = (name) => name === 'node_modules' || name.startsWith('.')
+
+// Newest reloadable-source mtime under `dirs`, or 0. Bounded and skip-listed so
+// a walk can never wander into a dependency tree or a dot-dir.
+function newestSourceMtime(dirs) {
+  let newest = 0
+  let seen = 0
+  const walk = (dir) => {
+    if (seen > SWEEP_MAX_FILES) return
+    let entries
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (seen > SWEEP_MAX_FILES) return
+      if (e.isDirectory()) { if (!SWEEP_SKIP_DIR(e.name)) walk(path.join(dir, e.name)); continue }
+      if (!isReloadableChange(e.name)) continue
+      seen++
+      try {
+        const m = fs.statSync(path.join(dir, e.name)).mtimeMs
+        if (m > newest) newest = m
+      } catch { /* vanished mid-walk */ }
+    }
+  }
+  for (const dir of dirs) { if (fs.existsSync(dir)) walk(dir) }
+  return newest
+}
+
+/**
+ * MTIME BACKSTOP for the watchers above, because a dead recursive watcher is
+ * INVISIBLE. fs.watch's 'error' event is the only failure this module could see,
+ * and it is not the failure that actually happens: witnessed live on Linux, a
+ * supervisor whose watcher armed cleanly at boot and logged no error at all
+ * silently stopped delivering events after roughly thirty minutes of heavy
+ * editor and `git fetch`/merge churn in the watched tree. The process was
+ * healthy, `live reload: on` was still the last thing it had said on the
+ * subject, a fresh fs.watch on the same directory in another process delivered
+ * the same touch immediately -- and the running worker had been frozen on
+ * half-hour-old code the whole time, with every save appearing to do nothing.
+ * Nothing in the system could notice, which is what makes it worth a second
+ * mechanism rather than a louder log line.
+ *
+ * So: remember the newest source mtime and compare it on an interval against
+ * WHEN THE RUNTIME LAST RELOADED. That second comparison is what keeps this
+ * silent while the watchers work: a healthy save reloads within the debounce
+ * window, so the reload timestamp is newer than the file and nothing fires. Only
+ * a source file that is newer than the last reload -- a save nothing acted on --
+ * trips it. It cannot false-positive (it reads real mtimes, never an event) and
+ * it cannot storm (one onChange per tick at most, and requestReload already
+ * coalesces). Unref'd: the supervisor holds its own keep-alive handle and a
+ * backstop must not be what keeps a stopping process up.
+ *
+ * @param {() => number} opts.lastReloadAt  epoch ms of the most recent reload or
+ *   worker spawn; the floor a source mtime has to beat to count as unhandled.
+ * @returns {{close: () => void}}
+ */
+export function armReloadMtimeBackstop({ log, intervalMs = RELOAD_SWEEP_INTERVAL_MS, lastReloadAt, onChange }) {
+  const dirs = reloadWatchPaths()
+  let baseline = newestSourceMtime(dirs)
+  const timer = setInterval(() => {
+    const newest = newestSourceMtime(dirs)
+    if (newest <= baseline) return
+    baseline = newest   // advance regardless, so one stale file cannot fire every tick forever
+    const handledAt = Number(lastReloadAt?.() || 0)
+    if (newest <= handledAt) return   // the watchers already reloaded this save
+    log.warn?.('[supervisor] a source change was found by the mtime backstop, not by the file watcher -- the watcher has stopped delivering events; reloading anyway', {
+      newestMtime: new Date(newest).toISOString(), lastReloadAt: handledAt ? new Date(handledAt).toISOString() : null,
+    })
+    onChange()
+  }, intervalMs)
+  timer.unref?.()
+  return { close: () => clearInterval(timer) }
 }

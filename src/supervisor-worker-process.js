@@ -17,15 +17,14 @@ import { classifyWorkerExit } from './supervisor-crash-policy.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const WORKER_ENTRY = path.join(__dirname, '..', 'bin', 'worker.js')
 
-// `restart` is passed as a thunk rather than a value: the restart cycle is built
-// from this module's own spawn(), so the two are mutually dependent and only the
-// call is deferred, never the wiring.
 // How much of a dying worker's own stderr is kept to explain its exit. Small on
 // purpose: this is the last few lines before death, not a log buffer, and it
 // ends up inside a crash `reason` string that supervisor-state.js truncates to
-// 300 chars for /api/runtime anyway.
+// 300 chars for /api/runtime anyway. The byte cap bounds the ONE partial line
+// carried between chunks, so a worker printing a single enormous unterminated
+// line cannot grow this without limit.
 const STDERR_TAIL_LINES = 12
-const STDERR_TAIL_BYTES = 8192
+const STDERR_PARTIAL_LINE_CAP = 8192
 
 // The line that actually names the cause, which is never the literal last line
 // of output. Node's fatal-startup shape is: the offending file:line, the source
@@ -39,6 +38,24 @@ function causeFromStderrTail(lines) {
   const named = meaningful.filter(l => /(?:^|\s)[A-Za-z]*(?:Error|Exception)\b/.test(l))
   const pick = named.length ? named[named.length - 1] : meaningful[meaningful.length - 1]
   return pick ? pick.trim().slice(0, 200) : null
+}
+
+// Fold one stderr chunk into a child's kept tail. A chunk boundary falls
+// wherever the OS happened to split the write, not on a newline, so the trailing
+// fragment is carried on `_stderrRest` and joined to the front of the next chunk
+// -- splitting each chunk independently would cut `Error: ...` in half whenever
+// a write landed mid-line, and the half that names the cause is the half that
+// matters. `flushStderrTail` adds the final unterminated fragment, which is
+// exactly where an abruptly-killed worker's last words live.
+function absorbStderrChunk(child, text) {
+  const parts = ((child._stderrRest || '') + text).split(/\r?\n/)
+  child._stderrRest = parts.pop().slice(-STDERR_PARTIAL_LINE_CAP)
+  child._stderrTail.push(...parts)
+  if (child._stderrTail.length > STDERR_TAIL_LINES) child._stderrTail = child._stderrTail.slice(-STDERR_TAIL_LINES)
+}
+function flushStderrTail(child) {
+  if (child._stderrRest) { child._stderrTail.push(child._stderrRest); child._stderrRest = '' }
+  return child._stderrTail
 }
 
 export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, onHealth, restart }) {
@@ -65,13 +82,14 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
     })
     rt.worker = child
     child._stderrTail = []
+    child._stderrRest = ''
     child.stderr?.on('data', (chunk) => {
       // Pass through FIRST and unmodified: the supervisor is not a log filter,
       // and a worker's stderr must keep reaching wherever it was already going.
-      process.stderr.write(chunk)
-      const text = chunk.toString('utf8').slice(-STDERR_TAIL_BYTES)
-      child._stderrTail.push(...text.split(/\r?\n/))
-      if (child._stderrTail.length > STDERR_TAIL_LINES) child._stderrTail = child._stderrTail.slice(-STDERR_TAIL_LINES)
+      // Wrapped because a write to a closed/broken parent stderr throws, and a
+      // supervisor must not die of its own logging while a worker is crashing.
+      try { process.stderr.write(chunk) } catch { /* the tail below is the record that matters */ }
+      absorbStderrChunk(child, chunk.toString('utf8'))
     })
     child.on('message', (m) => {
       if (!m || typeof m !== 'object') return
@@ -139,8 +157,18 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
       // `classifyWorkerExit` uses lastCrashReason INSTEAD of its own
       // `worker exited code=...` sentence, and a cause with no code is a worse
       // record than a code with no cause.
+      //
+      // BEST-EFFORT BY CONSTRUCTION, and deliberately not made stricter: Node
+      // does not guarantee that a child's stdio has finished flushing when
+      // 'exit' fires, so a crash whose last write races the exit yields an empty
+      // tail and no cause. That degrades to the bare code-and-signal reason --
+      // exactly what this path recorded before -- so the worst case is a missed
+      // explanation, never a missed restart. Waiting for 'close' or for the
+      // stream's 'end' instead would put the whole restart ladder behind a
+      // stream that a surviving grandchild holding fd 2 can keep open forever,
+      // which trades a cosmetic loss for a wedged runtime.
       lastCrashReason: child._fatalReason || (() => {
-        const cause = causeFromStderrTail(child._stderrTail || [])
+        const cause = causeFromStderrTail(flushStderrTail(child))
         return cause ? `worker exited code=${code} signal=${signal || ''} -- ${cause}` : null
       })(),
     })
