@@ -100,7 +100,21 @@ export async function applyServiceControls({ store, log, llmStatus, notifyHandof
   } else {
     // Same ordering rule as the human branch: the opt-out tag write must never
     // be gated behind its own audit append succeeding first.
-    try { await store.updateCase(caseRow.id, { tags: mergeTag(caseRow.tags, OPTED_OUT_TAG) }) }
+    //
+    // `tags` ACCUMULATES across both writes in this branch and is never re-derived
+    // from caseRow.tags a second time. That is the whole point: caseRow is the row
+    // as it was read BEFORE this function ran, so a second
+    // mergeTag(caseRow.tags, ...) writes a tag string computed from a row that no
+    // longer exists and silently drops whatever the first write added. Live
+    // witnessed: a STOP carrying report content (the ordinary shape -- "please
+    // stop messaging me, the cattle at the dip tank are still drooling") wrote
+    // opted-out, then the stop-with-content write below replaced the column with
+    // stale-tags + needs-human, so the opt-out tag was gone by the end of the same
+    // function. The contact had opted out, casey's own row said they had not, and
+    // the next inbound got an auto-reply -- an irreversible legal control undone
+    // two statements after it was applied.
+    let tags = mergeTag(caseRow.tags, OPTED_OUT_TAG)
+    try { await store.updateCase(caseRow.id, { tags }) }
     catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: caseRow.id, error: e.message }) }
     try { await store.appendEvent(caseRow.id, observation('OPT-OUT: contact asked to stop messaging.')) }
     catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: caseRow.id, error: e.message }) }
@@ -115,7 +129,8 @@ export async function applyServiceControls({ store, log, llmStatus, notifyHandof
         `STOP-WITH-CONTENT: the opt-out message also carried possible report content -- review manually: ${truncate(inboundText, 300)}`,
         { guardrail: 'stop_with_content' },
       ))
-      try { await store.updateCase(caseRow.id, { tags: mergeTag(caseRow.tags, 'needs-human') }) }
+      tags = mergeTag(tags, 'needs-human')
+      try { await store.updateCase(caseRow.id, { tags }) }
       catch (e) { log.warn?.('[casey] stop-with-content flag failed', { caseId: caseRow.id, error: e.message }) }
     }
   }
