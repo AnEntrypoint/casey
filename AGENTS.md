@@ -1189,6 +1189,26 @@ without restart-on-crash.
 - **No deterministic text processing.** No keyword intent classifier, no
   province->town gazetteer -- place understanding and report extraction are
   entirely the model reading and calling the right tool.
+  **The browser half of the dashboard is inside this rule, and nothing mechanical
+  checks it there.** `scripts/lint.mjs`'s `pure-llm` gate reads
+  `gateway-hooks.js` and `casey.js` only, so a word list in
+  `dashboard/public/src/` is a silent exception -- `reply-box.js` carried one
+  (18 literal Afrikaans/Nguni/Sotho words, to guess whether a contact writes
+  English) until it was removed. Two reasons it does not belong, and both
+  generalise past that one file: casey's SPA is shipped to every deployment, so
+  one deployment's vocabulary becomes every other deployment's, whatever their
+  country or language mix; and a per-language guess is answering, badly, a
+  question the screen already answers, since the timeline shows the contact's own
+  messages verbatim in any language. Where an operator-facing signal genuinely
+  needs the model's reading of something, it belongs in a config-declared report
+  field the model fills (see `uhh`'s `language_detected`), rendered like any other
+  field -- never a rule in the browser.
+  **The ONE sanctioned exception stays exactly where it is:** the STOP/HUMAN/HELP
+  keyword tables in `hooks/heuristics.js` (see the STOP/HUMAN bullet below).
+  Those decide an irreversible service control that must fire with the model
+  down, they read no config by design, and that is what makes them different in
+  kind from a cosmetic hint. Do not move them to config, do not route them
+  through the LLM, and do not cite them as precedent for a second word list.
 - **A COORDINATE IS THE ONLY THING THE MODEL MAY GUESS.** Everything else is
   recorded as the person actually said it, or left out. lat/lon are the single
   sanctioned inference: the model places a described location from its own world
