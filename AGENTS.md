@@ -292,6 +292,42 @@ alongside freddie's `@freddie/freddie-base` bundle:
   defaults. There is no `WHATSAPP_WEBHOOK_PORT`. Dispatch is synchronous and
   media hydration is detached, so the caller MUST ack as soon as it returns or
   Meta redelivers.
+
+  **Inbound message-type coverage, against Meta's own webhook reference (one
+  documented page per type under `webhooks/reference/messages/<type>`).** Every
+  type nests its payload under `m.<type>`, which is the rule the three below
+  turn on:
+  - `text` -> `m.text.body`. `image`/`video`/`document` -> the media id for the
+    two-hop download AND `m.<type>.caption`, which is where the words a person
+    typed alongside the file live. A caption is NOT on `m.text`, so reading only
+    `m.text.body` downloads the bytes perfectly and discards the sentence saying
+    what the photo shows. `audio` has no caption (it carries `voice`).
+  - `location` -> `m.location.{latitude,longitude,name,address,url}`, latitude
+    and longitude as JSON NUMBERS. It arrives complete: there is no media id and
+    nothing to fetch, so it must never enter the media path. See "A COORDINATE IS
+    THE ONLY THING THE MODEL MAY GUESS" for where the pin lands and why its
+    `location_source` is `gps`.
+  - `reaction` -> `m.reaction.emoji` (absent when the reaction is removed); the
+    emoji is the whole content of the message, so with no branch for it the turn
+    saw empty text.
+  - `sticker` carries a media id and is DELIBERATELY not downloaded: it is
+    image/webp, but `hooks/media-intake.js` records a photo only for a real
+    image, so fetching it spends two Graph hops and a rate-limit slot on bytes
+    nothing stores. It still reaches the turn -- `describeMedia()` names it from
+    `raw.type`, which is all a sticker says.
+  - `contacts` (a shared vCard) reaches the turn named but its
+    `formatted_name`/`phones[].phone` are not read. A shared card is plausibly
+    the animal owner's number, so routing it into a report field is a real
+    (unbuilt) improvement -- and a deliberately deferred one, because it would
+    make casey write a third party's phone number into the record from a payload
+    rather than from what a person said.
+  - `interactive`, `button` and `order` are replies to messages casey cannot
+    send (`adapter.send` posts text and audio only), so no branch exists for
+    them by construction, not by omission.
+  - `unsupported`, `system`, `edit`, `revoke` and `group` reach the turn named by
+    `raw.type` with their type-specific detail (e.g. `errors[]`) unread.
+  An unbranched type is never silently dropped: `describeMedia()` falls through
+  to "a `<type>` message" and the turn proceeds.
 - `src/agent/run-turn.js` -- the thin adapter `hooks/turn-attempts.js` calls as
   `runTurn(...)`: it creates/reuses a real freddie `Agent` per case
   (`ctx.agents.create()`), submits the inbound via
@@ -1227,6 +1263,30 @@ without restart-on-crash.
   render an unconfirmed estimate differently -- a case pin through its border
   treatment, a worker pin through a dashed stroke. A check-in or report whose
   provenance nobody stated resolves to `estimated`, never silently to a fix.
+  **A REAL READING IS RECORDED BEFORE THE MODEL IS INVOLVED, AND AN ESTIMATE
+  NEVER REPLACES IT.** A shared WhatsApp location pin is a reading off the
+  person's own phone, taken where they are standing, and it is not recapturable
+  once they walk away -- so `hooks/media-intake.js`'s `recordInboundLocation`
+  writes it to the case's own lat/lon columns with `location_source: 'gps'`
+  deterministically at ingress, exactly as a photo and a voice note are captured
+  there and for the same reason: the model never sees the webhook payload the
+  coordinates arrive in. `gps` is the honest rung -- `confirmed` would claim
+  somebody agreed with a coordinate another party proposed, and `estimated` is
+  reserved for the model's own guess. The place NAME/ADDRESS Meta attaches to a
+  pin is its own reverse-geocode label, not the person's words, so it goes on the
+  timeline (where the model reads it and can ask about that spot) and never into a
+  report field. An out-of-range pair writes no coordinate and says so on the
+  timeline rather than leaving a map point that never appears with no explanation.
+  The matching half is in `case-tools-record-report.js`'s `writeReportLocation`:
+  an `estimated` write is REFUSED over a stored `gps`/`confirmed` position and
+  returns `locationKept` telling the agent to ask the person to confirm or correct
+  the position instead. Without it any later `case_report` mentioning a place name
+  silently overwrote a real fix with a guess, changing both the coordinate and its
+  provenance with nothing anywhere saying the fix had been thrown away -- the
+  same rule `core/provenance.js`'s `canReplace` already enforces for the
+  provenance ledger, now true of the columns the map actually draws. Only the
+  DOWNGRADE is refused: a `gps`/`confirmed` write still replaces anything, and a
+  first estimate on a position-less report is unaffected.
   Anything else the model produces and an operator reads -- a photo
   auto-description, a voice-note auto-transcript -- names the AI helper as its
   author, so machine output is never mistaken for a person's words.

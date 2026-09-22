@@ -24,6 +24,7 @@
 import { truncate } from './heuristics.js'
 import { observation } from './case-writes.js'
 import { transcribeAudio, describePhoto } from './media.js'
+import { isValidLatLon } from '../case-tools-shared.js'
 
 // Short description of any non-text content, so a media-only message is never
 // summarised as "empty". Also feeds the new-case subject seed and the agent
@@ -31,6 +32,13 @@ import { transcribeAudio, describePhoto } from './media.js'
 export function describeMedia(msg) {
   const r = msg.raw || {}
   if (Array.isArray(r.attachments) && r.attachments.length) return `${r.attachments.length} attachment(s)`
+  // Named before the generic `r.type` branch below, which would say "a location
+  // message" -- a pin is not a message with a location in it, it is a position,
+  // and this string is what the agent prompt says the person sent when they sent
+  // nothing else. The coordinates themselves are not repeated here: they are
+  // already on the timeline as their own observation (recordInboundLocation),
+  // which is where a value an operator may act on belongs.
+  if (msg.location) return 'a location pin'
   if (r.type && r.type !== 'text') return `${/^[aeiou]/i.test(r.type) ? 'an' : 'a'} ${r.type} message`
   if (r.image) return 'an image'
   if (r.audio) return 'an audio message'
@@ -126,6 +134,59 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
       await store.appendEvent(caseId, observation(`WARNING: this case's stored report JSON was corrupted and has been reset before appending this ${kind} note -- some previously recorded fields may be lost.`))
     }
   } catch (e) { log.warn?.(`[casey] ${failLabel} failed`, { caseId, error: e.message }) }
+}
+
+// A SHARED LOCATION PIN, recorded deterministically at ingress for exactly the
+// reason a photo is: it is a real reading off the person's own device, taken
+// where they are standing right now, and it is not recapturable once they walk
+// away. Left to the agent turn it would be lost twice over -- the model never
+// sees the webhook payload, so it would either say nothing about the place or
+// fill lat/lon with its OWN estimate from a name, which is the one thing the
+// map's provenance ladder exists to keep apart from a real fix.
+//
+// location_source is 'gps', not 'estimated': the ladder's own meaning is HOW the
+// position was arrived at (thatcher.config.yml, map-overlays.js), and this one
+// came from a phone's GPS. 'confirmed' would be wrong too -- that rung means a
+// person agreed with a coordinate somebody else proposed, and nobody proposed
+// this one. 'estimated' is reserved for the model's own guess.
+//
+// Writes the case's own lat/lon COLUMNS, never a report field: the report blob is
+// the person's own words and casey does no field extraction into it (AGENTS.md,
+// "The LLM records the report"). The place NAME/ADDRESS Meta attaches to a pin is
+// its own reverse-geocode label, not what the person said, so it goes on the
+// timeline where its author is visible -- and the model reads that timeline, so
+// it can acknowledge the spot and ask about the animals there.
+//
+// Same failure discipline as every other write in this file: best-effort, never
+// blocking the reply. In observe mode the COLUMN write is correctly refused (no
+// automatic edits) but the arrival still lands on the timeline, since observe is
+// exactly the mode with no agent narration to compensate.
+export async function recordInboundLocation({ store, log, caseId, msg }) {
+  const pin = msg.location
+  if (!pin) return
+  // An out-of-range pair is surfaced, not silently treated as "no pin sent":
+  // a map point that never appears with no explanation is the failure mode
+  // case_report's own range check was added to close.
+  if (!isValidLatLon(pin.lat, pin.lon)) {
+    log.warn?.('[casey] location pin out of range; not recorded', { caseId, lat: pin.lat, lon: pin.lon })
+    try { await store.appendEvent(caseId, observation(`LOCATION PIN REJECTED: the shared position was out of range (lat=${pin.lat}, lon=${pin.lon}) and was not recorded. Ask where they are.`)) }
+    catch (e) { log.warn?.('[casey] location pin rejection note failed', { caseId, error: e.message }) }
+    return
+  }
+  const place = [pin.name, pin.address].filter(Boolean).join(', ')
+  try {
+    const res = await store.updateCaseChecked(caseId, { lat: pin.lat, lon: pin.lon, location_source: 'gps' })
+    if (res?.error && res.error !== 'observe') {
+      log.warn?.('[casey] location pin write failed', { caseId, error: res.error })
+      return
+    }
+    const recorded = res?.error === 'observe'
+      ? 'not recorded on the map (a person is handling this themselves)'
+      : 'recorded on the map as an exact GPS position'
+    await store.appendEvent(caseId, observation(
+      `LOCATION PIN RECEIVED: lat ${pin.lat}, lon ${pin.lon}${place ? ` -- WhatsApp labels this spot "${truncate(place, 200)}" (its own label, not the person's words)` : ''}. Read off the person's own device and ${recorded}.`,
+    ))
+  } catch (e) { log.warn?.('[casey] location pin mark failed', { caseId, error: e.message }) }
 }
 
 // Record every media artifact this message carried. Photo first, then audio,
