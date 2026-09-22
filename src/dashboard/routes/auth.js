@@ -1196,5 +1196,31 @@ export function registerAuth(app, deps) {
   // other case-data route -- unlike /design and /vendor (static UI assets with no
   // case content) this serves real field-worker media, so it stays behind the
   // token middleware above (mounted after it, no exemption added).
-  app.use('/media', express.static(path.join(store.dataDir, 'media')))
+  //
+  // The bytes AND the filename extension under this mount both originate with a
+  // CONTACT: store/media.js derives the extension from the MIME type the sender's
+  // own upload declared, and express.static then sets Content-Type from that
+  // extension. So without the two headers below, the chain "a contact chooses a
+  // MIME type" -> "casey names the file" -> "the dashboard declares that type"
+  // ends with contact-chosen content being served as an active document from the
+  // operator console's OWN origin, where the operator's session cookie lives.
+  // nosniff stops the browser upgrading octet-stream to something executable on
+  // its own, and Content-Disposition makes a top-level navigation DOWNLOAD the
+  // file instead of rendering it -- while leaving the dashboard's inline <img>
+  // previews working exactly as before, since Content-Disposition governs
+  // navigation, not subresource loading.
+  //
+  // Stated honestly: this is hardening of a class, not the repair of a witnessed
+  // exploit. A live probe uploaded HTML bytes declaring 'image/html' under a
+  // '.png' name and could NOT reach an executable file -- Discord rewrote the
+  // content type from the filename, and store/media.js's own non-alphanumeric
+  // strip turns 'image/svg+xml' into a '.svgxml' nothing executes. Neither of
+  // those is a guarantee casey controls: the WhatsApp webhook hands over whatever
+  // MIME the sender's client declared, with no platform rewrite in front of it.
+  app.use('/media', express.static(path.join(store.dataDir, 'media'), {
+    setHeaders: (res) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff')
+      res.setHeader('Content-Disposition', 'attachment')
+    },
+  }))
 }

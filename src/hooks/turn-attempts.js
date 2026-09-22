@@ -305,9 +305,34 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things you still need, woven into a single natural sentence. No numbered list, no bullets, no separate lines to fill in. They are reading on a phone.]" }
     }
   }
-  // Flagged but let-through (e.g. a tool refusal -- the model's own words
-  // directly answering what it was asked, however poorly, not narration ABOUT a
-  // reply).
+  // Flagged, and matched none of the shapes routed above -- a TOOL REFUSAL
+  // (reply-judge.js shape 4: the model talking about its own tools, access or
+  // limitations instead of answering) is what actually lands here. Retried ONCE
+  // with the judge's own reasons fed back, for the same reason as every branch
+  // above: the content is recoverable and a fresh roll usually answers the person
+  // instead. This also closes the last hole in this function's own header claim
+  // that nothing is an instant terminal degrade -- until now a verdict matching
+  // no specific branch was let through on attempt 1 with the retry budget
+  // completely unspent.
+  //
+  // Live-witnessed why it matters: a social-engineering probe asking to be made
+  // an admin came back as an ENUMERATION of casey's internal tool surface ("my
+  // available tools are... starting new case reports, recording case details,
+  // flagging cases...") -- internal jargon included -- and that was sent to the
+  // asker verbatim. The tier invariant itself held (AGENTS.md's operator-assigned,
+  // never-LLM-settable rule was never in question, and nothing was granted), but
+  // the reply handed someone probing the system an inventory of it.
+  //
+  // Still SENT ANYWAY once the budget is spent, unchanged: a refusal is a real
+  // answer to the person, and silence on a real report is worse -- the same
+  // priority the MULTI-ASK branch above states in its own words.
+  if (canRetry) {
+    log.warn?.('[casey] reply judge flagged the composed reply; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
+    await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
+    return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent: '
+      + verdict.reasons.join('; ')
+      + '. Answer the person directly and warmly instead. Never describe your own tools, access, capabilities or limitations, and never list what you are able to do -- if you cannot help with what they asked, say so in one plain sentence and offer the one thing you can help with: hearing about an animal that is sick or has died.]' }
+  }
   log.warn?.('[casey] reply judge flagged the composed reply; sending anyway', { caseId: fresh.id, reasons: verdict.reasons })
   await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED-BUT-SENT: ${verdict.reasons.join('; ')}`))
   return { done: true, text: candidate }
@@ -315,9 +340,11 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
 
 // The whole agent turn: up to MAX_TOOL_CHOICE_ATTEMPTS runTurn dispatches inside
 // the live turn's hard-deadline budget, each judged in-loop. Returns
-// `{ result, text, errored, jargonReasons, falseConfirmReasons, degradedReason }`
-// -- `text` is '' exactly when the whole retry budget was spent without a
-// sendable reply.
+// `{ result, text, errored, jargonReasons, falseConfirmReasons, degradedReason,
+// activeCase }` -- `text` is '' exactly when the whole retry budget was spent
+// without a sendable reply, and `activeCase` is the {id, ref} the turn ENDED
+// bound to, which is NOT necessarily the one it started on (see turnBinding
+// below, and driveAgentTurn's re-read for why the caller needs it).
 export async function runAgentTurn({
   store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
   channel, external_id, turnStartedAt, isBackgroundRedrive,
@@ -400,5 +427,9 @@ export async function runAgentTurn({
     falseConfirmReasons = verdict.falseConfirmReasons || null
     break
   }
-  return { result, text, errored, jargonReasons, falseConfirmReasons, degradedReason }
+  // turnBinding is the case this turn ENDED on. A case_new/case_switch inside an
+  // attempt rebinds it, and the caller's post-turn decisions (the outbound ref
+  // correction above all) have to act on that case rather than the one the
+  // handler resolved before the turn began -- see driveAgentTurn.
+  return { result, text, errored, jargonReasons, falseConfirmReasons, degradedReason, activeCase: turnBinding }
 }

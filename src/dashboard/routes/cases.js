@@ -23,7 +23,7 @@
 //   getRoster, sendReply, UNCLAIMED_ASSIGNEE, printableReport
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
-import { fmtPhone27 } from '../../format.js'
+import { fmtPhone27, markInvisibles } from '../../format.js'
 import { fieldLabel, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
 import { BRAND } from '../brand.js'
 import { mountRoutes } from './register.js'
@@ -55,10 +55,29 @@ import { mountRoutes } from './register.js'
 // (contact_id) are never emitted by either projection. A single case the
 // operator has explicitly opened additionally carries the DISPLAY form of the
 // contact number, through the same formatter contacts.js already uses.
+// The three fields below carry CONTACT-SUPPLIED words (subject is cut straight
+// from the inbound text, summary and report hold what the reporter said), so each
+// passes through markInvisibles: a bidi override or a zero-width character in a
+// reporter's own message is legal text that HTML-escaping does not touch, and left
+// alone it makes a place name or a count READ as something other than what was
+// sent. Marked, never stripped -- see format.js. Every other field here is
+// casey's own (a ref, a stage, a tag) or an operator's (assignee, autonomy).
 export function caseListProjection(c) {
   if (!c) return null
   const { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type } = c
-  return { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type }
+  return {
+    id, ref, channel, status, priority,
+    subject: markInvisibles(subject), summary: markInvisibles(summary), report: markInvisibles(report),
+    tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type,
+  }
+}
+
+// An event's own text and data are the other half of the same surface: the
+// timeline is where an operator actually READS a reporter's words, and
+// store.listEvents hands back the raw rows. Same marking, same reason.
+export function eventProjection(e) {
+  if (!e || typeof e !== 'object') return e
+  return { ...e, text: markInvisibles(e.text), data: markInvisibles(e.data) }
 }
 
 // Single-case projection: GET /api/cases/:id, PATCH /api/cases/:id and
@@ -260,7 +279,7 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
     const case_type_source = c.case_type && c.case_type !== 'unset'
       ? (caseTypeAction ? caseTypeAction.actor : 'agent')
       : null
-    res.json({ case: caseDetailProjection(c), events, events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
+    res.json({ case: caseDetailProjection(c), events: events.map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
   }
 }
 
