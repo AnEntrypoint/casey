@@ -98,6 +98,17 @@ function selfCheckLoadBearingPromptContent() {
     // into the reply. Without this rule the model weaves all of them, which is
     // a wall of text on a phone and gets none of them answered.
     { name: 'one-ask-per-reply precedence', pattern: /ONE ASK PER REPLY/ },
+    // Recording a person's words TRANSLATED is the same class of damage as
+    // inferring them: the field stops being what anyone said. Guarded because a
+    // prompt rewrite that drops it fails nothing -- the model simply starts
+    // writing its own English gloss into a surveillance record, and nobody
+    // reading the dashboard can tell.
+    { name: 'no-translation record rule', pattern: /RECORD IT IN THE LANGUAGE THEY WROTE IT IN/ },
+    // The on-site window is unrepeatable: these two exist because the
+    // behaviours they describe were absent under real inference until the
+    // prompt stated them outright.
+    { name: 'on-site-window last-chance push', pattern: /LAST-CHANCE PUSH/ },
+    { name: 'complete-report-is-not-a-dead-end invitation', pattern: /NOT A DEAD-END/ },
     // The never-say list must stay EQUAL to the literal word list
     // hooks/reply-judge.js holds a reply for. 'autonomy' is the last word on
     // the judge's list and the one most recently missing from this one, so it

@@ -18,6 +18,7 @@
 import { createUserMessage } from '@freddie/freddie-llm'
 import { SessionId } from '@freddie/freddie-session'
 import { installToolAllowlist } from '../../freddie-bundle/src/case-tools/tool-allowlist.js'
+import { installCasePrompt } from '../../freddie-bundle/src/case-tools/case-prompt.js'
 import { LOCATION_STALE_MS } from '../hooks/prompt-context.js'
 
 let _ctx = null
@@ -54,6 +55,21 @@ function requireCtx() {
 // currently do since tier is stable per-contact in practice).
 const liveAgents = new Map()
 const currentToolCtx = new Map()
+
+// Same per-sessionKey mutable-cell discipline as currentToolCtx above, and for
+// the same reason: hooks/prompt.js's caseSystemPrompt is rebuilt on EVERY turn
+// (report-so-far, recent timeline, firstMessage, the live nudges) while an
+// agent's setup() runs once, at creation. freddie-bundle/src/case-tools/
+// case-prompt.js's installed hook reads this cell at each prompt assembly, so a
+// reused agent composes against the current turn's prompt rather than the
+// prompt that happened to be in force when the conversation opened.
+//
+// Without this cell the domain prompt reached the model not at all: runTurn's
+// `messages` param (which is what hooks/turn-attempts.js puts the composed
+// system prompt in) is a signature leftover of the old casey-owned loop and
+// freddie's agent loop never reads it. See case-prompt.js's header for what was
+// witnessed live while that was true.
+const currentSystemPrompt = new Map()
 
 // IDLE TTL, not a count cap, and the choice is a correctness one rather than a
 // tuning preference. A count cap ("keep the newest N agents") evicts by
@@ -136,6 +152,7 @@ export async function evictAgent(sessionKey, reason) {
   if (!entry) return null
   liveAgents.delete(sessionKey)
   currentToolCtx.delete(sessionKey)
+  currentSystemPrompt.delete(sessionKey)
   stopSweepTimerIfEmpty()
   const idleMs = Date.now() - entry.lastUsedAt
   try {
@@ -196,7 +213,15 @@ async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames) {
   // note on the create() call for what is being kept out. Omitting it on the
   // resume path would leave every returning conversation running against
   // freddie-base's own bash/write/credential tools.
-  const setup = (agentCtx) => { installToolAllowlist(agentCtx, enabledToolNames) }
+  // Both installs, on both paths. installCasePrompt is what carries casey's own
+  // domain system prompt into freddie's prompt assembly at all (see
+  // case-prompt.js); omitting it on either path leaves that conversation running
+  // on freddie's bare "You are an AI agent powered by Freddie" with an empty
+  // deployment-persona slot, which is the exact defect it exists to close.
+  const setup = (agentCtx) => {
+    installToolAllowlist(agentCtx, enabledToolNames)
+    installCasePrompt(agentCtx, () => currentSystemPrompt.get(sessionKey) || '', enabledToolNames)
+  }
   // RESUME FIRST, create only for a session that has never existed. This is the
   // ordering the eviction policy above depends on: a case whose agent was
   // evicted still has its persisted log, and resume() is the only path that
@@ -266,10 +291,30 @@ function summarizeSince(agent, firstSeq) {
       messages.push({ role: 'assistant', content: text, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) })
       continue
     }
-    if (event.type === 'user/message' && event.data?.source?.kind === 'tool') {
-      const block = event.data.content?.[0]
-      if (block?.type === 'tool-result') {
-        messages.push({ role: 'tool', tool_call_id: block.toolCallId, content: typeof block.content === 'string' ? block.content : JSON.stringify(block.content) })
+    // A tool result is its OWN freddie session event type ('tool/result'), and
+    // the tool-result block lives under event.data.MESSAGE.content -- the same
+    // path freddie's own readers use (see packages/context/dream-rsi-context and
+    // packages/core/session's tool/result contract). Its `content` is itself an
+    // array of content blocks, so the JSON a case tool returned is the text of
+    // the nested text block, not the block array stringified.
+    //
+    // This used to look for a 'user/message' event with source.kind 'tool' and
+    // read event.data.content[0], which matches NO freddie event: every turn
+    // therefore reported ZERO tool results, and every reader over
+    // `messages` (hooks/turn-results.js's hadSuccessfulWrite, mutatingActions,
+    // toolCaseRefs) was blind. Live witnessed over Discord: a turn whose
+    // case_report demonstrably wrote the report was judged a FALSE CONFIRMATION
+    // (reply-judge.js only offers that shape when no write landed), spent its
+    // whole retry budget, and the reply was held as a draft -- total silence to
+    // the reporter; and the cross-attempt "already DONE, do not repeat" note was
+    // never produced, so retries re-called case_new and opened duplicate cases.
+    if (event.type === 'tool/result') {
+      for (const block of event.data?.message?.content || []) {
+        if (block?.type !== 'tool-result') continue
+        const text = Array.isArray(block.content)
+          ? block.content.filter(b => b?.type === 'text').map(b => b.text).join('')
+          : (typeof block.content === 'string' ? block.content : JSON.stringify(block.content))
+        messages.push({ role: 'tool', tool_call_id: block.toolCallId, content: text })
       }
       continue
     }
@@ -286,15 +331,25 @@ function summarizeSince(agent, firstSeq) {
  * runTurn({prompt, messages, sessionKey, tool_choice, enabledToolsets,
  *          disabledToolsets, toolCtx, timeoutMs}) -> {result, error, messages, iterations}
  *
- * `messages`/`callLLM`/`tool_choice` from the old casey-owned loop no longer
- * apply here (freddie's own agent-loop owns message history and the
- * tool_choice/iteration policy internally) -- kept as accepted-but-unused
- * params so hooks/turn-attempts.js's call site needs no change. `enabledToolsets`/
+ * `callLLM`/`tool_choice` from the old casey-owned loop no longer apply here
+ * (freddie's own agent-loop owns message history and the tool_choice/iteration
+ * policy internally) -- kept as accepted-but-unused params so
+ * hooks/turn-attempts.js's call site needs no change. `messages` is the
+ * exception and is NOT inert: its `role:'system'` entry is the composed case
+ * system prompt, published to this turn's prompt assembly (see
+ * freddie-bundle/src/case-tools/case-prompt.js). `enabledToolsets`/
  * `disabledToolsets` are translated into an explicit tool NAME allowlist
  * (freddie has no toolset-category concept of its own).
  */
 export async function runTurn({
   prompt,
+  // The composed case system prompt. hooks/turn-attempts.js supplies it as
+  // `messages:[{role:'system',content}]` (the old casey-owned loop's shape), so
+  // it is read from there when `systemPrompt` is not passed explicitly -- the
+  // one param of that legacy trio that is NOT inert, and the reason this
+  // signature keeps accepting it.
+  systemPrompt = null,
+  messages = [],
   sessionKey,
   enabledToolsets = [],
   disabledToolsets = [],
@@ -322,6 +377,22 @@ export async function runTurn({
   const enabledToolNames = enabledToolsets.includes('cases')
     ? allNames.filter(n => !disabledSet.has(n))
     : []
+
+  // BEFORE getOrCreateAgent: a cold create/resume can assemble a prompt of its
+  // own while mounting, and an agent whose very first assembly saw an empty cell
+  // would open the conversation on freddie's bare identity section.
+  const composedSystemPrompt = systemPrompt
+    || messages.find(m => m?.role === 'system')?.content
+    || ''
+  if (composedSystemPrompt) currentSystemPrompt.set(sessionKey, composedSystemPrompt)
+  else console.error(JSON.stringify({
+    t: new Date().toISOString(), level: 'error', component: 'agent',
+    // Loud, not silent: this turn runs without casey's domain prompt -- no
+    // report-not-assert rule, no reply-style rules, no untrusted-data fence --
+    // and a reply composed under those conditions is not one to mistake for a
+    // healthy turn.
+    msg: 'agent_turn_without_case_system_prompt', sessionKey,
+  }))
 
   const agent = await getOrCreateAgent(sessionKey, provider, model, enabledToolNames)
   // Publish this turn's toolCtx BEFORE followup() so case-tools/index.js's

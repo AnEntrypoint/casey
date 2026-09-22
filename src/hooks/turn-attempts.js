@@ -196,7 +196,18 @@ export function buildTurnRequest({
 // availability tracker on a detected miss, so a fresh attempt routes around a
 // model that keeps misbehaving instead of hitting the identical broken one
 // three times in a row.
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM }) {
+// `priorAttemptWrote` carries whether an EARLIER attempt of this same turn
+// already landed a real write. It has to, because the judge's ground truth for
+// the FALSE CONFIRMATION shape is "did a write happen on this TURN", while
+// hadSuccessfulWrite() can only see ONE attempt's result. The second and third
+// attempts of a turn that already wrote are exactly the attempts where
+// case-tools-gates.js's cross-attempt dedupe SUPPRESSES the repeated case_report
+// (duplicate_tool_call_suppressed), so the attempt looks write-less while the
+// facts are already safely stored -- live witnessed over Discord: a truthful
+// "I have recorded it" on attempt 3 was judged a false confirmation, the retry
+// budget was spent, and the reply was held as a draft, leaving a real reporter
+// with total silence on a complete, correctly-stored report.
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false }) {
   const note = async (text) => {
     try { await store.appendEvent(fresh.id, observation(text)) }
     catch (e) { log.warn?.('[casey] failed to record attempt observation', { caseId: fresh.id, error: e.message }) }
@@ -225,10 +236,17 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // (hooks/reply-judge.js), never a regex/word-list. A jargon-only verdict is
   // NOT retried -- it is the one recoverable shape (real content, just needs a
   // human to reword one word), carried to the post-loop hold.
-  const verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: hadSuccessfulWrite(result), latestInbound: inboundText })
+  const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result)
+  const verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText })
   if (verdict.clean) return { done: true, text: candidate }
   if (verdict.category === 'jargon') return { done: true, text: candidate, jargonReasons: verdict.reasons }
-  if (verdict.reasons?.some(r => /false.?confirm|claims?.*record|confirm.*record/i.test(r))) {
+  // The FALSE CONFIRMATION shape is only in the judge's prompt when NO write
+  // landed (reply-judge.js gates shape 8 on hadSuccessfulWrite === false), so a
+  // false-confirmation reason arriving when a write DID land is the judge
+  // contradicting a system fact it was never given. Honouring it would spend the
+  // retry budget and then hold a truthful reply as a draft -- silence on a report
+  // that is already stored. The structural fact wins over the judge's words.
+  if (!wroteThisTurn && verdict.reasons?.some(r => /false.?confirm|claims?.*record|confirm.*record/i.test(r))) {
     // False confirmation: the reply claims a write that never happened.
     // Retryable -- tool_choice:'required' already forces a first call, so a
     // fresh attempt with this nudge has a real chance of doing the write for
@@ -252,6 +270,19 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     log.warn?.('[casey] reply judge flagged the composed reply; blanking', { caseId: fresh.id, reasons: verdict.reasons })
     await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; blanked`))
     return { done: true, text: '' }
+  }
+  // MULTI-ASK WALL OF TEXT (reply-judge.js shape 7): three or more questions, or
+  // a numbered/bulleted list of them. Retried with the rule restated, because
+  // this is the one shape a fresh attempt reliably fixes -- the reply's CONTENT
+  // is right and only its shape is wrong. Never blanked: a wall of text still
+  // answers the person, and the alternative is silence on a real report. So a
+  // budget-exhausted multi-ask falls through to the send-anyway branch below.
+  if (verdict.reasons?.some(r => /multi.?ask|wall of text|too many questions/i.test(r))) {
+    if (canRetry) {
+      log.warn?.('[casey] reply judge flagged a multi-ask reply; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
+      await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
+      return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things you still need, woven into a single natural sentence. No numbered list, no bullets, no separate lines to fill in. They are reading on a phone.]" }
+    }
   }
   // Flagged but let-through (e.g. a tool refusal -- the model's own words
   // directly answering what it was asked, however poorly, not narration ABOUT a
@@ -295,6 +326,9 @@ export async function runAgentTurn({
   // Human-readable record of successful mutating tool calls across attempts, fed
   // into retry prompts ("already DONE -- do not repeat").
   const completedActions = []
+  // Did ANY attempt of this turn land a real write? The judge's false-confirmation
+  // ground truth, cumulative across attempts (see evaluateCandidate's note).
+  let turnWroteSomething = false
 
   let result, text = '', errored = false, degradedReason = null
   let jargonReasons = null, falseConfirmReasons = null, retryFeedback = null
@@ -333,8 +367,11 @@ export async function runAgentTurn({
     // Record this attempt's successful mutating tool calls BEFORE any retry
     // decision, so a retry's prompt can name them as already-done.
     for (const action of mutatingActions(result)) completedActions.push(action)
+    // Cumulative, not per-attempt: see evaluateCandidate's priorAttemptWrote note.
+    if (hadSuccessfulWrite(result)) turnWroteSomething = true
     const verdict = await evaluateCandidate({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
+      priorAttemptWrote: turnWroteSomething,
     })
     if (!verdict.done) { retryFeedback = verdict.retryFeedback; continue }
     text = verdict.text

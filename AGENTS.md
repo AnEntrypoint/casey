@@ -233,6 +233,28 @@ alongside freddie's `@freddie/freddie-base` bundle:
   (`ctx.agents.create()`), submits the inbound via
   `agent.followup(createUserMessage(...))`, awaits `agent.whenIdle()`, and
   reads the reply back from `agent.session.events`.
+- `freddie-bundle/src/case-tools/case-prompt.js` -- **the seam that carries
+  `hooks/prompt.js`'s composed prompt to the model at all.** freddie owns the
+  system prompt: its `SystemPrompt` service assembles one from its OWN
+  registered sections (`harness:identity`, an empty `deployment:persona` slot,
+  and one `tool:<name>` guidance section per tool `@freddie/freddie-base`
+  registers), and nothing in that assembly reads casey's prompt. `runTurn`'s
+  `messages:[{role:'system',...}]` param is a signature leftover of the old
+  casey-owned loop and freddie's agent loop never looks at it. So
+  `installCasePrompt(agentCtx, getPromptText, allowedNames)` -- installed
+  per-agent through the same `ctx.agents.create()` `setup` callback as
+  `installToolAllowlist`, reading a per-sessionKey mutable cell so a reused
+  agent gets THIS turn's prompt -- hooks `system-prompt/assemble` to put the
+  composed prompt in the `deployment:persona` slot, drop `harness:identity`
+  (it names Freddie to someone talking to casey), and drop the `tool:<name>`
+  guidance for every tool the allowlist already hid. Keep this install on BOTH
+  the create and resume paths: without it the contact-facing model runs on
+  "You are an AI agent powered by Freddie" plus prose about `bash`/`write`/
+  `edit`, with casey's entire domain prompt -- persona, the
+  report-not-assert rule, the untrusted-data fence, the reply-style rules, the
+  last-chance push -- discarded. Witnessed live while that was true: a
+  six-bullet question list, the word "case" spoken to the contact, and a
+  spurious `case_new` on a first message.
 
 **The outbound adapter lookup is load-bearing and fails silently when wrong.**
 `hooks/delivery.js`'s `resolveAdapter` resolves it off `casey.js`'s

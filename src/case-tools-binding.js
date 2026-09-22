@@ -8,9 +8,34 @@
 // descriptions, parameter schemas and handler bodies are unchanged.
 
 import { REPORT_ENTITY_LABEL } from './store/report-shape.js'
+import { parseReport } from './timestamp.js'
 import {
   defTool, str, ownsCase, enquiryRow, boundCase, rebindActiveCase,
 } from './case-tools-shared.js'
+
+// Does this case already hold report content? A case whose report blob is
+// absent/empty/unparseable holds nothing, so it IS the fresh case a case_new
+// would open. Used as case_new's precondition below.
+function hasReportContent(caseRow) {
+  if (!caseRow) return false
+  const rep = parseReport(caseRow)
+  return Object.values(rep || {}).some(v => v != null && String(v).trim() !== '')
+}
+
+// Has the AGENT actually recorded anything into this case yet? Report content
+// alone is not the whole answer: intake writes media bookkeeping (hooks/media.js
+// appends a "farmer sent a photo (saved: ...)" line into the photos field)
+// BEFORE the turn runs, so a case opened by a photo message already looks
+// non-empty while carrying none of the reporter's own facts -- live witnessed,
+// that was enough to let case_new open a duplicate on the first inbound of a
+// photo report. A successful case_report/case_update appends an agent 'action'
+// event, so its absence means nobody has recorded a fact here yet.
+async function hasAgentRecordedAction(store, caseId) {
+  try {
+    const events = await store().listEvents(caseId, { limit: 200 })
+    return (events || []).some(e => e?.kind === 'action' && e?.actor === 'agent')
+  } catch { return true }   // unreadable timeline: fail toward the old behaviour
+}
 
 export function buildBindingTools(store) {
   return [
@@ -38,6 +63,23 @@ export function buildBindingTools(store) {
         const channel = current?.channel || ctx?.channel || 'other'
         const external_id = current?.external_id
         if (!external_id) return { error: 'no conversation identity on this turn -- cannot bind a new case' }
+        // DETERMINISTIC PRECONDITION, not text processing: the case this turn is
+        // already bound to holds no report content at all, so it IS an empty
+        // fresh one and opening a second is structurally meaningless. A weak
+        // model reads "start a NEW report" as the way to BEGIN a report and
+        // calls this on the very first inbound of a conversation -- live
+        // witnessed over Discord: turn 1 opened a second case and wrote the
+        // report there, turn 2 bound to that one (findOpenCase's
+        // newest-open-wins) and opened a THIRD, so every turn fragmented onto a
+        // fresh case and the agent re-asked facts the reporter had already
+        // given. Reuse the empty case instead of stacking duplicates; a genuine
+        // second report (the bound case already carries facts) still opens one.
+        const currentIsFresh = current
+          && (!hasReportContent(current) || !(await hasAgentRecordedAction(store, current.id)))
+        if (currentIsFresh) {
+          rebindActiveCase(ctx, current)
+          return { ok: true, activeCase: enquiryRow(current), reused_empty_active_case: true }
+        }
         const c = await store().createCase({ channel, external_id, subject: subject || '', contact_id: current?.contact_id || '' })
         await store().appendEvent(c.id, { kind: 'note', actor: 'system', text: `case explicitly opened for a fresh report by ${author || 'unknown'}` })
         // Rebind THIS turn to the new case: the description says "bind it
