@@ -14,6 +14,7 @@
 import { tsMs } from '../timestamp.js'
 import { LOCATION_STALE_MS, fenced } from './prompt-context.js'
 import { canQueryCases } from '../contact-tiers.js'
+import { fieldLabel } from '../store/report-shape.js'
 
 // Identity, the untrusted-data rule, the enquiry path and the worker's last
 // known position.
@@ -314,8 +315,13 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     // from report-fields.yml's own critical_for_visit flags) rather than left
     // for the model to work out from "report so far" against a prose priority
     // order -- which is what it was before, and what it did not do.
+    // LABELS, not storage keys -- and the same labels hooks/reply-judge.js's
+    // farewell gate is handed, so the model and the judge are talking about the
+    // facts in the same words. Rendered as keys, this line asked the model to
+    // paraphrase "how_to_find" into a question while the gate that checks the
+    // answer named "How to find the place": one derivation, two vocabularies.
     missingCritical.length
-      ? `LAST-CHANCE PUSH: these facts are still missing and CANNOT be got once they leave the animals: ${missingCritical.join(', ')}. The moment they sound like they are wrapping up or leaving, ask ONCE for the first one on that list, woven into your goodbye as one warm sentence -- not a list, and never twice. Then let them go.`
+      ? `LAST-CHANCE PUSH: these facts are still missing and CANNOT be got once they leave the animals: ${missingCritical.map(fieldLabel).join(', ')}. The moment they sound like they are wrapping up or leaving, ask ONCE for the first one on that list, woven into your goodbye as one warm sentence -- not a list, and never twice. Then let them go.`
       : `LAST-CHANCE PUSH: nothing critical is missing. When they wrap up, let them go warmly.`,
     // THE MANDATORY MINIMUM, stated separately and above the push's own ordering.
     //

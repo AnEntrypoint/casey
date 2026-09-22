@@ -161,9 +161,18 @@ export function createSupervisor(opts = {}) {
     sup.fire('STOP', Date.now())
     for (const w of rt.watchers) { try { w.close() } catch {} }
     rt.watchers = []
-    await restart.drainWorker()
-    sup.fire('STOPPED', Date.now())
-    releaseKeepAlive()
+    // finally, not a trailing statement: the keep-alive is a REF'D handle, so a
+    // throw or a never-resolving drain above it would leave a 12-day interval
+    // holding the loop open on a process that has been told to stop -- and
+    // casey-serve.js's shutdown swallows a second Ctrl-C, so there is no second
+    // chance to ask. Before this handle existed such a process exited on its own.
+    try {
+      await restart.drainWorker()
+      sup.fire('STOPPED', Date.now())
+    } finally {
+      releaseKeepAlive()
+      workerProcess.cancelPendingRestart()
+    }
   }
 
   return {

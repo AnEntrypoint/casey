@@ -5,9 +5,12 @@
 // constraint here -- one extra real LLM round-trip per turn, deliberately,
 // for flawless operation over a cheaper-but-blind heuristic.
 //
-// Distinct from the main conversational turn: this call carries NO case
-// context, NO tools, and a fixed, narrow judging prompt -- it exists only to
-// classify the ALREADY-COMPOSED reply text, never to compose or edit it.
+// Distinct from the main conversational turn: this call carries NO tools and a
+// fixed, narrow judging prompt -- it exists only to classify the
+// ALREADY-COMPOSED reply text, never to compose or edit it. The only case
+// context it carries is structural and label-only: whether a write landed this
+// turn, and WHICH report fields are recorded and which are blank, by display
+// label. Never a recorded value, never the report itself.
 
 // judgeReply(callLLM, replyText, { lastOutboundText, hadSuccessfulWrite,
 // latestInbound, missingFacts, knownFacts }) ->
@@ -24,15 +27,20 @@
 // by regex over `reasons` -- 'jargon' retries then holds as a draft,
 // /false.?confirm|claims?.*record/ retries then holds as a draft,
 // /farewell.?gap/ retries with the last-chance push restated then SENDS ANYWAY,
-// /repeat.?ask|already (asked|recorded|known)/ retries then SENDS ANYWAY,
+// /repeat.?ask/ retries then SENDS ANYWAY,
 // /repeated|echo|stock|meta.?commentary|planning narration/ retries then BLANKS
 // the reply, /multi.?ask|wall of text/ retries then SENDS ANYWAY, and
 // anything matching neither (TOOL REFUSAL) is sent as-is. Renaming a heading
-// here silently reroutes that reply to the send-anyway branch. The two
-// send-anyway shapes are ORDERED ahead of the blanking one in
-// evaluateCandidate, because 'repeated ask' contains 'repeated' and would
-// otherwise be blanked -- silence on a real message, for a reply that does
-// answer the person.
+// here silently reroutes that reply to the send-anyway branch.
+//
+// EVERY ROUTE MUST MATCH A COINED TOKEN, never ordinary English. `farewell-gap`,
+// `repeat-ask` and `multi-ask` are words no judge writes by accident; a route
+// keyed on a phrase like "already recorded" or "already asked" instead catches a
+// STOCK ACK or a REPEATED REPLY whose reason happens to contain it and sends a
+// reply that should have been blanked, retried under a diagnosis that misnames
+// the fault. The two send-anyway shapes are still ORDERED ahead of the blanking
+// one, because a judge writing "repeated ask" in prose would otherwise be blanked
+// -- silence on a real message, for a reply that does answer the person.
 //
 // missingFacts (plain field LABELS, computed by the caller from the live report
 // via prompt-context.js's missingMandatory/missingCritical, mandatory first)
@@ -138,7 +146,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   person said in plain warm terms WITHOUT claiming anything was recorded,`,
       `   or genuinely does not touch on recording at all, is fine regardless of`,
       `   this fact.`,
-    ].join('\n') : '',
+    ].join('\n') : null,
     // The ONE reply rule the prompt states most emphatically and that had no
     // gate behind it at all: the on-site last-chance push. Live, twice in a row,
     // a farewell on a report missing visit-critical facts came back as a warm
@@ -169,9 +177,19 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   sign-off at all -- it asks something, answers something, carries the`,
       `   conversation on -- is CLEAN and this shape does not apply to it. Judge`,
       `   only whether an ask for one of those facts is present in a closing`,
-      `   reply, never whether the ask is phrased well. Write the reason as`,
-      `   "farewell-gap".`,
-    ].join('\n') : '',
+      `   reply, never whether the ask is phrased well.`,
+      // THE ASK IS SPENT ONCE. Without this, the shape fires again on the very
+      // next turn -- the one where the person has already been asked and has
+      // said they cannot answer -- and the retry instruction then demands the
+      // second ask the standing rules explicitly forbid ("Ask once only. If they
+      // cannot say, or they have already gone, let them go warmly anyway").
+      `   ONE EXCEPTION, and it overrides everything above: if the PRIOR REPLY`,
+      `   shown below already asked for one of those facts, the one ask has been`,
+      `   SPENT -- a goodbye now is CLEAN however many facts are still blank, and`,
+      `   so is a goodbye after the person declined, said they do not know, said`,
+      `   they have left, or simply did not answer it. Nobody is asked twice.`,
+      `   Write the reason as "farewell-gap".`,
+    ].join('\n') : null,
     // A paraphrased re-ask passed BOTH existing repeat guards: turn-attempts.js's
     // verbatim guard is a string equality (by design), and shape 3 above is
     // anchored on the reply being "essentially identical" to the prior one. A
@@ -192,26 +210,37 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   wording is completely different, the question is rephrased, or it is`,
     `   asked in another language. This shape is about the THING BEING ASKED`,
     `   FOR, never the words: "where are the animals?" and "which farm are they`,
-    `   on?" are one ask, and so are "how many died?" and "did you lose any?".`,
-    `   Shape 3 catches a parroted reply; this catches a fresh-sounding sentence`,
-    `   that asks again for what is already known or already asked. Asking for`,
-    `   something genuinely NEW is CLEAN even if the reply also recaps what the`,
-    `   person already said -- a recap is not an ask. Write the reason as`,
-    `   "repeat-ask".`,
-    ].join('\n') : '',
+    `   on?" are one ask. Shape 3 catches a parroted reply; this catches a`,
+    `   fresh-sounding sentence that asks again for what is already known or`,
+    `   already asked.`,
+    // Three carve-outs, each one a shape this would otherwise flag on the most
+    // ordinary intake turn there is. The first is structural: the two lists
+    // handed to you are disjoint by construction, so a still-blank fact can
+    // never be a repeat however much its NAME resembles a recorded one ("how to
+    // find the place" beside a recorded "where", "how many died" beside a
+    // recorded "how many affected").
+    `   THREE THINGS ARE ALWAYS CLEAN, whatever they sound like:`,
+    `   (a) asking for any fact NOT in the recorded list -- the recorded and the`,
+    `   still-missing facts are different facts even when their names are close;`,
+    `   (b) a clarifying re-ask of something the person gave vaguely, partly, or`,
+    `   in a way nobody could act on ("sorry, was that twenty or thirty?") --`,
+    `   this shape is for asking as though they had never answered at all;`,
+    `   (c) a recap of what they said, which is not an ask.`,
+    `   Write the reason as "repeat-ask".`,
+    ].join('\n') : null,
     ``,
     `A reply that is a genuine, warm, on-topic message actually addressed TO the`,
     `person -- even if short, even if it asks a question, even if it is in a`,
     `language other than English -- is CLEAN. Only flag a reply that clearly`,
     `matches one of the shapes above.`,
     ``,
-    lastOutboundText ? `PRIOR REPLY ALREADY SENT IN THIS CONVERSATION:\n${String(lastOutboundText).slice(0, 500)}\n` : '',
-    latestInbound ? `PERSON'S LATEST MESSAGE (what the candidate reply must answer):\n${String(latestInbound).slice(0, 500)}\n` : '',
+    lastOutboundText ? `PRIOR REPLY ALREADY SENT IN THIS CONVERSATION:\n${String(lastOutboundText).slice(0, 500)}\n` : null,
+    latestInbound ? `PERSON'S LATEST MESSAGE (what the candidate reply must answer):\n${String(latestInbound).slice(0, 500)}\n` : null,
     // LABELS ONLY, never the recorded values: this call is deliberately
     // context-free about the case (see this file's header), and the values are
     // the contact's own words, which have no business in a second LLM call that
     // exists only to judge the shape of one sentence.
-    knownFacts.length ? `FACTS ALREADY RECORDED ON THIS REPORT (asking for any of these again is shape 10):\n${knownFacts.join(', ')}\n` : '',
+    knownFacts.length ? `FACTS ALREADY RECORDED ON THIS REPORT (asking for any of these again is shape 10):\n${knownFacts.join(', ')}\n` : null,
     `CANDIDATE REPLY TO JUDGE:`,
     String(replyText).slice(0, 2000),
     ``,
@@ -225,11 +254,16 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `above, or when jargon is combined with any other shape (the reply has no`,
     `real content worth saving in that case). Some shapes above are numbered but`,
     `only listed when they apply -- judge only the shapes actually shown to you,`,
-    `and never treat a gap in the numbering as a shape withheld. For shape 7`,
-    `write the reason as "multi-ask", for shape 9 "farewell-gap", for shape 10`,
-    `"repeat-ask", so the caller can route each one (see this file's header: the`,
-    `shape heading words are a wire protocol, not prose).`,
-  ].filter(Boolean).join('\n')
+    `and never treat a gap in the numbering as a shape withheld. Three shapes`,
+    // Named conditionally, and that is load-bearing rather than tidy: naming
+    // "farewell-gap" while shape 9 is not shown invites the token for a shape the
+    // judge was never given, and the caller then composes a retry instruction
+    // around a missing-fact list that is empty -- the literal word "undefined"
+    // in a sentence aimed at a person. Only offer a token whose shape is present.
+    `have a REQUIRED reason word so the caller can route them (see this file's`,
+    `header: the shape heading words are a wire protocol, not prose): shape 7`,
+    `"multi-ask"${missingFacts.length ? `, shape 9 "farewell-gap"` : ''}${(lastOutboundText || knownFacts.length) ? `, shape 10 "repeat-ask"` : ''}.`,
+  ].filter(line => line !== null).join('\n')
 
   let raw
   try {

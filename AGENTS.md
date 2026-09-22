@@ -105,10 +105,16 @@ resolved by `src/config-loader.js` at process start:
   (dashboard `ReportSections` grouping, served via `/api/config`), and
   `severity_signal` (a field whose mere PRESENCE raises a case's attention
   rank -- `report-shape.js` derives `SEVERITY_SIGNAL_FIELDS` from it,
-  `attn.js` adds a flat +7 when any such field holds a non-empty value, and
+  `attn.js` adds a flat +7 when any such field holds a stated value, and
   `operations.js` publishes the set. Note what it is NOT: it reads no
   magnitude, so "1 dead" and "400 dead" score identically, and it lives
-  inside the URGENCY score. It is not a severity axis and cannot drive a
+  inside the URGENCY score. The ONE value it reads rather than merely
+  counting as present is a numeric ZERO, which scores nothing: the public
+  `/report` form's own hint for this deployment's severity field says "write
+  0 if none", so an honest "none have died" answer otherwise ranked with a
+  four-hundred-dead report -- the same inversion the flag exists to prevent,
+  pointing the other way. Numeric zero only; a word like "none" is the
+  model's to interpret, never `attn.js`'s. It is not a severity axis and cannot drive a
   graded severity ramp -- see `.gm/research/severity-route.md` in `uhh`).
   Alongside `fields[]`, `report-fields.yml` may also declare a top-level
   `mandatory_minimum` block -- `{fields: [...], blocks_transition_to: [...]}`
@@ -1281,6 +1287,23 @@ without restart-on-crash.
   a record, which makes the shape unrenderable. A handoff request is deliberately
   NOT exempted: that person is still standing next to the animals and has not
   asked to be left alone.
+  **The ask is spent once, and the gate knows it.** The shape's own text carves
+  out the case where the PRIOR reply already asked for one of the blanks: a
+  goodbye after that is CLEAN however many facts are still missing, and so is a
+  goodbye after the person declined, said they do not know, or simply did not
+  answer. Without that carve-out the gate fires on the turn AFTER the single ask,
+  and its retry instruction then demands the second ask the same prompt forbids
+  ("Ask once only ... let them go warmly anyway") -- the gate enforcing the
+  opposite of the rule it exists for.
+  **Every judge route matches a COINED token, never ordinary English.**
+  `farewell-gap`, `repeat-ask` and `multi-ask` are words no judge writes by
+  accident. A route keyed on a phrase like "already recorded" instead catches a
+  STOCK ACK or a REPEATED REPLY whose reason happens to contain it, and sends a
+  reply that should have been blanked, retried under a diagnosis that names the
+  wrong fault -- witnessed by driving the real function against pinned verdicts.
+  For the same reason a route also refuses to compose an instruction out of an
+  empty list: `farewell-gap` with no missing facts falls through instead of
+  telling the model to ask for `undefined`.
 - **No worker-volunteered fact is silently discarded.** Photo/audio/site
   fields append rather than overwrite. A dashboard operator's concurrent
   edit is detected via optimistic locking and the merge retries against the
