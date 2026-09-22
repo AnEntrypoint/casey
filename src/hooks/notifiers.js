@@ -28,7 +28,14 @@ const SESSION_WINDOW_MS = 24 * 3600e3
 // gets the conservative behaviour rather than silently originating messages.
 const UNWINDOWED_CHANNELS = new Set(['discord', 'sim', 'web'])
 
-function withinSessionWindow(caseRow, recentEvents, now = Date.now()) {
+export function sessionWindowHours() { return Math.round(SESSION_WINDOW_MS / 3600e3) }
+
+// Exported for the operator-initiated reminder (dashboard/routes/cases.js's
+// postRemind), which has to answer exactly the same question this notifier does
+// before it originates a message: may casey send to this contact right now.
+// Shared rather than reimplemented -- two independently-written copies of a
+// platform rule drift, and the direction one of them drifts in is "send anyway".
+export function withinSessionWindow(caseRow, recentEvents, now = Date.now()) {
   if (UNWINDOWED_CHANNELS.has(String(caseRow?.channel || ''))) return true
   // Keyed on the contact's own last inbound, which is what Meta's rule measures
   // -- not an outbound, and not the case's updated_at, which an operator's own

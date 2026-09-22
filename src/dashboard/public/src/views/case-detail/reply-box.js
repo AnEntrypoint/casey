@@ -8,7 +8,7 @@ import { Btn } from '/design/src/components/shell.js';
 import { TextField, Alert } from '/design/src/components/content.js';
 import { state, schedule } from '../../state.js';
 import { toast, replyUndoToast, failMsg } from '../../toasts.js';
-import { api, postDraftApprove, postDraftDiscard } from '../../api.js';
+import { api, postDraftApprove, postDraftDiscard, postCaseRemind } from '../../api.js';
 import { confirmDialog } from '../../components/dialog-shell.js';
 import { channelLabel, replyChannelLabel } from '../../format.js';
 import { entityLabel } from '../../vocabulary.js';
@@ -167,7 +167,58 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
             class: 'casey-reply-send-row',
             onkeydown: (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); send(); } }
         },
-            Btn({ variant: 'primary', disabled: sending || !text.trim(), children: sending ? 'Sending...' : 'Send reply', onClick: send })
+            Btn({ variant: 'primary', disabled: sending || !text.trim(), children: sending ? 'Sending...' : 'Send reply', onClick: send }),
+            // THE REMINDER, beside the reply and deliberately not dressed as one.
+            //
+            // It sits here because this is the one place on the screen that
+            // already means "say something to this person", and an operator
+            // deciding whether to nudge somebody is deciding between exactly these
+            // two things: write to them yourself, or ask them to write to you.
+            // Ghost, not primary: replying is the normal act and this is the
+            // narrower one, used when there is nothing to say yet and only silence
+            // to break.
+            //
+            // It never takes the text box's contents. That box is a reply the
+            // operator composed; a reminder is a different message with its own
+            // guards, and quietly sending a half-typed reply under a button
+            // labelled "Ask them to report back" would be the worst kind of
+            // surprise. The server composes it, and the operator is shown exactly
+            // what went out.
+            //
+            // Shares _replySending for the reason the draft buttons do: it means
+            // one send to this contact is in flight, and on a metered rural link a
+            // second tap is a second real message to a real person.
+            Btn({
+                size: 'sm', variant: 'ghost', disabled: sending,
+                children: sending ? 'Sending...' : 'Ask them to report back',
+                onClick: async () => {
+                    if (sending) return;
+                    if (await confirmDialog({
+                        title: 'Ask this person to report back?',
+                        message: 'Sends them ONE short message on ' + (replyChannelLabel(c.channel) || 'their channel')
+                            + ', asking if anything has changed. It names their reference and how long it has been, and nothing else -- you will see exactly what went out on the timeline.'
+                            + ' It will not send if they asked us to stop, if their channel is outside its reply window, or if they have already been asked and have not written back.',
+                        confirmLabel: 'Send the reminder',
+                    }) === null) return;
+                    state._replySending = true; schedule();
+                    try {
+                        const j = await postCaseRemind(c.id);
+                        state._replySending = false;
+                        if (j.delivered) toast('Asked them to report back.', 'ok');
+                        else toast(j.sent
+                            ? 'Saved to the timeline, but the channel refused it. They have NOT received this.'
+                            : 'Saved to the timeline only. This console is not attached to the messaging channels, so nothing was sent.', 'warn');
+                        if (onReload) await onReload(c.id);
+                    } catch (e) {
+                        state._replySending = false;
+                        // The server's own refusal sentence is the useful one here
+                        // (they opted out / outside the reply window / already
+                        // asked), so failMsg's fallback is only for a transport
+                        // failure that carries no sentence of its own.
+                        toast(await failMsg(e, 'Nothing was sent. Try again.'), 'err'); schedule();
+                    }
+                },
+            })
         )
     );
 }

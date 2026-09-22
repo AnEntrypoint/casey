@@ -28,6 +28,7 @@ import { fieldLabel, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
 import { isKnownValueField, invalidateKnownValues } from '../../field-values.js'
 import { BRAND } from '../brand.js'
 import { mountRoutes } from './register.js'
+import { prepareReminder, OPERATOR_REMINDER_FLAG } from '../../hooks/operator-reminder.js'
 
 // Body keys POST /api/cases/:id/intake accepts that are NOT report fields.
 const INTAKE_META_KEYS = new Set(['canonicalized'])
@@ -521,7 +522,16 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
     if (!ids || !ids.length) return res.status(400).json({ error: 'ids must be a non-empty array' })
     if (ids.length > 500) return res.status(413).json({ error: 'too many ids (max 500 per bulk request)' })
     const action = String(req.body?.action || '')
-    const ACTIONS = new Set(['claim', 'transition', 'tag', 'untag', 'note', 'draft_approve', 'draft_discard'])
+    // 'remind' is the only action here that reaches a PERSON rather than a row,
+    // which is why it carries no bulk `text` argument: the per-case route accepts
+    // an operator's own words because they are looking at that one report, and a
+    // single hand-typed sentence blasted verbatim at up to 500 different silent
+    // contacts is a form letter by construction. Each case composes its own,
+    // naming its own reference and its own real silence, and each one passes the
+    // same opted-out / session-window / already-reminded guards independently --
+    // so a selection of 40 stale reports may legitimately send 31 messages and
+    // refuse 9, each refusal reported against its own id.
+    const ACTIONS = new Set(['claim', 'transition', 'tag', 'untag', 'note', 'draft_approve', 'draft_discard', 'remind'])
     if (!ACTIONS.has(action)) return res.status(400).json({ error: `unknown action '${action}'`, allowed: [...ACTIONS] })
     const op = actingOperator(req)
     // Validate action-specific args ONCE up front so a malformed request fails fast
@@ -593,6 +603,19 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
           } else {
             results.push({ id, ok: false, error: 'send failed' }); continue
           }
+        } else if (action === 'remind') {
+          const plan = await prepareReminder({ store, caseRow: c })
+          if (!plan.ok) { results.push({ id, ok: false, error: plan.error }); continue }
+          let delivered = false
+          if (sendReply) {
+            try { await sendReply(c, plan.text); delivered = true }
+            catch (e) { await store.appendEvent(id, { kind: 'observation', actor: 'system', text: `Failed to send operator reminder on channel: ${e.message || 'unknown error'}` }) }
+          }
+          await appendReplyEvent(store, c, plan.text, op, {
+            delivered, reason: sendReply ? 'send_failed' : 'no_channel',
+            extra: { [OPERATOR_REMINDER_FLAG]: true, operator_authored: false, quiet_for_ms: plan.quietForMs, breaches: plan.breaches, bulk: true },
+          })
+          if (!delivered) { results.push({ id, ok: false, error: 'send failed' }); continue }
         } else if (action === 'draft_discard') {
           const draft = await pendingDraft(store, c)
           if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
@@ -971,6 +994,64 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
   }
 }
 
+// OPERATOR-INITIATED REMINDER: nudge one silent contact to report back.
+//
+// The third role in casey's role model has an actual action now. casey already
+// NOTICED silence -- case-health.js's stale/unanswered_handoff breaches,
+// case-sweep.js's tags, attn.js's ranking, the coverage-gap pager -- and every
+// one of those tells the TEAM and then waits for a human. Nothing reached back
+// out to the person who went quiet. This does, once, deliberately, on an operator
+// pressing a button on a report they have looked at.
+//
+// Reuses `sendReply` -- the same seam postReply and postDraftApprove send
+// through, resolving the real channel adapter via hooks/delivery.js. Recorded
+// through appendReplyEvent for the same reason those two are: an outbound row on
+// the timeline means the contact RECEIVED it, so an undelivered reminder becomes
+// a note that says so rather than a delivered-looking outbound.
+//
+// `data.operator_reminder` is what makes the audit trail honest. `actor:
+// 'operator'` alone does not distinguish this from an operator's own typed reply
+// -- both are operator outbounds -- and it must never read as `actor: 'agent'`,
+// because nothing the agent decided produced this sentence. Body: `{ text? }`,
+// where an operator's own words replace the composed ones but skip none of the
+// guards (see hooks/operator-reminder.js's prepareReminder).
+export function postRemind({ store, authed, str, actingOperator, sendReply }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const c = await store.getCase(req.params.id)
+    if (!c) return res.status(404).json({ error: 'not found' })
+    let override = null
+    if (req.body && typeof req.body.text === 'string' && req.body.text.trim()) {
+      const edited = str(res, req.body, 'text', { required: false }); if (edited === undefined) return
+      override = edited
+    }
+    const plan = await prepareReminder({ store, caseRow: c, overrideText: override })
+    if (!plan.ok) return res.status(plan.status).json({ error: plan.error, ...(plan.reminded_at ? { reminded_at: plan.reminded_at } : {}) })
+    const op = actingOperator(req)
+    let delivered = false
+    if (sendReply) {
+      try { await sendReply(c, plan.text); delivered = true }
+      catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send operator reminder on channel: ${e.message || 'unknown error'}` }) }
+    }
+    await appendReplyEvent(store, c, plan.text, op, {
+      delivered, reason: sendReply ? 'send_failed' : 'no_channel',
+      extra: {
+        [OPERATOR_REMINDER_FLAG]: true,
+        operator_authored: plan.operator_authored,
+        quiet_for_ms: plan.quietForMs,
+        breaches: plan.breaches,
+      },
+    })
+    // Unlike postReply this does NOT claim the case and does NOT clear
+    // needs-human: a reminder asks the contact for something, it does not answer
+    // them. Clearing needs-human here would drop a case that explicitly asked for
+    // a person out of the triage inbox because somebody nudged the person instead
+    // of talking to them.
+    store.learnOperatorActivity(op.id, c).catch(() => {})
+    res.json({ ok: delivered, sent: !!sendReply, delivered, text: plan.text, recorded: delivered ? 'outbound' : 'note' })
+  }
+}
+
 // Approve a held assisted draft: send the (possibly operator-edited) text to the
 // contact, record it as an operator outbound, and clear draft-pending +
 // needs-human only once it actually delivered -- mirroring the reply path so a
@@ -1160,6 +1241,7 @@ const ROUTES = [
   ['post', '/api/cases/:id/merge', postMerge],
   ['post', '/api/cases/:id/split', postSplit],
   ['post', '/api/cases/:id/reply', postReply],
+  ['post', '/api/cases/:id/remind', postRemind],
   ['post', '/api/cases/:id/draft/approve', postDraftApprove],
   ['post', '/api/cases/:id/draft/discard', postDraftDiscard],
   ['get', '/api/cases/:id/report.html', getReportHtml, { raw: true }],

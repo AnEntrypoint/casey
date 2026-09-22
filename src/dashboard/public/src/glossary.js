@@ -59,6 +59,14 @@ const GLOSSARY_TEMPLATE = {
     external_id: 'The internal address {brand} uses to message this person on their channel. Never shown to a field worker, for privacy.',
     field_worker: 'A reporter an operator has trusted with extra access: their own open {entity_plural}, "near me" lookups, and location check-ins.',
     reporter: 'The default access level for anyone who messages {brand}. Report-only, casual, public.',
+    // The top of the access ladder, and the only rung that can finish a
+    // {entity}. Stated as a capability rather than as a permission level,
+    // because that is what an operator actually needs to know: if a {entity}
+    // is complete and still not signed off, this is who it is waiting for.
+    animal_health_technician: 'The highest access level: everything a trusted reporter has, plus the only authority to sign a {entity} off as done. Nobody else can finish one, however complete it is.',
+    // The action, not the access level. Named here because the button exists and
+    // an operator has to know what pressing it actually does to a real person.
+    remind: 'Sends the person ONE message asking them to report back, on the channel they wrote in. Only for a {entity} that has gone quiet, never for someone who asked us to stop, and not twice in a row without them answering first.',
 };
 
 /**
