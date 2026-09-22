@@ -21,15 +21,21 @@ function caseHasDraft(c) { return tagList(c).includes('draft-pending'); }
 function latestDraft(events) { const d = (events || []).filter(e => e.kind === 'draft'); return d.length ? d[d.length - 1] : null; }
 function draftText(c, events) { if (!caseHasDraft(c)) return ''; const d = latestDraft(events); return (d && d.text) || ''; }
 
-const NON_EN_WORDS = /\b(dankie|asseblief|hallo|goeie|siek|beeste|ngiyabonga|siyabonga|sawubona|izinkomo|usizo|enkosi|molo|nceda|iinkomo|dumela|kea leboha|dikgomo)\b/i;
-function contactMaybeNonEnglish(events) {
-    const lastIn = (events || []).filter(e => e.kind === 'inbound').slice(-1)[0];
-    const txt = lastIn && lastIn.text;
-    if (!txt) return false;
-    for (let i = 0; i < txt.length; i++) { if (txt.charCodeAt(i) > 127) return true; }
-    return NON_EN_WORDS.test(txt);
-}
-
+// There is deliberately no per-language word list here, and no
+// "this person may not be writing in English" guess of any kind. The timeline
+// sitting directly above this box already carries the contact's own messages
+// verbatim, so their language is on the screen in full, for any language on
+// earth, before an operator types a character -- a guess adds nothing an
+// operator cannot already read, and a word list can only ever recognise the
+// languages whoever wrote it happened to think of. It also baked one country's
+// language set into casey's own generic source, which every deployment
+// inherits unchanged. Where a deployment's report-fields.yml declares a field
+// for it, the model's own reading of the language is recorded there too and
+// report-sections.js renders it from the live /api/config like any other
+// field. Do not reintroduce a guess: the agent already mirrors the contact's
+// language in its own replies (hooks/prompt-sections.js), and
+// help-overlay.js states the one thing true of every case -- that the
+// mirroring is the agent's, and an operator typing here does it themselves.
 function cannedReplies(c) {
     const tags = tagList(c);
     // 'opted-out' is a legal control (the contact said STOP). Its one
@@ -155,7 +161,6 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
             placeholder: 'Type your reply here. Ctrl+Enter sends it.',
             onInput: setText,
         }),
-        contactMaybeNonEnglish(events) ? Alert({ kind: 'warn', children: 'This person may not be writing in English. Please reply in their language.' }) : null,
         cans.length ? h('div', { class: 'casey-canned-wrap' },
             h('p', { class: 'casey-canned-lab' }, 'Or tap a ready-made reply to start with:'),
             h('div', { class: 'casey-canned' }, ...cans.map((t, i) => h('button', {
