@@ -8,7 +8,7 @@
 // descriptions, parameter schemas and handler bodies are unchanged.
 
 import { REPORT_ENTITY_LABEL } from './store/report-shape.js'
-import { parseReport } from './timestamp.js'
+import { parseReport, tagList } from './timestamp.js'
 import {
   defTool, str, ownsCase, enquiryRow, boundCase, rebindActiveCase,
 } from './case-tools-shared.js'
@@ -80,7 +80,26 @@ export function buildBindingTools(store) {
           rebindActiveCase(ctx, current)
           return { ok: true, activeCase: enquiryRow(current), reused_empty_active_case: true }
         }
-        const c = await store().createCase({ channel, external_id, subject: subject || '', contact_id: current?.contact_id || '' })
+        // Carry the intake-source tag forward. A case_new is the SAME person on
+        // the SAME channel starting a second report, so its intake route is by
+        // definition the one the conversation already arrived by -- but nothing
+        // was passing it on, so an agent-opened case was born with tags:'' and
+        // every tag-reading consumer read that as "intake source unknown":
+        // case-list/case-row.js's intakeSourceTag renders NO badge at all (the
+        // channel-opened case beside it shows "AI"), the case-detail header and
+        // fields-editor read the same tag, and /api/cases.csv's intakeSrc column
+        // comes out blank. Witnessed in this deployment's own live store: six
+        // consecutive agent-opened cases carrying tags:'' next to
+        // channel-opened ones carrying intake_mode:channel -- and case_new is
+        // the NORMAL path for a reporter's second, genuinely separate report,
+        // so this is the common case, not an edge one.
+        //
+        // Only the intake_mode:* tag is inherited, deliberately. Everything else
+        // a case accumulates (health:*, needs-human, opted-out, draft-pending)
+        // is a fact about THAT case's own history and must not follow the
+        // reporter onto a brand-new one.
+        const inheritedIntakeTags = tagList(current).filter(t => t.startsWith('intake_mode:')).join(',')
+        const c = await store().createCase({ channel, external_id, subject: subject || '', contact_id: current?.contact_id || '', tags: inheritedIntakeTags })
         await store().appendEvent(c.id, { kind: 'note', actor: 'system', text: `case explicitly opened for a fresh report by ${author || 'unknown'}` })
         // Rebind THIS turn to the new case: the description says "bind it
         // active", and the natural next call is case_report against the new

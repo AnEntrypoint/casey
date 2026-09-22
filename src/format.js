@@ -109,6 +109,46 @@ export function fmtPhone27(v) {
   return s
 }
 
+// Bidi and invisible format characters in CONTACT-SUPPLIED text, turned into a
+// visible ASCII marker.
+//
+// HTML-escaping does not touch these and was never meant to: they are legal
+// characters, not markup. So a case subject carrying U+202E (RIGHT-TO-LEFT
+// OVERRIDE) renders the rest of its line backwards -- in the operator console and
+// in a terminal alike -- and a count or a place name can therefore READ as
+// something other than what the reporter actually sent. U+200B and friends are
+// worse in a different way: they are simply not there to the eye, so "1<ZWSP>20"
+// and "120" look identical while a copy-paste of one into another system fails.
+//
+// Live-witnessed over Discord: a probe report whose counts carried U+200B and
+// whose sentence carried U+200F/U+200E reached case.subject and event.text with
+// every one of those characters intact. That probe's U+202E did NOT arrive --
+// Discord filtered it on send -- so the override half of this guard is not
+// something Discord alone can deliver. It stays in the set because Discord is not
+// the only inbound path: the WhatsApp webhook hands casey the message body as
+// posted, with no platform filtering in front of it, and the public /report form
+// even less.
+//
+// MARKED, NEVER STRIPPED, for the same reason every other field is recorded as
+// the person said it: the text is the record. The operator reads it in logical
+// order AND can see that a control character was present -- nothing is silently
+// removed, and nothing silently reads as something it is not.
+//
+// Two classes are deliberately left ALONE. Combining marks (the 'zalgo' shape)
+// are ordinary diacritics in real languages this deployment serves, and they
+// distort layout rather than meaning -- a CSS clipping concern, not a text one.
+// ZWJ/ZWNJ join rather than reorder, and ZWJ carries real emoji sequences, so
+// marking them would corrupt an ordinary photo caption.
+//
+// Applied SERVER-side, at the projection every case row already passes through,
+// rather than in the SPA's mirror of this file: one application covers the SPA,
+// the CSV/HTML report and the CLI at once, and there is no second copy to drift.
+const DECEPTIVE_INVISIBLES = /[\u00AD\u061C\u200B\u200E\u200F\u202A-\u202E\u2028\u2029\u2066-\u2069\uFEFF]/g
+export function markInvisibles(v) {
+  if (v == null || typeof v !== 'string') return v
+  return v.replace(DECEPTIVE_INVISIBLES, ch => '[U+' + ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0') + ']')
+}
+
 // True when the host process is not running in SAST, so the CLI/doctor can warn
 // that its own clock-derived output (if any) differs from the SAST display.
 // Resolved timezone is compared, not the offset, so a UTC+2 zone that observes

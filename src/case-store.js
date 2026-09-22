@@ -554,7 +554,12 @@ export class CaseStore {
   // findOrCreateCase never reads that field, so the next message silently keeps
   // talking to the OLD case. Locked on the same key so two near-simultaneous
   // "start a new report" turns cannot duplicate.
-  async createCase({ channel, external_id, subject = '', contact_id = '' } = {}) {
+  // `tags` exists so a caller that already knows which intake route this case
+  // arrived by can say so at creation, rather than the row being born untagged
+  // and every tag-reading consumer treating it as "unknown". The store itself
+  // stays ignorant of what any particular tag MEANS -- see case_new
+  // (case-tools-binding.js) for the one caller and its reason.
+  async createCase({ channel, external_id, subject = '', contact_id = '', tags = '' } = {}) {
     return this._withLock(`${channel}|${external_id}`, async () => {
       const ref = await this._nextRef()
       // reporter_tier is a creation-time snapshot (see thatcher.config.yml's
@@ -565,7 +570,7 @@ export class CaseStore {
       const currentOpen = await this.findOpenCase({ channel, external_id })
       return this.t.create('case', {
         ref, channel, external_id, contact_id: contact_id || '',
-        subject, summary: '', priority: 'normal', tags: '',
+        subject, summary: '', priority: 'normal', tags: tags || '',
         assignee: UNCLAIMED_ASSIGNEE, autonomy: 'auto', status: 'new', last_event_at: nowIso(),
         author_key: deriveAuthorKey(external_id),
         reporter_tier: currentOpen?.reporter_tier || 'reporter',

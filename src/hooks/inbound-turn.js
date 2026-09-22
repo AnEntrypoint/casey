@@ -112,7 +112,27 @@ async function driveAgentTurn(deps, {
   // Re-read the case after the agent turn: the agent may have completed intake
   // via case_report (or moved the stage) during the turn. Every report-aware
   // decision below must see what the agent just wrote, not the pre-turn snapshot.
-  fresh = await store.getCase(fresh.id).catch(() => fresh)
+  //
+  // And re-read the case the turn ENDED bound to, which a case_new/case_switch
+  // makes a DIFFERENT case from the one the handler resolved before the turn
+  // began. Reading fresh.id unconditionally meant every post-turn decision acted
+  // on the case the reporter had just moved on FROM, while their facts sat in the
+  // new one -- the outbound ref correction worst of all, since a reference is the
+  // single datum a reporter quotes to a vet. sanitizeOutboundRef is handed
+  // `fresh.ref` as "the real ref", and case_new's own result puts the new ref in
+  // the tool-learned allowlist, so BOTH refs read as legitimate and a reply
+  // naming the stale one passed through untouched.
+  //
+  // Live-witnessed over Discord: a reporter who finished with their goats and
+  // reported a separate pig sickness at another farm was answered "Your reference
+  // for this is: CASE-1118-..." -- the goat case -- for facts casey had just
+  // written into CASE-1119. Quoting that back would have named the wrong animals
+  // at the wrong place.
+  //
+  // Falls back to the original id if the rebound case cannot be read, so a
+  // failed lookup degrades to the previous behaviour rather than losing `fresh`.
+  const endedOnId = turn.activeCase?.id || fresh.id
+  fresh = await store.getCase(endedOnId).catch(() => null) || await store.getCase(fresh.id).catch(() => fresh)
 
   // Reaching here with empty text means the whole genuine retry budget (attempts
   // x hard deadline) was spent.
