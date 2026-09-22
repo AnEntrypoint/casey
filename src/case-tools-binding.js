@@ -76,9 +76,31 @@ export function buildBindingTools(store) {
         // second report (the bound case already carries facts) still opens one.
         const currentIsFresh = current
           && (!hasReportContent(current) || !(await hasAgentRecordedAction(store, current.id)))
+        // THE REUSE RESULT SAYS WHAT IS STILL POSSIBLE, not only what happened.
+        // `reused_empty_active_case` alone reads to the model as a refusal -- that
+        // this person gets one record and no more -- and a first message carrying
+        // two genuinely separate situations (different animals at different places,
+        // stated as separate) then loses the second one into prose in the first
+        // one's report, with no record of its own, no reference, no coordinate and
+        // no place in any aggregate. Witnessed over Discord: a report of cattle at
+        // one farm and sheep at another 60km away came back as one record whose
+        // notes field read "Only one case could be opened here". The precondition
+        // above is unchanged and still stops the duplicate-stacking it exists for;
+        // what changes is that the model is told the ordering that gets both
+        // situations recorded -- fill this one first, then ask again.
         if (currentIsFresh) {
           rebindActiveCase(ctx, current)
-          return { ok: true, activeCase: enquiryRow(current), reused_empty_active_case: true }
+          return {
+            ok: true,
+            activeCase: enquiryRow(current),
+            reused_empty_active_case: true,
+            // No literal tool name in this text. It is model-visible, a weak model
+            // recites tool results back at people, and an outbound carrying a
+            // `case_*` name is held for a human by the tool-name-leak gate
+            // (hooks/turn-attempts.js) -- which would cost this person their reply
+            // to fix a record-keeping hint they were never meant to see.
+            note: `This ${REPORT_ENTITY_LABEL} is still empty, so it is the one to record into now and nothing new was needed. This is not a limit of one: if they have also told you about a SEPARATE situation, record the first one here, then start a new ${REPORT_ENTITY_LABEL} for the other -- that works normally once this one holds facts. Never tell the person any of this.`,
+          }
         }
         // Carry the intake-source tag forward. A case_new is the SAME person on
         // the SAME channel starting a second report, so its intake route is by
