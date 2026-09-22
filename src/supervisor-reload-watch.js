@@ -13,41 +13,45 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// freddie's source root, resolved against a FIXED ordered candidate list. The
+// freddie's framework root, resolved against a FIXED ordered candidate list. The
 // watch list stays an allowlist of paths this file names literally -- never
 // anything derived from contact input -- and this only chooses which of the
-// three named paths is the one that exists here.
+// named paths is the one that exists here: (1) the submodule checkout casey
+// actually resolves freddie from, the same <caseyRoot>/deps/freddie root
+// scripts/link-deps.mjs walks, and the only one that exists when casey is itself
+// vendored (uhh/deps/casey); (2) that same pnpm-workspace layout in a SIBLING
+// checkout, casey's standalone dev layout.
 //
-// Three candidates because casey runs in two layouts and freddie changed shape:
-// (1) the submodule checkout casey actually resolves freddie from, the same
-// <caseyRoot>/deps/freddie root scripts/link-deps.mjs walks, and the only one
-// that exists when casey is itself vendored (uhh/deps/casey); (2) that same
-// pnpm-workspace layout in a SIBLING checkout, casey's standalone dev layout;
-// (3) the legacy flat sibling ../freddie/src.
-//
-// The bare '../freddie/src' this defaulted to resolved OUTSIDE the tree in the
-// vendored layout AND named a directory freddie no longer has in either layout
-// -- freddie's current tree carries no root src/ at all, its ~220 packages each
-// hold their own packages/<group>/<name>/src -- so editing freddie never
-// reloaded the worker and the only signal was one skipped-path line at boot.
-//
-// packages/ is watched whole rather than per-package src/: one recursive watcher
-// covers all of them (measured ~220ms to arm, ~30MB RSS) and isReloadableChange
-// already drops every node_modules path pnpm links underneath it.
+// framework/, NOT packages/, and that is the whole division of labour with
+// Cordis-level HMR. freddie's ~216 plugin packages under packages/ hot-swap in
+// the running worker (freddie-bundle/boot.js's hmrScopePatch scopes the `hmr`
+// row at them), so a full restart on those same saves would drop every in-flight
+// conversation to redo work the process already did in place. framework/ is the
+// opposite case and cannot be handed to HMR: cordis, the loader, the include and
+// the HMR service itself are the runtime the live tree is built out of, and every
+// mounted plugin holds framework/cordis's Context/Service classes by identity --
+// re-evaluating them under a running tree yields a tree that reports a clean
+// reload and is quietly running two class identities. Restart is the only
+// coherent answer there. Anything HMR turns out not to cover on the packages/
+// side escalates back to this same restart over WORKER_MSG.RELOAD_REQUEST.
 const FREDDIE_SOURCE_CANDIDATES = [
-  path.resolve(__dirname, '..', 'deps', 'freddie', 'packages'),
-  path.resolve(__dirname, '..', '..', 'freddie', 'packages'),
-  path.resolve(__dirname, '..', '..', 'freddie', 'src'),
+  path.resolve(__dirname, '..', 'deps', 'freddie', 'framework'),
+  path.resolve(__dirname, '..', '..', 'freddie', 'framework'),
 ]
 
-// Default the reload watch to casey's own src/ plus freddie's source root, plus
-// any extra dirs the operator names (CASEY_RELOAD_PATHS, comma-separated).
+// Default the reload watch to casey's own src/ plus freddie's framework root,
+// plus any extra dirs the operator names (CASEY_RELOAD_PATHS, comma-separated).
 // Absent dirs are skipped with a warning, never a crash.
+//
+// casey's own src/ belongs here rather than to HMR for a concrete reason: it sits
+// in bin/worker.js's static import graph, so HMR would clear its module cache and
+// then nothing would re-import it -- every live reference in the booted worker
+// would keep running the old code while the cache looked fresh. A full respawn is
+// what actually replaces it.
 export function reloadWatchPaths() {
   const paths = [path.join(__dirname)]   // src/
   // freddie is resolved through node_modules junctions, but a developer editing
-  // the freddie checkout (agent harness + gateway adapters) needs those saves to
-  // reload the worker too, else the running build silently diverges. Watched by
+  // the freddie checkout needs those saves to reach the running build. Watched by
   // DEFAULT, existence-guarded by armReloadWatchers' fs.existsSync. When no
   // candidate exists the first is still returned, so the missing-path warning
   // fires and hot reload is never quietly half-armed. (thatcher is an npm dep

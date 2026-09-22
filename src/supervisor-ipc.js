@@ -25,6 +25,11 @@ export const WORKER_MSG = Object.freeze({
   HEALTH: 'worker:health',          // periodic self-report; payload {receive, llm, store}
   DRAIN_COMPLETE: 'worker:drained', // responded to DRAIN; in-flight turns finished
   FATAL: 'worker:fatal',            // worker hit an unrecoverable boot/runtime error; payload {reason}
+  // The worker observed a source change its own in-process Cordis HMR could not
+  // apply (freddie-bundle/boot.js's installHmrEscalation) and is asking for the
+  // full drain-and-respawn instead. The worker cannot restart itself; only the
+  // parent owns fork/kill. Payload {reason}.
+  RELOAD_REQUEST: 'worker:reload-request',
 })
 
 // parent -> worker

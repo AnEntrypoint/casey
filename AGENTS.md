@@ -426,7 +426,7 @@ config/default/            bundled default config package (report-fields.yml, pe
 bin/casey.js               CLI entry; bin/casey-cli.mjs holds the COMMANDS table:
                            init / doctor / up / dashboard / cases / show / attention / handover /
                            report / health / sweep / transition / erase-contact / operators
-freddie-bundle/            casey's own Cordis plugins mounted into freddie's real boot() -- case-tools (defineTool wraps src/case-tools.js), llm-acptoapi (a real LlmAdapter), platform (WhatsApp/Discord wiring onto ctx.webServer), tool-allowlist (the security enforcement boundary)
+freddie-bundle/            casey's own Cordis plugins mounted into freddie's real boot() -- case-tools (defineTool wraps src/case-tools.js), llm-acptoapi (a real LlmAdapter), platform (WhatsApp/Discord wiring onto ctx.webServer), tool-allowlist (the security enforcement boundary); boot.js also owns the Cordis HMR scope + its escalation-to-restart net and keeps cordis.patch.yml itself live
 src/
   config-loader.js         resolves CASEY_CONFIG_DIR (or config/default/) -- report-fields.yml + persona.cjs, synchronous
   store/report-shape.js    single choke point deriving REPORT_KEYS/CRITICAL_FIELDS/APPEND_FIELDS/REPORT_SECTIONS/etc from the loaded config
@@ -464,7 +464,7 @@ src/
   hooks/typing.js          the typing indicator start/stop pair, best-effort by construction
   hooks/media.js           voice-note/photo/voice-reply media tools, all opt-in and fail-open
   llm.js                   model call wiring; self-healing backend that re-resolves a recovered provider
-  supervisor.js            fork/kill/watch parent, composed from supervisor-state.js (machine value + validated fire + /api/runtime snapshot), -worker-process.js (fork + IPC contract + ready/exit), -crash-policy.js (crash budget, backoff ladder, exit 44), -restart.js (the sequential drain-then-respawn cycle -- the two-writers-on-the-db boundary), -health.js (HEALTH tick -> degraded, incl. detectZombieReceive); supervisor-reload-watch.js owns the reload watch list
+  supervisor.js            fork/kill/watch parent, composed from supervisor-state.js (machine value + validated fire + /api/runtime snapshot), -worker-process.js (fork + IPC contract + ready/exit), -crash-policy.js (crash budget, backoff ladder, exit 44), -restart.js (the sequential drain-then-respawn cycle -- the two-writers-on-the-db boundary), -health.js (HEALTH tick -> degraded, incl. detectZombieReceive); supervisor-reload-watch.js owns the FULL-RESTART watch list (casey's own src/ + freddie's framework/ -- the trees Cordis HMR cannot replace in place)
   dashboard/server.js      express API + anentrypoint-design SPA; map/reporters/accounts routes
   dashboard/public/src/map-model.js   the ONE model the map and the rail both read: the urgency ladder (attn.js score -> band) and the shared filter predicate
 ```
@@ -578,23 +578,88 @@ this file mandates, made repeatable, and it skips loudly with exit 0 when no
 chromium binary exists. Every assertion in it is a regression that actually
 shipped at least once, so add to it rather than replacing it.
 
-`src/supervisor-reload-watch.js` builds the hot-reload watch list. It tries
-three candidate freddie source roots in order -- `<caseyRoot>/deps/freddie/
-packages` (the submodule, and the same root `scripts/link-deps.mjs` walks), the
-sibling `../freddie/packages`, then the legacy sibling `../freddie/src` -- and
-watches the first that exists.
-**This paragraph used to say the default was the sibling `../freddie/src` and
-that editing `deps/freddie` would NOT reload.** Both halves were wrong, and the
-truth was worse than either: freddie's current Cordis workspace has no root
-`src/` at all -- it is ~54 package groups under `packages/<group>/<name>/src` --
-so `../freddie/src` existed in NO layout and freddie hot-reload was dead
-everywhere, announced only by a `reload path missing, skipping` line at boot.
-An operator following the old advice and setting
-`CASEY_RELOAD_PATHS=./deps/freddie/src` named a directory that has never
-existed, and still got no reload. Freddie's own
-`@freddie/cordis-plugin-hmr` row exists inside its Cordis tree but casey does
-not enable it, so editing freddie's own source still requires a full `casey up`
-restart.
+### Live reload: two mechanisms, one boundary
+
+A save reaches the running worker through one of exactly two mechanisms, and
+which one owns a given tree is decided by whether the changed module can be
+replaced inside a live process at all. Both are on by default.
+
+**Cordis-level HMR (`@freddie/cordis-plugin-hmr`) owns the plugin trees.**
+`@freddie/freddie-base`'s own patch already carries the `hmr` row, so casey
+inherits it automatically; `freddie-bundle/boot.js`'s `hmrScopePatch()` is what
+makes it useful, replacing the row's shipped `root: ['.']` (which resolves
+against `ctx.baseUrl`, i.e. `freddie-bundle/` alone) with `freddie-bundle` plus
+every real `src` directory under `deps/freddie/packages`. A save there is traced
+through Node's module graph, the affected caches are cleared, and only the plugin
+entries that depend on the changed file are unloaded and re-registered -- in
+place, same process, same sqlite handle, same Discord gateway socket, every other
+conversation untouched. 227 chokidar roots, measured: 19ms to enumerate, 326ms to
+arm, ~52MB, 533 directories. The roots are the individual `src` dirs and never
+`packages/` itself -- that tree nests 220+ separate `node_modules`, and a
+chokidar `ignored` glob still has to `readdir` into each one to test its
+children (freddie's own `apps/cli/src/profile-boot.js` measured that at 30s+ and
+still not ready).
+
+`@freddie/cordis-plugin-hmr` needs Node's internal module loader.
+`deps/freddie/apps/cli` gets it by re-exec'ing with `--expose-internals`
+(`src/expose-internals.js`), which casey does NOT need and does not do: freddie's
+own pnpm tree carries `node-addon-require-builtin`, and
+`framework/loader/src/internal.js` falls back to its `requireBuiltin()` when the
+flag is absent. Verified live on Node 24.20: `ModuleLoader.fromInternal()`
+returns a `v2` loader with no flag set, and `bin/worker.js` is forked with no
+`execArgv` of its own. If that addon ever stops resolving, the HMR service
+throws `--expose-internals is required for HMR service` at boot -- a loud
+failure, not a silent downgrade.
+
+**The supervisor's full drain-and-respawn owns everything HMR cannot replace**
+(`src/supervisor-reload-watch.js`, watching casey's own `src/` plus the first
+freddie framework root that exists -- `<caseyRoot>/deps/freddie/framework`, else
+the sibling `../freddie/framework`). Two distinct reasons put a tree on this
+side, and both are structural, not cautious:
+
+- `deps/freddie/framework/` is the runtime the live tree is *made of* -- cordis,
+  the loader, the include, HMR itself. Every mounted plugin holds
+  `framework/cordis`'s `Context`/`Service` classes by identity, so re-evaluating
+  those modules hands the reloaded plugins a second class identity while the root
+  context keeps the first: a tree that reports a clean reload and is quietly
+  broken. freddie's own `packages/core/scope/src/index.js` carries a comment
+  documenting exactly this class of staleness bug, witnessed in freddie's own
+  HMR-driven development. (This is a deliberate divergence from
+  `profile-boot.js`, which does put `framework/` in its HMR roots -- freddie
+  standalone has no supervisor to fall back to, casey does.)
+- casey's own `src/` and `freddie-bundle/boot.js` sit in `bin/worker.js`'s static
+  import graph. HMR classifies those as "externals": it will clear their module
+  cache, but nothing re-imports them, so every live reference in the booted
+  worker keeps running the old code behind a cache that looks fresh.
+
+**Nothing falls between the two.** `freddie-bundle/boot.js`'s
+`installHmrEscalation()` subscribes to `hmr/journal` and escalates the two
+outcomes that mean the edit did not actually land -- `kind: 'failed'` (the
+re-import or re-register threw and HMR rolled the old plugins back) and a
+`kind: 'reload'` naming zero plugins (cache cleared, no plugin entry depended on
+it) -- to the supervisor over `WORKER_MSG.RELOAD_REQUEST`, the same
+`requestReload` entry the `fs.watch` callback uses. Every HMR decision is logged
+as `[casey] hmr {kind, plugins, escalate}`, because cordis's own `ctx.logger`
+goes nowhere in this tree (nothing mounts `framework/logger-console`) and HMR was
+therefore running completely silently here.
+
+**`freddie-bundle/cordis.patch.yml` is live too**, through freddie's own
+`watchUserPatches` (the mechanism `profile-boot.js` uses for its profile and home
+patch layers): it registers an exact-path watch on the HMR service and reapplies
+the whole recomposed patch stack to the live root Include transactionally.
+Verified live: changing the `casey-webserver` row's port moved the listening
+socket from `127.0.0.1:4001` to `:4009` in the same process, no restart.
+`composePatches()` therefore re-reads every layer from disk on each call and
+constructs fresh rows -- the include pushes `insert` rows into the mounted tree
+BY REFERENCE and later id-targeted patches mutate them in place, so a reapply
+that reused parsed rows would bake one generation's overrides into the bundle
+defaults permanently.
+
+**An in-flight agent turn is not killed by a save.** HMR dispatches
+`hmr/before-reload` as a bail event before touching the registry, and
+`@freddie/freddie-agent-loop` (mounted here) answers "busy" while any agent is
+mid-turn; the changed files stay stashed and the same reload runs once the work
+is quiescent, recorded as `kind: 'deferred'`.
 
 **Editing and pushing a composed dependency -- worked example (`deps/thatcher`,
 same shape for `deps/acptoapi`/`deps/design`):**
@@ -675,7 +740,7 @@ from the name alone.
 | `CASEY_RATE_LIMIT_MSGS`/`WINDOW_MS`, `CASEY_GLOBAL_RATE_LIMIT_MSGS`/`WINDOW_MS` | An over-cap message is dropped silently AS FAR AS THE CONTACT IS CONCERNED -- no reply, no synthetic "slow down" text, matching the no-fallback-text discipline -- but it is no longer silent to the operator: `hooks/dropped-intake.js` counts it and `/api/health` reports it (see "Inbound messages that never become records" below). Per-contact and aggregate-across-all-contacts limits are independent. |
 | `CASEY_RECEIVE_SILENCE_MS` | Restarts a channel that went silent this long (zombie-receive self-heal); default 0 = off. |
 | `CASEY_COOKIE_SECURE=0` | Drops the `Secure` flag on the session cookie for a plain-HTTP dev/LAN deployment (Secure is on by default). |
-| `CASEY_RELOAD`, `CASEY_RELOAD_PATHS` | `CASEY_RELOAD=0` disables hot reload (crash-restart stays on). `CASEY_RELOAD_PATHS` is a comma-separated list of extra dirs, deduped against the defaults: casey's own `src/` plus the first freddie source root that exists (`deps/freddie/packages`, else the sibling `../freddie/packages`, else the legacy `../freddie/src`). A named dir that does not exist is skipped with a warning saying edits under it will not reload -- nothing else says so. |
+| `CASEY_RELOAD`, `CASEY_RELOAD_PATHS` | Both govern the SUPERVISOR's full-restart watch only, never the in-worker Cordis HMR that owns freddie's plugin packages and `freddie-bundle/` (see "Live reload: two mechanisms, one boundary"), so `CASEY_RELOAD=0` does NOT stop plugin hot-swapping -- it stops restart-on-source-change (crash-restart stays on), and a save HMR declines then reaches nothing. `CASEY_RELOAD_PATHS` is a comma-separated list of extra dirs, deduped against the defaults: casey's own `src/` plus the first freddie framework root that exists (`deps/freddie/framework`, else the sibling `../freddie/framework`). A named dir that does not exist is skipped with a warning saying edits under it will not reload -- nothing else says so. |
 | `CASEY_TURN_HARD_DEADLINE_MS`, `CASEY_TURN_SOFT_DEADLINE_MS` | The hard deadline bounds total retry budget for a live first-attempt turn only (never a background resume); the soft deadline only picks which of two fallback strings to send once the hard deadline closes out a degraded turn. Pace these together with `ACPTOAPI_AUTO_CHAIN_CAP`/`ACPTOAPI_CHAIN_LINK_TIMEOUT_MS` below. |
 | `ACPTOAPI_AUTO_CHAIN_CAP` | acptoapi's own (`lib/auto-chain.js`). Caps candidate models per `auto` chain build. Too high risks not finishing the walk inside the turn deadline; too low risks exhausting the pool on backed-off providers before reaching a healthy one. |
 | `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS`, `ACPTOAPI_READINESS_PROBE_TIMEOUT_MS`, `ACPTOAPI_EXTRA_PROBE_TIMEOUT_MS`, `ACPTOAPI_REACHABILITY_PROBE_TIMEOUT_MS` | Four independent timeouts across acptoapi and casey's own bridge (chat-completion link, readiness pass, discovery-time probe, and `src/agent/acptoapi-bridge.js`'s reachability check). All four must agree on an outer bound, or a genuinely slow-but-working model gets marked unhealthy at an earlier, tighter layer before its own longer budget ever gets a chance. |
@@ -801,6 +866,12 @@ without restart-on-crash.
   into the same held port repeatedly.
 - The watch list is a fixed allowlist, never derived from contact input; the
   fork takes an argv array, never an interpolated shell string.
+- The supervisor is only HALF the live-reload story: freddie's plugin packages
+  and casey's own `freddie-bundle/` plugins hot-swap inside the running worker
+  through Cordis HMR and never reach this restart path, while the worker can ASK
+  for a restart (`WORKER_MSG.RELOAD_REQUEST`) when its own HMR declines a change.
+  See "Live reload: two mechanisms, one boundary" under Dev workflow for which
+  tree belongs to which mechanism and why.
 
 ## Design principles (preserve these)
 
