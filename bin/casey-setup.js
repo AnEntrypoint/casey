@@ -25,11 +25,15 @@ WHATSAPP_APP_SECRET=
 # Required too: casey refuses to serve WhatsApp without it.
 WHATSAPP_VERIFY_TOKEN=
 # Fix the public-facing webhook path (useful behind a reverse proxy or ngrok).
+# The same path is served on BOTH ports below.
 #WHATSAPP_WEBHOOK_PATH=/webhooks/whatsapp
 
-# Meta posts the webhook to freddie's own socket, NOT the dashboard's --
-# they are two different listeners and sharing a port costs the dashboard
-# EADDRINUSE. This, not --port, is the address you register with Meta.
+# freddie's own socket carries the webhook, and it is NOT the dashboard's --
+# two different listeners, and sharing a port costs the dashboard EADDRINUSE.
+# But EITHER is a valid address to register with Meta: the same webhook is also
+# served on the dashboard's --port, off the same adapter and the same handler.
+# Behind a reverse proxy that forwards one port, that port is the dashboard's
+# (the SPA and /api/* live there), so register that one. Nothing to switch on.
 #CASEY_WEBHOOK_HOST=127.0.0.1
 #CASEY_WEBHOOK_PORT=4001
 
