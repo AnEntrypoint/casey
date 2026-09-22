@@ -10,7 +10,7 @@
 import { tagList, parseReport } from '../../timestamp.js'
 import { snapshotDroppedIntake } from '../../hooks/dropped-intake.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
-import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI } from '../../store/report-shape.js'
+import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI, TIER_LABELS } from '../../store/report-shape.js'
 import { KNOWN_VALUE_FIELDS, isKnownValueField, readKnownValues, canonicalizeFieldValue } from '../../field-values.js'
 import { mountRoutes } from './register.js'
 
@@ -392,6 +392,13 @@ export function getConfig({ store, authed, SAST_TZ }) {
       // case app-view.js/nav-config.js fall back to their own hardcoded
       // literals -- byte-identical to before this existed.
       dashboard_ui: DASHBOARD_UI,
+      // What each contact access tier is CALLED here, one entry per rung of
+      // contact-tiers.js's ladder, ALREADY RESOLVED against the deployment's own
+      // dashboard_ui.tier_labels with casey's generic label as the fallback -- so
+      // the SPA renders a complete label map whether or not this deployment
+      // renamed a rung, and never needs its own copy of the fallbacks. Never null
+      // and never partial, unlike dashboard_ui above.
+      tier_labels: TIER_LABELS,
     })
   }
 }

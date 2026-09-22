@@ -18,6 +18,7 @@ import { loadDomainConfig } from '../config-loader.js'
 import { MANDATORY_MINIMUM_FIELDS } from '../store/report-shape.js'
 import { buildPromptContext } from './prompt-context.js'
 import { headerSection, caseContextSection, gatherSection, replySection } from './prompt-sections.js'
+import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN } from '../contact-tiers.js'
 
 const { persona } = loadDomainConfig()
 
@@ -77,7 +78,17 @@ function selfCheckLoadBearingPromptContent() {
   // the reporter-tier one above -- an edit that ungates them puts an
   // instruction to call an invisible tool back into the default tier's prompt,
   // and nothing else in the pipeline would notice.
-  const workerText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: 'field_worker' })
+  const workerText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_FIELD_WORKER })
+  // The SAME case composed for the TOP rung. Every tier branch in
+  // prompt-sections.js is a RANK test (canQueryCases, contact-tiers.js) rather
+  // than a field_worker equality, precisely so a rung added above field_worker
+  // inherits the elevated instructions instead of silently falling back to the
+  // report-only prompt -- which is what an equality test does, and what it did
+  // before this rung existed. Asserting the top rung's composition here is what
+  // keeps that true: a future edit that rewrites one of those branches back into
+  // an equality comparison passes every other check in this function and fails
+  // only this one.
+  const signOffText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_ANIMAL_HEALTH_TECHNICIAN })
   const required = [
     { name: 'two-item question requirement', pattern: /top TWO|TOP TWO|top two/ },
     { name: 'gap-detection instruction (reporter went quiet)', pattern: /person was gone a while/ },
@@ -149,6 +160,9 @@ function selfCheckLoadBearingPromptContent() {
     }
     if (pattern.test(text)) {
       throw new Error(`caseSystemPrompt regression: field_worker-only instruction leaked to reporter tier (${name}). That tier cannot see or dispatch the tool this names -- see case-tools-gates.js REPORT_ONLY_TOOLS.`)
+    }
+    if (!pattern.test(signOffText)) {
+      throw new Error(`caseSystemPrompt regression: elevated instruction missing at the ${TIER_ANIMAL_HEALTH_TECHNICIAN} tier (${name}). A tier branch was rewritten as a field_worker EQUALITY comparison, so the HIGHEST rung is composing the report-only prompt while gateByTier still grants it every tool -- use canQueryCases (contact-tiers.js), never ===.`)
     }
   }
   selfCheckFenceIntegrity()

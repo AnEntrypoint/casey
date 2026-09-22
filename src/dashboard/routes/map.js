@@ -11,6 +11,8 @@ import { rowInt } from '../../safe.js'
 import { tsMs, parseReport } from '../../timestamp.js'
 import { mergeTag } from '../../hooks/heuristics.js'
 import { mountRoutes } from './register.js'
+import { canQueryCases, resolveTierValue } from '../../contact-tiers.js'
+import { TIER_LABELS } from '../../store/report-shape.js'
 
 // Capped like every other list endpoint (PAGE_MAX-scale window) so clustering
 // never chokes on an unbounded pull; excluded-count is reported, never silently
@@ -188,7 +190,11 @@ export function getMapWorkers({ store, authed }) {
     const contacts = await store.listContacts({ limit: 1000 })
     const overdueById = new Set(classifyWorkerCheckins(contacts, now, checkinWindowMs).map(w => w.contact_id))
     const workers = contacts
-      .filter(c => c.tier === 'field_worker' && c.last_location_lat != null && c.last_location_lon != null && c.last_location_at)
+      // canQueryCases (a RANK test, contact-tiers.js), not a field_worker
+      // equality: an animal health technician checks in and gets dispatched
+      // exactly like an eco ranger does, and an equality test here would have
+      // dropped the highest rung off the dispatch map entirely.
+      .filter(c => canQueryCases(c.tier) && c.last_location_lat != null && c.last_location_lon != null && c.last_location_at)
       .map(c => workerPinProjection(c, { now, staleMs, checkinWindowMs, overdue: overdueById.has(c.id) }))
       .filter(w => Number.isFinite(w.lat) && Number.isFinite(w.lon) && Math.abs(w.lat) <= 90 && Math.abs(w.lon) <= 180)
     res.json({ workers, stale_ms: staleMs, checkin_window_ms: checkinWindowMs })
@@ -253,7 +259,12 @@ export function postCaseDispatch({ store, authed, actingOperator }) {
     if (!workerId) return res.status(400).json({ error: 'worker_id is required' })
     const worker = store.getContact ? await store.getContact(workerId).catch(() => null) : null
     if (!worker) return res.status(404).json({ error: 'worker not found' })
-    if (worker.tier !== 'field_worker') return res.status(400).json({ error: 'selected contact is not a field_worker' })
+    // A RANK test (contact-tiers.js): every rung above the casual reporter is
+    // dispatchable, so an animal health technician can be sent to a case. The
+    // refusal names the rung the contact actually holds, via its DISPLAY label,
+    // because this string reaches an operator who never sees the enum value
+    // anywhere else in the console.
+    if (!canQueryCases(worker.tier)) return res.status(400).json({ error: `selected contact is a ${TIER_LABELS[resolveTierValue(worker.tier)]} and cannot be dispatched to` })
     const op = actingOperator(req)
     const note = String(req.body?.note || '').trim().slice(0, 500)
     // PII discipline: the case's own timeline may already carry the contact's

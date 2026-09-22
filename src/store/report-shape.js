@@ -8,6 +8,7 @@
 // thatcher" goal) instead of pinned to the animal-health domain.
 
 import { loadDomainConfig } from '../config-loader.js'
+import { TIER_ORDER, tierLabel } from '../contact-tiers.js'
 
 // Pure transform from a report-fields.yml-shaped object into every derived
 // shape its importers consume (attn.js, case-health.js, case-store.js,
@@ -157,6 +158,28 @@ export function deriveReportShape(reportFields) {
   // its own hardcoded label/full item set, so this stays purely additive.
   const DASHBOARD_UI = reportFields.dashboard_ui || null
 
+  // What each contact access tier is CALLED in front of the team, per rung of
+  // contact-tiers.js's ladder. Declared under dashboard_ui as
+  // `tier_labels: {field_worker: Eco Ranger, ...}`.
+  //
+  // A LABEL, deliberately, and not a rename of the enum value -- which is the
+  // load-bearing half of this. The stored values live in two live enum columns
+  // (`contact.tier` and `case.reporter_tier`), the second of which holds
+  // historical creation-time snapshots that must keep meaning what they meant
+  // when they were written, and they are compared against by name in casey's
+  // agent tool gate, prompt composer, attention scorer, health sweep and map
+  // projection. Renaming the value would be a data migration of every deployed
+  // database plus a rewrite of every one of those comparisons, to change words on
+  // a screen. Renaming the label changes the words on the screen.
+  //
+  // Every rung falls back to casey's own generic label (contact-tiers.js's
+  // DEFAULT_TIER_LABELS) when unset, so declaring none -- as casey's own bundled
+  // default config does -- leaves this purely additive. Served to the SPA through
+  // /api/config alongside the rest of dashboard_ui.
+  const TIER_LABELS = Object.fromEntries(
+    TIER_ORDER.map(tier => [tier, tierLabel(tier, DASHBOARD_UI?.tier_labels || null)]),
+  )
+
   return {
     REPORT_KEYS, REPORT_KEY_ORDER, CRITICAL_FIELDS, APPEND_FIELDS, NEVER_INFERRED_FIELDS,
     SEVERITY_SIGNAL_FIELDS,
@@ -168,6 +191,7 @@ export function deriveReportShape(reportFields) {
     REPORT_FIELD_DEFS: reportFields.fields,
     REPORT_GEO_FIELD_DEFS: reportFields.geo_fields || [],
     DASHBOARD_UI,
+    TIER_LABELS,
   }
 }
 
@@ -192,3 +216,4 @@ export const REPORT_TOOL_DESCRIPTION = _default.REPORT_TOOL_DESCRIPTION
 export const REPORT_FIELD_DEFS = _default.REPORT_FIELD_DEFS
 export const REPORT_GEO_FIELD_DEFS = _default.REPORT_GEO_FIELD_DEFS
 export const DASHBOARD_UI = _default.DASHBOARD_UI
+export const TIER_LABELS = _default.TIER_LABELS

@@ -13,6 +13,7 @@
 
 import { tsMs } from '../timestamp.js'
 import { LOCATION_STALE_MS, fenced } from './prompt-context.js'
+import { canQueryCases } from '../contact-tiers.js'
 
 // Identity, the untrusted-data rule, the enquiry path and the worker's last
 // known position.
@@ -24,7 +25,7 @@ import { LOCATION_STALE_MS, fenced } from './prompt-context.js'
 // pointed at an identity the persona never established.
 export function headerSection(persona, caseRow, contact) {
   const name = persona.agentName || 'casey'
-  const isWorker = contact?.tier === 'field_worker'
+  const isWorker = canQueryCases(contact?.tier)
   return [
     ...persona.domainIntro,
     ``,
@@ -132,7 +133,7 @@ export function caseContextSection(caseRow, contact, { firstMessage, reportLine,
     // Multiple reports -- field_worker tier only. case_switch is gated to
     // field_worker (case-tools-gates.js), so on the default reporter tier this
     // used to instruct the model to call a tool it cannot see or dispatch.
-    ...(contact?.tier === 'field_worker' ? [
+    ...(canQueryCases(contact?.tier) ? [
       `If the worker could have more than one open report, ask which one they mean`,
       `before recording. If they name a different report, use case_switch to move to it.`,
       ``,
@@ -206,7 +207,7 @@ export function gatherSection(persona, caseRow, contact, { returnedAfterGap, rep
     // case_update is field_worker-gated (case-tools-gates.js REPORT_ONLY_TOOLS),
     // so telling the default reporter tier to keep its summary current named a
     // tool that tier can neither see nor dispatch.
-    `Recording is INVISIBLE to the person.${contact?.tier === 'field_worker' ? ' Keep case_update summary current.' : ''}`,
+    `Recording is INVISIBLE to the person.${canQueryCases(contact?.tier) ? ' Keep case_update summary current.' : ''}`,
     `If a message reads like a rough voice transcript with contradictory facts,`,
     `ask one clarifying question before recording.`,
     // No "USER DIRECTIVE:" prefix. It is this repo's own authoring vocabulary,
@@ -295,7 +296,7 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
       // "answer from tools" only for the tier that HAS the enquiry tools; the
       // reporter tier's four tools (case-tools-gates.js REPORT_ONLY_TOOLS)
       // cannot answer a question about anything.
-      ? [`FIRST MESSAGE.${contact?.tier === 'field_worker' ? ` If it's an enquiry, answer from tools.` : ''} If greeting/report:`,
+      ? [`FIRST MESSAGE.${canQueryCases(contact?.tier) ? ` If it's an enquiry, answer from tools.` : ''} If greeting/report:`,
          `(a) greet warmly, thank ONLY if they actually described ${persona.entitySubjectPlural};`,
          `(b) give reference ${caseRow.ref} (reproduce exactly, write sentence around it);`,
          `(c) MAY add one gentle question. Vary phrasing.`,
@@ -305,7 +306,7 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
          ...(process.env.CASEY_PUBLIC_URL ? [`They can always just keep talking here. Only if they say they would rather type it in themselves, offer this link once: ${process.env.CASEY_PUBLIC_URL}/report?ref=${caseRow.ref}`] : [])].join('\n')
       : `Continue gently from earlier messages.`,
     // Worker catch-up
-    ...(contact?.tier === 'field_worker' ? [persona.workerCatchUpText] : []),
+    ...(canQueryCases(contact?.tier) ? [persona.workerCatchUpText] : []),
     ``,
     // The on-site window is the only chance to capture these: once the worker
     // drives away, nobody can answer them at all, and a visit is dispatched on
@@ -350,7 +351,7 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     `other place, any time -- one short warm clause, never a second question.`,
     // case_transition is field_worker-gated (case-tools-gates.js), so on the
     // default reporter tier this block instructed a call that tier cannot make.
-    ...(contact?.tier === 'field_worker' ? [
+    ...(canQueryCases(contact?.tier) ? [
       ``,
       `BEFORE YOU MARK THIS DONE (case_transition to resolved): if you have not already`,
       `recorded what happened or what was given, gently ask once what the outcome was`,
