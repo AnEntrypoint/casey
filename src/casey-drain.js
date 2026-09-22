@@ -18,6 +18,14 @@ import { splitExternalId } from './hooks/handler.js'
 // rarest path in the file, and the one that exists to make sure a lost report
 // is not lost silently. It threw instead of escalating.
 import { mergeTag } from './hooks/heuristics.js'
+// The one shared answer to "did the contact actually get a reply", so this scan
+// and casey-resume-scan.js's cannot drift on it. A guaranteed-fallback status
+// message is not a reply: a LIVE turn that times out on a conversation which ALSO
+// has a queued msgId waiting wrote an outbound row here too, and that row burned
+// the queued message positionally -- the exact burn this file's own queuedRedrive
+// note guards against on its own degrade path, arriving from the live path
+// instead.
+import { completesTurn } from './casey-resume-scan.js'
 
 // A dead-lettered queued message means the LLM-down queue has given up on a
 // report a contact already sent. hooks/case-intake.js's queue gate deliberately
@@ -73,7 +81,7 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
           m = ev.text.match(/^queue-drive-failed:(.+)$/)
           if (m) dead.add(m[1])
         }
-        if (ev.kind === 'outbound' || ev.kind === 'draft') {
+        if (completesTurn(ev)) {
           for (const id of queued.keys()) completedAfter.add(id)
         }
       }
