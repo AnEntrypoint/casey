@@ -95,6 +95,14 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
     }))
   } catch (e) {
     log.error?.('[casey] findOrCreateCase failed; dropping inbound', { channel, error: e.message })
+    // COUNTED, not merely logged. AGENTS.md's guarantee is that every inbound
+    // casey throws away is counted even though it reaches no case, and THIS is
+    // the path where the message reaches no case at all -- no row, no timeline,
+    // no queue -- while the platform has already had its 2xx and will never
+    // redeliver. It was the one throw-away with no counter behind it, so a store
+    // too contended to take the write was indistinguishable on /api/health from
+    // no traffic having arrived.
+    recordDroppedInbound('case_resolve_failed', { channel, store, log })
     return { done: { to: replyTo, text: '', platform, error: e.message } }
   }
 
@@ -123,6 +131,12 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
     // rejection. Same explicit-drop discipline as the findOrCreateCase catch
     // above: log loud, send nothing (no fallback text).
     log.error?.('[casey] recordInbound failed; dropping inbound', { caseId: caseRow.id, channel, error: e.message })
+    // Counted for the same reason as the findOrCreateCase catch above, and kept a
+    // DISTINCT reason from it: here the report row does exist, so what an
+    // operator is looking at is a real report with one of its messages missing,
+    // not an absent record. The two need different answers and must not tally
+    // together.
+    recordDroppedInbound('inbound_record_failed', { channel, store, log })
     return { done: { to: replyTo, text: '', platform, caseId: caseRow.id, error: e.message } }
   }
   // A resume re-drive (msg.resume) intentionally carries the ORIGINAL msg_id of

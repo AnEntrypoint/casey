@@ -56,6 +56,8 @@ export const DROP_REASONS = {
   rate_limited_global: 'all contacts together sent more than the global allowance in the window',
   burst_buffer_full: 'a contact sent faster than a turn could finish and the hold buffer filled up',
   store_not_ready: 'the store was not initialized, so the message could not be recorded at all',
+  case_resolve_failed: 'the store could not be read or written to open or find the report, so the message reached no record at all (the sending platform was acked already and will never redeliver it)',
+  inbound_record_failed: 'the report was opened but the message itself could not be appended to it, so that report exists with the message missing from its timeline',
   gateway_gap_unresumable: 'the gateway reconnected but could not resume the previous session, so anything sent during that disconnect window was never delivered (a count of windows, not of messages -- how many were in one is not knowable)',
   gateway_identity_unknown: 'a guild message arrived before the gateway reported casey own user id, so the mention filter could not evaluate it and failed closed',
 }

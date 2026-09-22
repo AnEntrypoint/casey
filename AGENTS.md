@@ -1357,17 +1357,26 @@ without restart-on-crash.
   discarded -- the one real exception to this guarantee, and it is counted
   rather than merely logged (see below).
 - **A message casey throws away is counted, even though it reaches no case.**
-  Six paths turn an inbound away ABOVE `recordInbound`, so the message exists
-  in no case, on no timeline and in no queue. Four are admission decisions
+  Eight paths turn an inbound away at or above `recordInbound`, so the message
+  exists in no case, on no timeline and in no queue. Four are admission decisions
   inside casey: the two rate limits, a full burst buffer, and an uninitialized
-  store. Two are losses at the TRANSPORT edge, above admission entirely --
+  store. Two are STORE-WRITE failures that survive `store/busy-retry.js`'s whole
+  budget -- `case_resolve_failed` (`findOrCreateCase` could not open or find the
+  report, so the message reached no record at all) and `inbound_record_failed`
+  (the report row exists but the message could not be appended to its timeline).
+  These two are the reason the retry budget is measured in seconds rather than
+  milliseconds: the platform has already had its 2xx by the time either fires, so
+  nothing will ever redeliver the message. Two are losses at the TRANSPORT edge,
+  above admission entirely --
   `gateway_gap_unresumable` (a reconnect that could not RESUME, so whatever
   Discord buffered during the disconnect was never replayed) and
   `gateway_identity_unknown` (a guild message that arrived before the gateway
   had reported casey's own user id, so `casey-adapters.js`'s @mention filter
   could not evaluate it and failed closed). `hooks/dropped-intake.js` counts all
-  six and `/api/health` reports them as `dropped_inbound`, with a bounded audit
-  trail appended to a singleton `channel:'system'` case.
+  eight and `/api/health` reports them as `dropped_inbound`, with a bounded audit
+  trail appended to a singleton `channel:'system'` case -- the COUNT is in memory
+  and authoritative, while that audit row is best-effort, so a store contended
+  enough to cause the two write failures may also lose the row recording them.
   **The last one counts WINDOWS, not messages, and the difference is
   load-bearing.** Nothing on casey's side can know how many messages Discord
   held for an unresumable session and then discarded, so `gateway_gap_unresumable`
@@ -1645,6 +1654,21 @@ operator-where directly with no runtime feature-detect and no fallback.
 busybase's `src/*.js` are gitignored bun-build outputs -- fixes go in the `.ts`
 sources in the busybase repo and are rebuilt there, never patched in a
 casey-side copy.
+
+**busybase opens the file with `journal_mode=delete` and `busy_timeout=0`, so
+sqlite NEVER waits for a lock -- it fails instantly with `SQLITE_BUSY`, and a
+plain reader blocks a writer.** That makes any concurrent reader on
+`data/db.sqlite` -- another `casey`/`uhh` CLI command, a backup, an audit script
+-- able to fail casey's own writes while it runs, and a burst of concurrent
+inbounds able to fail each other's. `src/store/busy-retry.js` is the only defence
+and it is a USERLAND retry: full jitter (a fixed ladder cannot break a symmetric
+collision -- read its own header for the live incident) inside a seconds-long
+time budget, chosen against what is lost rather than against latency. It cannot
+save a write from a reader that holds the lock continuously; the real fix for
+that is `busy_timeout`/WAL on busybase's own handle, which belongs in the
+busybase repo's `.ts` sources and must not be patched casey-side. When the budget
+is spent on the intake path the loss is COUNTED (`case_resolve_failed` /
+`inbound_record_failed`, see "A message casey throws away is counted").
 
 **busybase binds numeric columns as TEXT, so every number read off a row
 arrives as a digit string.** Both readers and writers have to defend against
