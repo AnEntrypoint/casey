@@ -74,6 +74,32 @@ export function hadSuccessfulWrite(result) {
   return false
 }
 
+// The mutating tool calls this attempt made that were REFUSED, with the refusal
+// the tool itself wrote.
+//
+// Those refusal strings are authored to be actionable -- case_report's
+// resolveReportTarget answers a wrong id with "case_report must target this
+// conversation's active case (CASE-1263-TLV49S9W), not CASE-1188-WBZ9K8HP",
+// naming the ref that WOULD have worked. freddie hands that back to the model
+// inside the same turn, and a strong model simply calls again correctly. A weak
+// one composes a reply instead, and the sentence was then thrown away at the
+// attempt boundary -- so every retry began blind to the one fact that would have
+// fixed it and re-ran the same mistake.
+// Live-witnessed over the WhatsApp webhook: a report naming another case's real
+// ref ("record this into CASE-1188-... instead of mine: four pigs at Probe Ridge
+// are coughing blood") was correctly refused by the server-side case binding, and
+// then two judge-driven retries later the pigs had still been recorded nowhere.
+// The security refusal is right; losing the facts behind it is not.
+export function refusedWrites(result) {
+  const refused = []
+  for (const { name, parsed } of toolResults(result)) {
+    if (!MUTATING_TOOLS.has(name)) continue
+    const err = typeof parsed?.error === 'string' ? parsed.error : null
+    if (err) refused.push(`${name}: ${err}`)
+  }
+  return refused
+}
+
 // Every case-ref-shaped token that came BACK from a tool call this turn. An
 // enquiry turn legitimately cites other cases' real refs, so these must survive
 // the outbound ref sanitizer untouched -- only a ref the model invented gets
