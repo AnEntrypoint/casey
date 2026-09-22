@@ -187,9 +187,9 @@ export function buildTurnRequest({
 // to retry, or `{ done: true, text, jargonReasons?, falseConfirmReasons? }`.
 //
 // Everything here runs INSIDE the attempt loop on purpose: an empty,
-// verbatim-repeated, judge-blanked, or false-confirming reply is a RETRYABLE
-// miss with the judge's reasons fed straight back to the model on the next
-// attempt, never an instant terminal degrade. Judging outside the loop sends a
+// verbatim-repeated, judge-blanked, jargon-leaking or false-confirming reply is
+// a RETRYABLE miss with the judge's reasons fed straight back to the model on
+// the next attempt, never an instant terminal degrade. Judging outside the loop sends a
 // healthy model's recoverable miss straight to the "Still working" fallback and
 // parks a real report in draft limbo with no reply at all. Retrying re-rolls
 // model selection too: the bridge penalizes the served model in the shared
@@ -233,13 +233,34 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   }
   // USER DIRECTIVE: no deterministic text classification anywhere -- what the
   // reply MEANS is judged by the single real-LLM judgeReply call
-  // (hooks/reply-judge.js), never a regex/word-list. A jargon-only verdict is
-  // NOT retried -- it is the one recoverable shape (real content, just needs a
-  // human to reword one word), carried to the post-loop hold.
+  // (hooks/reply-judge.js), never a regex/word-list.
   const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result)
   const verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText })
   if (verdict.clean) return { done: true, text: candidate }
-  if (verdict.category === 'jargon') return { done: true, text: candidate, jargonReasons: verdict.reasons }
+  // INTERNAL JARGON LEAK (reply-judge.js shape 6) is the shape whose fix is the
+  // most purely mechanical of all of them: the reply's content is already right
+  // and one internal word has to be said in plain language instead. So it is
+  // RETRIED with the offending words named back to the model, the same
+  // discipline every other recoverable shape in this function already uses, and
+  // only a budget-exhausted leak falls through to turn-outcome.js's draft hold
+  // where a human rewords it.
+  //
+  // Holding on the FIRST flag spends none of the retry budget and leaves the
+  // reporter with total silence -- the exact harm this function's header names.
+  // It is also strictly harsher than the treatment of a MULTI-ASK wall of text,
+  // which is retried and then SENT ANYWAY on the stated grounds that silence on
+  // a real report is worse than an imperfect reply; a single leaked word is less
+  // damaging to a reporter than a wall of text, not more.
+  if (verdict.category === 'jargon') {
+    if (canRetry) {
+      log.warn?.('[casey] reply judge flagged an internal jargon leak; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
+      await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
+      return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it used internal system words this person must never read: '
+        + verdict.reasons.join('; ')
+        + '. Say the same thing again, just as warmly, in their own plain language. Never the words "case", "ticket", "triage", "workflow", "status", "priority", "escalate", "transition" or "autonomy" -- speak about "your report", "what you told me", or "the animals" instead. A reference code stays written exactly as it is.]' }
+    }
+    return { done: true, text: candidate, jargonReasons: verdict.reasons }
+  }
   // The FALSE CONFIRMATION shape is only in the judge's prompt when NO write
   // landed (reply-judge.js gates shape 8 on hadSuccessfulWrite === false), so a
   // false-confirmation reason arriving when a write DID land is the judge

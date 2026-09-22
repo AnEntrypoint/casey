@@ -140,6 +140,11 @@ export class Casey {
       log: this.log,
       notifyHandoff: this.opts.notifyHandoff || discordHandoffNotifier(undefined, this.log),
     })
+    // Captured off the RAW handler, not off this.gateway.handleInbound: both the
+    // gateway arrow and _wrapInflight's wrapper are plain functions that do not
+    // carry the handler's own properties forward, so the claim probe has to be
+    // taken here or it silently reads undefined.
+    this._isContactClaimed = handler.isClaimed || null
     this._wireAlerting()
 
     // 3) build adapters for the requested channels (casey's own DM/mention
@@ -672,7 +677,7 @@ export class Casey {
     this._draining = true
     try {
       return await resumePendingTurnsBody(
-        { store: this.store, log: this.log, gateway: this.gateway, adapters: this.adapters, handle },
+        { store: this.store, log: this.log, gateway: this.gateway, adapters: this.adapters, handle, isClaimed: this._isContactClaimed },
         { maxCases, maxRedrives, spacingMs },
       )
     } finally { this._draining = false }
