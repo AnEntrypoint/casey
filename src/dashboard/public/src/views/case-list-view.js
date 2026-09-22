@@ -48,6 +48,12 @@ import { confirmDialog } from '../components/dialog-shell.js';
 import { FilterChip, ClearChip } from '../components/filter-chip.js';
 const h = webjsx.createElement;
 
+// The report blob as it arrives on a list row: a JSON string on the wire,
+// already absent or unparseable on a row that never got one.
+function parseReportJson(raw) {
+  try { return raw ? JSON.parse(raw) : {}; } catch { return {}; }
+}
+
 // How many reports the server says exist, versus how many arrived. The list
 // poll that owns state.allCases lives in main.js and does not ask for the
 // total, so this asks for it directly -- a limit=1 request, which returns one
@@ -132,11 +138,30 @@ export function matchesClientFilt(c) {
     if (state.filt.source === 'channel' && !tags.includes('intake_mode:channel')) return false;
     if (state.filt.source === 'public_form' && !tags.includes('intake_mode:public_form')) return false;
   }
+  // Known-value report-field narrowing (filters-bar.js's knownValueFilters).
+  // The report blob is already in the PII-free /api/cases projection, so this
+  // needs no extra fetch. Compared case-insensitively on the trimmed value and
+  // nothing further: the options offered ARE stored values, so an exact-ish
+  // compare is the honest reading of "reports whose species is this one" -- it
+  // deliberately does not token-match, which would quietly widen "cattle" to
+  // every row that happens to mention cattle somewhere.
+  const fv = state.filt.fv;
+  if (fv && Object.values(fv).some(Boolean)) {
+    const rep = parseReportJson(c.report);
+    for (const [k, want] of Object.entries(fv)) {
+      if (!want) continue;
+      if (String(rep[k] == null ? '' : rep[k]).trim().toLowerCase() !== String(want).trim().toLowerCase()) return false;
+    }
+  }
   return true;
 }
 
+function anyFieldValueFilter() {
+  return Object.values(state.filt.fv || {}).some(Boolean);
+}
+
 export function anyFilterActive() {
-  return !!(state.mineOnly || attentionOnly || state.filt.q || state.filt.status || state.filt.channel || state.filt.source);
+  return !!(state.mineOnly || attentionOnly || state.filt.q || state.filt.status || state.filt.channel || state.filt.source || anyFieldValueFilter());
 }
 
 export function visibleCases() {

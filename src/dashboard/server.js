@@ -555,7 +555,13 @@ function compressResponses(req, res, next) {
 }
 
 // opts.sendReply(caseRow, text) -> Promise; lets the operator reply on the channel.
-export function createDashboard(store, { port = 4000, sendReply = null, llmStatus = null, runSweep = null, receiveStatus = null, runtimeStatus = null, queueStatus = null, alertWebhookUrl = null } = {}) {
+// callLLM is the SAME resilient backend the inbound turn uses (bin/worker-boot.js's
+// makeResilientCallLLM), handed in so a dashboard-side one-off model call -- today
+// exactly one: routes/operations.js's field-value canonicalize check -- reuses the
+// live provider chain instead of resolving a second backend of its own. Null in
+// dashboard-only mode (`casey dashboard`), where every consumer of it degrades to
+// its own manual path.
+export function createDashboard(store, { port = 4000, sendReply = null, llmStatus = null, callLLM = null, runSweep = null, receiveStatus = null, runtimeStatus = null, queueStatus = null, alertWebhookUrl = null } = {}) {
   if (!store) throw new Error('createDashboard requires a store instance')
   const app = express()
   // Trust-proxy is env-driven and defaults OFF (req.ip stays the raw socket
@@ -739,7 +745,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     UNCLAIMED_ASSIGNEE,
     rankAttention, sendReply, fmtTimeSAST, fmtPhone27, SAST_TZ,
     printableReportRow, printableReportTable, printableReport,
-    getWebhookDeliveryStatus, llmStatus, runSweep, receiveStatus,
+    getWebhookDeliveryStatus, llmStatus, callLLM, runSweep, receiveStatus,
     runtimeStatus, queueStatus, alertWebhookUrl,
   }
 

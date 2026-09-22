@@ -90,6 +90,10 @@ async function main() {
     // recovery the instant the provider comes back -- no separate probe to drift
     // from reality.
     llmStatus: casey.resilientStatus,
+    // ...and the same backend itself, for the dashboard's own one-off model
+    // call (the field-value canonicalize check). Same self-healing resolution,
+    // same provider chain, no second backend to drift from this one.
+    callLLM: casey.resilientCallLLM,
     runtimeStatus: runtime.runtimeStatus,
     forked,
   })

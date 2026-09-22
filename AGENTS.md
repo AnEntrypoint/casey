@@ -667,6 +667,38 @@ BY REFERENCE and later id-targeted patches mutate them in place, so a reapply
 that reused parsed rows would bake one generation's overrides into the bundle
 defaults permanently.
 
+**A RESTART DOES NOT COST THE DISCORD GATEWAY BACKLOG.** The supervisor's cycle
+is a full drain-then-respawn -- the old worker exits before the new one starts
+(`supervisor-restart.js`) -- so anything the gateway client held in process
+memory died with every reload, and the Discord session id plus sequence number
+are exactly that. A fresh IDENTIFY forfeits every dispatch Discord buffered
+during the downtime SILENTLY: no error, no gap marker, the connection just comes
+up empty. `src/adapters/discord-lib/session-store.js` persists the session id,
+resume url, sequence and bot user id to `<dataDir>/discord-gateway-session.json`,
+and `DiscordAdapter.start()` restores them before the socket opens, so a
+restarted worker sends `op: RESUME` and Discord replays what it missed. The
+replay is safe because `hooks/case-intake.js`'s `recordInbound` dedups atomically
+on `msg_id` under the per-conversation lock -- at-least-once from Discord,
+exactly-once in casey -- which is why a debounced sequence (at most a second
+stale after a SIGKILL) is the right trade: replaying a message is free, losing
+one is not. Two rules that are not optional:
+
+- **The bot user id is part of the session, not an extra.** A RESUME sends no
+  READY, so the bot's own user id -- which only READY carries -- is never
+  re-delivered on a resumed connection. Without it restored, the resumed worker
+  runs with a null identity and the guild @mention filter correctly fails closed
+  on every guild message, replayed ones first: the resume delivers the very
+  messages it exists to save and the filter discards them one layer up. A stored
+  session with no identity is therefore NOT resumed at all -- casey identifies
+  fresh instead, because an unresumable-but-hearing connection beats a
+  resumed-but-deaf one.
+- **A refused RESUME is the one moment casey can know messages were lost**, and
+  it is counted (`gateway_gap_unresumable`, see Design principles) rather than
+  logged and forgotten. Discord does not document how long a session stays
+  resumable and answers `INVALID_SESSION` when it no longer is, which is the real
+  authority; `CASEY_DISCORD_SESSION_MAX_AGE_MS` only stops casey attempting a
+  resume with state so old the attempt is pure latency.
+
 **An in-flight agent turn is not killed by a save.** HMR dispatches
 `hmr/before-reload` as a bail event before touching the registry, and
 `@freddie/freddie-agent-loop` (mounted here) answers "busy" while any agent is
@@ -751,6 +783,7 @@ from the name alone.
 | `CASEY_DRAIN_POLL_INTERVAL_MS` | Background poll that drains LLM-down-queued turns once the provider recovers, independent of any new inbound arriving on the same conversation -- without it a queued contact can wait indefinitely even after the backend is healthy again. |
 | `CASEY_RATE_LIMIT_MSGS`/`WINDOW_MS`, `CASEY_GLOBAL_RATE_LIMIT_MSGS`/`WINDOW_MS` | An over-cap message is dropped silently AS FAR AS THE CONTACT IS CONCERNED -- no reply, no synthetic "slow down" text, matching the no-fallback-text discipline -- but it is no longer silent to the operator: `hooks/dropped-intake.js` counts it and `/api/health` reports it (see "Inbound messages that never become records" below). Per-contact and aggregate-across-all-contacts limits are independent. |
 | `CASEY_RECEIVE_SILENCE_MS` | Restarts a channel that went silent this long (zombie-receive self-heal); default 0 = off. |
+| `CASEY_DISCORD_SESSION_MAX_AGE_MS` | Default 1h. How stale the persisted Discord gateway session may be and still be worth a RESUME attempt (see "A RESTART DOES NOT COST THE DISCORD GATEWAY BACKLOG"). Discord itself is the authority on resumability and answers `INVALID_SESSION` when a session is gone, so this is not a correctness knob -- it only stops casey spending a round trip resuming state from a box that was off overnight, and stops a months-old file being reported as a gap an operator could act on. |
 | `CASEY_COOKIE_SECURE=0` | Drops the `Secure` flag on the session cookie for a plain-HTTP dev/LAN deployment (Secure is on by default). |
 | `CASEY_RELOAD`, `CASEY_RELOAD_PATHS` | Both govern the SUPERVISOR's full-restart watch only, never the in-worker Cordis HMR that owns freddie's plugin packages and `freddie-bundle/` (see "Live reload: two mechanisms, one boundary"), so `CASEY_RELOAD=0` does NOT stop plugin hot-swapping -- it stops restart-on-source-change (crash-restart stays on), and a save HMR declines then reaches nothing. `CASEY_RELOAD_PATHS` is a comma-separated list of extra dirs, deduped against the defaults: casey's own `src/` plus the first freddie framework root that exists (`deps/freddie/framework`, else the sibling `../freddie/framework`). A named dir that does not exist is skipped with a warning saying edits under it will not reload -- nothing else says so. |
 | `CASEY_TURN_HARD_DEADLINE_MS`, `CASEY_TURN_SOFT_DEADLINE_MS` | The hard deadline bounds total retry budget for a live first-attempt turn only (never a background resume); the soft deadline only picks which of two fallback strings to send once the hard deadline closes out a degraded turn. Pace these together with `ACPTOAPI_AUTO_CHAIN_CAP`/`ACPTOAPI_CHAIN_LINK_TIMEOUT_MS` below. |
@@ -995,11 +1028,23 @@ without restart-on-crash.
   discarded -- the one real exception to this guarantee, and it is counted
   rather than merely logged (see below).
 - **A message casey throws away is counted, even though it reaches no case.**
-  Four paths turn an inbound away ABOVE `recordInbound`, so the message exists
-  in no case, on no timeline and in no queue: the two rate limits, a full burst
-  buffer, and an uninitialized store. `hooks/dropped-intake.js` counts all four
-  and `/api/health` reports them as `dropped_inbound`, with a bounded audit
-  trail appended to a singleton `channel:'system'` case. It is an AGGREGATE by
+  Six paths turn an inbound away ABOVE `recordInbound`, so the message exists
+  in no case, on no timeline and in no queue. Four are admission decisions
+  inside casey: the two rate limits, a full burst buffer, and an uninitialized
+  store. Two are losses at the TRANSPORT edge, above admission entirely --
+  `gateway_gap_unresumable` (a reconnect that could not RESUME, so whatever
+  Discord buffered during the disconnect was never replayed) and
+  `gateway_identity_unknown` (a guild message that arrived before the gateway
+  had reported casey's own user id, so `casey-adapters.js`'s @mention filter
+  could not evaluate it and failed closed). `hooks/dropped-intake.js` counts all
+  six and `/api/health` reports them as `dropped_inbound`, with a bounded audit
+  trail appended to a singleton `channel:'system'` case.
+  **The last one counts WINDOWS, not messages, and the difference is
+  load-bearing.** Nothing on casey's side can know how many messages Discord
+  held for an unresumable session and then discarded, so `gateway_gap_unresumable`
+  increments once per disconnect window and its reason text says so. Inventing a
+  message count would put a fabricated number in the one place an operator most
+  needs a true one. It is an AGGREGATE by
   construction -- one summary per reason per window, never one row per message
   -- because the rate limiters exist precisely to stop a flood driving unbounded
   store writes, and a per-message record would hand the flood that exact

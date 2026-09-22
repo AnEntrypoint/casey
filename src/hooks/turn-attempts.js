@@ -15,6 +15,7 @@ import { judgeReply } from './reply-judge.js'
 import { stripThinkingBlock } from './heuristics.js'
 import { mutatingActions, hadSuccessfulWrite } from './turn-results.js'
 import { buildCaseToolset, reporterTierExcludedToolNames } from '../case-tools.js'
+import { resolveContactTier, canQueryCases } from '../contact-tiers.js'
 import { FAILURE_REASONS } from '../degraded-turns.js'
 import { TURN_HARD_DEADLINE_MS } from './turn-deadlines.js'
 
@@ -89,8 +90,15 @@ export function systemPromptEchoRuns(candidate, systemPromptText) {
 // Fail-closed tier resolution, shared by the request's `disabledToolsets` and
 // its `toolCtx.tier` so the two stay byte-identical rather than being two
 // independent tier expressions that could silently drift apart.
+//
+// Delegates to contact-tiers.js rather than comparing the literal here: the
+// ladder has three rungs and this used to collapse everything that was not
+// `field_worker` to `reporter`, which would have silently demoted an
+// animal_health_technician -- the highest rung -- to report-only on every turn.
+// resolveContactTier keeps the fail-closed direction (unset/corrupt/unknown ->
+// reporter) in one place.
 export function resolveTier(contact) {
-  return contact?.tier === 'field_worker' ? 'field_worker' : 'reporter'
+  return resolveContactTier(contact)
 }
 
 // This attempt's timeout: the configured per-attempt ceiling, additionally
@@ -361,9 +369,15 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     if (canRetry) {
       log.warn?.('[casey] reply judge flagged an internal jargon leak; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
+      // The reference is named EXPLICITLY, and before the prohibition, because the
+      // prohibited word is the first half of the reference's own token. Told only
+      // "never write case", a model drops CASE-1133-95UJ423J along with it -- so
+      // the reporter loses the one datum they can quote back, which is a worse
+      // trade than the leak. Live-witnessed on a first message: a complete report
+      // was extracted and acknowledged with no reference anywhere in the reply.
       return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it used internal system words this person must never read: '
         + verdict.reasons.join('; ')
-        + '. Say the same thing again, just as warmly, in their own plain language. Never the words "case", "ticket", "triage", "workflow", "status", "priority", "escalate", "transition" or "autonomy" -- speak about "your report", "what you told me", or "the animals" instead. A reference code stays written exactly as it is.]' }
+        + `. Say the same thing again, just as warmly, in their own plain language. If you were giving them their reference, keep it EXACTLY as ${fresh.ref} -- that token is required and is not one of the forbidden words. Otherwise never write "case", "ticket", "triage", "workflow", "status", "priority", "escalate", "transition" or "autonomy" -- speak about "your report", "what you told me", or "the animals" instead.]` }
     }
     return { done: true, text: candidate, jargonReasons: verdict.reasons }
   }

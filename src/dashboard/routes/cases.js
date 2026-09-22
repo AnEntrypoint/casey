@@ -25,8 +25,31 @@ import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27, markInvisibles } from '../../format.js'
 import { fieldLabel, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
+import { isKnownValueField, invalidateKnownValues } from '../../field-values.js'
 import { BRAND } from '../brand.js'
 import { mountRoutes } from './register.js'
+
+// Body keys POST /api/cases/:id/intake accepts that are NOT report fields.
+const INTAKE_META_KEYS = new Set(['canonicalized'])
+
+// Normalize the optional `canonicalized` body block into what the timeline
+// records, dropping anything that does not describe a field actually being
+// written by THIS request. A client is free not to send it at all; a malformed
+// one is ignored rather than 400'd, because it is an annotation on a write, never
+// the write itself -- refusing the whole save over a bad note would make the
+// audit trail the thing that loses the data.
+function canonicalizedNote(raw, incoming) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out = {}
+  for (const [k, v] of Object.entries(raw)) {
+    if (!(k in incoming)) continue
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue
+    const typed = v.typed == null ? '' : String(v.typed).slice(0, 500)
+    if (!typed || typed === incoming[k]) continue
+    out[k] = { typed, stored: incoming[k], how: v.how == null ? '' : String(v.how).slice(0, 40) }
+  }
+  return Object.keys(out).length ? out : null
+}
 
 // The two projections below are the ONLY way a raw thatcher case row may reach
 // a JSON response. Both are explicit allowlists, never a spread of the row, so
@@ -296,8 +319,11 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
       const v = str(res, req.body, k, { required: false }); if (v === undefined) return
       incoming[k] = v
     }
-    // Reject unrecognised keys to avoid silent data loss
-    const unknown = Object.keys(req.body).filter(k => !REPORT_KEY_SET.has(k))
+    // Reject unrecognised keys to avoid silent data loss. INTAKE_META_KEYS are
+    // the body keys that are deliberately not report fields -- see
+    // `canonicalized` below; without the exemption a client sending one would be
+    // told its own metadata is an unknown report field.
+    const unknown = Object.keys(req.body).filter(k => !REPORT_KEY_SET.has(k) && !INTAKE_META_KEYS.has(k))
     if (unknown.length) return res.status(400).json({ error: `unknown report fields: ${unknown.join(', ')}` })
     if (!Object.keys(incoming).length) return res.status(400).json({ error: 'no report fields provided' })
     const op = actingOperator(req)
@@ -316,7 +342,20 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
     }
     const data = { by: op.id, ...firstFills }
     if (Object.keys(corrections).length) data.corrections = corrections
+    // WHAT THE OPERATOR TYPED, when it is not what got stored. The known-value
+    // combo box (field-values.js) may store an existing spelling instead of the
+    // one an operator typed -- "cows" filed as "cattle" -- and the audit trail
+    // has to carry both halves or the record claims they typed a word they never
+    // typed. Same reason the corrections diff above exists: a field write that
+    // changed shape on the way in is not self-describing afterwards.
+    const canon = canonicalizedNote(req.body.canonicalized, incoming)
+    if (canon) data.canonicalized = canon
     await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `recorded report fields via dashboard: ${Object.keys(incoming).join(', ')}`, data })
+    // A value an operator just recorded is part of this deployment's vocabulary
+    // from now on, so the next case they open must offer it. Dropping the memo
+    // here rather than waiting out its TTL is what makes "add a new one" feel
+    // like it took effect.
+    for (const k of Object.keys(incoming)) if (isKnownValueField(k)) invalidateKnownValues(k)
     res.json({ report: result.report, report_fill_rate: computeFillRate(JSON.stringify(result.report)) })
   }
 }

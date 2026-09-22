@@ -4,9 +4,21 @@
 
 import { state, setFilt, setInboxMode } from './state.js';
 
+// fv (the per-report-field known-value narrowing, filters-bar.js) is carried as
+// a flat field -> value map, sanitized on both sides: only string values, only
+// non-empty ones, so a saved view can never carry an object or reintroduce a
+// filter key the app no longer has a control for.
+function fvOf(raw) {
+  const out = {};
+  for (const [k, v] of Object.entries((raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {})) {
+    if (typeof v === 'string' && v) out[k] = v;
+  }
+  return out;
+}
+
 export function currentView() {
   const f = state.filt;
-  return { q: f.q || '', status: f.status || '', channel: f.channel || '', source: f.source || '', mine: !!f.mine, focus: !!state.inboxMode };
+  return { q: f.q || '', status: f.status || '', channel: f.channel || '', source: f.source || '', fv: fvOf(f.fv), mine: !!f.mine, focus: !!state.inboxMode };
 }
 
 // Reader only, deliberately: nothing in the SPA produces a #view= link, so
@@ -23,7 +35,7 @@ export function decodeView(s) {
 
 export function applyView(v) {
   if (!v || typeof v !== 'object') return;
-  setFilt({ q: String(v.q || ''), status: String(v.status || ''), channel: String(v.channel || ''), source: String(v.source || ''), mine: !!v.mine });
+  setFilt({ q: String(v.q || ''), status: String(v.status || ''), channel: String(v.channel || ''), source: String(v.source || ''), fv: fvOf(v.fv), mine: !!v.mine });
   setInboxMode(!!v.focus);
 }
 

@@ -2,13 +2,29 @@
 // away BEFORE it reached recordInbound, so a lost report is not merely a log
 // line on a headless box nobody reads.
 //
-// FOUR PATHS DROP AN INBOUND ABOVE THE STORE WRITE, and all four are deliberate:
+// SIX PATHS TURN AN INBOUND AWAY ABOVE THE STORE WRITE. The first four are
+// deliberate admission decisions taken inside casey; the last two are losses at
+// the transport edge, above admission entirely, and were silent until they were
+// added here:
 //
 //   rate_limited_contact  one contact over CASEY_RATE_LIMIT_MSGS in the window
 //   rate_limited_global   everyone together over CASEY_GLOBAL_RATE_LIMIT_MSGS
 //   burst_buffer_full     more than BUFFER_CAP messages held for one contact
 //                         while a turn was in flight; the OLDEST is discarded
 //   store_not_ready       the store is not initialized, so nothing can be written
+//   gateway_gap_unresumable  a reconnect could not RESUME, so whatever Discord
+//                         buffered during the disconnect was never replayed
+//   gateway_identity_unknown  a guild message arrived before the gateway had
+//                         told casey its own user id, so the @mention filter
+//                         could not evaluate it and failed closed
+//
+// THE LAST TWO COUNT WINDOWS AND MESSAGES RESPECTIVELY, AND THE DIFFERENCE IS
+// LOAD-BEARING. `gateway_identity_unknown` is one count per real message, like
+// the four above it. `gateway_gap_unresumable` is one count per DISCONNECT
+// WINDOW: nothing on casey's side can know how many messages Discord held and
+// then discarded, and inventing a message count would be a fabricated number in
+// the one place an operator most needs a true one. Its reason text says window,
+// not messages, for exactly that reason.
 //
 // WHY THIS IS AGGREGATE AND NOT ONE ROW PER MESSAGE. The rate limiters exist
 // precisely to stop a flood driving unbounded store writes (hooks/
@@ -40,6 +56,8 @@ export const DROP_REASONS = {
   rate_limited_global: 'all contacts together sent more than the global allowance in the window',
   burst_buffer_full: 'a contact sent faster than a turn could finish and the hold buffer filled up',
   store_not_ready: 'the store was not initialized, so the message could not be recorded at all',
+  gateway_gap_unresumable: 'the gateway reconnected but could not resume the previous session, so anything sent during that disconnect window was never delivered (a count of windows, not of messages -- how many were in one is not knowable)',
+  gateway_identity_unknown: 'a guild message arrived before the gateway reported casey own user id, so the mention filter could not evaluate it and failed closed',
 }
 
 // reason -> { total, sinceFlush, firstAt, lastAt, channels: Map<channel, count>, lastFlushAt }
@@ -47,7 +65,7 @@ const tallies = new Map()
 
 function tally(reason) {
   let t = tallies.get(reason)
-  if (!t) { t = { total: 0, sinceFlush: 0, firstAt: null, lastAt: null, channels: new Map(), lastFlushAt: 0 }; tallies.set(reason, t) }
+  if (!t) { t = { total: 0, sinceFlush: 0, firstAt: null, lastAt: null, channels: new Map(), lastFlushAt: 0, note: null }; tallies.set(reason, t) }
   return t
 }
 
@@ -78,12 +96,17 @@ async function dropCaseId(store) {
 // runs on the flood path itself, so it must not add an await, a store round
 // trip, or anything that could fail, to the path whose whole job is to be cheap.
 // The store write is fired separately and best-effort by flushIfDue.
-export function recordDroppedInbound(reason, { channel = 'unknown', store = null, log = console, now = Date.now(), flushWindowMs = DEFAULT_FLUSH_WINDOW_MS } = {}) {
+// `note` is an optional short, non-identifying detail for the reasons whose
+// whole value is the detail -- how long a gateway was disconnected, say. It is
+// last-writer-wins within a window rather than accumulated: a summary is one
+// line, and the most recent occurrence is the one an operator is acting on.
+export function recordDroppedInbound(reason, { channel = 'unknown', store = null, log = console, now = Date.now(), flushWindowMs = DEFAULT_FLUSH_WINDOW_MS, note = null } = {}) {
   const t = tally(reason)
   t.total += 1
   t.sinceFlush += 1
   if (t.firstAt == null) t.firstAt = now
   t.lastAt = now
+  if (note) t.note = note
   t.channels.set(channel, (t.channels.get(channel) || 0) + 1)
   if (store) flushIfDue(reason, { store, log, now, flushWindowMs })
 }
@@ -108,8 +131,8 @@ function flushIfDue(reason, { store, log, now, flushWindowMs, force = false }) {
   dropCaseId(store)
     .then(id => store.appendEvent(id, {
       kind: 'observation', actor: 'system',
-      text: `INTAKE DROPPED ${count} message(s), ${t.total} since start -- ${DROP_REASONS[reason] || reason} (${channels})`,
-      data: { dropped_inbound: reason, count, total: t.total },
+      text: `INTAKE DROPPED ${count} message(s), ${t.total} since start -- ${DROP_REASONS[reason] || reason} (${channels})${t.note ? ` [${t.note}]` : ''}`,
+      data: { dropped_inbound: reason, count, total: t.total, note: t.note || undefined },
     }))
     .catch(e => log?.error?.('[casey] dropped-intake audit write failed', { reason, error: e.message }))
 }
@@ -140,7 +163,7 @@ export function snapshotDroppedIntake() {
   let lastAt = null
   for (const [reason, t] of tallies) {
     if (!t.total) continue
-    reasons[reason] = { count: t.total, detail: DROP_REASONS[reason] || reason, channels: Object.fromEntries(t.channels) }
+    reasons[reason] = { count: t.total, detail: DROP_REASONS[reason] || reason, channels: Object.fromEntries(t.channels), note: t.note || undefined }
     total += t.total
     if (firstAt == null || t.firstAt < firstAt) firstAt = t.firstAt
     if (lastAt == null || t.lastAt > lastAt) lastAt = t.lastAt

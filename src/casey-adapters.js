@@ -36,10 +36,20 @@ export async function makeChannelAdapter(ch, deps) {
 // only. The wrapper depends on that adapter's `ready` event and `botUserId`
 // getter. Follow this method as the template for a future realtime-socket
 // channel.
-async function makeDiscordAdapter({ log, store, markConnected, markInbound }) {
+async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbound }) {
   {
     const { DiscordAdapter } = await import('./adapters/discord.js')
-    const a = new DiscordAdapter({ log: log })
+    const { DiscordSessionStore } = await import('./adapters/discord-lib/session-store.js')
+    const { recordDroppedInbound } = await import('./hooks/dropped-intake.js')
+    // The gateway session survives this process, so a supervisor reload resumes
+    // and Discord replays what it buffered instead of the restart window being
+    // a silent hole. When a resume is refused, that window becomes a counted
+    // drop reason like every other path that turns an inbound away.
+    const a = new DiscordAdapter({
+      log,
+      sessionStore: new DiscordSessionStore({ dataDir, log }),
+      onUnresumableGap: (note) => recordDroppedInbound('gateway_gap_unresumable', { channel: 'discord', store, log, note }),
+    })
     // Filter guild channel messages to only DMs (guild_id absent), @mentions
     // of the bot, or plain follow-ups from an author mid-conversation with
     // the bot in that channel. Without this, every message in any guild
@@ -93,6 +103,15 @@ async function makeDiscordAdapter({ log, store, markConnected, markInbound }) {
         const followKey = `${raw.channel_id || ''}:${raw?.author?.id || ''}`
         const inConversation = !isDM && !botMentioned && (followUpWindow.get(followKey) || 0) > Date.now()
         if (!isDM && !botMentioned && !inConversation) {
+          // The fail-closed branch above is NOT the same thing as ordinary guild
+          // chatter, and only one of the two is a loss. A message casey could
+          // not evaluate because it did not yet know its own user id may well
+          // have been addressed to it; that is a real inbound turned away above
+          // recordInbound, so it is counted like every other such path. Ordinary
+          // non-mention chatter was never for casey and is not counted -- mixing
+          // it into the same total would drown the number that matters in the
+          // volume of a busy server and make dropped_inbound meaningless.
+          if (!a.botUserId) recordDroppedInbound('gateway_identity_unknown', { channel: 'discord', store, log })
           // OBSERVABILITY: a drop here is otherwise structurally invisible --
           // no case created, no receive-health stamp, nothing to grep for --
           // so a real inbound that failed this check for any reason

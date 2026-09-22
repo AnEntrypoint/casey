@@ -7,20 +7,25 @@ import { OP, RECONNECT_MAX_RETRIES, RECONNECT_GIVEUP_RETRY_MS, RECONNECT_BASE_MS
 import { fetchAttachment } from './attachments.js'
 
 export function connect(self, resume = false) {
-  const url = resume && self._resumeUrl ? self._resumeUrl + '/?v=10&encoding=json' : self.gatewayUrl
+  // `resume` says "this is a reconnect within this process". A session restored
+  // from disk by an earlier process is equally resumable and arrives with
+  // _resumeFromDisk set, so honour either: the whole point of persisting the
+  // session is that a restart is no less resumable than a socket drop.
+  const canResume = (resume || self._resumeFromDisk) && !!self._sessionId && !!self._resumeUrl
+  const url = canResume ? self._resumeUrl + '/?v=10&encoding=json' : self.gatewayUrl
   // Drop the previous socket's listeners before replacing it so reconnects
   // do not accumulate orphaned 'message'/'close'/'error' handlers over time.
   if (self._ws) { try { self._ws.removeAllListeners(); self._ws.terminate() } catch { /* already gone */ } }
   const ws = self._ws = new WebSocket(url)
   ws.on('message', (raw) => {
     let p; try { p = JSON.parse(raw.toString()) } catch { return }
-    if (p.s != null) self._seq = p.s
+    if (p.s != null) { self._seq = p.s; self.sessionStore?.saveSeq?.(p.s) }
     switch (p.op) {
       case OP.HELLO:
         self._retries = 0                     // connected: reset backoff
         self._acked = true                     // clear stale state before heartbeat
         startHeartbeat(self, p.d.heartbeat_interval)
-        if (resume && self._sessionId) send(self, { op: OP.RESUME, d: { token: self.token, session_id: self._sessionId, seq: self._seq } })
+        if (canResume) { self._resumeAttempted = true; send(self, { op: OP.RESUME, d: { token: self.token, session_id: self._sessionId, seq: self._seq } }) }
         else identify(self)
         break
       case OP.HEARTBEAT: send(self, { op: OP.HEARTBEAT, d: self._seq }); break
@@ -33,6 +38,15 @@ export function connect(self, resume = false) {
       case OP.INVALID_SESSION:
         // Session is not resumable; clear it and re-identify after a
         // brief delay (Discord sends d:true when a quick retry is safe).
+        //
+        // A refused RESUME is the ONE moment casey can know that messages may
+        // have been lost: Discord is saying "I will not replay what you missed".
+        // Report it before clearing the state, so an unresumable reload window
+        // is countable rather than the silence it used to be.
+        if (self._resumeAttempted) reportUnresumableGap(self)
+        self._resumeAttempted = false
+        self._resumeFromDisk = false
+        self.sessionStore?.clear?.()
         self._sessionId = null; self._resumeUrl = null; self._seq = null
         clearTimeout(self._invalidSessionTimeout)
         self._invalidSessionTimeout = setTimeout(() => { if (!self._closed) identify(self) }, p.d ? 1000 : 5000)
@@ -79,17 +93,47 @@ export function scheduleReconnect(self) {
   self._reconnectTimeout = setTimeout(() => { self._reconnecting = false; connect(self, true) }, delay)
 }
 
+// A fresh IDENTIFY after a session casey was HOLDING is the unrecoverable case:
+// everything Discord buffered for that session while the socket was down is
+// forfeited, with nothing on the wire to say so. Count it like every other path
+// that turns an inbound away (hooks/dropped-intake.js) so an operator sees a
+// window rather than silence. It is ONE count per window, not per message --
+// nothing on this side can know how many messages went into a gap, and the
+// reason text says so rather than implying a message count casey does not have.
+function reportUnresumableGap(self) {
+  const downMs = self._resumeStateSavedAt ? Date.now() - self._resumeStateSavedAt : null
+  self._resumeStateSavedAt = null
+  const note = downMs != null ? `gateway was unresumable after ~${Math.round(downMs / 1000)}s disconnected` : 'gateway session was refused on resume'
+  self.log?.warn?.('[discord] RESUME refused; messages sent during the disconnect are not replayable', { downMs })
+  try { self.onUnresumableGap?.(note) } catch { /* reporting must never break the reconnect */ }
+}
+
 export function dispatch(self, p) {
   if (p.t === 'READY') {
+    // A READY where a resume was attempted means Discord answered the RESUME
+    // with a brand new session instead of replaying -- same forfeit as an
+    // explicit INVALID_SESSION, and it must be counted the same way.
+    if (self._resumeAttempted) reportUnresumableGap(self)
+    self._resumeAttempted = false
+    self._resumeFromDisk = false
     self._sessionId = p.d?.session_id
     self._resumeUrl = p.d?.resume_gateway_url
     self._botUserId = p.d?.user?.id || null
+    self._seq = p.s ?? self._seq
+    self.sessionStore?.save?.({ sessionId: self._sessionId, resumeUrl: self._resumeUrl, seq: self._seq, botUserId: self._botUserId })
     self.log?.info?.('[discord] gateway READY', { botUser: p.d?.user?.username || null })
     self.emit('ready', p.d)
     return
   }
   if (p.t === 'RESUMED') {
-    self.log?.info?.('[discord] session resumed successfully')
+    // Discord has finished replaying everything missed since _seq. Nothing was
+    // lost, so no gap is reported -- this is the success path the persisted
+    // session exists to reach.
+    self._resumeAttempted = false
+    self._resumeFromDisk = false
+    self._resumeStateSavedAt = null
+    self.sessionStore?.save?.({ sessionId: self._sessionId, resumeUrl: self._resumeUrl, seq: self._seq, botUserId: self._botUserId })
+    self.log?.info?.('[discord] session resumed successfully', { botUser: self._botUserId ? 'restored' : 'UNKNOWN' })
     self.emit('ready', null)
     return
   }
@@ -147,3 +191,4 @@ export function startHeartbeat(self, interval) {
 }
 
 export function send(self, obj) { try { self._ws?.send(JSON.stringify(obj)) } catch {} }
+
