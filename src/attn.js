@@ -184,9 +184,24 @@ function attnScore(c, now = Date.now()) {
   // should surface ahead of an equally-fresh report that carries no such
   // fact. No default fields ship set -- a deployment opts specific report
   // fields in via report-fields.yml; this is a no-op until one does.
+  // A RECORDED ZERO IS NOT A SIGNAL, and it is a reachable value rather than a
+  // hypothetical: the public /report form's own hint for this deployment's
+  // severity field reads "write 0 if none", so a reporter answering "none have
+  // died" honestly with a 0 scored the same +7 as a report of four hundred dead.
+  // That is the same inbox inversion the field exists to prevent, pointing the
+  // other way. Numeric zero only -- a purely structural test on the value's own
+  // shape, never a reading of words like "none", which is the model's job and not
+  // this module's (see the no-LLM contract above).
   if (SEVERITY_SIGNAL_FIELDS.length) {
     const rep = parseReport(c)
-    if (SEVERITY_SIGNAL_FIELDS.some(k => rep[k] != null && String(rep[k]).trim() !== '')) s += 7
+    const stated = (v) => {
+      if (v == null) return false
+      const text = String(v).trim()
+      if (text === '') return false
+      const n = Number(text)
+      return !(Number.isFinite(n) && n === 0)
+    }
+    if (SEVERITY_SIGNAL_FIELDS.some(k => stated(rep[k]))) s += 7
   }
   s += Math.min(20, Math.floor(ageHours(c, now)))
   return s

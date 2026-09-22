@@ -23,7 +23,16 @@ export const WORKER_ENTRY = path.join(__dirname, '..', 'bin', 'worker.js')
 // 300 chars for /api/runtime anyway. The byte cap bounds the ONE partial line
 // carried between chunks, so a worker printing a single enormous unterminated
 // line cannot grow this without limit.
-const STDERR_TAIL_LINES = 12
+//
+// 40 LINES, NOT 12, and the number is measured rather than chosen: Node 24's
+// fatal ESM SyntaxError block is 17 lines with a ten-frame stack, so a 12-line
+// window kept only frames and the `Node.js vX` banner -- every one of which the
+// filter below correctly discards, leaving no cause at all for exactly the crash
+// class this exists to explain. A real worker's deeper import chain produces MORE
+// frames, not fewer, and the three most useful lines (the file:line, the source
+// line, the caret) sit ABOVE the message. 40 keeps the whole block for that shape
+// with room to spare, and the extracted cause is still one line.
+const STDERR_TAIL_LINES = 40
 const STDERR_PARTIAL_LINE_CAP = 8192
 
 // The line that actually names the cause, which is never the literal last line
@@ -59,6 +68,7 @@ function flushStderrTail(child) {
 }
 
 export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, onHealth, restart }) {
+  let pendingRestartTimer = null
   function spawn() {
     rt.booted = false
     const child = fork(WORKER_ENTRY, workerArgs, {
@@ -201,8 +211,20 @@ export function createWorkerProcess({ log, rt, sup, workerArgs, runtimeEvents, o
     // one CRASH row, `restarting after crash { backoffMs: 300 }`, then a clean
     // exit and silence. The whole purpose of this process is to still be here
     // when this timer fires.
-    setTimeout(() => restart().respawn(Date.now()), decision.backoffMs)
+    // Held so stop() can clear it. `respawn`'s own rt.stopping guard already
+    // stops a pending backoff resurrecting a worker after a deliberate stop, but
+    // it cannot stop a REF'D timer keeping the process up for the rest of the
+    // backoff (10s at the ceiling) after the drain has finished.
+    pendingRestartTimer = setTimeout(() => { pendingRestartTimer = null; restart().respawn(Date.now()) }, decision.backoffMs)
   }
 
-  return { spawn }
+  // Called by the supervisor's stop(): drop a crash backoff that is still pending
+  // so a deliberate shutdown exits now rather than at the end of it.
+  function cancelPendingRestart() {
+    if (!pendingRestartTimer) return
+    clearTimeout(pendingRestartTimer)
+    pendingRestartTimer = null
+  }
+
+  return { spawn, cancelPendingRestart }
 }

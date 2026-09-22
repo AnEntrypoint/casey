@@ -274,7 +274,24 @@ export function buildTurnRequest({
 // keys: the retry feedback is a sentence the model paraphrases to a person, and
 // "how_to_find" is not a phrase anybody says out loud.
 export async function reportFactsForJudge(store, fallbackRow, events, caseId = fallbackRow?.id) {
-  const row = (await store.getCase(caseId).catch(() => null)) || fallbackRow
+  const fresh = await store.getCase(caseId).catch(() => null)
+  // The fallback row is only a safe substitute for the SAME case. After a
+  // case_new/case_switch this is called with the rebound id while fallbackRow is
+  // still the case the turn started on, so falling back there would judge the
+  // reply against a DIFFERENT report -- naming facts from a record the person is
+  // no longer talking about. No row for the case being judged means no verdict
+  // input: both lists empty, which makes shapes 9 and 10 unrenderable.
+  const row = fresh || (caseId === fallbackRow?.id ? fallbackRow : null)
+  if (!row) return { missingFacts: [], knownFacts: [] }
+  // A report column that is present but unparseable is NOT an empty report, and
+  // buildPromptContext cannot tell you which it saw -- it answers null for both.
+  // Treated as an empty report, every critical field reads as blank and a closing
+  // reply on a possibly-complete record draws a guaranteed farewell-gap plus the
+  // whole retry budget. The honest answer for a corrupt record is that nothing is
+  // known about what it holds, so neither shape may judge it.
+  let reportParsed = true
+  if (row.report) { try { JSON.parse(row.report) } catch { reportParsed = false } }
+  if (!reportParsed) return { missingFacts: [], knownFacts: [] }
   const { reportObj, missingCritical, missingMandatory } = buildPromptContext(row, events)
   // STOP MEANS STOP, and this is the one place the farewell gate would break it.
   // A STOP tags the case opted-out and then falls through to an ordinary agent
@@ -322,7 +339,12 @@ export async function reportFactsForJudge(store, fallbackRow, events, caseId = f
 // "I have recorded it" on attempt 3 was judged a false confirmation, the retry
 // budget was spent, and the reply was held as a draft, leaving a real reporter
 // with total silence on a complete, correctly-stored report.
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, missingFacts = [], knownFacts = [] }) {
+// `factsForJudge` is a THUNK, not a value, and the laziness is the point: four of
+// the guards below (empty reply, verbatim repeat, system-prompt echo, tool-name
+// leak) return before the judge is ever called, and on those attempts the store
+// read behind it is pure waste inside a live turn's hard deadline. Awaited once,
+// immediately before the judge call that is the first thing to need it.
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null }) {
   const note = async (text) => {
     try { await store.appendEvent(fresh.id, observation(text)) }
     catch (e) { log.warn?.('[casey] failed to record attempt observation', { caseId: fresh.id, error: e.message }) }
@@ -402,6 +424,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // reply MEANS is judged by the single real-LLM judgeReply call
   // (hooks/reply-judge.js), never a regex/word-list.
   const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result)
+  const { missingFacts = [], knownFacts = [] } = factsForJudge ? await factsForJudge() : {}
   const verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts })
   if (verdict.clean) return { done: true, text: candidate }
   // INTERNAL JARGON LEAK (reply-judge.js shape 6) is the shape whose fix is the
@@ -469,7 +492,14 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // its own words: a goodbye that failed to ask one more question is still a real
   // answer to a real person, and silence is worse. The record simply stays open,
   // which is the truthful state (AGENTS.md's mandatory-minimum bullet).
-  if (verdict.reasons?.some(r => /farewell.?gap/i.test(r))) {
+  // The length guard is not belt-and-braces: with an empty list this branch's own
+  // feedback sentence reads "it said goodbye while  are still missing" and "weave
+  // ONE gentle ask for undefined into it", and the audit line records a blank.
+  // The judge is not supposed to produce this verdict without a list (the shape is
+  // not even rendered), but a verdict is model output and the one thing a route
+  // must never do is compose an instruction to a real person out of an empty
+  // array. With no list, fall through to the generic route below.
+  if (missingFacts.length && verdict.reasons?.some(r => /farewell.?gap/i.test(r))) {
     if (canRetry) {
       log.warn?.('[casey] reply said goodbye with on-site-critical facts still missing; retrying turn with feedback', { caseId: fresh.id, attempt, missing: missingFacts })
       await note(`FAREWELL-GAP: reply closed the conversation with ${missingFacts.join(', ')} still blank; retrying turn with feedback (attempt ${attempt})`)
@@ -491,7 +521,17 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // real message whose only fault is asking the wrong thing. Retried with the
   // already-known facts named back, then SENT ANYWAY -- being asked twice is an
   // irritation, being answered with nothing is a lost report.
-  if (verdict.reasons?.some(r => /repeat.?ask|already (asked|recorded|known)/i.test(r))) {
+  //
+  // MATCHES THE COINED TOKEN ONLY. An earlier alternation here also matched
+  // "already asked"/"already recorded"/"already known", which are ordinary
+  // English a judge writes inside a STOCK ACK or REPEATED REPLY reason -- and
+  // those verdicts then reached this send-anyway branch instead of the blanking
+  // one below, retried under a diagnosis that named the wrong fault. Verified by
+  // running the real function: "repeated reply: asks for the location already
+  // asked" and "stock ack; the details are already recorded" both routed here.
+  // The judge is instructed to write exactly "repeat-ask", the same contract
+  // "multi-ask" has had all along.
+  if (verdict.reasons?.some(r => /repeat.?ask/i.test(r))) {
     if (canRetry) {
       log.warn?.('[casey] reply re-asked something already asked or already recorded; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPEAT-ASK: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
@@ -646,13 +686,14 @@ export async function runAgentTurn({
     for (const action of mutatingActions(result)) completedActions.push(action)
     // Cumulative, not per-attempt: see evaluateCandidate's priorAttemptWrote note.
     if (hadSuccessfulWrite(result)) turnWroteSomething = true
-    // Re-read AFTER this attempt's writes and against the case the attempt ended
-    // bound to (case_new/case_switch can have moved it) -- see
-    // reportFactsForJudge for why a pre-turn snapshot is the wrong input here.
-    const { missingFacts, knownFacts } = await reportFactsForJudge(store, fresh, events, turnBinding.id)
     const verdict = await evaluateCandidate({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
-      priorAttemptWrote: turnWroteSomething, systemPromptText, missingFacts, knownFacts,
+      priorAttemptWrote: turnWroteSomething, systemPromptText,
+      // Read AFTER this attempt's writes and against the case the attempt ended
+      // bound to (case_new/case_switch can have moved it) -- see
+      // reportFactsForJudge for why a pre-turn snapshot is the wrong input, and
+      // evaluateCandidate for why this is deferred rather than awaited here.
+      factsForJudge: () => reportFactsForJudge(store, fresh, events, turnBinding.id),
     })
     if (!verdict.done) { retryFeedback = verdict.retryFeedback; continue }
     text = verdict.text
