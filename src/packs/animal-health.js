@@ -90,6 +90,13 @@ export const animalHealthPack = {
   roles: {
     reporter: { rowAccess: 'none' },
     field_worker: { rowAccess: 'owner' },
+    // The sign-off rung of contact-tiers.js's ladder, declared here for the same
+    // reason every other role in this map is: completeness of the pack's own
+    // declared vocabulary. Nothing evaluates `roles` (AGENTS.md's provenance
+    // section says so explicitly -- only observationForms is read), so this
+    // grants nothing; it is the documented target shape, kept in step with the
+    // ladder so the pack does not describe a two-rung world.
+    animal_health_technician: { rowAccess: 'owner' },
     district_vet: { rowAccess: 'assigned' },
     national_authority: { rowAccess: 'none' },
     admin: { rowAccess: 'none' },

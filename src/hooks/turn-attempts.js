@@ -179,9 +179,11 @@ export function buildTurnRequest({
     // subtracts disabledToolsets by tool NAME before the schemas are ever
     // assembled -- real headroom against a smaller/lower-TPM provider's rate
     // limit, and one less thing for a weak model to waste a turn attempting to
-    // call and being rejected. field_worker tier passes an empty array (every
-    // tool stays visible).
-    disabledToolsets: resolvedTier === 'field_worker' ? [] : reporterTierExcludedToolNames(),
+    // call and being rejected. Any tier at or above field_worker passes an empty
+    // array (every tool stays visible) -- a RANK test, matching gateByTier's own,
+    // so the highest rung is never handed a request with the elevated schemas
+    // stripped out of it while the handler would have accepted the calls.
+    disabledToolsets: canQueryCases(resolvedTier) ? [] : reporterTierExcludedToolNames(),
     // Identity for the case/enquiry tools: WHO is asking (the message author),
     // the live store, and the active case. The case toolset reads these from
     // toolCtx rather than a global, so "my cases"/"near me"/"today" answer FOR
@@ -208,9 +210,13 @@ export function buildTurnRequest({
       // own read path. `tier` below is a genuinely separate and genuinely
       // enforced axis: it controls which case_* tools are reachable at all.
       role: 'worker',
-      // Access tier: 'reporter' (casual/public, report-only) or 'field_worker'
-      // (elevated -- agentic case_list/case_mine/case_today queries + location
-      // check-ins), enforced at call time by gateByTier (case-tools-gates.js).
+      // Access tier, one of contact-tiers.js's three rungs: 'reporter' (casual/
+      // public, report-only), 'field_worker' (elevated -- agentic case_list/
+      // case_mine/case_today queries + location check-ins), or
+      // 'animal_health_technician' (everything a field_worker has, plus the
+      // exclusive authority to mark a record done -- case-tools-record-timeline.js's
+      // sign-off gate reads THIS value). Enforced at call time by gateByTier
+      // (case-tools-gates.js).
       // Read from the contact's own stored tier, operator-assigned via the
       // dashboard, NEVER contact-self-service or LLM-settable. Fails CLOSED to
       // 'reporter' on any falsy/missing/unrecognised value -- a brand new

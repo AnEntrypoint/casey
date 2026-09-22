@@ -14,6 +14,7 @@
 import { tsMs, tagList, parseReport } from './timestamp.js'
 import { fieldLabel } from './store/report-shape.js'
 import { CRITICAL_FIELDS } from './store/report-shape.js'
+import { canQueryCases } from './contact-tiers.js'
 
 // Default thresholds, in milliseconds, tuned for a rural one-shot reporting
 // service where a field visit is the goal and delay is the enemy. Every value is
@@ -267,7 +268,8 @@ export const BREACH_LABEL = {
 
 export const ALL_HEALTH_TAGS = ['stale', 'stuck', 'unanswered_handoff', 'unanswered_handoff_escalated', 'unsent_draft', 'abandoned_intake', 'incomplete_critical', 'never_closed', 'timestamp_corrupt', 'premature_complete'].map(healthTag)
 
-// Worker check-in baseline: every field_worker should check in at least once per
+// Worker check-in baseline: every contact above the casual reporter rung
+// (contact-tiers.js: field_worker, animal_health_technician) should check in at least once per
 // configurable window (default 7 days). Returns a list of workers who are past the
 // deadline, each with their last check-in timestamp and age. Pure function of
 // (contacts, now, thresholds) -- no I/O, no clock.
@@ -275,7 +277,10 @@ export const WORKER_CHECKIN_WINDOW_MS = 7 * 24 * 3600e3
 export function classifyWorkerCheckins(contacts, now = Date.now(), checkinWindowMs = WORKER_CHECKIN_WINDOW_MS) {
   const overdue = []
   for (const c of contacts) {
-    if (c.tier !== 'field_worker') continue
+    // A RANK test (contact-tiers.js): an animal health technician is held to the
+    // same check-in baseline as an eco ranger, and an equality test here quietly
+    // exempted the highest rung from the one accountability signal the team has.
+    if (!canQueryCases(c.tier)) continue
     // tsMs, not new Date(): last_location_at is written as ISO (case-tools.js's
     // check-in handler), but this module already imports the one shared
     // digit-string-aware parser and hooks/prompt.js reads the SAME column

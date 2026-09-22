@@ -8,6 +8,7 @@
 // deps: store, wrap, actingOperator, authed, isAdmin
 import { fmtPhone27 } from '../../format.js'
 import { mountRoutes } from './register.js'
+import { TIER_ORDER, resolveContactTier } from '../../contact-tiers.js'
 
 // The one allowlist through which a contact row may reach JSON (AGENTS.md
 // Security invariants). Module-level and named on purpose: the three fields
@@ -44,7 +45,13 @@ export const publicContact = (c) => {
   const formatted = fmtPhone27(c.external_id)
   return {
     id: c.id, channel: c.channel, external_id_formatted: formatted,
-    display_name: c.display_name || null, tier: c.tier === 'field_worker' ? 'field_worker' : 'reporter',
+    // resolveContactTier, not a two-way ternary: the ladder has three rungs
+    // (contact-tiers.js) and collapsing anything-but-field_worker to 'reporter'
+    // here would show an operator the LOWEST rung for the contact holding the
+    // HIGHEST one, on the very panel they use to assign it. Still fail-closed --
+    // an unrecognised stored value is reported as the reporter it is treated as,
+    // never rendered raw.
+    display_name: c.display_name || null, tier: resolveContactTier(c),
     // A name somebody gave, as opposed to the routing key echoed into the
     // column because nobody gave one.
     named: !!(c.display_name && c.display_name !== c.external_id),
@@ -69,7 +76,12 @@ export function postContactTier({ store, authed, actingOperator }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     try {
       const { tier } = req.body || {}
-      if (tier !== 'reporter' && tier !== 'field_worker') return res.status(400).json({ error: 'tier must be "reporter" or "field_worker"' })
+      // Validated against the real ladder rather than a hand-written pair, so a
+      // rung added to contact-tiers.js is assignable here with nothing to keep in
+      // sync -- and an unrecognised value is still REFUSED at this write boundary
+      // rather than quietly coerced (see case-store.js's setContactTier for why
+      // reads coerce and writes refuse).
+      if (!TIER_ORDER.includes(tier)) return res.status(400).json({ error: `tier must be one of ${TIER_ORDER.map(t => `"${t}"`).join(', ')}` })
       await store.setContactTier(req.params.id, tier, { id: actingOperator(req).id, role: 'operator' })
       const updated = await store.getContact(req.params.id)
       res.json({ contact: publicContact(updated) })

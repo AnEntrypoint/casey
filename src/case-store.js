@@ -31,6 +31,7 @@ import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
 import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable, installVersionGuard } from './store/guards.js'
 import { REPORT_KEYS, REPORT_KEY_ORDER } from './store/report-shape.js'
+import { TIER_ORDER, resolveTierValue } from './contact-tiers.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 import { validateCaseConfig, parseFieldEnums } from './store/config-schema.js'
 import { deriveAuthorKey, mintRef } from './store/ref.js'
@@ -376,7 +377,8 @@ export class CaseStore {
     return this.t.list('contact', where, { limit, sort: [{ field: 'created_at', dir: 'DESC' }] })
   }
 
-  // Operator-assigned access-tier change (reporter <-> field_worker). NEVER
+  // Operator-assigned access-tier change, anywhere on contact-tiers.js's ladder
+  // (reporter / field_worker / animal_health_technician). NEVER
   // reachable from the agent/tool-call path: case-tools.js registers no tool
   // that calls this, which is what makes the "never contact-self-service or
   // LLM-settable" half of the design real.
@@ -389,8 +391,14 @@ export class CaseStore {
   // other break-glass path. So the privilege boundary this method sits behind
   // is "a valid operator session", nothing narrower; an audit looking for an
   // admin check will not find one, because there is none to find.
+  // Validated against TIER_ORDER, not a hand-written pair of comparisons: this is
+  // a WRITE boundary, so it must reject an unrecognised value outright rather
+  // than resolve it (resolveTierValue's fail-closed coercion is for READS, where
+  // a corrupt stored value must still produce a safe answer -- coercing here
+  // would silently store 'reporter' for an operator who asked for something
+  // else and report success).
   async setContactTier(contactId, tier, user = SYSTEM_USER) {
-    if (tier !== 'reporter' && tier !== 'field_worker') throw new Error(`invalid tier: ${tier}`)
+    if (!TIER_ORDER.includes(tier)) throw new Error(`invalid tier: ${tier} -- expected one of ${TIER_ORDER.join(', ')}`)
     return this.t.update('contact', contactId, { tier }, user)
   }
 
@@ -573,7 +581,7 @@ export class CaseStore {
         subject, summary: '', priority: 'normal', tags: tags || '',
         assignee: UNCLAIMED_ASSIGNEE, autonomy: 'auto', status: 'new', last_event_at: nowIso(),
         author_key: deriveAuthorKey(external_id),
-        reporter_tier: currentOpen?.reporter_tier || 'reporter',
+        reporter_tier: resolveTierValue(currentOpen?.reporter_tier),
       }, AGENT_USER)
     })
   }
@@ -943,8 +951,11 @@ export class CaseStore {
       // comment for why this is a snapshot, not a live join). contactRow is
       // only populated when the caller passed `contact` -- a settings/system
       // case with no contact defaults to 'reporter' (the lower-privilege
-      // default, matching the fail-closed discipline used for tier elsewhere).
-      reporter_tier: contactRow?.tier || 'reporter',
+      // default, matching the fail-closed discipline used for tier elsewhere),
+      // and so does an unrecognised stored value -- resolveTierValue keeps a
+      // snapshot column holding only real ladder rungs, so a consumer reading it
+      // years later (attn.js's on-site weight) never has to re-validate it.
+      reporter_tier: resolveTierValue(contactRow?.tier),
     }, AGENT_USER)
     return { case: created, created: true }
   }
@@ -1542,7 +1553,7 @@ export class CaseStore {
         tags: 'split', assignee: src.assignee || 'agent', autonomy: src.autonomy || 'auto',
         status: 'new', last_event_at: nowIso(),
         author_key: deriveAuthorKey(src.external_id),
-        reporter_tier: src.reporter_tier || 'reporter',
+        reporter_tier: resolveTierValue(src.reporter_tier),
       }, AGENT_USER)
       for (const id of ids) await this.updateEvent(id, { case_id: created.id })
       await this.appendEvent(created.id, {

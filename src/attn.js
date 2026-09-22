@@ -21,6 +21,7 @@ import { tsMs, tagList, parseReport } from './timestamp.js'
 import { healthTag } from './case-health.js'
 import { OPTED_OUT_TAG } from './hooks/heuristics.js'
 import { SEVERITY_SIGNAL_FIELDS } from './store/report-shape.js'
+import { canQueryCases } from './contact-tiers.js'
 
 // Age in hours from the last-touch timestamp, relative to `now`. Tolerates a
 // missing/corrupt timestamp (returns 0 -- a brand-new or unparseable case is not
@@ -157,7 +158,9 @@ function attnScore(c, now = Date.now()) {
   if (c.autonomy === 'assisted') s += 15                   // person in the loop; soft nudge
   if (c.priority === 'urgent') s += 15
   else if (c.priority === 'high') s += 8
-  // A field_worker report means someone is (or may still be) physically on
+  // A report from anyone above the casual reporter rung (contact-tiers.js:
+  // field_worker, animal_health_technician) means someone is (or may still be)
+  // physically on
   // site right now -- more actionable than a public reporter's message, which
   // usually arrives after the fact with no one waiting at the scene. Modest,
   // deliberately below every urgency signal above (needs-human=100 down to
@@ -166,7 +169,10 @@ function attnScore(c, now = Date.now()) {
   // worker check-in. reporter_tier is a creation-time snapshot (case-store.js
   // createCase/_findOrCreateCaseUnsafe/splitCase), so it reflects who was
   // actually on-site relaying the report, not a contact's current tier.
-  if (c.reporter_tier === 'field_worker') s += 5
+  // A RANK test: an animal health technician's own report is at least as
+  // on-site as an eco ranger's, and an equality comparison here would have
+  // scored the highest rung like an anonymous public message.
+  if (canQueryCases(c.reporter_tier)) s += 5
   // A config-declared severity-signal field (report-fields.yml's
   // severity_signal flag, e.g. an animal-health deployment's dead_count) that
   // the reporter has ALREADY given a non-empty value for -- surfacing a
