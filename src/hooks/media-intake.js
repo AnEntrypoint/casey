@@ -23,7 +23,7 @@
 
 import { truncate } from './heuristics.js'
 import { observation } from './case-writes.js'
-import { transcribeAudio, describePhoto } from './media.js'
+import { transcribeAudioDetailed, describePhoto } from './media.js'
 import { isValidLatLon } from '../case-tools-shared.js'
 
 // Short description of any non-text content, so a media-only message is never
@@ -64,14 +64,15 @@ function inboundImageNote(msg) {
 // available, is folded straight into the recorded note; without one the operator
 // listens and fills the richer detail -- an honest degradation rung, not a
 // silent drop.
-function inboundAudioNote(msg, transcript = '') {
+function inboundAudioNote(msg, transcript = '', failure = '') {
   const r = msg.raw || {}
   // Attributed to the machine, explicitly. A bare 'transcript:' reads as a
   // record of what was said; this is the AI helper's transcription of audio it
   // may have got wrong, and an operator acting on a disease report needs to know
   // which of those they are reading. Same reason the photo note below names its
   // author: the machine must not present its own output as what someone entered.
-  const tail = transcript ? ` -- auto-transcript by the AI helper (may be wrong, listen to check): "${truncate(transcript, 500)}"` : ''
+  const tail = transcript ? ` -- auto-transcript by the AI helper (may be wrong, listen to check): "${truncate(transcript, 1500)}"`
+    : failure ? ` -- no auto-transcript could be made (${truncate(failure, 120)})` : ''
   const base = 'farmer sent a voice note (listen and record what it says)' + tail
   if (r.audio || r.voice || r.type === 'audio' || r.type === 'voice') return base
   const atts = Array.isArray(r.attachments) ? r.attachments : []
@@ -205,8 +206,13 @@ export async function recordInboundMedia({ store, log, caseId, msg }) {
     })
   }
 
-  const transcript = audioItem ? await transcribeAudio(audioItem.buffer, audioItem.mimeType) : ''
-  const audioNote = inboundAudioNote(msg, transcript)
+  const tr = audioItem ? await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType) : { text: '', error: '' }
+  if (audioItem) {
+    // The audio log line: what arrived, what became of it. The bytes themselves
+    // are saved by recordArrival below and the path lands on the timeline event.
+    log.info?.('[casey] voice note received', { caseId, mime: audioItem.mimeType, bytes: audioItem.buffer?.length || 0, provider: tr.provider, transcribed: !!tr.text, transcriptChars: tr.text.length, ms: tr.ms, error: tr.error || undefined })
+  }
+  const audioNote = inboundAudioNote(msg, tr.text, tr.error)
   if (audioNote) {
     await recordArrival({
       store, log, caseId, field: 'audio', note: audioNote, kind: 'audio',

@@ -8,7 +8,11 @@
 // registry (AGENTS.md, "Architecture"), so a registration here is reachable
 // from a contact-facing conversation.
 
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { truncate } from './heuristics.js'
+import { fetchWithTimeout } from '../adapters/webhook-platform-base.js'
 
 // None of the three dispatchTool calls below carry any timeout of their own
 // (freddie's dispatch path and the bare fetch() calls beneath it are both
@@ -28,33 +32,78 @@ function withTimeout(promise, ms) {
   })
 }
 
-// Best-effort voice-note transcription via src/agent/media-tools.js's
-// transcribe() (an acptoapi /v1/audio/transcriptions Whisper passthrough) --
-// OPT-IN, degrades silently to the operator-listens fallback when
-// OPENAI_API_KEY is unset or the request fails, matching the no-fallback-text
-// invariant's spirit (the transcript is an ENHANCEMENT to the recorded note,
-// never something the reply pipeline depends on existing).
-// Writes to a temp file because transcribe() takes a file_path, not a buffer;
-// the file is removed in a finally so a crash never leaks it.
-export async function transcribeAudio(buffer, mimeType) {
-  if (process.env.CASEY_TRANSCRIBE_VOICE_NOTES !== '1') return ''
-  if (!process.env.OPENAI_API_KEY) return ''
-  let tmpPath = ''
+// Best-effort voice-note transcription, ON whenever a provider key exists
+// (CASEY_TRANSCRIBE_VOICE_NOTES=0 opts out -- it sends the audio bytes to an
+// external API). Provider order: OpenAI Whisper via src/agent/media-tools.js's
+// transcribe() when OPENAI_API_KEY is set, else an OpenRouter audio-capable
+// chat model (WhatsApp voice notes are ogg/opus, which it takes as-is), so the
+// deployment's one OPENROUTER_API_KEY is enough. Degrades to the operator-listens
+// fallback on any failure, and the failure REASON is returned rather than
+// swallowed, so the caller can log why a note has no transcript. The transcript
+// is an ENHANCEMENT to the recorded note, never something the reply depends on.
+const OPENROUTER_TRANSCRIBE_MODEL = process.env.CASEY_TRANSCRIBE_MODEL || 'google/gemini-2.5-flash'
+const TRANSCRIBE_PROMPT = 'Transcribe this voice note verbatim, in the language spoken (do not translate). Output only the transcript. If nothing intelligible is said, output exactly UNINTELLIGIBLE.'
+
+function openrouterKey() {
+  if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY
   try {
-    const os = await import('node:os')
-    const path = await import('node:path')
-    const fs = await import('node:fs')
-    const ext = /ogg/.test(mimeType || '') ? 'ogg' : /mp3|mpeg/.test(mimeType || '') ? 'mp3' : 'wav'
-    tmpPath = path.join(os.tmpdir(), `casey-voice-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`)
-    fs.writeFileSync(tmpPath, buffer)
-    const { transcribe } = await import('../agent/media-tools.js')
-    const parsed = await withTimeout(transcribe({ file_path: tmpPath }), MEDIA_TOOL_TIMEOUT_MS)
-    return typeof parsed?.text === 'string' ? parsed.text.trim() : ''
-  } catch {
-    return '' // best-effort only -- a transcription failure never blocks the reply path
-  } finally {
-    if (tmpPath) { try { (await import('node:fs')).unlinkSync(tmpPath) } catch { /* best effort cleanup */ } }
+    const m = /^OPENROUTER_API_KEY=(.+)$/m.exec(fs.readFileSync(path.join(os.homedir(), '.acptoapi', '.env'), 'utf8'))
+    return m ? m[1].trim() : ''
+  } catch { return '' }
+}
+
+function audioFormat(mimeType) {
+  const t = mimeType || ''
+  return /ogg|opus/.test(t) ? 'ogg' : /mp3|mpeg/.test(t) ? 'mp3' : /m4a|mp4|aac/.test(t) ? 'aac' : /flac/.test(t) ? 'flac' : /webm/.test(t) ? 'webm' : 'wav'
+}
+
+async function transcribeViaOpenrouter(buffer, mimeType) {
+  const key = openrouterKey()
+  if (!key) return { text: '', error: 'no OPENROUTER_API_KEY' }
+  const r = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: OPENROUTER_TRANSCRIBE_MODEL,
+      temperature: 0,
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: TRANSCRIBE_PROMPT },
+        { type: 'input_audio', input_audio: { data: buffer.toString('base64'), format: audioFormat(mimeType) } },
+      ] }],
+    }),
+  }, MEDIA_TOOL_TIMEOUT_MS)
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) return { text: '', error: `openrouter ${r.status}: ${truncate(j?.error?.message || '', 160)}` }
+  const raw = String(j?.choices?.[0]?.message?.content || '').trim()
+  const text = /^UNINTELLIGIBLE\.?$/i.test(raw) ? '' : raw
+  return { text, error: text ? '' : 'no intelligible speech' }
+}
+
+// Returns {text, provider, ms, error}. `text` is '' on any failure or opt-out.
+export async function transcribeAudioDetailed(buffer, mimeType) {
+  const t0 = Date.now()
+  if (process.env.CASEY_TRANSCRIBE_VOICE_NOTES === '0') return { text: '', provider: 'off', ms: 0, error: 'disabled (CASEY_TRANSCRIBE_VOICE_NOTES=0)' }
+  if (!buffer?.length) return { text: '', provider: 'none', ms: 0, error: 'no audio bytes downloaded' }
+  try {
+    if (process.env.OPENAI_API_KEY) {
+      const tmpPath = path.join(os.tmpdir(), `casey-voice-${Date.now()}-${Math.random().toString(36).slice(2)}.${audioFormat(mimeType) === 'ogg' ? 'ogg' : audioFormat(mimeType)}`)
+      try {
+        fs.writeFileSync(tmpPath, buffer)
+        const { transcribe } = await import('../agent/media-tools.js')
+        const parsed = await withTimeout(transcribe({ file_path: tmpPath }), MEDIA_TOOL_TIMEOUT_MS)
+        const text = typeof parsed?.text === 'string' ? parsed.text.trim() : ''
+        if (text) return { text, provider: 'whisper', ms: Date.now() - t0, error: '' }
+      } finally { try { fs.unlinkSync(tmpPath) } catch { /* best effort cleanup */ } }
+    }
+    const res = await transcribeViaOpenrouter(buffer, mimeType)
+    return { ...res, provider: `openrouter:${OPENROUTER_TRANSCRIBE_MODEL}`, ms: Date.now() - t0 }
+  } catch (e) {
+    return { text: '', provider: 'error', ms: Date.now() - t0, error: String(e?.message || e) } // never blocks the reply path
   }
+}
+
+export async function transcribeAudio(buffer, mimeType) {
+  return (await transcribeAudioDetailed(buffer, mimeType)).text
 }
 
 // Best-effort photo description via src/agent/media-tools.js's describeImage()
