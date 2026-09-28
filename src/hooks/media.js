@@ -41,8 +41,16 @@ function withTimeout(promise, ms) {
 // fallback on any failure, and the failure REASON is returned rather than
 // swallowed, so the caller can log why a note has no transcript. The transcript
 // is an ENHANCEMENT to the recorded note, never something the reply depends on.
-const OPENROUTER_TRANSCRIBE_MODEL = process.env.CASEY_TRANSCRIBE_MODEL || 'google/gemini-2.5-flash'
-const TRANSCRIBE_PROMPT = 'Transcribe this voice note verbatim, in the language spoken (do not translate). Output only the transcript. If nothing intelligible is said, output exactly UNINTELLIGIBLE.'
+// OpenRouter's dedicated /audio/transcriptions endpoint, tried in order. Chosen
+// 2026-09-28 from OpenRouter's live model list + each vendor's language table:
+// google/gemini-3.5-transcribe (~$0.003/min, 85+ languages incl. Afrikaans and
+// Swahili, code-switching) is the best fit for a South African deployment;
+// openai/whisper-large-v3 (~$0.0005/min, 99 languages) is the cheap second link.
+// No dedicated OpenRouter STT model lists isiXhosa or isiZulu (MAI-Transcribe-2
+// lacks even Afrikaans), so those are best-effort on either -- the note always
+// says the transcript is the AI helper's and may be wrong. Override the chain
+// with CASEY_TRANSCRIBE_MODEL (comma-separated).
+const OPENROUTER_TRANSCRIBE_MODELS = (process.env.CASEY_TRANSCRIBE_MODEL || 'google/gemini-3.5-transcribe,openai/whisper-large-v3').split(',').map(x => x.trim()).filter(Boolean)
 
 function openrouterKey() {
   if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY
@@ -57,26 +65,18 @@ function audioFormat(mimeType) {
   return /ogg|opus/.test(t) ? 'ogg' : /mp3|mpeg/.test(t) ? 'mp3' : /m4a|mp4|aac/.test(t) ? 'aac' : /flac/.test(t) ? 'flac' : /webm/.test(t) ? 'webm' : 'wav'
 }
 
-async function transcribeViaOpenrouter(buffer, mimeType) {
+async function transcribeViaOpenrouter(buffer, mimeType, model) {
   const key = openrouterKey()
   if (!key) return { text: '', error: 'no OPENROUTER_API_KEY' }
-  const r = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+  const r = await fetchWithTimeout('https://openrouter.ai/api/v1/audio/transcriptions', {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: OPENROUTER_TRANSCRIBE_MODEL,
-      temperature: 0,
-      messages: [{ role: 'user', content: [
-        { type: 'text', text: TRANSCRIBE_PROMPT },
-        { type: 'input_audio', input_audio: { data: buffer.toString('base64'), format: audioFormat(mimeType) } },
-      ] }],
-    }),
+    body: JSON.stringify({ model, input_audio: { data: buffer.toString('base64'), format: audioFormat(mimeType) } }),
   }, MEDIA_TOOL_TIMEOUT_MS)
   const j = await r.json().catch(() => ({}))
-  if (!r.ok) return { text: '', error: `openrouter ${r.status}: ${truncate(j?.error?.message || '', 160)}` }
-  const raw = String(j?.choices?.[0]?.message?.content || '').trim()
-  const text = /^UNINTELLIGIBLE\.?$/i.test(raw) ? '' : raw
-  return { text, error: text ? '' : 'no intelligible speech' }
+  if (!r.ok) return { text: '', error: `${model} ${r.status}: ${truncate(j?.error?.message || '', 160)}` }
+  const text = String(j?.text || '').trim()
+  return { text, error: text ? '' : `${model}: no intelligible speech` }
 }
 
 // Returns {text, provider, ms, error}. `text` is '' on any failure or opt-out.
@@ -95,8 +95,14 @@ export async function transcribeAudioDetailed(buffer, mimeType) {
         if (text) return { text, provider: 'whisper', ms: Date.now() - t0, error: '' }
       } finally { try { fs.unlinkSync(tmpPath) } catch { /* best effort cleanup */ } }
     }
-    const res = await transcribeViaOpenrouter(buffer, mimeType)
-    return { ...res, provider: `openrouter:${OPENROUTER_TRANSCRIBE_MODEL}`, ms: Date.now() - t0 }
+    let last = { text: '', error: 'no transcription model configured', provider: 'none' }
+    for (const model of OPENROUTER_TRANSCRIBE_MODELS) {
+      let res
+      try { res = await transcribeViaOpenrouter(buffer, mimeType, model) } catch (e) { res = { text: '', error: `${model}: ${String(e?.message || e)}` } }
+      last = { ...res, provider: `openrouter:${model}` }
+      if (res.text) break
+    }
+    return { ...last, ms: Date.now() - t0 }
   } catch (e) {
     return { text: '', provider: 'error', ms: Date.now() - t0, error: String(e?.message || e) } // never blocks the reply path
   }
