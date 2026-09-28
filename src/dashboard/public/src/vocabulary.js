@@ -81,7 +81,7 @@ export function countOf(n, one, many) {
 // this deployment's "Eco Ranger" reaches the screen without any rename of the
 // value underneath it. A view that spells "field worker" is wrong the moment a
 // deployment renames the rung; ask for the label, never spell it.
-export const TIER_ORDER = ['reporter', 'field_worker', 'animal_health_technician'];
+export const TIER_ORDER = ['reporter', 'field_worker', 'animal_health_technician', 'operator'];
 
 /** @returns {string} the stored rung, coerced to a real one (fail-closed to the lowest). */
 export function tierValue(tier) {

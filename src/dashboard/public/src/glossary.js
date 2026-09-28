@@ -63,7 +63,8 @@ const GLOSSARY_TEMPLATE = {
     // {entity}. Stated as a capability rather than as a permission level,
     // because that is what an operator actually needs to know: if a {entity}
     // is complete and still not signed off, this is who it is waiting for.
-    animal_health_technician: 'The highest access level: everything a trusted reporter has, plus the only authority to sign a {entity} off as done. Nobody else can finish one, however complete it is.',
+    animal_health_technician: 'Everything a trusted reporter has, plus the only authority to sign a {entity} off as done. Nobody else can finish one over WhatsApp, however complete it is.',
+    operator: 'A team member who runs the queue: replies to people, assigns {entity_plural}, invites others into a role. Can query everything a technician can, but cannot sign a {entity} off over WhatsApp.',
     // The action, not the access level. Named here because the button exists and
     // an operator has to know what pressing it actually does to a real person.
     remind: 'Sends the person ONE message asking them to report back, on the channel they wrote in. Only for a {entity} that has gone quiet, never for someone who asked us to stop, and not twice in a row without them answering first.',

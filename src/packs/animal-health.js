@@ -97,6 +97,7 @@ export const animalHealthPack = {
     // grants nothing; it is the documented target shape, kept in step with the
     // ladder so the pack does not describe a two-rung world.
     animal_health_technician: { rowAccess: 'owner' },
+    operator: { rowAccess: 'none' },
     district_vet: { rowAccess: 'assigned' },
     national_authority: { rowAccess: 'none' },
     admin: { rowAccess: 'none' },

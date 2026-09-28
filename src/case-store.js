@@ -427,6 +427,22 @@ export class CaseStore {
     return this.t.update('contact', contactId, { tier }, user)
   }
 
+  // Register a phone number in a role BEFORE it has ever messaged in -- the
+  // dashboard half of role assignment (the other half is a one-time WhatsApp
+  // code, src/role-invites.js). Creates the contact row if the number is new and
+  // sets the rung. Same trust boundary as setContactTier: reachable only from an
+  // authenticated dashboard route, never from the agent/tool path.
+  async registerContact({ channel = 'whatsapp', external_id, display_name = '', tier }, user = SYSTEM_USER) {
+    if (!TIER_ORDER.includes(tier)) throw new Error(`invalid tier: ${tier} -- expected one of ${TIER_ORDER.join(', ')}`)
+    if (!external_id) throw new Error('a phone number is required')
+    const contact = await this.findOrCreateContactLocked({ channel, external_id, display_name })
+    // A name typed by the operator wins over the number-fallback the create used.
+    const patch = { tier }
+    if (display_name && (!contact.display_name || contact.display_name === contact.external_id)) patch.display_name = display_name
+    await this.t.update('contact', contact.id, patch, user)
+    return this.getContact(contact.id)
+  }
+
   // Operator-tunable health thresholds, persisted as an append-only audited
   // observation on a singleton `system` settings case (the same pattern the
   // runtime-event log uses). The LATEST `thresholds:<json>` observation is the
