@@ -6,6 +6,7 @@ import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
 import { state, schedule, setActiveId } from '../state.js';
+import { assigneeName, loadRoster } from '../api-roles.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchHandover, postStartShift } from '../api.js';
 import { fmtTime, eventKindLabel, actorLabel } from '../format.js';
@@ -15,7 +16,7 @@ import { toast } from '../toasts.js';
 
 const SECTION_EMPTY_TEXT = {
     [QUEUE_NAME]: 'Nothing needs a person right now.',
-    'Open handoffs': 'No open handoffs.',
+    'Asked for a person, not answered yet': 'Nobody is waiting for an answer.',
     'Unsent drafts': 'No unsent drafts.',
     'Changed this shift': 'Nothing has changed yet this shift.',
 };
@@ -60,13 +61,18 @@ function refLink(ref, id) {
     }, ref || '');
 }
 
+// Who holds it, as a person: 'agent' is the assistant with nobody assigned (no holder to show), and a login is
+// shown by name once the roster has loaded.
+const holder = (a) => assigneeName(a);
+
 function handoverBody(j) {
+    loadRoster(schedule);
     return h('div', {},
         h('div', { class: 'ds-ho-since' }, `Since ${j.since ? fmtTime(j.since) : 'the last day'}${j.since_by ? ' (' + j.since_by + ')' : ''}`),
         hoSection(QUEUE_NAME, j.attention, (r, i) => h('div', { key: i, class: 'ds-ho-row' },
             refLink(r.ref, r.id), ' ', h('span', { class: 'ds-muted' }, r.subject || '(no subject)'), ' ', h('span', { class: 'ds-ho-why' }, r.reason || ''),
-            r.assignee ? h('span', { class: 'ds-ho-assignee' }, Chip({ tone: 'accent', size: 'sm', children: r.assignee })) : null)),
-        hoSection('Open handoffs', j.handoffs, (r, i) => h('div', { key: i, class: 'ds-ho-row' },
+            holder(r.assignee) ? h('span', { class: 'ds-ho-assignee' }, Chip({ tone: 'accent', size: 'sm', children: holder(r.assignee) })) : null)),
+        hoSection('Asked for a person, not answered yet', j.handoffs, (r, i) => h('div', { key: i, class: 'ds-ho-row' },
             refLink(r.ref, r.id), ' ', h('span', { class: 'ds-muted' }, r.subject || ''), ' ', h('span', { class: 'ds-ho-why' }, r.reason || ''))),
         hoSection('Unsent drafts', j.drafts, (r, i) => h('div', { key: i, class: 'ds-ho-row' },
             refLink(r.ref, r.id), ' ', h('span', { class: 'ds-muted' }, r.subject || ''), ' ', h('span', { class: 'ds-ho-why' }, (r.text || '').slice(0, 120)))),

@@ -52,6 +52,9 @@ export function headerSection(persona, caseRow, contact) {
     `you are gathering is "${persona.entityLabel}". A reference code such as`,
     `${caseRow.ref} is fine to write out in full.`,
     autonomyLine(persona, caseRow),
+    // A deployment's own words for the moment someone may be in danger (real helpline numbers).
+    // Up here, not with the reply rules: it must outrank everything the person reads below.
+    ...(persona.safetyText ? [persona.safetyText] : []),
     ``,
     // Enquiry path -- field_worker tier only. These four tools are gated to
     // field_worker (case-tools-gates.js REPORT_ONLY_TOOLS), so naming them to a
@@ -182,6 +185,8 @@ export function gatherSection(persona, caseRow, contact, { returnedAfterGap, rep
     `correct and expected, and far better than a plausible guess someone later`,
     `acts on as fact. The ONLY exception is a field whose own description`,
     `explicitly asks you to estimate.`,
+    `A lone emoji or symbol states no species, no sign and no number: record`,
+    `nothing from it and ask what they are seeing.`,
     // "Their own words" was stated but never defined across a language
     // boundary, and a model reads an English-language field description as an
     // instruction to write English. Live-witnessed on a fresh case with the

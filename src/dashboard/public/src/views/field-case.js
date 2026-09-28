@@ -30,7 +30,7 @@ import { Transitions } from './case-detail/transitions.js';
 import { FieldsEditor } from './case-detail/fields-editor.js';
 const h = webjsx.createElement;
 
-const fc = { id: null, data: null, loading: false, error: '', confirmedFor: null, draft: {}, note: '', busy: false };
+const fc = { id: null, data: null, loading: false, error: '', confirmedFor: null, draft: {}, note: '', busy: false, lost: false };
 
 function parseReport(raw) { try { return raw ? JSON.parse(raw) : {}; } catch { return {}; } }
 const has = (r, k) => r[k] != null && String(r[k]).trim() !== '';
@@ -40,7 +40,7 @@ const doneStages = () => new Set(['resolved', 'closed', ...(((cfg().mandatory_mi
 const fieldDefs = () => (cfg().report_sections || []).flatMap((s) => s.keys.map(([k, label, multi]) => ({ key: k, label, multi, section: s.title })));
 
 async function load(id) {
-  fc.id = id; fc.loading = true; fc.error = ''; fc.data = null; fc.confirmedFor = null; fc.draft = {}; fc.note = '';
+  fc.id = id; fc.loading = true; fc.error = ''; fc.lost = false; fc.data = null; fc.confirmedFor = null; fc.draft = {}; fc.note = '';
   try { fc.data = await fetchFieldCase(id); }
   catch (e) { fc.error = (e && e.status === 404) ? 'This ' + entityLabel() + ' is not one you can open.' : 'Could not open this ' + entityLabel() + '. Go back and try again.'; }
   fc.loading = false; schedule();
@@ -48,8 +48,18 @@ async function load(id) {
 async function reload() {
   if (!fc.id) return;
   const keep = { draft: fc.draft, note: fc.note, confirmedFor: fc.confirmedFor };
-  try { fc.data = await fetchFieldCase(fc.id); } catch { /* keep what is on screen */ }
+  // A 404 here means the report is no longer this person's to open (an operator gave it
+  // to someone else while this screen sat open). That is said on screen; any other failure
+  // keeps what is showing.
+  try { fc.data = await fetchFieldCase(fc.id); fc.lost = false; } catch (e) { if (e && e.status === 404) fc.lost = true; }
   Object.assign(fc, keep); schedule();
+}
+
+// The message for a failed write. A refusal that means "this screen is out of date" also
+// re-reads the report so the screen catches up with what the server now says.
+async function failed(e, fallback) {
+  if (e && (e.status === 404 || e.status === 403 || e.status === 409)) reload();
+  return failMsg(e, fallback);
 }
 
 // "CASE-1042 (cattle in Musina)" -- the words used everywhere the screen names
@@ -89,8 +99,11 @@ function Header(c, data, write) {
 function Checklist(c, r) {
   const items = mandatory();
   if (!items.length) return null;
-  return h('div', { role: 'list', 'aria-label': 'What this ' + entityLabel() + ' needs before it can be signed off' },
-    ...items.map((f) => Row({ key: f.key, code: has(r, f.key) ? 'Have' : 'Needed', title: f.label, sub: has(r, f.key) ? String(r[f.key]).slice(0, 60) : '', rail: has(r, f.key) ? 'green' : 'flame' })));
+  // The kit hides a Row's `code` column on a phone, so what is recorded and what is still
+  // needed is said in the sub line (visible at every width), never by the rail colour alone.
+  // role=group, not list: the kit Row is a plain div, so a list would own non-listitem children.
+  return h('div', { role: 'group', 'aria-label': 'What this ' + entityLabel() + ' needs before it can be signed off' },
+    ...items.map((f) => Row({ key: f.key, code: has(r, f.key) ? 'Have' : 'Needed', title: f.label, sub: has(r, f.key) ? 'Recorded: ' + String(r[f.key]).slice(0, 60) : 'Still needed', rail: has(r, f.key) ? 'green' : 'flame' })));
 }
 
 // A report still at "new" cannot jump to done in the workflow, so a sign-off from
@@ -112,7 +125,7 @@ async function signOff(c, data) {
     }
     await postFieldTransition(c.id, c.ref, to, 'signed off by technician');
     toast('Signed off ' + identity(c) + '.', 'ok'); await reload();
-  } catch (e) { toast(await failMsg(e, 'It was not signed off. Nothing changed -- try again.'), 'err'); await reload(); }
+  } catch (e) { toast(await failed(e, 'It was not signed off. Nothing changed -- try again.'), 'err'); await reload(); }
 }
 
 async function sendBack(c, r) {
@@ -124,13 +137,21 @@ async function sendBack(c, r) {
   });
   if (text === null || text === undefined) return;
   try { await postSendBack(c.id, c.ref, text, missing); toast('Sent back ' + identity(c) + '.', 'ok'); await reload(); }
-  catch (e) { toast(await failMsg(e, 'It was not sent back. Nothing changed -- try again.'), 'err'); }
+  catch (e) { toast(await failed(e, 'It was not sent back. Nothing changed -- try again.'), 'err'); }
 }
 
 function SignOffCard(c, data, r, write) {
   const tech = isTechnician();
   const missing = mandatory().filter((f) => !has(r, f.key));
   const canSign = tech && !missing.length && canReachDone(data.transitions);
+  // Already finished: no sign-off or send-back to offer (the workflow would only let a
+  // second "done" step close it further), just the plain fact.
+  if (doneStages().has(c.status)) {
+    return Section({
+      title: 'Signed off',
+      children: [Checklist(c, r), h('p', { class: 'casey-hint' }, 'This ' + entityLabel() + ' is finished (' + stageLabel(c.status) + '). Nothing more to sign off.')].filter(Boolean),
+    });
+  }
   return Section({
     title: tech ? 'Ready to sign off?' : (missing.length ? 'What this ' + entityLabel() + ' still needs' : 'Everything needed is recorded'),
     children: [
@@ -156,6 +177,15 @@ function ContactCard(c, data) {
   });
 }
 
+// The save button is re-created while it says "Saving..."; keyboard focus goes back to it once the
+// save has finished, unless the person has already moved on to something else.
+function refocusSave() {
+  setTimeout(() => {
+    const b = document.querySelector('.field-save');
+    if (b && (!document.activeElement || document.activeElement === document.body)) b.focus();
+  }, 60);
+}
+
 async function saveRecord(c) {
   if (fc.busy) return;
   const fields = {};
@@ -170,10 +200,12 @@ async function saveRecord(c) {
     fc.draft = {}; fc.note = ''; fc.busy = false;
     await reload();
     toast('Saved to ' + identity(fc.data.case) + '.', 'ok');
+    refocusSave();
   } catch (e) {
     fc.busy = false;
-    toast(await failMsg(e, 'Nothing was saved to ' + c.ref + '. What you typed is still here -- try again.'), 'err');
+    toast(await failed(e, 'Nothing was saved to ' + c.ref + '. What you typed is still here -- try again.'), 'err');
     schedule();
+    refocusSave();
   }
 }
 
@@ -191,7 +223,10 @@ function RecordForm(c, r) {
       ...first.map(field),
       TextField({ key: 'note', label: 'What the reporter told you (free words)', multiline: true, rows: 3, value: fc.note, onInput: (v) => { fc.note = v; schedule(); } }),
       rest.length ? h('details', { key: 'more' }, h('summary', {}, 'Other details'), ...rest.map(field)) : null,
-      Btn({ variant: 'primary', disabled: fc.busy, children: fc.busy ? 'Saving...' : 'Save to ' + c.ref, onClick: () => saveRecord(c) }),
+      // Not disabled while saving (a disabled button drops keyboard focus to the page top); the busy
+      // guard in saveRecord ignores a second press. The label swap re-creates the node, so
+      // saveRecord puts focus back on it afterwards.
+      Btn({ variant: 'primary', class: 'field-save', children: fc.busy ? 'Saving...' : 'Save to ' + c.ref, onClick: () => saveRecord(c) }),
     ].filter(Boolean),
   });
 }
@@ -204,7 +239,7 @@ function markHere(c) {
     try {
       await postFieldLocation(c.id, c.ref, pos.coords.latitude, pos.coords.longitude);
       toast('Marked where you are on ' + identity(c) + '.', 'ok'); await reload();
-    } catch (e) { toast(await failMsg(e, 'The position was not saved to ' + c.ref + '.'), 'err'); }
+    } catch (e) { toast(await failed(e, 'The position was not saved to ' + c.ref + '.'), 'err'); }
   }, () => toast('Could not get your position. Check that location is allowed for this page.', 'warn'), { enableHighAccuracy: true, timeout: 15000 });
 }
 
@@ -213,7 +248,7 @@ async function quickNote(c, prefix, title, label) {
   if (!text) return;
   if (!(await confirmOnce(c))) return;
   try { await postFieldNote(c.id, c.ref, prefix + text, false); toast('Saved to ' + identity(c) + '.', 'ok'); await reload(); }
-  catch (e) { toast(await failMsg(e, 'The note was not saved to ' + c.ref + '.'), 'err'); }
+  catch (e) { toast(await failed(e, 'The note was not saved to ' + c.ref + '.'), 'err'); }
 }
 
 function QuickActions(c) {
@@ -236,6 +271,13 @@ export function FieldCaseView({ id, onBack }) {
   const back = Btn({ variant: 'link', size: 'sm', class: 'casey-back-btn', 'aria-label': 'Back to the list', onClick: onBack, children: [Icon('chevron-left', { size: 14 }), ' Back to the list'] });
   if (fc.error) return h('div', { class: 'casey-detail-pane' }, back, h('p', { class: 'casey-hint' }, fc.error));
   if (!fc.data || fc.data.case.id !== id) return h('div', { class: 'casey-detail-pane' }, back, Skeleton({ count: 5, height: '1.4em' }));
+  if (fc.lost) {
+    const typed = [...Object.values(fc.draft), fc.note].map((v) => String(v || '').trim()).filter(Boolean);
+    return h('div', { class: 'casey-detail-pane', key: 'field-case-lost-' + id },
+      back,
+      Alert({ kind: 'warn', title: 'This ' + entityLabel() + ' is no longer yours', children: 'An operator has given it to someone else, or taken it off you. Nothing you typed was saved to it. Go back to your list to see what you have now.' }),
+      typed.length ? Section({ title: 'What you had typed (copy it if you still need it)', children: typed.map((t, i) => h('p', { key: 'typed' + i }, t)) }) : null);
+  }
   const { case: c, events, events_total, transitions } = fc.data;
   const data = fc.data;
   const r = parseReport(c.report);

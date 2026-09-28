@@ -181,18 +181,21 @@ const FAILS = new Map()
 const WINDOW_MS = 3600e3
 const MAX_FAILS = 5
 // A second, deployment-wide cap so cycling through phone numbers does not reset
-// the guess budget: registration is rare, so 40 wrong codes an hour across
-// EVERYONE is already an attack, and locking claims for the rest of the hour is
-// the cheap, safe answer (an operator can still assign in the dashboard).
+// the guess budget: registration is rare, so 200 wrong codes an hour across
+// EVERYONE is already an attack (high on purpose: the lock is also a way to deny
+// registration, and 200 guesses an hour against ~8e11 codes is still nothing), and
+// locking claims for the rest of the hour is the cheap, safe answer (an operator can still assign in the dashboard).
 const GLOBAL_KEY = '*'
-const MAX_GLOBAL_FAILS = 40
-const recent = (key, now) => { const l = (FAILS.get(key) || []).filter(t => now - t < WINDOW_MS); FAILS.set(key, l); return l }
+const MAX_GLOBAL_FAILS = 200
+// Keys are per contact, so a flood of throwaway numbers would grow this map: sweep stale ones.
+const sweep = (now) => { if (FAILS.size > 2000) for (const [k, l] of FAILS) if (!l.some(t => now - t < WINDOW_MS)) FAILS.delete(k) }
+const recent = (key, now) => { const l = (FAILS.get(key) || []).filter(t => now - t < WINDOW_MS); if (l.length) FAILS.set(key, l); else FAILS.delete(key); return l }
 export function attemptsExhausted(key, now = Date.now()) {
   return recent(key, now).length >= MAX_FAILS || recent(GLOBAL_KEY, now).length >= MAX_GLOBAL_FAILS
 }
 export function noteFailedAttempt(key, now = Date.now()) {
-  recent(key, now).push(now)
-  recent(GLOBAL_KEY, now).push(now)
+  sweep(now)
+  for (const k of [key, GLOBAL_KEY]) FAILS.set(k, [...recent(k, now), now])
 }
 
 // A phone number as WhatsApp reports it: digits only, with country code, no

@@ -25,6 +25,7 @@ import { rel, fmtTime, tagList, stageLabel, stageTone, healthLabel, channelLabel
 import { urgencyBand, URGENCY_BAND_LABEL } from '../../map-model.js';
 import { entityLabel } from '../../vocabulary.js';
 import { pushHash } from '../../route.js';
+import { teamRoster } from '../../api-roles.js';
 const h = webjsx.createElement;
 
 const HEALTH_TAG_PREFIX = 'health:';
@@ -79,6 +80,10 @@ function fillPill(rfr) {
   });
 }
 
+// A field-team login is held by its username ("rng2"); the roster (loaded once by the case list)
+// knows the person's name, which is what an operator scanning the list should read.
+const ownerName = (key) => { const hit = teamRoster().find((m) => m.key === key); return hit ? hit.name : key; };
+
 export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
   const selected = state.bulkSelected.has(c.id);
   const active = c.id === state.activeId;
@@ -120,7 +125,10 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
     class: 'case-row' + (band ? ' band-' + band : '')
       + (active ? ' active' : '') + (selected ? ' selected' : '') + (kbdFocused ? ' kbd-focused' : ''),
     'data-id': c.id, role: 'listitem', tabindex: '0',
-    'aria-selected': selected ? 'true' : 'false',
+    // aria-selected is not valid on a listitem (axe: aria-allowed-attr, critical). The
+    // bulk-ticked state is carried by the row's own checkbox; the open one is the
+    // global aria-current.
+    'aria-current': active ? 'true' : undefined,
     // The stripe is a colour; this is the same fact in words, for a screen
     // reader and for anyone who cannot separate the two warm bands.
     'aria-label': c.ref + ': ' + (band ? (URGENCY_BAND_LABEL[band] + ' -- ') : '') + lead,
@@ -143,7 +151,7 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
         c.priority === 'urgent' || c.priority === 'high'
           ? Chip({ key: 'pri', tone: 'warn', size: 'sm', children: priorityLabel(c.priority) })
           : null,
-        owner ? Chip({ key: 'own', tone: mine ? 'accent' : '', size: 'sm', children: mine ? 'you' : owner }) : null,
+        owner ? Chip({ key: 'own', tone: mine ? 'accent' : '', size: 'sm', children: mine ? 'you' : ownerName(owner) }) : null,
         h('span', { key: 'when', class: 'case-row-when', title: fmtTime(c.updated_at || c.created_at) }, rel(c.updated_at || c.created_at))
       ),
       h('div', { key: 'sub', class: 'case-row-sub' },

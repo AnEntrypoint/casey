@@ -96,6 +96,12 @@ export const SYSTEM_CONDITIONS = Object.freeze({
   // abandoned cases are no longer being detected at all -- the failure whose
   // whole symptom is that nothing else has a symptom.
   SWEEP_STALLED: 'sweep_stalled',
+  // WhatsApp is configured and the dashboard/other channels are in use, but no
+  // inbound message has arrived for CASEY_INBOUND_SILENCE_HOURS (default 24).
+  // The class where the process, the dashboard, outbound send and every health
+  // pill are green while Meta delivers nothing -- e.g. the callback URL is
+  // registered with no webhook FIELDS subscribed, so `messages` never arrives.
+  INBOUND_SILENT: 'inbound_silent',
 })
 
 const ARCHIVE_RE = /^alerts\.(\d+)\.jsonl$/

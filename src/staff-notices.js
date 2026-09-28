@@ -42,7 +42,13 @@ export function assignedCaseState(events, contact) {
   const iOut = lastIndex(events, e => e.kind === 'outbound' && e.actor === 'operator')
   const iAssigned = lastIndex(events, e => e.kind === 'action' && dataOf(e).assigned_contact_id === me)
   const iAnnounced = lastIndex(events, e => e.kind === 'observation' && dataOf(e).announced_to === me)
+  // The newest reply casey or a person sent that WhatsApp reported as not
+  // delivered (delivery-status.js writes delivered:false on the outbound event),
+  // and the reporter has not written since. Nothing they were told reached them.
+  const iOutAny = lastIndex(events, e => e.kind === 'outbound')
+  const undelivered = iOutAny > iIn && iOutAny >= 0 && dataOf(events[iOutAny]).delivered === false
   return {
+    reply_undelivered: undelivered,
     new_assignment: iAssigned > iAnnounced,
     waiting_for_you: iIn > iOut,
     new_reply: iIn > iAnnounced && iIn > iOut,
@@ -68,7 +74,7 @@ export async function pendingDispatchesFor(store, contact, cases) {
 // every assigned case that carried news is stamped announced so it is news once.
 export async function staffNotices(store, contact, { mark = false, cap = NOTICE_CASE_CAP } = {}) {
   const key = assigneeKeyFor(contact)
-  if (!key) return { assigned: [], dispatches: [], counts: { assigned: 0, new_assignments: 0, new_replies: 0, dispatches: 0 } }
+  if (!key) return { assigned: [], dispatches: [], counts: { assigned: 0, new_assignments: 0, new_replies: 0, dispatches: 0, undelivered: 0 } }
   const mine = (await store.listCases({ assignee: key }, { limit: cap * 4 })).filter(isOpenCase).slice(0, cap)
   const assigned = []
   for (const c of mine) {
@@ -87,6 +93,7 @@ export async function staffNotices(store, contact, { mark = false, cap = NOTICE_
       assigned: assigned.length,
       new_assignments: assigned.filter(a => a.flags.new_assignment).length,
       new_replies: assigned.filter(a => a.flags.new_reply).length,
+      undelivered: assigned.filter(a => a.flags.reply_undelivered).length,
       dispatches: dispatches.length,
     },
   }
@@ -97,10 +104,11 @@ export async function staffNotices(store, contact, { mark = false, cap = NOTICE_
 export async function staffNoticeNote(store, contact) {
   let n
   try { n = (await staffNotices(store, contact)).counts } catch { return '' }
-  if (!n.new_assignments && !n.new_replies && !n.dispatches) return ''
+  if (!n.new_assignments && !n.new_replies && !n.dispatches && !n.undelivered) return ''
   const bits = []
   if (n.new_assignments) bits.push(`${n.new_assignments} newly assigned to them`)
   if (n.new_replies) bits.push(`${n.new_replies} where the reporter has answered`)
   if (n.dispatches) bits.push(`${n.dispatches} suggested for them to attend`)
+  if (n.undelivered) bits.push(`${n.undelivered} where WhatsApp did not deliver the last reply (the reporter has to message first, or be phoned)`)
   return `\n\n[System note: waiting for this team member: ${bits.join('; ')}. Call case_pending, and after dealing with what they just said, tell them briefly in your own words. It is queued news, not a new message from them.]`
 }

@@ -231,6 +231,8 @@ node bin/casey.js sweep         # run the health-guardrail sweep once now (write
 node bin/casey.js transition <ref|id> <stage> [--reason]   # legality-checked stage move
 node bin/casey.js erase-contact <contact|ref> --yes [--reason]  # irreversibly scrub a contact's PII
 node bin/casey.js operators <add|list|disable|enable> ...  # dashboard login accounts (break-glass)
+node bin/casey.js roles <list|assign|demote|invite|invites|revoke|release|link> ...  # the team model from a terminal (same store methods as the dashboard)
+node bin/casey.js doctor --no-network   # skip doctor's read-only Meta and public-URL checks
 node bin/casey.js --version     # print the version  (also --help / -h on any command)
 npm run lint                    # dependency-free preflight; the gate to run before pushing
 npm run gui-check               # drives the real dashboard in headless Chromium (needs a browser)
@@ -271,6 +273,9 @@ AGENTS.md "Supervised runtime" for the full env-var set.
 | `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Enable WhatsApp (Meta Graph send). |
 | `WHATSAPP_VERIFY_TOKEN` | Webhook verification handshake token. |
 | `WHATSAPP_APP_SECRET` | When set, inbound webhooks are HMAC-SHA256 verified (`X-Hub-Signature-256`); forged posts are rejected. Required, not optional, once WhatsApp credentials exist. |
+| `WHATSAPP_APP_ID`, `CASEY_PUBLIC_WEBHOOK_URL` | Optional, `casey doctor` only: the Meta app id, and the full public callback URL registered with Meta. With them doctor reads the app's webhook subscription (`messages` field subscribed? callback URL right?) and probes the public URL with Meta's verification challenge. |
+| `CASEY_INBOUND_SILENCE_HOURS` | Default 24, `0` off. Raises the `inbound_silent` alert when WhatsApp has heard nobody for this long while an operator or another channel is active. |
+| `CASEY_WHATSAPP_MAX_AGE_HOURS`, `WHATSAPP_GRAPH_API`, `WHATSAPP_GRAPH_VERSION`, `CASEY_DOCTOR_OFFLINE` | Replay window for signed inbound (default 168h), Graph base URL/version override, and skipping doctor's network rows. |
 | `WHATSAPP_WEBHOOK_PATH` | Path Meta POSTs to (default `/webhooks/whatsapp`). Served on BOTH ports below, so it is the same path either way. There is no `WHATSAPP_WEBHOOK_PORT`. |
 | `CASEY_WEBHOOK_HOST`, `CASEY_WEBHOOK_PORT` | Host/port of the freddie-tree web server carrying that webhook (default `127.0.0.1:4001`) -- a different socket from the dashboard's 4000, because `bin/worker.js` boots the freddie tree first and sharing a port costs the dashboard EADDRINUSE. **Either port is a valid callback URL to publish to Meta:** the same webhook is also served on the dashboard's `--port`, off the same adapter and the same handler, so a deployment behind a reverse proxy that forwards only one port (the dashboard's, since that is where the SPA and `/api/*` live) publishes that one and needs no extra plumbing. No env var switches it on. Meta needs a stable public URL for whichever you publish; use a tunnel in dev. |
 | `CASEY_SESSION_SECRET` | HMAC key signing the dashboard session cookie. The dashboard uses per-operator username/password login (no bearer token, no `?token=`); a fresh deployment with zero accounts auto-creates one admin with a random printed password. Random per process when unset, so a restart logs everyone out -- set it explicitly for sessions to survive a restart. |

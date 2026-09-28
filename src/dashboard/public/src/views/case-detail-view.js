@@ -61,7 +61,10 @@ export async function loadCaseDetail(id) {
         // most, and a failure leaves those fields plain text boxes.
         for (const f of knownValueFields()) loadKnownValues(f).then(schedule);
     } catch (e) {
-        setCaseDetailError((e && e.message) || ('Could not load this ' + entityLabel() + '. It may have been merged or removed -- go back to the list and open it again.'));
+        // Never the server's own word ("not found"): a 404 means merged, removed or a stale link.
+        setCaseDetailError((e && e.status === 404)
+            ? 'This ' + entityLabel() + ' is not here any more. It may have been merged or removed -- go back to the list and open it again.'
+            : 'Could not load this ' + entityLabel() + '. Check your signal, then go back to the list and open it again.');
     }
 }
 

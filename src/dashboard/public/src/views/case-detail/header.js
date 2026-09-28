@@ -49,6 +49,7 @@ import { state, schedule } from '../../state.js';
 import { toast, undoToast } from '../../toasts.js';
 import { fmtTime, rel, healthLabel, headline, channelLabel } from '../../format.js';
 import { entityLabel } from '../../vocabulary.js';
+import { teamRoster } from '../../api-roles.js';
 import { postClaim, postSnooze } from '../../api.js';
 import { todoHintText } from './todo-hint.js';
 
@@ -128,7 +129,7 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
     // screen shouted in caps as P-VANWYK; it is a name, so it is written as
     // one.
     const claimBtn = (c.assignee && c.assignee !== 'agent')
-        ? h('span', { class: 'casey-claimed' }, isMine ? 'Yours' : 'Claimed by ' + (c.assignee_name || c.assignee))
+        ? h('span', { class: 'casey-claimed' }, isMine ? 'Yours' : 'Claimed by ' + ((teamRoster().find((m) => m.key === c.assignee) || {}).name || c.assignee_name || c.assignee))
         : Btn({
             size: 'sm', variant: 'primary', children: 'Claim',
             onClick: async () => {

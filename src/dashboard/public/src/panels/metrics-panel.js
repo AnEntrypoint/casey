@@ -10,11 +10,11 @@ import { Btn } from '/design/src/components/shell/atoms.js';
 import { state } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchOverview, fetchReportJson, fetchSlaAtRiskByType } from '../api.js';
-import { fmtDur } from '../format.js';
+import { fmtDur, stageLabel } from '../format.js';
+import { entityLabelPlural } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
-const STAGE_LABELS_M = { new: 'New', triaging: 'Triage', in_progress: 'In progress', waiting: 'Waiting', resolved: 'Resolved', closed: 'Closed' };
 const CASE_TYPE_LABEL = { unset: 'Unclassified', outbreak: 'Symptom cluster', follow_up: 'Follow-up', lab_sample: 'Lab sample', import_alert: 'Import alert' };
 const ctLabel = (t) => CASE_TYPE_LABEL[t] || t;
 const slaMetPct = (s) => (s && s.considered ? Math.round(((s.met_count || 0) / s.considered) * 100) + '%' : '--');
@@ -37,11 +37,13 @@ function summaryCards(j) {
     const fr = j.first_response_ms || {};
     const dwell = j.dwell_ms_median || {}, backlog = j.backlog_by_stage || {};
     const cards = [
-        [ 'Median first reply', fmtDur(fr.median), `p90 ${fmtDur(fr.p90)} (${fr.n || 0} answered)` ],
-        [ 'Open', String(j.cases ? j.cases.open : 0), 'cases' ],
-        [ 'Closed', String(j.cases ? j.cases.closed : 0), 'cases' ],
-        ...Object.keys(dwell).map((s) => [STAGE_LABELS_M[s] || s, fmtDur(dwell[s]), 'median dwell']),
-        ...Object.keys(backlog).map((s) => [STAGE_LABELS_M[s] || s, String(backlog[s]), 'open now']),
+        // Plain words for a reader who is not a statistician: "usual" is the median, "9 in 10" the 90th percentile,
+        // "time in this stage" the dwell, and the stage names are the ones used everywhere else on screen.
+        [ 'Usual time to a first reply', fmtDur(fr.median), `9 in 10 within ${fmtDur(fr.p90)} (${fr.n || 0} answered)` ],
+        [ 'Open', String(j.cases ? j.cases.open : 0), entityLabelPlural() ],
+        [ 'Closed', String(j.cases ? j.cases.closed : 0), entityLabelPlural() ],
+        ...Object.keys(dwell).map((s) => [stageLabel(s), fmtDur(dwell[s]), 'usual time in this stage']),
+        ...Object.keys(backlog).map((s) => [stageLabel(s), String(backlog[s]), 'open now']),
     ];
     // The kit's Kpi is number-over-caption; the second line each card used to carry
     // rides in the caption so nothing that was said is dropped.
@@ -78,8 +80,8 @@ function byTypeTable(report) {
     };
     const rows = types.map((t) => row(ctLabel(t), sbt[t], met[t]));
     if (ov) rows.push(row('Overall', ov, null));
-    return Section({ title: 'By case type', children: [
-        Table({ headers: ['Type', 'Cases', 'SLA met', 'Late', 'Never', '1st reply', 'Closed'], rows })
+    return Section({ title: 'By type of report', children: [
+        Table({ headers: ['Type', 'Reports', 'Replied in time', 'Replied late', 'Never replied', 'First reply', 'Closed'], rows })
     ]});
 }
 

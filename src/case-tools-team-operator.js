@@ -210,6 +210,11 @@ export function buildTeamOperatorTools(store) {
         if (!TIER_ORDER.filter(t => t !== TIER_REPORTER && t !== TIER_OPERATOR).includes(role)) return { error: 'That role cannot be granted from here.' }
         const external_id = normalizeMsisdn(phone)
         if (!external_id) return { error: 'That does not look like a phone number. Ask for it again.' }
+        // A role is granted only to a number the operator typed in THIS message. Text
+        // read out of a report (a reporter's words reach the model through the queue and
+        // case tools) cannot choose who becomes team: no digits from the operator, no grant.
+        const said = String(ctx?.inboundText || '').replace(/\D/g, '')
+        if (!said.includes(external_id) && !said.includes('0' + external_id.slice(2))) return { error: 'Nothing was changed. Ask the operator to type the phone number in their message, then try again.' }
         const existing = (await store().listContacts({ limit: 1000 })).find(k => k.external_id === external_id && k.channel === 'whatsapp')
         if (existing && TIER_ORDER.indexOf(resolveTierValue(existing.tier)) > TIER_ORDER.indexOf(role)) {
           return { error: `That number already holds a higher role (${TIER_LABELS[resolveTierValue(existing.tier)]}); it was not changed.` }

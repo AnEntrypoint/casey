@@ -25,7 +25,7 @@
 // ignorant of casey's case-store/domain logic. Discord is built but not yet
 // connected when this runs: src/casey.js opens its gateway later, in start().
 import { setAgentContext } from '../../../src/agent/run-turn.js'
-import { serveWhatsappWebhook } from '../../../src/adapters/whatsapp.js'
+import { serveWhatsappWebhook, WEBHOOK_MAX_BODY_BYTES } from '../../../src/adapters/whatsapp.js'
 
 export const name = 'casey-platform'
 // 'agents' alongside 'webServer': this plugin hands its own ctx to
@@ -92,8 +92,20 @@ async function webhookHandler(adapter, req, res) {
   // pointless, and the verify handshake must answer before any await.
   let rawBody = Buffer.alloc(0)
   if (req.method !== 'GET') {
+    // Bounded BEFORE the signature is consulted: this read used to buffer the
+    // whole stream, so any unauthenticated client that could reach the port could
+    // make the worker hold an arbitrarily large body in memory.
     const chunks = []
-    for await (const chunk of req) chunks.push(chunk)
+    let size = 0
+    for await (const chunk of req) {
+      size += chunk.length
+      if (size > WEBHOOK_MAX_BODY_BYTES) {
+        res.writeHead(413, { connection: 'close' })
+        res.end(() => req.destroy?.())
+        return
+      }
+      chunks.push(chunk)
+    }
     rawBody = Buffer.concat(chunks)
   }
   serveWhatsappWebhook(adapter, {

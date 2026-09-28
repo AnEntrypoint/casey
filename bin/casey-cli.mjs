@@ -18,6 +18,7 @@
 //
 //   casey-cli-ui.js         colour, argv, credential/port probes, HELP, closeAndExit
 //   casey-setup.js          init, doctor
+//   casey-roles-command.js  roles (list / assign / demote / invite / revoke / release / link)
 //   casey-serve.js          up, dashboard
 //   casey-store-commands.js cases, show, attention, handover, report, health,
 //                           sweep, transition, erase-contact, retention,
@@ -33,6 +34,7 @@ import {
   cmdRetention, cmdBackup, cmdRestore,
 } from './casey-store-commands.js'
 import { cmdAlerts } from './casey-alerts-command.js'
+import { cmdRoles } from './casey-roles-command.js'
 import { cmdSyncImport } from './casey-sync-import-command.js'
 import { cmdSyncCorrelate } from './casey-sync-correlate-command.js'
 import { cmdSyncApiKey } from './casey-sync-apikey-command.js'
@@ -81,6 +83,7 @@ const COMMANDS = {
   backup: cmdBackup,
   restore: cmdRestore,
   operators: cmdOperators,
+  roles: cmdRoles,
   'sync-import': cmdSyncImport,
   'sync-correlate': cmdSyncCorrelate,
   'sync-apikey': cmdSyncApiKey,

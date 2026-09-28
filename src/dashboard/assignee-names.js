@@ -38,7 +38,12 @@ const ASSIGNEE_DATA_KEYS = ['assignee', 'claimed_by', 'was']
 
 // Timeline rows carry the key in event.data (edited assignee / claimed by);
 // name it for the client and drop the raw contact id used for staff notices.
-export async function nameEventAssignees(store, events) {
+// Internal join keys that have no display use: never sent, for any login. A field
+// login additionally never receives `to` (the reporter's raw routing number on an
+// outbound row): the number is shown only on a case it works, through its audited reveal.
+const CONTACT_KEYS = ['assigned_contact_id', 'staff_contact_id', 'dispatch_worker_id', 'dispatch_response_by', 'announced_to']
+
+export async function nameEventAssignees(store, events, { field = false } = {}) {
   const vals = []
   for (const e of events || []) for (const k of ASSIGNEE_DATA_KEYS) vals.push(e?.data?.[k])
   const name = await assigneeNamer(store, vals, (v) => v)
@@ -47,7 +52,8 @@ export async function nameEventAssignees(store, events) {
     if (!d || typeof d !== 'object') return e
     const out = { ...d }
     for (const k of ASSIGNEE_DATA_KEYS) if (typeof out[k] === 'string') out[k] = name(out[k])
-    delete out.assigned_contact_id
+    for (const k of CONTACT_KEYS) delete out[k]
+    if (field) delete out.to
     return { ...e, data: out }
   })
 }

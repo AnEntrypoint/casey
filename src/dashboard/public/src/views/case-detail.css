@@ -257,3 +257,7 @@
   .casey-detail-pane{padding-left:0;padding-right:0}
   .casey-report{padding-left:var(--space-2);padding-right:var(--space-2)}
 }
+/* Touch floor for the inline edit and note controls (one pair per report field): 44px on a coarse pointer. */
+@media (pointer: coarse){
+  .casey-detail-pane .casey-rep-editable,.casey-detail-pane .casey-rep-note-btn,.casey-detail-pane .casey-meta-toggle,.casey-detail-pane .casey-research-note-toggle{min-height:44px;min-width:44px}
+}

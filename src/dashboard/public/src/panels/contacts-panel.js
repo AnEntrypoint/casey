@@ -38,12 +38,34 @@ const h = webjsx.createElement;
 
 const busyIds = new Set();
 
+// Segment: null = automatic (team members if there are any, else everyone). The segment and
+// the search are asked of the server, over every contact: a deployment holds far more public
+// reporters than the panel could ever draw, and the team is the part the operator came for.
+const view = { segment: null, q: '' };
+
+async function query() {
+    const q = view.q.trim();
+    let j = await fetchContacts({ segment: view.segment || 'team', q });
+    if (!view.segment && j && j.counts && j.counts.team === 0) { view.segment = 'all'; j = await fetchContacts({ segment: 'all', q }); }
+    return j;
+}
+
 const loader = createPanelLoader({
     what: 'the reporters',
     label: 'loading reporters',
-    fetch: fetchContacts,
+    fetch: query,
     apply: (j) => { state._contacts = j; },
 });
+
+// A refresh that keeps the panel (and the search box's focus) on screen, unlike loader.reload().
+let seq = 0, timer = null;
+function refetch(delay) {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+        const mine = ++seq;
+        try { const j = await query(); if (mine === seq) { state._contacts = j; schedule(); } } catch { /* the last list stays */ }
+    }, delay || 0);
+}
 
 // The caller names the target role, so the confirmation and the failure message
 // can name the real role by its real label.
@@ -131,37 +153,28 @@ function who(c) {
         h('span', { class: 'ds-contact-anon-sub' }, via + ', ' + arrived));
 }
 
-// Segment: null = automatic (team members if there are any, else everyone).
-const view = { segment: null, q: '' };
-const isTeam = (c) => TIER_ORDER.indexOf(tierValue(c.tier)) >= 1;
 
 export function ContactsPanel() {
     loader.ensureLoaded();
     const isAdmin = !!(state.currentUser && state.currentUser.role === 'admin');
     const body = loader.slot(() => {
         const contacts = (state._contacts && state._contacts.contacts) || [];
-        if (!contacts.length) return Alert({ kind: 'info', children: 'No one has reported yet.' });
-        const team = contacts.filter(isTeam);
-        const segment = view.segment || (team.length ? 'team' : 'all');
-        const q = view.q.trim().toLowerCase();
-        const shown = contacts.filter((c) => {
-            if (segment === 'team' && !isTeam(c)) return false;
-            if (segment === 'public' && isTeam(c)) return false;
-            if (!q) return true;
-            return [c.display_name, c.external_id_formatted].join(' ').toLowerCase().includes(q.replace(/\s+/g, ' '));
-        });
+        const counts = (state._contacts && state._contacts.counts) || { team: 0, public: 0, all: contacts.length };
+        if (!counts.all) return Alert({ kind: 'info', children: 'No one has reported yet.' });
+        const segment = view.segment || (counts.team ? 'team' : 'all');
+        const shown = contacts;
         return h('div', { class: 'ds-people' },
             h('div', { class: 'ds-people-filter' },
                 FilterPills({
                     label: 'Show', selected: segment,
                     options: [
-                        { id: 'team', label: 'Team members (' + team.length + ')' },
-                        { id: 'public', label: 'Public reporters (' + (contacts.length - team.length) + ')' },
-                        { id: 'all', label: 'Everyone (' + contacts.length + ')' },
+                        { id: 'team', label: 'Team members (' + counts.team + ')' },
+                        { id: 'public', label: 'Public reporters (' + counts.public + ')' },
+                        { id: 'all', label: 'Everyone (' + counts.all + ')' },
                     ],
-                    onSelect: (key) => { view.segment = key; schedule(); },
+                    onSelect: (key) => { view.segment = key; refetch(0); },
                 }),
-                TextField({ key: 'people-q', name: 'people-q', 'aria-label': 'Search by name or number', placeholder: 'Search by name or number', value: view.q, onInput: (v) => { view.q = v; schedule(); } })),
+                TextField({ key: 'people-q', name: 'people-q', 'aria-label': 'Search by name or number', placeholder: 'Search by name or number', value: view.q, onInput: (v) => { view.q = v; refetch(300); } })),
             shown.length ? Table({
                 headers: ['Who', 'Channel', 'Role', 'Last check-in', ''],
                 rows: shown.map((c) => {
@@ -188,7 +201,8 @@ export function ContactsPanel() {
                             (isAdmin && !erased) ? Btn({ size: 'sm', variant: 'link', class: 'ds-contact-erase', disabled: busyIds.has(c.id), children: 'Erase personal details', onClick: () => erase(c) }) : null),
                     ];
                 }),
-            }) : Alert({ kind: 'info', children: 'No one matches that.' }));
+            }) : Alert({ kind: 'info', children: 'No one matches that.' }),
+            (state._contacts && state._contacts.capped) ? h('p', { class: 'casey-hint' }, 'Showing the first ' + shown.length + ' of ' + state._contacts.matched + '. Search by name or number to find the rest.') : null);
     });
     return h('div', { class: 'ds-people-page' },
         TeamRegistration({ isAdmin, onDone: () => loader.reload() }),

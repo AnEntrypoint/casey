@@ -94,8 +94,11 @@ function assigneeControl(d, set) {
     // a <select> when the list arrived.
     if (!roster.length) return h('div', { key: 'assignee-text' }, TextField({ label: 'Assignee', value: d.assignee, onInput: (v) => set('assignee', v) }));
     const opts = [{ value: '', label: 'Nobody yet' }, ...roster.map((m) => ({ value: m.key, label: m.name + ' (' + m.role + ', ' + m.via + ')' }))];
-    if (d.assignee && !opts.some((o) => o.value === d.assignee)) opts.push({ value: d.assignee, label: d.assignee_label || d.assignee });
-    return h('div', { key: 'assignee-pick' }, Select({ label: 'Assigned to', value: d.assignee || '', options: opts, onChange: (v) => set('assignee', v) }));
+    // 'agent' is the assistant holding a report nobody has taken: that IS "Nobody yet" to a
+    // person, so it selects that option instead of showing the raw word as a third choice.
+    const current = d.assignee === 'agent' ? '' : (d.assignee || '');
+    if (current && !opts.some((o) => o.value === current)) opts.push({ value: current, label: d.assignee_label || current });
+    return h('div', { key: 'assignee-pick' }, Select({ label: 'Assigned to', value: current, options: opts, onChange: (v) => set('assignee', v) }));
 }
 
 export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false, expectedRef = null, beforeSave = null, titleNote = null } = {}) {

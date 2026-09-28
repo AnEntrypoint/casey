@@ -138,7 +138,7 @@ export function classifyTurnError(message) {
 export function buildTurnRequest({
   prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
   resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-  staffSend = null, inboundRefs = [],
+  staffSend = null, inboundRefs = [], inboundText = '',
 }) {
   return {
     // A retry after a judge-blank/false-confirm/empty carries the judge's
@@ -253,6 +253,10 @@ export function buildTurnRequest({
       // Record references the staff member's OWN message names, pulled out by
       // pattern for team-focus.js's write gate (identifier extraction, not intent).
       inboundRefs,
+      // What the sender themselves typed this turn (never a record's text): the team
+      // tools that grant a role check the number they are asked to register was
+      // actually named by the operator, so text read from a report cannot pick it.
+      inboundText: String(inboundText || '').slice(0, 2000),
       store,
       principal: { id: msg.from || external_id, role: 'worker' },
       activeCaseRef: turnBinding.ref,
@@ -714,7 +718,7 @@ export async function runAgentTurn({
       result = await runTurn(buildTurnRequest({
         prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
         resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-        staffSend, inboundRefs,
+        staffSend, inboundRefs, inboundText,
       }))
     } catch (e) {
       errored = true

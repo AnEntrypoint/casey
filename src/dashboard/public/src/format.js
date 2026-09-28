@@ -203,7 +203,7 @@ export function caseTypeLabel(t) { return CASE_TYPE_LABEL[t] || deSnake(t); }
 // sitting beside humanised labels in the same column.
 const EVENT_KIND_LABEL = {
   inbound: 'Inbound', outbound: 'Reply', transition: 'Stage change',
-  note: 'Note', observation: 'Note', action: 'Action', autonomy_change: 'Autonomy',
+  note: 'Note', observation: 'Note', action: 'Action', autonomy_change: 'Who answers changed',
 };
 export function eventKindLabel(kind) {
   if (EVENT_KIND_LABEL[kind]) return EVENT_KIND_LABEL[kind];

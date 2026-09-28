@@ -8,6 +8,7 @@
 
 import { state, schedule } from './state.js';
 import { api } from './api.js';
+import { entityLabel } from './vocabulary.js';
 
 // An undoable action's toast carries the only affordance that can reverse it,
 // so it stays up far longer than an ordinary one (which self-dismisses on
@@ -40,10 +41,16 @@ export function toasts() { return state.toasts; }
 // with .body pre-parsed) -- every consumer catches an ApiError from the
 // api.js helpers, so both shapes resolve to the same message.
 export async function failMsg(r, fallback) {
-  if (r && typeof r === 'object' && 'body' in r && !('json' in r)) {
-    return (r.body && r.body.error) || fallback;
-  }
-  try { return (await r.json()).error || fallback; } catch { return fallback; }
+  let msg = '';
+  let status = r && typeof r === 'object' ? r.status : 0;
+  if (r && typeof r === 'object' && 'body' in r && !('json' in r)) msg = (r.body && r.body.error) || '';
+  else { try { msg = (await r.json()).error || ''; } catch { msg = ''; } }
+  // Machine words the server answers with (a 404 hides a report the person may not see, a
+  // 401 is an ended session) are never a sentence to show a ranger or an operator.
+  if (status === 401) return 'You were signed out. Log in again, then repeat that. Nothing was saved.';
+  if (status === 404 && (!msg || /^not found$/i.test(msg))) return 'That ' + entityLabel() + ' is no longer available to you. It may have been given to someone else or removed. Nothing was saved -- refresh and check.';
+  if (/^(unauthorized|forbidden|not found|internal(?: server)? error|bad request)$/i.test(msg)) return fallback;
+  return msg || fallback;
 }
 
 // ~15s actionable Undo toast after a reversible operator action (transition /

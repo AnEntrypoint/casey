@@ -30,7 +30,7 @@ import { ViewTitle, VIEW_TITLE_ID } from './view-title.js';
 import { FieldCaseView, resetFieldCase } from './field-case.js';
 const h = webjsx.createElement;
 
-const fs = { view: 'home', mine: [], signoff: [], loaded: false, loading: false, error: '' };
+const fs = { view: 'home', mine: [], signoff: [], mineTotal: 0, loaded: false, loading: false, error: '' };
 
 export async function refreshFieldLists() {
   if (fs.loading) return;
@@ -41,6 +41,7 @@ export async function refreshFieldLists() {
       isTechnician() ? fetchFieldCases('signoff') : Promise.resolve({ cases: [] }),
     ]);
     fs.mine = (mine && mine.cases) || [];
+    fs.mineTotal = (mine && typeof mine.total === 'number') ? mine.total : fs.mine.length;
     fs.signoff = (signoff && signoff.cases) || [];
     fs.error = '';
   } catch (e) { fs.error = 'Could not load your ' + entityLabelPlural() + '. Check your signal and try again.'; }
@@ -73,9 +74,12 @@ function Row(c, { showMissing = true } = {}) {
   const sentBack = tagsOf(c).includes('sent-back');
   const need = showMissing && mandatory().length ? (missing.length ? 'Still needed: ' + missing.map((f) => f.label).join(', ') : 'Everything needed is recorded') : '';
   return KitRow({
-    key: c.id, title: (what || headline(c.subject || 'No details yet')) + ' -- ' + c.ref,
-    sub: [sentBack ? 'Sent back to you -- open it to see what is needed' : '', need].filter(Boolean).join('. '),
-    meta: stageLabel(c.status) + (c.last_event_at ? ' -- ' + rel(c.last_event_at) : ''),
+    // The reference sits in the sub line, not the title: on a phone it wrapped in the middle of
+    // the id ("CASE-" / "1003-..."), which read as two different things.
+    // Stage and age ride in the sub line, not the kit's right-hand meta: on a phone that column took half the
+    // row and squeezed the title into two words a line.
+    key: c.id, title: what || headline(c.subject || 'No details yet'),
+    sub: [c.ref, stageLabel(c.status) + (c.last_event_at ? ' -- ' + rel(c.last_event_at) : ''), sentBack ? 'Sent back to you -- open it to see what is needed' : '', need].filter(Boolean).join('. '),
     rail: sentBack ? 'flame' : (mandatory().length && !missing.length ? 'green' : undefined),
     onClick: () => openReport(c.id),
   });
@@ -102,6 +106,8 @@ function Home() {
   const open = worstFirst(fs.mine.filter(isOpen));
   const body = [];
   if (fs.error) body.push(Alert({ kind: 'warn', children: fs.error }));
+  // The server sends at most 200 at a time; more than that is said, never silently cut.
+  if (fs.mineTotal > fs.mine.length) body.push(Alert({ kind: 'info', children: 'Showing the ' + fs.mine.length + ' most recently active of your ' + fs.mineTotal + ' ' + entityLabelPlural() + '. Ask an operator to hand some on if this is too many.' }));
   if (tech) {
     const ids = new Set();
     const ready = [...fs.signoff, ...open.filter((c) => !missingOf(c).length)].filter((c) => (ids.has(c.id) ? false : (ids.add(c.id), true)));
@@ -110,7 +116,9 @@ function Home() {
     body.push(List('Your other ' + entityLabelPlural() + ', still being gathered', rest, 'You have no other open ' + entityLabelPlural() + '.'));
   } else {
     body.push(List('My ' + entityLabelPlural(), open, 'No ' + entityLabel() + ' is assigned to you right now. When an operator gives you one it shows up here.'));
-    body.push(Panel({ title: 'Where mine are', children: h('div', { class: 'field-map-small' }, MapPanel()) }));
+    // Nothing assigned means nothing to place: an empty map of the whole country only says "no reports have
+    // come in", which is a claim about the deployment, not about this person.
+    if (open.length) body.push(Panel({ title: 'Where mine are', children: h('div', { class: 'field-map-small' }, MapPanel()) }));
   }
   return h('div', { class: 'field-home' }, ...body);
 }
@@ -165,7 +173,7 @@ export function FieldApp() {
     ConnectionBanner(),
     AppShell({
       topbar: Topbar({ brand, leaf: roleName(), items: [], themeToggle: false }), crumb, side: nav(),
-      status: Status({ left: [h('span', { key: 'c' }, countOf(fs.mine.length) + ' yours')], right: [h('span', { key: 'n' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected')], ariaLabel: 'Status bar' }),
+      status: Status({ left: [h('span', { key: 'c' }, 'You have ' + countOf(fs.mine.length))], right: [h('span', { key: 'n' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected')], ariaLabel: 'Status bar' }),
       main: [main], bannerLabel: 'Top bar', mainLabelledby: VIEW_TITLE_ID,
     }),
     FieldHelp(),

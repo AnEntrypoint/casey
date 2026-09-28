@@ -23,6 +23,7 @@ import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { SearchInput } from 'ds/components/content.js';
 import { state, setActiveId, schedule } from '../state.js';
+import { assigneeName, loadRoster } from '../api-roles.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchSecretaryQueue } from '../api.js';
 import { fmtDur, fmtTime, channelLabel } from '../format.js';
@@ -94,7 +95,7 @@ function caseValues(c) {
         c.ref || '',
         c.subject || '(no subject)',
         channelLabel(c.channel),
-        c.assignee || h('span', { class: 'ds-muted' }, 'unassigned'),
+        assigneeName(c.assignee) || h('span', { class: 'ds-muted' }, 'unassigned'),
         fmtDur(c.wait_ms),
         c.reason || '',
         c.updated_at ? fmtTime(c.updated_at) : '',
@@ -141,6 +142,7 @@ function searchBar(resultCount) {
 
 export function SecretaryPanel() {
     loader.ensureLoaded();
+    loadRoster(schedule);
     let total = 0;
     const body = loader.slot(() => {
         const j = state._secretary;

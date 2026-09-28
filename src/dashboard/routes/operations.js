@@ -90,6 +90,16 @@ export function llmHealthView(s) {
 // tell "online" from "online but answering nobody". A channel configured yet
 // never connected since start is the actionable red signal. Best-effort: a
 // receive-status failure never breaks health.
+// The WhatsApp block of /api/health: last inbound, webhook counters, delivery
+// outcomes (failed/undelivered by code), and the silence-alarm setting. Aggregate
+// only. null when no WhatsApp channel is served or no way to ask was wired.
+async function whatsappView(receiveStatus) {
+  try {
+    const rs = await resolve(receiveStatus)
+    return rs && rs.whatsapp ? rs.whatsapp : null
+  } catch { return null }
+}
+
 async function gatewayView(receiveStatus) {
   try {
     const rs = await resolve(receiveStatus)
@@ -134,6 +144,7 @@ export function getHealth({ store, llmStatus, receiveStatus, queueStatus, runSwe
     const model = s.model ? String(s.model).slice(0, 100) : null
     const url = s.url ? String(s.url).slice(0, 200) : null
     const gateway = await gatewayView(receiveStatus)
+    const whatsapp = await whatsappView(receiveStatus)
     // LLM-down queue depth (pending re-drives + dead-lettered) so an operator
     // sees not just "AI helper offline" but how much is actually backed up
     // behind that outage. Best-effort: a scan failure never breaks health.
@@ -150,7 +161,7 @@ export function getHealth({ store, llmStatus, receiveStatus, queueStatus, runSwe
     res.json({
       ...view, source: s.source, model, url, degraded: !!s.degraded,
       last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null,
-      gateway, queue,
+      gateway, whatsapp, queue,
       // Every capability this process was GIVEN, not just the three that had a
       // pill. `sweep` is the load-bearing addition: postSweep answers 501
       // "sweep not available in this mode" when runSweep is absent, and the
@@ -645,6 +656,10 @@ export function getActivity({ store, authed }) {
     const since = parseInt(req.query.since, 10) || 0
     let { rows, truncated } = await store.listAllEvents({ kind, actor }, { limit: limit + (since ? 500 : 0) })
     if (since) rows = rows.filter(e => Number(e.created_at) * 1000 >= since)
+    // The invite log, settings and erasure journal live on channel:'system' singleton cases. Their events are
+    // bookkeeping (a raw JSON line carrying an invite's label), not something that happened on a report.
+    const system = new Set((await store.listCases({ channel: 'system' }, { limit: 50 })).map(c => c.id))
+    if (system.size) rows = rows.filter(e => !system.has(e.case_id))
     const events = rows.slice(0, limit).map(e => ({
       id: e.id, case_id: e.case_id, kind: e.kind, actor: e.actor,
       text: e.text || '', created_at: e.created_at,

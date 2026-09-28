@@ -1023,13 +1023,34 @@ export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSwee
 // file), and a lockout mechanism is itself a denial-of-service surface
 // against a teammate's account. scrypt's own cost already makes brute-force
 // impractical at any real request rate.
+// Online password guessing is capped per (username, source address) and per source
+// address, in memory (a restart forgives; the scrypt cost is the standing brake). A
+// success clears the pair. Keyed by source too, so one stranger cannot lock a real
+// person out of their own login from elsewhere.
+const LOGIN_FAILS = new Map()
+const LOGIN_WINDOW_MS = 15 * 60e3
+const loginFails = (k, now) => { const l = (LOGIN_FAILS.get(k) || []).filter(t => now - t < LOGIN_WINDOW_MS); if (l.length) LOGIN_FAILS.set(k, l); else LOGIN_FAILS.delete(k); return l }
+// A login for a name that does not exist still pays the scrypt cost, so response time
+// does not tell a stranger which usernames are real.
+const DECOY = { salt: 'decoy-salt-0000000000000000000000', hash: '00'.repeat(64) }
+
 export function postLogin({ store, findAccountByUsername, verifyPassword, issueSession, sessionCookieHeader, markLogin }) {
   return async (req, res) => {
     const { username, password } = req.body || {}
+    const now = Date.now()
+    const pairKey = `${String(username || '').trim().toLowerCase().slice(0, 60)}|${req.ip}`
+    const ipKey = `ip|${req.ip}`
+    if (loginFails(pairKey, now).length >= 10 || loginFails(ipKey, now).length >= 60) {
+      return res.status(429).json({ error: 'too many attempts; wait a few minutes and try again' })
+    }
     const acct = await findAccountByUsername(store, username)
-    if (!acct || acct.disabled === '1' || !verifyPassword(password, acct.password_salt, acct.password_hash)) {
+    const ok = acct ? verifyPassword(password, acct.password_salt, acct.password_hash) : (verifyPassword(password, DECOY.salt, DECOY.hash), false)
+    if (!acct || acct.disabled === '1' || !ok) {
+      for (const k of [pairKey, ipKey]) LOGIN_FAILS.set(k, [...loginFails(k, now), now])
+      if (LOGIN_FAILS.size > 5000) for (const k of LOGIN_FAILS.keys()) loginFails(k, now)
       return res.status(401).json({ error: 'invalid username or password' })
     }
+    LOGIN_FAILS.delete(pairKey)
     const token = issueSession(acct.id, { epoch: Number(acct.session_epoch) || 0 })
     res.set('Set-Cookie', sessionCookieHeader(token))
     markLogin(store, acct.id).catch(() => {}) // best-effort, never blocks login

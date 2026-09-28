@@ -67,8 +67,18 @@ export const publicContact = (c) => {
 export function getContacts({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const contacts = await store.listContacts({ limit: 1000 })
-    res.json({ contacts: contacts.map(publicContact) })
+    // The panel's default view is the TEAM, but the newest-first cut used to be taken before
+    // any filtering: once public reporters passed 1000 the team (registered earlier) fell off
+    // the end and "Team members (0)" was shown over people who exist. So the segment and the
+    // search are applied here, over everyone, and the counts say what exists.
+    const all = (await store.listContacts({ limit: 10000 })).map(publicContact)
+    const team = all.filter((c) => c.tier !== TIER_REPORTER)
+    const seg = String(req.query.segment || '')
+    const q = String(req.query.q || '').trim().slice(0, 100).toLowerCase().replace(/\s+/g, ' ')
+    let rows = seg === 'team' ? team : seg === 'public' ? all.filter((c) => c.tier === TIER_REPORTER) : all
+    if (q) rows = rows.filter((c) => [c.display_name, c.external_id_formatted].join(' ').toLowerCase().includes(q))
+    const CAP = 300
+    res.json({ contacts: rows.slice(0, CAP), matched: rows.length, capped: rows.length > CAP, counts: { team: team.length, public: all.length - team.length, all: all.length } })
   }
 }
 

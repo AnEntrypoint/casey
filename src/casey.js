@@ -32,6 +32,7 @@ import { ALL_HEALTH_TAGS } from './case-health.js'
 import { mergeTag } from './hooks/heuristics.js'
 import { caseDeliveryTarget, splitExternalId } from './hooks/handler.js'
 import { disposeAgent } from './agent/run-turn.js'
+import { applyDeliveryStatus, snapshotDeliveryStatus, countUndeliveredCases } from './delivery-status.js'
 
 const CASE_HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
@@ -153,7 +154,84 @@ export class Casey {
     const platforms = {}
     for (const ch of this.channels) platforms[ch] = await makeChannelAdapter(ch, { log: this.log, store: this.store, dataDir: this.store.dataDir, markConnected: (c) => this._markConnected(c), markInbound: (c) => this._markInbound(c) })
     this.adapters = platforms
+    this._wireDeliveryStatus()
     return this._initFreddieAndHooks(handler)
+  }
+
+  // Meta posts delivery statuses (sent/delivered/read/failed) to the same webhook
+  // as messages. The adapter emits them as 'status', never as 'message', so they
+  // cannot open a case or reach a turn; they are applied to the outbound event
+  // they name (src/delivery-status.js). Tracked in _inflight so drain() waits for
+  // a status write the way it waits for a turn, and a shutdown never closes the
+  // store under one.
+  _wireDeliveryStatus() {
+    const wa = this.adapters?.whatsapp
+    if (!wa || typeof wa.on !== 'function') return
+    wa.on('status', (st) => {
+      const p = applyDeliveryStatus(this.store, st, { log: this.log, recentSends: wa.recentSends })
+        .catch(e => this.log?.warn?.('[casey] delivery status could not be applied', { error: e?.message || String(e) }))
+      this._inflight.add(p)
+      p.finally(() => this._inflight.delete(p))
+    })
+  }
+
+  // The WhatsApp block of the health surface: inbound liveness, webhook counters,
+  // delivery outcomes. Aggregate only -- no contact identifier, no number, no
+  // token. `undelivered_cases` is refreshed by the alert watch (never on the
+  // request path), so this stays synchronous and cheap.
+  whatsappStatus(now = Date.now()) {
+    const a = this.adapters?.whatsapp
+    if (!a) return null
+    const r = this.receiveHealth.whatsapp || {}
+    const lastIn = Math.max(r.lastInboundAt || 0, this._waStoredInboundAt || 0) || null
+    const hours = this._inboundSilenceHours()
+    return {
+      configured: true,
+      last_inbound_at: lastIn,
+      silent_for_ms: lastIn ? now - lastIn : null,
+      silence_alarm_hours: hours,
+      webhook: { ...(a.webhookStats || {}) },
+      delivery: { ...snapshotDeliveryStatus(), open_cases_undelivered: this._undeliveredCases ?? null },
+    }
+  }
+
+  _inboundSilenceHours() {
+    const raw = process.env.CASEY_INBOUND_SILENCE_HOURS
+    if (raw === undefined || raw === '') return 24
+    const n = Number(raw)
+    return Number.isFinite(n) && n >= 0 ? n : 24
+  }
+
+  // Newest WhatsApp inbound the STORE knows of, so a restart does not forget when
+  // the channel last heard anyone. Read at most every 10 minutes; a failure keeps
+  // the last known value.
+  async _refreshStoredInbound(now) {
+    if (this._waStoredAt && now - this._waStoredAt < 10 * 60e3) return
+    this._waStoredAt = now
+    try {
+      const rows = await this.store.t.list('event', { kind: 'inbound', channel: 'whatsapp' }, { limit: 1, sort: [{ field: 'created_at', dir: 'DESC' }] })
+      const ts = Number(rows[0]?.created_at)
+      if (Number.isFinite(ts) && ts > 0) this._waStoredInboundAt = ts * 1000
+    } catch { /* keep the last value */ }
+  }
+
+  // The newest sign that something OTHER than WhatsApp inbound is alive: an
+  // operator login, an operator action on any case, or an inbound on another
+  // channel. Without it a genuinely quiet reserve at 3am would page as "deaf".
+  async _otherSignalAt() {
+    let newest = 0
+    const bump = (v) => { const n = Number(v); if (Number.isFinite(n) && n > newest) newest = n }
+    try {
+      const { listAccounts } = await import('./dashboard/auth.js')
+      for (const a of await listAccounts(this.store)) bump(tsMs(a.last_login_at))
+    } catch { /* no roster */ }
+    try {
+      const ops = await this.store.t.list('event', { actor: 'operator' }, { limit: 1, sort: [{ field: 'created_at', dir: 'DESC' }] })
+      if (ops[0]) bump(Number(ops[0].created_at) * 1000)
+      const others = await this.store.t.list('event', { kind: 'inbound', channel: { $ne: 'whatsapp' } }, { limit: 1, sort: [{ field: 'created_at', dir: 'DESC' }] })
+      if (others[0]) bump(Number(others[0].created_at) * 1000)
+    } catch { /* keep what we have */ }
+    return newest || null
   }
 
   // Everything that decides WHERE an alert goes, in one place so the choice can
@@ -313,7 +391,8 @@ export class Casey {
       if (state === 'never-connected') worst = 'never-connected'
       channels[ch] = { state, connected, sinceConnectMs, sinceInboundMs }
     }
-    return { state: Object.keys(channels).length ? worst : 'none', channels }
+    const whatsapp = this.whatsappStatus(now)
+    return { state: Object.keys(channels).length ? worst : 'none', channels, ...(whatsapp ? { whatsapp } : {}) }
   }
 
   // Await all in-flight inbound turns (used for drain-on-shutdown and test determinism).
@@ -540,6 +619,33 @@ export class Casey {
       active: sweepScheduled && stalledFor > stallMs,
       detail: `the guardrail sweep has not completed a pass in ${Math.round(stalledFor / 60000)} minutes (it runs every ${Math.round(interval / 60000)}); stale, stuck and abandoned cases are going undetected`,
     })
+
+    // 4. WHATSAPP HAS HEARD NOBODY FOR HOURS WHILE OTHER SIGNALS ARE ALIVE. A
+    //    webhook channel holds no socket that can look dead, so `never-connected`
+    //    can never name it. What it can do is stay silent: Meta's callback URL
+    //    registered with no webhook fields subscribed leaves every pill green and
+    //    every report undelivered. Baseline = the newest WhatsApp inbound the
+    //    process OR the store knows of (a restart never resets it), else process start. Alive = an operator
+    //    login/action or another channel's inbound inside the same window, so an
+    //    idle deployment is not called deaf. CASEY_INBOUND_SILENCE_HOURS=0 turns
+    //    it off.
+    const waHours = this.adapters?.whatsapp ? this._inboundSilenceHours() : 0
+    if (waHours > 0) {
+      const silenceMs = waHours * 3600e3
+      await this._refreshStoredInbound(now)
+      const r = this.receiveHealth.whatsapp || {}
+      const baseline = Math.max(r.lastInboundAt || 0, this._waStoredInboundAt || 0) || this._startedAt
+      const other = await this._otherSignalAt()
+      const silent = now - baseline > silenceMs
+      const alive = other != null && now - other < silenceMs
+      verdicts.push({
+        condition: SYSTEM_CONDITIONS.INBOUND_SILENT,
+        active: silent && alive,
+        detail: `WhatsApp is configured but no inbound message has arrived for ${Math.round((now - baseline) / 3600e3)} hours while the dashboard or other channels are in use. If people are messaging, Meta is not delivering: in the Meta developer console open WhatsApp -> Configuration -> Webhook fields and make sure "messages" is subscribed and the callback URL matches; run casey doctor to check.`,
+      })
+    }
+    // Refreshed here, off the request path, for /api/health.
+    try { this._undeliveredCases = await countUndeliveredCases(this.store) } catch { /* keep last */ }
 
     const fired = []
     for (const v of verdicts) {
@@ -846,6 +952,11 @@ export class Casey {
     this.stopSweep()
     this.stopDrainPoll()
     this.stopAlertWatch()
+    // Webhook channels first: refuse new POSTs (503, so Meta redelivers to the next
+    // worker) and let any media download already in flight finish and become its
+    // message, before the in-flight drain below takes its snapshot.
+    for (const a of Object.values(this.adapters || {})) a?.beginDrain?.()
+    for (const a of Object.values(this.adapters || {})) { try { await a?.drainMedia?.() } catch { /* bounded, best effort */ } }
     await this.gateway?.stop()
     // Wait out the boot-time resume sweep too, not just gateway.handleInbound's
     // own in-flight turns -- see start()'s comment on why this is tracked

@@ -11,6 +11,7 @@ import path from 'node:path'
 import { ROOT, bold, dim, green, red, cyan, ok, bad, warn, pkgVersion, hasCreds, partialCreds, portFree } from './casey-cli-ui.js'
 import { checkConfigDrift } from './casey-config-drift.js'
 import { RawLog } from '../src/core/raw-log.js'
+import { runMetaChecks, runRoleChecks } from './casey-doctor-checks.js'
 
 const ENV_TEMPLATE = `# casey environment -- fill in the channels you want, leave the rest blank.
 # Discord:
@@ -422,6 +423,12 @@ export async function cmdDoctor({ flags }) {
       console.log(warn(`provenance raw log could not be read (${e.message})`))
     }
   }
+  // What Meta and the public URL say about WhatsApp (read-only), then the role
+  // model in the database. Each is best-effort: an unreadable answer is a row,
+  // never a crash of the preflight.
+  try { problems += await runMetaChecks(flags) } catch (e) { console.log(warn(`Meta checks could not run (${e.message})`)) }
+  try { problems += await runRoleChecks() } catch (e) { console.log(warn(`role checks could not run (${e.message})`)) }
+  console.log('')
   // port
   const port = Number(flags.port || 4000)
   // Every other bad() row in this command counts itself into `problems`; this
