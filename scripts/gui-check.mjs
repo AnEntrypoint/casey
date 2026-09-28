@@ -59,6 +59,10 @@ let dash = null, chrome = null, ws = null
 
 try {
   await createAccount(store, { username: USER, password: PW, displayName: 'GUI Check', role: 'admin', mustChangePassword: false })
+  // Two field-team logins with no cases and no linked number: the role-shaped
+  // screens are checked without creating or touching any real report.
+  await createAccount(store, { username: USER + '-rng', password: PW, displayName: 'GUI Ranger', role: 'eco_ranger', mustChangePassword: false })
+  await createAccount(store, { username: USER + '-aht', password: PW, displayName: 'GUI Technician', role: 'animal_health_technician', mustChangePassword: false })
   dash = await createDashboard(store, { port: PORT })
 
   chrome = spawn(CHROME, [
@@ -154,6 +158,31 @@ try {
   check(m.z !== 'auto' && Number(m.z) > 0, 'mobile appbar sits above the map', `z-index ${m.z}`)
   check(m.scrollW <= m.innerW, 'no horizontal overflow on mobile', `${m.scrollW} vs ${m.innerW}`)
 
+  console.log('\nteam registration + invite codes (Reporters panel)')
+  await send('Emulation.clearDeviceMetricsOverride')
+  await evalJs(`import('/src/state.js').then((m) => { m.openPanel('contacts'); return 1 })`)
+  await sleep(2000)
+  // The invite is real (the store is the live one) so it is cancelled below.
+  await evalJs(`(() => { const e = document.querySelector('[name=invite-label]'); e.value = 'gui-check'; e.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
+  await evalJs(`(() => { [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Make a code').click(); return 1 })()`)
+  await sleep(1500)
+  const t = JSON.parse(await evalJs(`(() => {
+    const opts = (n) => { const s = document.querySelector('[name=' + n + ']'); return s ? [...s.options].map((o) => o.value) : null };
+    const code = document.querySelector('.ds-invite-code');
+    const page = (document.querySelector('.ds-people-page') || {}).innerText || '';
+    return JSON.stringify({ reg: opts('team-role'), inv: opts('invite-role'), code: code ? code.dataset.inviteCode : null, page, filter: document.querySelectorAll('.ds-people-filter button').length });
+  })()`))
+  check(!!t.reg && !t.reg.includes('reporter') && t.reg.includes('operator'), 'register form offers the roles above the public rung, operator included for an admin', t.reg && t.reg.join(','))
+  check(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(t.code || ''), 'creating an invite shows the one-time code in a copyable block', t.code)
+  check(!/\b(tier|rung|hash)\b/i.test(t.page), 'the people/invite screens use no tier/rung/hash jargon')
+  check(t.filter === 3 || t.filter === 0, 'team / public / everyone filter present when contacts exist', String(t.filter))
+  await evalJs(`(() => { [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Cancel code')?.click(); return 1 })()`)
+  await sleep(500)
+  await evalJs(`(() => { [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Cancel the code')?.click(); return 1 })()`)
+  await sleep(1200)
+  const left = await evalJs(`[...document.querySelectorAll('.ds-invite tbody tr')].filter((r) => /gui-check/.test(r.innerText) && /Waiting to be used/i.test(r.innerText)).length`)
+  check(left === 0, 'the test invite was cancelled again', String(left))
+
   console.log('\naccessibility + console')
   const bad = JSON.parse(await evalJs(`(() => {
     const els = [...document.querySelectorAll('button, a, [role=button], input, select')];
@@ -208,6 +237,32 @@ try {
   }
   check(consoleMsgs.length === 0, 'browser console clean', consoleMsgs.length ? consoleMsgs[0] : 'no errors or warnings')
   check(failedReqs.length === 0, 'no failed requests', failedReqs.length ? [...new Set(failedReqs)][0] : 'none')
+
+  // ---- role-shaped screens: each field-team login gets its own narrow home, and
+  // the server (not the screen) refuses everything outside it.
+  for (const [suffix, homeLabel, label] of [['-rng', 'My ', 'eco ranger'], ['-aht', 'Ready to sign off', 'animal health technician']]) {
+    console.log(`\nrole home: ${label}`)
+    await evalJs(`fetch('/api/logout',{method:'POST'}).then(r=>r.status)`)
+    await evalJs(`fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:${JSON.stringify(USER + suffix)},password:${JSON.stringify(PW)}})}).then(r=>r.status)`)
+    await send('Page.navigate', { url: base })
+    await sleep(4000)
+    const r = JSON.parse(await evalJs(`(async () => {
+      const nav = [...document.querySelectorAll('nav a, nav button, aside a, aside button')].map((e) => e.innerText.trim()).filter(Boolean);
+      const code = async (p) => (await fetch(p)).status;
+      const list = await (await fetch('/api/cases')).json();
+      return JSON.stringify({
+        nav, hasMapHomeShell: !!document.querySelector('.app-two-pane-map'),
+        codes: { accounts: await code('/api/accounts'), thresholds: await code('/api/thresholds'), csv: await code('/api/report.csv'), contacts: await code('/api/contacts'), cases: await code('/api/cases') },
+        listed: (list.cases || []).length, whoami: (await (await fetch('/api/whoami')).json()).role,
+        scrollW: document.documentElement.scrollWidth, innerW: window.innerWidth,
+      });
+    })()`))
+    check(r.nav.length === 2 && r.nav[0].startsWith(homeLabel) && r.nav[1] === 'Map', `${label}: nav is only their home and the map`, r.nav.join(' | '))
+    check(!r.hasMapHomeShell, `${label}: not the operator console`)
+    check(r.codes.accounts === 403 && r.codes.thresholds === 403 && r.codes.csv === 403 && r.codes.contacts === 403, `${label}: accounts, thresholds, exports and contacts are refused by the server`, JSON.stringify(r.codes))
+    check(r.codes.cases === 200 && r.listed === 0, `${label}: the case list answers, scoped to their own (none here)`, `${r.codes.cases}, ${r.listed} listed`)
+    check(r.scrollW <= r.innerW, `${label}: no horizontal overflow`, `${r.scrollW} vs ${r.innerW}`)
+  }
 } catch (e) {
   console.error('[gui-check] ERROR:', e.message)
   failures.push('harness: ' + e.message)
@@ -216,7 +271,7 @@ try {
   try { chrome && chrome.kill() } catch { /* already gone */ }
   try { if (dash?.close) await dash.close() } catch { /* already closed */ }
   for (const a of await listAccounts(store).catch(() => [])) {
-    if (a.username === USER) await deleteAccount(store, a.id).catch(() => {})
+    if (a.username === USER || a.username.startsWith(USER + '-')) await deleteAccount(store, a.id).catch(() => {})
   }
 }
 

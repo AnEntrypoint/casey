@@ -5,14 +5,14 @@
 //
 // deps: store, wrap, actingOperator, authed, isAdmin, getRoster, listAccounts,
 //   createAccount, setAccountDisabled, deleteAccount, revokeAccountSessions,
-//   getAccount, issueSession, sessionCookieHeader
+//   getAccount, issueSession, sessionCookieHeader, setAccountContactPhone
 import { mountRoutes } from './register.js'
 
 // Account rows carry password_hash/password_salt/session_epoch. This is the one
 // allowlist through which one may reach JSON -- module-level and named, so the
 // credential columns stay unemitted by construction rather than by each
 // handler remembering.
-export const publicAccount = (a) => ({ id: a.id, username: a.username, display_name: a.display_name, role: a.role, disabled: a.disabled === '1', last_login_at: a.last_login_at || null })
+export const publicAccount = (a) => ({ id: a.id, username: a.username, display_name: a.display_name, role: a.role, contact_phone: a.contact_phone || null, disabled: a.disabled === '1', last_login_at: a.last_login_at || null })
 
 // The operator roster + who the server resolved THIS request to (from the
 // logged-in session), so the SPA can label every action with a real name.
@@ -37,10 +37,20 @@ export function postAccount({ store, authed, isAdmin, createAccount }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
     try {
-      const { username, password, display_name, role } = req.body || {}
-      const acct = await createAccount(store, { username, password, displayName: display_name, role })
+      const { username, password, display_name, role, contact_phone } = req.body || {}
+      const acct = await createAccount(store, { username, password, displayName: display_name, role, contactPhone: contact_phone })
       res.status(201).json({ account: publicAccount(acct) })
     } catch (e) { res.status(400).json({ error: e.message }) }
+  }
+}
+
+// Link or unlink an account to a WhatsApp number (admin-only, like every account edit).
+export function postAccountContactPhone({ store, authed, isAdmin, setAccountContactPhone }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
+    try { await setAccountContactPhone(store, req.params.id, (req.body || {}).contact_phone); res.json({ ok: true }) }
+    catch (e) { res.status(400).json({ error: e.message }) }
   }
 }
 
@@ -105,6 +115,7 @@ const ROUTES = [
   ['post', '/api/accounts', postAccount, { raw: true }],
   ['post', '/api/accounts/:id/disable', postAccountDisabled(true), { raw: true }],
   ['post', '/api/accounts/:id/enable', postAccountDisabled(false), { raw: true }],
+  ['post', '/api/accounts/:id/contact-phone', postAccountContactPhone, { raw: true }],
   ['post', '/api/accounts/:id/revoke-sessions', postRevokeSessions, { raw: true }],
   ['post', '/api/logout-everywhere', postLogoutEverywhere, { raw: true }],
   ['delete', '/api/accounts/:id', deleteAccountRoute, { raw: true }],

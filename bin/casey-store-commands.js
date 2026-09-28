@@ -589,7 +589,7 @@ export async function cmdOperators({ flags, rest }) {
   // `--role secretary` reported "created account (role: operator)" and exited
   // 0 -- a flag accepted, silently changed, and confirmed as if it had been
   // honoured. The roles live here once, and an unknown one is refused.
-  const ACCOUNT_ROLES = ['admin', 'operator', 'secretary']
+  const ACCOUNT_ROLES = ['admin', 'operator', 'secretary', 'eco_ranger', 'animal_health_technician']
   if (sub === 'add') {
     const username = positional[0]
     if (!username) { say('usage: casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary]'); await closeAndExit(store, 1) }

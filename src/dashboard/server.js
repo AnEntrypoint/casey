@@ -49,6 +49,8 @@ import { getWebhookDeliveryStatus } from '../gateway-hooks.js'
 import { escapeHtml } from 'anentrypoint-design/html-escape.js'
 import { parseJsonArraySafe, parseEventData } from '../safe.js'
 import { registerAuth } from './routes/auth.js'
+import { roleOf } from './roles.js'
+import { registerTeam } from './routes/team.js'
 import { registerWhatsappWebhook } from './routes/whatsapp-webhook.js'
 import { registerCases } from './routes/cases.js'
 import { registerAccounts } from './routes/accounts.js'
@@ -63,7 +65,7 @@ const esc = escapeHtml
 import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
   issueSession, verifySession, findAccountByUsername, verifyPassword, markLogin,
-  getAccount, listAccounts, createAccount, setAccountDisabled, deleteAccount, changePassword,
+  getAccount, listAccounts, createAccount, setAccountDisabled, setAccountContactPhone, deleteAccount, changePassword,
   revokeAccountSessions,
 } from './auth.js'
 
@@ -658,7 +660,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   const actingOperator = (req) => {
     const acct = req.caseyAccount
     if (!acct) throw new Error('actingOperator called with no authenticated session -- a gated route was registered before the session gate')
-    return { id: acct.username, name: acct.display_name || acct.username, role: acct.role || 'operator' }
+    return { id: acct.username, name: acct.display_name || acct.username, role: roleOf(acct) }
   }
   // Same {id, name} shape the old CASEY_OPERATORS roster returned, sourced
   // from real operator_account rows instead of an env var -- every existing
@@ -756,7 +758,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR,
     COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
     issueSession, verifySession, findAccountByUsername, verifyPassword,
-    markLogin, getAccount, listAccounts, createAccount, setAccountDisabled,
+    markLogin, getAccount, listAccounts, createAccount, setAccountDisabled, setAccountContactPhone,
     deleteAccount, changePassword, revokeAccountSessions,
     esc, wrap, str, clampLimit, offsetOf,
     authed, isAdmin, actingOperator, getRoster,
@@ -782,6 +784,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerMap(app, deps)
   registerReports(app, deps)
   registerOperations(app, deps)
+  registerTeam(app, deps)
   // The basemap, same-origin, off a bounded on-disk LRU cache -- see
   // routes/tiles.js for the OSM usage-policy argument and the cache bound.
   // Registered here rather than in registerAuth's static block on purpose: it

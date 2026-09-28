@@ -80,15 +80,23 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
     await store.appendEvent(fresh.id, observation('concurrent turn skipped: prior LLM turn still in-flight for this contact; buffered for replay'))
   }
 
+  // The team tools' outbound seam: the receiver's own sendReply -- Casey.sendReply,
+  // the very function the dashboard's operator reply and the proactive stage note
+  // call -- and whether the channel a record arrived on has a live adapter. No
+  // second outbound mechanism exists; a receiver without either leaves the team
+  // tools to refuse honestly.
+  const staffSend = typeof receiver?.sendReply === 'function'
+    ? { sendReply: (caseRow, text) => receiver.sendReply(caseRow, text), canSend: (ch) => !!resolveAdapter(receiver, ch)?.send }
+    : null
   return await driveAgentTurn(deps, {
     adapter, fresh, contact, events, prompt, inboundText, media,
-    msg, msgId, channel, external_id, replyTo, platform,
+    msg, msgId, channel, external_id, replyTo, platform, staffSend,
   })
 }
 
 async function driveAgentTurn(deps, {
   adapter, fresh, contact, events, prompt, inboundText, media,
-  msg, msgId, channel, external_id, replyTo, platform,
+  msg, msgId, channel, external_id, replyTo, platform, staffSend = null,
 }) {
   const { store, log, callLLM, notifyHandoff } = deps
   // Durable turn-lifecycle marker: record that an agent turn STARTED for this
@@ -110,7 +118,7 @@ async function driveAgentTurn(deps, {
 
   const turn = await runAgentTurn({
     store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
-    channel, external_id, turnStartedAt, isBackgroundRedrive,
+    channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend,
   })
   const { result, errored, jargonReasons, falseConfirmReasons, degradedReason } = turn
   let text = turn.text

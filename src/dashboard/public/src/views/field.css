@@ -1,0 +1,9 @@
+/* field.css -- the field team's screens are composed from kit primitives (Panel,
+   Row, DetailRow, Alert, Btn, Section) and this file's existing siblings
+   (.casey-detail-pane, .casey-case-header, .casey-timeline-actions). The only
+   bespoke rule is the map's height: the map shell has no intrinsic size, and no
+   kit primitive sizes a Leaflet canvas. Viewport units, so no spacing literals. */
+.field-map-small,.field-map-full{position:relative}
+.field-map-small{height:40vh}
+.field-map-full{height:70vh}
+.field-map-small .ds-map-shell,.field-map-full .ds-map-shell{height:100%}

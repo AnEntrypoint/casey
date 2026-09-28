@@ -10,6 +10,7 @@
 
 import { AGENT_USER } from './case-store.js'
 import { defTool, str, pick, ownsCase, slimCase } from './case-tools-shared.js'
+import { isContactAssignee } from './case-assignment.js'
 
 export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
   return [
@@ -32,6 +33,10 @@ export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
         if (bad) return bad
         const clean = pick(patch, ['subject', 'summary', 'priority', 'assignee', 'case_type'])
         if (!Object.keys(clean).length) return { error: 'no editable fields supplied' }
+        // A contact key ('contact:<id>') names a team member and is written only by
+        // the assignment tools (team_assign / case_claim); free text here must not
+        // be able to hand a record to, or take one from, someone.
+        if (isContactAssignee(clean.assignee)) return { error: 'that assignee cannot be set here' }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         // A field_worker may learn another case's id via case_list/case_mine

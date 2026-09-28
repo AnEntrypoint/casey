@@ -17,7 +17,7 @@ default. The animal-disease-surveillance-for-rural-South-Africa domain this
 project was first built for lives as a separate, fully self-contained config
 package: `AnEntrypoint/uhh` (private).
 
-### The contact access ladder (three rungs)
+### The contact access ladder (four rungs)
 
 `src/contact-tiers.js` is the one authority: `TIER_ORDER` is the ladder, lowest
 to highest, and every tier question in casey asks "does this contact reach at
@@ -31,9 +31,30 @@ carries its own default.
 | `reporter` | Report-only: file/amend their own report plus the two irreversible service controls (`REPORT_ONLY_TOOLS`). | The default, and the far more common tier. |
 | `field_worker` | Everything above, plus agentic case-query access (`case_list`/`case_mine`/`case_today`/`case_get`), `case_switch`/`case_update`/`case_split`, and casual location check-ins so they appear on the operator map for dispatch. | Operator-promoted. A deployment may CALL this rung something else -- `uhh` calls it an "Eco Ranger" (see below). |
 | `animal_health_technician` | Everything above, plus the EXCLUSIVE authority to move a report to a done stage. | See the AHT-exclusive-signoff principle under Design principles. |
+| `operator` | Everything above EXCEPT sign-off: the team-management rung (work the queue, reply to reporters, assign, issue role invites) for a team member who mainly uses the dashboard but must be able to work over WhatsApp too. | Sits above the technician on the ladder, and `canSignOff` is an equality test, so it does NOT inherit sign-off. Only an admin may grant it. |
+
+**A phone number gets a role by exactly two mechanisms, neither reachable from
+a contact's own free text.** (1) An operator ASSIGNS it in the dashboard:
+`POST /api/contacts/:id/tier` for an existing contact, or `POST
+/api/contacts/register {phone,name,tier}` for a number that has never messaged
+in (`case-store.js`'s `registerContact`; `normalizeMsisdn` makes "079 091 5297"
+and "+27 79 091 5297" land on the key the webhook later delivers). (2) A person
+sends a ONE-TIME CODE over WhatsApp: an operator mints it (`POST
+/api/role-invites`, or an operator-rung number over WhatsApp), and
+`hooks/role-registration.js` consumes it in `runInboundTurn` AFTER admission and
+BEFORE any case is opened or any agent turn runs, only for a message that is
+nothing but a code (`extractCode` is strict), so the model never sees a code,
+cannot decide the outcome, and a wrong guess opens no case. Codes live in
+`src/role-invites.js` as an append-only audited log on a `role-invites` system
+singleton case (no schema change), only a SHA-256 is stored (the plain code is
+returned once at creation), single use by default, 72h default life, claims are
+serialised per code, a code never DEMOTES, and wrong guesses are capped per
+contact (5/hour) and deployment-wide (40/hour). The operator rung can be granted
+only by an admin, by either mechanism. Both end in `setContactTier`.
 
 Promotion is operator-assigned via the dashboard (`POST
-/api/contacts/:id/tier`, any authed operator, not admin-only) and
+/api/contacts/:id/tier`, any authed operator except for the operator rung, which
+needs an admin) and
 `case-store.js`'s `setContactTier`. No `case_*` tool touches `contact.tier`, so
 it is never contact-self-service or LLM-settable. The WRITE boundary REFUSES an
 unrecognised value (validated against `TIER_ORDER`); the READ path COERCES one
@@ -271,7 +292,7 @@ alongside freddie's `@freddie/freddie-base` bundle:
 - `freddie-bundle/boot.js::bootCasey()` composes `@freddie/freddie-base`'s
   own `cordis.patch.yml` rows with casey's own (`freddie-bundle/cordis.patch.yml`)
   into one flattened patch array, then calls freddie's real `boot()`.
-- `freddie-bundle/src/case-tools/index.js` -- casey's 18 `case_*` tools,
+- `freddie-bundle/src/case-tools/index.js` -- casey's 18 original `case_*` tools plus the 24 team tools (`case-tools-team*.js`),
   reusing `src/case-tools.js`'s existing definitions/handlers unchanged,
   wrapped as real freddie `defineTool()` calls registered on `ctx.tools`
   (`schema-adapt.js` mechanically translates casey's plain-JSON-Schema
@@ -458,7 +479,7 @@ real waterfalls. Keep both gates: removing either leaves the base bundle's
 bash/write/credential tools reachable from a contact-facing conversation.
 
 `src/case-tools.js` is the single source of truth for WHICH case tools exist,
-in what order, and what wraps them; the 18 definitions themselves live in six
+in what order, and what wraps them; the 18 original definitions live in six
 sibling modules it composes, grouped by the surface they serve:
 `case-tools-lookup.js` (`case_get`, `case_list`), `case-tools-record.js`
 (`case_update`, `case_report`, `case_observe`, `case_transition`),
@@ -466,7 +487,8 @@ sibling modules it composes, grouped by the surface they serve:
 `case_split`, `case_health`), `case-tools-worker.js` (`case_mine`,
 `case_today`, `case_checkin`, `case_idle`), `case-tools-binding.js`
 (`case_new`, `case_switch`), `case-tools-control.js` (`case_stop`,
-`case_handoff`), with `case-tools-shared.js` holding `defTool`, the enum-hint
+`case_handoff`), and -- APPENDED after them, so the pinned order above is untouched --
+`case-tools-team.js` (24 role tools, below), with `case-tools-shared.js` holding `defTool`, the enum-hint
 ladder and `ownsCase`. **The composition order is pinned deliberately** -- it
 is the order freddie serializes tool schemas into every request, so it is
 prompt-visible text like the descriptions themselves. Do not reorder it
@@ -606,8 +628,17 @@ src/
   case-runtime.js          process singleton so the plugin reaches the live CaseStore
   provenance-wire.js       additive bridge from case_report into the provenance subsystem (src/core/, src/packs/)
   contact-tiers.js         THE contact access ladder: TIER_ORDER, fail-closed resolveTierValue, the atLeast/canQueryCases rank tests and canSignOff (see "The contact access ladder")
-  case-tools.js            composes the 18 case_* tools from case-tools-{lookup,record,triage,worker,binding,control}.js; -record composes three of its own (case-tools-record-{fields,report,timeline}.js); gateByTier wraps every query/mutation tool behind at-least-field_worker tier, and case_transition additionally behind AHT-only sign-off
+  case-tools-team.js      the ROLE tools, appended after the original 18 and gated per rung by case-tools-gates.js TOOL_MIN_TIER (a RANK test; hidden from a lower tier's schema by hiddenToolNamesForTier through the same disabledToolsets seam): -team-field.js (field_worker: case_pending case_claim case_release case_dispatch_reply case_focus case_gaps case_contact case_edit case_stage case_message), -team-review.js (animal_health_technician: signoff_queue case_review case_reopen case_ask_ranger; sign-off itself stays case_transition's canSignOff equality), -team-operator.js (operator: team_queue team_handover team_assign team_draft team_remind team_invite team_register team_roster team_quiet_staff team_nudge_staff); -team-shared.js holds authorityOn (operator, or an assignee on THEIR assigned record; deskAuthorityOn adds the technician's unassigned queue) and teamRow (PII-free)
+  case-assignment.js       tiny fail-closed assignee predicate: assigneeKeyFor(contact) = 'contact:<id>', isAssignedTo(caseRow, contact), isContactAssignee, contactIdOfAssignee, publicAssignee (renders a key as 'you' / 'a team member'); legacy usernames and 'agent' keep their meaning
+  team-focus.js            which record a ranger/technician is working on, in code: writeGate refuses an unconfirmed record, a record the inbound message does not name, or two named at once; confirmation must come in a LATER turn; recordedOn is the shape every team write returns; state is in memory (restart = ask again)
+  staff-notices.js         queued news for an assignee (newly assigned, reporter answered, dispatch suggested), derived from timeline events and delivered as a counts-only note in their next in-window turn and by case_pending
+  hooks/staff-outbound.js  the ONE outbound path for a team member's message to a reporter: opt-out + 24h-window + wired-channel refusals, then Casey.sendReply (the dashboard's own seam); records outbound actor 'operator' with data.by; first human reply claims an unclaimed record and moves 'auto' to 'observe'; releaseCase hands back and resumes 'auto'
+  hooks/prompt-roles.js    the stacked role blocks (field / sign-off desk / operator desk), guarded both ways by prompt.js's selfCheckLoadBearingPromptContent
+  case-tools.js            composes the 18 original case_* tools (plus the team tools above) from case-tools-{lookup,record,triage,worker,binding,control}.js; -record composes three of its own (case-tools-record-{fields,report,timeline}.js); gateByTier wraps every query/mutation tool behind at-least-field_worker tier, and case_transition additionally behind AHT-only sign-off
   dashboard/auth.js        per-operator login: scrypt hashing, stateless HMAC-signed session cookies, operator_account CRUD
+  dashboard/roles.js       THE dashboard-login role authority: STAFF (admin/operator/secretary) vs FIELD (eco_ranger/animal_health_technician), fail-closed resolveRole (unknown/absent -> eco_ranger), caseAccess (write = assigned, read = own report or, for a technician, the sign-off queue, none = 404), the deny-by-default roleGate route table and expectedRefGuard
+  dashboard/wa-link.js     the one wa.me click-to-chat builder (9-15 digits or no link; text stripped, capped, percent-encoded)
+  dashboard/routes/team.js operator-only GET /api/team-members (assignable people, keyed for case-assignment.js) and GET /api/nudges (assigned reports per person with the clocks to nudge on + a drafted wa.me link)
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep, including team-coverage-gap detection
@@ -685,6 +716,54 @@ centre entirely.
   (`onActiveIdChange`); the map subscribes. Assigning `state.activeId` directly
   skips that notification and leaves the map wherever it happened to be -- do
   not introduce a direct assignment.
+
+### Dashboard roles: two families, one gate
+
+`operator_account.role` is `admin | operator | secretary` (STAFF: the operator
+console, unchanged) or `eco_ranger | animal_health_technician` (FIELD: the field
+team's own GUI). `dashboard/roles.js` is the only place that decides what a
+login may do. `resolveRole()` is fail-closed: a missing, blank or forged value
+resolves to the LEAST privileged rung (`eco_ranger`), never to operator --
+`actingOperator` and `/api/whoami` both go through it. Staff pass `roleGate` (a
+middleware mounted right after `authGate()` in `routes/auth.js`) untouched; a
+FIELD login reaches only the rows of its allowlist and everything else is 403:
+
+| FIELD login may | Rule |
+|---|---|
+| `GET /api/config`, `GET /api/operators`, `POST /api/logout-everywhere`, `POST /api/cases` (auto-assigned to the creator) | no case involved |
+| `GET /api/cases`, `GET /api/map/cases` | filtered to what `caseAccess` allows; the map's shared memo is bypassed for them; `?view=mine` / `?view=signoff` narrow it |
+| `GET /api/cases/:id`, `/events`, `/media/<caseId>/*` | `read` or better |
+| `PATCH` (subject/summary/priority/tags/case_type only -- never assignee or autonomy), `/intake`, `/note`, `/reply`, `/remind`, `/location`, `/transition` | `write` = the case is assigned to them (their username, or the `contact:<id>` key of the contact their `contact_phone` links to) |
+| `POST /api/cases/:id/send-back` | technician only, on an assigned case or one in the sign-off queue |
+
+`caseAccess`: `write` = assigned; `read` = their own report (`external_id` is
+their linked number) or, for a technician, an open case with the mandatory minimum
+met and nobody holding it (the sign-off queue); otherwise `none` (404, so a probe
+learns nothing). A done-stage move needs the technician role and the mandatory
+minimum recorded (`missingMandatoryMinimum`); an eco ranger is refused with a
+plain message, and a technician may also move a case in the queue. The reporter's
+number (`external_id_formatted`), the `wa.me` message link and `missing_facts`
+appear in `GET /api/cases/:id` only on a `write` case, and each reveal appends a
+timeline observation (throttled to once per case per person per ten minutes,
+in memory). Notes and intake by a field login are recorded as relayed, not as the
+reporter's words. `expectedRefGuard` (every role): a write carrying `expected_ref`
+that is not the case id's `ref` is refused 409 -- the SPA sends it on every field
+write. `contact_phone` (optional, `normalizeMsisdn`-normalised, admin-set on
+account create or `POST /api/accounts/:id/contact-phone`) is what links a login to
+its contact. `casey operators add --role` accepts all five roles.
+
+Client: `views/app-view.js` returns `views/field-app.js` (its own frame, not the
+console with pieces hidden) for any non-staff role. Eco ranger home = "My
+reports", worst-first (sent-back first, then priority, then most missing) with
+what each still needs and a small map of only their own; technician home = "Ready
+to sign off" (mandatory minimum met) with their other open reports beneath.
+`views/field-case.js` is the one-report screen: a persistent identity header, the
+checklist, sign off / send back, reach-the-reporter link, a record form titled
+with the reference that asks for one confirm per opened report, quick note /
+photo details / mark where I am. Client calls live in `api-roles.js`. Operators
+get `panels/nudges-panel.js` ("Who needs a nudge") and an assignee picker fed by
+`/api/team-members` in `fields-editor.js`. No FIELD screen shows accounts, teams,
+metrics, thresholds or exports; the server would refuse them regardless.
 
 There is no automated test suite. Verification is manual/live: run `casey up`
 against real freddie/thatcher/a real LLM provider and exercise the actual
@@ -1576,6 +1655,11 @@ without restart-on-crash.
   recovery. Only an unreachable store is a 503.
   Admin-only routes additionally require `role: 'admin'`, read from the live
   `operator_account` row, never from the cookie.
+  A FIELD login (`eco_ranger`, `animal_health_technician`) is fenced by
+  `dashboard/roles.js`'s deny-by-default `roleGate`, and an unknown or absent role
+  value resolves to the least privileged rung, never to operator (see "Dashboard
+  roles"). Case scoping is server-side; hiding a control in the SPA is not the
+  fence.
 - All contact-supplied text is HTML-escaped before render.
 - Session-cookie and password comparisons use `crypto.timingSafeEqual` to
   prevent timing oracles.

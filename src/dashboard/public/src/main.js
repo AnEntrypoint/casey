@@ -31,6 +31,9 @@ import { TeamPanel } from './panels/team-panel.js';
 import { ContactsPanel } from './panels/contacts-panel.js';
 import { SecretaryPanel } from './panels/secretary-panel.js';
 import { ExternalLinksPanel } from './panels/external-links-panel.js';
+import { NudgesPanel } from './panels/nudges-panel.js';
+import { isFieldRole } from './api-roles.js';
+import { refreshFieldLists } from './views/field-app.js';
 
 import { OnboardingOverlay, onboarded, markOnboarded } from './components/onboarding-overlay.js';
 import { SkillsOverlay, skillsDismissed } from './components/skills-overlay.js';
@@ -69,6 +72,7 @@ registerPanelBody('team', TeamPanel);
 registerPanelBody('contacts', ContactsPanel);
 registerPanelBody('secretary', SecretaryPanel);
 registerPanelBody('external_links', ExternalLinksPanel);
+registerPanelBody('nudges', NudgesPanel);
 
 // Dialog-shaped modals (settings/stats are quick-glance overlays that never
 // displace the case queue; help/onboarding/skills share the same Dialog
@@ -136,6 +140,7 @@ installGlobalKeyboard();
 // checklist once logged in -- all localStorage-gated, shown at most once
 // unless the operator explicitly reopens via the Topbar help button.
 function maybeShowOnboarding() {
+  if (isFieldRole()) return;   // the field team's screen has its own short help
   if (!onboarded()) { openModal('onboarding'); return; }
   if (!helpSeen()) markHelpSeen();
   // username, not id: /api/whoami returns { authed, username, display_name,
@@ -224,6 +229,7 @@ async function refreshDegradedTurns() {
 }
 
 export async function refreshAll() {
+  if (isFieldRole()) { await Promise.all([loadCaseyConfig(), refreshFieldLists()]); return; }
   // loadCaseyConfig() runs here too, not just in boot() -- a login that
   // happens after the pre-login boot attempt's own /api/config call failed
   // (401/403, e.g. the bootstrap-admin must-change-password gate) left
@@ -240,6 +246,13 @@ registerRefreshAll(refreshAll);
 
 async function boot() {
   await loadCaseyConfig();
+  if (isFieldRole()) {
+    // The field team's screen (views/field-app.js): config, the open-report deep link,
+    // and their own lists. None of the operator polls below apply to them.
+    applyRouteToState();
+    await refreshFieldLists();
+    return;
+  }
   const hv = currentRoute();
   if (hv.view) {
     const decoded = decodeView(hv.view);
@@ -359,7 +372,7 @@ const onMapHome = () => !state.activePanel && state.homeView === 'map';
 // repopulates every surface these feed, and a tick that skips costs nothing --
 // so there is no second place that has to remember to start a timer, and a
 // session lost mid-shift stops the traffic by itself.
-const polling = () => state.authed;
+const polling = () => state.authed && !isFieldRole();
 // The polling cadence, named rather than left as five bare numbers inline.
 // This is not housekeeping: every one of these is traffic on what AGENTS.md
 // describes as a metered, intermittent rural link, so how often each surface
@@ -417,6 +430,8 @@ const _healthIv = setInterval(() => { if (polling()) refreshHealth(); }, HEALTH_
 const _attnIv = setInterval(() => { if (polling()) refreshAttention(); }, ATTENTION_POLL_MS);
 const _mapIv = setInterval(() => { if (polling() && onMapHome()) refreshMapData(); }, MAP_POLL_MS);
 const _degradedIv = setInterval(() => { if (polling()) refreshDegradedTurns(); }, DEGRADED_POLL_MS);
+const FIELD_POLL_MS = 30000;
+const _fieldIv = setInterval(() => { if (state.authed && isFieldRole() && !state.activeId) refreshFieldLists(); }, FIELD_POLL_MS);
 // Not one of the polls above: it fetches no data and exists only so that
 // "Connected" cannot outlive the last response that reached the origin. The
 // polls are a side-effect detector with a 15s floor on this view and no floor
@@ -424,7 +439,7 @@ const _degradedIv = setInterval(() => { if (polling()) refreshDegradedTurns(); }
 const _stopConnWatch = api.startConnectionWatch();
 window.addEventListener('beforeunload', () => {
   clearTimeout(_casesTimer); clearInterval(_healthIv); clearInterval(_attnIv);
-  clearInterval(_mapIv); clearInterval(_degradedIv); _stopConnWatch();
+  clearInterval(_mapIv); clearInterval(_degradedIv); clearInterval(_fieldIv); _stopConnWatch();
 });
 
 // Read-only diagnostic hook. The bug class this layout keeps producing is the

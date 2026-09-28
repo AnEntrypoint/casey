@@ -10,7 +10,7 @@
 import { tagList, parseReport } from '../../timestamp.js'
 import { snapshotDroppedIntake } from '../../hooks/dropped-intake.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
-import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI, TIER_LABELS } from '../../store/report-shape.js'
+import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI, TIER_LABELS, MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES } from '../../store/report-shape.js'
 import { KNOWN_VALUE_FIELDS, isKnownValueField, readKnownValues, canonicalizeFieldValue } from '../../field-values.js'
 import { mountRoutes } from './register.js'
 
@@ -391,6 +391,9 @@ export function getConfig({ store, authed, SAST_TZ }) {
       // active config declares none (casey's own default, uhh), in which
       // case app-view.js/nav-config.js fall back to their own hardcoded
       // literals -- byte-identical to before this existed.
+      // The floor a report must reach before it can be signed off (report-fields
+      // mandatory_minimum), so the field-team screens can show what is still missing.
+      mandatory_minimum: { fields: MANDATORY_MINIMUM_FIELDS.map(k => ({ key: k, label: fieldLabel(k) })), blocks_transition_to: MANDATORY_MINIMUM_BLOCKED_STATUSES },
       dashboard_ui: DASHBOARD_UI,
       // What each contact access tier is CALLED here, one entry per rung of
       // contact-tiers.js's ladder, ALREADY RESOLVED against the deployment's own

@@ -16,6 +16,8 @@ import { HandoffBanner } from '../components/handoff-banner.js';
 import { ConnectionBanner } from '../components/connection-banner.js';
 import { ToastTray } from '../components/toast-tray.js';
 import { LoginGate } from './login-gate.js';
+import { FieldApp } from './field-app.js';
+import { isFieldRole } from '../api-roles.js';
 import { Dialog } from '../components/dialog-shell.js';
 import { CaseListDetailLayout } from './case-list-detail-layout.js';
 import { MapCommandCenter } from './map-command-center.js';
@@ -258,6 +260,10 @@ export function App() {
   // A form nobody can submit, with no statement of why, on the one screen with
   // no other chrome to say it.
   if (!state.authed) return h('div', { class: 'ds-app-root is-gated' }, ConnectionBanner(), LoginGate());
+
+  // The field team (eco ranger, animal health technician) get their own screen,
+  // not the operator console with pieces hidden (views/field-app.js).
+  if (isFieldRole()) return FieldApp();
 
   // brand/leaf are config-driven (dashboard_ui.brand/dashboard_ui.leaf, see
   // report-shape.js's DASHBOARD_UI, threaded through /api/config) so a

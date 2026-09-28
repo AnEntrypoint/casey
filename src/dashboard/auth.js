@@ -18,6 +18,8 @@
 // break-glass recovery.
 
 import crypto from 'node:crypto'
+import { normalizeMsisdn } from '../role-invites.js'
+import { ACCOUNT_ROLES } from './roles.js'
 
 const SCRYPT_KEYLEN = 64
 const SCRYPT_OPTS = { N: 16384, r: 8, p: 1 } // Node's own recommended defaults
@@ -149,15 +151,20 @@ export async function listAccounts(store) {
   return store.t.list('operator_account', {}, { limit: 500 })
 }
 
-export async function createAccount(store, { username, password, displayName, role = 'operator', mustChangePassword = false }) {
+export async function createAccount(store, { username, password, displayName, role = 'operator', mustChangePassword = false, contactPhone = '' }) {
   const sid = slugUsername(username)
   if (!sid) throw new Error('invalid username')
   if (!password || String(password).length < 8) throw new Error('password must be at least 8 characters')
   if (await findAccountByUsername(store, sid)) throw new Error(`account "${sid}" already exists`)
+  // Optional link to the person's WhatsApp number, stored as the msisdn the
+  // webhook delivers, so 'my cases' can mean the cases of that contact.
+  const phone = String(contactPhone || '').trim() ? normalizeMsisdn(contactPhone) : ''
+  if (String(contactPhone || '').trim() && !phone) throw new Error('phone number is not valid -- use a full number such as 082 123 4567')
   const { hash, salt } = hashPassword(password)
   return store.t.create('operator_account', {
     username: sid, password_hash: hash, password_salt: salt,
-    display_name: String(displayName || sid).slice(0, 80), role: ['admin', 'secretary'].includes(role) ? role : 'operator',
+    display_name: String(displayName || sid).slice(0, 80), role: ACCOUNT_ROLES.includes(role) ? role : 'operator',
+    ...(phone ? { contact_phone: phone } : {}),
     disabled: '0', must_change_password: mustChangePassword ? '1' : '0',
   }, SYSTEM)
 }
@@ -194,6 +201,14 @@ export async function changePassword(store, id, newPassword) {
   // on its own terms rather than relying on nobody adding a version guard here.
   await store.t.update('operator_account', id, { password_hash: hash, password_salt: salt, must_change_password: '0', session_epoch: String(nextEpoch) }, SYSTEM)
   return { epoch: nextEpoch }
+}
+
+// Link (or unlink, with '') an account to a WhatsApp number.
+export async function setAccountContactPhone(store, id, contactPhone) {
+  const raw = String(contactPhone || '').trim()
+  const phone = raw ? normalizeMsisdn(raw) : ''
+  if (raw && !phone) throw new Error('phone number is not valid -- use a full number such as 082 123 4567')
+  return store.t.update('operator_account', id, { contact_phone: phone }, SYSTEM)
 }
 
 export async function setAccountDisabled(store, id, disabled) {

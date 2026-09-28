@@ -43,16 +43,18 @@ const TOOL_SECTION_PREFIX = 'tool:'
 /**
  * @param agentCtx - the per-agent Cordis context from `ctx.agents.create()`'s `setup`.
  * @param getPromptText - () => string, read at EACH prompt assembly.
- * @param allowedNames - the tool names this conversation may call; every other
+ * @param allowedNames - array, or a function returning one (read per assembly); the tool names this conversation may call; every other
  *   tool's `tool:<name>` guidance section is dropped, since installToolAllowlist
  *   has already hidden the schema it describes and prose telling the model to
  *   "use the write tool" for a tool it cannot see is a pure liability.
  * @returns a disposer.
  */
 export function installCasePrompt(agentCtx, getPromptText, allowedNames = []) {
-  const allowed = new Set(allowedNames)
   return agentCtx.on('system-prompt/assemble', async (_assembly, _context, next) => {
     const assembled = await next()
+    // Function form is read per assembly (see installToolAllowlist): a tier change
+    // must reach the tool guidance sections too.
+    const allowed = new Set(typeof allowedNames === 'function' ? allowedNames() : allowedNames)
     const text = getPromptText()
     // No prompt for this turn is a real fault, but not one to fail a live
     // contact's turn over: fall through to freddie's own assembly unchanged so

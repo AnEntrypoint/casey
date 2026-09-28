@@ -1,8 +1,10 @@
-// Contacts/Reporters panel -- contact access-tier promote/demote across the
-// whole three-rung ladder (vocabulary.js's TIER_ORDER) +
-// admin-only PII erasure. Content-swap panel (state.activePanel ===
-// 'contacts'). Table-based; each row carries a Promote/Demote button and, for
-// an admin, an Erase control.
+// People panel -- register team members (team-registration.js), invite them by
+// WhatsApp code (invite-codes.js), and manage every contact's role from one
+// table, plus admin-only PII erasure. Content-swap panel (state.activePanel ===
+// 'contacts'). Each row carries a role selector that can move the person to any
+// role directly, and for an admin an Erase control. The table is filtered to
+// team members by default: the public reporters are the vast majority and
+// would otherwise bury the handful of people who hold a role.
 //
 // THE ERASE CONTROL IS DELIBERATELY NOT A FILLED DANGER BUTTON. It used to be:
 // the kit's highest-emphasis style, in red, repeated on all 20 rows, one
@@ -20,13 +22,17 @@ import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
+import { TextField, Select } from '/design/src/components/content/fields.js';
 import { state, schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchContacts, postContactTier, postContactErase } from '../api.js';
 import { fmtTime, channelLabel } from '../format.js';
-import { countOf, entityLabelPlural, tierLabel, tierValue, tierAbove, tierBelow, TIER_ORDER } from '../vocabulary.js';
+import { countOf, entityLabelPlural, tierLabel, tierValue, TIER_ORDER } from '../vocabulary.js';
+import { glossaryLookup } from '../glossary.js';
 import { toast, failMsg } from '../toasts.js';
 import { confirmDialog } from '../components/dialog-shell.js';
+import { TeamRegistration, tierOptions } from './team-registration.js';
+import { InviteCodes } from './invite-codes.js';
 
 const h = webjsx.createElement;
 
@@ -39,26 +45,25 @@ const loader = createPanelLoader({
     apply: (j) => { state._contacts = j; },
 });
 
-// ONE RUNG AT A TIME, in a named direction -- not a toggle.
-//
-// This was `c.tier === 'field_worker' ? 'reporter' : 'field_worker'`, which is a
-// two-position switch. The ladder has three rungs, and a switch over three
-// positions has no correct behaviour: whichever pair it flips between, one rung
-// is unreachable, and the button's own label can no longer say what pressing it
-// will do. So the caller names the target rung and the button is the one that
-// knows which rung that is -- which also makes the confirmation and the failure
-// message able to name the real rung by its real label.
-async function setTier(c, to) {
-    if (!to) return;
+// The caller names the target role, so the confirmation and the failure message
+// can name the real role by its real label.
+async function setTier(c, to, selectEl) {
+    if (!to || to === tierValue(c.tier)) return;
+    const who_ = c.named ? c.display_name : (c.has_number ? c.external_id_formatted : 'this person');
+    const ok = await confirmDialog({
+        title: 'Change ' + who_ + ' to ' + tierLabel(to) + '?',
+        message: glossaryLookup(to) + ' They were ' + tierLabel(c.tier) + ' before.',
+        confirmLabel: 'Change role',
+    });
+    if (ok === null) { if (selectEl) selectEl.value = tierValue(c.tier); return; }
     busyIds.add(c.id); schedule();
     try {
         await postContactTier(c.id, to);
-        toast('Access level is now ' + tierLabel(to), 'ok');
-        // The tier is a column in the table below, so the row on screen now
-        // disagrees with the server.
+        toast('Role is now ' + tierLabel(to), 'ok');
         loader.reload();
     } catch (e) {
-        toast(await failMsg(e, 'The access level was not changed, so it is still ' + tierLabel(c.tier) + '. Try again.'), 'err');
+        if (selectEl) selectEl.value = tierValue(c.tier);
+        toast(await failMsg(e, 'The role was not changed, so it is still ' + tierLabel(c.tier) + '. Try again.'), 'err');
     }
     busyIds.delete(c.id); schedule();
 }
@@ -126,49 +131,63 @@ function who(c) {
         h('span', { class: 'ds-contact-anon-sub' }, via + ', ' + arrived));
 }
 
+// Segment: null = automatic (team members if there are any, else everyone).
+const view = { segment: null, q: '' };
+const isTeam = (c) => TIER_ORDER.indexOf(tierValue(c.tier)) >= 1;
+
 export function ContactsPanel() {
     loader.ensureLoaded();
-    const isAdmin = state.currentUser && state.currentUser.role === 'admin';
+    const isAdmin = !!(state.currentUser && state.currentUser.role === 'admin');
     const body = loader.slot(() => {
         const contacts = (state._contacts && state._contacts.contacts) || [];
         if (!contacts.length) return Alert({ kind: 'info', children: 'No one has reported yet.' });
-        return Table({
-            headers: ['Who', 'Channel', 'Tier', 'Last check-in', ''],
-            rows: contacts.map((c) => {
-                const tier = tierValue(c.tier);
-                const up = tierAbove(tier);
-                const down = tierBelow(tier);
-                const erased = c.external_id_formatted === '[erased]';
-                return [
-                    who(c),
-                    channelLabel(c.channel),
-                    // Only the exception gets chip chrome. Nearly every row is
-                    // a plain reporter, and a chip repeated down the whole
-                    // column stops marking anything; plain text keeps the
-                    // value present without competing with the one row that
-                    // differs.
-                    // Only a rung ABOVE the default gets chip chrome. Nearly every
-                    // row is a plain reporter, and a chip repeated down the whole
-                    // column stops marking anything; plain text keeps the value
-                    // present without competing with the rows that differ. The
-                    // top rung reads as the strongest chip because it is the one
-                    // an operator scans for -- a complete report that is still
-                    // not signed off is waiting for exactly these people.
-                    tier === TIER_ORDER[0]
-                        ? tierLabel(tier)
-                        : Chip({ tone: tier === TIER_ORDER[TIER_ORDER.length - 1] ? 'blue' : 'accent', children: tierLabel(tier) }),
-                    c.last_location_at ? fmtTime(c.last_location_at) : 'never',
-                    h('div', { class: 'ds-contact-actions' },
-                        // Two buttons, each naming the rung it moves TO, each
-                        // absent at the end of the ladder it cannot move past --
-                        // so the control never offers a move that does not exist
-                        // and never hides a rung behind a toggle's other half.
-                        up ? Btn({ size: 'sm', disabled: busyIds.has(c.id), children: 'Make ' + tierLabel(up), onClick: () => setTier(c, up) }) : null,
-                        down ? Btn({ size: 'sm', variant: 'ghost', disabled: busyIds.has(c.id), children: 'Make ' + tierLabel(down), onClick: () => setTier(c, down) }) : null,
-                        (isAdmin && !erased) ? Btn({ size: 'sm', variant: 'link', class: 'ds-contact-erase', disabled: busyIds.has(c.id), children: 'Erase personal details', onClick: () => erase(c) }) : null),
-                ];
-            }),
+        const team = contacts.filter(isTeam);
+        const segment = view.segment || (team.length ? 'team' : 'all');
+        const q = view.q.trim().toLowerCase();
+        const shown = contacts.filter((c) => {
+            if (segment === 'team' && !isTeam(c)) return false;
+            if (segment === 'public' && isTeam(c)) return false;
+            if (!q) return true;
+            return [c.display_name, c.external_id_formatted].join(' ').toLowerCase().includes(q.replace(/\s+/g, ' '));
         });
+        const seg = (key, text) => h('button', { type: 'button', key: 'seg-' + key, class: 'btn btn-sm' + (segment === key ? '' : ' btn-ghost'), 'aria-pressed': String(segment === key), onclick: () => { view.segment = key; schedule(); } }, text);
+        return h('div', { class: 'ds-people' },
+            h('div', { class: 'ds-people-filter' },
+                h('div', { class: 'ds-contact-actions', role: 'group', 'aria-label': 'Show' },
+                    seg('team', 'Team members (' + team.length + ')'),
+                    seg('public', 'Public reporters (' + (contacts.length - team.length) + ')'),
+                    seg('all', 'Everyone (' + contacts.length + ')')),
+                TextField({ key: 'people-q', name: 'people-q', 'aria-label': 'Search by name or number', placeholder: 'Search by name or number', value: view.q, onInput: (v) => { view.q = v; schedule(); } })),
+            shown.length ? Table({
+                headers: ['Who', 'Channel', 'Role', 'Last check-in', ''],
+                rows: shown.map((c) => {
+                    const tier = tierValue(c.tier);
+                    const erased = c.external_id_formatted === '[erased]';
+                    // Only a role ABOVE the default gets chip chrome; nearly every
+                    // row is a public reporter and a chip down the whole column
+                    // stops marking anything. The top role reads strongest.
+                    const chip = tier === TIER_ORDER[0]
+                        ? h('span', { class: 'ds-role-plain' }, tierLabel(tier))
+                        : Chip({ tone: tier === TIER_ORDER[TIER_ORDER.length - 1] ? 'blue' : 'accent', children: tierLabel(tier) });
+                    // The top role is offered to an admin only (the server refuses
+                    // anyone else); a person already holding it still shows it.
+                    const opts = tierOptions(isAdmin);
+                    const all = [{ value: TIER_ORDER[0], label: tierLabel(TIER_ORDER[0]) }].concat(opts);
+                    if (!all.some((o) => o.value === tier)) all.push({ value: tier, label: tierLabel(tier) });
+                    return [
+                        who(c),
+                        channelLabel(c.channel),
+                        chip,
+                        c.last_location_at ? fmtTime(c.last_location_at) : 'never',
+                        h('div', { class: 'ds-contact-actions' },
+                            Select({ key: 'role-' + c.id, name: 'role-' + c.id, size: 'sm', value: tier, options: all, 'aria-label': 'Role for ' + (c.named ? c.display_name : (c.has_number ? c.external_id_formatted : 'this person')), onChange: (v, e) => setTier(c, v, e && e.target) }),
+                            (isAdmin && !erased) ? Btn({ size: 'sm', variant: 'link', class: 'ds-contact-erase', disabled: busyIds.has(c.id), children: 'Erase personal details', onClick: () => erase(c) }) : null),
+                    ];
+                }),
+            }) : Alert({ kind: 'info', children: 'No one matches that.' }));
     });
-    return Panel({ children: [body] });
+    return h('div', { class: 'ds-people-page' },
+        TeamRegistration({ isAdmin, onDone: () => loader.reload() }),
+        InviteCodes({ isAdmin }),
+        Panel({ title: 'People', children: [body] }));
 }

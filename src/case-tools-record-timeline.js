@@ -10,6 +10,9 @@ import { AGENT_USER } from './case-store.js'
 import { defTool, str, ownsCase, OBSERVE_TEXT_MAX_LEN } from './case-tools-shared.js'
 import { parseReport } from './timestamp.js'
 import { canSignOff } from './contact-tiers.js'
+import { isAssignedTo } from './case-assignment.js'
+import { doneStages } from './case-tools-team-shared.js'
+import { writeGate, recordedOn, clearFocusForCase } from './team-focus.js'
 import {
   MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES,
   missingMandatoryMinimum, fieldLabel, REPORT_TOOL_NAME, REPORT_ENTITY_LABEL,
@@ -99,10 +102,27 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const author = ctx?.author || ctx?.principal?.id
-        if (!ownsCase(c.external_id, author)) {
+        // SIGN-OFF DESK. The technician signs off records the public filed, so
+        // ownership cannot be the test for THEM: a move to a done stage is also
+        // allowed on a record assigned to this technician or assigned to nobody
+        // (the signoff_queue set). Only the technician -- the canSignOff equality,
+        // unchanged -- and only to a done stage; every other move on a record that
+        // is not yours still needs ownership (case_stage covers assigned work).
+        // That path is write-gated like the rest of the team family: the record
+        // must be the confirmed focus, and the message must not name another.
+        const unassigned = !String(c.assignee || '').trim() || String(c.assignee).trim() === 'agent'
+        const signOffDesk = canSignOff(ctx?.tier) && doneStages().includes(to) && (isAssignedTo(c, ctx?.contact) || unassigned)
+        const owns = ownsCase(c.external_id, author)
+        if (!owns && !signOffDesk) {
           return { error: `case ${id} does not belong to you -- cannot transition it` }
         }
-        if (c.autonomy === 'observe') return { error: 'case autonomy is "observe"; transitions are operator-only' }
+        if (!owns) {
+          const refused = writeGate(ctx, c)
+          if (refused) return refused
+        }
+        // A person who has taken the conversation over drives it in 'observe'
+        // (staff-outbound.js); that mode stops the ASSISTANT, not the assignee.
+        if (c.autonomy === 'observe' && !isAssignedTo(c, ctx?.contact)) return { error: 'case autonomy is "observe"; transitions are operator-only' }
         // MANDATORY MINIMUM, enforced HERE rather than in the prompt alone.
         //
         // A prompt instruction is a suggestion a model may ignore, and the one it
@@ -162,7 +182,9 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         }
         try {
           await store().transition(id, to, { user: AGENT_USER, reason })
-          return { ok: true, from: c.status, to }
+          const on = owns ? null : await recordedOn(store(), c, ctx)
+          if (doneStages().includes(to)) clearFocusForCase(c.id)
+          return { ok: true, from: c.status, to, ...(on ? { recorded_on: on } : {}) }
         } catch (e) {
           return { error: e.message }
         }

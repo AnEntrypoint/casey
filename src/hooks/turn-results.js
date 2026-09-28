@@ -23,7 +23,13 @@ const MUTATING_TOOLS = new Set(['case_new', 'case_report', 'case_update', 'case_
 // turn" -- ground truth for reply-judge.js's FALSE CONFIRMATION shape (the
 // judge decides whether the reply's WORDS claim a write; this decides whether
 // one really happened).
-const WRITE_TOOLS = new Set(['case_report', 'case_update', 'case_new'])
+// The team tools' successful writes count as writes for the false-confirmation
+// judge (a reply that says it was recorded is true when they returned ok). They are
+// deliberately NOT in MUTATING_TOOLS: a team write refused for a missing
+// confirmation is the turn's intended reply (ask which record), not a failure to
+// retry around.
+const TEAM_WRITE_TOOLS = ['case_edit', 'case_stage', 'case_message', 'case_claim', 'case_release', 'case_dispatch_reply', 'case_reopen', 'case_ask_ranger', 'team_assign', 'team_draft', 'team_remind', 'team_register', 'team_invite', 'team_nudge_staff']
+const WRITE_TOOLS = new Set(['case_report', 'case_update', 'case_new', ...TEAM_WRITE_TOOLS])
 
 // tool_call_id -> tool name, read off this turn's assistant messages.
 function toolNamesById(result) {
@@ -114,6 +120,19 @@ export function toolCaseRefs(result) {
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
     const found = content.match(CASE_REF_RE)
     if (found) refs.push(...found)
+  }
+  return refs
+}
+
+// The references of the records a team member's tool calls touched this attempt
+// (case_edit and friends return recorded_on.ref). Used by the staff-reply gate in
+// turn-attempts.js: a reply to a ranger or technician that touched a record must
+// name it.
+export function touchedRefs(result) {
+  const refs = []
+  for (const { parsed } of toolResults(result)) {
+    const ref = parsed?.ok === true ? parsed?.recorded_on?.ref : null
+    if (typeof ref === 'string' && !refs.includes(ref)) refs.push(ref)
   }
   return refs
 }

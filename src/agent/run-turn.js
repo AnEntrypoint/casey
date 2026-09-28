@@ -71,6 +71,13 @@ const currentToolCtx = new Map()
 // witnessed live while that was true.
 const currentSystemPrompt = new Map()
 
+// The tool-name allowlist for the turn in flight, per sessionKey, same mutable-cell
+// discipline: the agent's installs read it through a function, so a contact whose
+// tier changed since the agent was created is handed the tools of their CURRENT
+// rung on the next turn (a role code claimed mid-conversation would otherwise be
+// inert until the agent idled out).
+const currentAllowedNames = new Map()
+
 // IDLE TTL, not a count cap, and the choice is a correctness one rather than a
 // tuning preference. A count cap ("keep the newest N agents") evicts by
 // pressure: which conversation loses its agent depends on how many OTHER
@@ -153,6 +160,7 @@ export async function evictAgent(sessionKey, reason) {
   liveAgents.delete(sessionKey)
   currentToolCtx.delete(sessionKey)
   currentSystemPrompt.delete(sessionKey)
+  currentAllowedNames.delete(sessionKey)
   stopSweepTimerIfEmpty()
   const idleMs = Date.now() - entry.lastUsedAt
   try {
@@ -219,8 +227,8 @@ async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames) {
   // on freddie's bare "You are an AI agent powered by Freddie" with an empty
   // deployment-persona slot, which is the exact defect it exists to close.
   const setup = (agentCtx) => {
-    installToolAllowlist(agentCtx, enabledToolNames)
-    installCasePrompt(agentCtx, () => currentSystemPrompt.get(sessionKey) || '', enabledToolNames)
+    installToolAllowlist(agentCtx, () => currentAllowedNames.get(sessionKey) || enabledToolNames)
+    installCasePrompt(agentCtx, () => currentSystemPrompt.get(sessionKey) || '', () => currentAllowedNames.get(sessionKey) || enabledToolNames)
   }
   // RESUME FIRST, create only for a session that has never existed. This is the
   // ordering the eviction policy above depends on: a case whose agent was
@@ -394,6 +402,7 @@ export async function runTurn({
     msg: 'agent_turn_without_case_system_prompt', sessionKey,
   }))
 
+  currentAllowedNames.set(sessionKey, enabledToolNames)
   const agent = await getOrCreateAgent(sessionKey, provider, model, enabledToolNames)
   // Publish this turn's toolCtx BEFORE followup() so case-tools/index.js's
   // getToolCtx() thunk (read at each tool dispatch during this turn) sees
