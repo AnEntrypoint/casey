@@ -768,7 +768,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
     rankAttention, sendReply, fmtTimeSAST, fmtPhone27, SAST_TZ,
     printableReportRow, printableReportTable, printableReport,
     getWebhookDeliveryStatus, llmStatus, callLLM, runSweep, receiveStatus,
-    runtimeStatus, queueStatus, alertWebhookUrl,
+    runtimeStatus, queueStatus, alertWebhookUrl, resolveWhatsappAdapter,
   }
 
   // auth.js registers first: the session-resolving middleware, the public

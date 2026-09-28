@@ -23,7 +23,7 @@ import { tagList, tsMs } from './timestamp.js'
 import { isOpenCase, fmtPhone27 } from './format.js'
 import { rankAttention } from './attn.js'
 import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, TIER_FIELD_WORKER, atLeast, resolveTierValue } from './contact-tiers.js'
-import { assigneeKeyFor, isAssignedTo, contactIdOfAssignee, isContactAssignee } from './case-assignment.js'
+import { assigneeKeyFor, isAssignedTo, isOwnConversation, contactIdOfAssignee, isContactAssignee } from './case-assignment.js'
 import { createInvite, normalizeMsisdn } from './role-invites.js'
 import { sendStaffMessage, pendingDraft, releaseCase, staffLabel } from './hooks/staff-outbound.js'
 import { dropTag } from './hooks/heuristics.js'
@@ -122,6 +122,7 @@ export function buildTeamOperatorTools(store) {
         }
         const key = assigneeKeyFor(assignee)
         if (String(c.assignee || '').trim() === key) return { ok: true, ref: c.ref, assigned_to: staffLabel(assignee), note: 'Already with them.' }
+        if (isOwnConversation(c, assignee)) return { error: 'That record is their own chat with the assistant, so it cannot be assigned to them.' }
         await store().updateCase(c.id, { assignee: key }, user)
         clearFocusForCase(c.id)
         await store().appendEvent(c.id, {

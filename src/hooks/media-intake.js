@@ -82,6 +82,21 @@ function inboundAudioNote(msg, transcript = '', failure = '') {
   return ''
 }
 
+// Does this message carry a photo, a voice note or a location pin (the three
+// on-site artifacts routed by hooks/media-relay.js)? Same detectors recordInbound*
+// use, so the router and the recorder can never disagree about what arrived.
+export function carriesArtifact(msg) {
+  return !!(msg?.location || inboundImageNote(msg) || inboundAudioNote(msg))
+}
+
+// A team member relaying on the reporter's behalf: same phrasing as case_edit's
+// `[relayed by <name> on the reporter's behalf ...]`. The note names who sent it
+// instead of "farmer sent", which would be false here.
+function relayedNote(note, relay) {
+  if (!relay) return note
+  return `[relayed by ${relay.by} on the reporter's behalf] ${note.replace(/^farmer sent/, 'team member sent')}`
+}
+
 // Normalise msg.media across adapter shapes. WhatsApp's adapter resolves a
 // SINGLE object ({type, mimeType, buffer}); Discord's resolves an ARRAY, one
 // entry per attachment. Read msg.media through here, never directly: a bare
@@ -113,12 +128,12 @@ function pickMediaItem(msg, kind) {
 
 // One arrival: save the bytes if the adapter actually downloaded any, append the
 // note to its report field, and make the arrival visible on the timeline.
-async function recordArrival({ store, log, caseId, field, note, kind, mediaItem, eventPrefix, failLabel }) {
+async function recordArrival({ store, log, caseId, field, note, kind, mediaItem, eventPrefix, failLabel, relay = null }) {
   try {
-    let text = note
+    let text = relayedNote(note, relay)
     if (mediaItem) {
       const savedPath = store.saveMedia(caseId, mediaItem.buffer, { mimeType: mediaItem.mimeType, kind })
-      text = `${note} (saved: ${savedPath})`
+      text = `${text} (saved: ${savedPath})`
       if (kind === 'photo') {
         const description = await describePhoto(mediaItem.buffer, mediaItem.mimeType)
         // 'described:' alone reads as the farmer's own description of their photo.
@@ -129,7 +144,8 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
     }
     const r = await store.appendReportField(caseId, field, text)
     if (r?.appended || r?.error === 'observe') {
-      await store.appendEvent(caseId, observation(`${eventPrefix}: ${text}${kind === 'photo' ? ' (recorded for the field team).' : '.'}`))
+      await store.appendEvent(caseId, observation(`${eventPrefix}: ${text}${kind === 'photo' ? ' (recorded for the field team).' : '.'}`,
+        relay ? { on_behalf: true, relayed_by: relay.by, staff_contact_id: relay.contactId } : undefined))
     }
     if (r?.reportWasCorrupted) {
       await store.appendEvent(caseId, observation(`WARNING: this case's stored report JSON was corrupted and has been reset before appending this ${kind} note -- some previously recorded fields may be lost.`))
@@ -193,7 +209,7 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
 // Record every media artifact this message carried. Photo first, then audio,
 // preserving the original ordering (transcription runs BEFORE the audio note is
 // composed so a successful transcript is folded into the recorded field).
-export async function recordInboundMedia({ store, log, caseId, msg }) {
+export async function recordInboundMedia({ store, log, caseId, msg, relay = null }) {
   const photoItem = pickMediaItem(msg, 'photo')
   const audioItem = pickMediaItem(msg, 'audio')
 
@@ -202,7 +218,7 @@ export async function recordInboundMedia({ store, log, caseId, msg }) {
     await recordArrival({
       store, log, caseId, field: 'photos', note: photoNote, kind: 'photo',
       mediaItem: photoItem,
-      eventPrefix: 'PHOTO RECEIVED', failLabel: 'photo mark',
+      eventPrefix: 'PHOTO RECEIVED', failLabel: 'photo mark', relay,
     })
   }
 
@@ -217,7 +233,7 @@ export async function recordInboundMedia({ store, log, caseId, msg }) {
     await recordArrival({
       store, log, caseId, field: 'audio', note: audioNote, kind: 'audio',
       mediaItem: audioItem,
-      eventPrefix: 'AUDIO RECEIVED', failLabel: 'audio mark',
+      eventPrefix: 'AUDIO RECEIVED', failLabel: 'audio mark', relay,
     })
   }
 }

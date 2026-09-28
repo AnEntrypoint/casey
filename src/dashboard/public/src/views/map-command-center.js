@@ -26,6 +26,7 @@
 
 import * as webjsx from 'webjsx';
 import { Btn } from 'ds/components/shell.js';
+import { FilterPills } from 'ds/components/content/feedback.js';
 import { state, setMobilePane } from '../state.js';
 import { MapPanel, MapRail } from '../panels/map-panel.js';
 import { CaseDetailView } from './case-detail-view.js';
@@ -36,14 +37,11 @@ import { panelTitle } from './nav-config.js';
 const h = webjsx.createElement;
 
 function paneToggle() {
-  const btn = (pane, label) => h('button', {
-    key: pane, type: 'button',
-    class: 'ds-seg-btn' + (state.mobilePane === pane ? ' is-on' : ''),
-    'aria-pressed': state.mobilePane === pane ? 'true' : 'false',
-    onclick: () => setMobilePane(pane),
-  }, label);
-  return h('div', { class: 'ds-pane-toggle ds-seg', role: 'group', 'aria-label': 'Map or list' },
-    btn('map', 'Map'), btn('list', 'List'));
+  return h('div', { class: 'ds-pane-toggle' }, FilterPills({
+    label: 'Map or list', selected: state.mobilePane,
+    options: [{ id: 'map', label: 'Map' }, { id: 'list', label: 'List' }],
+    onSelect: setMobilePane,
+  }));
 }
 
 export function MapCommandCenter() {

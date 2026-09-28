@@ -47,7 +47,8 @@ export function mergeReportFields(current, incoming) {
   const APPEND_KEYS = APPEND_FIELDS
   for (const [k, v] of Object.entries(incoming)) {
     if (v == null || String(v).trim() === '') continue
-    // Bounded worst-case for the append-prone fields, applied to EVERY
+    // Bounded worst-case for every field (an append-prone one grows, a scalar one
+    // is simply pasted whole), applied to EVERY
     // write regardless of branch -- a single call carrying an oversized
     // value (an adversarial or malfunctioning agent passing a huge string
     // in one shot) must be rejected exactly like an append that grows past
@@ -55,7 +56,7 @@ export function mergeReportFields(current, incoming) {
     // first-write/same-value-overwrite paths open to an unbounded single
     // write. Reject, never truncate silently, so the caller can surface
     // that a note did not attach rather than a fact quietly vanishing.
-    if (APPEND_KEYS.has(k) && String(v).length > APPEND_FIELD_MAX_LEN) { cappedFields.push(k); continue }
+    if (String(v).length > APPEND_FIELD_MAX_LEN) { cappedFields.push(k); continue }
     // photos/audio/sites: a worker can give MULTIPLE across one
     // conversation (more than one photo, more than one distinct site
     // within the same visit) -- overwrite would silently discard every

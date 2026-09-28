@@ -25,6 +25,7 @@ import { stageLabel, stageTone, channelLabel } from '../../format.js';
 import { entityLabelPlural } from '../../vocabulary.js';
 import { pushRecentSearch, loadRecentSearches, listNamedViews } from '../../saved-views.js';
 import { knownValues, loadKnownValues } from '../../known-values.js';
+import { PillButton } from '../../components/filter-chip.js';
 const h = webjsx.createElement;
 
 // Truncate a long option label to a fixed budget so a Select never blows out
@@ -80,12 +81,12 @@ export function refreshSavedViews() { viewsCache = null; }
 function recentSearches() {
   const arr = recent();
   if (!arr.length || state.filt.q) return null;
-  return h('div', { class: 'ds-recent-searches' },
+  return h('div', { class: 'ds-btn-row' },
     h('span', { key: 'lab', class: 'ds-recent-label' }, 'Recent:'),
-    ...arr.slice(0, 5).map((q) => h('button', {
-      key: 'r-' + q, type: 'button', class: 'ds-recent-chip', title: q,
-      onclick: () => { setFilt({ q }); remember(q); },
-    }, q)));
+    ...arr.slice(0, 5).map((q) => PillButton({
+      key: 'r-' + q, class: 'ds-recent-chip', title: q, children: q,
+      onClick: () => { setFilt({ q }); remember(q); },
+    })));
 }
 
 // resultCount comes from the caller, which is the only place that knows how
@@ -99,7 +100,7 @@ function recentSearches() {
 // that could not arrive.
 export function SearchBar({ resultCount = 0 } = {}) {
   const countLabel = resultCount + ' result' + (resultCount === 1 ? '' : 's');
-  return h('div', { class: 'ds-case-filters-bar', role: 'search' },
+  return h('div', { class: 'ds-btn-row', role: 'search' },
     h('div', { key: 'search', class: 'ds-case-filters-search' },
       SearchInput({
         value: state.filt.q,
@@ -143,7 +144,7 @@ function knownValueFilters() {
 }
 
 export function MoreFilters({ onOpenSavedViews, onSaveView }) {
-  return h('div', { class: 'ds-case-more-filters' },
+  return h('div', { class: 'ds-btn-row' },
     ...knownValueFilters(),
     Select({
       key: 'channel', value: state.filt.channel, placeholder: 'all channels',

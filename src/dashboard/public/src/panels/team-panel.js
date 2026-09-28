@@ -75,5 +75,5 @@ export function TeamPanel() {
         }
         return Table({ headers: HEADERS, rows: sorted.map(operatorValues) });
     });
-    return Panel({ children: [h('div', { class: 'ds-team-panel' }, body)] });
+    return Panel({ children: [body] });
 }

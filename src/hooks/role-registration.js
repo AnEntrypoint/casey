@@ -12,7 +12,7 @@
 // Every outcome is audited on the role-invites singleton log (claim on success;
 // a failed attempt is counted in memory and rate-limited, and noted).
 
-import { extractCode, claimInvite, attemptsExhausted, noteFailedAttempt } from '../role-invites.js'
+import { extractCode, claimInvite, attemptsExhausted, noteFailedAttempt, withoutIssuedCodes, issuedLooseCode } from '../role-invites.js'
 import { TIER_LABELS } from '../store/report-shape.js'
 import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR, tierLabel } from '../contact-tiers.js'
 
@@ -31,17 +31,32 @@ const REFUSAL = {
   revoked: 'That code is no longer valid. Ask for a new one.',
   already: 'You already have this role (or a higher one), so nothing changed.',
   locked: 'Too many attempts. Please wait an hour and try again.',
+  alone: 'That message has a registration code in it, so it was not used. To register, send the code on its own, with nothing else in the message.',
 }
 
 // Returns the handled-result object for runInboundTurn to return, or null when
 // the message is not a code (the normal turn then proceeds untouched).
 export async function tryRegisterByCode({ store, log, adapter, msg, channel, external_id, replyTo, platform, labels = TIER_LABELS }) {
-  const code = extractCode(msg?.text)
-  if (!code) return null
+  let code = extractCode(msg?.text)
+  if (!code) { try { code = await issuedLooseCode(store, msg?.text) } catch { code = null } }
   const say = async (text) => {
     const reply = { to: replyTo, text, platform }
     try { await adapter?.send?.(reply) } catch (e) { log.error?.('[casey] role-registration reply failed', { channel, error: e.message }) }
     return { ...reply, registration: true }
+  }
+  if (!code) {
+    // A live code inside a longer message registers nobody, and must not be kept:
+    // the text would land on a public timeline and in front of the model. Strip it;
+    // a short message that was only an attempt at registering gets one plain hint
+    // instead of an agent turn that would answer as if it were a report.
+    let stripped = null
+    try { stripped = await withoutIssuedCodes(store, msg?.text) } catch (e) { log.error?.('[casey] code redaction failed', { channel, error: e.message }) }
+    if (stripped == null) return null
+    const original = String(msg.text || '')
+    msg.text = stripped
+    if (msg.raw?.text && typeof msg.raw.text.body === 'string') msg.raw.text.body = stripped
+    if (original.length <= 100) return say(REFUSAL.alone)
+    return null
   }
   const key = `${channel}|${external_id}`
   if (attemptsExhausted(key)) return say(REFUSAL.locked)

@@ -6,7 +6,7 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Alert } from '/design/src/components/content/feedback.js';
-import { Chip } from '/design/src/components/shell/atoms.js';
+import { PillButton } from '../components/filter-chip.js';
 import { state, setActiveId } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchClusters } from '../api.js';
@@ -40,13 +40,10 @@ function clusterRow(c, i) {
         sym ? h('div', { class: 'ds-cluster-sub' }, 'symptoms: ' + sym) : null,
         reported ? h('div', { class: 'ds-cluster-sub', title: 'Named by the worker/farmer, not a lab result' }, 'as reported: ' + reported) : null,
         h('div', { class: 'ds-cluster-chips' }, ...(c.members || []).map((m, j) =>
-            Chip({
-                key: j, tone: 'accent',
-                children: h('button', {
-                    type: 'button', class: 'ds-chip-btn',
-                    title: (m.case_type && m.case_type !== 'unset' ? caseTypeLabel(m.case_type) + ': ' : '') + (m.subject || ''),
-                    onclick: () => { setActiveId(m.id); },
-                }, m.ref),
+            PillButton({
+                key: j, children: m.ref,
+                title: (m.case_type && m.case_type !== 'unset' ? caseTypeLabel(m.case_type) + ': ' : '') + (m.subject || ''),
+                onClick: () => { setActiveId(m.id); },
             }))));
 }
 

@@ -5,6 +5,7 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Alert } from '/design/src/components/content/feedback.js';
+import { Kpi } from '/design/src/components/content/charts.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { state } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
@@ -42,11 +43,9 @@ function summaryCards(j) {
         ...Object.keys(dwell).map((s) => [STAGE_LABELS_M[s] || s, fmtDur(dwell[s]), 'median dwell']),
         ...Object.keys(backlog).map((s) => [STAGE_LABELS_M[s] || s, String(backlog[s]), 'open now']),
     ];
-    return h('div', { class: 'ds-stats-grid' }, ...cards.map(([lab, val, sub], i) =>
-        h('div', { key: i, class: 'ds-stat-card' },
-            h('div', { class: 'ds-stat-label' }, lab),
-            h('div', { class: 'ds-stat-value' }, val),
-            sub ? h('div', { class: 'ds-stat-sub' }, sub) : null)));
+    // The kit's Kpi is number-over-caption; the second line each card used to carry
+    // rides in the caption so nothing that was said is dropped.
+    return Kpi({ items: cards.map(([lab, val, sub]) => [val, sub ? lab + ' - ' + sub : lab]) });
 }
 
 function atRiskByType(risk) {
@@ -86,7 +85,7 @@ function byTypeTable(report) {
 
 export function MetricsPanel() {
     loader.ensureLoaded();
-    const exportLinks = h('div', { class: 'ds-metrics-exports' },
+    const exportLinks = h('div', { class: 'ds-btn-row' },
         Btn({ href: '/api/report.csv?days=14', variant: 'ghost', size: 'sm', children: 'Export CSV' }),
         Btn({ href: '/api/report.html?days=14', variant: 'ghost', size: 'sm', children: 'Export HTML' }),
         Btn({ href: '/api/audit.csv?days=14', variant: 'ghost', size: 'sm', children: 'Audit trail CSV' }));

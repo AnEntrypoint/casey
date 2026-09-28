@@ -49,5 +49,5 @@ export function StatsPanel() {
             rows: modes.map((m) => statRow(m, j.by_mode[m])),
         });
     });
-    return h('div', { class: 'ds-stats-panel' }, Panel({ title: 'Intake stats', children: [body] }));
+    return Panel({ title: 'Intake stats', children: [body] });
 }

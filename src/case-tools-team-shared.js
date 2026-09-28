@@ -17,7 +17,7 @@
 
 import { AGENT_USER, UNCLAIMED_ASSIGNEE } from './case-store.js'
 import { isOperator, canQueryCases, atLeast, TIER_ANIMAL_HEALTH_TECHNICIAN } from './contact-tiers.js'
-import { isAssignedTo, publicAssignee } from './case-assignment.js'
+import { isAssignedTo, isOwnConversation, publicAssignee } from './case-assignment.js'
 import { enquiryRow } from './case-tools-shared.js'
 import { staffLabel } from './hooks/staff-outbound.js'
 import { MANDATORY_MINIMUM_BLOCKED_STATUSES } from './store/report-shape.js'
@@ -45,7 +45,7 @@ export async function findCase(store, idOrRef) {
 
 export function authorityOn(ctx, caseRow) {
   if (isOperator(ctx?.tier)) return 'operator'
-  if (canQueryCases(ctx?.tier) && isAssignedTo(caseRow, ctx?.contact)) return 'assigned'
+  if (canQueryCases(ctx?.tier) && isAssignedTo(caseRow, ctx?.contact) && !isOwnConversation(caseRow, ctx?.contact)) return 'assigned'
   return null
 }
 
@@ -85,3 +85,12 @@ export function teamRow(c, ctx, extra = {}) {
 // Media notes carry the saved file's server path; the path is internal and the
 // note's own words (and the transcript) are what a reviewer needs.
 export const stripSavedPaths = (text) => String(text || '').replace(/\s*\(saved: [^)]*\)/g, '')
+
+// Text a team member relays for the record is shown back to other people (timeline,
+// dashboard, prompts). Invisible and direction-changing characters have no place in
+// it: they let "sheep" read as something else on screen, hide a difference from the
+// held-value comparison, or break a line. Removed rather than refused; newline and
+// tab stay.
+export const cleanRelayed = (v) => typeof v === 'string'
+  ? v.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+  : v

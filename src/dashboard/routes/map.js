@@ -5,6 +5,7 @@
 //
 // deps: store, wrap, authed, actingOperator, isOpenCase, parseJsonArraySafe,
 //   getRoster
+import { assigneeNamer } from '../assignee-names.js'
 import { createHash } from 'node:crypto'
 import { classifyWorkerCheckins, WORKER_CHECKIN_WINDOW_MS } from '../../case-health.js'
 import { rowInt } from '../../safe.js'
@@ -25,14 +26,14 @@ const MAP_CASE_CAP = 2000
 // present_person -- only what a map pin needs. Module-level and named so a
 // column added to the case table is never auto-exposed by a handler that
 // happened to have the row in scope.
-export function mapCaseProjection(c, report, clusterIndex) {
+export function mapCaseProjection(c, report, clusterIndex, name = (v) => v) {
   return {
     id: c.id, ref: c.ref, status: c.status, case_type: c.case_type || 'unset',
     species: report.species || null, location: report.location || null,
     symptoms: report.symptoms || null,
     affected_count: report.affected_count ?? null, dead_count: report.dead_count ?? null,
     onset: report.onset || null,
-    assignee: c.assignee || null, priority: c.priority,
+    assignee: c.assignee ? name(c.assignee) : null, priority: c.priority,
     cluster: clusterIndex,
     last_event_at: c.last_event_at,
     // When the report came in, so the map view's "new today" filter can be
@@ -152,12 +153,13 @@ export function getMapCases({ store, authed, isOpenCase, UNCLAIMED_ASSIGNEE }) {
     const clusterByRef = new Map()
     clusters.forEach((cl, i) => { for (const m of cl.members) clusterByRef.set(m.ref, i) })
 
+    const named = await assigneeNamer(store, pool)
     const pins = [], unresolved = []
     for (const c of pool) {
       let report = parseReport(c)
       const lat = c.lat != null && c.lat !== '' ? Number(c.lat) : null
       const lon = c.lon != null && c.lon !== '' ? Number(c.lon) : null
-      const row = mapCaseProjection(c, report, clusterByRef.has(c.ref) ? clusterByRef.get(c.ref) : null)
+      const row = mapCaseProjection(c, report, clusterByRef.has(c.ref) ? clusterByRef.get(c.ref) : null, named)
       if (lat != null && Number.isFinite(lat) && lon != null && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
         pins.push({ ...row, lat, lon })
       } else {

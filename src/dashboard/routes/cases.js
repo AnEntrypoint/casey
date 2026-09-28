@@ -28,6 +28,12 @@ import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL } from '../../store/
 import { isKnownValueField, invalidateKnownValues } from '../../field-values.js'
 import { BRAND } from '../brand.js'
 import { mountRoutes } from './register.js'
+import { assigneeNamer, nameEventAssignees } from '../assignee-names.js'
+import { appendReplyEvent, pendingDraft, releaseCase } from '../../hooks/staff-outbound.js'
+import { clearFocusForCase } from '../../team-focus.js'
+import { assigneeKeyFor, isContactAssignee, contactIdOfAssignee, isOwnConversation } from '../../case-assignment.js'
+import { atLeast, TIER_FIELD_WORKER } from '../../contact-tiers.js'
+import { findAccountByUsername } from '../auth.js'
 import { isFieldAccount, caseAccess, isAssignedTo, inSignOffQueue, detailForAccess, missingFor } from '../roles.js'
 import { waLink } from '../wa-link.js'
 import { prepareReminder, OPERATOR_REMINDER_FLAG } from '../../hooks/operator-reminder.js'
@@ -88,13 +94,15 @@ function canonicalizedNote(raw, incoming) {
 // alone it makes a place name or a count READ as something other than what was
 // sent. Marked, never stripped -- see format.js. Every other field here is
 // casey's own (a ref, a stage, a tag) or an operator's (assignee, autonomy).
-export function caseListProjection(c) {
+// `name` is an assigneeNamer(): a `contact:<id>` key is shown as the person's
+// name, never sent as a key (assignee-names.js).
+export function caseListProjection(c, name = (v) => v) {
   if (!c) return null
   const { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type } = c
   return {
     id, ref, channel, status, priority,
     subject: markInvisibles(subject), summary: markInvisibles(summary), report: markInvisibles(report),
-    tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type,
+    tags, assignee: name(assignee), autonomy, last_event_at, fill_rate, created_at, case_type,
   }
 }
 
@@ -115,21 +123,14 @@ export function eventProjection(e) {
 // filter and filters-bar.js's search placeholder both record that /api/cases
 // carries no contact number and that the search must not promise one, and a
 // 50-row poll is no place to move 50 phone numbers.
-export function caseDetailProjection(c) {
+// The editor needs the stored assignee value to seed its picker, so the detail
+// keeps it as `assignee` for a dashboard operator; a field login (keepKey:false)
+// gets the name only. `assignee_name` is what every screen displays.
+export function caseDetailProjection(c, name = (v) => v, { keepKey = true } = {}) {
   if (!c) return null
-  return { ...caseListProjection(c), external_id_formatted: fmtPhone27(c.external_id) }
-}
-
-// The latest pending assisted-mode draft for a case, or null. A draft is
-// "pending" only while draft-pending is on the case (cleared on
-// approve/discard/supersede), so we read the most recent draft event and gate
-// on the tag rather than tracking draft state separately.
-async function pendingDraft(store, c) {
-  const tags = tagList(c)
-  if (!tags.includes('draft-pending')) return null
-  const events = await store.listEvents(c.id)
-  const drafts = events.filter(e => e.kind === 'draft')
-  return drafts.length ? drafts[drafts.length - 1] : null
+  const out = { ...caseListProjection(c, name), external_id_formatted: fmtPhone27(c.external_id), assignee_name: name(c.assignee || '') }
+  if (keepKey) out.assignee = c.assignee
+  return out
 }
 
 export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate, REPORT_KEY_LIST, UNCLAIMED_ASSIGNEE }) {
@@ -158,7 +159,8 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       const found = await store.getCaseByRef(ref)
       const seen = found && (!field || caseAccess(found, req.caseyAccount, { unclaimedKey: UNCLAIMED_ASSIGNEE }) !== 'none') ? found : null
       const casesWithFill = seen ? [{ ...seen, fill_rate: computeFillRate(seen.report) }] : []
-      return res.json({ cases: casesWithFill.map(c => caseListProjection({ ...c })), total: casesWithFill.length, limit: casesWithFill.length, offset: 0 })
+      const named = await assigneeNamer(store, casesWithFill)
+      return res.json({ cases: casesWithFill.map(c => caseListProjection({ ...c }, named)), total: casesWithFill.length, limit: casesWithFill.length, offset: 0 })
     }
     const q = req.query.q ? String(req.query.q).slice(0, 200).toLowerCase() : ''
     const limit = clampLimit(req.query.limit, 50)
@@ -197,7 +199,8 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       total = await store.countCases(where)
     }
     const casesWithFill = cases.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
-    res.json({ cases: casesWithFill.map(c => caseListProjection(c)), total, limit, offset })
+    const named = await assigneeNamer(store, casesWithFill)
+    res.json({ cases: casesWithFill.map(c => caseListProjection(c, named)), total, limit, offset })
   }
 }
 
@@ -362,7 +365,8 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
       fieldExtras = { ...fieldExtras, reporter_message_link: waLink(digits, text), missing_facts: missing.map(k => ({ key: k, label: fieldLabel(k) })), reporter_first_name: first }
       await noteNumberReveal(store, c, op)
     }
-    res.json({ ...fieldExtras, case: detailForAccess(caseDetailProjection(c), req.caseyAccess), events: events.map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
+    const named = await assigneeNamer(store, [c])
+    res.json({ ...fieldExtras, case: detailForAccess(caseDetailProjection(c, named, { keepKey: !isFieldAccount(req.caseyAccount) }), req.caseyAccess), events: (await nameEventAssignees(store, events)).map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
   }
 }
 
@@ -427,12 +431,12 @@ export function getCaseEvents({ store, authed, clampLimit, offsetOf, parseEventD
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const limit = clampLimit(req.query.limit, 50)
     const offset = offsetOf(req.query.offset)
-    const events = parseEventData(await store.listEventsPage(req.params.id, { limit, offset }))
+    const events = await nameEventAssignees(store, parseEventData(await store.listEventsPage(req.params.id, { limit, offset })))
     res.json({ events, offset, limit })
   }
 }
 
-export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, actingOperator }) {
+export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, actingOperator, UNCLAIMED_ASSIGNEE }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const allowed = ['subject', 'summary', 'priority', 'tags', 'assignee', 'autonomy', 'case_type']
@@ -449,7 +453,7 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
     // Optional one-line reason carried alongside the patch (notably for autonomy
     // changes); not a stored field, so it is read off the body directly.
     const patchReason = str(res, req.body, 'reason', { required: false }); if (patchReason === undefined) return
-    const prior = await store.getCase(req.params.id)
+    let prior = await store.getCase(req.params.id)
     // OPTIONAL PER-FIELD PRECONDITION. `expected` carries, for each field in
     // the patch, the value the caller's form was seeded with; a field whose
     // stored value has moved since then is a genuine collision between two
@@ -487,10 +491,52 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
         })
       }
     }
-    if (Object.keys(patch).some(k => k !== 'autonomy')) {
-      if (prior?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy setting can be changed' })
+    if (Object.keys(patch).some(k => k !== 'autonomy' && k !== 'assignee')) {
+      if (prior?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy and assignee can be changed' })
     }
     const op = actingOperator(req)
+    // ASSIGNEE is handled apart from the generic edit, because handing a case to
+    // someone else (or to nobody) is what ends a team member's takeover: the same
+    // releaseCase() the bot's team_assign/case_release use returns an 'observe'
+    // case to 'auto' and the previous holder's focus is cleared, so nothing they
+    // had confirmed can still receive a write. Assigning a WhatsApp team member
+    // writes their shared `contact:<id>` key and an event carrying
+    // assigned_contact_id -- exactly what staff-notices.js reads as "newly assigned".
+    if ('assignee' in patch) {
+      if (!prior) return res.status(404).json({ error: 'not found' })
+      const want = String(patch.assignee || '').trim()
+      const had = String(prior.assignee || '').trim()
+      const target = want === UNCLAIMED_ASSIGNEE ? '' : want
+      const held = had && had !== UNCLAIMED_ASSIGNEE
+      delete patch.assignee
+      if (target !== (held ? had : '')) {
+        let contact = null
+        if (isContactAssignee(target)) {
+          contact = await store.getContact(contactIdOfAssignee(target))
+          if (!contact) return res.status(400).json({ error: 'that team member is not registered' })
+          // Only someone on the team can hold a report: a member of the public assigned
+          // one could never act on it, and the assistant would stay silent for good.
+          if (!atLeast(contact.tier, TIER_FIELD_WORKER)) return res.status(400).json({ error: 'that person is not on the team (they hold no team role), so a report cannot be assigned to them' })
+          if (isOwnConversation(prior, contact)) return res.status(400).json({ error: 'that is this team member\'s own chat with the assistant, not a report to assign to them' })
+        } else if (target && !(await findAccountByUsername(store, target))) {
+          return res.status(400).json({ error: 'no team member or login by that name' })
+        }
+        const by = op.name || op.id
+        if (held) { await releaseCase({ store, caseRow: prior, by, user: op }); clearFocusForCase(prior.id) }
+        if (target) {
+          await store.updateCase(prior.id, { assignee: target }, op)
+          const data = { assignee: target, by }
+          if (contact) { data.assigned_contact_id = contact.id; data.assigned_name = contact.display_name || '' }
+          await store.appendEvent(prior.id, { kind: 'action', actor: 'operator', text: 'edited assignee', data })
+        }
+        prior = await store.getCase(req.params.id)
+      }
+      if (!Object.keys(patch).length) {
+        const after = await store.getCase(req.params.id)
+        store.learnOperatorActivity(op.id, after).catch(() => {})
+        return res.json(caseDetailProjection(after, await assigneeNamer(store, [after])))
+      }
+    }
     // Forward the version this operator's edit was actually based on (prior,
     // already read above for the audit-diff below) as an optimistic-concurrency
     // guard -- without this, two operators editing DIFFERENT fields on the same
@@ -539,7 +585,7 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
       const otherPatch = Object.fromEntries(otherKeys.map(k => [k, patch[k]]))
       await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${otherKeys.join(', ')}`, data: { ...otherPatch, by: op.id } })
     }
-    res.json(caseDetailProjection(updated))
+    res.json(caseDetailProjection(updated, await assigneeNamer(store, [updated])))
   }
 }
 
@@ -562,7 +608,7 @@ export function postTransition({ store, authed, str, actingOperator }) {
     await store.transition(req.params.id, to, { user: op, reason: reason || 'operator override' })
     const after = await store.getCase(req.params.id)
     store.learnOperatorActivity(op.id, after).catch(() => {})
-    res.json(caseDetailProjection(after))
+    res.json(caseDetailProjection(after, await assigneeNamer(store, [after])))
   }
 }
 
@@ -969,40 +1015,9 @@ export function postSplit({ store, authed, str, actingOperator }) {
   }
 }
 
-// THE TIMELINE IS THE AUDIT RECORD, so an `outbound` row on it means the
-// contact received the message -- it is what an operator reads a week later,
-// what /api/activity streams, and the only kind timeline.js offers "flag this
-// reply" on. Recording one unconditionally made that untrue in two real
-// situations: a `casey dashboard` console has no sendReply at all (see
-// casey-serve.js cmdDashboard) so nothing is ever sent, and a wired channel
-// can still refuse the send. Both used to leave a delivered-looking outbound
-// for a message that never reached anybody.
-//
-// An undelivered reply is recorded as an operator NOTE that says so in its own
-// first words, never as an outbound. Nothing is discarded: the operator's text
-// is kept verbatim in `data.text` as well as in the line, because what a human
-// chose to say is part of the record whether or not it left the building.
-// `data.to` is deliberately absent -- there is no recipient of a message that
-// was not sent.
-const UNDELIVERED_REPLY_REASONS = {
-  no_channel: 'this console is not attached to the messaging channels',
-  send_failed: 'the channel refused it',
-}
-function appendReplyEvent(store, c, text, op, { delivered, reason, extra = {} }) {
-  if (delivered) {
-    return store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id, ...extra } })
-  }
-  const why = UNDELIVERED_REPLY_REASONS[reason] || 'the send did not happen'
-  return store.appendEvent(c.id, {
-    kind: 'note', actor: 'operator', channel: c.channel,
-    text: `NOT SENT to the contact (${why}). Operator wrote: ${text}`,
-    data: { undelivered: true, reason, by: op.id, text, ...extra },
-  })
-}
-
 // Operator takes over the conversation: send a message to the contact on
 // their channel and record it as an outbound event -- or, when it did not
-// send, as an undelivered note (see appendReplyEvent above).
+// send, as an undelivered note (see appendReplyEvent in hooks/staff-outbound.js).
 export function postReply({ store, authed, str, actingOperator, sendReply, UNCLAIMED_ASSIGNEE }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1036,6 +1051,13 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
         await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `Claimed by ${op.name || op.id}`, data: { claimed_by: op.id, was: current || null } })
         claimed = true
       }
+    }
+    // A field team member who answered from the dashboard has taken the conversation
+    // over, exactly as one who answered over WhatsApp: the assistant stops replying
+    // over them (inbound is still recorded; handing the report back resumes it).
+    if (delivered && req.caseyRole && (c.autonomy || 'auto') === 'auto') {
+      await store.updateCase(c.id, { autonomy: 'observe' }, op)
+      await store.appendEvent(c.id, { kind: 'autonomy_change', actor: 'operator', text: 'autonomy auto -> observe', data: { from: 'auto', to: 'observe', by: op.name || op.id, reason: 'a team member took over the conversation' } })
     }
     await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel' })
     // A personal reply is the strongest working-area signal casey has.

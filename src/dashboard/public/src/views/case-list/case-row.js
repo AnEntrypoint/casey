@@ -156,7 +156,7 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
       ),
       guardrailTags(c).length
         ? h('button', {
-          key: 'grd-toggle', type: 'button', class: 'ds-guardrail-toggle-btn',
+          key: 'grd-toggle', type: 'button', class: 'btn-link ds-guardrail-toggle-btn',
           'aria-expanded': expandedGuardrails ? 'true' : 'false',
           onclick: (e) => { e.stopPropagation(); onToggleGuardrails && onToggleGuardrails(c.id); },
         }, expandedGuardrails ? 'Hide flags' : 'Show flags')

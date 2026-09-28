@@ -25,7 +25,7 @@ import { REPORT_KEYS } from './case-store.js'
 import { parseReport, tagList } from './timestamp.js'
 import { isOpenCase, fmtPhone27 } from './format.js'
 import { canSignOff, isOperator, atLeast, TIER_ANIMAL_HEALTH_TECHNICIAN } from './contact-tiers.js'
-import { assigneeKeyFor, isAssignedTo, publicAssignee } from './case-assignment.js'
+import { assigneeKeyFor, isAssignedTo, isOwnConversation, publicAssignee } from './case-assignment.js'
 import { normalizeLocation } from './location-normalize.js'
 import { OPTED_OUT_TAG, mergeTag, dropTag } from './hooks/heuristics.js'
 import { sendStaffMessage, releaseCase, staffLabel } from './hooks/staff-outbound.js'
@@ -37,9 +37,10 @@ import {
   missingMandatoryMinimum, fieldLabel,
 } from './store/report-shape.js'
 import { UNCLAIMED_ASSIGNEE } from './case-store.js'
+import { APPEND_FIELD_MAX_LEN } from './store/report-merge.js'
 import { signOffCandidates } from './case-tools-team-review.js'
 import {
-  NOT_ASSIGNED, doneStages, findCase, authorityOn, deskAuthorityOn, storeUser, actorData, teamRow,
+  NOT_ASSIGNED, doneStages, findCase, authorityOn, deskAuthorityOn, storeUser, actorData, teamRow, cleanRelayed,
 } from './case-tools-team-shared.js'
 
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
@@ -47,7 +48,7 @@ const FINISHED = { error: 'That record is already finished, so it is not changed
 const empty = (v) => v == null || String(v).trim() === ''
 // Tags the system owns. A team member records facts; they do not flip the
 // machinery (opt-out, hand-off, draft and health flags are set by their own paths).
-const RESERVED_TAG = /^(opted-out|needs-human|draft-pending|ai-offline|flagged-reply|dispatch-suggested|health:|intake_mode:)/
+const RESERVED_TAG = /^(opted-out|needs-human|draft-pending|ai-offline|flagged-reply|dispatch-suggested|health:|intake_mode:)/i
 const staffOf = (ctx) => ({ ...(ctx?.contact || {}), tier: ctx?.tier })
 const optedOut = (c) => tagList(c).includes(OPTED_OUT_TAG)
 // Resolve a record for a team write. `gate` applies team-focus.js's writeGate to
@@ -86,20 +87,27 @@ export function buildTeamFieldTools(store, { priorityValues }) {
       'Take an unassigned open record for THIS team member (assign it to them). Refuses one that is already with someone else. Use when they say they will take it or it is theirs to do.',
       { type: 'object', properties: { case: str('Record reference or id') }, required: ['case'] },
       async ({ case: ref }, ctx) => {
-        const c = await findCase(store(), ref)
-        if (!c) return NO_SUCH
-        if (!isOpenCase(c)) return FINISHED
+        const c0 = await findCase(store(), ref)
+        if (!c0) return NO_SUCH
+        if (!isOpenCase(c0)) return FINISHED
         const key = assigneeKeyFor(ctx?.contact)
         if (!key) return { error: 'Could not tell who you are on this conversation, so nothing was assigned.' }
-        const current = String(c.assignee || '').trim()
-        if (current === key) return { ok: true, ref: c.ref, note: 'Already assigned to you.' }
-        if (current && current !== UNCLAIMED_ASSIGNEE) {
-          return { error: 'That one is already with someone else. Ask an operator to move it if it should be yours.' }
-        }
-        const by = staffLabel(ctx.contact)
-        await store().updateCase(c.id, { assignee: key }, storeUser(ctx, isOperator(ctx.tier) ? 'operator' : 'assigned'))
-        await store().appendEvent(c.id, { kind: 'action', actor: 'operator', text: `Claimed by ${by}`, data: actorData(ctx, { claimed_by: key, was: current || null }) })
-        return { ok: true, ref: c.ref }
+        if (isOwnConversation(c0, ctx.contact)) return { error: 'That is this chat with the assistant, not a record to work on, so it is not assigned to you.' }
+        // Two people taking the same unassigned record at the same moment must not both
+        // be told yes: the read, the check and the write happen under one lock per record.
+        return store()._withLock(`assign|${c0.id}`, async () => {
+          const c = await store().getCase(c0.id)
+          if (!c || !isOpenCase(c)) return FINISHED
+          const current = String(c.assignee || '').trim()
+          if (current === key) return { ok: true, ref: c.ref, note: 'Already assigned to you.' }
+          if (current && current !== UNCLAIMED_ASSIGNEE) {
+            return { error: 'That one is already with someone else. Ask an operator to move it if it should be yours.' }
+          }
+          const by = staffLabel(ctx.contact)
+          await store().updateCase(c.id, { assignee: key }, storeUser(ctx, isOperator(ctx.tier) ? 'operator' : 'assigned'))
+          await store().appendEvent(c.id, { kind: 'action', actor: 'operator', text: `Claimed by ${by}`, data: actorData(ctx, { claimed_by: key, was: current || null }) })
+          return { ok: true, ref: c.ref }
+        })
       }),
     defTool('case_release', 'cases',
       'Hand an assigned record back: it becomes unassigned and the assistant resumes talking with the reporter on its own. Use when they cannot take it or are finished with it but the record stays open.',
@@ -131,17 +139,19 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const pending = me?.id ? await pendingDispatchesFor(store(), me, [c]) : []
         if (!pending.length) return { error: 'There is no open suggestion for you on that record.' }
         const by = staffLabel(me)
-        const current = String(c.assignee || '').trim()
         const key = assigneeKeyFor(me)
         let claimed = false
+        let current = String(c.assignee || '').trim()
         if (decision === 'accept') {
-          if (current && current !== UNCLAIMED_ASSIGNEE && current !== key) {
-            return { error: 'That record is already with someone else now, so it cannot be taken on from here.' }
-          }
-          if (!current || current === UNCLAIMED_ASSIGNEE) {
-            await store().updateCase(c.id, { assignee: key }, storeUser(ctx, 'assigned'))
-            claimed = true
-          }
+          if (isOwnConversation(c, me)) return { error: 'That is this chat with the assistant, not a record to attend.' }
+          const taken = await store()._withLock(`assign|${c.id}`, async () => {
+            const cur = String((await store().getCase(c.id))?.assignee || '').trim()
+            current = cur
+            if (cur && cur !== UNCLAIMED_ASSIGNEE && cur !== key) return { error: 'That record is already with someone else now, so it cannot be taken on from here.' }
+            if (!cur || cur === UNCLAIMED_ASSIGNEE) { await store().updateCase(c.id, { assignee: key }, storeUser(ctx, 'assigned')); claimed = true }
+            return null
+          })
+          if (taken) return taken
         }
         await store().appendEvent(c.id, {
           kind: 'action', actor: 'operator',
@@ -219,8 +229,8 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const by = staffLabel(ctx.contact)
         const wanted = [...missing, ...helpful].map(fieldLabel)
         const reminder = `Hello, it is ${by} from the team, about the ${REPORT_ENTITY_LABEL} you reported (${c.ref}).`
-          + (wanted.length ? ` Please send the same chat you first reported in a message telling us: ${wanted.join(', ')}.` : ' Please send the same chat you first reported in a message with anything that has changed.')
-          + ` Quote ${c.ref} so we match it. Thank you.`
+          + (wanted.length ? ` Please message our WhatsApp assistant again, on the same number you first reported to, and tell it: ${wanted.join(', ')}.` : ' Please message our WhatsApp assistant again, on the same number you first reported to, with anything that has changed.')
+          + ` Thank you.`
         return {
           recorded_on: r.on, ref: c.ref, status: c.status,
           required_missing: missing.map(describe),
@@ -260,12 +270,16 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         required: ['case'],
       },
       async ({ case: ref, lat, lon, location_source, subject, summary, priority, add_tags, note, correct = false, ...fields }, ctx) => {
+        subject = cleanRelayed(subject); summary = cleanRelayed(summary); add_tags = cleanRelayed(add_tags); note = cleanRelayed(note)
+        for (const k of Object.keys(fields)) fields[k] = cleanRelayed(fields[k])
         const r = await lookupTeamCase(store, ctx, ref); if (r.fail) return r.fail
         const { c, authority } = r
         if (!isOpenCase(c)) return FINISHED
         const by = staffLabel(ctx.contact)
         const user = storeUser(ctx, authority)
         const incoming = pick(fields, [...REPORT_KEYS].filter(k => k !== 'photos' && k !== 'audio'))
+        const tooLong = Object.keys(incoming).filter(k => String(incoming[k]).length > APPEND_FIELD_MAX_LEN)
+        if (tooLong.length) return { error: `${tooLong.map(fieldLabel).join(', ')} is too long to record (over ${APPEND_FIELD_MAX_LEN} characters). Nothing was changed. Ask for a shorter version.` }
         const prior = parseReport(c)
         const held = Object.keys(incoming).filter(k => !APPEND_FIELDS.has(k) && !empty(prior[k]) && String(prior[k]).trim() !== String(incoming[k]).trim())
         if (held.length && !correct) {
@@ -278,7 +292,10 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         if ((lat != null || lon != null) && !(hasLatLon && isValidLatLon(lat, lon))) return { error: `lat/lon out of range or incomplete: lat=${lat}, lon=${lon}` }
         const columns = {}
         if (subject) columns.subject = String(subject).slice(0, 200)
-        if (summary) columns.summary = String(summary)
+        if (summary) {
+          if (String(summary).length > APPEND_FIELD_MAX_LEN) return { error: `The summary is too long (over ${APPEND_FIELD_MAX_LEN} characters). Nothing was changed. Give a shorter one.` }
+          columns.summary = String(summary)
+        }
         if (priority) {
           if (!new Set(store().getFieldEnum('case.priority', priorityValues)).has(priority)) return { error: `invalid priority: ${priority}`, allowed: priorityValues }
           columns.priority = priority
@@ -330,6 +347,11 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const r = await lookupTeamCase(store, ctx, ref); if (r.fail) return r.fail
         const { c, authority } = r
         if (doneStages().includes(to)) {
+          // The same order case_transition uses: a blank required fact is something the
+          // person on site can still fix, so it is named first; only a complete record
+          // reaches the "not yours to finish" answer.
+          const blank = missingMandatoryMinimum(parseReport(c))
+          if (blank.length) return { error: `Not finished: ${blank.map(fieldLabel).join(', ')} ${blank.length === 1 ? 'is' : 'are'} still not recorded, and every one of those has to be known before anyone can finish it. Ask the reporter for ${blank.length === 1 ? 'it' : 'them'} (case_gaps has a reminder to send), record ${blank.length === 1 ? 'it' : 'them'} with case_edit, and leave the record open.` }
           return { error: canSignOff(ctx?.tier)
             ? 'Finishing a record is done with the sign-off, not here, and only once every required fact is recorded.'
             : 'Finishing a record is not done from here. Leave it as it is: the technician who signs these off will finish it.' }

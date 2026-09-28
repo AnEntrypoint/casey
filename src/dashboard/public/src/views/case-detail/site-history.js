@@ -5,6 +5,7 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Table } from '/design/src/components/content.js';
+import { Btn } from '/design/src/components/shell.js';
 import { state, setSiteHistory } from '../../state.js';
 import { fetchSiteHistory } from '../../api.js';
 import { rel, stageLabel, channelLabel } from '../../format.js';
@@ -25,7 +26,7 @@ export function SiteHistoryPanel({ onOpenCase, key } = {}) {
     // same stage. stageLabel() is the one stage vocabulary an operator reads,
     // and it belongs here too.
     const rows = visits.map(v => [
-        h('button', { type: 'button', class: 'casey-linklike', onclick: () => onOpenCase && onOpenCase(v.id) }, v.ref),
+        Btn({ variant: 'link', size: 'sm', onClick: () => onOpenCase && onOpenCase(v.id), children: v.ref }),
         channelLabel(v.channel) + ' - ' + (v.status ? stageLabel(v.status) : '') + ' - reported ' + rel(v.reported_at),
         (v.reasons || []).join(', ')
     ]);

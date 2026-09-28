@@ -233,7 +233,7 @@ function Summary(c, r) {
 
 export function FieldCaseView({ id, onBack }) {
   if (fc.id !== id && !fc.loading) load(id);
-  const back = h('button', { type: 'button', class: 'casey-back-btn', onclick: onBack }, Icon('chevron-left', { size: 14 }), ' Back to the list');
+  const back = Btn({ variant: 'link', size: 'sm', class: 'casey-back-btn', 'aria-label': 'Back to the list', onClick: onBack, children: [Icon('chevron-left', { size: 14 }), ' Back to the list'] });
   if (fc.error) return h('div', { class: 'casey-detail-pane' }, back, h('p', { class: 'casey-hint' }, fc.error));
   if (!fc.data || fc.data.case.id !== id) return h('div', { class: 'casey-detail-pane' }, back, Skeleton({ count: 5, height: '1.4em' }));
   const { case: c, events, events_total, transitions } = fc.data;

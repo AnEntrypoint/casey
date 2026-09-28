@@ -21,20 +21,39 @@
 // fact a sighted one does -- no state here is carried by hue alone.
 
 import * as webjsx from 'webjsx';
+import { Btn } from 'ds/components/shell/atoms.js';
 const h = webjsx.createElement;
 
 export function FilterChip({ key, label, count, on, onClick, title }) {
+  return PillButton({
+    key, title, active: on, empty: count === 0, onClick,
+    children: [h('span', { key: 'n', class: 'ds-fchip-n' }, String(count)), h('span', { key: 'l' }, label)],
+  });
+}
+
+// The kit's FilterPills draws its pills as `.ds-filter-pill` (aria-pressed, `active`),
+// but it renders one single-select group. The chips here are independent toggles and
+// one-shot actions, so they wear the same class on their own button and keep the kit's
+// look, focus ring, and coarse-pointer floor without a second pill vocabulary.
+// `active` undefined = an action (no pressed state); `empty` dims a zero count.
+export function PillButton({ key, active, empty, title, onClick, class: cls, children }) {
   return h('button', {
     key, type: 'button', title,
-    class: 'ds-fchip' + (on ? ' is-on' : '') + (count === 0 ? ' is-empty' : ''),
-    'aria-pressed': on ? 'true' : 'false',
+    class: 'ds-filter-pill' + (active ? ' active' : '') + (empty ? ' is-empty' : '') + (cls ? ' ' + cls : ''),
+    'aria-pressed': active === undefined ? undefined : (active ? 'true' : 'false'),
     onclick: onClick,
-  }, h('span', { class: 'ds-fchip-n' }, String(count)), h('span', { class: 'ds-fchip-l' }, label));
+  }, ...(Array.isArray(children) ? children : [children]));
 }
 
 // Only rendered when something is actually filtered, by both callers: a Clear
 // control that is always present is one an operator has to read to find out
 // whether it applies.
 export function ClearChip({ onClick }) {
-  return h('button', { key: 'clr', type: 'button', class: 'ds-fchip-clear', onclick: onClick }, 'Clear');
+  return Btn({ key: 'clr', variant: 'link', size: 'sm', onClick, children: 'Clear' });
+}
+
+// The rail's "Show all N" / "Show fewer" row action: the kit's ghost button, one
+// place, so every capped list states its true total on the same control.
+export function QueueMore({ key, onClick, children }) {
+  return Btn({ key, variant: 'ghost', size: 'sm', class: 'ds-queue-more', onClick, children });
 }

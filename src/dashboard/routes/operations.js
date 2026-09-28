@@ -13,6 +13,7 @@ import { calculateDegradationRate } from '../../degraded-turns.js'
 import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI, TIER_LABELS, MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES } from '../../store/report-shape.js'
 import { KNOWN_VALUE_FIELDS, isKnownValueField, readKnownValues, canonicalizeFieldValue } from '../../field-values.js'
 import { mountRoutes } from './register.js'
+import { assigneeNamer } from '../assignee-names.js'
 
 // Same default casey.js's startSweep uses when no CASEY_SWEEP_INTERVAL_MS is
 // set. Reported to the operator so "next run at" is a real time rather than a
@@ -274,12 +275,13 @@ export function getHealthCases({ store, authed }) {
     // surfaces) so a breaching case can be attributed to who is on the hook for
     // it, not just listed flat -- an empty string means unassigned, never PII
     // (assignee is an operator username, not a contact identifier).
+    const named = await assigneeNamer(store, openCases)
     const cases = openCases.map(c => ({
       id: c.id,
       ref: c.ref,
       status: c.status,
       tags: tagList(c).join(','),
-      assignee: c.assignee || '',
+      assignee: named(c.assignee || ''),
       breaches: classifyCaseHealth(c, now, thresholds),
       updated_at: c.updated_at || c.created_at,
     })).filter(c => c.breaches.length > 0)  // only show cases with active breaches
@@ -351,10 +353,15 @@ export function getRuntime({ authed, runtimeStatus }) {
 // deployment that adds/renames a workflow stage or case_type value is
 // reflected in the dashboard with no client code change. PII-free (labels
 // and enum names only).
-export function getConfig({ store, authed, SAST_TZ }) {
+export function getConfig({ store, authed, SAST_TZ, resolveWhatsappAdapter, fmtPhone27 }) {
   return (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    // The bot's own WhatsApp number, as the Graph API reports it (adapters/
+    // whatsapp.js caches it; '' until known or when no WhatsApp channel is wired).
+    let botNumber = ''
+    try { botNumber = fmtPhone27(resolveWhatsappAdapter?.()?.displayNumber?.() || '') } catch { /* best-effort */ }
     res.json({
+      whatsapp_number: botNumber,
       stages: store.getValidStatuses(),
       open_stages: typeof store.getOpenStatuses === 'function' ? store.getOpenStatuses() : [],
       case_type: typeof store.getFieldEnum === 'function' ? store.getFieldEnum('case.case_type', []) : [],
@@ -432,10 +439,11 @@ export function getAttention({ store, authed, isOpenCase, rankAttention }) {
     // waitMs is the live SLA clock -- ms the contact has waited on a human reply
     // (null when nobody owes a reply), so the row can show "waited 18m, target 30m"
     // without the SPA recomputing it. The header at_risk count is aggregate-only.
+    const named = await assigneeNamer(store, items, (x) => x.c.assignee)
     const cases = items.map(({ c, score, reason, waitMs }) => ({
       id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
       status: c.status, updated_at: c.updated_at || c.created_at,
-      assignee: c.assignee || '',
+      assignee: named(c.assignee || ''),
       wait_ms: waitMs == null ? null : waitMs,
       score, reason, breaches: classifyCaseHealth(c, now, thresholds),
       // Already folded into `score` via attn.js's attnScore (degraded-turn-seen
@@ -473,6 +481,7 @@ export function getSecretaryQueue({ store, authed, isOpenCase, rankAttention }) 
       return true
     })
     const groups = new Map()
+    const named = await assigneeNamer(store, filtered, (x) => x.c.assignee)
     for (const { c, score, reason, waitMs } of filtered) {
       let report = parseReport(c)
       const place = normalizeLocation(report.location) || 'unresolved'
@@ -480,7 +489,7 @@ export function getSecretaryQueue({ store, authed, isOpenCase, rankAttention }) 
       groups.get(place).push({
         id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
         status: c.status, updated_at: c.updated_at || c.created_at,
-        assignee: c.assignee || '',
+        assignee: named(c.assignee || ''),
         wait_ms: waitMs == null ? null : waitMs,
         score, reason, breaches: classifyCaseHealth(c, now, thresholds),
       })

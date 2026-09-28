@@ -15,7 +15,7 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Lede } from '/design/src/components/shell/atoms.js';
-import { Icon } from '/design/src/components/shell/icons.js';
+import { Checkbox } from '/design/src/components/form-primitives.js';
 import { Dialog } from './dialog-shell.js';
 const h = webjsx.createElement;
 
@@ -64,20 +64,8 @@ export function SkillsOverlay({ open, operatorId, onClose, onAllDone } = {}) {
         footer: Btn({ onClick: onClose, children: 'Close' }),
         children: [
             Lede({ children: 'You already know the job. These are the shortcuts for doing it faster. Tick each one as you pick it up; the list is yours alone, kept on this device, and it stops appearing once you finish or close it.' }),
-            h('ul', { key: 'list', class: 'ds-skills-list', role: 'group', 'aria-label': 'Skills checklist' },
-                ...SKILLS.map((s) => h('li', {
-                    key: s.id,
-                    class: 'ds-skills-item' + (state[s.id] ? ' is-done' : ''),
-                    role: 'checkbox',
-                    tabindex: '0',
-                    'aria-checked': state[s.id] ? 'true' : 'false',
-                    onclick: () => toggle(s.id),
-                    onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(s.id); } },
-                },
-                    h('span', { class: 'ds-skills-box', 'aria-hidden': 'true' }, state[s.id] ? Icon('check', { size: 14 }) : null),
-                    h('span', { class: 'ds-skills-label' }, s.label)
-                ))
-            ),
+            h('div', { key: 'list', role: 'group', 'aria-label': 'Skills checklist' },
+                ...SKILLS.map((s) => Checkbox({ key: s.id, checked: !!state[s.id], label: s.label, onChange: () => toggle(s.id) }))),
             h('p', { key: 'foot', class: 'ds-dialog-foot-note' }, 'Nothing here changes what you can do, only how many steps it takes.')
         ]
     });

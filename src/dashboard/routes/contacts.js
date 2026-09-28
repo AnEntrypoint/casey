@@ -85,6 +85,9 @@ export function postContactTier({ store, authed, isAdmin, actingOperator }) {
       if (!TIER_ORDER.includes(tier)) return res.status(400).json({ error: `tier must be one of ${TIER_ORDER.map(t => `"${t}"`).join(', ')}` })
       // The operator rung is the team-management rung: only an admin may grant it.
       if (tier === TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can make someone an operator' })
+      // The operator rung is an admin's to give AND to take away.
+      const existing = await store.getContact(req.params.id)
+      if (existing && resolveContactTier(existing) === TIER_OPERATOR && tier !== TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
       await store.setContactTier(req.params.id, tier, { id: actingOperator(req).id, role: 'operator' })
       const updated = await store.getContact(req.params.id)
       res.json({ contact: publicContact(updated) })
@@ -121,6 +124,8 @@ export function postContactRegister({ store, authed, isAdmin, actingOperator }) 
       if (!external_id) return res.status(400).json({ error: 'that does not look like a phone number -- use the full number, e.g. 079 091 5297 or +27 79 091 5297' })
       if (!TIER_ORDER.includes(tier) || tier === TIER_REPORTER) return res.status(400).json({ error: `role must be one of ${TIER_ORDER.filter(t => t !== TIER_REPORTER).map(t => `"${t}"`).join(', ')}` })
       if (tier === TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can make someone an operator' })
+      const known = (await store.listContacts({ limit: 1000 })).find(k => k.channel === 'whatsapp' && k.external_id === external_id)
+      if (known && resolveContactTier(known) === TIER_OPERATOR && tier !== TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
       const contact = await store.registerContact({ channel: 'whatsapp', external_id, display_name: String(name || '').trim().slice(0, 80), tier }, { id: actingOperator(req).id, role: 'operator' })
       res.json({ contact: publicContact(contact) })
     } catch (e) { res.status(400).json({ error: e.message }) }
@@ -129,10 +134,15 @@ export function postContactRegister({ store, authed, isAdmin, actingOperator }) 
 
 // One-time WhatsApp role codes (mechanism 2). The plain code is in the create
 // response ONCE; only its hash is stored, so it cannot be shown again.
-export function getRoleInvites({ store, authed }) {
+export function getRoleInvites({ store, authed, getRoster }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    res.json({ invites: await listInvites(store) })
+    // A dashboard-made code records the maker's username; show the operator's
+    // display name from the account roster (a code minted over WhatsApp already
+    // carries a display label, which has no roster entry and passes through).
+    const names = new Map((await getRoster()).map(r => [r.id, r.name]))
+    const invites = (await listInvites(store)).map(v => ({ ...v, created_by: names.get(v.created_by) || v.created_by }))
+    res.json({ invites })
   }
 }
 

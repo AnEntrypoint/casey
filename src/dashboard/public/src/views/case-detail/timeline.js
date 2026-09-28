@@ -4,7 +4,7 @@
 // pagination.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
-import { Icon, IconButton } from '/design/src/components/shell.js';
+import { Btn, Icon, IconButton } from '/design/src/components/shell.js';
 import { SearchInput, LogRow } from '/design/src/components/content.js';
 import { state, schedule, appendTimelineEvents, setTimelineSearch } from '../../state.js';
 import { fetchCaseEvents, postFlagReply } from '../../api.js';
@@ -136,6 +136,6 @@ export function Timeline({ caseId, events, eventsTotal, key } = {}) {
             hasMore ? ' -- showing the latest ' + events.length + ' of ' + eventsTotal : ''),
         SearchInput({ value: state.timelineSearch || '', placeholder: 'Search timeline...', onInput: setTimelineSearch, resultCount: q ? filtered.length + ' matching' : null }),
         h('div', { class: 'casey-timeline', id: 'timeline' }, ...filtered.map((e, i) => TimelineRow({ key: e.id || i, e, caseId }))),
-        hasMore ? h('button', { type: 'button', class: 'casey-load-older', onclick: loadMore }, 'Load older events') : null
+        hasMore ? Btn({ variant: 'ghost', size: 'sm', class: 'casey-load-older', onClick: loadMore, children: 'Load older events' }) : null
     );
 }

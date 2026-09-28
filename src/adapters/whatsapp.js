@@ -8,6 +8,8 @@ import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMed
 // guaranteed-fallback reply composed and recorded but never actually delivered
 // because the network call itself just hangs with no timeout.
 const SEND_TIMEOUT_MS = 15000
+const DISPLAY_TIMEOUT_MS = 4000
+const DISPLAY_RETRY_MS = 5 * 60e3
 
 export class WhatsappAdapter extends EventEmitter {
   constructor(opts = {}) {
@@ -31,6 +33,42 @@ export class WhatsappAdapter extends EventEmitter {
     // WHATSAPP_WEBHOOK_PORT of its own.
     this.path = opts.path || process.env.WHATSAPP_WEBHOOK_PATH || '/webhooks/whatsapp'
     this.api = opts.api || 'https://graph.facebook.com/v20.0'
+    // The bot's own number as WhatsApp displays it (digits/format Meta returns),
+    // read once from the Graph API so the dashboard can tell a team member which
+    // number to message. Best-effort: never awaited by boot, never throws, cached
+    // in memory; a failure is retried at most every DISPLAY_RETRY_MS on a later read.
+    this._displayNumber = ''
+    this._displayTriedAt = 0
+    this._displayInflight = null
+    if (this.token && this.phoneId) setImmediate(() => this.refreshDisplayNumber())
+  }
+
+  // GET /{phone_id}?fields=display_phone_number, bearer token, short timeout.
+  // A read only: nothing is sent to anyone. The token is never logged.
+  refreshDisplayNumber() {
+    if (this._displayInflight) return this._displayInflight
+    if (!this.token || !this.phoneId) return Promise.resolve('')
+    this._displayTriedAt = Date.now()
+    this._displayInflight = (async () => {
+      try {
+        const r = await fetchWithTimeout(`${this.api}/${encodeURIComponent(this.phoneId)}?fields=display_phone_number`, { headers: { authorization: `Bearer ${this.token}` } }, DISPLAY_TIMEOUT_MS)
+        if (!r.ok) throw new Error(`status ${r.status}`)
+        const j = await r.json()
+        const n = String(j?.display_phone_number || '').trim()
+        if (n) this._displayNumber = n
+      } catch (e) {
+        console.warn('[whatsapp] could not read the display phone number:', e?.message || 'failed')
+      } finally { this._displayInflight = null }
+      return this._displayNumber
+    })()
+    return this._displayInflight
+  }
+
+  // The cached display number ('' until known). Synchronous; a stale miss kicks
+  // a background retry rather than making the caller wait.
+  displayNumber() {
+    if (!this._displayNumber && this.token && this.phoneId && Date.now() - this._displayTriedAt > DISPLAY_RETRY_MS) this.refreshDisplayNumber()
+    return this._displayNumber
   }
 
   // Verify Meta's HMAC-SHA256 signature over the raw request body.

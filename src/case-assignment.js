@@ -19,6 +19,7 @@
 //   isContactAssignee(value)         -> the value is a contact key (not a
 //                                       dashboard username, not 'agent')
 //   contactIdOfAssignee(value)       -> the contact id inside a key, or ''
+//   isOwnConversation(caseRow, contact) -> the record is that person's own chat
 //   publicAssignee(value, viewer?)   -> a display-safe rendering for anything a
 //                                       model or another contact reads: the key
 //                                       becomes 'you' (viewer's own) or 'a team
@@ -46,6 +47,18 @@ export function isAssignedTo(caseRow, contact) {
   const key = assigneeKeyFor(contact)
   if (!key) return false
   return String(caseRow?.assignee || '').trim() === key
+}
+
+// Is this record the person's OWN conversation with the assistant (they are its
+// reporter)? Assigning it to themselves would turn their own chat into a record
+// they "work on": their first reply to the bot would count as a human takeover and
+// the assistant would go quiet on them. Discord keys a record 'channel:author', so
+// the author is the last segment.
+export function isOwnConversation(caseRow, contact) {
+  const me = String(contact?.external_id || '')
+  if (!me || String(caseRow?.channel || '') !== String(contact?.channel || '')) return false
+  const ext = String(caseRow?.external_id || '')
+  return ext === me || ext.split(':').pop() === me
 }
 
 export function publicAssignee(value, viewer = null) {

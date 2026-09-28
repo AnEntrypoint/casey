@@ -20,6 +20,7 @@
 import path from 'node:path'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { caseListProjection } from './cases.js'
+import { assigneeNamer } from '../assignee-names.js'
 import { publicExternalLink } from './external-links.js'
 import { verifyApiKey, findByPrefix, touchLastUsed, parseScopes, keyPrefix } from '../../sync/api-key-auth.js'
 import { KINDS } from '../../sync/adapters/base.js'
@@ -95,7 +96,8 @@ export function getSyncCases({ store, clampLimit, offsetOf, computeFillRate }) {
     const cases = await store.listCases(where, { limit, offset })
     const total = await store.countCases(where)
     const withFill = cases.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
-    res.json({ cases: withFill.map(c => caseListProjection(c)), total, limit, offset })
+    const named = await assigneeNamer(store, withFill)
+    res.json({ cases: withFill.map(c => caseListProjection(c, named)), total, limit, offset })
   }
 }
 

@@ -46,8 +46,8 @@ async function runBulk(action, extra, onDone) {
 export function BulkBar({ stages, onDone, onPromptTag, onPromptNote }) {
   const n = state.bulkSelected.size;
   if (!n) return null;
-  return h('div', { class: 'ds-bulk-bar', role: 'toolbar', 'aria-label': 'Bulk actions' },
-    h('span', { key: 'count', class: 'ds-bulk-count' }, n + ' selected'),
+  return h('div', { class: 'ds-bulkbar', role: 'toolbar', 'aria-label': 'Bulk actions' },
+    h('span', { key: 'count', class: 'ds-bulkbar-count' }, n + ' selected'),
     Btn({ key: 'claim', size: 'sm', onClick: () => runBulk('claim', null, onDone), children: 'Claim' }),
     Select({
       key: 'stage', size: 'sm', placeholder: 'Move to...',

@@ -7,6 +7,7 @@
 //   createAccount, setAccountDisabled, deleteAccount, revokeAccountSessions,
 //   getAccount, issueSession, sessionCookieHeader, setAccountContactPhone
 import { mountRoutes } from './register.js'
+import { FIELD_ROLES } from '../roles.js'
 
 // Account rows carry password_hash/password_salt/session_epoch. This is the one
 // allowlist through which one may reach JSON -- module-level and named, so the
@@ -100,11 +101,18 @@ export function postLogoutEverywhere({ store, authed, revokeAccountSessions, get
   }
 }
 
-export function deleteAccountRoute({ store, authed, isAdmin, deleteAccount }) {
+export function deleteAccountRoute({ store, authed, isAdmin, deleteAccount, getAccount }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     if (!isAdmin(req)) return res.status(403).json({ error: 'admin only' })
-    try { await deleteAccount(store, req.params.id); res.json({ ok: true }) }
+    try {
+      const target = await getAccount(store, req.params.id)
+      await deleteAccount(store, req.params.id)
+      // A field login that is deleted can no longer work the reports it held, and a
+      // report left in its name keeps the assistant quiet with nobody driving.
+      if (target && FIELD_ROLES.includes(target.role)) await store.releaseCasesHeldBy(target.username, 'the login holding it was deleted', { id: 'account-removal', role: 'system' })
+      res.json({ ok: true })
+    }
     catch (e) { res.status(400).json({ error: e.message }) }
   }
 }

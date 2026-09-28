@@ -220,6 +220,16 @@ export function detectContactIntent(text) {
   return null
 }
 
+// Is the ENTIRE message exactly one existing STOP keyword (whole-message equality
+// after the same normalisation the detector uses)? The stricter test applied to a
+// TEAM member (tier >= field_worker), for whom STOP has no service meaning and a
+// sentence like "wrong one, stop" is ordinary conversation. Reads STOP_KEYS; adds
+// no vocabulary of its own.
+export function isBareStopKeyword(text) {
+  const t = normalizeIntentText(text)
+  return !!t && STOP_KEYS.includes(t)
+}
+
 // Keyword tables. Single-word keys match as whole tokens; multi-word keys as
 // space-bounded phrases -- never a bare-prefix substring match. Accent-
 // stripped, lowercase (see normalizeIntentText).

@@ -77,7 +77,6 @@
 <link rel="stylesheet" href="/app.css">
 <link rel="stylesheet" href="/src/views/case-detail.css">
 <link rel="stylesheet" href="/src/views/field.css">
-<link rel="stylesheet" href="/src/panels/dispatch-picker.css">
 <!-- "ds/" resolves every component import to the SDK's unbundled sources, and
      is the only way this page reaches the design kit's JavaScript. Do NOT add
      a '/design/dist/247420.js' entry: loading the prebuilt bundle alongside
@@ -173,14 +172,36 @@
      register() resolves, because clients.claim() can land between the two. -->
 <script>if('serviceWorker' in navigator) (function(){
   var hadController = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.register('/sw.js').then(function(){
+  // A new build is picked up without the operator doing anything. The browser
+  // re-checks /sw.js only on a real navigation, and this app is a single page
+  // an operator may leave open for days, so ask again whenever the tab comes
+  // back to the front and on a slow timer. The worker's cache name carries the
+  // server's build id (server.js SHELL_BUILD_ID), so a changed build is a new
+  // worker; when it takes over, the page reloads onto it -- quietly, and never
+  // while someone is typing (the reload waits until they leave the field or hide
+  // the tab), so a half-written note is not lost.
+  function typing() {
+    var a = document.activeElement;
+    return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'button' && a.type !== 'submit' && !!(a.value || a.isContentEditable);
+  }
+  function reloadWhenSafe() {
+    if (document.hidden || !typing()) { location.reload(); return; }
+    // Re-check every couple of seconds and when the tab is hidden: focus events
+    // are not reliable on every handset, a short poll always is.
+    var timer = setInterval(function(){ if (document.hidden || !typing()) { clearInterval(timer); location.reload(); } }, 2000);
+    document.addEventListener('visibilitychange', function(){ if (document.hidden) { clearInterval(timer); location.reload(); } });
+  }
+  navigator.serviceWorker.register('/sw.js').then(function(reg){
+    var check = function(){ try { reg.update().catch(function(){}); } catch (e) {} };
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden) check(); });
+    setInterval(check, 30 * 60 * 1000);
     if (!hadController) return;
     var reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', function(){
       if (reloaded) return;
       reloaded = true;
-      location.reload();
+      reloadWhenSafe();
     });
-  }).catch(()=>{})
+  }).catch(function(){})
 })()</script>
 </body></html>

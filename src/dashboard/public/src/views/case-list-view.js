@@ -195,7 +195,7 @@ function listChips() {
 
   const chip = (key, label, count, on, onClick, title) => FilterChip({ key, label, count, on, onClick, title });
 
-  return h('div', { class: 'ds-fchips' },
+  return h('div', { class: 'ds-filter-pills' },
     chip('attn', 'need a person', needCount, attentionOnly,
       () => { attentionOnly = !attentionOnly; schedule(); },
       'Show only the reports the guardrails are chasing'),

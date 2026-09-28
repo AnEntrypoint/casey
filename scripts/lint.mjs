@@ -187,19 +187,17 @@ try {
     // This dashboard's own `!important` budget, counted separately from the
     // kit's frozen baseline (deps/design's ratchetOrThrow splits the two
     // corpora, so a consumer's sheet can never buy the kit slack it did not
-    // earn -- and vice versa: tightening the kit no longer breaks us).
-    //
-    // The one declaration is app.css's
-    //   @media print { .app-topbar, ... { display: none !important } }
-    // which keeps the app chrome off the operator's printed handover sheet.
-    // It cannot be done with specificity instead: the kit sets display:flex
-    // on those same elements at specificity up to 4
-    // (.ds-247420.ds-247420 .ca-app .app-topbar, and .ca-app is emitted by
-    // the kit's own JS), so a consumer sheet cannot beat it without the flag.
-    // Verified by enumerating every competing `display` declaration in
-    // dist/247420.css before keeping it. This is a budget to drive to 0, not
-    // an allowance to spend.
-    DS_LINT_EXTRA_IMPORTANT_BASELINE: '1',
+    // earn -- and vice versa). It is 0: the one print override that used to need
+    // the flag was unnecessary (the kit's own @media print already hides the app
+    // chrome; verified under print media emulation, desktop and phone width).
+    // Raising this needs a comment on the declaration saying why it cannot win
+    // by source order or composition instead.
+    DS_LINT_EXTRA_IMPORTANT_BASELINE: '0',
+    // The consumer corpus is also at zero raw spacing / font-size / inline-CSS
+    // violations; pinned explicitly so the floor is visible and cannot drift up.
+    DS_LINT_EXTRA_SPACING_BASELINE: '0',
+    DS_LINT_EXTRA_FONTSIZE_BASELINE: '0',
+    DS_LINT_EXTRA_INLINE_CSS_BASELINE: '0',
   }
   for (const script of ['lint-tokens.mjs', 'lint-inline-css.mjs']) {
     try {

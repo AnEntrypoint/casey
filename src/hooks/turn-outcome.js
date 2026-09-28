@@ -6,7 +6,9 @@
 // Nothing here talks to an adapter. Delivery lives in hooks/delivery.js.
 
 import { observation, flagNeedsHuman } from './case-writes.js'
-import { sanitizeOutboundRef, mergeTag, dropTag, canAgentAct } from './heuristics.js'
+import { sanitizeOutboundRef, mergeTag, dropTag, canAgentAct, CASE_REF_RE } from './heuristics.js'
+import { resolveTierValue, canQueryCases } from '../contact-tiers.js'
+import { deskAuthorityOn } from '../case-tools-team-shared.js'
 import { toolCaseRefs } from './turn-results.js'
 import { tagList } from '../timestamp.js'
 import { recordDegradedTurn, FAILURE_REASONS } from '../degraded-turns.js'
@@ -77,11 +79,34 @@ export async function recordDegradedOutcome({ store, log, fresh, result, errored
 // hallucinated, and must pass through unmodified. toolCaseRefs() collects those;
 // see turn-results.js for why it scans the raw tool-message content rather than
 // each tool's own result shape.
-export async function correctOutboundRef({ store, fresh, text, result }) {
-  const { text: safeText, corrected } = sanitizeOutboundRef(text, fresh.ref, toolCaseRefs(result))
+export async function correctOutboundRef({ store, fresh, text, result, inboundText = '', contact = null }) {
+  const extra = [...toolCaseRefs(result), ...(await namedRefsToKeep({ store, text, inboundText, contact }))]
+  const { text: safeText, corrected } = sanitizeOutboundRef(text, fresh.ref, extra)
   if (!corrected.length) return text
   await store.appendEvent(fresh.id, observation(`REF-CORRECTED: model emitted ${corrected.join(', ')}; rewrote to real ref ${fresh.ref}.`))
   return safeText
+}
+
+// A team member works on records other than the conversation's own, so a reply to
+// them legitimately names those: the ones they typed themselves, and the ones
+// assigned to them (or, for the sign-off desk, waiting in its queue). Rewriting such
+// a reference to the conversation's own would tell them the wrong record to confirm.
+// Ownership and equality only; a reference that resolves to nothing they hold is
+// still corrected.
+async function namedRefsToKeep({ store, text, inboundText, contact }) {
+  const found = (t) => [...new Set((String(t || '').match(CASE_REF_RE) || []).map(r => r.toUpperCase()))]
+  // A reporter's reply is untouched: only the team works on records other than the
+  // conversation's own.
+  if (!contact || !canQueryCases(contact.tier)) return []
+  const typed = found(inboundText)
+  const keep = [...typed]
+  const ctx = { tier: resolveTierValue(contact.tier), contact }
+  for (const ref of found(text)) {
+    if (typed.includes(ref)) continue
+    const c = await store.getCaseByRef(ref).catch(() => null)
+    if (c && c.channel !== 'system' && deskAuthorityOn(ctx, c)) keep.push(ref)
+  }
+  return keep
 }
 
 // A genuinely non-degraded turn (the model produced real, usable content) proves

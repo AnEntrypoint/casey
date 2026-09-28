@@ -21,7 +21,6 @@
    white root behind a dark app. --paper/--ink are base tokens, defined once
    under .ds-247420 and not re-bound per theme, so naming them here is a token
    reference and not a second definition of the ground. */
-body { background: var(--bg); color: var(--fg); }
 
 /* ---- SEAMS ARE GROUND, NOT HAIRLINES ------------------------------------
    Measured on the running page, the app drew four one-sided borders, and the
@@ -64,7 +63,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    (no explicit width outside .fd-root, by design per that file's comment)
    collapses to 0 width at desktop and the whole shell renders blank. Give it
    the same 100% stretch .fd-root would have provided. */
-.ds-app-surface .app { width: 100%; }
 
 /* ---- two-pane case list / case detail split (architecture spec section 5) */
 .app-two-pane { display: flex; width: 100%; height: 100%; min-height: 0; }
@@ -74,7 +72,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .app-two-pane { flex-direction: column; }
   .app-two-pane > .case-list-pane { flex: 1 1 auto; }
   .app-two-pane.has-active > .case-list-pane { display: none; }
-  .app-two-pane.has-active > .case-detail-pane { position: fixed; inset: 0; z-index: var(--z-overlay, 40); background: var(--bg); }
+  .app-two-pane.has-active > .case-detail-pane { position: fixed; inset: 0; z-index: var(--z-raised); background: var(--bg); }
 }
 
 /* ---- map-first home view (BLUF, map-command-center.js) -- the map is the
@@ -101,17 +99,9 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg-2);
 }
-/* The map/list toggle is phone-only chrome: above the breakpoint both panes
-   are on screen, so a control for choosing between them would be a control for
-   nothing.
-   Two-class selector on purpose. The element also carries .ds-seg (it IS a
-   segmented control), and .ds-seg's `display:inline-flex` is declared later in
-   this file at equal specificity, so a bare `.ds-pane-toggle{display:none}`
-   LOSES the cascade -- measured live at 1440x900: the toggle rendered, and
-   because it is a flex child of the row that holds the map and the rail, it
-   took 175px of horizontal space and squeezed the map down to 40% of the
-   viewport. The control that exists only for phones was making the desktop map
-   smaller. */
+/* The map/list toggle is phone-only chrome: above the breakpoint both panes are
+   on screen. Left displayed, it is a flex child of the map row and takes 175px
+   of the map's width (measured at 1440x900). */
 .app-two-pane-map > .ds-pane-toggle { display: none; }
 
 /* Phone: ONE pane at a time, not a split. An earlier version stacked them with
@@ -129,8 +119,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .app-two-pane-map > .ds-pane-toggle {
     display: flex; margin: var(--space-2) var(--space-3); align-self: flex-start; flex: 0 0 auto;
   }
-  .ds-pane-toggle .ds-seg-btn { min-height: 2.75rem; padding: var(--space-2) var(--space-5); }
-  .app-two-pane-map { flex-direction: column; }
   .app-two-pane-map > .case-list-pane,
   .app-two-pane-map > .case-detail-pane { flex: 1 1 auto; min-height: 0; max-width: none; }
   /* Stacked at this width, so the tint that separates the two columns side by
@@ -231,137 +219,38 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   padding: var(--space-2) var(--space-3);
 }
 /* Same fix, same reason, for the plain (non-map) case list's own detail pane:
-   CaseDetailView's backControl() renders this as the FIRST child of
-   .casey-detail-pane, which is itself a plain block inside the real scroll
-   container (.app-two-pane > .case-detail-pane, overflow:auto). With no
-   sticky rule it scrolled away identically to .ds-rail-back above. */
-.casey-back-btn {
-  position: sticky; top: 0; z-index: var(--z-raised); background: var(--bg-2);
-  display: inline-flex; align-items: center; gap: var(--space-1);
-  margin: var(--space-2) var(--space-3);
-}
-.ds-rail-disclosure { }
+   the back control is the first child of .casey-detail-pane, the real scroll
+   container, and would otherwise scroll away like .ds-rail-back above. */
+.casey-back-btn { position: sticky; top: 0; z-index: var(--z-raised); }
 /* A real word with a real hit target, never a bare chevron. */
 .ds-rail-disclosure > summary {
   cursor: pointer; padding: var(--space-3); font-weight: 600;
   font-size: var(--fs-micro); min-height: 2.75rem; display: flex; align-items: center;
 }
 .ds-rail-disclosure > summary:hover { background: var(--bg-2); }
-.ds-rail-disclosure > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ds-rail-disclosure > summary:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; } /* inset: the summary sits flush in a clipped rail */
 .ds-rail-disclosure-body { padding: var(--space-3); }
 .ds-rail-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
 .ds-app-surface h2.ds-rail-title, .ds-rail-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 700; }
 .ds-rail-head .ds-map-updated { font-size: var(--fs-micro); color: var(--fg-2); margin: 0; }
 
-/* Segmented control -- the time window in the rail head, and the map/list
-   switch on a phone. One always-visible control rather than a dropdown: the
-   three choices are the whole vocabulary, so hiding two of them behind a click
-   buys nothing and costs the operator the ability to see which is on. */
-.ds-seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--r-1); overflow: hidden; }
-.ds-seg-btn {
-  flex: 1 1 auto; background: var(--bg); border: 0;
-  color: var(--fg-2, var(--muted)); font: inherit; font-size: var(--fs-micro);
-  padding: var(--space-2) var(--space-3); cursor: pointer; min-height: 2.25rem; white-space: nowrap;
-}
-.ds-seg-btn:hover { background: var(--bg-2); color: var(--fg); }
-.ds-seg-btn.is-on { background: var(--accent); color: var(--accent-fg, var(--paper)); font-weight: 600; }
-.ds-seg-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
-
+/* The time window (rail head) and the map/list switch (phone) are the kit's
+   FilterPills; only the rail lets the group take the row's spare width. */
 .ds-rail-controls { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.ds-rail-controls .ds-seg { flex: 1 1 auto; }
-.ds-rail-reset {
-  flex: 0 0 auto; background: var(--bg-2); border: 1px solid var(--border);
-  border-radius: var(--r-1); color: var(--fg-2, var(--muted)); font: inherit;
-  font-size: var(--fs-micro); padding: var(--space-2) var(--space-3);
-  cursor: pointer; min-height: 2.25rem; white-space: nowrap;
-}
-.ds-rail-reset:hover { background: var(--bg-3, var(--border)); color: var(--fg); }
-.ds-rail-reset:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+.ds-rail-controls .ds-filter-pills { flex: 1 1 auto; }
 
-/* Filter chips: the count IS the control. These replaced four inert stat
-   tiles whose subtitle literally said "see below" -- a number the operator
-   could read but not act on, which is the opposite of leading with the bottom
-   line. Each one filters the map and the rail together. */
-.ds-fchips { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
-.ds-fchip {
-  display: inline-flex; align-items: baseline; gap: var(--space-1);
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-pill, var(--r-1));
-  padding: var(--space-1) var(--space-3); cursor: pointer; color: var(--fg);
-  font: inherit; font-size: var(--fs-micro); min-height: 2.25rem;
-}
-.ds-fchip:hover { background: var(--bg-3, var(--border)); }
-.ds-fchip.is-on { background: var(--accent); border-color: var(--accent); color: var(--accent-fg, var(--paper)); }
-/* A zero still renders -- "nothing needs a person" is information, and hiding
-   the chip would make the absence look like a missing feature. It just stops
-   inviting a click that would filter to nothing. */
-.ds-fchip.is-empty { opacity: .55; }
-.ds-fchip:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
-.ds-fchip-n { font-size: var(--fs-sm); font-weight: 700; }
-.ds-fchip-l { color: inherit; }
-.ds-fchip-clear {
-  background: none; border: 0; color: var(--accent-ink, var(--accent)); font: inherit;
-  font-size: var(--fs-micro); cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
-  padding: var(--space-1);
-}
-.ds-fchip-clear:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+/* Filter chips (FilterChip/PillButton): the count IS the control, drawn as the kit's
+   .ds-filter-pill. Only the count's weight and the zero treatment are casey's -- a
+   zero still renders ("nothing needs a person" is information) and only stops
+   inviting a click. */
+.ds-filter-pill .ds-fchip-n { font-weight: 700; margin-right: var(--space-1); }
+.ds-247420 .ds-filter-pill.is-empty { opacity: .55; }
 
 /* Whole-row tap target on the queue -- the most-used control in the view. */
-.ds-rail-body .ds-map-attention-feed { border: none; margin: 0; max-height: none; }
 .ds-rail-body .ds-map-attention-feed .tcase { min-height: 4rem; padding: var(--space-3); }
-/* Names the true total next to the control that reveals it, so a capped list
-   can never silently disagree with the count above it. */
-.ds-queue-more {
-  display: block; width: 100%; background: none; border: 0;
-  color: var(--accent-ink, var(--accent)); font: inherit; font-size: var(--fs-micro);
-  padding: var(--space-3); cursor: pointer; text-align: left; min-height: 2.75rem;
-}
-.ds-queue-more:hover { background: var(--bg-2); }
-.ds-queue-more:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
-
-/* ---- THE RAIL'S ONE CONTROL CONTRACT -----------------------------------
-   Every control in the rail shares one height and one label size; only the
-   shape distinguishes a count-chip (pill) from an action (rect).
-
-   The .ds-247420 scope is load-bearing, not decoration. The kit styles its
-   own `button` at two classes deep, which outranks a bare `.ds-fchip` /
-   `.ds-seg-btn` / `.ds-rail-reset` / `.ds-queue-more` -- so every font-size
-   those rules declared lost the cascade and the rail rendered its controls
-   at the kit's inherited 16px while the rows beside them sat at 10-11px.
-   Anything here that must beat the kit carries the scope class. */
-.ds-map-rail, .ds-rail-stack { --rail-ctrl-h: 2.25rem; }
-/* The phone's map/list toggle is a .ds-seg-btn outside the rail, so it reads
-   the shared height too -- and it is the ONLY way to switch panes there, which
-   is why it keeps the thumb target rather than the desk one. Declared as the
-   variable, not as a competing height, so the two cannot drift apart. */
-.ds-pane-toggle { --rail-ctrl-h: 2.75rem; }
-.ds-247420 .ds-seg-btn,
-.ds-247420 .ds-rail-reset,
-.ds-247420 .ds-fchip,
-.ds-247420 .ds-chip-btn {
-  box-sizing: border-box;
-  min-height: var(--rail-ctrl-h, 2.25rem);
-  height: var(--rail-ctrl-h, 2.25rem);
-  font-size: var(--fs-micro);
-  line-height: 1.2;
-}
-.ds-247420 .ds-queue-more, .ds-247420 .ds-fchip-clear { font-size: var(--fs-micro); }
-/* The datum inside a count chip is the one thing in the rail allowed to sit a
-   rung above its own label -- the number IS the control's content. */
-.ds-247420 .ds-fchip-n { font-size: var(--fs-sm); font-weight: 700; }
-/* The overlay toggles were bare 20px-tall text with no box at all, so four
-   real controls read as a caption. Same secondary treatment as the chips. */
-.ds-247420 .ds-chip-btn {
-  display: inline-flex; align-items: center; gap: var(--space-1);
-  padding: var(--space-1) var(--space-3);
-  background: var(--bg-2); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--r-pill, var(--r-1));
-}
-.ds-247420 .ds-chip-btn:hover { background: var(--bg-3, var(--border)); }
-/* Thumb targets, not mouse targets, on the surface a field operator works
-   from -- one bump for the whole rail rather than per-control exceptions. */
-@media (max-width: 900px) {
-  .ds-map-rail, .ds-rail-stack { --rail-ctrl-h: 2.75rem; }
-}
+/* The "Show all N" row action is a kit ghost Btn (QueueMore); this is only its
+   spacing inside the rail. */
+.ds-queue-more { margin: var(--space-2) var(--space-3); }
 
 /* ---- panel-swap chrome: a content-swap panel is a full PAGE ------------
    ONE treatment for all seven non-spatial panels (app-view.js's PanelSwap):
@@ -399,19 +288,11 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 
 /* ---- topbar action row (the verbs that used to sit in the nav) --------- */
-.ds-action-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.ds-action-link {
-  display: inline-flex; align-items: center; color: var(--fg-2, var(--muted));
-  font-size: var(--fs-sm); text-decoration: none; padding: var(--space-1) var(--space-2);
-  border-radius: var(--r-0, var(--r-sm));
-}
-.ds-action-link:hover { background: var(--bg-2); color: var(--fg); text-decoration: underline; }
-.ds-action-link:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 /* On a narrow screen the rare verbs give way first -- the map and the queue
    are what a phone operator came for, and Export/Sweep/Refresh are desk work.
    They stay reachable on any screen wide enough to do them. */
 @container (max-width: 900px) {
-  .ds-action-row .ds-action-link, .ds-action-row .ds-action-rare { display: none; }
+  .ds-action-row .ds-action-rare { display: none; }
 }
 
 /* ---- casey-local Dialog primitive (dialog-shell.js) --------------------
@@ -428,15 +309,15 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   padding: var(--space-6) var(--space-3);
 }
 .ds-dialog-panel {
-  background: var(--bg-2, var(--panel, var(--bg)));
-  border: 1px solid var(--border, var(--ink-3));
-  border-radius: var(--r-2, var(--r-lg));
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
   max-width: 560px; width: 100%;
   padding: var(--space-4) var(--space-5);
-  box-shadow: var(--shadow-2, var(--shadow-lg, none));
+  box-shadow: var(--shadow-2);
   font-size: var(--fs-sm);
   line-height: 1.55;
-  max-height: calc(100dvh - var(--space-7, var(--space-6)));
+  max-height: calc(100dvh - var(--space-7));
   overflow: auto;
 }
 .ds-dialog-panel-wide, .ds-dialog-panel--wide { max-width: 720px; }
@@ -452,60 +333,29 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-app-surface h2.ds-dialog-title, .ds-dialog-title { margin: 0; font-size: var(--fs-h3-app); }
 .ds-dialog-x, .ds-dialog-close {
   background: transparent; border: 0; cursor: pointer; padding: var(--space-1);
-  border-radius: var(--r-0, var(--r-sm)); color: var(--fg-2, var(--muted));
+  border-radius: var(--r-0); color: var(--fg-2);
   display: inline-flex; align-items: center; justify-content: center;
 }
-.ds-dialog-x:hover, .ds-dialog-close:hover { background: var(--bg-3, var(--hover)); color: var(--fg); }
-.ds-dialog-x:focus-visible, .ds-dialog-close:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+.ds-dialog-x:hover, .ds-dialog-close:hover { background: var(--bg-3); color: var(--fg); }
 .ds-dialog-body h3 { margin: var(--space-3) 0 var(--space-1); font-size: var(--fs-sm); }
-.ds-dialog-body p { margin: var(--space-1) 0; color: var(--fg-2, var(--muted)); }
+.ds-dialog-body p { margin: var(--space-1) 0; color: var(--fg-2); }
 .ds-dialog-body .ds-lede, .ds-dialog-body .lede { color: var(--fg); }
-.ds-dialog-body ul, .ds-dialog-body ol { margin: var(--space-1) 0; padding-left: var(--space-4); color: var(--fg-2, var(--muted)); }
+.ds-dialog-body ul, .ds-dialog-body ol { margin: var(--space-1) 0; padding-left: var(--space-4); color: var(--fg-2); }
 .ds-dialog-body li { margin: var(--space-1) 0; }
 .ds-dialog-foot { margin-top: var(--space-3); }
-.ds-dialog-foot-row, .ds-dialog-actions { display: flex; gap: var(--space-2); justify-content: flex-end; align-items: center; flex-wrap: wrap; margin-top: var(--space-4, var(--space-3)); }
-.ds-dialog-foot-note { font-size: var(--fs-micro); color: var(--fg-3, var(--faint)); margin-top: var(--space-3); }
-.ds-dialog-message { color: var(--fg-2, var(--muted)); font-size: var(--fs-sm); }
-.ds-dialog-input { width: 100%; }
-.ds-help-swatch {
-  display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill);
-  background: var(--amber); vertical-align: middle; margin-right: var(--space-1);
-}
-.ds-help-hint { color: var(--fg-2, var(--muted)); }
-.ds-kbd {
-  display: inline-block; font-family: var(--ff-mono);
-  background: var(--bg-3, var(--hover)); border: 1px solid var(--border);
-  border-radius: var(--r-hair, var(--r-sm)); padding: 0 var(--space-1);
-  font-size: var(--fs-micro);
-}
+.ds-dialog-foot-row, .ds-dialog-actions { display: flex; gap: var(--space-2); justify-content: flex-end; align-items: center; flex-wrap: wrap; margin-top: var(--space-4); }
+.ds-dialog-foot-note { font-size: var(--fs-micro); color: var(--fg-3); margin-top: var(--space-3); }
+.ds-dialog-message { color: var(--fg-2); font-size: var(--fs-sm); }
 .ds-help-keys { list-style: none; padding-left: 0; }
 .ds-help-glossary { margin: var(--space-2) 0; }
 .ds-help-glossary dt { font-weight: 600; margin-top: var(--space-2); text-transform: capitalize; }
-.ds-help-glossary dd { margin: 0 0 0 var(--space-2); color: var(--fg-2, var(--muted)); }
+.ds-help-glossary dd { margin: 0 0 0 var(--space-2); color: var(--fg-2); }
 
 /* ---- contextual glossary term (term.js) -------------------------------- */
-.ds-term { border-bottom: 1px dotted var(--fg-3, var(--faint)); cursor: help; }
+.ds-term { border-bottom: 1px dotted var(--fg-3); cursor: help; }
 
 /* ---- onboarding quick-start steps -------------------------------------- */
-.ds-onboard-steps { list-style: decimal; padding-left: var(--space-4); }
 .ds-onboard-steps li { margin: var(--space-2) 0; }
-
-/* ---- per-operator skills checklist ------------------------------------- */
-.ds-skills-list { list-style: none; margin: var(--space-2) 0; padding: 0; }
-.ds-skills-item {
-  display: flex; align-items: flex-start; gap: var(--space-2);
-  margin: var(--space-2) 0; cursor: pointer; color: var(--fg);
-  border-radius: var(--r-0, var(--r-sm)); padding: var(--space-1);
-}
-.ds-skills-item:focus-visible { outline: var(--focus-w, 2px) solid var(--accent); outline-offset: 2px; }
-.ds-skills-box {
-  flex: 0 0 auto; width: 18px; height: 18px;
-  border: 2px solid var(--border); border-radius: var(--r-hair, var(--r-sm));
-  display: flex; align-items: center; justify-content: center;
-  color: var(--accent-fg, var(--paper));
-}
-.ds-skills-item.is-done .ds-skills-box { background: var(--accent); border-color: var(--accent); }
-.ds-skills-item.is-done .ds-skills-label { color: var(--fg-2, var(--muted)); text-decoration: line-through; }
 
 /* ---- health notices (health-notices.js) --------------------------------- */
 /* A full-width band in the banner stack, styled exactly like the offline
@@ -515,21 +365,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    tint comes from an inline style so error and warning share one rule here. */
 .ds-health-notice { width: 100%; }
 
-.ds-metrics-exports { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
-.ds-secretary-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
-
-/* ---- metrics summary stat cards (metrics-panel.js) ---------------------- */
-.ds-stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--space-3); margin: var(--space-3) 0; }
-.ds-stat-card {
-  background: var(--bg-2, var(--panel, var(--bg)));
-  border: 1px solid var(--border, var(--ink-3));
-  border-radius: var(--r-md, var(--r-1));
-  padding: var(--space-3) var(--space-4);
-  display: flex; flex-direction: column; gap: var(--space-1);
-}
-.ds-stat-label { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); text-transform: uppercase; letter-spacing: .03em; }
-.ds-stat-value { font-size: var(--fs-xl); font-weight: 700; color: var(--fg); line-height: 1.15; }
-.ds-stat-sub { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
 
 /* ---- at-risk-by-case-type line (metrics-panel.js) ------------------------
    A sentence, not a pill strip: the section heading above it already says
@@ -538,26 +373,10 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-risk-strip { margin-top: var(--space-2); color: var(--fg); }
 .ds-risk-strip b { font-weight: 700; }
 
-/* ---- intake-stats modal wrapper (stats-panel.js) ------------------------- */
-.ds-stats-panel { display: flex; flex-direction: column; gap: var(--space-3); }
-
-/* ---- species/symptom distribution bars (distribution-panel.js) ---------- */
-.ds-dist-group-body { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
-.ds-dist-row { display: grid; grid-template-columns: minmax(90px, 26%) 1fr auto; align-items: center; gap: var(--space-3); }
-.ds-dist-token { font-size: var(--fs-sm); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ds-dist-bar-track { position: relative; height: 8px; background: var(--bg-3, var(--border)); border-radius: var(--r-hair, var(--r-sm)); overflow: hidden; }
-.ds-dist-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--r-hair, var(--r-sm)); transition: width .3s; }
-.ds-dist-count { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); text-align: right; min-width: 2ch; }
-@media (prefers-reduced-motion: reduce) { .ds-dist-bar-fill { transition: none; } }
-
-/* ---- team workload panel (team-panel.js) --------------------------------- */
-.ds-team-panel { display: flex; flex-direction: column; gap: var(--space-3); }
-
 /* ---- settings panel: tunable thresholds (settings-panel.js) ------------- */
 .ds-settings-panel { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-1) 0; }
-.ds-settings-row { display: flex; flex-direction: column; }
 .ds-settings-actions { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-2); }
-.ds-settings-state { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
+.ds-settings-state { font-size: var(--fs-micro); color: var(--fg-3); }
 
 /* Four rule blocks were removed from here, all verified to have no emitter
    anywhere in the client tree: the draft banner (.draft-banner/.ds-draft-*),
@@ -572,7 +391,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 /* ---- case list / inbox / row / bulk-bar -------------------------------- */
 .case-list-view { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; }
-.ds-case-filters-bar { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 
 /* Stage quick-filter pill color distinction rides entirely on the SDK's own
    tone-accent/tone-warn/tone-live/tone-sun/tone-success/tone-dim classes
@@ -583,23 +401,23 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-case-list-scroll { overflow-y: auto; }
 .ds-case-list-spine { position: relative; }
 .ds-case-list-plain, .ds-case-list-empty { display: flex; flex-direction: column; }
-.ds-case-list-empty { padding: var(--space-5) var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-micro); }
+.ds-case-list-empty { padding: var(--space-5) var(--space-4); color: var(--fg-3); font-size: var(--fs-micro); }
 
 .case-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); cursor: pointer; min-height: 64px; transition: background var(--dur-snap) var(--ease), box-shadow var(--dur-snap) var(--ease); }
 /* Native checkbox has no square guarantee across browsers/zoom levels and
    defaults to baseline-ish vertical alignment that sits high relative to
    the bold case-row-ref text next to it -- lock the box shape and nudge it
    down to the first text line's optical center. */
-.case-row-cb { width: 16px; height: 16px; aspect-ratio: 1; flex: 0 0 auto; margin: var(--space-half) 0 0; accent-color: var(--accent); }
+.case-row-cb { width: 24px; height: 24px; aspect-ratio: 1; flex: 0 0 auto; margin: var(--space-half) 0 0; accent-color: var(--accent); }
 .case-row:hover { background: var(--bg-2); }
-.case-row.active { background: var(--accent-soft, var(--bg-2)); box-shadow: inset 3px 0 0 var(--accent); }
-.case-row.selected { box-shadow: inset 3px 0 0 var(--accent-ink, var(--accent)); }
+.case-row.active { background: var(--bg-2); box-shadow: inset 3px 0 0 var(--accent); }
+.case-row.selected { box-shadow: inset 3px 0 0 var(--accent-ink); }
 /* j/k keyboard triage's currently-highlighted row (state._focusRowId) -- an
    outline distinct from .active's inset accent bar so a keyboard user can
    tell "the row I'm about to open with Enter" apart from "the row currently
    open in the detail pane" when they differ. */
-.case-row.kbd-focused { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
-.case-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
+.case-row.kbd-focused { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
+.case-row:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
 .case-row-body { flex: 1; min-width: 0; }
 /* One block per element, deliberately. .case-row-top and .case-row-ref were
    each declared twice, ~80 lines apart: once here from before the case-list
@@ -616,38 +434,34 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .case-row-ref {
   font-weight: 400;
   font-size: var(--fs-micro);
-  color: var(--fg-2, var(--muted));
+  color: var(--fg-2);
 }
-.case-row-when { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
-.case-row-sub { display: flex; align-items: center; gap: var(--space-2); row-gap: var(--space-1-75, var(--space-2)); font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-top: var(--space-2); flex-wrap: wrap; }
-.ds-guardrail-toggle-btn { background: none; border: none; color: var(--accent-ink, var(--accent)); font-size: var(--fs-micro); cursor: pointer; padding: 0; margin-top: var(--space-1-75, var(--space-2)); display: block; text-decoration: underline; text-underline-offset: 2px; transition: color var(--dur-snap) var(--ease); }
-.ds-guardrail-toggle-btn:hover { color: var(--accent); }
-.ds-guardrail-toggle-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+.case-row-when { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3); }
+.case-row-sub { display: flex; align-items: center; gap: var(--space-2); row-gap: var(--space-1-75); font-size: var(--fs-micro); color: var(--fg-3); margin-top: var(--space-2); flex-wrap: wrap; }
+.ds-guardrail-toggle-btn { display: block; margin-top: var(--space-1-75); }
 .ds-guardrail-expanded { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 
-.ds-bulk-bar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-2) var(--space-3); background: var(--bg-2); border-radius: var(--r-md, var(--r-1)); }
-.ds-bulk-count { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
 
-.triage { background: var(--accent-soft, var(--bg-2)); border-radius: var(--r-md, var(--r-1)); }
+.triage { background: var(--bg-2); border-radius: var(--r-1); }
 .triage-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-1); }
-.triage .calm { padding: var(--space-4); color: var(--fg-3, var(--muted)); font-size: var(--fs-micro); }
+.triage .calm { padding: var(--space-4); color: var(--fg-3); font-size: var(--fs-micro); }
 .tcase { padding: var(--space-3); cursor: pointer; transition: background var(--dur-snap) var(--ease); }
 .tcase:hover { background: var(--bg-2); }
-.tcase.active { outline: var(--focus-w, 2px) solid var(--accent); outline-offset: -2px; }
-.tcase:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
+.tcase.active { outline: var(--focus-w) solid var(--accent); outline-offset: -2px; }
+.tcase:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
 /* The row's LEAD. map-panel.js puts the case subject here and the ref in
    .tcase-meta below it, so this is the case content and it takes the content
    rung -- it rendered a rung under its own ref, which made the subject of the
    row the smallest text on a phone-first surface. */
 .tcase-why { font-size: var(--fs-sm); font-weight: 600; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; overflow-wrap: anywhere; }
-.tcase-meta { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tcase-breach-detail { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
+.tcase-meta { font-size: var(--fs-micro); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tcase-breach-detail { font-size: var(--fs-micro); color: var(--fg-3); }
 /* The ranking reason is what is said ABOUT the report, so it sits with the ref
    rather than above the subject. It carried no rule at all and inherited 16px,
    which made the quietest line in the row its largest. */
-.tcase-reason { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
+.tcase-reason { font-size: var(--fs-micro); color: var(--fg-3); margin-top: var(--space-1); }
 /* 3px inset stripe matches the same left-edge accent idiom on
-   .case-row.active/.selected and .ds-activity-row.ds-activity-tone--* elsewhere
+   .case-row.active/.selected elsewhere
    in this file -- not --bw-chunk (4px), a differently-scoped border-width token
    used for rails/borders, not this row-accent idiom. (Named by selector rather
    than by line number: the numbers this comment used to carry, 254-255 and
@@ -685,7 +499,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   border-radius: 0 var(--r-pill) var(--r-pill) 0;
 }
 .tcase.heat-3::before { background: var(--danger); }
-.tcase.heat-2::before { background: var(--warn, var(--accent)); }
+.tcase.heat-2::before { background: var(--warn); }
 .tcase.heat-1::before { background: var(--border); }
 .tcase.claimed-other { opacity: .62; }
 
@@ -695,8 +509,8 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    Added as one block by the case-list BLUF pass. Nothing here touches the map
    shell, the rail, the legend, the markers or the ds-map-* / casey-linked-*
    regions of this file; it styles the case-list home view only, and it reuses
-   .ds-fchip / .ds-fchips / .ds-fchip-clear / .ds-queue-more from the map rail
-   above rather than restating them, because the case list is now applying the
+   FilterChip / .ds-filter-pills / QueueMore from the map rail above rather than
+   restating them, because the case list is now applying the
    same two ideas those classes exist for: a count that IS its own filter, and
    a cap that names its true total on the control that lifts it. */
 
@@ -713,29 +527,20 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   padding-top: var(--space-2);
 }
 .ds-app-surface h2.ds-cl-section-title, .ds-cl-section-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 700; }
-.ds-cl-range { font-size: var(--fs-micro); color: var(--fg-2, var(--muted)); }
+.ds-cl-range { font-size: var(--fs-micro); color: var(--fg-2); }
 /* The match count only exists while a filter is on, and it is a different fact
    from the cap beside it, so it is toned as the live one of the two. */
-.ds-cl-match { font-size: var(--fs-micro); color: var(--accent-ink, var(--accent)); font-weight: 600; }
+.ds-cl-match { font-size: var(--fs-micro); color: var(--accent-ink); font-weight: 600; }
 
 /* Tier-2 filters. Same disclosure idiom as the map rail's "Map options", so
    the two home views hide their rarely-reached controls the same way. */
 .ds-cl-more { border-top: 0; }
-.ds-case-more-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 
 /* Recent searches as real, tappable chips. The control they replace was a
    Dropdown whose whole trigger carried sr-only, i.e. a control that did not
    exist for anyone working on a touch screen. */
-.ds-recent-searches { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.ds-recent-label { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
-.ds-recent-chip {
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-pill, var(--r-1));
-  color: var(--fg); font: inherit; font-size: var(--fs-micro); cursor: pointer;
-  padding: var(--space-1) var(--space-3); min-height: 2.25rem; max-width: 18ch;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ds-recent-chip:hover { background: var(--bg-3, var(--border)); }
-.ds-recent-chip:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
+.ds-recent-label { font-size: var(--fs-micro); color: var(--fg-3); }
+.ds-recent-chip { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* a long past query must not stretch the row */
 
 /* The row's lead line: what makes this one worth touching, first and largest.
    The ref, the stage and the timestamp moved to the line under it. */
@@ -753,18 +558,15 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    than relying on source order so .active/.selected keep their accent stripe
    regardless of where this block sits in the file. */
 .case-row:not(.active):not(.selected).band-3 { box-shadow: inset 3px 0 0 var(--danger); }
-.case-row:not(.active):not(.selected).band-2 { box-shadow: inset 3px 0 0 var(--warn, var(--accent)); }
+.case-row:not(.active):not(.selected).band-2 { box-shadow: inset 3px 0 0 var(--warn); }
 .case-row:not(.active):not(.selected).band-1 { box-shadow: inset 3px 0 0 var(--border); }
 
 /* Phone: the section head stacks rather than pushing the range off the edge,
    and the chips keep a full-size tap target. */
 @container (max-width: 900px) {
   .ds-cl-section-head { flex-direction: column; align-items: flex-start; gap: var(--space-1); }
-  /* The two count chips are the primary filters on a phone, so they take the
-     full row and the same 2.75rem target the rail's own disclosure summary
-     uses -- 2.25rem is a comfortable mouse target and a poor thumb one. */
-  .case-list-view .ds-fchip { flex: 1 1 auto; justify-content: center; min-height: 2.75rem; }
-  .ds-recent-chip { min-height: 2.75rem; }
+  /* The two count chips are the primary filters on a phone: they share the row. */
+  .case-list-view .ds-filter-pills > .ds-filter-pill { flex: 1 1 auto; }
 }
 
 /* ---- handoff alert banner: loud, sticky, dismiss-per-case --------------- */
@@ -777,17 +579,20 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    opacity animation is fatigue rather than signal. The warm tint plus the
    sentence in it carry the urgency. */
 .ds-handoff-banner { display: flex; align-items: center; gap: var(--space-3); cursor: pointer; }
-.ds-handoff-banner .ds-alert-warn {
-  flex: 1; min-width: 0;
-  background: var(--warn-bg, color-mix(in oklab, var(--warn, var(--amber)) 14%, var(--bg)));
-  border-color: var(--warn-border, color-mix(in oklab, var(--warn, var(--amber)) 35%, transparent));
+.ds-handoff-banner .ds-alert-warn { flex: 1; min-width: 0; }
+/* Shared by both banners: .ds-alert paints its own --panel-1 ground, which stacks
+   into a box on a box inside a wrapper that already tints a band, so the alert
+   takes the tint itself. */
+.ds-247420 .ds-handoff-banner .ds-alert-warn,
+.ds-247420 .ds-conn-banner .ds-alert-warn {
+  background: color-mix(in oklab, var(--warn) 14%, var(--bg));
+  border-color: color-mix(in oklab, var(--warn) 35%, transparent);
 }
-.ds-handoff-banner .ds-alert-warn .ds-alert-icon { color: var(--warn, var(--amber)); }
+.ds-handoff-banner .ds-alert-warn .ds-alert-icon { color: var(--warn); }
 .ds-handoff-banner-hide { flex-shrink: 0; }
-.ds-handoff-banner:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 
 /* ---- connection-lost banner --------------------------------------------- */
-.ds-conn-banner { position: sticky; top: 0; z-index: var(--z-banner, var(--z-toast, 30)); }
+.ds-conn-banner { position: sticky; top: 0; z-index: var(--z-toast); }
 /* On the login screen the gate is a FIXED full-viewport overlay at --z-modal,
    so a sticky banner behind it is invisible -- and that screen has no topbar,
    no status bar and no other chrome, which makes the banner the only thing
@@ -806,15 +611,15 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 
 /* ---- toast tray ---------------------------------------------------------- */
-.ds-toast-tray { position: fixed; right: var(--space-4); bottom: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); z-index: var(--z-toast, 50); max-width: 340px; }
-.ds-toast-item { box-shadow: var(--shadow-md, var(--shadow-1, none)); }
+.ds-toast-tray { position: fixed; right: var(--space-4); bottom: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); z-index: var(--z-toast); max-width: 340px; }
+.ds-toast-item { box-shadow: var(--shadow-1); }
 
 /* ---- login gate ----------------------------------------------------------- */
-.ds-login-gate { position: fixed; inset: 0; background: var(--bg); z-index: var(--z-modal, 1000); display: flex; align-items: center; justify-content: center; padding: var(--space-4); }
-.ds-login-form { display: flex; flex-direction: column; gap: var(--space-2); background: var(--panel, var(--bg-2)); border: 1px solid var(--border); border-radius: var(--r-lg, var(--r-2)); padding: var(--space-7, var(--space-6)) var(--space-6); max-width: 340px; width: 100%; box-shadow: var(--shadow-lg, none); }
+.ds-login-gate { position: fixed; inset: 0; background: var(--bg); z-index: var(--z-modal); display: flex; align-items: center; justify-content: center; padding: var(--space-4); }
+.ds-login-form { display: flex; flex-direction: column; gap: var(--space-2); background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-2); padding: var(--space-7) var(--space-6); max-width: 340px; width: 100%; box-shadow: none; }
 .ds-247420 .ds-login-brand, .ds-login-brand { margin: 0 0 var(--space-5); font-size: var(--fs-h1-app); }
 /* Error text on the login gate is TYPE, so it takes the ink companion too. */
-.ds-login-error { color: var(--danger-ink, var(--danger)); font-size: var(--fs-sm); margin-bottom: var(--space-3); }
+.ds-login-error { color: var(--danger-ink); font-size: var(--fs-sm); margin-bottom: var(--space-3); }
 
 /* ---- table cell overflow guard -------------------------------------------
    The SDK's own table CSS has no overflow-wrap/word-break fallback on td
@@ -851,22 +656,17 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    renders as a bare .ds-dropdown-trigger button instead of the custom
    .ds-account-trigger class this rule used to target -- style the class the
    SDK actually emits. */
-.ds-dropdown-trigger { display: inline-flex; align-items: center; gap: var(--space-2); background: transparent; border: 1px solid var(--border); border-radius: var(--r-md, var(--r-1)); padding: var(--space-1) var(--space-3); cursor: pointer; color: var(--fg); font-size: var(--fs-sm); }
-.ds-dropdown-trigger:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
-/* The alerts trigger is now the SDK's own .ds-dropdown-trigger (styled above)
-   carrying an icon plus the word -- the .ds-notif-trigger wrapper and its
-   positioned danger Badge are gone with the icon-only bell. */
 /* --danger-ink, not --danger: --danger is the brand red kept for FILLS and it
    measured 3.27:1 here against the pill's tinted ground -- a WCAG AA failure on
    the alert count, which is the one number on this screen that has to be
    noticed. The old `var(--danger, var(--warn))` fallback never fired because
    --danger is always defined; this one does. */
-.ds-notif-count.is-active { color: var(--danger-ink, var(--danger)); font-weight: 600; }
+.ds-notif-count.is-active { color: var(--danger-ink); font-weight: 600; }
 
 /* ---- related-reports cluster row / case-id pill grid --------------------- */
 .ds-cluster-row { padding: var(--space-3) 0; }
 .ds-cluster-row:last-child { border-bottom: none; }
-.ds-cluster-sub { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
+.ds-cluster-sub { font-size: var(--fs-micro); color: var(--fg-3); margin-top: var(--space-1); }
 /* a real column grid instead of flex-wrap so case-id pills align edge to
    edge across rows instead of wrapping raggedly at whatever count fits. */
 .ds-cluster-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-2); margin-top: var(--space-2); }
@@ -883,18 +683,17 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-attn-lead {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 44px; padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border); border-radius: var(--r-md, var(--r-1));
-  background: transparent; color: var(--fg-2, var(--muted));
+  border: 1px solid var(--border); border-radius: var(--r-1);
+  background: transparent; color: var(--fg-2);
   font: inherit; font-size: var(--fs-sm); cursor: pointer;
   white-space: nowrap;
 }
 .ds-attn-lead:hover { background: var(--bg-2); color: var(--fg); }
-.ds-attn-lead:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
 .ds-attn-lead.is-waiting {
-  color: var(--warn); border-color: var(--warn); font-weight: 700;
+  color: var(--danger-ink); border-color: var(--warn); font-weight: 700;
   background: color-mix(in oklab, var(--warn) 12%, transparent);
 }
-.ds-attn-lead.is-waiting:hover { background: color-mix(in oklab, var(--warn) 20%, transparent); color: var(--warn); }
+.ds-attn-lead.is-waiting:hover { background: color-mix(in oklab, var(--warn) 20%, transparent); }
 
 /* ---- map legend + Leaflet overrides (no SDK equivalent for a tile-map) ---
    The canvas is sized by its pane (.ds-map-shell above), never by a viewport
@@ -904,7 +703,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-map-canvas { overflow: hidden; }
 .ds-map-legend {
   display: flex; gap: var(--space-3); flex-wrap: wrap;
-  font-size: var(--fs-micro); color: var(--fg-2, var(--muted));
+  font-size: var(--fs-micro); color: var(--fg-2);
   margin: var(--space-2) 0; padding: var(--space-2) var(--space-3);
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-1);
 }
@@ -913,33 +712,26 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 /* Second legend row entry documenting the marker BORDER channel (location
    provenance) -- a plain background swatch can't show a dashed border at
    9px, so this one is unfilled with a visible dashed ring instead. */
-.ds-map-legend-sw-dashed { background: transparent; border: 2px dashed var(--fg-3, var(--muted)); }
+.ds-map-legend-sw-dashed { background: transparent; border: 2px dashed var(--fg-3); }
 
 /* ---- attention feed + map controls (map-panel.js) ----------------------- */
-.ds-map-updated { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin: 0 0 var(--space-2); }
 /* No max-height: the feed lives in the rail, which does its own scrolling.
    A second scroll region nested inside it produced two competing scrollbars
    and made the "show all" control unreachable on a short viewport. */
 .ds-map-attention-feed { display: flex; flex-direction: column; }
-.ds-map-attention-feed .tcase { padding: var(--space-2) var(--space-3); border-radius: 0; }
-.ds-map-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
-.ds-map-overlays { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-2); }
-.ds-chip-btn { background: none; border: none; padding: 0; margin: 0; font: inherit; color: inherit; cursor: pointer; }
-.ds-chip-btn:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
-.ds-map-unresolved-note { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin: var(--space-2) 0; }
+.ds-map-filters, .ds-map-overlays { margin-bottom: var(--space-2); }
+.ds-map-unresolved-note { font-size: var(--fs-micro); color: var(--fg-3); margin: var(--space-2) 0; }
 .ds-map-unresolved-list { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-2); }
 .ds-map-unresolved-row {
   display: flex; align-items: baseline; gap: var(--space-1); flex-wrap: wrap;
-  font-size: var(--fs-micro); color: var(--fg-2, var(--muted));
+  font-size: var(--fs-micro); color: var(--fg-2);
   padding: var(--space-1) var(--space-2); border-radius: var(--r-1);
 }
 .ds-map-unresolved-row:hover { background: var(--bg-2); }
-.ds-map-unresolved-row:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
-.ds-muted { color: var(--fg-3, var(--muted)); }
+.ds-muted { color: var(--fg-3); }
 /* No .leaflet-popup rules: a pin click selects the case into the rail and no
    popup is ever opened (map-leaflet.js). Theming an element nothing emits is
    how a stylesheet accumulates rules nobody dares delete later. */
-.leaflet-container { background: var(--bg-2); }
 /* Leaflet and leaflet.markercluster ship FIXED backgrounds that no theme can
    reach -- the cluster bubbles are stock pastel fills (#6ECC39 green, #F0C20C
    amber, #F18017 orange) and the zoom/attribution controls are white -- while
@@ -957,7 +749,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-247420 .leaflet-control-attribution a { color: var(--ink); }
 /* "Not refreshing" is a warning, not a caption, so it stops reading like the
    ordinary timestamp it sits in place of. */
-.ds-map-updated.is-stale { color: var(--warn, var(--amber)); font-weight: 600; }
+.ds-map-updated.is-stale { color: var(--warn); font-weight: 600; }
 
 /* ---- map marker icons (map-leaflet.js) --------------------------------- */
 .ds-map-marker-icon { display: flex; align-items: center; justify-content: center; }
@@ -968,7 +760,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    a focus position they cannot see. Matches the ring the rail's own rows and
    chip buttons already use. */
 .ds-map-marker-icon:focus-visible {
-  outline: var(--focus-w, 3px) solid var(--focus-color, var(--accent));
+  outline: var(--focus-w) solid var(--focus-color);
   outline-offset: 3px;
   border-radius: var(--r-pill);
 }
@@ -1003,7 +795,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    halves of the same screen answered different questions. */
 .ds-map-marker-dot[data-urgency="2"] {
   width: 18px; height: 18px;
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--warn, var(--amber)) 75%, transparent),
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--warn) 75%, transparent),
               0 0 3px color-mix(in oklab, var(--ink) 50%, transparent);
 }
 .ds-map-marker-dot[data-urgency="3"] {
@@ -1037,7 +829,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 /* Legend swatch for the urgency channel -- same ring idiom at swatch scale. */
 .ds-map-legend-sw-urgent {
-  background: var(--fg-3, var(--muted));
+  background: var(--fg-3);
   box-shadow: 0 0 0 2px var(--danger);
   margin-right: var(--space-2);
 }
@@ -1046,13 +838,12 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    here" rather than "what is this pin", so it reads as context under the
    header rather than as another field of the report. */
 .casey-linked-reports {
-  font-size: var(--fs-micro); color: var(--fg-2, var(--muted));
+  font-size: var(--fs-micro); color: var(--fg-2);
   padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2);
   background: var(--bg-2); border-radius: var(--r-1);
 }
 
 @container (max-width: 640px) {
-  .ds-map-filters, .ds-map-overlays { gap: var(--space-1); }
   /* The legend is the only chrome on the canvas, so on a small phone it is the
      only thing that can cover a pin -- cap it harder here than the 40% the
      desktop rule allows. */
@@ -1062,35 +853,17 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 /* ---- case-detail empty state -------------------------------------------- */
 .casey-detail-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: var(--space-2); text-align: center; padding: var(--space-7, var(--space-6)) var(--space-4);
-  color: var(--fg-3, var(--muted));
+  gap: var(--space-2); text-align: center; padding: var(--space-7) var(--space-4);
+  color: var(--fg-3);
 }
-.casey-detail-empty svg { color: var(--fg-3, var(--faint)); }
-.ds-app-surface h2.casey-detail-empty-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 600; color: var(--fg-2, var(--muted)); }
+.casey-detail-empty svg { color: var(--fg-3); }
+.ds-app-surface h2.casey-detail-empty-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 600; color: var(--fg-2); }
 .casey-detail-empty .casey-hint { margin: 0; font-size: var(--fs-micro); max-width: 32ch; }
 
 /* ---- activity feed panel (activity-panel.js) ---------------------------- */
-.ds-activity-filters { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; margin-bottom: var(--space-3); }
-.ds-activity-list { display: flex; flex-direction: column; }
-.ds-activity-row {
-  display: flex; align-items: flex-start; gap: var(--space-2);
-  padding: var(--space-2) var(--space-1);
-  box-shadow: inset 3px 0 0 transparent;
-}
-.ds-activity-row[role="button"] { cursor: pointer; }
-.ds-activity-row[role="button"]:hover { background: var(--bg-2); }
-.ds-activity-row[role="button"]:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: -2px; }
-.ds-activity-row.ds-activity-tone--accent { box-shadow: inset 3px 0 0 var(--accent); }
-.ds-activity-row.ds-activity-tone--ok { box-shadow: inset 3px 0 0 var(--success, var(--green)); }
-.ds-activity-row.ds-activity-tone--warn { box-shadow: inset 3px 0 0 var(--warn, var(--amber)); }
-.ds-activity-row.ds-activity-tone--muted { box-shadow: inset 3px 0 0 var(--border); }
-.ds-activity-icon { flex: 0 0 auto; color: var(--fg-3, var(--muted)); margin-top: var(--space-1); }
-.ds-activity-body { flex: 1; min-width: 0; }
-.ds-activity-top { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.ds-activity-who { font-size: var(--fs-micro); color: var(--fg-2, var(--muted)); }
-.ds-activity-when { margin-left: auto; font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
-.ds-activity-text { font-size: var(--fs-sm); color: var(--fg); margin-top: var(--space-1); overflow-wrap: anywhere; }
-@media (prefers-reduced-motion: reduce) { .ds-activity-row { transition: none; } }
+.ds-activity-link { cursor: pointer; }
+.ds-activity-link:hover { background: var(--bg-2); }
+.ds-activity-link:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
 
 /* ---- contacts/reporters panel (contacts-panel.js) ------------------------- */
 .ds-contact-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
@@ -1101,51 +874,38 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    .ds-247420-prefixed rule, which outranks a bare class selector however late
    this sheet loads -- measured, not assumed: without the prefix the control
    rendered the brand accent (rgb(180,96,15)) rather than the danger token. */
-.ds-247420 .ds-contact-erase { color: var(--danger); }
+.ds-247420 .ds-contact-erase { color: var(--danger-ink); } /* -ink: the fill colour fails AA as text */
 .ds-247420 .ds-contact-erase:hover { text-decoration: underline; }
 /* A contact who gave neither a name nor a number: the fact on the first line,
    how they reached us and when on the second, since time is the only thing
    distinguishing these rows from each other. */
 .ds-contact-anon { display: flex; flex-direction: column; gap: var(--space-hair); }
-.ds-contact-anon-sub { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); }
+.ds-contact-anon-sub { font-size: var(--fs-micro); color: var(--fg-3); }
 
 /* ---- shift handover panel (handover-panel.js) ---------------------------- */
 .ds-ho-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
-.ds-ho-since { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-bottom: var(--space-3); }
+.ds-ho-since { font-size: var(--fs-micro); color: var(--fg-3); margin-bottom: var(--space-3); }
 .ds-ho-row {
   display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
   padding: var(--space-2) var(--space-1);
 }
-.ds-ho-row:last-child { border-bottom: none; }
 .ds-ho-ref {
-  font-weight: 600; font-size: var(--fs-sm); color: var(--accent-ink, var(--accent));
-  cursor: pointer; border-radius: var(--r-hair, var(--r-sm));
+  font-weight: 600; font-size: var(--fs-sm); color: var(--accent-ink);
+  cursor: pointer; border-radius: var(--r-hair);
 }
 .ds-ho-ref:hover { text-decoration: underline; }
-.ds-ho-ref:focus-visible { outline: var(--focus-w, 2px) solid var(--focus-color, var(--accent)); outline-offset: 2px; }
-.ds-ho-why { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); overflow-wrap: anywhere; }
+.ds-ho-why { font-size: var(--fs-micro); color: var(--fg-3); overflow-wrap: anywhere; }
 .ds-ho-assignee { margin-left: auto; }
-.ds-act-when { font-size: var(--fs-micro); color: var(--fg-3, var(--muted)); margin-left: auto; }
+.ds-act-when { font-size: var(--fs-micro); color: var(--fg-3); margin-left: auto; }
 
 /* ---- print CSS (printable handover/metrics/report links) ---------------- */
-/* LOAD-BEARING !important -- a print override that must win, which is the
-   exact case the kit's own lint-important text names as legitimate. It was
-   briefly rewritten to use specificity instead, to get under a ratchet, and
-   that was wrong: enumerating every competing `display` rule in the bundle
-   showed the kit sets `display: flex` on these same elements at specificity
-   up to 4 (`.ds-247420.ds-247420 .ca-app .app-topbar`, and `.ca-app` IS
-   emitted by the kit's own JS), which beats anything a consumer sheet can
-   reasonably write without !important. Trading a guarantee that the operator
-   gets a clean printout for a green counter is the wrong trade on a
-   deployment where the printed handover sheet is a real artefact.
-   #toasts stays dropped from the list, separately: toast-tray.js puts BOTH
-   id="toasts" and class="ds-toast-tray" on the same element, so the list was
-   naming one element twice. */
+/* The kit's own @media print already drops the app chrome (.app-topbar,
+   .app-side-shell, .app-status) with no !important -- verified under print media
+   emulation -- so this lists only what casey adds itself: its overlays and banners. */
 @media print {
-  .app-topbar, .app-side-shell, .app-status,
   .ds-dialog-backdrop, .ds-toast-tray, .ds-handoff-banner,
-  .ds-conn-banner { display: none !important; }
-  body { background: var(--paper, var(--bg)); color: var(--ink, var(--fg)); }
+  .ds-conn-banner { display: none; }
+  body { background: var(--paper); color: var(--ink); }
   /* A printed report is a form somebody completes by hand in the field, so
      the per-field editing affordances are chrome on paper: the click-to-edit
      pencil and the "note" button would otherwise print into the very space
@@ -1157,21 +917,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
      rule only removes what casey itself adds on top. */
   .casey-rep-note-btn,
   .casey-rep-editable svg { display: none; }
-}
-
-/* The one casey-local transition with no guard beside its own rule. Every
-   other element this block used to name already carries a reduced-motion guard
-   next to the declaration it cancels -- .ds-dist-bar-fill, .case-row/.tcase,
-   .ds-handoff-banner and .ds-map-marker-dot[data-urgency="3"] each have one --
-   so restating them here only meant a reader had to hold two blocks in mind to
-   answer "is this guarded", and a future edit that drops a transition would
-   leave the copy down here behind. It also reached across into
-   .casey-progress-line/.casey-rep-editable/.casey-meta-toggle, which are
-   case-detail.css's own classes and are guarded in that file; a sheet that
-   guards another sheet's classes is how one of them ends up silently
-   unguarded when the other is edited. Each sheet now guards what it declares. */
-@media (prefers-reduced-motion: reduce) {
-  .ds-guardrail-toggle-btn { transition: none; }
 }
 
 /* ==========================================================================
@@ -1345,7 +1090,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-247420 .ds-appbar .btn-primary,
 .ds-247420 .ds-appbar .btn-ghost,
 .ds-247420 .ds-appbar .ds-attn-lead,
-.ds-247420 .ds-appbar .ds-action-link,
 .ds-247420 .ds-appbar .ds-icon-btn,
 .ds-247420 .ds-appbar .ds-dropdown-trigger {
   height: var(--appbar-ctrl-h);
@@ -1372,24 +1116,22 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    The kit's own dropdown-trigger fill outranks a single-class rule, so the
    scope class is required here to reach it. */
 .ds-247420 .ds-appbar .btn-ghost,
-.ds-247420 .ds-appbar .ds-action-link,
 .ds-247420 .ds-appbar .ds-icon-btn,
 .ds-247420 .ds-appbar .ds-dropdown-trigger {
   padding: 0 var(--space-3);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: var(--r-md, var(--r-1));
+  border-radius: var(--r-1);
   color: var(--fg);
   font-size: var(--fs-sm);
   font-weight: 600;
   text-decoration: none;
 }
 .ds-247420 .ds-appbar .btn-ghost:hover,
-.ds-247420 .ds-appbar .ds-action-link:hover,
 .ds-247420 .ds-appbar .ds-icon-btn:hover,
 .ds-247420 .ds-appbar .ds-dropdown-trigger:hover {
   background: var(--bg-2);
-  border-color: var(--fg-3, var(--border));
+  border-color: var(--fg-3);
   color: var(--fg);
   text-decoration: none;
 }
@@ -1397,7 +1139,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    the row reads as one system with one thing shouting in it. */
 .ds-247420 .ds-appbar .ds-attn-lead {
   padding: 0 var(--space-3);
-  border-radius: var(--r-md, var(--r-1));
+  border-radius: var(--r-1);
   font-size: var(--fs-sm);
   font-weight: 600;
 }
@@ -1479,14 +1221,15 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
      their neighbours fill them -- three tile heights on three top edges again. */
   .ds-247420 .ds-appbar > *,
   .ds-247420 .ds-appbar .ds-action-row > * { height: 100%; }
+  /* The rare verbs are hidden on a narrow DESKTOP row (the @container rule near
+     the top) but belong in the grid, where space is no longer the constraint. */
   .ds-247420 .ds-appbar .ds-action-common,
   .ds-247420 .ds-appbar .ds-action-rare { display: flex; }
   .ds-247420 .ds-appbar .btn,
   .ds-247420 .ds-appbar .btn-primary,
   .ds-247420 .ds-appbar .btn-ghost,
   .ds-247420 .ds-appbar .ds-attn-lead,
-  .ds-247420 .ds-appbar .ds-action-link,
-  .ds-247420 .ds-appbar .ds-icon-btn,
+    .ds-247420 .ds-appbar .ds-icon-btn,
   .ds-247420 .ds-appbar .ds-dropdown-trigger {
     /* One tile, one size. The six-selector version of this list left the two
        dropdown triggers at 28px while everything else was 58px, which measured
@@ -1537,18 +1280,12 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
        (fixed height, horizontal padding, a border per control) does not apply.
        Keep the shared border so a tile still reads as a control. */
   .ds-247420 .ds-appbar .btn-ghost,
-  .ds-247420 .ds-appbar .ds-action-link,
-  .ds-247420 .ds-appbar .ds-icon-btn,
+    .ds-247420 .ds-appbar .ds-icon-btn,
   .ds-247420 .ds-appbar .ds-dropdown-trigger,
   .ds-247420 .ds-appbar .ds-attn-lead {
     padding: var(--space-1);
     width: 100%;
   }
-  /* The rare verbs are hidden on a narrow DESKTOP row (the pre-existing
-     @container rule) but belong in the grid, where space is no longer the
-     constraint. */
-  .ds-247420 .ds-appbar .ds-action-rare,
-  .ds-247420 .ds-appbar .ds-action-link { display: flex; }
   .ds-247420 .ds-appbar .ds-action-row {
     display: contents;
   }
@@ -1580,7 +1317,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    grid is what floats, above the map, at a z-index over the Leaflet panes
    (Leaflet's own controls sit at 400-1000, hence the value here). */
 @media (max-width: 900px) {
-  .ds-app-root.is-map-home .ds-map-shell > .ds-map-canvas { position: absolute; inset: 0; }
   .ds-app-root.is-map-home .app-crumb,
   .ds-app-root.is-map-home .app-topbar {
     position: sticky;
@@ -1591,32 +1327,20 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-247420 .ds-appbar { position: relative; z-index: var(--z-raised); }
 }
 
-/* ---- AN ALERT INSIDE A BANNER THAT ALREADY CARRIES ITS OWN BAND ----------
-   .ds-alert paints its own --panel-1 ground, which is right for a standalone
-   alert and wrong inside a wrapper that already tints a band of its own --
-   two grounds then stack and the band reads as a box on a box.
-   .ds-handoff-banner states that for itself above; the connection banner
-   needs the same. */
-.ds-247420 .ds-conn-banner .ds-alert-warn {
-  background: var(--warn-bg, color-mix(in oklab, var(--warn, var(--amber)) 14%, var(--bg)));
-  border-color: var(--warn-border, color-mix(in oklab, var(--warn, var(--amber)) 35%, transparent));
-}
-
 /* ---- A BORDERED, GROUNDLESS DROPDOWN TRIGGER ----------------------------
    The kit fills its trigger with the --panel-2 tier; this dashboard's
    triggers read as chrome affordances on whatever surface they sit on (the
    appbar, a filter bar), so they carry a border and no ground of their own.
-   The bare `.ds-dropdown-trigger` rule further up states the same intent but
-   loses to the kit's own scope-prefixed `.ds-247420 .ds-dropdown-trigger`;
-   this is that intent at a specificity that actually wins. */
+   Scope-prefixed because the kit's own trigger rule is. */
 .ds-247420 .ds-dropdown-trigger {
+  gap: var(--space-2);
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
 }
 .ds-247420 .ds-dropdown-trigger:hover {
   background: var(--bg-2);
-  border-color: var(--fg-3, var(--border));
+  border-color: var(--fg-3);
 }
 
 /* ---- CONTRAST: THE ACCENT AS TEXT ON THE SECOND GROUND TIER -------------
@@ -1633,9 +1357,8 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    LIGHTENS --accent-ink there, which is the correction that theme would need
    for the same reason. */
 .ds-247420 {
-  --casey-accent-ink-on-bg2: color-mix(in oklab, var(--accent-ink, var(--accent)) 78%, var(--fg));
+  --casey-accent-ink-on-bg2: color-mix(in oklab, var(--accent-ink) 78%, var(--fg));
 }
-.ds-247420 .ds-queue-more,
 .ds-247420 .ds-map-rail .ds-badge.tone-blue,
 .ds-247420 .case-list-view .ds-badge.tone-blue,
 .ds-247420 .ds-filter-pill.tone-accent,
@@ -1643,38 +1366,15 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   color: var(--casey-accent-ink-on-bg2);
 }
 
-/* ---- CONTRAST: A DANGER/WARN FILL USED AS TEXT --------------------------
-   Both themes define a *-ink companion for exactly this case and both of
-   these controls reach past it for the FILL colour. Measured live: the
-   contacts panel's "Erase personal details" link is --danger (#FF001D) on
-   #FFFFFF at 3.99:1 in herd, and the appbar's attention lead is --warn
-   (#FF5C6B) on the bar's own --bg-2 (#333333) at 4.21:1 in herd-ink -- the
-   herd-ink preset's own note says --warn was measured against --bg and that
-   --danger-ink exists because a text token has to survive all three ground
-   tiers. The border and the tint stay on the fill colour; only the type
-   moves. */
-.ds-247420 .ds-contact-erase { color: var(--danger-ink, var(--danger)); }
-.ds-247420 .ds-attn-lead.is-waiting { color: var(--danger-ink, var(--warn)); }
-
-/* ---- TARGET SIZE: THE BULK-SELECT CHECKBOX ------------------------------
-   16x16 is under WCAG 2.5.8's 24x24 floor, and the spacing exception does not
-   apply: the row it sits in is itself a target, so there is no 24px clearance
-   around it. This is the control an operator taps repeatedly, one-handed, to
-   act on several reports at once -- the one place on the screen where a missed
-   tap costs a wrong selection rather than a re-tap. The box grows to the floor
-   without moving the row: the label beside it is vertically centred on the
-   same line either way. */
-.case-row-cb { width: 24px; height: 24px; }
-
 /* ---- team registration + invite codes (panels/team-registration.js, invite-codes.js) ---- */
 .ds-team-form { display: flex; flex-direction: column; gap: var(--space-3); }
 .ds-team-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-3); }
-.ds-team-lede, .ds-team-explain { margin: 0; font-size: var(--fs-sm); color: var(--fg-2, var(--muted)); }
-.ds-team-error { margin: 0; font-size: var(--fs-sm); color: var(--danger-ink, var(--danger)); }
+.ds-team-lede, .ds-team-explain { margin: 0; font-size: var(--fs-sm); color: var(--fg-2); }
+.ds-team-error { margin: 0; font-size: var(--fs-sm); color: var(--danger-ink); }
 .ds-invite { display: flex; flex-direction: column; gap: var(--space-3); }
-.ds-invite-fresh { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--line, currentColor); border-radius: var(--radius, 6px); }
+.ds-invite-fresh { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--r-2); }
 .ds-invite-fresh-note, .ds-invite-text { margin: 0; font-size: var(--fs-sm); }
-.ds-invite-code { font-family: ui-monospace, monospace; font-size: var(--fs-xl); letter-spacing: 0.12em; font-weight: 700; user-select: all; overflow-wrap: anywhere; }
+.ds-invite-code { font-family: var(--ff-mono); font-size: var(--fs-xl); letter-spacing: 0.12em; font-weight: 700; user-select: all; overflow-wrap: anywhere; }
 .ds-people-filter { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; justify-content: space-between; margin-bottom: var(--space-3); }
 .ds-people-page { display: flex; flex-direction: column; gap: var(--space-4); }
 .ds-people { overflow-x: auto; }
