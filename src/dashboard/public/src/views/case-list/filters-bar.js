@@ -24,7 +24,7 @@ import { state, setFilt, schedule } from '../../state.js';
 import { stageLabel, stageTone, channelLabel } from '../../format.js';
 import { entityLabelPlural } from '../../vocabulary.js';
 import { pushRecentSearch, loadRecentSearches, listNamedViews } from '../../saved-views.js';
-import { knownValues, loadKnownValues } from '../../known-values.js';
+import { knownValues, knownValuesFresh, loadKnownValues } from '../../known-values.js';
 import { PillButton } from '../../components/filter-chip.js';
 const h = webjsx.createElement;
 
@@ -128,7 +128,7 @@ function knownValueFilters() {
     const values = knownValues(f.key);
     // Nothing recorded for this field yet (or the list has not arrived): render
     // no control at all rather than an empty dropdown.
-    if (!values.length) { loadKnownValues(f.key).then(schedule); return null; }
+    if (!values.length) { if (!knownValuesFresh(f.key)) loadKnownValues(f.key).then(schedule); return null; }
     const anyLabel = 'any ' + String(f.label || f.key).toLowerCase();
     return Select({
       key: 'fv-' + f.key,

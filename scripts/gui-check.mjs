@@ -106,6 +106,13 @@ try {
   await send('Runtime.enable'); await send('Log.enable'); await send('Network.enable'); await send('Page.enable')
 
   const base = `http://127.0.0.1:${PORT}`
+  // Counts every render the kit's schedule() actually queues (bootstrap.js coalesces
+  // into one microtask per render). A self-rescheduling render loop locks a phone, so
+  // the counter drops past 3000 to keep a regression a FAILED check, not a hung page.
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
+    const W = window; W.__renders = 0; const q = W.queueMicrotask.bind(W);
+    W.queueMicrotask = (f) => { if (/schedule/.test((new Error().stack || '').split('\\n')[2] || '')) { if (++W.__renders > 3000) return } return q(f) };
+  })()` })
   await send('Page.navigate', { url: base })
   await sleep(2000)
   await evalJs(`fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:${JSON.stringify(USER)},password:${JSON.stringify(PW)}})}).then(r=>r.status)`)
@@ -157,6 +164,37 @@ try {
   check(m.colCount >= 2, 'mobile icon grid has more than one column', `${m.colCount} cols (${m.cols})`)
   check(m.z !== 'auto' && Number(m.z) > 0, 'mobile appbar sits above the map', `z-index ${m.z}`)
   check(m.scrollW <= m.innerW, 'no horizontal overflow on mobile', `${m.scrollW} vs ${m.innerW}`)
+
+  console.log('\nrender budget + case heading (cases view, case detail)')
+  let caseId = JSON.parse(await evalJs(`fetch('/api/cases').then((r) => r.json()).then((j) => JSON.stringify((j.cases || [])[0] ? j.cases[0].id : null))`))
+  if (!caseId) {
+    caseId = (await store.createCase({ channel: 'guicheck', external_id: USER, subject: 'gui-check heading probe' })).id
+    console.log('  (store had no case; created one probe case ' + caseId + ')')
+  }
+  // Opening a case makes the best-effort per-run config request, which answers 404 on a
+  // plain deployment by design (fetchRunConfig); it is not a defect of the later checks.
+  const noiseFrom = { c: consoleMsgs.length, f: failedReqs.length }
+  const renders = () => evalJs('window.__renders')
+  await evalJs(`localStorage.casey_home_view = 'cases'; 1`)
+  await send('Page.navigate', { url: base + '#home=cases' })
+  await sleep(4000)
+  const cold = await renders()
+  await sleep(6000)
+  const idle = (await renders()) - cold
+  check(cold != null && cold <= 60, 'cases view cold open stays inside the render budget', `${cold} renders (budget 60)`)
+  check(idle <= 5, 'cases view is quiet at idle (no render loop)', `${idle} renders in 6 s (budget 5)`)
+  await evalJs(`location.hash = 'home=cases&case=' + ${JSON.stringify(caseId)}; 1`)
+  await sleep(3000)
+  const opened = await renders()
+  await sleep(6000)
+  const idleOpen = (await renders()) - opened
+  check(idleOpen <= 5, 'an open case is quiet at idle (no render loop)', `${idleOpen} renders in 6 s (budget 5)`)
+  const hd = JSON.parse(await evalJs(`JSON.stringify({ n: document.querySelectorAll('.casey-case-header-top h2').length, txt: (document.querySelector('.casey-case-header-top h2') || {}).textContent })`))
+  check(hd.n === 1 && !!(hd.txt || '').trim(), 'case detail has exactly one h2 (the subject) in its header', `${hd.n} h2, "${(hd.txt || '').slice(0, 30)}"`)
+  consoleMsgs.length = noiseFrom.c; failedReqs.length = noiseFrom.f
+  await evalJs(`localStorage.removeItem('casey_home_view'); location.hash = ''; 1`)
+  await send('Page.navigate', { url: base })
+  await sleep(2500)
 
   console.log('\nteam registration + invite codes (Reporters panel)')
   await send('Emulation.clearDeviceMetricsOverride')
