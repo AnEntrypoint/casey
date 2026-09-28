@@ -257,7 +257,7 @@ export function ageHoursOf(c) {
 // A subject is written by the agent from what a reporter said, so its length is
 // contact-influenced and nothing upstream bounds it. Rendered as the bare text
 // child of a WRAPPING FLEX container -- which is what both the case-detail
-// heading (h2.casey-case-ref, subject plus its action buttons on one line) and
+// heading (h2.casey-case-ref-text, subject plus its action buttons on one line) and
 // the map rail's queue row (.tcase-why) are -- a long string with no break
 // opportunity in it becomes an anonymous flex item that the engine has to
 // measure at max-content and then re-wrap, and the cost is superlinear.

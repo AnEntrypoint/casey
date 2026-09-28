@@ -44,7 +44,7 @@
 // dead affordance rather than an empty one.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
-import { Btn, IconButton, Icon } from '/design/src/components/shell.js';
+import { Btn, IconButton, Icon, Heading } from '/design/src/components/shell.js';
 import { state, schedule } from '../../state.js';
 import { toast, undoToast } from '../../toasts.js';
 import { fmtTime, rel, healthLabel, headline, channelLabel } from '../../format.js';
@@ -164,13 +164,14 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
             // name ("Cattle drooling and limping - possibly FMD WORKING ON
             // IT") and said, in a second vocabulary, exactly what the
             // progress rail below says with the sequence intact.
-            // The subject sits in its OWN span rather than as bare text beside
+            // The subject is the pane's heading (a real h2, so a screen reader
+            // gets a heading to navigate by) and sits in its OWN element rather than as bare text beside
             // the buttons: a bare text child of this flex row is an anonymous
             // flex item, which cannot be given min-width:0 and so is measured
             // at max-content. That is the shape that froze the renderer on a
             // long subject (see format.js's headline()); headline() bounds the
-            // text and the span gives the box a real, shrinkable item.
-            h('span', { class: 'casey-case-ref-text' }, headline(c.subject || c.ref)),
+            // text and the h2 gives the box a real, shrinkable item.
+            Heading({ level: 2, class: 'casey-case-ref-text', children: headline(c.subject || c.ref) }),
             claimBtn,
             snoozeBtn,
             IconButton({ icon: Icon('external-link'), title: 'Print this ' + entityLabel(), onClick: () => window.open('/api/cases/' + encodeURIComponent(c.id) + '/report.html', '_blank') }),

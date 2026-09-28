@@ -45,9 +45,8 @@
    fallback can only ever fire when the page is already broken, and a set of
    guessed fallbacks that disagree with each other is worse than none.
    --fs-md is not a token in the kit at all and is therefore never used here. */
-/* The subject's text is its own flex ITEM in the header row (header.js renders it in
-   a span), so it can be told to shrink. (This replaces a rule keyed on an h2.casey-case-ref
-   that header.js no longer emits, which therefore never applied.) min-width:0 is what a bare text child could never
+/* The subject is its own flex ITEM in the header row (header.js renders it as
+   the pane's h2.casey-case-ref-text), so it can be told to shrink. min-width:0 is what a bare text child could never
    be given: an anonymous flex item keeps min-width:auto and is measured at
    max-content, and on a long subject with no break opportunity that measure is
    what froze the renderer. format.js's headline() bounds the string as well --
