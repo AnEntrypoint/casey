@@ -2,7 +2,7 @@
 // what a stored `contact.tier` value means, which rung outranks which, and what
 // each rung is called in front of a person.
 //
-// Three rungs, lowest to highest, and the ORDER is the whole point: every tier
+// Four rungs, lowest to highest, and the ORDER is the whole point: every tier
 // question in casey is "does this contact reach at least rung N", never "is this
 // contact exactly rung N". Twenty separate `=== 'field_worker'` string
 // comparisons across eighteen files each answered the second question, which is
@@ -25,6 +25,13 @@
 //   EXCLUSIVE authority to move a record to a done stage. See canSignOff below
 //   for why that one capability is an equality test rather than a rank test.
 //
+// - `operator` -- the team member who runs the dashboard and, over WhatsApp,
+//   manages the queue: replies to reporters, assigns, hands over, invites people
+//   into a role. Everything an animal_health_technician can QUERY, and NOTHING
+//   more on sign-off: it sits above the technician on the ladder but canSignOff
+//   below is an equality test, so an operator still cannot resolve a report over
+//   WhatsApp -- that stays the technician's alone.
+//
 // WHY ONE RUNG CARRIES A DOMAIN NAME. casey's tier mechanism is otherwise
 // domain-independent, and AGENTS.md's Configuration architecture is explicit
 // that domain vocabulary belongs in config rather than in this source tree.
@@ -42,11 +49,12 @@
 export const TIER_REPORTER = 'reporter'
 export const TIER_FIELD_WORKER = 'field_worker'
 export const TIER_ANIMAL_HEALTH_TECHNICIAN = 'animal_health_technician'
+export const TIER_OPERATOR = 'operator'
 
 // Lowest to highest. This array IS the ladder: index is rank, and it is the
 // order every enum declaration (thatcher.config.yml's contact.tier and
 // case.reporter_tier) and every UI ladder step follows.
-export const TIER_ORDER = [TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN]
+export const TIER_ORDER = [TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR]
 
 const RANK = new Map(TIER_ORDER.map((tier, i) => [tier, i]))
 
@@ -88,6 +96,13 @@ export function canQueryCases(value) {
   return atLeast(value, TIER_FIELD_WORKER)
 }
 
+// Operator-or-above: the team-management surface (reply to a reporter, work the
+// queue, assign, issue a role invite). A RANK test on purpose -- unlike sign-off,
+// nothing here is a named clinical responsibility.
+export function isOperator(value) {
+  return atLeast(value, TIER_OPERATOR)
+}
+
 // Sign-off authority: may move a record to a done stage.
 //
 // An EQUALITY test, deliberately, where every other capability here is a rank
@@ -96,7 +111,8 @@ export function canQueryCases(value) {
 // words for it were "non-negotiable, only they do that". Written as
 // `atLeast(value, TIER_ANIMAL_HEALTH_TECHNICIAN)` it would read identically
 // today and would silently hand sign-off to any rung added above AHT later,
-// which is the one outcome this function exists to prevent. If a deployment ever
+// which is the one outcome this function exists to prevent -- and `operator`,
+// added above AHT, is exactly that rung: it does NOT sign off. If a deployment ever
 // genuinely needs a second signing role, it names it here, on purpose.
 export function canSignOff(value) {
   return resolveTierValue(value) === TIER_ANIMAL_HEALTH_TECHNICIAN
@@ -115,6 +131,7 @@ export const DEFAULT_TIER_LABELS = {
   [TIER_REPORTER]: 'Reporter',
   [TIER_FIELD_WORKER]: 'Field worker',
   [TIER_ANIMAL_HEALTH_TECHNICIAN]: 'Animal health technician',
+  [TIER_OPERATOR]: 'Operator',
 }
 
 // The label for one rung under an optional deployment override map. Unknown

@@ -1,0 +1,168 @@
+// role-invites.js -- the WhatsApp-code mechanism for giving a phone number a
+// role. The other mechanism is an operator assigning the role in the dashboard
+// (routes/contacts.js); both end in the same place, contact.tier, and neither is
+// reachable from a contact's own free text.
+//
+// An operator (dashboard, or an operator-rung number over WhatsApp) mints a
+// one-time code for a rung. The person sends that code from their own phone; a
+// deterministic intercept (hooks/role-registration.js) claims it BEFORE any agent
+// turn, so the model never sees the code, never decides the outcome, and cannot
+// be talked into a promotion.
+//
+// Storage is the same append-only, audited observation log the thresholds and
+// fleet-health settings use (a 'system' singleton case): no schema change in
+// either config, and a full history of who invited whom. Current state is a
+// replay of the log. Only a SHA-256 of the code is stored -- the plain code is
+// returned once, at creation, and cannot be recovered afterwards.
+
+import crypto from 'node:crypto'
+import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, resolveTierValue } from './contact-tiers.js'
+import { taggedObservations } from './store/settings-log.js'
+
+// Crockford-ish: no 0/O/1/I/L, so a code read aloud or typed off a screen
+// survives. 8 symbols ~ 40 bits; with single use, a default 72h life and the
+// attempt limiter below, guessing is not a strategy.
+const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
+const CODE_LEN = 8
+const KEY = 'role-invites'
+const TAG = 'role-invite'
+export const DEFAULT_TTL_HOURS = 72
+export const MAX_TTL_HOURS = 24 * 30
+
+export function generateCode() {
+  const bytes = crypto.randomBytes(CODE_LEN)
+  let out = ''
+  for (let i = 0; i < CODE_LEN; i++) out += ALPHABET[bytes[i] % ALPHABET.length]
+  return `${out.slice(0, 4)}-${out.slice(4)}`
+}
+
+const hashCode = (code) => crypto.createHash('sha256').update(String(code).replace(/[^A-Z0-9]/g, '')).digest('hex')
+
+// Pull a claim code out of an inbound message, or null. Deliberately strict --
+// this runs on every message from every contact, so an ordinary sentence must
+// never be mistaken for a code. Accepted: the bare code ("K7QM-4XWP"), or the
+// code after one of the words people naturally write ("code K7QM-4XWP",
+// "join k7qm4xwp"). The message must be nothing else.
+export function extractCode(text) {
+  const t = String(text || '').trim().toUpperCase()
+  if (!t || t.length > 40) return null
+  const sym = `[${ALPHABET}]`
+  const bare = new RegExp(`^(${sym}{4})-(${sym}{4})$`).exec(t)
+  if (bare) return `${bare[1]}-${bare[2]}`
+  const worded = new RegExp(`^(?:CODE|JOIN|REGISTER|INVITE|REG)\\s*[:#-]?\\s*(${sym}{4})[-\\s]?(${sym}{4})$`).exec(t)
+  return worded ? `${worded[1]}-${worded[2]}` : null
+}
+
+function replay(events) {
+  const invites = new Map()
+  for (const { payload } of taggedObservations(events, TAG)) {
+    let r
+    try { r = JSON.parse(payload) } catch { continue }
+    if (!r?.id) continue
+    if (r.op === 'create') invites.set(r.id, { id: r.id, hash: r.h, tier: r.tier, label: r.label || '', by: r.by || '', created_at: r.at, expires_at: r.exp, max_uses: r.max || 1, uses: 0, claimed_by: [], revoked: false })
+    else if (r.op === 'claim' && invites.has(r.id)) { const v = invites.get(r.id); v.uses += 1; v.claimed_by.push({ contact_id: r.contact, at: r.at }) }
+    else if (r.op === 'revoke' && invites.has(r.id)) invites.get(r.id).revoked = true
+  }
+  return invites
+}
+
+async function load(store) {
+  const caseId = await store._systemSingletonCaseId(KEY, KEY)
+  const events = await store.listEvents(caseId).catch(() => [])
+  return { caseId, invites: replay(events) }
+}
+
+async function append(store, caseId, rec, note) {
+  await store.appendEvent(caseId, { kind: 'observation', actor: 'operator', text: `${TAG}:${JSON.stringify(rec)}`, data: { op: rec.op, id: rec.id, note } })
+}
+
+function statusOf(v, now) {
+  if (v.revoked) return 'revoked'
+  if (v.uses >= v.max_uses) return 'used'
+  if (v.expires_at <= now) return 'expired'
+  return 'active'
+}
+
+const publicView = (v, now) => ({ id: v.id, tier: v.tier, label: v.label, created_by: v.by, created_at: v.created_at, expires_at: v.expires_at, uses: v.uses, max_uses: v.max_uses, status: statusOf(v, now) })
+
+// `grantableTiers`: the rungs the CREATOR may hand out. The dashboard passes
+// every rung for an admin and everything below operator for anyone else; an
+// operator-rung phone passes everything below operator. Reporter is never worth
+// inviting, and operator needs an admin -- a promotion to the team-management
+// rung is the one grant that must not be self-serve.
+export async function createInvite(store, { tier, label = '', ttlHours = DEFAULT_TTL_HOURS, maxUses = 1, by = 'operator', grantableTiers = TIER_ORDER.filter(t => t !== TIER_REPORTER && t !== TIER_OPERATOR), now = Date.now() } = {}) {
+  if (!TIER_ORDER.includes(tier) || tier === TIER_REPORTER) throw new Error(`tier must be one of ${TIER_ORDER.filter(t => t !== TIER_REPORTER).join(', ')}`)
+  if (!grantableTiers.includes(tier)) throw new Error(`you cannot invite someone as ${tier}${tier === TIER_OPERATOR ? ' -- only an admin can' : ''}`)
+  const ttl = Math.min(Math.max(Number(ttlHours) || DEFAULT_TTL_HOURS, 1), MAX_TTL_HOURS)
+  const uses = Math.min(Math.max(Math.floor(Number(maxUses)) || 1, 1), 25)
+  const code = generateCode()
+  const { caseId } = await load(store)
+  const rec = { op: 'create', id: crypto.randomBytes(6).toString('hex'), h: hashCode(code), tier, label: String(label).slice(0, 80), by: String(by).slice(0, 80), at: now, exp: now + ttl * 3600e3, max: uses }
+  await append(store, caseId, rec, `invite created for ${tier}`)
+  return { code, ...publicView({ ...rec, hash: rec.h, created_at: rec.at, expires_at: rec.exp, max_uses: rec.max, uses: 0, revoked: false, by: rec.by }, now) }
+}
+
+export async function listInvites(store, now = Date.now()) {
+  const { invites } = await load(store)
+  return [...invites.values()].map(v => publicView(v, now)).sort((a, b) => b.created_at - a.created_at)
+}
+
+export async function revokeInvite(store, id, by = 'operator') {
+  const { caseId, invites } = await load(store)
+  if (!invites.has(id)) throw new Error('no such invite')
+  await append(store, caseId, { op: 'revoke', id, at: Date.now(), by }, 'invite revoked')
+  return true
+}
+
+// Claim `code` for `contact`. Serialised per code so two phones racing one code
+// cannot both win. Returns {ok:true, tier, invite} or {ok:false, reason} where
+// reason is one of unknown | expired | used | revoked | already.
+export async function claimInvite(store, code, contact, now = Date.now()) {
+  const h = hashCode(code)
+  return store._withLock(`${KEY}|${h}`, async () => {
+    const { caseId, invites } = await load(store)
+    const v = [...invites.values()].find(x => x.hash === h)
+    if (!v) return { ok: false, reason: 'unknown' }
+    const st = statusOf(v, now)
+    if (st !== 'active') return { ok: false, reason: st }
+    if (v.claimed_by.some(c => c.contact_id === contact.id)) return { ok: false, reason: 'already' }
+    // Never DEMOTE: a code for a lower rung than the person already holds
+    // changes nothing, and is reported as such rather than silently lowering them.
+    if (resolveTierValue(contact.tier) === v.tier || TIER_ORDER.indexOf(resolveTierValue(contact.tier)) > TIER_ORDER.indexOf(v.tier)) return { ok: false, reason: 'already' }
+    await append(store, caseId, { op: 'claim', id: v.id, contact: contact.id, at: now }, `code claimed by contact ${contact.id}`)
+    await store.setContactTier(contact.id, v.tier, { id: `invite:${v.id}`, role: 'system' })
+    return { ok: true, tier: v.tier, invite: publicView({ ...v, uses: v.uses + 1 }, now) }
+  })
+}
+
+// Failed-claim limiter: 5 wrong codes per contact per hour, then the intercept
+// stops consulting the store for that contact until the window passes.
+const FAILS = new Map()
+const WINDOW_MS = 3600e3
+const MAX_FAILS = 5
+// A second, deployment-wide cap so cycling through phone numbers does not reset
+// the guess budget: registration is rare, so 40 wrong codes an hour across
+// EVERYONE is already an attack, and locking claims for the rest of the hour is
+// the cheap, safe answer (an operator can still assign in the dashboard).
+const GLOBAL_KEY = '*'
+const MAX_GLOBAL_FAILS = 40
+const recent = (key, now) => { const l = (FAILS.get(key) || []).filter(t => now - t < WINDOW_MS); FAILS.set(key, l); return l }
+export function attemptsExhausted(key, now = Date.now()) {
+  return recent(key, now).length >= MAX_FAILS || recent(GLOBAL_KEY, now).length >= MAX_GLOBAL_FAILS
+}
+export function noteFailedAttempt(key, now = Date.now()) {
+  recent(key, now).push(now)
+  recent(GLOBAL_KEY, now).push(now)
+}
+
+// A phone number as WhatsApp reports it: digits only, with country code, no
+// '+' and no leading 0. An operator types "079 091 5297" or "+27 79 091 5297";
+// both must land on the key the webhook will later deliver ("27790915297").
+// Returns '' for anything that cannot be a number, never a guess.
+export function normalizeMsisdn(input, defaultCountryCode = '27') {
+  let d = String(input || '').replace(/[\s().-]/g, '')
+  if (d.startsWith('+')) d = d.slice(1)
+  else if (d.startsWith('00')) d = d.slice(2)
+  else if (d.startsWith('0')) d = defaultCountryCode + d.slice(1)
+  return /^\d{9,15}$/.test(d) ? d : ''
+}

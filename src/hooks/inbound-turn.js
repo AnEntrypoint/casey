@@ -25,12 +25,18 @@ import {
 } from './turn-outcome.js'
 import { resolveAdapter, sendGuaranteedFallback, sendAgentReply } from './delivery.js'
 import { makeTypingIndicator } from './typing.js'
+import { tryRegisterByCode } from './role-registration.js'
 
 export async function runInboundTurn(receiver, deps, { platform, msg, channel, external_id, replyTo }) {
   const { store, log, admission, autoRespond, llmStatus, notifyHandoff } = deps
   const adapter = resolveAdapter(receiver, platform)
   const denied = checkAdmission({ admission, store, log, msg, channel, external_id, replyTo, platform })
   if (denied) return denied
+
+  // A message that is nothing but a one-time role code is consumed here, before
+  // any case exists and before any agent turn (hooks/role-registration.js).
+  const registered = await tryRegisterByCode({ store, log, adapter, msg, channel, external_id, replyTo, platform })
+  if (registered) return registered
 
   const opened = await openCaseForInbound({ store, log, msg, channel, external_id, replyTo, platform })
   if (opened.done) return opened.done

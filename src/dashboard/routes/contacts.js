@@ -8,7 +8,8 @@
 // deps: store, wrap, actingOperator, authed, isAdmin
 import { fmtPhone27 } from '../../format.js'
 import { mountRoutes } from './register.js'
-import { TIER_ORDER, resolveContactTier } from '../../contact-tiers.js'
+import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, resolveContactTier } from '../../contact-tiers.js'
+import { createInvite, listInvites, revokeInvite, normalizeMsisdn } from '../../role-invites.js'
 
 // The one allowlist through which a contact row may reach JSON (AGENTS.md
 // Security invariants). Module-level and named on purpose: the three fields
@@ -71,7 +72,7 @@ export function getContacts({ store, authed }) {
   }
 }
 
-export function postContactTier({ store, authed, actingOperator }) {
+export function postContactTier({ store, authed, isAdmin, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     try {
@@ -82,6 +83,8 @@ export function postContactTier({ store, authed, actingOperator }) {
       // rather than quietly coerced (see case-store.js's setContactTier for why
       // reads coerce and writes refuse).
       if (!TIER_ORDER.includes(tier)) return res.status(400).json({ error: `tier must be one of ${TIER_ORDER.map(t => `"${t}"`).join(', ')}` })
+      // The operator rung is the team-management rung: only an admin may grant it.
+      if (tier === TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can make someone an operator' })
       await store.setContactTier(req.params.id, tier, { id: actingOperator(req).id, role: 'operator' })
       const updated = await store.getContact(req.params.id)
       res.json({ contact: publicContact(updated) })
@@ -107,7 +110,57 @@ export function postContactErase({ store, authed, isAdmin, actingOperator }) {
   }
 }
 
+// Register a phone number in a role before it ever messages in (mechanism 1 of
+// 2; mechanism 2 is the one-time WhatsApp code below).
+export function postContactRegister({ store, authed, isAdmin, actingOperator }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      const { phone, name, tier } = req.body || {}
+      const external_id = normalizeMsisdn(phone)
+      if (!external_id) return res.status(400).json({ error: 'that does not look like a phone number -- use the full number, e.g. 079 091 5297 or +27 79 091 5297' })
+      if (!TIER_ORDER.includes(tier) || tier === TIER_REPORTER) return res.status(400).json({ error: `role must be one of ${TIER_ORDER.filter(t => t !== TIER_REPORTER).map(t => `"${t}"`).join(', ')}` })
+      if (tier === TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can make someone an operator' })
+      const contact = await store.registerContact({ channel: 'whatsapp', external_id, display_name: String(name || '').trim().slice(0, 80), tier }, { id: actingOperator(req).id, role: 'operator' })
+      res.json({ contact: publicContact(contact) })
+    } catch (e) { res.status(400).json({ error: e.message }) }
+  }
+}
+
+// One-time WhatsApp role codes (mechanism 2). The plain code is in the create
+// response ONCE; only its hash is stored, so it cannot be shown again.
+export function getRoleInvites({ store, authed }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    res.json({ invites: await listInvites(store) })
+  }
+}
+
+export function postRoleInvite({ store, authed, isAdmin, actingOperator }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try {
+      const { tier, label, ttl_hours, max_uses } = req.body || {}
+      const grantableTiers = TIER_ORDER.filter(t => t !== TIER_REPORTER && (t !== TIER_OPERATOR || isAdmin(req)))
+      const invite = await createInvite(store, { tier, label, ttlHours: ttl_hours, maxUses: max_uses, by: actingOperator(req).id, grantableTiers })
+      res.json({ invite })
+    } catch (e) { res.status(400).json({ error: e.message }) }
+  }
+}
+
+export function deleteRoleInvite({ store, authed, actingOperator }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    try { await revokeInvite(store, req.params.id, actingOperator(req).id); res.json({ ok: true }) }
+    catch (e) { res.status(400).json({ error: e.message }) }
+  }
+}
+
 const ROUTES = [
+  ['post', '/api/contacts/register', postContactRegister, { raw: true }],
+  ['get', '/api/role-invites', getRoleInvites],
+  ['post', '/api/role-invites', postRoleInvite, { raw: true }],
+  ['delete', '/api/role-invites/:id', deleteRoleInvite, { raw: true }],
   ['get', '/api/contacts', getContacts],
   ['post', '/api/contacts/:id/tier', postContactTier, { raw: true }],
   ['post', '/api/contacts/:id/erase', postContactErase, { raw: true }],
