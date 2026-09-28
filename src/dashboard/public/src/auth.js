@@ -10,7 +10,7 @@
 // from the service worker's own 503-offline vs the server's own 401
 // (api.js's isOfflineError), never from a timeout guess.
 
-import { state, setAuthed, setConnLost, setSessionRestored } from './state.js';
+import { state, schedule, setAuthed, setConnLost, setSessionRestored } from './state.js';
 import * as api from './api.js';
 
 export async function checkSession() {
@@ -52,6 +52,21 @@ export async function checkSession() {
 // the data on their own.
 api.onConnectionRestored(() => {
   if (state.sessionRestored) checkSession();
+});
+
+// A live session that the server no longer honours (expired, or ended elsewhere). Checked
+// against /api/whoami rather than trusted from one 401, then the sign-in screen says why.
+// What was being typed lives in module state, not the DOM, so it is still there after the
+// person signs back in.
+let sessionCheckBusy = false;
+api.onSessionLost(async () => {
+  if (sessionCheckBusy || !state.authed || (state.currentUser && state.currentUser.must_change_password)) return;
+  sessionCheckBusy = true;
+  try {
+    await checkSession();
+    if (!state.authed) state.sessionNotice = 'You were signed out (your session ended). Log in again to carry on. Anything you had typed is still on the page.';
+    schedule();
+  } finally { sessionCheckBusy = false; }
 });
 
 export async function doLogin(username, password) {

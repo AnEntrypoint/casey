@@ -62,7 +62,7 @@ const ROW_LABEL = {
     'action/agent': 'Recorded automatically',
     'action/system': 'System action',
     'observation/agent': 'Observed',
-    'observation/system': 'Guardrail check',
+    'observation/system': 'Automatic note',
     'observation/operator': 'Observation',
     'transition/operator': 'Stage change',
     'transition/agent': 'Stage change',

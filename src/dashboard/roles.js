@@ -18,8 +18,10 @@
 //             technician, it is ready to sign off and nobody holds it
 //   none   -- everything else (404, so a probe learns nothing)
 import { normalizeMsisdn } from '../role-invites.js'
+import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
 import { isAssignedTo as contactHoldsCase } from '../case-assignment.js'
-import { parseReport } from '../timestamp.js'
+import { parseReport, tagList } from '../timestamp.js'
+import { RESERVED_TAG } from '../hooks/heuristics.js'
 import { MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum, fieldLabel, REPORT_ENTITY_LABEL } from '../store/report-shape.js'
 
 export const STAFF_ROLES = ['admin', 'operator', 'secretary']
@@ -51,7 +53,9 @@ export async function resolveContact(store, acct) {
 
 export function isAssignedTo(c, acct) {
   const a = String(c?.assignee || '').trim().toLowerCase()
-  if (!a) return false
+  // 'agent' is the UNCLAIMED marker, not a person: a login that happens to be named
+  // that must never hold every unclaimed case.
+  if (!a || a === UNCLAIMED_ASSIGNEE) return false
   if (a === String(acct?.username || '').trim().toLowerCase()) return true
   return contactHoldsCase(c, acct?._contact)
 }
@@ -82,6 +86,8 @@ export function inSignOffQueue(c, unclaimedKey) {
 export function caseAccess(c, acct, { unclaimedKey = 'agent' } = {}) {
   if (!c) return 'none'
   if (isStaffAccount(acct)) return 'write'
+  // The settings / invite / erasure singletons are stored as channel 'system' cases: never a report.
+  if (c.channel === 'system') return 'none'
   if (isAssignedTo(c, acct)) return 'write'
   if (isOwnReport(c, acct)) return 'read'
   if (isTechnician(acct) && inSignOffQueue(c, unclaimedKey)) return 'read'
@@ -132,11 +138,23 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
       acct._contact = await resolveContact(store, acct)
       const p = req.path
       // Photo and voice-note bytes: /media/<caseId>/<file>, scoped like the case.
-      if (p.startsWith('/media/')) {
-        const c = await store.getCase(decodeURIComponent(p.split('/')[2] || ''))
+      // Express matches routes case-insensitively, so '/API/contacts' reaches the
+      // very handlers '/api/contacts' does: decide on the lower-cased prefix, and let
+      // the exact-case route table below refuse every spelling it does not list.
+      const lp = p.toLowerCase()
+      if (lp.startsWith('/media/')) {
+        // The file server resolves the DECODED path, so the case checked must be the one
+        // that path lands in: exactly /media/<caseId>/<file>, decoded, with no dot segment,
+        // separator or backslash left to walk out of <caseId> into another case's folder
+        // ('/media/<mine>/../<theirs>/f' passed a check made on the raw second segment).
+        let decoded = ''
+        try { decoded = decodeURIComponent(p) } catch { return deny(res, 404, 'not found') }
+        const m = /^\/media\/([^/\\]+)\/([^/\\]+)$/.exec(decoded)
+        if (!m || m[1] === '.' || m[1] === '..' || m[2] === '.' || m[2] === '..' || decoded.includes('\0')) return deny(res, 404, 'not found')
+        const c = await store.getCase(m[1])
         return caseAccess(c, acct, { unclaimedKey: UNCLAIMED_ASSIGNEE }) === 'none' ? deny(res, 404, 'not found') : next()
       }
-      if (!p.startsWith('/api/')) return next()   // shell assets carry no case data
+      if (!lp.startsWith('/api/') && lp !== '/api') return next()   // shell assets carry no case data
       // Routes exempted from the session gate (login, sync) never reach here with
       // a field session that matters; whoami/logout/change-password are ungated
       // or self-only and must stay reachable.
@@ -169,6 +187,11 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
       if (rule.patch) {
         const bad = Object.keys(b).filter(k => !PATCH_KEYS_FIELD.has(k))
         if (bad.length) return deny(res, 403, 'You cannot change who a case is assigned to or how it is handled.', 'role_forbidden')
+        // The system's own tags (a STOP, a hand-off, a held draft) are not a field login's to add or drop.
+        if ('tags' in b) {
+          const sys = (list) => list.map(t => String(t).trim().toLowerCase()).filter(t => RESERVED_TAG.test(t)).sort().join('|')
+          if (typeof b.tags !== 'string' || sys(tagList(c)) !== sys(String(b.tags).split(','))) return deny(res, 403, 'Those tags are set by the system itself and cannot be changed by hand.', 'role_forbidden')
+        }
       }
       if (rule.transition && isDoneStatus(b.to) && b.to !== c.status) {
         if (!isTechnician(acct)) return deny(res, 403, 'Only an animal health technician can sign a case off.', 'signoff_forbidden')

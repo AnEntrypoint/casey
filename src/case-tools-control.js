@@ -17,8 +17,11 @@ export function buildControlTools(store) {
   return [
     defTool('case_stop', 'cases',
       'The person asked to STOP receiving messages (opt out). Records the opt-out. Use ONLY on a clear opt-out.',
-      { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
-      async ({ id }, ctx) => {
+      { type: 'object', properties: { id: str("Report id; leave out to use this conversation's own report") } },
+      async ({ id: askedId }, ctx) => {
+        // The id is optional: an irreversible control can only ever act on this conversation's own
+        // record, and a model that must supply one invents it (then the guard below rejects it).
+        const id = askedId || boundCase(ctx).id
         // Same server-side active-case binding as case_report: an irreversible
         // control is exactly the kind of write that must never land on the wrong
         // case from a model mistake or injected text naming another case's ref.
@@ -58,9 +61,12 @@ export function buildControlTools(store) {
     // Same reasoning as case_stop: a handoff request is an irreversible legal
     // control, not a content edit, so it deliberately bypasses the observe guard.
     defTool('case_handoff', 'cases',
-      'The person wants a real person / operator to help. Flags the case for a human. Use on a clear ask for a person.',
-      { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
-      async ({ id }, ctx) => {
+      'The person wants a real person / operator to help. Flags the case for a human. Use on a clear ask for a person, or when someone says they may hurt themselves or others.',
+      { type: 'object', properties: { id: str("Report id; leave out to use this conversation's own report") } },
+      async ({ id: askedId }, ctx) => {
+        // The id is optional: an irreversible control can only ever act on this conversation's own
+        // record, and a model that must supply one invents it (then the guard below rejects it).
+        const id = askedId || boundCase(ctx).id
         // Fail CLOSED: a missing ctx.activeCaseId is itself a rejection condition,
         // never a bypass -- see case_report's handler for the full reasoning.
         const handoffBound = boundCase(ctx)

@@ -35,6 +35,7 @@ const CONDITION_LABEL = {
   channel_deaf: 'not hearing the field',
   provider_down_backlog: 'AI helper down, messages queuing',
   sweep_stalled: 'guardrail checks stopped',
+  inbound_silent: 'WhatsApp silent, possibly deaf',
   coverage_gap: 'nobody covering',
 }
 const conditionLabel = (c) => CONDITION_LABEL[c] || c

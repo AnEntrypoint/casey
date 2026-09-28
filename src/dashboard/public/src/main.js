@@ -34,6 +34,7 @@ import { ExternalLinksPanel } from './panels/external-links-panel.js';
 import { NudgesPanel } from './panels/nudges-panel.js';
 import { isFieldRole } from './api-roles.js';
 import { refreshFieldLists } from './views/field-app.js';
+import { resetFieldCase } from './views/field-case.js';
 
 import { OnboardingOverlay, onboarded, markOnboarded } from './components/onboarding-overlay.js';
 import { SkillsOverlay, skillsDismissed } from './components/skills-overlay.js';
@@ -296,6 +297,11 @@ async function boot() {
 initRouteSync((r) => {
   if (r.home) setHomeView(r.home);
   if (r.caseId) setActiveId(r.caseId);
+  else if (state.activeId != null) {
+    // Back/forward landed on an entry with no report in it: close the one that is open.
+    setActiveId(null);
+    if (isFieldRole()) { resetFieldCase(); refreshFieldLists(); }
+  }
   if (r.inbox !== undefined) state.inboxMode = r.inbox;
   schedule();
 });

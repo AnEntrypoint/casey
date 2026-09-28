@@ -20,6 +20,7 @@
 import crypto from 'node:crypto'
 import { normalizeMsisdn } from '../role-invites.js'
 import { ACCOUNT_ROLES } from './roles.js'
+import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
 
 const SCRYPT_KEYLEN = 64
 const SCRYPT_OPTS = { N: 16384, r: 8, p: 1 } // Node's own recommended defaults
@@ -154,6 +155,9 @@ export async function listAccounts(store) {
 export async function createAccount(store, { username, password, displayName, role = 'operator', mustChangePassword = false, contactPhone = '' }) {
   const sid = slugUsername(username)
   if (!sid) throw new Error('invalid username')
+  if (sid === UNCLAIMED_ASSIGNEE) throw new Error(`"${sid}" is reserved (it marks an unclaimed report) -- pick another username`)
+  // An unrecognised role is refused, never quietly upgraded to operator.
+  if (role != null && role !== '' && !ACCOUNT_ROLES.includes(role)) throw new Error(`role must be one of ${ACCOUNT_ROLES.join(', ')}`)
   if (!password || String(password).length < 8) throw new Error('password must be at least 8 characters')
   if (await findAccountByUsername(store, sid)) throw new Error(`account "${sid}" already exists`)
   // Optional link to the person's WhatsApp number, stored as the msisdn the
@@ -163,7 +167,7 @@ export async function createAccount(store, { username, password, displayName, ro
   const { hash, salt } = hashPassword(password)
   return store.t.create('operator_account', {
     username: sid, password_hash: hash, password_salt: salt,
-    display_name: String(displayName || sid).slice(0, 80), role: ACCOUNT_ROLES.includes(role) ? role : 'operator',
+    display_name: String(displayName || sid).slice(0, 80), role: ACCOUNT_ROLES.includes(role) ? role : 'operator', // '' / absent only (validated above)
     ...(phone ? { contact_phone: phone } : {}),
     disabled: '0', must_change_password: mustChangePassword ? '1' : '0',
   }, SYSTEM)

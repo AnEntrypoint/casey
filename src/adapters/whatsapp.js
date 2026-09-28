@@ -11,6 +11,22 @@ const SEND_TIMEOUT_MS = 15000
 const DISPLAY_TIMEOUT_MS = 4000
 const DISPLAY_RETRY_MS = 5 * 60e3
 
+// The largest webhook body casey will read or parse. Meta's real bodies are a few
+// KB; the dashboard mount already caps its raw reader at 256kb, and this is the
+// same number applied where BOTH mounts converge (and, via the exported const,
+// to the freddie-side reader that used to buffer an unbounded stream BEFORE the
+// signature was ever consulted).
+export const WEBHOOK_MAX_BODY_BYTES = 256 * 1024
+// Meta redelivers a webhook for at most seven days. A signed body older than that
+// is a replay, not a retry: the HMAC carries no clock, so a captured body would
+// otherwise verify forever, and once the case it belonged to has been erased or
+// archived nothing would remember its wamid. Age is read off the message's own
+// Meta-stamped `timestamp`. CASEY_WHATSAPP_MAX_AGE_HOURS=0 turns the check off.
+const DEFAULT_MAX_MESSAGE_AGE_HOURS = 168
+
+// Delivery-status ladder. sent < delivered < read; `failed` is separate.
+export const STATUS_RANK = Object.freeze({ sent: 1, delivered: 2, read: 3 })
+
 export class WhatsappAdapter extends EventEmitter {
   constructor(opts = {}) {
     super()
@@ -32,7 +48,7 @@ export class WhatsappAdapter extends EventEmitter {
     // event emitter regardless of which socket Meta reaches. There is no
     // WHATSAPP_WEBHOOK_PORT of its own.
     this.path = opts.path || process.env.WHATSAPP_WEBHOOK_PATH || '/webhooks/whatsapp'
-    this.api = opts.api || 'https://graph.facebook.com/v20.0'
+    this.api = opts.api || (process.env.WHATSAPP_GRAPH_API || `https://graph.facebook.com/${process.env.WHATSAPP_GRAPH_VERSION || 'v20.0'}`).replace(/\/+$/, '')
     // The bot's own number as WhatsApp displays it (digits/format Meta returns),
     // read once from the Graph API so the dashboard can tell a team member which
     // number to message. Best-effort: never awaited by boot, never throws, cached
@@ -40,7 +56,33 @@ export class WhatsappAdapter extends EventEmitter {
     this._displayNumber = ''
     this._displayTriedAt = 0
     this._displayInflight = null
+    // In-memory webhook counters, read by /api/health via casey.js. Since start,
+    // aggregate, never a contact identifier.
+    // The last few hundred sends by wamid (recipient, text, time), so a status can
+    // be matched to an outbound event whose wamid no caller persisted. Bounded.
+    this.recentSends = new Map()
+    // Shutdown: once draining, the webhook answers 503 so Meta redelivers the
+    // message to the next worker instead of an ack going to a process about to
+    // close its store; media hydrations already in flight are awaited by
+    // drainMedia() so a downloaded photo still becomes its message.
+    this.draining = false
+    this._pendingMedia = new Set()
+    this.webhookStats = { posts: 0, messages: 0, statuses: 0, stale_dropped: 0, rejected_signature: 0, rejected_oversize: 0, rejected_malformed: 0, rejected_draining: 0, malformed_messages: 0, last_post_at: null, last_message_at: null, last_status_at: null }
     if (this.token && this.phoneId) setImmediate(() => this.refreshDisplayNumber())
+  }
+
+  beginDrain() { this.draining = true }
+
+  async drainMedia(timeoutMs = 15000) {
+    if (!this._pendingMedia.size) return
+    let timer
+    await Promise.race([
+      Promise.allSettled([...this._pendingMedia]),
+      new Promise(r => { timer = setTimeout(r, timeoutMs) }),
+    ])
+    clearTimeout(timer)
+    // The emit for a settled hydration runs on the next microtask.
+    await new Promise(r => setImmediate(r))
   }
 
   // GET /{phone_id}?fields=display_phone_number, bearer token, short timeout.
@@ -54,7 +96,7 @@ export class WhatsappAdapter extends EventEmitter {
         const r = await fetchWithTimeout(`${this.api}/${encodeURIComponent(this.phoneId)}?fields=display_phone_number`, { headers: { authorization: `Bearer ${this.token}` } }, DISPLAY_TIMEOUT_MS)
         if (!r.ok) throw new Error(`status ${r.status}`)
         const j = await r.json()
-        const n = String(j?.display_phone_number || '').trim()
+        const n = String(j?.display_phone_number || '').replace(/[^\d+()\s-]/g, '').trim().slice(0, 32)
         if (n) this._displayNumber = n
       } catch (e) {
         console.warn('[whatsapp] could not read the display phone number:', e?.message || 'failed')
@@ -89,8 +131,10 @@ export class WhatsappAdapter extends EventEmitter {
   async _downloadMedia(mediaId, timeoutMs = 10000) {
     const authHeader = { authorization: `Bearer ${this.token}` }
     const withTimeout = (url) => fetchWithTimeout(url, { headers: authHeader }, timeoutMs)
-    const meta = await withTimeout(`${this.api}/${mediaId}`).then(r => r.json())
-    if (!meta?.url) throw new Error('WhatsappAdapter: media lookup returned no url: ' + JSON.stringify(meta))
+    const meta = await withTimeout(`${this.api}/${encodeURIComponent(String(mediaId))}`).then(r => r.json())
+    if (!meta?.url) throw new Error('WhatsappAdapter: media lookup returned no url')
+    // The bearer token rides to whatever host that url names: only https, never a cleartext or odd scheme.
+    if (!/^https:\/\//i.test(String(meta.url))) throw new Error('WhatsappAdapter: media url is not https')
     const res = await withTimeout(meta.url)
     if (!res.ok) throw new Error(`WhatsappAdapter: media fetch failed with status ${res.status}`)
     const buffer = Buffer.from(await res.arrayBuffer())
@@ -123,11 +167,23 @@ export class WhatsappAdapter extends EventEmitter {
     // non-2xx Graph API response (bad token, rate limit, invalid recipient)
     // returns a normal JSON body with no messages[0].id, which checking only
     // res.ok would swallow as if the send succeeded.
-    const post = (payload) => verifiedSend(
-      () => fetchWithTimeout(`${this.api}/${this.phoneId}/messages`, { method: 'POST', headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', to: reply.to, ...payload }) }, SEND_TIMEOUT_MS),
-      (body) => body?.messages?.[0]?.id,
-      'WhatsappAdapter',
-    )
+    // The wamid Meta returns for each accepted send is collected on the result
+    // (`wamids`, first = the text). Delivery-status webhooks name a message ONLY
+    // by that id, so it is what lets a later `failed` (131047, window closed)
+    // find the outbound event it belongs to.
+    const wamids = []
+    const post = async (payload) => {
+      const body = await verifiedSend(
+        () => fetchWithTimeout(`${this.api}/${this.phoneId}/messages`, { method: 'POST', headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', to: reply.to, ...payload }) }, SEND_TIMEOUT_MS),
+        (b) => b?.messages?.[0]?.id,
+        'WhatsappAdapter',
+      )
+      const id = body.messages[0].id
+      wamids.push(id)
+      this.recentSends.set(id, { to: reply.to, text: payload.text?.body || '', at: Date.now() })
+      if (this.recentSends.size > 500) this.recentSends.delete(this.recentSends.keys().next().value)
+      return { ...body, wamids }
+    }
     // Optional audio: an already-hosted link sends directly; raw bytes upload
     // first, then send by media id. The text (when present) is sent alongside
     // so the reporter still gets the words.
@@ -211,10 +267,57 @@ function profileNameFor(value, from) {
   return String(hit?.profile?.name || '')
 }
 
-export function dispatchWhatsappWebhookBody(adapter, body) {
+// One Meta `statuses[]` entry, normalised. Statuses ride the SAME webhook as
+// messages (`value.statuses[]`, a sibling of `value.messages[]`) and are never a
+// message: they must not open a case, reach a turn or count as inbound liveness.
+// Meta names the outbound only by its wamid (`id`); `errors[]` carries the
+// reason for a `failed` (131047 = the 24h re-engagement window is closed,
+// 131026 = the number cannot receive WhatsApp, 131049 = Meta withheld it for
+// ecosystem health, 130472 = experiment holdout, ...). Only `code`, `title`,
+// `message` and `details` are kept -- bounded, and nothing else off the payload.
+const clipText = (v, n) => String(v == null ? '' : v).replace(/[\r\n]+/g, ' ').slice(0, n)
+function normaliseStatus(st) {
+  if (!st || typeof st !== 'object') return null
+  const id = typeof st.id === 'string' ? st.id : ''
+  const status = typeof st.status === 'string' ? st.status.toLowerCase() : ''
+  if (!id || !status) return null
+  const ts = Number(st.timestamp)
+  const errors = (Array.isArray(st.errors) ? st.errors : []).slice(0, 3).map(e => ({
+    code: Number.isFinite(Number(e?.code)) ? Number(e.code) : null,
+    title: clipText(e?.title, 120),
+    message: clipText(e?.message, 240),
+    details: clipText(e?.error_data?.details, 240),
+  }))
+  return { id: clipText(id, 200), status: clipText(status, 24), recipient: clipText(st.recipient_id, 32), at: Number.isFinite(ts) && ts > 0 ? ts * 1000 : null, errors }
+}
+
+// Message age off Meta's own unix-seconds `timestamp`. Unknown -> not stale.
+function messageTooOld(m, now) {
+  const hours = process.env.CASEY_WHATSAPP_MAX_AGE_HOURS === undefined ? DEFAULT_MAX_MESSAGE_AGE_HOURS : Number(process.env.CASEY_WHATSAPP_MAX_AGE_HOURS)
+  if (!(hours > 0)) return false
+  const ts = Number(m?.timestamp)
+  if (!Number.isFinite(ts) || ts <= 0) return false
+  return now - ts * 1000 > hours * 3600e3
+}
+
+export function dispatchWhatsappWebhookBody(adapter, body, now = Date.now()) {
   const events = []
-  for (const e of (body?.entry || [])) for (const c of (e.changes || [])) {
-    for (const m of (c.value?.messages || [])) {
+  const statuses = []
+  const stats = adapter.webhookStats || (adapter.webhookStats = {})
+  const bump = (k, n = 1) => { stats[k] = (stats[k] || 0) + n }
+  const arr = (v) => (Array.isArray(v) ? v : [])
+  for (const e of arr(body?.entry)) for (const c of arr(e?.changes)) {
+    for (const st of arr(c?.value?.statuses)) {
+      const n = normaliseStatus(st)
+      if (n) statuses.push(n)
+    }
+    for (const m of arr(c?.value?.messages)) {
+      if (!m || typeof m !== 'object') continue
+      // A message with no sender or no wamid can never be deduplicated (the
+      // dedup key IS the wamid) and would open a case keyed 'unknown' on every
+      // redelivery. Meta never sends one; refuse it and say so on the counters.
+      if (typeof m.from !== 'string' || !m.from || typeof m.id !== 'string' || !m.id) { bump('malformed_messages'); continue }
+      if (messageTooOld(m, now)) { bump('stale_dropped'); continue }
       const location = inboundLocation(m)
       const profileName = profileNameFor(c.value, m.from)
       const event = {
@@ -238,14 +341,32 @@ export function dispatchWhatsappWebhookBody(adapter, body) {
       events.push({ event, pending: mediaObj?.id ? { mediaObj, type } : null })
     }
   }
+  if (events.length) { bump('messages', events.length); stats.last_message_at = now }
+  if (statuses.length) { bump('statuses', statuses.length); stats.last_status_at = now }
+  // Delivery statuses go out on their own event. A throwing listener must not
+  // turn a 200-worthy webhook into a 500 (Meta would redeliver the whole body,
+  // messages included), so it is contained here.
+  for (const st of statuses) {
+    try { adapter.emit('status', st) }
+    catch (err) { console.error('WhatsappAdapter: a status listener threw; the status was delivered once and is not retried', err) }
+  }
   for (const { event, pending } of events) {
     emitWithDetachedMedia(
       (ev) => adapter.emit('message', ev),
       event,
       !!pending,
-      async () => {
-        const { buffer, mimeType } = await adapter._downloadMedia(pending.mediaObj.id)
-        return { type: pending.type, mimeType, buffer }
+      () => {
+        const p = (async () => {
+          const { buffer, mimeType } = await adapter._downloadMedia(pending.mediaObj.id)
+          return { type: pending.type, mimeType, buffer }
+        })()
+        // Tracked for shutdown (drainMedia); the settled copy is what is kept so
+        // a rejection here is still handled by onError below, not by the set.
+        if (adapter._pendingMedia) {
+          const settled = p.then(() => {}, () => {}).finally(() => adapter._pendingMedia.delete(settled))
+          adapter._pendingMedia.add(settled)
+        }
+        return p
       },
       (err) => {
         // Never let a failed/slow media fetch block the pipeline -- note
@@ -286,21 +407,45 @@ export function dispatchWhatsappWebhookBody(adapter, body) {
 //    and earn a redelivery.
 export function serveWhatsappWebhook(adapter, req, res) {
   if (req.method === 'GET') {
-    const challenge = adapter.verifyChallenge(req.query['hub.verify_token'], req.query['hub.challenge'])
+    const challenge = adapter.verifyChallenge(req.query?.['hub.verify_token'], req.query?.['hub.challenge'])
     if (challenge === null) { res.sendStatus(403); return }
     res.sendText(challenge)
     return
   }
-  if (!verifyWebhookOr401(req, res, (r) => adapter._verifySignature(r))) return
+  const stats = adapter.webhookStats || (adapter.webhookStats = {})
+  const bump = (k) => { stats[k] = (stats[k] || 0) + 1 }
+  stats.last_post_at = Date.now()
+  // Size first: cheaper than an HMAC over a hostile megabyte, and answered 413 so
+  // a proxy or a human reading its log sees WHY. Both mounts already bound their
+  // own reader; this is the one place that bound is stated for the shared handler.
+  if ((req.rawBody?.length || 0) > WEBHOOK_MAX_BODY_BYTES) { bump('rejected_oversize'); res.sendStatus(413); return }
+  if (!verifyWebhookOr401(req, res, (r) => adapter._verifySignature(r))) { bump('rejected_signature'); return }
+  // Draining for shutdown: a 5xx makes Meta redeliver to the restarted worker.
+  // After the signature so an unauthenticated caller learns nothing about state.
+  if (adapter.draining) { bump('rejected_draining'); res.sendStatus(503); return }
   let body
   try {
     body = JSON.parse((req.rawBody || Buffer.alloc(0)).toString('utf8') || '{}')
   } catch {
     // Signed by Meta and still unparseable: answer, do not hang the socket.
+    bump('rejected_malformed')
     res.sendStatus(400)
     return
   }
-  dispatchWhatsappWebhookBody(adapter, body)
+  bump('posts')
+  // The ack must never depend on the shape of a body that verified: a valid
+  // signature only proves who sent it, and a JSON `null`, `[]` or a number where
+  // an array belongs must not throw out of a handler whose caller (freddie's
+  // ctx.webServer) has no catch around it.
+  // What CAN still throw is a message listener. That is answered 500 so Meta
+  // redelivers the whole body: safe, because every message is deduplicated on its
+  // wamid and every status on its recorded state, so the retry only completes
+  // what the throw cut short.
+  try { dispatchWhatsappWebhookBody(adapter, body) }
+  catch (err) {
+    console.error('WhatsappAdapter: webhook body could not be fully dispatched (answering 500 so Meta redelivers)', err?.message || err)
+    res.sendStatus(500)
+    return
+  }
   res.json({ ok: true })
 }
-

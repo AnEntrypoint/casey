@@ -115,7 +115,9 @@ export function CaseListDetailLayout() {
         onReloadCases: reloadCases,
       })
     ),
-    h('div', { class: 'case-detail-pane', key: 'detail' },
+    // The empty pane scrolls but holds nothing focusable, which a keyboard user could not
+    // scroll (axe scrollable-region-focusable); once a report is open its own controls are focusable.
+    h('div', Object.assign({ class: 'case-detail-pane', key: 'detail' }, hasActive ? {} : { tabindex: '0', role: 'region', 'aria-label': EntityLabel() + ' details' }),
       CaseDetailView({ onClose: closeCase, onOpenCase: openCase, key: 'detail-view' })
     )
   );

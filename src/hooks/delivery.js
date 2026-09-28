@@ -11,6 +11,7 @@
 // to a reporter: there is no second channel to notice the silence.
 
 import { observation } from './case-writes.js'
+import { attachWamids } from '../delivery-status.js'
 import { synthesizeVoice } from './media.js'
 import { TURN_SOFT_DEADLINE_MS, STILL_WORKING_TEXT, TURN_TIMEOUT_TEXT } from './turn-deadlines.js'
 
@@ -59,7 +60,7 @@ export async function sendGuaranteedFallback({
   // fast-degrade reads as "still working" and long-degrade as "having trouble".
   const elapsedMs = Date.now() - turnStartedAt
   const fallbackText = elapsedMs >= TURN_SOFT_DEADLINE_MS ? TURN_TIMEOUT_TEXT : STILL_WORKING_TEXT
-  await store.appendEvent(fresh.id, {
+  const fallbackEvent = await store.appendEvent(fresh.id, {
     kind: 'outbound', actor: 'system', channel,
     text: fallbackText, data: { to: replyTo, fallback: true, guaranteedFallback: true },
   })
@@ -70,7 +71,12 @@ export async function sendGuaranteedFallback({
   // adapter to send it with.
   let fallbackDelivered = false
   try {
-    if (typeof adapter?.send === 'function') { fallbackDelivered = true; await adapter.send(fallbackReply) }
+    if (typeof adapter?.send === 'function') {
+      fallbackDelivered = true
+      // The wamid Meta returns is stored on the event so a later `failed` status
+      // (e.g. 131047, window closed) can find it. Best-effort, never throws.
+      await attachWamids(store, fallbackEvent, await adapter.send(fallbackReply), { log, recentSends: adapter.recentSends })
+    }
   } catch (e) {
     fallbackDelivered = false
     log.error?.('[casey] guaranteed-fallback send failed', { caseId: fresh.id, error: e.message })
@@ -126,7 +132,7 @@ export async function sendAgentReply({
   let delivered = false
   if (adapter?.send) {
     delivered = true
-    try { await adapter.send(reply) }
+    try { await attachWamids(store, outboundEvent, await adapter.send(reply), { log, recentSends: adapter.recentSends }) }
     catch (e) {
       delivered = false
       log.error?.('[casey] adapter.send failed', { caseId: fresh.id, platform, error: e.message })

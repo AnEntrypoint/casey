@@ -115,7 +115,7 @@ export function InboxPanel() {
   const shown = ranked.slice(0, cap);
 
   if (!shown.length) {
-    return h('div', { class: 'triage', role: 'list', 'aria-label': QUEUE_NAME },
+    return h('div', { class: 'triage', 'aria-label': QUEUE_NAME },
       Heading({ level: 2, children: QUEUE_NAME }),
       h('div', { class: 'calm' }, state.mineOnly
         ? 'Nothing you have claimed needs you right now. Turn off "yours" below to see everyone else\'s.'
@@ -123,12 +123,15 @@ export function InboxPanel() {
     );
   }
 
-  return h('div', { class: 'triage', role: 'list', 'aria-label': QUEUE_NAME },
+  // The list role sits on the rows' own wrapper: a role=list may own only listitems,
+  // and the heading beside them made the whole block an axe aria-required-children hit.
+  // display:contents (app.css) keeps the wrapper out of the layout.
+  return h('div', { class: 'triage', 'aria-label': QUEUE_NAME },
     h('div', { key: 'head', class: 'triage-head' },
       Heading({ level: 2, children: QUEUE_NAME }),
       Badge({ tone: 'blue', children: String(ranked.length) })
     ),
-    ...shown.map(InboxRow),
+    h('div', { key: 'rows', class: 'triage-rows', role: 'list', 'aria-label': QUEUE_NAME }, ...shown.map(InboxRow)),
     // The true total sits on the control that reveals the rest, so the count
     // in the head above can never silently disagree with the rows below it.
     ranked.length > shown.length

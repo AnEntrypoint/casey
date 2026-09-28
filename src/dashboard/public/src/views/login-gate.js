@@ -106,7 +106,7 @@ async function enterApp() {
 async function submitLogin(e) {
   e.preventDefault();
   if (local.busy) return;
-  local.busy = true; local.error = ''; local.notice = ''; schedule();
+  local.busy = true; local.error = ''; local.notice = ''; state.sessionNotice = ''; schedule();
   try {
     await postJson('/api/login', { username: local.username, password: local.password });
     // whoami is read here rather than through checkSession() because
@@ -203,7 +203,7 @@ export function LoginGate() {
   // applyDiff cannot morph in place (the same trap the kit's own SearchInput
   // documents), and the notice simply never appeared. Only the class and the
   // live-region role change.
-  const message = local.error || local.notice;
+  const message = local.error || local.notice || state.sessionNotice || '';
   const messageNode = message
     ? h('div', {
       key: 'msg',

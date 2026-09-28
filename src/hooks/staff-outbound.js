@@ -35,6 +35,7 @@ import { tagList } from '../timestamp.js'
 import { OPTED_OUT_TAG } from './heuristics.js'
 import { assigneeKeyFor, isAssignedTo, isOwnConversation } from '../case-assignment.js'
 import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
+import { withoutIssuedCodes } from '../role-invites.js'
 
 export const STAFF_TEXT_MAX_LEN = 4000
 
@@ -78,6 +79,9 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
   const body = String(text || '').trim()
   if (!body) return { ok: false, error: 'nothing was sent: the message is empty' }
   if (body.length > STAFF_TEXT_MAX_LEN) return { ok: false, error: `nothing was sent: the message is too long (max ${STAFF_TEXT_MAX_LEN})` }
+  // A live role code must never leave through a reporter-bound message: the reporter
+  // would then hold the credential. (A text steered by a report's own words could try.)
+  if (await withoutIssuedCodes(store, body).catch(() => null) != null) return { ok: false, error: 'nothing was sent: the message contains a registration code' }
   if (isOwnConversation(caseRow, staff)) return { ok: false, error: 'nothing was sent: that is this same chat with the assistant, not a reporter to message' }
   const gate = await outboundRefusal(store, caseRow, { canSend, sendReply, now })
   if (gate.error) return { ok: false, error: gate.error }

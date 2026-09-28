@@ -17,7 +17,7 @@
 function channelRegistry(deps) {
   return {
     discord: () => makeDiscordAdapter(deps),
-    whatsapp: () => makeWhatsappAdapter(),
+    whatsapp: () => makeWhatsappAdapter(deps),
   }
 }
 
@@ -169,7 +169,12 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
 // webhook-driven (Meta posts to us), not a persistent socket casey must
 // reconnect. A future webhook-driven channel (e.g. SMS via a carrier webhook)
 // fits this shape rather than Discord's.
-async function makeWhatsappAdapter() {
+async function makeWhatsappAdapter({ markInbound } = {}) {
   const { WhatsappAdapter } = await import('./adapters/whatsapp.js')
-  return new WhatsappAdapter()
+  const a = new WhatsappAdapter()
+  // Stamp the last inbound the moment a real message is parsed (not statuses:
+  // a delivery receipt proves Meta can reach us, never that a person wrote).
+  // casey.js's inbound-silence alarm reads it, and /api/health publishes it.
+  if (typeof markInbound === 'function') a.on('message', () => { try { markInbound('whatsapp') } catch { /* liveness stamping never blocks intake */ } })
+  return a
 }

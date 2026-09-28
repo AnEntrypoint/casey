@@ -46,7 +46,12 @@ export function pushHash(partial) {
   if (next.panel) tokens.push('panel=' + encodeURIComponent(next.panel));
   const want = tokens.length ? '#' + tokens.join('&') : location.pathname + location.search;
   if (location.hash !== (tokens.length ? '#' + tokens.join('&') : '')) {
-    history.replaceState(null, '', want);
+    // Opening or closing a report, a panel or a home view is navigation, so it gets its own
+    // history entry: the browser's Back (a phone's Back button is a ranger's only way out of
+    // a report) returns to where they were instead of leaving the dashboard. A change of the
+    // filter token alone is not navigation and only rewrites the current entry.
+    const navigated = next.caseId !== cur.caseId || next.panel !== cur.panel || next.home !== cur.home || !!next.inbox !== !!cur.inbox;
+    history[navigated ? 'pushState' : 'replaceState'](null, '', want);
   }
 }
 

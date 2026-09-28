@@ -35,6 +35,7 @@ import * as webjsx from 'webjsx';
 import { state, schedule, setMineOnly, setCases } from '../state.js';
 import { tagList, isMine } from '../format.js';
 import * as api from '../api.js';
+import { loadRoster } from '../api-roles.js';
 import { toast } from '../toasts.js';
 import { saveCurrentView, applyNamedView } from '../saved-views.js';
 import { SearchBar, MoreFilters, StagePills, refreshSavedViews } from './case-list/filters-bar.js';
@@ -45,7 +46,7 @@ import { confirmDialog } from '../components/dialog-shell.js';
 // One definition of the counted filter chip, shared with the map home view --
 // see components/filter-chip.js for why a second local copy of the control is
 // the same class of defect as a second local copy of the predicate it applies.
-import { FilterChip, ClearChip } from '../components/filter-chip.js';
+import { FilterChip, ClearChip, QueueMore } from '../components/filter-chip.js';
 const h = webjsx.createElement;
 
 // The report blob as it arrives on a list row: a JSON string on the wire,
@@ -67,6 +68,7 @@ function probeTotal() {
   const now = Date.now();
   if (now - lastProbeAt < TOTAL_PROBE_MS) return;
   lastProbeAt = now;
+  if (more.rows.length) showMore(true);
   api.fetchCases({ limit: 1 })
     .then((r) => {
       if (!r || typeof r.total !== 'number' || r.total === state.allCasesTotal) return;
@@ -79,9 +81,10 @@ function probeTotal() {
 // the total is not known yet. Never the loaded count on its own: "35 reports"
 // over a 37-report deployment is a true number that tells a lie.
 function pageRangeText() {
-  const loaded = (state.allCases || []).length;
+  const loaded = loadedRows().length;
   const total = state.allCasesTotal;
   if (state.inboxMode) return 'Not loaded (Focus mode)';
+  if (wide.rows) return 'Searched all ' + total + ' reports';
   if (!total) return loaded ? loaded + ' loaded so far' : 'Nothing loaded yet';
   if (total > loaded) return 'Showing ' + loaded + ' of ' + total + ' reports';
   return 'All ' + total + ' report' + (total === 1 ? '' : 's');
@@ -164,8 +167,71 @@ export function anyFilterActive() {
   return !!(state.mineOnly || attentionOnly || state.filt.q || state.filt.status || state.filt.channel || state.filt.source || anyFieldValueFilter());
 }
 
+// ---- reports beyond the first page ------------------------------------------------------
+// The server sends the newest 50 by default and the list poll only ever asks for that page, so on
+// a deployment with more, the older reports were unreachable: no pager, and search/stage/channel
+// only looked at the 50 loaded. Two remedies live here, both kept out of state.allCases (which
+// the poll rewrites every few seconds and the chip counts read):
+//   - "Show more": further pages, appended after the poll's own page;
+//   - a narrowed search (text, stage or channel) is asked of the server across every report.
+const PAGE = 200;
+// Pages are fetched by offset while the order underneath them can shift (a report that is
+// touched moves to the top), so each fetch starts a little before where the loaded rows end and
+// the overlap is dropped by id: a small shift then costs nothing instead of losing a row.
+const OVERLAP = 10;
+const more = { rows: [], want: 0, busy: false };
+const wide = { key: '', rows: null, total: 0, timer: null, at: 0 };
+
+function loadedRows() {
+  if (!more.rows.length) return state.allCases || [];
+  const seen = new Set((state.allCases || []).map((c) => c.id));
+  return (state.allCases || []).concat(more.rows.filter((c) => !seen.has(c.id)));
+}
+
+async function showMore(refresh) {
+  if (more.busy) return;
+  more.busy = true; schedule();
+  try {
+    if (!refresh) more.want += PAGE;
+    const first = (state.allCases || []).length;
+    const start = Math.max(0, first - OVERLAP);
+    const target = more.want + (first - start);
+    const rows = [];
+    while (rows.length < target) {
+      const r = await api.fetchCases({ limit: Math.min(PAGE, target - rows.length), offset: start + rows.length });
+      const page = (r && r.cases) || [];
+      if (r && typeof r.total === 'number' && r.total !== state.allCasesTotal) state.allCasesTotal = r.total;
+      rows.push(...page);
+      if (page.length === 0) break;
+    }
+    more.rows = rows;
+  } catch { /* the connection banner already surfaces a dead API */ }
+  more.busy = false; schedule();
+}
+
+const narrowing = () => !!(state.filt.q || state.filt.status || state.filt.channel);
+function ensureWide(now) {
+  const partial = !state.inboxMode && narrowing() && state.allCasesTotal > loadedRows().length;
+  if (!partial) { wide.rows = null; wide.key = ''; return; }
+  const key = JSON.stringify([state.filt.q || '', state.filt.status || '', state.filt.channel || '']);
+  const stale = key === wide.key && now - wide.at > TOTAL_PROBE_MS;
+  if (key === wide.key && !stale) return;
+  const sameKey = key === wide.key;
+  wide.key = key; wide.at = now;
+  if (!sameKey) wide.rows = null;
+  clearTimeout(wide.timer);
+  wide.timer = setTimeout(async () => {
+    try {
+      const r = await api.fetchCases({ q: state.filt.q, status: state.filt.status, channel: state.filt.channel, limit: PAGE });
+      if (wide.key !== key) return;
+      wide.rows = (r && r.cases) || []; wide.total = (r && r.total) || wide.rows.length;
+      schedule();
+    } catch { /* keep the loaded rows */ }
+  }, sameKey ? 0 : 300);
+}
+
 export function visibleCases() {
-  const base = state.allCases.filter(matchesClientFilt);
+  const base = (wide.rows || loadedRows()).filter(matchesClientFilt);
   if (!attentionOnly) return base;
   const ids = attentionIds();
   return base.filter((c) => ids.has(c.id));
@@ -188,7 +254,7 @@ async function promptSaveView() {
 // set the chip narrows -- the loaded report list -- so pressing it can never
 // produce a different number than the one on its face.
 function listChips() {
-  const loaded = state.allCases || [];
+  const loaded = loadedRows();
   const ids = attentionIds();
   const needCount = loaded.filter((c) => ids.has(c.id)).length;
   const mineCount = loaded.filter(isMine).length;
@@ -231,6 +297,8 @@ function listBody(shown) {
 }
 
 export function CaseListView({ onPromptTag, onPromptNote, onReloadCases }) {
+  loadRoster(schedule);
+  ensureWide(Date.now());
   const shown = visibleCases();
   // Out of the render pass, like map-panel.js's own canvas mount: this can call
   // setCases, and a state mutation inside a render would re-enter schedule().
@@ -250,8 +318,16 @@ export function CaseListView({ onPromptTag, onPromptNote, onReloadCases }) {
     h('div', { key: 'lhead', class: 'ds-cl-section-head' },
       h('h2', { class: 'ds-cl-section-title' }, 'All reports'),
       h('span', { class: 'ds-cl-range' }, pageRangeText()),
+      // The next page of reports, beside the count it changes (the list below is its own
+      // scroll region, so a control under it would sit out of sight). Not shown while a search
+      // or stage is narrowing: those already ask the server across every report.
+      (!state.inboxMode && !wide.rows && state.allCasesTotal > loadedRows().length && !narrowing())
+        ? QueueMore({ key: 'more', onClick: () => showMore(false),
+          children: more.busy ? 'Loading...' : 'Show ' + Math.min(PAGE, state.allCasesTotal - loadedRows().length) + ' more' })
+        : null,
       anyFilterActive()
-        ? h('span', { class: 'ds-cl-match' }, shown.length + ' match the filters you have on')
+        ? h('span', { class: 'ds-cl-match' }, shown.length + ' match the filters you have on'
+          + (wide.rows && wide.total > wide.rows.length ? ' (the first ' + wide.rows.length + ' of ' + wide.total + ' -- narrow the search to see the rest)' : ''))
         : null),
     listChips(),
 

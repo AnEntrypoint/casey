@@ -196,7 +196,9 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       cases = filtered.slice(offset, offset + limit)
     } else {
       cases = await store.listCases(where, { limit, offset })
-      total = await store.countCases(where)
+      // listCases leaves the system singleton cases (settings, invite log) out; the count must too, or
+      // the list says "Showing N of N+2" forever and offers a rest that does not exist.
+      total = await store.countCases(where.channel === undefined ? { ...where, channel: { $ne: 'system' } } : where)
     }
     const casesWithFill = cases.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
     const named = await assigneeNamer(store, casesWithFill)
@@ -207,6 +209,15 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
 // Create a case manually from the dashboard (non-AI intake flow).
 // channel is forced to 'web'; external_id is synthesised from the contact phone
 // (or a timestamp if none given) so it does not collide with channel messages.
+// The case a WRITE returns. A field login gets the name, never the `contact:<id>`
+// key and never the reporter's number: the number reaches a field login only through
+// GET /api/cases/:id, where each reveal is written to the timeline.
+async function writeProjection(store, c, req) {
+  const field = isFieldAccount(req.caseyAccount)
+  const out = caseDetailProjection(c, await assigneeNamer(store, [c]), { keepKey: !field })
+  return field ? detailForAccess(out, 'read') : out
+}
+
 export function postCase({ store, authed, str, actingOperator, computeFillRate }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -366,7 +377,7 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
       await noteNumberReveal(store, c, op)
     }
     const named = await assigneeNamer(store, [c])
-    res.json({ ...fieldExtras, case: detailForAccess(caseDetailProjection(c, named, { keepKey: !isFieldAccount(req.caseyAccount) }), req.caseyAccess), events: (await nameEventAssignees(store, events)).map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
+    res.json({ ...fieldExtras, case: detailForAccess(caseDetailProjection(c, named, { keepKey: !isFieldAccount(req.caseyAccount) }), req.caseyAccess), events: (await nameEventAssignees(store, events, { field: isFieldAccount(req.caseyAccount) })).map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
   }
 }
 
@@ -431,7 +442,7 @@ export function getCaseEvents({ store, authed, clampLimit, offsetOf, parseEventD
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const limit = clampLimit(req.query.limit, 50)
     const offset = offsetOf(req.query.offset)
-    const events = await nameEventAssignees(store, parseEventData(await store.listEventsPage(req.params.id, { limit, offset })))
+    const events = (await nameEventAssignees(store, parseEventData(await store.listEventsPage(req.params.id, { limit, offset })), { field: isFieldAccount(req.caseyAccount) })).map(eventProjection)
     res.json({ events, offset, limit })
   }
 }
@@ -534,7 +545,7 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
       if (!Object.keys(patch).length) {
         const after = await store.getCase(req.params.id)
         store.learnOperatorActivity(op.id, after).catch(() => {})
-        return res.json(caseDetailProjection(after, await assigneeNamer(store, [after])))
+        return res.json(await writeProjection(store, after, req))
       }
     }
     // Forward the version this operator's edit was actually based on (prior,
@@ -585,7 +596,7 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
       const otherPatch = Object.fromEntries(otherKeys.map(k => [k, patch[k]]))
       await store.appendEvent(req.params.id, { kind: 'action', actor: 'operator', text: `edited ${otherKeys.join(', ')}`, data: { ...otherPatch, by: op.id } })
     }
-    res.json(caseDetailProjection(updated, await assigneeNamer(store, [updated])))
+    res.json(await writeProjection(store, updated, req))
   }
 }
 
@@ -608,7 +619,7 @@ export function postTransition({ store, authed, str, actingOperator }) {
     await store.transition(req.params.id, to, { user: op, reason: reason || 'operator override' })
     const after = await store.getCase(req.params.id)
     store.learnOperatorActivity(op.id, after).catch(() => {})
-    res.json(caseDetailProjection(after, await assigneeNamer(store, [after])))
+    res.json(await writeProjection(store, after, req))
   }
 }
 
@@ -1026,6 +1037,8 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
     if (!text) return res.status(400).json({ error: 'empty reply' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
+    // Enforced here, not only by the reply box hiding itself: a person who said STOP is not messaged.
+    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: 'This person asked us to stop messaging them, so nothing was sent.' })
     // Try to deliver before claiming success: if the channel send throws, we
     // record the failure and do NOT clear needs-human, so a contact who never
     // got the reply stays pinned in triage rather than silently dropped (P10).

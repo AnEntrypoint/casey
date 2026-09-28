@@ -1250,6 +1250,62 @@ export class CaseStore {
     })
   }
 
+  // The role model's traces of one person, outside their own contact row and the
+  // cases they REPORTED (which _erasePiiOnCase already scrubs):
+  //   - the rung itself. An erased contact keeping `operator` would still count
+  //     as a team member on every roster and doctor row while identifying nobody,
+  //     so it drops to the lowest rung.
+  //   - the contact id written into timeline events on records they HELD:
+  //     assignment (`assigned_contact_id`), notices (`announced_to`), dispatch
+  //     (`dispatch_worker_id`, `dispatch_response_by`) and the release note's
+  //     `was: contact:<id>`. The id is pseudonymous, but it is the key back to a
+  //     person, and the row it pointed at is now scrubbed.
+  //   - the role-invite log: the claim record names the claimant by contact id,
+  //     and the invite's free-text label is whatever the operator typed to say who
+  //     the code was for. Both are overwritten in place on the events that hold them.
+  // Returns the number of events rewritten. Best effort per event: the contact
+  // scrub has already landed, so a failure here is counted, never thrown.
+  async _scrubRoleReferences(contactIds, user = SYSTEM_USER) {
+    const ids = [...new Set((contactIds || []).map(String).filter(id => id.length >= 6))]
+    let rewritten = 0
+    for (const id of ids) {
+      try { await this.t.update('contact', id, { tier: 'reporter' }, user) } catch { /* row may be gone */ }
+    }
+    const rewrite = (raw) => { let out = String(raw); for (const id of ids) out = out.split(id).join('[erased]'); return out }
+    // Invites this person claimed: their labels are blanked too.
+    const claimedInvites = new Set()
+    let inviteCaseId = null
+    try { inviteCaseId = await this._systemSingletonCaseId('role-invites', 'role-invites') } catch { inviteCaseId = null }
+    if (inviteCaseId) {
+      const evs = await this.t.list('event', { case_id: inviteCaseId }, { limit: 100000 }).catch(() => [])
+      for (const e of evs) {
+        if (typeof e.text !== 'string' || !e.text.startsWith('role-invite:')) continue
+        let r; try { r = JSON.parse(e.text.slice('role-invite:'.length)) } catch { continue }
+        if (r?.op === 'claim' && ids.includes(String(r.contact))) claimedInvites.add(r.id)
+      }
+      for (const e of evs) {
+        if (typeof e.text !== 'string' || !e.text.startsWith('role-invite:')) continue
+        let r; try { r = JSON.parse(e.text.slice('role-invite:'.length)) } catch { continue }
+        let changed = false
+        if (r?.op === 'claim' && ids.includes(String(r.contact))) { r.contact = '[erased]'; changed = true }
+        if (r?.op === 'create' && claimedInvites.has(r.id) && r.label) { r.label = ''; changed = true }
+        if (!changed) continue
+        try {
+          await this.t.update('event', e.id, { text: `role-invite:${JSON.stringify(r)}`, data: rewrite(e.data || '') }, user)
+          rewritten++
+        } catch { /* counted by omission */ }
+      }
+    }
+    for (const id of ids) {
+      const evs = await this.t.list('event', { data: { $like: `%${id}%` } }, { limit: 100000 }).catch(() => [])
+      for (const e of evs) {
+        if (e.case_id === inviteCaseId) continue
+        try { await this.t.update('event', e.id, { data: rewrite(e.data) }, user); rewritten++ } catch { /* counted by omission */ }
+      }
+    }
+    return rewritten
+  }
+
   // ---- erasure journal: crash recovery for a multi-step, irreversible action --
   //
   // eraseContact is NOT ATOMIC and cannot be made so from here: thatcher exposes
@@ -1408,6 +1464,22 @@ export class CaseStore {
     for (const sid of siblingIds) {
       try { await this.t.update('contact', sid, PII_CONTACT_FIELDS, SYSTEM_USER) } catch { /* per-row best effort */ }
     }
+    // A team member's erasure reaches the two places their number and their hold on
+    // work live outside their own contact row: the dashboard login linked to their
+    // number (operator_account.contact_phone) and every open record assigned to
+    // `contact:<id>`, which would otherwise stay held by nobody and keep the
+    // assistant silent on it. Best effort: the contact scrub above already landed.
+    try {
+      for (const id of [contactId, ...siblingIds]) await this.releaseCasesHeldBy(`contact:${id}`, 'the team member was erased', SYSTEM_USER)
+      const digits = String(contact.external_id || '').replace(/\D/g, '')
+      if (digits && !alreadyErased) {
+        for (const a of await this.t.list('operator_account', {}, { limit: 500 })) {
+          if (a.contact_phone && String(a.contact_phone).replace(/\D/g, '') === digits) await this.t.update('operator_account', a.id, { contact_phone: '' }, SYSTEM_USER)
+        }
+      }
+    } catch { /* additive: the erasure itself has landed */ }
+    let roleRefsScrubbed = 0
+    try { roleRefsScrubbed = await this._scrubRoleReferences([contactId, ...siblingIds], SYSTEM_USER) } catch { /* additive */ }
     const touchedCaseIds = []
     const failedCaseIds = []
     for (const c0 of cases) {
@@ -1434,7 +1506,7 @@ export class CaseStore {
       sessionsErased: sessions.removed.length, sessionsFailed: sessions.failed.length, ts: Date.now(),
     })
     return {
-      contactId, contactErased: !alreadyErased, alsoErasedContactIds: siblingIds,
+      contactId, contactErased: !alreadyErased, alsoErasedContactIds: siblingIds, roleReferencesScrubbed: roleRefsScrubbed,
       casesScrubbed: touchedCaseIds, casesFailed: failedCaseIds,
       // Named so a caller can tell an operator that a conversation could not be
       // removed. A compliance action that half-succeeded must say so.

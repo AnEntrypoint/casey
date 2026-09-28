@@ -55,6 +55,11 @@ export function isOfflineError(e) {
 // whose own error state can outlive the link outage it was caused by belongs
 // on this list, not just auth.
 const restoredListeners = new Set();
+const sessionLostListeners = new Set();
+export function onSessionLost(fn) {
+  sessionLostListeners.add(fn);
+  return () => sessionLostListeners.delete(fn);
+}
 export function onConnectionRestored(fn) {
   restoredListeners.add(fn);
   return () => restoredListeners.delete(fn);
@@ -116,6 +121,12 @@ export async function api(path, opts = {}) {
   if (await isOfflineResponse(res)) {
     setConnLost(true);
     return res;
+  }
+  // The server says the session is gone (expired, or ended from another device): tell
+  // the subscriber (auth.js) so the login screen appears at once instead of every later
+  // action failing one by one. The sign-in calls themselves answer 401 for a wrong password.
+  if (res.status === 401 && !/^\/api\/(login|logout|whoami|ready|branding|change-password)/.test(String(path))) {
+    for (const fn of sessionLostListeners) { try { fn(); } catch { /* a listener must never break a live request */ } }
   }
   // Stamped only here, on a response that provably came from the origin: the
   // rejection above never left the device and the 503 envelope never left the
@@ -483,7 +494,7 @@ export const fetchMapLastReports = () => json('/api/map/last-reports');
 export const fetchOperatorIdentities = () => json('/api/operators/identities');
 
 // --- contacts / reporters ---
-export const fetchContacts = () => json('/api/contacts');
+export const fetchContacts = (params) => json('/api/contacts' + qs(params));
 export const postContactTier = (id, tier) => post('/api/contacts/' + encodeURIComponent(id) + '/tier', { tier });
 export const postContactErase = (id, reason) => post('/api/contacts/' + encodeURIComponent(id) + '/erase', { reason });
 

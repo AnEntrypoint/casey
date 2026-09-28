@@ -966,7 +966,7 @@ self.addEventListener('activate', (e) => {
     // handset is the point, so they are deleted rather than orphaned.
     .then(() => caches.open(CACHE))
     .then((c) => c.keys().then((rs) => Promise.all(rs
-      .filter((r) => new URL(r.url).pathname === '/report')
+      .filter((r) => { const p = new URL(r.url).pathname; return p === '/report' || p.toLowerCase().startsWith('/media/') })
       .map((r) => c.delete(r)))))
     .then(() => self.clients.claim()))
 })
@@ -992,6 +992,10 @@ self.addEventListener('fetch', (e) => {
   // to the browser's own HTTP cache, which honours the Cache-Control the tile
   // route passes through from upstream and is bounded by the browser itself.
   if (url.pathname.startsWith('/tiles/')) return
+  // Photo and voice-note bytes are case data behind a session. Cached here they would be
+  // handed to the next person on a shared handset with no login at all (cache-first, no
+  // network, no cookie), so they go to the network like /api/ and are never stored.
+  if (url.pathname.toLowerCase().startsWith('/media/')) return
   // The public report form is live per-case data on an unauthenticated URL, so
   // it belongs with /api/ above and not with the shell. Cached, it did two
   // wrong things at once: a reporter who came back to their own reference was

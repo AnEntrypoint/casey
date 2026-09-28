@@ -37,6 +37,10 @@ import {
     unresolvedSummaryText,
 } from './map-view-state.js';
 import { countOf } from '../vocabulary.js';
+import { stageLabel } from '../format.js';
+// The legend's words are the same ones the rest of the screen uses (stage names, the queue's
+// name), in sentence case -- not the raw status key run through text-transform: capitalize.
+const sentence = (s) => String(s || '').charAt(0).toUpperCase() + String(s || '').slice(1);
 
 const h = webjsx.createElement;
 
@@ -125,11 +129,11 @@ function mapLegend() {
     // unreadable symbol.
     return h('div', { class: 'ds-map-legend' },
         ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
-            h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), k.replace(/_/g, ' '))),
+            h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), stageLabel(k))),
         h('span', { key: 'urgent', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-urgent', 'data-urgency': '3' }), 'needs a person'),
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-urgent', 'data-urgency': '3' }), QUEUE_NAME),
         h('span', { key: 'loc-estimated', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-dashed' }), LOCATION_SOURCE_LABEL.estimated));
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-dashed' }), sentence(LOCATION_SOURCE_LABEL.estimated)));
 }
 
 // ---- the one note on the canvas -----------------------------------------

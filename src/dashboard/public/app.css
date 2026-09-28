@@ -56,6 +56,10 @@
 .ds-247420 .app-status .item:first-of-type { color: var(--fg-2); }
 html.ds-247420[data-casey-theme="herd"] { background: var(--paper); }
 html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
+/* The kit's herd-ink preset lifts --warn to a light red fill (#FF5C6B) but never sets its paired
+   --warn-fg, so destructive buttons kept white text at 3.0:1 (axe color-contrast). --ink on that fill
+   is 6.3:1, the pairing the kit's own github-dark preset already makes. Kit follow-up: set it in the preset. */
+.ds-247420[data-theme="herd-ink"] { --warn-fg: var(--ink); }
 .ds-app-root, .ds-app-surface { display: flex; flex-direction: column; min-height: 100vh; }
 
 /* casey mounts the shell as a full standalone page, never inside the SDK's
@@ -244,7 +248,36 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    zero still renders ("nothing needs a person" is information) and only stops
    inviting a click. */
 .ds-filter-pill .ds-fchip-n { font-weight: 700; margin-right: var(--space-1); }
-.ds-247420 .ds-filter-pill.is-empty { opacity: .55; }
+.ds-247420 .ds-filter-pill.is-empty { color: var(--fg-3); } /* muted ink, not opacity: opacity .55 measured 3.15:1 (axe color-contrast); --fg-3 is AA by the kit's own token audit */
+/* Kit follow-ups, kept local until the kit takes them: the "New" stage pill and chip draw their text in
+   --sky (3.96:1 / 3.56:1, axe color-contrast), and a danger menu item ("Log out everywhere")
+   draws its label in the --danger FILL red (3.65:1 light, 3.49:1 dark) where --danger-ink exists. */
+.ds-247420 :is(.ds-filter-pill, .chip).tone-live { color: color-mix(in oklab, var(--sky) 70%, var(--fg)); }
+.ds-247420 .is-danger > .ds-dropdown-label { color: var(--danger-ink); }
+
+/* The kit's SearchInput is content-sized (303px), which clipped every placeholder here ("Search a
+   reference or what it is a..."). Let it take the room its container has, up to a readable line. */
+.ds-247420 .ds-search-field { width: 100%; max-width: 36rem; }
+.ds-247420 .ds-search-field .ds-search-input { flex: 1 1 auto; min-width: 0; }
+
+/* Windows High Contrast: the kit gives form fields a tonal fill and no border, and its forced-colors
+   baseline (border on input/textarea/select) loses to the field rules, so every text box vanished. An
+   outline is not touched by those rules; zero specificity so the kit's :focus-visible ring still wins. */
+@media (forced-colors: active) {
+  :where(.ds-247420 input:not([type=checkbox]):not([type=radio]), .ds-247420 textarea, .ds-247420 select) { outline: 1px solid ButtonBorder; outline-offset: -1px; }
+}
+
+/* Touch floor. The kit gives .btn/.btn-primary/.btn-ghost a 44px minimum for coarse pointers, but its
+   .btn-sm rule (0,2,0, min-height fixed at 28px) outranks it, and text fields, selects, summaries and
+   link buttons are not in it at all: measured on a phone emulation, 28px buttons and 34px fields. Kit
+   follow-up: the floor should beat .btn-sm. */
+@media (pointer: coarse) {
+  .ds-247420 :is(.btn, .btn-primary, .btn-ghost, .btn-sm, .btn-link, summary, select, input:not([type=checkbox]):not([type=radio]):not([type=hidden])),
+  .ds-247420 .btn-sm.btn-primary, .ds-247420 .btn-sm.btn-ghost { min-height: 44px; }
+  /* The kit's touch block pads every <button> 12px 20px, which crushed the fixed-size icon-only nav toggle to a dot
+     (its 16px icon was left 2px of room) on a real phone. */
+  .ds-247420 .app-side-toggle, .ds-247420 .app-status-toggle { padding: 0; }
+}
 
 /* Whole-row tap target on the queue -- the most-used control in the view. */
 .ds-rail-body .ds-map-attention-feed .tcase { min-height: 4rem; padding: var(--space-3); }
@@ -443,6 +476,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 
 
 .triage { background: var(--bg-2); border-radius: var(--r-1); }
+.triage-rows { display: contents; }
 .triage-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-1); }
 .triage .calm { padding: var(--space-4); color: var(--fg-3); font-size: var(--fs-micro); }
 .tcase { padding: var(--space-3); cursor: pointer; transition: background var(--dur-snap) var(--ease); }
@@ -501,7 +535,8 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .tcase.heat-3::before { background: var(--danger); }
 .tcase.heat-2::before { background: var(--warn); }
 .tcase.heat-1::before { background: var(--border); }
-.tcase.claimed-other { opacity: .62; }
+/* A queue row that someone else holds is not dimmed with opacity (it would take the row's text under 4.5:1);
+   the holder's name is on its owner chip. */
 
 @media (prefers-reduced-motion: reduce) { .case-row, .tcase { transition: none; } }
 
@@ -530,7 +565,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-cl-range { font-size: var(--fs-micro); color: var(--fg-2); }
 /* The match count only exists while a filter is on, and it is a different fact
    from the cap beside it, so it is toned as the live one of the two. */
-.ds-cl-match { font-size: var(--fs-micro); color: var(--accent-ink); font-weight: 600; }
+.ds-cl-match { font-size: var(--fs-micro); color: var(--fg); /* --accent-ink measured 4.16:1 on this surface (axe) */ font-weight: 600; }
 
 /* Tier-2 filters. Same disclosure idiom as the map rail's "Map options", so
    the two home views hide their rarely-reached controls the same way. */
@@ -691,9 +726,9 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-attn-lead:hover { background: var(--bg-2); color: var(--fg); }
 .ds-attn-lead.is-waiting {
   color: var(--danger-ink); border-color: var(--warn); font-weight: 700;
-  background: color-mix(in oklab, var(--warn) 12%, transparent);
+  background: color-mix(in oklab, var(--warn) 6%, transparent); /* 12% measured 4.17:1 for --danger-ink text (axe) */
 }
-.ds-attn-lead.is-waiting:hover { background: color-mix(in oklab, var(--warn) 20%, transparent); }
+.ds-attn-lead.is-waiting:hover { background: color-mix(in oklab, var(--warn) 12%, transparent); }
 
 /* ---- map legend + Leaflet overrides (no SDK equivalent for a tile-map) ---
    The canvas is sized by its pane (.ds-map-shell above), never by a viewport
@@ -708,7 +743,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-1);
 }
 .ds-map-legend-sw { display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill); margin-right: var(--space-1); vertical-align: middle; }
-.ds-map-legend-item { display: inline-flex; align-items: center; text-transform: capitalize; }
+.ds-map-legend-item { display: inline-flex; align-items: center; }
 /* Second legend row entry documenting the marker BORDER channel (location
    provenance) -- a plain background swatch can't show a dashed border at
    9px, so this one is unfilled with a visible dashed ring instead. */

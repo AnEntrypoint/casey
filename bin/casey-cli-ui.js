@@ -97,6 +97,12 @@ ${bold('usage:')}
   casey operators list                          list dashboard login accounts (never prints password hashes)
   casey operators disable <username>            disable a login without deleting its history
   casey operators enable <username>             re-enable a disabled login
+  casey roles list [--json]                     the team: WhatsApp members by rung, and dashboard logins
+  casey roles assign <phone> <tier> [--name ..] register a number in a role (reporter/field_worker/animal_health_technician/operator)
+  casey roles demote <phone|id>                 back to reporter; the reports they held return to the queue
+  casey roles invite <tier> [--label ..] [--ttl-hours N] [--uses N]   mint a one-time WhatsApp code (printed once)
+  casey roles invites | revoke <id> | release <holder> | link <username> <phone>
+                                                 invite log, revoke a code, free a holder's reports, link a login to a number
   casey sync-import <file> --kind field_visit|farmer|association|follow_up
                                                  read a manually-exported external-system file into the cross-app
                                                  correlation engine's normalized shape (no live adapter needed)
@@ -129,14 +135,34 @@ ${dim('new here? run')} ${cyan('casey init')} ${dim('then')} ${cyan('casey docto
 // `casey sweep --help` ran the sweep and `casey transition <ref> <stage> --help`
 // moved the case -- a help request that wrote to the store.
 export const USAGE = {
+  roles: `casey roles <subcommand>
+  The team model from a terminal, calling the same store methods the dashboard does.
+    list [--json]                            WhatsApp team members by rung, and dashboard logins
+    assign <phone> <tier> [--name "..."]     register a number (works before it has ever messaged)
+    demote <phone|contact-id>                back to reporter; open reports they held go back to the queue
+    invite <tier> [--label ..] [--ttl-hours 72] [--uses 1]   one-time code, printed once
+    invites [--json]                         the invite log: active, used, expired, revoked
+    revoke <invite-id>                       kill an unused code
+    release <phone|contact-id|username>      unassign every open report a holder has
+    link <username> <phone>                  link a dashboard login to its WhatsApp contact
+  tiers: field_worker, animal_health_technician, operator (and reporter to demote).
+  Acts with admin authority (it needs a shell on the box) and records itself as cli-operator.
+  Nothing here sends a WhatsApp message.`,
   init: `casey init
   Scaffold a .env in casey's own repo root for you to fill in. Never overwrites
   an existing one. A deployer package that ships its own .env (uhh, serpent)
   does not use this -- edit that package's .env instead.`,
-  doctor: `casey doctor [--port 4000]
+  doctor: `casey doctor [--port 4000] [--no-network]
   Preflight: Node version, .env, dependency resolution, supply-chain scan,
   submodule health, timeout coordination, channel credentials, config validity
-  and drift, data dir, and whether --port is free. Exits 1 if anything is red.`,
+  and drift, data dir, and whether --port is free. With WhatsApp configured it
+  also asks Meta (read-only GETs) whether the API token is valid and unexpired,
+  whether the app's webhook has the "messages" field subscribed and the right
+  callback URL, whether the phone number is connected, and whether the public
+  callback URL answers Meta's verification challenge; then it checks the role
+  model (an admin exists, a team is registered, no report is held by someone who
+  cannot act on it). --no-network skips the Meta and public-URL rows.
+  Exits 1 if anything is red.`,
   up: `casey up [--channels discord,whatsapp] [--port 4000] [--no-reload] [--no-supervise] [--no-auto-update]
   Start the gateway (all configured channels) and the dashboard.
   Supervised by default: the worker auto-restarts on a source change (live reload) or a crash,

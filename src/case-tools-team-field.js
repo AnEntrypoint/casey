@@ -27,7 +27,7 @@ import { isOpenCase, fmtPhone27 } from './format.js'
 import { canSignOff, isOperator, atLeast, TIER_ANIMAL_HEALTH_TECHNICIAN } from './contact-tiers.js'
 import { assigneeKeyFor, isAssignedTo, isOwnConversation, publicAssignee } from './case-assignment.js'
 import { normalizeLocation } from './location-normalize.js'
-import { OPTED_OUT_TAG, mergeTag, dropTag } from './hooks/heuristics.js'
+import { OPTED_OUT_TAG, RESERVED_TAG, mergeTag, dropTag } from './hooks/heuristics.js'
 import { sendStaffMessage, releaseCase, staffLabel } from './hooks/staff-outbound.js'
 import { staffNotices, pendingDispatchesFor } from './staff-notices.js'
 import { evData } from './safe.js'
@@ -48,7 +48,6 @@ const FINISHED = { error: 'That record is already finished, so it is not changed
 const empty = (v) => v == null || String(v).trim() === ''
 // Tags the system owns. A team member records facts; they do not flip the
 // machinery (opt-out, hand-off, draft and health flags are set by their own paths).
-const RESERVED_TAG = /^(opted-out|needs-human|draft-pending|ai-offline|flagged-reply|dispatch-suggested|health:|intake_mode:)/i
 const staffOf = (ctx) => ({ ...(ctx?.contact || {}), tier: ctx?.tier })
 const optedOut = (c) => tagList(c).includes(OPTED_OUT_TAG)
 // Resolve a record for a team write. `gate` applies team-focus.js's writeGate to
