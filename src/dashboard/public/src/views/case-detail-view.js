@@ -110,8 +110,8 @@ function pauseWhileEditing(el) {
 // one reading a bare " cases" while it actually returned to the map rail. One
 // escape per pane, and it says where it goes.
 function backControl(onClose) {
-    return h('button', { type: 'button', class: 'casey-back-btn', onclick: onClose },
-        Icon('chevron-left', { size: 14 }), ' Back to the list');
+    return Btn({ variant: 'link', size: 'sm', class: 'casey-back-btn', 'aria-label': 'Back to the list', onClick: onClose,
+        children: [Icon('chevron-left', { size: 14 }), ' Back to the list'] });
 }
 
 export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {}) {

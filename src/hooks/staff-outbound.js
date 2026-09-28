@@ -33,7 +33,7 @@
 
 import { tagList } from '../timestamp.js'
 import { OPTED_OUT_TAG } from './heuristics.js'
-import { assigneeKeyFor, isAssignedTo } from '../case-assignment.js'
+import { assigneeKeyFor, isAssignedTo, isOwnConversation } from '../case-assignment.js'
 import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
 
 export const STAFF_TEXT_MAX_LEN = 4000
@@ -78,6 +78,7 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
   const body = String(text || '').trim()
   if (!body) return { ok: false, error: 'nothing was sent: the message is empty' }
   if (body.length > STAFF_TEXT_MAX_LEN) return { ok: false, error: `nothing was sent: the message is too long (max ${STAFF_TEXT_MAX_LEN})` }
+  if (isOwnConversation(caseRow, staff)) return { ok: false, error: 'nothing was sent: that is this same chat with the assistant, not a reporter to message' }
   const gate = await outboundRefusal(store, caseRow, { canSend, sendReply, now })
   if (gate.error) return { ok: false, error: gate.error }
   const by = staffLabel(staff)
@@ -117,13 +118,47 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
   return { ok: true, delivered: true, claimed, took_over: tookOver, recorded: 'outbound' }
 }
 
-// The latest pending assisted draft for a case, or null (same rule as the
-// dashboard: pending only while draft-pending is on the case).
+// The latest pending assisted draft for a case, or null: a draft is "pending"
+// only while draft-pending is on the case (cleared on approve/discard/supersede),
+// so the most recent draft event is read and gated on the tag rather than
+// tracking draft state separately. The dashboard routes and the staff tools share
+// this one implementation.
 export async function pendingDraft(store, caseRow) {
   if (!tagList(caseRow).includes('draft-pending')) return null
   const events = await store.listEvents(caseRow.id)
   const drafts = events.filter(e => e.kind === 'draft')
   return drafts.length ? drafts[drafts.length - 1] : null
+}
+
+// THE TIMELINE IS THE AUDIT RECORD, so an `outbound` row on it means the
+// contact received the message -- it is what an operator reads a week later,
+// what /api/activity streams, and the only kind timeline.js offers "flag this
+// reply" on. Recording one unconditionally made that untrue in two real
+// situations: a `casey dashboard` console has no sendReply at all (see
+// casey-serve.js cmdDashboard) so nothing is ever sent, and a wired channel
+// can still refuse the send. Both used to leave a delivered-looking outbound
+// for a message that never reached anybody.
+//
+// An undelivered reply is recorded as an operator NOTE that says so in its own
+// first words, never as an outbound. Nothing is discarded: the operator's text
+// is kept verbatim in `data.text` as well as in the line, because what a human
+// chose to say is part of the record whether or not it left the building.
+// `data.to` is deliberately absent -- there is no recipient of a message that
+// was not sent.
+const UNDELIVERED_REPLY_REASONS = {
+  no_channel: 'this console is not attached to the messaging channels',
+  send_failed: 'the channel refused it',
+}
+export function appendReplyEvent(store, c, text, op, { delivered, reason, extra = {} }) {
+  if (delivered) {
+    return store.appendEvent(c.id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, by: op.id, ...extra } })
+  }
+  const why = UNDELIVERED_REPLY_REASONS[reason] || 'the send did not happen'
+  return store.appendEvent(c.id, {
+    kind: 'note', actor: 'operator', channel: c.channel,
+    text: `NOT SENT to the contact (${why}). Operator wrote: ${text}`,
+    data: { undelivered: true, reason, by: op.id, text, ...extra },
+  })
 }
 
 // Hand a case back: unassign it and, when a person had taken over ('observe'),

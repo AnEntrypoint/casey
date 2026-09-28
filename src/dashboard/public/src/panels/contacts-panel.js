@@ -20,7 +20,7 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
-import { Alert } from '/design/src/components/content/feedback.js';
+import { Alert, FilterPills } from '/design/src/components/content/feedback.js';
 import { Btn, Chip } from '/design/src/components/shell/atoms.js';
 import { TextField, Select } from '/design/src/components/content/fields.js';
 import { state, schedule } from '../state.js';
@@ -150,13 +150,17 @@ export function ContactsPanel() {
             if (!q) return true;
             return [c.display_name, c.external_id_formatted].join(' ').toLowerCase().includes(q.replace(/\s+/g, ' '));
         });
-        const seg = (key, text) => h('button', { type: 'button', key: 'seg-' + key, class: 'btn btn-sm' + (segment === key ? '' : ' btn-ghost'), 'aria-pressed': String(segment === key), onclick: () => { view.segment = key; schedule(); } }, text);
         return h('div', { class: 'ds-people' },
             h('div', { class: 'ds-people-filter' },
-                h('div', { class: 'ds-contact-actions', role: 'group', 'aria-label': 'Show' },
-                    seg('team', 'Team members (' + team.length + ')'),
-                    seg('public', 'Public reporters (' + (contacts.length - team.length) + ')'),
-                    seg('all', 'Everyone (' + contacts.length + ')')),
+                FilterPills({
+                    label: 'Show', selected: segment,
+                    options: [
+                        { id: 'team', label: 'Team members (' + team.length + ')' },
+                        { id: 'public', label: 'Public reporters (' + (contacts.length - team.length) + ')' },
+                        { id: 'all', label: 'Everyone (' + contacts.length + ')' },
+                    ],
+                    onSelect: (key) => { view.segment = key; schedule(); },
+                }),
                 TextField({ key: 'people-q', name: 'people-q', 'aria-label': 'Search by name or number', placeholder: 'Search by name or number', value: view.q, onInput: (v) => { view.q = v; schedule(); } })),
             shown.length ? Table({
                 headers: ['Who', 'Channel', 'Role', 'Last check-in', ''],

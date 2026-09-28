@@ -22,6 +22,7 @@ import { BRAND } from '../brand.js'
 const brandSlug = () => (BRAND.name || 'casey').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'casey'
 import { evData } from '../../safe.js'
 import { mountRoutes } from './register.js'
+import { assigneeNamer } from '../assignee-names.js'
 
 const reportDays = (req) => Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
 const msToHrs = (ms) => ms == null ? '' : Math.round(ms / 3600000 * 10) / 10
@@ -62,7 +63,8 @@ export async function gatherReport({ store, isOpenCase, getRoster }, days) {
     .flatMap(c => classifyCaseHealth(c, now, thresholds))
   const staleMs = Number.isFinite(thresholds?.staleMs) ? thresholds.staleMs : 24 * 3600 * 1000
   const { buildReport } = await import('../../report.js')
-  const report = buildReport(cases, eventsByCaseId, breachRows, now, days, await getRoster(), staleMs)
+  const named = await assigneeNamer(store, cases.filter(isOpenCase))
+  const report = buildReport(cases, eventsByCaseId, breachRows, now, days, [...await getRoster(), ...named.rosterEntries()], staleMs)
   return { report, cases, eventsByCaseId, thresholds, now }
 }
 
@@ -77,13 +79,14 @@ export async function gatherHandover({ store, isOpenCase, rankAttention }) {
   const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
   // Cases still needing attention, ranked by the same scorer the inbox uses.
   const { items } = rankAttention(open, now, { limit: 50, offset: 0 })
+  const named = await assigneeNamer(store, open)
   const attention = items.map(({ c, score, reason }) => ({
     id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
-    status: c.status, assignee: c.assignee || '', score, reason,
+    status: c.status, assignee: named(c.assignee || ''), score, reason,
   }))
   // Open handoffs not yet taken: a person was asked for and no operator owns it.
   const handoffs = open.filter(c => tagList(c).includes('needs-human'))
-    .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel, assignee: c.assignee || '' }))
+    .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel, assignee: named(c.assignee || '') }))
   // Unsent assisted drafts waiting for an operator to approve or discard.
   const drafts = open.filter(c => tagList(c).includes('draft-pending'))
     .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel }))
@@ -178,7 +181,7 @@ export function getOverview({ store, authed }) {
 // no per-contact rows, no external_id. On-demand single scan, never per-poll.
 // buildWorkload is the pure aggregator (like overview/attn) so the maths is one
 // place. The stale window reads the live operator-tuned thresholds when present.
-export function getWorkload({ store, authed, getRoster }) {
+export function getWorkload({ store, authed, getRoster, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildWorkload } = await import('../../workload.js')
@@ -188,7 +191,8 @@ export function getWorkload({ store, authed, getRoster }) {
     const eventsByCaseId = await store.listEventsByCase(cases.map(c => c.id)).catch(() => new Map())
     const th = (store.resolveThresholds ? await store.resolveThresholds() : null) || {}
     const staleMs = Number.isFinite(th.staleMs) ? th.staleMs : 24 * 3600 * 1000
-    const out = buildWorkload(cases, eventsByCaseId, await getRoster(), Date.now(), staleMs)
+    const named = await assigneeNamer(store, cases.filter(isOpenCase))
+    const out = buildWorkload(cases, eventsByCaseId, [...await getRoster(), ...named.rosterEntries()], Date.now(), staleMs)
     res.json(out)
   }
 }
@@ -272,6 +276,10 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
     const extById = new Map(cases.map(c => [c.id, String(c.external_id || '')]))
     let { rows, truncated } = await store.listAllEvents(optActor ? { actor: optActor } : {}, { limit: 100000 })
     rows = rows.filter(e => Number(e.created_at) >= sinceSec)
+    // An assignee change is recorded with the stable contact key; name it.
+    const held = []
+    for (const e of rows) { const d = evData(e); held.push(d.claimed_by, d.was) }
+    const named = await assigneeNamer(store, held, (v) => v)
     const lines = []
     lines.push(['case_ref', 'timestamp_sast', 'actor', 'action', 'field', 'old_value', 'new_value', 'reason'].join(','))
     for (const e of rows) {
@@ -281,8 +289,8 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
       const scrub = (v) => (v != null && ext && String(v) === ext) ? '[contact]' : (v == null ? '' : String(v))
       const field = d.field || (d.from != null || d.to != null ? 'status' : (d.claimed_by != null ? 'assignee' : ''))
       const fieldSafe = field && AUDIT_SAFE_ACTIONS.has(field)
-      const oldVal = fieldSafe ? (d.from != null ? d.from : (d.was != null ? d.was : (d.old != null ? d.old : ''))) : ''
-      const newVal = fieldSafe ? (d.to != null ? scrub(d.to) : (d.claimed_by != null ? d.claimed_by : (d.new != null ? d.new : ''))) : ''
+      const oldVal = fieldSafe ? (d.from != null ? d.from : (d.was != null ? named(d.was) : (d.old != null ? d.old : ''))) : ''
+      const newVal = fieldSafe ? (d.to != null ? scrub(d.to) : (d.claimed_by != null ? named(d.claimed_by) : (d.new != null ? d.new : ''))) : ''
       const reason = d.reason || ''
       lines.push([
         csvCell(refById.get(e.case_id) || e.case_id),
@@ -379,9 +387,11 @@ export function getUnreplied({ store, authed, isOpenCase }) {
     const open = (await store.listCases({}, { limit: 10000, offset: 0 }))
       .filter(c => isOpenCase(c) && tagList(c).includes('ai-offline'))
     open.sort((a, b) => (b.last_event_at || b.updated_at || 0) - (a.last_event_at || a.updated_at || 0))
-    const items = open.slice(0, UNREPLIED_ROW_CAP).map(c => ({
+    const shown = open.slice(0, UNREPLIED_ROW_CAP)
+    const named = await assigneeNamer(store, shown)
+    const items = shown.map(c => ({
       id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
-      status: c.status, assignee: c.assignee || '',
+      status: c.status, assignee: named(c.assignee || ''),
       last_event_at: c.last_event_at || c.updated_at || c.created_at || 0,
     }))
     res.json({ total: open.length, shown: items.length, items })

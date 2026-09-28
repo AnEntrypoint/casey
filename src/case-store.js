@@ -31,7 +31,7 @@ import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
 import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable, installVersionGuard } from './store/guards.js'
 import { REPORT_KEYS, REPORT_KEY_ORDER } from './store/report-shape.js'
-import { TIER_ORDER, resolveTierValue } from './contact-tiers.js'
+import { TIER_ORDER, TIER_FIELD_WORKER, atLeast, resolveTierValue } from './contact-tiers.js'
 import { isContactAssignee } from './case-assignment.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 import { validateCaseConfig, parseFieldEnums } from './store/config-schema.js'
@@ -425,7 +425,35 @@ export class CaseStore {
   // else and report success).
   async setContactTier(contactId, tier, user = SYSTEM_USER) {
     if (!TIER_ORDER.includes(tier)) throw new Error(`invalid tier: ${tier} -- expected one of ${TIER_ORDER.join(', ')}`)
-    return this.t.update('contact', contactId, { tier }, user)
+    const updated = await this.t.update('contact', contactId, { tier }, user)
+    await this._releaseHeldCases(contactId, tier, user)
+    return updated
+  }
+
+  // A person who drops below the field rung can no longer act on the records assigned
+  // to them, and a record left in their name keeps the assistant silent (a human owns
+  // it) with nobody driving. So the moment the rung is taken away, their open records
+  // go back to the queue: unassigned, and the assistant resumes where a person had
+  // taken over. Recorded on each timeline.
+  async _releaseHeldCases(contactId, tier, user) {
+    if (atLeast(tier, TIER_FIELD_WORKER)) return
+    return this.releaseCasesHeldBy(`contact:${contactId}`, 'the team member holding it lost their role', user)
+  }
+
+  // Every open record held by `key` (a `contact:<id>` key or a dashboard username)
+  // goes back to the queue: unassigned, the assistant resuming where a person had
+  // taken over. Used when the holder can no longer act on them.
+  async releaseCasesHeldBy(key, why, user = SYSTEM_USER) {
+    const held = await this.t.list('case', { assignee: key, status: { $in: this.getOpenStatuses() } }, { limit: 500 })
+    for (const c of held) {
+      const patch = { assignee: UNCLAIMED_ASSIGNEE }
+      const resumed = c.autonomy === 'observe'
+      if (resumed) patch.autonomy = 'auto'
+      await this.updateCase(c.id, patch, user)
+      await this.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'edited assignee', data: { assignee: UNCLAIMED_ASSIGNEE, released_because: why, was: key } })
+      if (resumed) await this.appendEvent(c.id, { kind: 'autonomy_change', actor: 'operator', text: 'autonomy observe -> auto', data: { from: 'observe', to: 'auto', reason: why } })
+    }
+    return held.length
   }
 
   // Register a phone number in a role BEFORE it has ever messaged in -- the
@@ -441,6 +469,7 @@ export class CaseStore {
     const patch = { tier }
     if (display_name && (!contact.display_name || contact.display_name === contact.external_id)) patch.display_name = display_name
     await this.t.update('contact', contact.id, patch, user)
+    await this._releaseHeldCases(contact.id, tier, user)
     return this.getContact(contact.id)
   }
 

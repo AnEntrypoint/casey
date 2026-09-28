@@ -14,7 +14,7 @@ import { schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchRoleInvites, postRoleInvite, deleteRoleInvite } from '../api.js';
 import { fmtTime } from '../format.js';
-import { tierLabel, brandName } from '../vocabulary.js';
+import { tierLabel, brandName, botNumber } from '../vocabulary.js';
 import { toast, failMsg } from '../toasts.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 import { tierOptions, assignableTiers } from './team-registration.js';
@@ -83,7 +83,7 @@ async function revoke(inv) {
 
 function sendText(inv) {
     return 'Hi' + (inv.label ? ' ' + inv.label : '') + ', to join ' + brandName() + ' as ' + tierLabel(inv.tier)
-        + ', send this code as a WhatsApp message to the ' + brandName() + ' number from your own phone: ' + inv.code
+        + ', send this code as a WhatsApp message to the ' + brandName() + ' number' + (botNumber() ? ' (' + botNumber() + ')' : '') + ' from your own phone: ' + inv.code
         + '. It works until ' + fmtTime(inv.expires_at) + '.';
 }
 

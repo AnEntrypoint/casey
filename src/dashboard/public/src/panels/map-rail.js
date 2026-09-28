@@ -15,7 +15,8 @@
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Select } from '/design/src/components/content/fields.js';
-import { Chip, Btn } from '/design/src/components/shell/atoms.js';
+import { FilterPills } from '/design/src/components/content/feedback.js';
+import { Btn } from '/design/src/components/shell/atoms.js';
 import {
     state, schedule, setActiveId, setMapFilter, clearMapFilter, setRailMode,
 } from '../state.js';
@@ -32,7 +33,7 @@ import { ClustersPanel } from './clusters-panel.js';
 // view. Both surfaces render the same control and it must not be able to drift
 // on one of them -- the same rule map-model.js enforces for the derivations
 // these chips apply.
-import { FilterChip, ClearChip } from '../components/filter-chip.js';
+import { FilterChip, ClearChip, QueueMore, PillButton } from '../components/filter-chip.js';
 import { headline } from '../format.js';
 
 const h = webjsx.createElement;
@@ -63,21 +64,21 @@ function applyFilterToMap() {
 function timeControl() {
     const opts = [{ v: '0', label: 'All time' }, { v: '7', label: 'This week' }, { v: '30', label: 'This month' }];
     return h('div', { class: 'ds-rail-controls' },
-        h('div', { class: 'ds-seg', role: 'group', 'aria-label': 'Time window' },
-            ...opts.map((o) => h('button', {
-                key: o.v, type: 'button', class: 'ds-seg-btn' + (state.mapFilter.days === o.v ? ' is-on' : ''),
-                'aria-pressed': state.mapFilter.days === o.v ? 'true' : 'false',
-                onclick: () => { if (state.mapFilter.days === o.v) return; setMapFilter({ days: o.v }); refresh(); },
-            }, o.label))),
+        FilterPills({
+            label: 'Time window', selected: state.mapFilter.days,
+            options: opts.map((o) => ({ id: o.v, label: o.label })),
+            onSelect: (v) => { if (state.mapFilter.days === v) return; setMapFilter({ days: v }); refresh(); },
+        }),
         // In the rail, not on the canvas: only the legend and the state note are
         // allowed to sit over the map. An operator who has zoomed into one
         // district previously had no way back to the whole picture except a page
         // reload, which re-buys the map payload and every tile.
-        h('button', {
-            key: 'reset', type: 'button', class: 'ds-rail-reset',
+        Btn({
+            key: 'reset', variant: 'ghost', size: 'sm',
             title: 'Move the map back to show every report',
-            onclick: () => { resetMapView(mapStateRef.current); },
-        }, 'Show all'));
+            onClick: () => { resetMapView(mapStateRef.current); },
+            children: 'Show all',
+        }));
 }
 
 // At most three, and every one of them DOES something. The previous version
@@ -92,7 +93,7 @@ function filterChips() {
     const chip = (key, label, count, on, onClick, title) => FilterChip({ key, label, count, on, onClick, title });
 
     const f = state.mapFilter;
-    return h('div', { class: 'ds-fchips' },
+    return h('div', { class: 'ds-filter-pills' },
         chip('attn', 'need a person', attentionCount, f.band === 'attention',
             () => { setMapFilter({ band: f.band === 'attention' ? null : 'attention' }); applyFilterToMap(); },
             'Show only the reports the guardrails are chasing'),
@@ -162,15 +163,9 @@ function attentionFeed() {
         // reveals the rest -- so a capped list can never silently disagree with
         // the chip above it again.
         all.length > rows.length
-            ? h('button', {
-                key: 'more', type: 'button', class: 'ds-queue-more',
-                onclick: () => { setQueueShown(all.length); },
-            }, `Show all ${all.length}`)
+            ? QueueMore({ key: 'more', onClick: () => { setQueueShown(all.length); }, children: `Show all ${all.length}` })
             : (shown > QUEUE_PAGE && all.length > QUEUE_PAGE
-                ? h('button', {
-                    key: 'less', type: 'button', class: 'ds-queue-more',
-                    onclick: () => { setQueueShown(QUEUE_PAGE); },
-                }, 'Show fewer')
+                ? QueueMore({ key: 'less', onClick: () => { setQueueShown(QUEUE_PAGE); }, children: 'Show fewer' })
                 : null));
 }
 
@@ -179,7 +174,7 @@ function attentionFeed() {
 function mapFilterRow() {
     const f = state.mapFilter;
     const options = filterOptions();
-    return h('div', { class: 'ds-map-filters' },
+    return h('div', { class: 'ds-btn-row ds-map-filters' },
         Select({
             key: 'sp', placeholder: 'all species', value: f.species,
             options: options.species, onChange: (v) => { setMapFilter({ species: v }); applyFilterToMap(); },
@@ -202,14 +197,8 @@ function mapFilterRow() {
 // sentence; the label stays short.
 function mapOverlayRow() {
     const ms = mapStateRef.current;
-    const tog = (key, label, title, on, onClick) => Chip({
-        key, tone: on ? 'accent' : '',
-        children: h('button', {
-            type: 'button', class: 'ds-chip-btn', title,
-            'aria-pressed': on ? 'true' : 'false', onclick: onClick,
-        }, label),
-    });
-    return h('div', { class: 'ds-map-overlays' },
+    const tog = (key, label, title, on, onClick) => PillButton({ key, title, active: on, onClick, children: label });
+    return h('div', { class: 'ds-btn-row ds-map-overlays' },
         tog('cl', 'Clusters', 'Draw a line between reports that look like the same event',
             !!(ms && ms.showClusters), () => { toggleClusters(ms, state.mapFilter); schedule(); }),
         tog('cov', 'Coverage', 'Ring the areas each operator has been working in',

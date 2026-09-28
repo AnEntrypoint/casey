@@ -128,7 +128,7 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
     // screen shouted in caps as P-VANWYK; it is a name, so it is written as
     // one.
     const claimBtn = (c.assignee && c.assignee !== 'agent')
-        ? h('span', { class: 'casey-claimed' }, isMine ? 'Yours' : 'Claimed by ' + c.assignee)
+        ? h('span', { class: 'casey-claimed' }, isMine ? 'Yours' : 'Claimed by ' + (c.assignee_name || c.assignee))
         : Btn({
             size: 'sm', variant: 'primary', children: 'Claim',
             onClick: async () => {
@@ -210,7 +210,7 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
             ),
             disclosed ? h('div', { class: 'casey-meta-body' },
                 contact ? contactNode(contact) : null,
-                contact ? h('button', { type: 'button', class: 'casey-copy-btn', onclick: async () => { try { await navigator.clipboard.writeText(contact); toast('Contact copied to the clipboard.'); } catch { toast('This browser would not let the page copy. Select the number above and copy it by hand.', 'err'); } } }, 'Copy contact') : null,
+                contact ? Btn({ variant: 'link', size: 'sm', children: 'Copy contact', onClick: async () => { try { await navigator.clipboard.writeText(contact); toast('Contact copied to the clipboard.'); } catch { toast('This browser would not let the page copy. Select the number above and copy it by hand.', 'err'); } } }) : null,
                 h('span', {}, 'created ', rel(c.created_at))
             ) : null
         )

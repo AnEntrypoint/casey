@@ -41,7 +41,7 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
   const opened = await openCaseForInbound({ store, log, msg, channel, external_id, replyTo, platform })
   if (opened.done) return opened.done
   const { caseRow, created, inboundText, media, msgId } = opened
-  await applyInboundSideEffects({ store, log, caseRow, created, msg, channel, inboundText, media })
+  const { promptNote = '', ingressRecorded = false } = (await applyInboundSideEffects({ store, log, caseRow, created, msg, channel, inboundText, media })) || {}
   if (!autoRespond) return { to: replyTo, text: '', platform, caseId: caseRow.id }
 
   // Guarded: unguarded, a transient store error here silently drops the whole
@@ -68,7 +68,8 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
   // maze, decides the reply.
   const contact = fresh.contact_id ? await store.getContact(fresh.contact_id).catch(() => null) : null
   const events = await store.listEvents(fresh.id)
-  const prompt = inboundText || (media ? `The contact sent ${media} with no text. Acknowledge and ask how you can help.` : 'The contact sent an empty message. Acknowledge politely.')
+  const basePrompt = inboundText || (media ? `The contact sent ${media} with no text. Acknowledge and ask how you can help.` : 'The contact sent an empty message. Acknowledge politely.')
+  const prompt = basePrompt + promptNote
 
   const queued = await llmDownQueueGate({ store, log, llmStatus, fresh, events, msg, msgId, replyTo, platform })
   if (queued) return queued
@@ -90,13 +91,13 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
     : null
   return await driveAgentTurn(deps, {
     adapter, fresh, contact, events, prompt, inboundText, media,
-    msg, msgId, channel, external_id, replyTo, platform, staffSend,
+    msg, msgId, channel, external_id, replyTo, platform, staffSend, ingressRecorded,
   })
 }
 
 async function driveAgentTurn(deps, {
   adapter, fresh, contact, events, prompt, inboundText, media,
-  msg, msgId, channel, external_id, replyTo, platform, staffSend = null,
+  msg, msgId, channel, external_id, replyTo, platform, staffSend = null, ingressRecorded = false,
 }) {
   const { store, log, callLLM, notifyHandoff } = deps
   // Durable turn-lifecycle marker: record that an agent turn STARTED for this
@@ -118,7 +119,7 @@ async function driveAgentTurn(deps, {
 
   const turn = await runAgentTurn({
     store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
-    channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend,
+    channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend, ingressRecorded,
   })
   const { result, errored, jargonReasons, falseConfirmReasons, degradedReason } = turn
   let text = turn.text
@@ -160,7 +161,7 @@ async function driveAgentTurn(deps, {
   // re-drive as a failed attempt instead of burning the queued message.
   const degraded = errored || isFallback
 
-  text = await correctOutboundRef({ store, fresh, text, result })
+  text = await correctOutboundRef({ store, fresh, text, result, inboundText, contact })
   if (!degraded) await clearAiOffline({ store, log, fresh })
 
   const held = await holdReplyForHuman({

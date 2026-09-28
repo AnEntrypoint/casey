@@ -9,9 +9,9 @@
 import { AGENT_USER } from './case-store.js'
 import { defTool, str, ownsCase, OBSERVE_TEXT_MAX_LEN } from './case-tools-shared.js'
 import { parseReport } from './timestamp.js'
-import { canSignOff } from './contact-tiers.js'
+import { canSignOff, canQueryCases } from './contact-tiers.js'
 import { isAssignedTo } from './case-assignment.js'
-import { doneStages } from './case-tools-team-shared.js'
+import { doneStages, authorityOn } from './case-tools-team-shared.js'
 import { writeGate, recordedOn, clearFocusForCase } from './team-focus.js'
 import {
   MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES,
@@ -113,10 +113,15 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         const unassigned = !String(c.assignee || '').trim() || String(c.assignee).trim() === 'agent'
         const signOffDesk = canSignOff(ctx?.tier) && doneStages().includes(to) && (isAssignedTo(c, ctx?.contact) || unassigned)
         const owns = ownsCase(c.external_id, author)
-        if (!owns && !signOffDesk) {
+        // An assignee or an operator who asks for a FINISHED stage is answered by the
+        // two checks below (which fact is missing / that finishing is not theirs), not
+        // by "does not belong to you": it does belong to them, and a person told the
+        // wrong reason goes looking for the wrong fix.
+        const authority = owns ? null : authorityOn(ctx, c)
+        if (!owns && !signOffDesk && !(authority && doneStages().includes(to))) {
           return { error: `case ${id} does not belong to you -- cannot transition it` }
         }
-        if (!owns) {
+        if (!owns && authority !== 'operator') {
           const refused = writeGate(ctx, c)
           if (refused) return refused
         }
@@ -148,6 +153,9 @@ export function buildCaseTimelineTools(store, { stageValues }) {
           : []
         if (blockedBy.length) {
           const labels = blockedBy.map(fieldLabel).join(', ')
+          // A team member who asked to finish a record is owed the plain reason; the
+          // "say nothing" wording below is for a reporter who never asked.
+          if (canQueryCases(ctx?.tier)) return { error: `this ${REPORT_ENTITY_LABEL} cannot be finished yet: ${labels} ${blockedBy.length === 1 ? 'is' : 'are'} still not recorded. Tell them exactly that, in one plain sentence, and that they can ask the reporter for ${blockedBy.length === 1 ? 'it' : 'them'} (case_gaps has a reminder text). Do not use stage names.` }
           return { error: `this ${REPORT_ENTITY_LABEL} cannot be marked done yet: ${labels} ${blockedBy.length === 1 ? 'is' : 'are'} still blank, and ${blockedBy.length === 1 ? 'that fact is' : 'those facts are'} the minimum anyone needs to act on it. Say NOTHING about this to the person -- no stage, no tool, no refusal. Ask them once, warmly, for the missing one, record it with ${REPORT_TOOL_NAME}, then call this again. If they cannot or will not answer, leave it as it is and let them go kindly; it stays open and a person will look at it.` }
         }
         // SIGN-OFF AUTHORITY, the second condition on the same move -- checked
@@ -178,6 +186,7 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         // operator-assigned and never contact-self-service or LLM-settable, so a
         // turn that cannot prove the tier has no claim to it.
         if (MANDATORY_MINIMUM_BLOCKED_STATUSES.includes(to) && !canSignOff(ctx?.tier)) {
+          if (canQueryCases(ctx?.tier)) return { error: `every required fact is recorded, but finishing a ${REPORT_ENTITY_LABEL} is not something they can do: only the animal health technician signs it off. Tell them so plainly in one sentence, and that it stays open until the technician finishes it. Do not use stage names.` }
           return { error: `this ${REPORT_ENTITY_LABEL} is complete but signing it off is not yours to do -- only the animal health technician marks one ${MANDATORY_MINIMUM_BLOCKED_STATUSES.join('/')}. Nothing is missing and nothing needs asking: every fact is already recorded. Say NOTHING about this to the person -- no stage, no tool, no permission, no refusal. Thank them warmly for what they gave you and let them go; it stays open, and the person who signs these off will finish it.` }
         }
         try {

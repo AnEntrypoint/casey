@@ -13,6 +13,8 @@
 import { observation, flagNeedsHuman } from './case-writes.js'
 import { applyServiceControls, isLlmDown } from './service-controls.js'
 import { describeMedia, recordInboundMedia, recordInboundLocation } from './media-intake.js'
+import { routeStaffArtifact, recordRelayedLocationPin, noteRoute } from './media-relay.js'
+import { staffLabel } from './staff-outbound.js'
 import { truncate, stripChannelMarkup, mergeTag, dropTag } from './heuristics.js'
 import { isContactAssignee } from '../case-assignment.js'
 import { recordDroppedInbound } from './dropped-intake.js'
@@ -161,7 +163,11 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
 
 // The append-only intake writes that follow a recorded inbound: supersede a
 // stale assisted draft, record every media artifact, and (on a brand-new case)
-// seed the subject, tag the intake source and note the opening.
+// seed the subject, tag the intake source and note the opening. Returns
+// `{ promptNote, ingressRecorded }`: the one system note (hooks/media-relay.js)
+// this turn's prompt carries when a team member's media was routed, else '', and
+// whether that media was filed on an assigned record (a real write the reply
+// judge must count, though no tool call made it).
 //
 // Every write in here is best-effort and individually guarded: this is
 // audit-trail decoration and the case already exists, so nothing in here may
@@ -186,14 +192,29 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   // single media object and Discord's resolves an ARRAY, so a read that assumes
   // the WhatsApp shape strands a Discord photo at the text-only floor with real
   // downloaded bytes sitting right there. Append-only and best-effort.
-  await recordInboundMedia({ store, log, caseId: caseRow.id, msg })
+  //
+  // A team member (>= field_worker) on site is the one exception: their photos,
+  // voice notes and pins go to the ASSIGNED record they have confirmed focus on
+  // (or, when that is not certain, stay here and the model asks) -- see
+  // hooks/media-relay.js. Everyone else, and a team member with nothing
+  // assigned, takes the unchanged path below.
+  const route = await routeStaffArtifact({ store, log, caseRow, msg, inboundText, msgId: messageId(msg) })
+  const promptNote = route ? await noteRoute({ store, log, caseRow, route, msg }) : ''
+  const ingressRecorded = route?.mode === 'relay'
+  if (ingressRecorded) {
+    const relay = { by: staffLabel(route.contact), contactId: route.contact.id }
+    await recordInboundMedia({ store, log, caseId: route.target.id, msg, relay })
+    await recordRelayedLocationPin({ store, log, route, msg })
+  } else {
+    await recordInboundMedia({ store, log, caseId: caseRow.id, msg })
+  }
   // A shared location pin is the same class of unrecapturable on-site artifact
   // and is captured the same way -- before the agent turn, deterministically,
   // because the model never sees the webhook payload the coordinates arrive in.
   // Runs BEFORE inbound-turn.js re-reads the case, so this turn's prompt already
   // carries the real position and its provenance.
-  await recordInboundLocation({ store, log, caseId: caseRow.id, msg })
-  if (!created) return
+  if (route?.mode !== 'relay') await recordInboundLocation({ store, log, caseId: caseRow.id, msg })
+  if (!created) return { promptNote, ingressRecorded }
   if (!caseRow.subject) {
     const subj = truncate(inboundText || media || 'New conversation', 80)
     try { await store.updateCase(caseRow.id, { subject: subj }) } catch (e) { log.warn?.('[casey] seed subject failed', { error: e.message }) }
@@ -206,6 +227,7 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   } catch (e) { log.warn?.('[casey] intake_mode tag failed', { error: e.message }) }
   try { await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` }) }
   catch (e) { log.warn?.('[casey] case-opened note failed', { caseId: caseRow.id, error: e.message }) }
+  return { promptNote, ingressRecorded }
 }
 
 // IRREVERSIBLE SERVICE CONTROLS + observe mode -- the only deterministic

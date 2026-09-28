@@ -19,6 +19,7 @@ import { REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_TOOL_NAME, REPORT_TOOL
 import { normalizeLocation } from './location-normalize.js'
 import { recordProvenanceObservation } from './provenance-wire.js'
 import { defTool, str, pick, boundCase, isValidLatLon } from './case-tools-shared.js'
+import { findCase, deskAuthorityOn } from './case-tools-team-shared.js'
 
 const OBSERVE_BLOCKED = { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
 const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed'])
@@ -44,6 +45,8 @@ export function buildCaseReportTools(store) {
         required: ['id'],
       },
       async ({ id, lat, lon, location_source, ...fields }, ctx) => {
+        const elsewhere = await namesHeldRecord(store, ctx)
+        if (elsewhere) return { error: `This message is about ${elsewhere}, a record held by this team member, not about their own report. Nothing was recorded on their own report. Say which record it is (${elsewhere}), ask them to confirm it in their next message, then use case_focus and case_edit for it.` }
         const target = await resolveReportTarget(store, id, ctx)
         if (target.error) return { error: target.error }
         id = target.id
@@ -86,6 +89,23 @@ export function buildCaseReportTools(store) {
 // case, so accepting either preserves the invariant (writes only ever land on the
 // active conversation case). The returned id is normalized to the internal id no
 // matter which name the model passed.
+// A team member's message that names a record they hold (its reference, typed by
+// them) is about THAT record. case_report writes the conversation's own report, so
+// it would file their relayed sighting under their own name. Equality and ownership
+// only: the named reference must resolve to a record they have authority on and must
+// not be the one this conversation is bound to.
+async function namesHeldRecord(store, ctx) {
+  const named = ctx?.inboundRefs || []
+  if (!named.length || !ctx?.contact) return null
+  const own = String(boundCase(ctx).ref || '').toUpperCase()
+  for (const ref of named) {
+    if (ref === own) continue
+    const c = await findCase(store(), ref)
+    if (c && deskAuthorityOn(ctx, c)) return c.ref
+  }
+  return null
+}
+
 async function resolveReportTarget(store, id, ctx) {
   const bound = boundCase(ctx)
   if (bound.id && (id === bound.id || id === bound.ref)) return { id: bound.id }

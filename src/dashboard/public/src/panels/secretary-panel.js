@@ -82,7 +82,7 @@ function filterBar() {
     const opt = (val, label) => Btn({
         size: 'sm', variant: filter === val ? 'primary' : 'ghost', children: label, onClick: () => setFilter(val),
     });
-    return h('div', { class: 'ds-secretary-filters' }, opt('all', 'All'), ' ', opt('me', 'Mine'), ' ', opt('unassigned', 'Unassigned'));
+    return h('div', { class: 'ds-btn-row' }, opt('all', 'All'), ' ', opt('me', 'Mine'), ' ', opt('unassigned', 'Unassigned'));
 }
 
 const HEADERS = ['Ref', 'Subject', 'Channel', 'Assignee', 'Waiting', 'Why', 'Last update'];

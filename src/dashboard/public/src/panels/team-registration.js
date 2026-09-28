@@ -12,7 +12,7 @@ import { TextField, Select } from '/design/src/components/content/fields.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { schedule } from '../state.js';
 import { postContactRegister } from '../api.js';
-import { tierLabel, TIER_ORDER } from '../vocabulary.js';
+import { tierLabel, TIER_ORDER, botNumber, brandName } from '../vocabulary.js';
 import { glossaryLookup } from '../glossary.js';
 import { toast, failMsg } from '../toasts.js';
 
@@ -53,7 +53,7 @@ export function TeamRegistration({ isAdmin, onDone }) {
             class: 'ds-team-form', novalidate: true,
             onsubmit: (e) => { e.preventDefault(); submit(isAdmin, onDone); },
         },
-            h('p', { class: 'ds-team-lede' }, 'Add someone by their WhatsApp number. Next time they message, they are treated in the role you pick here. They do not need to do anything.'),
+            h('p', { class: 'ds-team-lede' }, 'Add someone by their WhatsApp number. Next time they message, they are treated in the role you pick here. They do not need to do anything.' + (botNumber() ? ' They reach ' + brandName() + ' on WhatsApp at ' + botNumber() + '.' : '')),
             h('div', { class: 'ds-team-row' },
                 TextField({ key: 'tf-phone', name: 'team-phone', label: 'WhatsApp number', type: 'tel', value: form.phone, placeholder: '079 091 5297 or +27 79 091 5297', onInput: (v) => { form.phone = v; form.error = null; } }),
                 TextField({ key: 'tf-name', name: 'team-name', label: 'Name (optional)', value: form.name, placeholder: 'e.g. Thandi Mokoena', maxLength: 80, onInput: (v) => { form.name = v; } }),

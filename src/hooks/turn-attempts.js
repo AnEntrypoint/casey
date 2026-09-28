@@ -654,7 +654,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
 // below, and driveAgentTurn's re-read for why the caller needs it).
 export async function runAgentTurn({
   store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
-  channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend = null,
+  channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend = null, ingressRecorded = false,
 }) {
   // A resume/queue re-drive is retrying a turn already known to have failed
   // before -- exempt it from the shared completion-health window (see llm.js's
@@ -765,7 +765,7 @@ export async function runAgentTurn({
     }
     const verdict = await evaluateCandidate({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
-      priorAttemptWrote: turnWroteSomething, systemPromptText,
+      priorAttemptWrote: turnWroteSomething || ingressRecorded, systemPromptText,
       staffRefs: canQueryCases(resolvedTier) ? touchedRefs(result) : [],
       // Read AFTER this attempt's writes and against the case the attempt ended
       // bound to (case_new/case_switch can have moved it) -- see

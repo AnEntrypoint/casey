@@ -30,6 +30,8 @@ import { state } from './state.js';
 export function activeConfig() { return state.runConfig || state.config; }
 
 /** @returns {string} this deployment's product name, e.g. "Herd Health". */
+// The bot's own WhatsApp number, display-formatted by the server ('' until known).
+export function botNumber() { return state.config?.whatsapp_number || ''; }
 export function brandName() { return activeConfig()?.dashboard_ui?.brand || state.config?.dashboard_ui?.brand || 'casey'; }
 
 /** @returns {string} the record's name in lower case, e.g. "report". */

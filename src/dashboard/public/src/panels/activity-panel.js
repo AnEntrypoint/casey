@@ -6,7 +6,7 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Select } from '/design/src/components/content/fields.js';
 import { Alert } from '/design/src/components/content/feedback.js';
-import { Chip } from '/design/src/components/shell/atoms.js';
+import { LogRow } from '/design/src/components/content/row.js';
 import { Icon } from '/design/src/components/shell.js';
 import { state, setActiveId } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
@@ -37,28 +37,29 @@ const loader = createPanelLoader({
     apply: (j) => { state._activity = j; },
 });
 
+// The kit's LogRow (tone rail + icon + label + text + meta), the same row the case
+// timeline uses, with eventTone()'s four tones being LogRow's four. The wrapper only
+// makes it a control when the event belongs to a case.
 function ActivityRow(e, i) {
+    const row = LogRow({
+        kind: e.kind, tone: eventTone(e.kind),
+        leading: Icon(eventIcon(e.kind), { size: 14 }),
+        label: kindLabel(e.kind),
+        text: (e.text || '').trim().slice(0, 200) || actorLabel(e.actor),
+        meta: h('span', { title: fmtTime(e.created_at) }, actorLabel(e.actor) + ' - ' + rel(e.created_at)),
+    });
+    if (!e.case_id) return h('div', { key: e.id != null ? e.id : i }, row);
     return h('div', {
-        key: e.id != null ? e.id : i,
-        class: 'ds-activity-row ds-activity-tone--' + eventTone(e.kind),
-        tabindex: e.case_id ? '0' : null,
-        role: e.case_id ? 'button' : null,
-        'aria-label': e.case_id ? ('Open the ' + entityLabel() + ' this happened on') : null,
-        onclick: e.case_id ? () => setActiveId(e.case_id) : null,
-        onkeydown: e.case_id ? (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); setActiveId(e.case_id); } } : null,
-    },
-        h('span', { class: 'ds-activity-icon' }, Icon(eventIcon(e.kind), { size: 14 })),
-        h('div', { class: 'ds-activity-body' },
-            h('div', { class: 'ds-activity-top' },
-                Chip({ tone: eventTone(e.kind), size: 'sm', children: kindLabel(e.kind) }),
-                h('span', { class: 'ds-activity-who' }, actorLabel(e.actor)),
-                h('span', { class: 'ds-activity-when', title: fmtTime(e.created_at) }, rel(e.created_at))),
-            (e.text || '').trim() ? h('div', { class: 'ds-activity-text' }, (e.text || '').slice(0, 200)) : null));
+        key: e.id != null ? e.id : i, class: 'ds-activity-link', tabindex: '0', role: 'button',
+        'aria-label': 'Open the ' + entityLabel() + ' this happened on',
+        onclick: () => setActiveId(e.case_id),
+        onkeydown: (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); setActiveId(e.case_id); } },
+    }, row);
 }
 
 export function ActivityPanel() {
     loader.ensureLoaded();
-    const filterRow = h('div', { class: 'ds-activity-filters' },
+    const filterRow = h('div', { class: 'ds-btn-row ds-activity-filters' },
         Select({
             key: 'k', placeholder: 'all kinds', value: filters.kind,
             options: eventKindOptions(),
@@ -72,7 +73,7 @@ export function ActivityPanel() {
     const body = loader.slot(() => {
         const ev = (state._activity && state._activity.events) || [];
         return ev.length
-            ? h('div', { class: 'ds-activity-list' }, ...ev.map((e, i) => ActivityRow(e, i)))
+            ? h('div', {}, ...ev.map((e, i) => ActivityRow(e, i)))
             : Alert({ kind: 'info', children: 'Nothing matches these filters.' });
     });
     return Panel({ children: [filterRow, body] });

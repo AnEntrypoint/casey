@@ -83,7 +83,10 @@ export function buildWorkload(cases, eventsByCaseId, roster = [], now = Date.now
     // caller's seed list) never asked for it.
     for (const e of events) {
       if (e.kind === 'outbound' && e.actor === 'operator') {
-        const by = String(evData(e).by || '').trim()
+        const d = evData(e)
+        // A team member who replies over WhatsApp is credited by the stable
+        // contact key recorded with the message, not by their display name.
+        const by = d.staff_contact_id ? `contact:${d.staff_contact_id}` : String(d.by || '').trim()
         if (!by || !rosterIds.has(by)) continue
         const m = evMs(e)
         if (m != null && m >= replyWindowStart) card(by).replies_24h++
@@ -115,6 +118,8 @@ export function buildWorkload(cases, eventsByCaseId, roster = [], now = Date.now
   const operators = [...cards.values()].map(k => {
     k.first_reply_ms_median = median(k._firstReplies)
     delete k._firstReplies
+    // A contact key is storage, never display: the card is identified by name.
+    if (k.id.startsWith('contact:')) k.id = k.name
     return k
   })
   // Worst-first: stale claims dominate (a dropped case is the real failure),

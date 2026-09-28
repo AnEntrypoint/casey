@@ -98,12 +98,11 @@ export function SettingsPanel() {
     const j = state._thresholds || {};
     const rows = Object.keys(THRESH_META).filter((k) => draft[k] !== undefined).map((k) => {
         const [lab, help] = THRESH_META[k];
-        return h('div', { key: k, class: 'ds-settings-row' },
-            TextField({
-                key: 'f', label: lab, hint: help, type: 'number', min: 0,
-                value: draft[k], name: k,
-                onInput: (v) => { draft[k] = v; schedule(); },
-            }));
+        return TextField({
+            key: k, label: lab, hint: help, type: 'number', min: 0,
+            value: draft[k], name: k,
+            onInput: (v) => { draft[k] = v; schedule(); },
+        });
     });
     return h('div', { class: 'ds-settings-panel' },
         h('p', { class: 'ds-settings-state' }, 'These are the deadlines the guardrail sweep checks every case against. Every value is in hours: 24 is a day, 168 is a week. Decimals are allowed, so 0.5 is thirty minutes.'),

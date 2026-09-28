@@ -143,13 +143,15 @@ function ActionRow() {
     h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, it.glyph),
     h('span', { key: 'l', class: 'ds-action-label' }, it.label),
   ];
-  return h('div', { class: 'ds-action-row' }, ...items.map((it) => {
+  return h('div', { class: 'ds-btn-row ds-action-row' }, ...items.map((it) => {
     if (it.href) {
-      // A real anchor, not a JS click -- Export has to actually download.
-      return h('a', {
-        key: it.key, class: 'ds-action-link', href: it.href,
-        title: it.ariaLabel || it.label, 'aria-label': it.ariaLabel || it.label,
-      }, ...face(it));
+      // A real anchor (Btn renders <a> for a real href), not a JS click -- Export
+      // has to actually download. Desk work, so it gives way first like the rest.
+      return h('span', { key: it.key, class: 'ds-action-rare' },
+        Btn({
+          variant: 'ghost', href: it.href, children: face(it),
+          title: it.ariaLabel || it.label, 'aria-label': it.ariaLabel || it.label,
+        }));
     }
     // Anything that is neither the primary action nor a mode toggle is desk
     // work (Sweep now, Refresh) and gives way first on a narrow screen -- see

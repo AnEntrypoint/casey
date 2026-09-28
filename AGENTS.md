@@ -33,12 +33,32 @@ carries its own default.
 | `animal_health_technician` | Everything above, plus the EXCLUSIVE authority to move a report to a done stage. | See the AHT-exclusive-signoff principle under Design principles. |
 | `operator` | Everything above EXCEPT sign-off: the team-management rung (work the queue, reply to reporters, assign, issue role invites) for a team member who mainly uses the dashboard but must be able to work over WhatsApp too. | Sits above the technician on the ladder, and `canSignOff` is an equality test, so it does NOT inherit sign-off. Only an admin may grant it. |
 
+**Team media on site (`hooks/media-relay.js`).** A ranger or technician
+(>= `field_worker`) messages the bot on the reporter's behalf, so their photos,
+voice notes and location pins must never reach the wrong record. Media is filed
+on an assigned record ONLY when that record is `isAssignedTo` the sender (never
+their own chat), is their CONFIRMED focus, is fresh (the 30-minute rule), and
+the message names no other reference -- exactly `writeGate`. It is saved with
+its usual kind, attributed `[relayed by <name> on the reporter's behalf]` in the
+report note and on the timeline event (a voice-note transcript keeps its "AI
+helper" attribution), and the reply must state the reference and identifying
+line and confirm what was saved. In every other case the media stays on the
+sender's own record (nothing is dropped) and a system note tells the model to
+ask which record it belongs to, naming the candidate, never guessing; nothing
+already sent is moved. A reporter, or a team member with nothing assigned, is
+unchanged. A ranger's shared pin is the RANGER's position: it is recorded as a
+`ranger location pin` observation on the assigned record and updates their
+check-in position (`case_checkin` semantics); the record's own lat/lon
+(the animals) is untouched unless the model asks and the ranger says the pin is
+where the animals are, when it uses `case_edit` with the pin's exact
+coordinates. The same rung rule for STOP is in the STOP/HUMAN bullet below.
+
 **A phone number gets a role by exactly two mechanisms, neither reachable from
 a contact's own free text.** (1) An operator ASSIGNS it in the dashboard:
 `POST /api/contacts/:id/tier` for an existing contact, or `POST
 /api/contacts/register {phone,name,tier}` for a number that has never messaged
 in (`case-store.js`'s `registerContact`; `normalizeMsisdn` makes "079 091 5297"
-and "+27 79 091 5297" land on the key the webhook later delivers). (2) A person
+and "+27 (0) 79 091 5297" (or a number pasted with direction marks) land on the key the webhook later delivers, and refuses a South African number that is not 27 plus nine digits rather than register a key nothing will ever match). (2) A person
 sends a ONE-TIME CODE over WhatsApp: an operator mints it (`POST
 /api/role-invites`, or an operator-rung number over WhatsApp), and
 `hooks/role-registration.js` consumes it in `runInboundTurn` AFTER admission and
@@ -48,7 +68,7 @@ cannot decide the outcome, and a wrong guess opens no case. Codes live in
 `src/role-invites.js` as an append-only audited log on a `role-invites` system
 singleton case (no schema change), only a SHA-256 is stored (the plain code is
 returned once at creation), single use by default, 72h default life, claims are
-serialised per code, a code never DEMOTES, and wrong guesses are capped per
+serialised per code, a code never DEMOTES, at most 100 unused codes exist at once, a code sitting inside a longer message registers nobody and is stripped from the text before it is stored or shown to the model (`withoutIssuedCodes`; a space-separated code counts only when it matches one we issued), and wrong guesses are capped per
 contact (5/hour) and deployment-wide (40/hour). The operator rung can be granted
 only by an admin, by either mechanism. Both end in `setContactTier`.
 
@@ -85,6 +105,10 @@ state of all twenty comparisons before `contact-tiers.js` existed. Use
 `canQueryCases`/`atLeast`; `hooks/prompt.js`'s `selfCheckLoadBearingPromptContent`
 composes the TOP rung's prompt and throws if an elevated instruction is missing
 from it, which is what catches a branch rewritten back into an equality.
+
+**A record is only ever held by someone who can act on it.** Dropping a contact below the field rung (`setContactTier`, `registerContact`) or deleting a field login releases every open record they held (`CaseStore.releaseCasesHeldBy`: unassigned, `observe` back to `auto`, recorded), the dashboard PATCH refuses an assignee who is not on the team or a login that does not exist, and no path assigns a record to the person whose own chat it is (`case-assignment.js`'s `isOwnConversation`; `sendStaffMessage` and `authorityOn` refuse it too). `case_claim` and dispatch accept read, check and write under one lock per record, so two people claiming at once cannot both be told yes. A ranger's dashboard reply moves `auto` to `observe` exactly as their WhatsApp reply does. A reply to a team member may name any record they typed or hold (`turn-outcome.js` `namedRefsToKeep`); only a reference that resolves to nothing they hold is rewritten to the conversation's own, and `case_report` refuses a message that names a held record so a relayed sighting is never filed on the person's own report.
+
+**Assignee display and dashboard assignment.** A stored `contact:<id>` assignee is storage, never display: `src/dashboard/assignee-names.js` builds one namer per request and every dashboard payload that shows an assignee (lists, workload, handover, health, attention, map, csv, timeline data) uses it, so a WhatsApp team member appears by name; only the case DETAIL keeps the key (for a dashboard operator, so the editor's picker can seed). `PATCH /api/cases/:id` may change the assignee on an `observe` case; a change or unassign runs `hooks/staff-outbound.js`'s `releaseCase` (back to `auto`) and `clearFocusForCase`, and an assignment to a contact writes an event with `assigned_contact_id`, which is what `staff-notices.js` reads as "newly assigned". The bot's own number reaches the SPA as `whatsapp_number` on `/api/config`, read best-effort from the Graph API by `WhatsappAdapter.displayNumber()`.
 
 casey amplifies the team's workflow -- it does not
 impose domain-specific rules or escalation; priority stays with people.
@@ -630,6 +654,7 @@ src/
   contact-tiers.js         THE contact access ladder: TIER_ORDER, fail-closed resolveTierValue, the atLeast/canQueryCases rank tests and canSignOff (see "The contact access ladder")
   case-tools-team.js      the ROLE tools, appended after the original 18 and gated per rung by case-tools-gates.js TOOL_MIN_TIER (a RANK test; hidden from a lower tier's schema by hiddenToolNamesForTier through the same disabledToolsets seam): -team-field.js (field_worker: case_pending case_claim case_release case_dispatch_reply case_focus case_gaps case_contact case_edit case_stage case_message), -team-review.js (animal_health_technician: signoff_queue case_review case_reopen case_ask_ranger; sign-off itself stays case_transition's canSignOff equality), -team-operator.js (operator: team_queue team_handover team_assign team_draft team_remind team_invite team_register team_roster team_quiet_staff team_nudge_staff); -team-shared.js holds authorityOn (operator, or an assignee on THEIR assigned record; deskAuthorityOn adds the technician's unassigned queue) and teamRow (PII-free)
   case-assignment.js       tiny fail-closed assignee predicate: assigneeKeyFor(contact) = 'contact:<id>', isAssignedTo(caseRow, contact), isContactAssignee, contactIdOfAssignee, publicAssignee (renders a key as 'you' / 'a team member'); legacy usernames and 'agent' keep their meaning
+  hooks/media-relay.js     where a team member's photo / voice note / location pin goes: filed on their CONFIRMED, fresh, assigned focus (writeGate) attributed as relayed, else kept on their own chat with a prompt note that makes the model ask which record; a ranger's pin is their OWN position (see "Team media on site")
   team-focus.js            which record a ranger/technician is working on, in code: writeGate refuses an unconfirmed record, a record the inbound message does not name, or two named at once; confirmation must come in a LATER turn; recordedOn is the shape every team write returns; state is in memory (restart = ask again)
   staff-notices.js         queued news for an assignee (newly assigned, reporter answered, dispatch suggested), derived from timeline events and delivered as a counts-only note in their next in-window turn and by case_pending
   hooks/staff-outbound.js  the ONE outbound path for a team member's message to a reporter: opt-out + 24h-window + wired-channel refusals, then Casey.sendReply (the dashboard's own seam); records outbound actor 'operator' with data.by; first human reply claims an unclaimed record and moves 'auto' to 'observe'; releaseCase hands back and resumes 'auto'
@@ -1429,6 +1454,13 @@ without restart-on-crash.
   the same real-LLM turn as any other reply -- no hardcoded per-language
   template. A STOP arriving with real report content is flagged for manual
   review rather than silently actioned and forgotten.
+  **STOP is the PUBLIC's control.** For a contact at or above `field_worker`
+  it has no service meaning and a sentence like "wrong one, stop" is ordinary
+  conversation, so for that tier alone STOP fires only when the ENTIRE message
+  is exactly one existing STOP keyword (`isBareStopKeyword`: whole-message
+  equality after the detector's own normalisation, reading `STOP_KEYS`, adding
+  no vocabulary). A reporter, or a contact whose tier cannot be read, is
+  byte-identical to before; HUMAN is unchanged for every tier.
 - **A fast message burst is buffered and replayed, never silently
   dropped.** A message that hits the per-contact in-flight guard is queued
   and replayed as a full turn once the in-flight turn clears. The buffer is

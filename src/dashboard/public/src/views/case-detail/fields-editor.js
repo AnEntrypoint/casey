@@ -56,7 +56,7 @@ function operatorTagsOnly(tags) { return String(tags || '').split(',').map(s => 
 function draftFor(c) {
     return {
         subject: c.subject || '', summary: c.summary || '', priority: c.priority || '',
-        autonomy: c.autonomy || 'auto', assignee: c.assignee || '', case_type: c.case_type || 'unset',
+        autonomy: c.autonomy || 'auto', assignee: c.assignee || '', assignee_label: c.assignee_name || c.assignee || '', case_type: c.case_type || 'unset',
         tags: operatorTagsOnly(c.tags),
     };
 }
@@ -94,7 +94,7 @@ function assigneeControl(d, set) {
     // a <select> when the list arrived.
     if (!roster.length) return h('div', { key: 'assignee-text' }, TextField({ label: 'Assignee', value: d.assignee, onInput: (v) => set('assignee', v) }));
     const opts = [{ value: '', label: 'Nobody yet' }, ...roster.map((m) => ({ value: m.key, label: m.name + ' (' + m.role + ', ' + m.via + ')' }))];
-    if (d.assignee && !opts.some((o) => o.value === d.assignee)) opts.push({ value: d.assignee, label: d.assignee });
+    if (d.assignee && !opts.some((o) => o.value === d.assignee)) opts.push({ value: d.assignee, label: d.assignee_label || d.assignee });
     return h('div', { key: 'assignee-pick' }, Select({ label: 'Assigned to', value: d.assignee || '', options: opts, onChange: (v) => set('assignee', v) }));
 }
 

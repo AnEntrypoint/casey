@@ -10,6 +10,9 @@
 // reason was false at the time it was written as well as now. The real reason
 // is the one above, and it stands on its own.
 
+import * as webjsx from '/design/vendor/webjsx/index.js';
+import { Select, TextField } from '/design/src/components/content/fields.js';
+import { Btn } from '/design/src/components/shell/atoms.js';
 import { toast } from '../toasts.js';
 import { postDispatch } from '../api.js';
 import { brandName } from '../vocabulary.js';
@@ -17,6 +20,7 @@ import { brandName } from '../vocabulary.js';
 // The deployment's own product name (dashboard_ui.brand), never the literal
 // 'casey' -- an operator never meets the name of the software underneath.
 const brand = brandName;
+const h = webjsx.createElement;
 
 function haversineKm(lat1, lon1, lat2, lon2) {
     const R = 6371, toRad = (d) => (d * Math.PI) / 180;
@@ -27,50 +31,28 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 
 function showWorkerPicker(title, message, workers) {
     return new Promise((resolve) => {
-        function mk(tag, cls, txt) { const el = document.createElement(tag); if (cls) el.className = cls; if (txt != null) el.textContent = txt; return el; }
-        const overlay = mk('div', 'ds-dialog-backdrop');
+        // Built once from the kit's own Select / TextField / Btn (each carries a
+        // real <label>, so the select and the note are named for a screen reader)
+        // inside casey's shared .ds-dialog-* shell. Uncontrolled: the picker never
+        // re-renders, so the two values are simply read back on confirm.
+        let workerId = workers[0] ? workers[0].id : '', note = '';
+        const overlay = document.createElement('div');
+        overlay.className = 'ds-dialog-backdrop';
         overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true');
-        const card = mk('div', 'ds-dialog-panel');
-        const head = mk('div', 'ds-dialog-head');
-        head.appendChild(mk('h3', 'ds-dialog-title', title));
-        card.appendChild(head);
-        card.appendChild(mk('p', 'ds-dialog-message', message));
-        // Both controls carry a real <label for>. They had none: the select was
-        // named only by its own first option, and the textarea by nothing at
-        // all, so a screen reader announced an unlabelled edit box in a dialog
-        // whose whole purpose is choosing who goes where. Ids are per-instance
-        // because this dialog is built imperatively and could in principle be
-        // opened twice before the first is torn down.
-        const uid = 'dispatch-' + Math.random().toString(36).slice(2, 9);
-        const sel = document.createElement('select');
-        sel.className = 'casey-dispatch-select';
-        sel.id = uid + '-worker';
-        const selLabel = mk('label', 'casey-dispatch-label', 'Who should go');
-        selLabel.setAttribute('for', sel.id);
-        card.appendChild(selLabel);
-        for (const w of workers) {
-            const o = document.createElement('option'); o.value = w.id;
-            o.textContent = (w.display_name || 'field worker') + (w.km != null ? ` (${w.km.toFixed(1)}km${w.stale ? ', stale' : ''})` : (w.stale ? ' (stale)' : ''));
-            sel.appendChild(o);
-        }
-        card.appendChild(sel);
-        const noteInp = document.createElement('textarea'); noteInp.rows = 2;
-        noteInp.className = 'casey-dispatch-note';
-        noteInp.id = uid + '-note';
-        const noteLabel = mk('label', 'casey-dispatch-label', 'Optional note for the team');
-        noteLabel.setAttribute('for', noteInp.id);
-        card.appendChild(noteLabel);
-        card.appendChild(noteInp);
-        const row = mk('div', 'ds-dialog-foot-row');
-        const cancelBtn = mk('button', 'casey-dispatch-cancel', 'Cancel');
-        const okBtn = mk('button', 'casey-dispatch-ok', 'Suggest dispatch');
-        row.appendChild(cancelBtn); row.appendChild(okBtn); card.appendChild(row);
-        overlay.appendChild(card); document.body.appendChild(overlay);
-        const close = (confirmed) => { overlay.remove(); resolve(confirmed ? { workerId: sel.value, note: noteInp.value || '' } : null); };
-        okBtn.onclick = () => close(true);
-        cancelBtn.onclick = () => close(false);
+        const close = (confirmed) => { overlay.remove(); resolve(confirmed ? { workerId, note } : null); };
+        const workerLabel = (w) => (w.display_name || 'field worker')
+            + (w.km != null ? ` (${w.km.toFixed(1)}km${w.stale ? ', stale' : ''})` : (w.stale ? ' (stale)' : ''));
+        webjsx.applyDiff(overlay, h('div', { class: 'ds-dialog-panel' },
+            h('div', { key: 'head', class: 'ds-dialog-head' }, h('h3', { class: 'ds-dialog-title' }, title)),
+            h('p', { key: 'msg', class: 'ds-dialog-message' }, message),
+            Select({ key: 'who', label: 'Who should go', name: 'worker', value: workerId, options: workers.map((w) => ({ value: w.id, label: workerLabel(w) })), onChange: (v) => { workerId = v; } }),
+            TextField({ key: 'note', label: 'Optional note for the team', name: 'note', multiline: true, rows: 2, value: '', onInput: (v) => { note = v; } }),
+            h('div', { key: 'foot', class: 'ds-dialog-foot-row' },
+                Btn({ variant: 'ghost', children: 'Cancel', onClick: () => close(false) }),
+                Btn({ variant: 'primary', children: 'Suggest dispatch', onClick: () => close(true) }))));
         overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(false); });
-        setTimeout(() => sel.focus(), 60);
+        document.body.appendChild(overlay);
+        setTimeout(() => { const sel = overlay.querySelector('select'); if (sel) sel.focus(); }, 60);
     });
 }
 

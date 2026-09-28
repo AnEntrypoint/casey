@@ -26,7 +26,8 @@
 
 import { truncate } from './heuristics.js'
 import { tagList } from '../timestamp.js'
-import { mergeTag, dropTag, detectContactIntent, OPTED_OUT_TAG } from './heuristics.js'
+import { mergeTag, dropTag, detectContactIntent, isBareStopKeyword, OPTED_OUT_TAG } from './heuristics.js'
+import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
 import { observation, flagNeedsHuman } from './case-writes.js'
 
 // Is the LLM backend reporting itself down right now? A status() that itself
@@ -44,7 +45,18 @@ export async function isLlmDown(llmStatus) {
 // language once the control itself has already taken effect).
 export async function applyServiceControls({ store, log, llmStatus, notifyHandoff, caseRow, inboundText, channel, msg, replyTo, platform }) {
   let optedOut = tagList(caseRow).includes(OPTED_OUT_TAG)
-  const intent = detectContactIntent(inboundText)
+  let intent = detectContactIntent(inboundText)
+  // STOP is the PUBLIC's legal opt-out; for a team member (>= field_worker) it has
+  // no service meaning and "wrong one, stop" mid-shift would silence the bot to
+  // them. So for that tier alone it fires only when the whole message IS a bare
+  // stop keyword; anything longer is ordinary conversation. A reporter (or a
+  // contact whose tier cannot be read) is untouched: fail closed on the legal control.
+  if (intent === 'stop' && !isBareStopKeyword(inboundText)) {
+    try {
+      const contact = caseRow.contact_id ? await store.getContact(caseRow.contact_id) : null
+      if (contact && atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)) intent = null
+    } catch { /* unreadable tier: keep the legal control */ }
+  }
 
   // HELP-RESUME: an opted-out contact who asks for help (any supported language)
   // OPTS BACK IN. Keep this path -- it is the only thing that clears the tag, so

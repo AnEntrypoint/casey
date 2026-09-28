@@ -22,6 +22,7 @@ import { state, setActiveId, setInboxMode, schedule } from '../../state.js';
 import { rel, waitFmt, isMine, channelLabel } from '../../format.js';
 import { urgencyBand, URGENCY_BAND_LABEL, QUEUE_NAME } from '../../map-model.js';
 import { pushHash } from '../../route.js';
+import { QueueMore } from '../../components/filter-chip.js';
 const h = webjsx.createElement;
 
 // How many rows are shown before the list says so. The number itself is not
@@ -131,25 +132,16 @@ export function InboxPanel() {
     // The true total sits on the control that reveals the rest, so the count
     // in the head above can never silently disagree with the rows below it.
     ranked.length > shown.length
-      ? h('button', {
-        key: 'more', type: 'button', class: 'ds-queue-more',
-        onclick: () => { inboxShown = ranked.length; schedule(); },
-      }, 'Show all ' + ranked.length + ' that need a person')
+      ? QueueMore({ key: 'more', onClick: () => { inboxShown = ranked.length; schedule(); }, children: 'Show all ' + ranked.length + ' that need a person' })
       : (!state.inboxMode && shown.length > INBOX_PAGE
-        ? h('button', {
-          key: 'less', type: 'button', class: 'ds-queue-more',
-          onclick: () => { inboxShown = INBOX_PAGE; schedule(); },
-        }, 'Show fewer')
+        ? QueueMore({ key: 'less', onClick: () => { inboxShown = INBOX_PAGE; schedule(); }, children: 'Show fewer' })
         : null),
     // Focus mode is reachable from the topbar, but nothing on this screen said
     // what it does or that it is on. It stops the full report list loading at
     // all, which is why the list below it goes empty -- so the control that
     // causes that sits next to the thing it affects, worded plainly.
     state.inboxMode
-      ? h('button', {
-        key: 'unfocus', type: 'button', class: 'ds-queue-more',
-        onclick: () => { setInboxMode(false); },
-      }, 'Also load every other report')
+      ? QueueMore({ key: 'unfocus', onClick: () => { setInboxMode(false); }, children: 'Also load every other report' })
       : null
   );
 }
