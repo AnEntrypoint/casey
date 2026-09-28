@@ -11,6 +11,7 @@ import { rowInt } from '../../safe.js'
 import { tsMs, parseReport } from '../../timestamp.js'
 import { mergeTag } from '../../hooks/heuristics.js'
 import { mountRoutes } from './register.js'
+import { isFieldAccount, caseAccess } from '../roles.js'
 import { canQueryCases, resolveTierValue } from '../../contact-tiers.js'
 import { TIER_LABELS } from '../../store/report-shape.js'
 
@@ -130,15 +131,20 @@ function mapPoolFingerprint(days, rows) {
   return h.digest('hex')
 }
 
-export function getMapCases({ store, authed, isOpenCase }) {
+export function getMapCases({ store, authed, isOpenCase, UNCLAIMED_ASSIGNEE }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 0, 0), 365)
     const where = {}
     if (days > 0) where.created_at = { $gte: Math.floor(Date.now() / 1000) - days * 86400 }
-    const all = await store.listCases(where, { limit: MAP_CASE_CAP + 1, offset: 0 })
+    let all = await store.listCases(where, { limit: MAP_CASE_CAP + 1, offset: 0 })
+    // A field-team login sees only its own cases on the map, and its answer is
+    // never read from or written to the shared memo below (which holds the
+    // whole-fleet payload).
+    const scoped = isFieldAccount(req.caseyAccount)
+    if (scoped) all = all.filter(c => caseAccess(c, req.caseyAccount, { unclaimedKey: UNCLAIMED_ASSIGNEE }) !== 'none')
     const fingerprint = mapPoolFingerprint(days, all)
-    if (mapCasesMemo && mapCasesMemo.fingerprint === fingerprint) return res.json(mapCasesMemo.payload)
+    if (!scoped && mapCasesMemo && mapCasesMemo.fingerprint === fingerprint) return res.json(mapCasesMemo.payload)
     const truncated = all.length > MAP_CASE_CAP
     const pool = truncated ? all.slice(0, MAP_CASE_CAP) : all
     const { buildClusters } = await import('../../clusters.js')
@@ -166,7 +172,7 @@ export function getMapCases({ store, authed, isOpenCase }) {
       })),
       truncated, cap: MAP_CASE_CAP, total_considered: all.length,
     }
-    mapCasesMemo = { fingerprint, payload }
+    if (!scoped) mapCasesMemo = { fingerprint, payload }
     res.json(payload)
   }
 }

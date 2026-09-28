@@ -32,6 +32,7 @@ import { tokens } from './correlate.js'
 import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable, installVersionGuard } from './store/guards.js'
 import { REPORT_KEYS, REPORT_KEY_ORDER } from './store/report-shape.js'
 import { TIER_ORDER, resolveTierValue } from './contact-tiers.js'
+import { isContactAssignee } from './case-assignment.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
 import { validateCaseConfig, parseFieldEnums } from './store/config-schema.js'
 import { deriveAuthorKey, mintRef } from './store/ref.js'
@@ -211,7 +212,7 @@ export class CaseStore {
       const byAssignee = new Map()
       for (const c of cases) {
         const a = c.assignee
-        if (!a || a === UNCLAIMED_ASSIGNEE || known.has(a)) continue
+        if (!a || a === UNCLAIMED_ASSIGNEE || known.has(a) || isContactAssignee(a)) continue
         if (!byAssignee.has(a)) byAssignee.set(a, [])
         byAssignee.get(a).push(c.ref || c.id)
       }
@@ -735,7 +736,10 @@ export class CaseStore {
     return { value, corrupted }
   }
 
-  async mergeReport(caseId, incoming, user = AGENT_USER) {
+  // `bypassObserve` is for a HUMAN writing through a team tool (case_edit): observe
+  // mode stops the ASSISTANT acting, and it is exactly the mode a person takes a
+  // case into when they take over, so their own edits must not be refused by it.
+  async mergeReport(caseId, incoming, user = AGENT_USER, { bypassObserve = false } = {}) {
     const invalid = Object.keys(incoming).filter(k => !REPORT_KEYS.has(k))
     if (invalid.length) return { error: `invalid report fields: ${invalid.join(', ')}` }
     const c0 = await this.getCase(caseId)
@@ -743,7 +747,7 @@ export class CaseStore {
     return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
       const c = await this.getCase(caseId)             // re-read INSIDE the lock
       if (!c) return { error: `no case ${caseId}` }
-      if (c.autonomy === 'observe') return { error: 'observe' }
+      if (c.autonomy === 'observe' && !bypassObserve) return { error: 'observe' }
       const { value: currentReport, corrupted: initCorrupted } = this._parseReport(c.report, caseId)
       const { merged, cappedFields: initCapped } = mergeReportFields(currentReport, incoming)
       // No server-side geocoding: the map's lat/lon comes ONLY from the agent's
@@ -798,7 +802,7 @@ export class CaseStore {
           // operator's own dashboard flip to observe, the retry must honour
           // it rather than silently landing one write later than the
           // operator intended.
-          if (fresh.autonomy === 'observe') return { error: 'observe' }
+          if (fresh.autonomy === 'observe' && !bypassObserve) return { error: 'observe' }
           attemptCase = fresh
           const { value: freshReport, corrupted: retryCorrupted } = this._parseReport(fresh.report, caseId)
           const { merged: retryMerged, cappedFields: retryCapped } = mergeReportFields(freshReport, incoming)
@@ -855,7 +859,7 @@ export class CaseStore {
           }
           const fresh = await this.getCase(caseId)
           if (!fresh) return { error: `no case ${caseId}` }
-          if (fresh.autonomy === 'observe') return { error: 'observe' }
+          if (fresh.autonomy === 'observe' && !bypassObserve) return { error: 'observe' }
           attemptCase = fresh
         }
       }

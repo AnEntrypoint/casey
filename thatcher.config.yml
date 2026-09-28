@@ -217,7 +217,8 @@ entities:
       password_hash:  { type: text, required: true }     # scrypt hash, hex
       password_salt:  { type: text, required: true }     # scrypt salt, hex (per-account, random)
       display_name:   { type: text }                     # human name shown in the dashboard, attribution
-      role:           { type: enum, options: [admin, operator, secretary], default: operator }
+      role:           { type: enum, options: [admin, operator, secretary, eco_ranger, animal_health_technician], default: operator }
+      contact_phone:  { type: text }                     # optional: the person's WhatsApp number as an msisdn (digits, country code, no +) -- links a field-team login (eco_ranger / animal_health_technician) to their contact so 'my cases' means that contact's cases
       disabled:       { type: text, default: "0" }        # "1" disables login without deleting the account/history
       last_login_at:  { type: text }
       must_change_password: { type: text, default: "0" }  # "1" forces a change-password flow before any other route -- set on the auto-created bootstrap admin (see ensureBootstrapAdmin) so a printed random password cannot persist indefinitely; cleared once the account holder sets their own

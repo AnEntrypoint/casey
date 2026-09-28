@@ -6,7 +6,7 @@
 // both, in this order, to every tool it builds.
 
 import { boundCase } from './case-tools-shared.js'
-import { canQueryCases } from './contact-tiers.js'
+import { atLeast, TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR } from './contact-tiers.js'
 
 // Tier gate: a 'reporter'-tier contact (casual/public, report-only per the
 // operator-assignable access-tier design) can report an incident and use the
@@ -27,6 +27,36 @@ import { canQueryCases } from './contact-tiers.js'
 // EXISTING case's already-recorded history, a materially different risk
 // than opening a brand new empty one.
 export const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stop', 'case_handoff', 'case_new'])
+
+// The MINIMUM rung of every team tool (case-tools-team*.js). Any non-report tool
+// not listed here needs field_worker, exactly as before. A RANK test through
+// atLeast, so an unknown or missing tier resolves to the lowest rung and is
+// refused: adding a tool means adding a row, and forgetting the row leaves it at
+// field_worker, never wider. Sign-off is not a row: it stays case_transition's
+// canSignOff equality, which no rank here can grant.
+export const TOOL_MIN_TIER = {
+  case_pending: TIER_FIELD_WORKER, case_claim: TIER_FIELD_WORKER, case_release: TIER_FIELD_WORKER,
+  case_dispatch_reply: TIER_FIELD_WORKER, case_focus: TIER_FIELD_WORKER, case_gaps: TIER_FIELD_WORKER,
+  case_contact: TIER_FIELD_WORKER, case_edit: TIER_FIELD_WORKER, case_stage: TIER_FIELD_WORKER,
+  case_message: TIER_FIELD_WORKER,
+  signoff_queue: TIER_ANIMAL_HEALTH_TECHNICIAN, case_review: TIER_ANIMAL_HEALTH_TECHNICIAN,
+  case_reopen: TIER_ANIMAL_HEALTH_TECHNICIAN, case_ask_ranger: TIER_ANIMAL_HEALTH_TECHNICIAN,
+  team_queue: TIER_OPERATOR, team_handover: TIER_OPERATOR, team_assign: TIER_OPERATOR,
+  team_draft: TIER_OPERATOR, team_remind: TIER_OPERATOR, team_invite: TIER_OPERATOR,
+  team_register: TIER_OPERATOR, team_roster: TIER_OPERATOR, team_quiet_staff: TIER_OPERATOR,
+  team_nudge_staff: TIER_OPERATOR,
+}
+
+export function minTierOf(name) {
+  if (REPORT_ONLY_TOOLS.has(name)) return TIER_REPORTER
+  return TOOL_MIN_TIER[name] || TIER_FIELD_WORKER
+}
+
+// Does a contact at `tier` get to SEE (and call) this tool? The one predicate the
+// call-time gate, the per-tier schema hiding and the allowlist derivation share.
+export function toolVisibleToTier(name, tier) {
+  return atLeast(tier, minTierOf(name))
+}
 
 export function gateByTier(tool) {
   if (REPORT_ONLY_TOOLS.has(tool.name)) return tool
@@ -58,7 +88,7 @@ export function gateByTier(tool) {
       // tells the model plainly, in conversational terms, to drop the query and
       // keep going -- nothing here is safe or useful to relay to the person
       // messaging in.
-      if (!canQueryCases(ctx?.tier)) {
+      if (!toolVisibleToTier(tool.name, ctx?.tier)) {
         return { unavailable: true, note: 'This is not something you can look up for this person. Do not mention tools, permissions, or access -- just continue the conversation naturally: report their case, or answer using what you already know from this conversation.' }
       }
       return handler(args, ctx)

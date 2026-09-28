@@ -24,14 +24,16 @@
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27, markInvisibles } from '../../format.js'
-import { fieldLabel, REPORT_FIELD_DEFS } from '../../store/report-shape.js'
+import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL } from '../../store/report-shape.js'
 import { isKnownValueField, invalidateKnownValues } from '../../field-values.js'
 import { BRAND } from '../brand.js'
 import { mountRoutes } from './register.js'
+import { isFieldAccount, caseAccess, isAssignedTo, inSignOffQueue, detailForAccess, missingFor } from '../roles.js'
+import { waLink } from '../wa-link.js'
 import { prepareReminder, OPERATOR_REMINDER_FLAG } from '../../hooks/operator-reminder.js'
 
 // Body keys POST /api/cases/:id/intake accepts that are NOT report fields.
-const INTAKE_META_KEYS = new Set(['canonicalized'])
+const INTAKE_META_KEYS = new Set(['canonicalized', 'expected_ref'])
 
 // Normalize the optional `canonicalized` body block into what the timeline
 // records, dropping anything that does not describe a field actually being
@@ -130,9 +132,12 @@ async function pendingDraft(store, c) {
   return drafts.length ? drafts[drafts.length - 1] : null
 }
 
-export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate, REPORT_KEY_LIST }) {
+export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate, REPORT_KEY_LIST, UNCLAIMED_ASSIGNEE }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    // A field-team login sees only the cases it may act on or sign off (roles.js).
+    const field = isFieldAccount(req.caseyAccount)
+    const fieldView = field ? String(req.query.view || '') : ''
     const where = {}
     if (req.query.status) {
       // Validate against the workflow's real statuses so an arbitrary
@@ -151,14 +156,29 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
     if (req.query.ref) {
       const ref = String(req.query.ref).slice(0, 50)
       const found = await store.getCaseByRef(ref)
-      const casesWithFill = found ? [{ ...found, fill_rate: computeFillRate(found.report) }] : []
+      const seen = found && (!field || caseAccess(found, req.caseyAccount, { unclaimedKey: UNCLAIMED_ASSIGNEE }) !== 'none') ? found : null
+      const casesWithFill = seen ? [{ ...seen, fill_rate: computeFillRate(seen.report) }] : []
       return res.json({ cases: casesWithFill.map(c => caseListProjection({ ...c })), total: casesWithFill.length, limit: casesWithFill.length, offset: 0 })
     }
     const q = req.query.q ? String(req.query.q).slice(0, 200).toLowerCase() : ''
     const limit = clampLimit(req.query.limit, 50)
     const offset = offsetOf(req.query.offset)
     let cases, total
-    if (q) {
+    if (field) {
+      const all = await store.listCases(where, { limit: 10000, offset: 0 })
+      const key = { unclaimedKey: UNCLAIMED_ASSIGNEE }
+      const mine = all.filter(c => fieldView === 'mine' ? isAssignedTo(c, req.caseyAccount)
+        : fieldView === 'signoff' ? (caseAccess(c, req.caseyAccount, key) !== 'none' && inSignOffQueue(c, UNCLAIMED_ASSIGNEE))
+        : caseAccess(c, req.caseyAccount, key) !== 'none')
+      const filtered = q ? mine.filter(c => {
+        const hay = [c.ref, c.subject, c.summary, c.channel].join(' ').toLowerCase()
+        if (hay.includes(q)) return true
+        const r = parseReport(c)
+        return REPORT_KEY_LIST.some(k => r[k] != null && String(r[k]).toLowerCase().includes(q))
+      }) : mine
+      total = filtered.length
+      cases = filtered.slice(offset, offset + limit)
+    } else if (q) {
       // Search across case fields + all report field values. Fetch the full set
       // (capped at 10000) then filter in Node so report JSON is reachable.
       // Search uses external_id for operator convenience (matching on contact id),
@@ -204,6 +224,11 @@ export function postCase({ store, authed, str, actingOperator, computeFillRate }
     const { case: c, created } = await store.findOrCreateCase({ channel: 'web', external_id, contact, subject: subject || 'Field report' })
     // If a case already exists for this phone, return 409 so the client can offer to open it
     if (!created) {
+      // A field login is told about an existing case only when it may see it; otherwise
+      // the answer must not reveal that this number has a case, or which.
+      if (isFieldAccount(req.caseyAccount) && caseAccess(c, req.caseyAccount) === 'none') {
+        return res.status(409).json({ error: 'A report already exists for this contact. Ask an operator to assign it to you.' })
+      }
       return res.status(409).json({ error: 'A case already exists for this contact', existing_id: c.id, existing_ref: c.ref })
     }
     // Tag it as operator-initiated manual intake
@@ -213,6 +238,9 @@ export function postCase({ store, authed, str, actingOperator, computeFillRate }
       const newTags = [...tags, 'intake_mode:manual'].join(',')
       await store.updateCase(c.id, { tags: newTags }, op)
     }
+    // A field-team login that opens a case is working it: assign it to them so it
+    // is theirs to edit (operators can still reassign).
+    if (isFieldAccount(req.caseyAccount)) await store.updateCase(c.id, { assignee: op.id }, op)
     await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'case created via dashboard manual intake', data: { by: op.id } })
     const createdCase = await store.getCase(c.id)
     res.status(201).json(caseListProjection({ ...createdCase, fill_rate: computeFillRate(createdCase.report) }))
@@ -248,6 +276,19 @@ export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
     res.setHeader('Content-Disposition', 'attachment; filename="casey-cases.csv"')
     res.send(csv)
   }
+}
+
+// One timeline observation per (case, person) per ten minutes whenever a non-
+// operator is shown a reporter's number. In-memory throttle only: it stops a
+// re-render loop writing a row per poll, and a restart at worst writes one more.
+const REVEAL_SEEN = new Map()
+const REVEAL_WINDOW_MS = 10 * 60e3
+async function noteNumberReveal(store, c, op) {
+  const k = c.id + '|' + op.id
+  const last = REVEAL_SEEN.get(k)
+  if (last && Date.now() - last < REVEAL_WINDOW_MS) return
+  REVEAL_SEEN.set(k, Date.now())
+  await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `The reporter's phone number was shown to ${op.name || op.id}, who is working this ${REPORT_ENTITY_LABEL}.`, data: { number_shown_to: op.id } })
 }
 
 export function getCaseDetail({ store, authed, clampLimit, parseEventData, actingOperator, computeFillRate, parseJsonArraySafe, getRoster, UNCLAIMED_ASSIGNEE }) {
@@ -303,7 +344,25 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
     const case_type_source = c.case_type && c.case_type !== 'unset'
       ? (caseTypeAction ? caseTypeAction.actor : 'agent')
       : null
-    res.json({ case: caseDetailProjection(c), events: events.map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
+    // A field login working THIS case is shown the reporter's number so it can
+    // reach them on WhatsApp; that reveal is written to the timeline, and a case
+    // that is only being looked at never shows it.
+    let fieldExtras = isFieldAccount(req.caseyAccount) ? { access: req.caseyAccess } : {}
+    if (isFieldAccount(req.caseyAccount) && req.caseyAccess === 'write') {
+      const op = actingOperator(req)
+      const missing = missingFor(c)
+      const digits = c.channel === 'whatsapp' ? String(c.external_id || '').replace(/\D/g, '') : ''
+      const text = `Hello, ${op.name} here, following up on your ${REPORT_ENTITY_LABEL} ${c.ref}. Please send a message to our WhatsApp assistant again`
+        + (missing.length ? ` and tell it: ${missing.map(fieldLabel).join(', ')}.` : ' so we can finish it.') + ' Thank you.'
+      // First name only: enough to be sure it is the right person on the phone,
+      // never the full name or the number.
+      const contact = c.contact_id ? await store.getContact(c.contact_id).catch(() => null) : null
+      const given = String(contact?.display_name || '').trim()
+      const first = given && given !== contact?.external_id && !/^[\d+\s()-]+$/.test(given) && !/^web-/.test(given) ? given.split(/\s+/)[0].slice(0, 30) : null
+      fieldExtras = { ...fieldExtras, reporter_message_link: waLink(digits, text), missing_facts: missing.map(k => ({ key: k, label: fieldLabel(k) })), reporter_first_name: first }
+      await noteNumberReveal(store, c, op)
+    }
+    res.json({ ...fieldExtras, case: detailForAccess(caseDetailProjection(c), req.caseyAccess), events: events.map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
   }
 }
 
@@ -331,6 +390,8 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
     const priorReport = parseReport(c)
     const result = await store.mergeReport(c.id, incoming, op)
     if (result.error) return res.status(400).json({ error: result.error })
+    // Fresh facts from the person a report was sent back to answer the send-back.
+    if (isFieldAccount(req.caseyAccount) && tagList(c).includes('sent-back')) await store.updateCase(c.id, { tags: tagList(c).filter(t => t !== 'sent-back').join(',') }, op)
     // Distinguish a correction (prior value non-blank) from a first-time fill
     // per AGENTS.md's audit-trail invariant -- record the old-to-new diff for
     // any field that already had a value, not just the new value.
@@ -351,7 +412,7 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
     // changed shape on the way in is not self-describing afterwards.
     const canon = canonicalizedNote(req.body.canonicalized, incoming)
     if (canon) data.canonicalized = canon
-    await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `recorded report fields via dashboard: ${Object.keys(incoming).join(', ')}`, data })
+    await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: isFieldAccount(req.caseyAccount) ? `recorded report fields on the reporter's behalf (relayed by ${op.name || op.id}): ${Object.keys(incoming).join(', ')}` : `recorded report fields via dashboard: ${Object.keys(incoming).join(', ')}`, data: isFieldAccount(req.caseyAccount) ? { ...data, relayed_by: op.id } : data })
     // A value an operator just recorded is part of this deployment's vocabulary
     // from now on, so the next case they open must offer it. Dropping the memo
     // here rather than waiting out its TTL is what makes "add a new one" feel
@@ -776,7 +837,10 @@ export function postNote({ store, authed, str, REPORT_KEY_SET, actingOperator })
     if (!c) return res.status(404).json({ error: 'not found' })
     const field = req.body.field && REPORT_KEY_SET.has(req.body.field) ? req.body.field : null
     const op = actingOperator(req)
-    await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text, data: { ...(field ? { field } : {}), by: op.id } })
+    // A field login noting what the reporter told them on the phone is passing it
+    // on, not quoting the reporter: say so on the timeline.
+    const relayed = isFieldAccount(req.caseyAccount) && req.body.relayed === true
+    await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text: relayed ? `Relayed by ${op.name || op.id} (told to them by the reporter, not written by the reporter): ${text}` : text, data: { ...(field ? { field } : {}), by: op.id, ...(relayed ? { relayed: true } : {}) } })
     res.json({ ok: true })
   }
 }
@@ -1235,6 +1299,8 @@ const ROUTES = [
   ['post', '/api/cases/:id/snooze', postSnooze],
   ['post', '/api/cases/:id/undo', postUndo],
   ['post', '/api/cases/:id/note', postNote],
+  ['post', '/api/cases/:id/location', postLocation],
+  ['post', '/api/cases/:id/send-back', postSendBack],
   ['post', '/api/cases/:id/flag-reply', postFlagReply],
   ['get', '/api/cases/:id/suggestions', getSuggestions],
   ['get', '/api/cases/:id/site-history', getSiteHistory],
@@ -1246,6 +1312,42 @@ const ROUTES = [
   ['post', '/api/cases/:id/draft/discard', postDraftDiscard],
   ['get', '/api/cases/:id/report.html', getReportHtml, { raw: true }],
 ]
+
+// Check-in location from the field: the ranger's phone reports where they are
+// standing and the case pin moves there (source 'gps', the exact-position rung).
+export function postLocation({ store, authed, actingOperator }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const lat = Number(req.body?.lat), lon = Number(req.body?.lon)
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return res.status(400).json({ error: 'That position is not valid.' })
+    const c = await store.getCase(req.params.id)
+    if (!c) return res.status(404).json({ error: 'not found' })
+    const op = actingOperator(req)
+    await store.updateCase(c.id, { lat, lon, location_source: 'gps' }, op)
+    await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'location marked from the field', data: { by: op.id, lat, lon } })
+    res.json({ ok: true })
+  }
+}
+
+// Technician sends a case back to whoever is working it, saying what is missing.
+// It records a note on the timeline and tags the case `sent-back`; nothing is
+// sent to any channel -- the ranger sees it at the top of their own list.
+export function postSendBack({ store, authed, str, actingOperator }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const c = await store.getCase(req.params.id)
+    if (!c) return res.status(404).json({ error: 'not found' })
+    const text = str(res, req.body, 'text', { required: false }); if (text === undefined) return
+    const missing = Array.isArray(req.body?.missing) ? req.body.missing.filter(k => typeof k === 'string').slice(0, 20) : []
+    if (!text.trim() && !missing.length) return res.status(400).json({ error: 'Say what is missing so it can be fixed.' })
+    const op = actingOperator(req)
+    const tags = tagList(c)
+    if (!tags.includes('sent-back')) await store.updateCase(c.id, { tags: [...tags, 'sent-back'].join(',') }, op)
+    const line = `Sent back by ${op.name || op.id}${missing.length ? `: still needed -- ${missing.join(', ')}` : ''}${text.trim() ? `. ${text.trim()}` : ''}`
+    await store.appendEvent(c.id, { kind: 'note', actor: 'operator', text: line, data: { by: op.id, sent_back: true, missing } })
+    res.json({ ok: true })
+  }
+}
 
 export function registerCases(app, deps) {
   mountRoutes(app, deps, ROUTES)

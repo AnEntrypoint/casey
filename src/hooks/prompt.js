@@ -18,7 +18,8 @@ import { loadDomainConfig } from '../config-loader.js'
 import { MANDATORY_MINIMUM_FIELDS } from '../store/report-shape.js'
 import { buildPromptContext } from './prompt-context.js'
 import { headerSection, caseContextSection, gatherSection, replySection } from './prompt-sections.js'
-import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN } from '../contact-tiers.js'
+import { roleSection } from './prompt-roles.js'
+import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR } from '../contact-tiers.js'
 
 const { persona } = loadDomainConfig()
 
@@ -45,6 +46,8 @@ export function caseSystemPrompt(caseRow, events, contact) {
     ...gatherSection(persona, caseRow, contact, ctx),
     // --- How to reply ---
     ...replySection(persona, caseRow, contact, ctx),
+    // --- What this person's ROLE lets them do (empty for a reporter) ---
+    ...roleSection(persona, caseRow, contact),
   ].join('\n')
 }
 
@@ -89,6 +92,32 @@ function selfCheckLoadBearingPromptContent() {
   // an equality comparison passes every other check in this function and fails
   // only this one.
   const signOffText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_ANIMAL_HEALTH_TECHNICIAN })
+  // The role blocks, asserted in BOTH directions per rung. Each rung's block must
+  // be present for that rung and everything above it, and absent below: an equality
+  // comparison in prompt-roles.js would drop the operator (the top rung) back to no
+  // block at all, and an ungated block would tell a lower tier to call tools it
+  // cannot see. The operator and technician blocks are the ones a token squeeze is
+  // most likely to cut, since they only render for two contacts in the system.
+  const operatorText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_OPERATOR })
+  const roleBlocks = [
+    { name: 'field team block (which record first, confirm before writing)', pattern: /WHICH RECORD FIRST/, from: TIER_FIELD_WORKER },
+    { name: 'field team block (finishing is not theirs)', pattern: /FINISHING IS NOT YOURS/, from: TIER_FIELD_WORKER },
+    { name: 'technician sign-off desk block', pattern: /SIGN-OFF DESK/, from: TIER_ANIMAL_HEALTH_TECHNICIAN },
+    { name: 'technician two-refusals rule', pattern: /two DIFFERENT refusals/, from: TIER_ANIMAL_HEALTH_TECHNICIAN },
+    { name: 'operator desk block', pattern: /OPERATOR DESK/, from: TIER_OPERATOR },
+    { name: 'operator cannot sign off', pattern: /CANNOT sign a/, from: TIER_OPERATOR },
+  ]
+  const composed = { reporter: text, [TIER_FIELD_WORKER]: workerText, [TIER_ANIMAL_HEALTH_TECHNICIAN]: signOffText, [TIER_OPERATOR]: operatorText }
+  const rungs = [TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR]
+  for (const { name, pattern, from } of roleBlocks) {
+    if (pattern.test(text)) throw new Error(`caseSystemPrompt regression: role block leaked to the reporter tier (${name}).`)
+    for (const rung of rungs) {
+      const want = rungs.indexOf(rung) >= rungs.indexOf(from)
+      if (pattern.test(composed[rung]) !== want) {
+        throw new Error(`caseSystemPrompt regression: role block ${want ? 'missing at' : 'leaked to'} the ${rung} tier (${name}). Each rung gets its own block and every rung above it -- see hooks/prompt-roles.js.`)
+      }
+    }
+  }
   const required = [
     { name: 'two-item question requirement', pattern: /top TWO|TOP TWO|top two/ },
     { name: 'gap-detection instruction (reporter went quiet)', pattern: /person was gone a while/ },

@@ -489,3 +489,9 @@ export const postContactErase = (id, reason) => post('/api/contacts/' + encodeUR
 
 // --- degraded turns ---
 export const fetchDegradedTurns = (params) => json('/api/turns/degraded' + qs(params));
+export const postContactRegister = (phone, name, tier) => post('/api/contacts/register', { phone, name, tier });
+
+// --- one-time WhatsApp role codes ---
+export const fetchRoleInvites = () => json('/api/role-invites');
+export const postRoleInvite = (body) => post('/api/role-invites', body);
+export const deleteRoleInvite = (id) => del('/api/role-invites/' + encodeURIComponent(id));

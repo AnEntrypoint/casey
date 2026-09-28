@@ -12,6 +12,7 @@
 import { readThatcherFieldEnum } from './config-loader.js'
 import { ENQUIRY_HEADLINE_FIELDS } from './store/report-shape.js'
 import { parseReport } from './timestamp.js'
+import { publicAssignee } from './case-assignment.js'
 
 export const str = (description, extra = {}) => ({ type: 'string', description, ...extra })
 
@@ -122,7 +123,7 @@ export function slimCase(c) {
   // it already has, so it never re-asks). Tolerate a malformed/empty report.
   let reportObj = null
   try { reportObj = report ? JSON.parse(report) : null } catch { reportObj = null }
-  return { id, ref, channel, status, priority, subject, summary, report: reportObj, tags, assignee, autonomy, last_event_at }
+  return { id, ref, channel, status, priority, subject, summary, report: reportObj, tags, assignee: publicAssignee(assignee), autonomy, last_event_at }
 }
 // PII-FREE projection for a LIST row (an enquiry spanning cases the asker may not
 // own). Keeps only ref/status/species/location -- NEVER the full report object, which
@@ -137,7 +138,7 @@ export function enquiryRow(c, distanceKm) {
   return {
     id: c.id, ref: c.ref, status: c.status, priority: c.priority,
     ...headline,
-    assignee: c.assignee || null, last_event_at: c.last_event_at,
+    assignee: publicAssignee(c.assignee) || null, last_event_at: c.last_event_at,
     ...(typeof distanceKm === 'number' ? { distance_km: distanceKm } : {}),
   }
 }

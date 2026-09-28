@@ -16,8 +16,10 @@ import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
 import { stripThinkingBlock, OPTED_OUT_TAG } from './heuristics.js'
 import { tagList } from '../timestamp.js'
-import { mutatingActions, hadSuccessfulWrite, refusedWrites } from './turn-results.js'
-import { buildCaseToolset, reporterTierExcludedToolNames } from '../case-tools.js'
+import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs } from './turn-results.js'
+import { staffNoticeNote } from '../staff-notices.js'
+import { refsIn } from '../team-focus.js'
+import { buildCaseToolset, hiddenToolNamesForTier } from '../case-tools.js'
 import { resolveContactTier, canQueryCases } from '../contact-tiers.js'
 import { FAILURE_REASONS } from '../degraded-turns.js'
 import { TURN_HARD_DEADLINE_MS } from './turn-deadlines.js'
@@ -136,6 +138,7 @@ export function classifyTurnError(message) {
 export function buildTurnRequest({
   prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
   resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
+  staffSend = null, inboundRefs = [],
 }) {
   return {
     // A retry after a judge-blank/false-confirm/empty carries the judge's
@@ -191,7 +194,13 @@ export function buildTurnRequest({
     // array (every tool stays visible) -- a RANK test, matching gateByTier's own,
     // so the highest rung is never handed a request with the elevated schemas
     // stripped out of it while the handler would have accepted the calls.
-    disabledToolsets: canQueryCases(resolvedTier) ? [] : reporterTierExcludedToolNames(),
+    //
+    // PER-TIER since the team tools: every rung is handed exactly the tools whose
+    // minimum rung it reaches (case-tools-gates.js TOOL_MIN_TIER), so a field
+    // worker does not see the technician or operator tools and a reporter sees
+    // none of them. hiddenToolNamesForTier is the same predicate the call-time
+    // gate uses, so the schema and the refusal cannot disagree.
+    disabledToolsets: hiddenToolNamesForTier(resolvedTier),
     // Identity for the case/enquiry tools: WHO is asking (the message author),
     // the live store, and the active case. The case toolset reads these from
     // toolCtx rather than a global, so "my cases"/"near me"/"today" answer FOR
@@ -231,6 +240,19 @@ export function buildTurnRequest({
       // contact, a pre-migration row with no tier populated yet, or a corrupt
       // value all get the LOWER-privilege tier, never silently elevated.
       tier: resolvedTier,
+      // The acting contact (id, display name, number) for the team tools. It stays
+      // inside the tool layer: no tool result carries it (case-assignment.js keys
+      // are rendered 'you' / 'a team member'), and the number is only ever shown
+      // through case_contact on an assigned record, audited.
+      contact: contact ? { id: contact.id, display_name: contact.display_name, external_id: contact.external_id, channel: contact.channel, tier: contact.tier } : null,
+      // The ONE outbound seam (Casey.sendReply, the dashboard's own) and whether a
+      // channel is wired; null on a turn with no live adapter, which the team
+      // tools turn into an honest refusal rather than a silent no-op.
+      sendReply: staffSend?.sendReply || null,
+      canSend: staffSend?.canSend || null,
+      // Record references the staff member's OWN message names, pulled out by
+      // pattern for team-focus.js's write gate (identifier extraction, not intent).
+      inboundRefs,
       store,
       principal: { id: msg.from || external_id, role: 'worker' },
       activeCaseRef: turnBinding.ref,
@@ -349,7 +371,7 @@ export async function reportFactsForJudge(store, fallbackRow, events, caseId = f
 // leak) return before the judge is ever called, and on those attempts the store
 // read behind it is pure waste inside a live turn's hard deadline. Awaited once,
 // immediately before the judge call that is the first thing to need it.
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null }) {
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [] }) {
   const note = async (text) => {
     try { await store.appendEvent(fresh.id, observation(text)) }
     catch (e) { log.warn?.('[casey] failed to record attempt observation', { caseId: fresh.id, error: e.message }) }
@@ -424,6 +446,22 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     }
     log.warn?.('[casey] reply names casey internal tools on a spent retry budget; holding for a human', { caseId: fresh.id, tools: leakedToolNames })
     return { done: true, text: candidate, jargonReasons: [`named internal tools: ${leakedToolNames.join(', ')}`] }
+  }
+  // STAFF REPLY NAMES THE RECORD. A ranger or technician whose turn touched a
+  // record (a team tool returned recorded_on) must be able to see WHICH one in the
+  // reply itself, so a wrong-record write is visible the moment it happens. An
+  // equality-class check for a literal token, like the tool-name check above.
+  // Retried with the omission fed back; on a spent budget the reference is
+  // appended rather than held, so a missing ref never reaches them and neither
+  // does silence.
+  const missingRefs = staffRefs.filter(r => !candidate.toLowerCase().includes(String(r).toLowerCase()))
+  if (missingRefs.length) {
+    if (canRetry) {
+      await note(`STAFF-REPLY-MISSING-REF: reply did not name ${missingRefs.join(', ')}; retrying turn with feedback (attempt ${attempt})`)
+      return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because it did not say which record you just worked on. Say it again and name ${missingRefs.join(' and ')} exactly, with one short line on what it is (the animals and the place), so they can see it is the right one.]` }
+    }
+    await note(`STAFF-REPLY-REF-APPENDED: ${missingRefs.join(', ')} added to the reply`)
+    return { done: true, text: `${candidate} (${missingRefs.join(', ')})` }
   }
   // USER DIRECTIVE: no deterministic text classification anywhere -- what the
   // reply MEANS is judged by the single real-LLM judgeReply call
@@ -616,7 +654,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
 // below, and driveAgentTurn's re-read for why the caller needs it).
 export async function runAgentTurn({
   store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
-  channel, external_id, turnStartedAt, isBackgroundRedrive,
+  channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend = null,
 }) {
   // A resume/queue re-drive is retrying a turn already known to have failed
   // before -- exempt it from the shared completion-health window (see llm.js's
@@ -625,6 +663,12 @@ export async function runAgentTurn({
   // queue.
   const turnCallLLM = msg.resume ? (req) => callLLM(req, { recordHealth: false }) : callLLM
   const resolvedTier = resolveTier(contact)
+  // A team member's QUEUED news (newly assigned, reporter answered, dispatch
+  // suggested) rides into their next in-window turn as one counts-only system
+  // note; casey cannot message them outside their own window, so this is where it
+  // is delivered. Reporter tier never computes it.
+  if (canQueryCases(resolvedTier) && contact?.id) prompt += await staffNoticeNote(store, contact)
+  const inboundRefs = refsIn(inboundText)
   // Prior outbound for the repeat guard, hoisted: no new outbound can land
   // between attempts of THIS message's own turn, so one lookup serves all.
   const lastOutboundText = [...events].reverse().find(e => e.kind === 'outbound')?.text || null
@@ -670,6 +714,7 @@ export async function runAgentTurn({
       result = await runTurn(buildTurnRequest({
         prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
         resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
+        staffSend, inboundRefs,
       }))
     } catch (e) {
       errored = true
@@ -721,6 +766,7 @@ export async function runAgentTurn({
     const verdict = await evaluateCandidate({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
       priorAttemptWrote: turnWroteSomething, systemPromptText,
+      staffRefs: canQueryCases(resolvedTier) ? touchedRefs(result) : [],
       // Read AFTER this attempt's writes and against the case the attempt ended
       // bound to (case_new/case_switch can have moved it) -- see
       // reportFactsForJudge for why a pre-turn snapshot is the wrong input, and

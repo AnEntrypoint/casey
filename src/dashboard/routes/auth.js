@@ -28,6 +28,7 @@ import { BRAND, TYPE_SCALE_CSS } from '../brand.js'
 import { parseReport } from '../../timestamp.js'
 import { mountRoutes } from './register.js'
 import { RUNTIME_STATES } from './operations.js'
+import { roleGate, roleOf, expectedRefGuard } from '../roles.js'
 
 // Session gate: a valid casey_session cookie (see dashboard/auth.js) resolves
 // to a real operator_account row. Middleware runs on every request BEFORE
@@ -1032,7 +1033,7 @@ export function postLogin({ store, findAccountByUsername, verifyPassword, issueS
     const token = issueSession(acct.id, { epoch: Number(acct.session_epoch) || 0 })
     res.set('Set-Cookie', sessionCookieHeader(token))
     markLogin(store, acct.id).catch(() => {}) // best-effort, never blocks login
-    res.json({ ok: true, username: acct.username, display_name: acct.display_name, role: acct.role })
+    res.json({ ok: true, username: acct.username, display_name: acct.display_name, role: roleOf(acct) })
   }
 }
 
@@ -1052,7 +1053,7 @@ export function getWhoami() {
   return (req, res) => {
     if (!req.caseyAccount) return res.json({ authed: false })
     const a = req.caseyAccount
-    res.json({ authed: true, username: a.username, display_name: a.display_name, role: a.role, must_change_password: a.must_change_password === '1' })
+    res.json({ authed: true, username: a.username, display_name: a.display_name, role: roleOf(a), contact_linked: !!String(a.contact_phone || '').trim(), must_change_password: a.must_change_password === '1' })
   }
 }
 
@@ -1188,6 +1189,9 @@ export function registerAuth(app, deps) {
   mountRoutes(app, deps, ROUTES)
 
   app.use(authGate())
+  // Deny-by-default scope for the field-team logins (roles.js). Staff pass through.
+  app.use(roleGate(deps))
+  app.use(expectedRefGuard(deps))
 
   app.use('/design', express.static(DESIGN_DIR))
   app.use('/vendor/leaflet', express.static(LEAFLET_DIR))

@@ -92,7 +92,7 @@ ${bold('usage:')}
   casey retention [--days N] [--yes] [--json]   age-based retention. OFF unless configured; DRY RUN unless --yes
   casey backup [--out <dir>] [--json]           consistent copy of every store, including the ones outside data/
   casey restore <backup-dir> --yes              put a backup back (stop casey first; the live data dir is moved aside)
-  casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary]
+  casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary|eco_ranger|animal_health_technician]
                                                  create a dashboard login account (break-glass/scripted provisioning)
   casey operators list                          list dashboard login accounts (never prints password hashes)
   casey operators disable <username>            disable a login without deleting its history
@@ -234,7 +234,7 @@ casey erase-contact --check
   data.pre-restore-<timestamp> rather than overwritten, so restoring the wrong
   backup is itself recoverable, and any stale sqlite -wal/-shm sidecar is removed
   so the restored database cannot have an old write-ahead log replayed over it.`,
-  operators: `casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary]
+  operators: `casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary|eco_ranger|animal_health_technician]
 casey operators list
 casey operators disable <username>
 casey operators enable <username>

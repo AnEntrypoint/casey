@@ -14,6 +14,7 @@ import { autonomyExplanation } from './autonomy-badge.js';
 import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { patchCaseApi, fetchCase } from '../../api.js';
+import { patchFieldCase, teamRoster, loadRoster } from '../../api-roles.js';
 import { brandName, entityLabel, EntityLabel } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
@@ -47,7 +48,7 @@ function labelled(values) {
     return values.map(v => ({ value: v, label: OPTION_LABEL[v] || v }));
 }
 const INTERNAL_TAG_PREFIXES = ['health:', 'intake_mode:', 'snoozed-until:'];
-const INTERNAL_TAG_EXACT = new Set(['needs-human', 'draft-pending', 'unsent_draft', 'ai-offline', 'degraded-turn-seen']);
+const INTERNAL_TAG_EXACT = new Set(['needs-human', 'draft-pending', 'unsent_draft', 'ai-offline', 'degraded-turn-seen', 'sent-back']);
 
 function isInternalTag(t) { return INTERNAL_TAG_EXACT.has(t) || INTERNAL_TAG_PREFIXES.some(p => t.startsWith(p)); }
 function operatorTagsOnly(tags) { return String(tags || '').split(',').map(s => s.trim()).filter(t => t && !isInternalTag(t)).join(','); }
@@ -79,7 +80,26 @@ function SourceNote({ source }) {
         brand + ' filled this in from what the reporter said. Nobody has checked it yet.');
 }
 
-export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
+// limited: the field team's version -- no 'who answers' or assignee control (the
+// server refuses both for them). expectedRef: every write names the report it is
+// for, and beforeSave() is a chance to ask 'is this the right one' first.
+// The assignee is picked from the registered team (WhatsApp team members and
+// field-team logins) once that list has loaded, so the value stored is the same
+// key the assignment check uses; until then (or if the list cannot load) it stays
+// the plain text box it always was, and a value not in the list stays selectable.
+function assigneeControl(d, set) {
+    const roster = teamRoster();
+    // Wrapped and keyed per variant: the text box and the picker share the kit's
+    // inner key, and webjsx patched the <input> in place instead of swapping it for
+    // a <select> when the list arrived.
+    if (!roster.length) return h('div', { key: 'assignee-text' }, TextField({ label: 'Assignee', value: d.assignee, onInput: (v) => set('assignee', v) }));
+    const opts = [{ value: '', label: 'Nobody yet' }, ...roster.map((m) => ({ value: m.key, label: m.name + ' (' + m.role + ', ' + m.via + ')' }))];
+    if (d.assignee && !opts.some((o) => o.value === d.assignee)) opts.push({ value: d.assignee, label: d.assignee });
+    return h('div', { key: 'assignee-pick' }, Select({ label: 'Assigned to', value: d.assignee || '', options: opts, onChange: (v) => set('assignee', v) }));
+}
+
+export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false, expectedRef = null, beforeSave = null, titleNote = null } = {}) {
+    if (!limited) loadRoster(schedule);
     if (!state._fieldsDraft || state._fieldsDraftFor !== c.id) {
         state._fieldsDraft = draftFor(c);
         // The values this form was SEEDED from, kept beside the live draft.
@@ -117,10 +137,11 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
     // field) into a real 409 the operator is told about instead of a silent
     // overwrite.
     const save = async () => {
+        if (beforeSave && !(await beforeSave())) return;
         state._fieldsSaving = true; schedule();
         const patch = {};
         const expected = {};
-        for (const k of ['subject', 'summary', 'priority', 'assignee', 'autonomy']) {
+        for (const k of (limited ? ['subject', 'summary', 'priority'] : ['subject', 'summary', 'priority', 'assignee', 'autonomy'])) {
             if (d[k] === base[k]) continue;
             patch[k] = d[k];
             expected[k] = base[k];
@@ -146,9 +167,10 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
                 schedule();
                 return;
             }
-            await patchCaseApi(c.id, { ...patch, expected });
+            if (expectedRef) await patchFieldCase(c.id, expectedRef, { ...patch, expected });
+            else await patchCaseApi(c.id, { ...patch, expected });
             state._fieldsSaving = false;
-            toast('Your edits are saved.', 'ok');
+            toast(expectedRef ? 'Your edits are saved to ' + expectedRef + '.' : 'Your edits are saved.', 'ok');
             // RELOAD FIRST, THEN DROP THE DRAFT. Clearing it before the reload
             // lets the very next render re-seed the form from the `c` this
             // render still closes over -- the pre-save snapshot -- and once
@@ -186,13 +208,14 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key } = {}) {
     };
 
     return h('div', { key, class: 'casey-fields-editor' },
+        titleNote ? h('p', { class: 'casey-hint field-editing-note' }, titleNote) : null,
         h('div', { class: 'casey-fields-row' },
             Select({ label: 'Priority', value: d.priority, options: labelled(priorities), onChange: (v) => set('priority', v) }),
-            Select({
+            limited ? null : Select({
                 label: 'Who answers', value: d.autonomy, options: labelled(AUTONOMY_OPTS),
                 onChange: (v) => set('autonomy', v), hint: autonomyExplanation(d.autonomy)
             }),
-            TextField({ label: 'Assignee', value: d.assignee, onInput: (v) => set('assignee', v) }),
+            limited ? null : assigneeControl(d, set),
             h('div', {},
                 // The old hint was written for whoever wrote the endpoint:
                 // "Segments every report aggregate. Changing it records a

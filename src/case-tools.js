@@ -21,6 +21,9 @@
 //   case-tools-worker.js    case_mine, case_today, case_checkin, case_idle
 //   case-tools-binding.js   case_new, case_switch
 //   case-tools-control.js   case_stop, case_handoff
+//   case-tools-team.js      the role tools, appended: field (case_pending .. case_message),
+//                           technician (signoff_queue, case_review, case_reopen,
+//                           case_ask_ranger), operator (team_*) -- see that file
 //   case-tools-shared.js    defTool, the enum-hint ladder, ownsCase, the
 //                           PII projections, the small pure helpers
 //   case-tools-gates.js     REPORT_ONLY_TOOLS, gateByTier, dedupeDuplicateCalls
@@ -36,13 +39,14 @@ import {
   fieldEnumHint, stageHint,
   FALLBACK_CASE_TYPE_VALUES, FALLBACK_PRIORITY_VALUES,
 } from './case-tools-shared.js'
-import { REPORT_ONLY_TOOLS, gateByTier, dedupeDuplicateCalls } from './case-tools-gates.js'
+import { REPORT_ONLY_TOOLS, gateByTier, dedupeDuplicateCalls, toolVisibleToTier } from './case-tools-gates.js'
 import { buildLookupTools } from './case-tools-lookup.js'
 import { buildRecordTools } from './case-tools-record.js'
 import { buildTriageTools } from './case-tools-triage.js'
 import { buildWorkerTools } from './case-tools-worker.js'
 import { buildBindingTools } from './case-tools-binding.js'
 import { buildControlTools } from './case-tools-control.js'
+import { buildTeamTools } from './case-tools-team.js'
 
 // Build the array of tool objects bound to an explicit store (used by anywhere
 // that wants the tools without the runtime singleton).
@@ -63,6 +67,9 @@ export function buildCaseToolset(storeOrNull) {
     ...buildWorkerTools(store),
     ...buildBindingTools(store),
     ...buildControlTools(store),
+    // Appended, never interleaved: the team tools (field / technician / operator
+    // surfaces) sit after the original eighteen so their pinned order is untouched.
+    ...buildTeamTools(store, enums),
   ]
   return tools.map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
 }
@@ -150,7 +157,17 @@ function selfCheckLoadBearingToolDescriptions() {
 // same way it already is at the handler layer, with nothing to keep in sync by
 // hand.
 export function reporterTierExcludedToolNames() {
-  return buildCaseToolset(null).map(t => t.name).filter(name => !REPORT_ONLY_TOOLS.has(name))
+  return hiddenToolNamesForTier('reporter')
+}
+
+// The tool names a contact at `tier` must NOT be handed: every tool whose minimum
+// rung (case-tools-gates.js TOOL_MIN_TIER) sits above it. This is the per-tier
+// generalisation of the reporter list above -- a field worker is hidden the
+// technician and operator tools, a technician the operator tools -- and it feeds
+// the same disabledToolsets seam, so run-turn.js's allowlist (schema hiding AND
+// pre-execute denial) needs no second derivation.
+export function hiddenToolNamesForTier(tier) {
+  return buildCaseToolset(null).map(t => t.name).filter(name => !toolVisibleToTier(name, tier))
 }
 
 selfCheckLoadBearingToolDescriptions()

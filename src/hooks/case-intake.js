@@ -14,6 +14,7 @@ import { observation, flagNeedsHuman } from './case-writes.js'
 import { applyServiceControls, isLlmDown } from './service-controls.js'
 import { describeMedia, recordInboundMedia, recordInboundLocation } from './media-intake.js'
 import { truncate, stripChannelMarkup, mergeTag, dropTag } from './heuristics.js'
+import { isContactAssignee } from '../case-assignment.js'
 import { recordDroppedInbound } from './dropped-intake.js'
 import { tagList } from '../timestamp.js'
 
@@ -238,7 +239,15 @@ export async function applyPreTurnControls({ store, log, llmStatus, notifyHandof
     // triage inbox. Flag needs-human (the observable handoff signal) and notify
     // once on first flag, exactly like an explicit human request. Do NOT raise
     // priority: casey surfaces the request; the operator decides urgency.
-    await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, flagLabel: 'observe needs-human', notifyLabel: 'observe handoff' })
+    //
+    // EXCEPT when the person driving is a team member assigned by contact key
+    // (case-assignment.js): they are already on it, the operators' triage inbox
+    // does not need a second pin per reporter message, and the assignee is told in
+    // their own next in-window turn (staff-notices.js derives "the reporter has
+    // answered" from this same inbound). STOP/HUMAN already fired above.
+    if (!isContactAssignee(fresh.assignee)) {
+      await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, flagLabel: 'observe needs-human', notifyLabel: 'observe handoff' })
+    }
     return { to: replyTo, text: '', platform, caseId: fresh.id, observed: true }
   }
   return null

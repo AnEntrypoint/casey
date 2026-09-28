@@ -1665,3 +1665,16 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    without moving the row: the label beside it is vertically centred on the
    same line either way. */
 .case-row-cb { width: 24px; height: 24px; }
+
+/* ---- team registration + invite codes (panels/team-registration.js, invite-codes.js) ---- */
+.ds-team-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.ds-team-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-3); }
+.ds-team-lede, .ds-team-explain { margin: 0; font-size: var(--fs-sm); color: var(--fg-2, var(--muted)); }
+.ds-team-error { margin: 0; font-size: var(--fs-sm); color: var(--danger-ink, var(--danger)); }
+.ds-invite { display: flex; flex-direction: column; gap: var(--space-3); }
+.ds-invite-fresh { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--line, currentColor); border-radius: var(--radius, 6px); }
+.ds-invite-fresh-note, .ds-invite-text { margin: 0; font-size: var(--fs-sm); }
+.ds-invite-code { font-family: ui-monospace, monospace; font-size: var(--fs-xl); letter-spacing: 0.12em; font-weight: 700; user-select: all; overflow-wrap: anywhere; }
+.ds-people-filter { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; justify-content: space-between; margin-bottom: var(--space-3); }
+.ds-people-page { display: flex; flex-direction: column; gap: var(--space-4); }
+.ds-people { overflow-x: auto; }

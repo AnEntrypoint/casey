@@ -18,18 +18,19 @@
 // allowlist (e.g. reporter tier vs field_worker tier) never leaks across
 // concurrent conversations.
 export function installToolAllowlist(agentCtx, allowedNames) {
-  const allowed = new Set(allowedNames)
+  // `allowedNames` is an array (fixed for the agent's life) or a function read at
+  // EACH prompt assembly and dispatch. src/agent/run-turn.js passes the function
+  // form so a contact promoted mid-conversation (a role code, a dashboard
+  // assignment) gets their new tools on the very next turn instead of keeping the
+  // allowlist the agent was created with.
+  const current = () => new Set(typeof allowedNames === 'function' ? allowedNames() : allowedNames)
   const disposePrompt = agentCtx.on('system-prompt/assemble', async (_assembly, _context, next) => {
     const assembled = await next()
+    const allowed = current()
     return { ...assembled, tools: assembled.tools.filter(t => allowed.has(t.name)) }
   })
-  // The denial names what IS callable, not just what is not. freddie's own
-  // registry makes the same point about its collapsed-tool denial (see
-  // @freddie/freddie-tools's createExecution): a bare refusal for a name the
-  // model believes in reads as a broken deployment, and the model gives up
-  // rather than reaching for a tool it may actually use. The reason string is
-  // read by the model, never by a person.
   const disposeExecute = agentCtx.on('tools/pre-execute', async (exec, next) => {
+    const allowed = current()
     if (!allowed.has(exec.name)) {
       const callable = [...allowed].join(', ')
       return { kind: 'deny', reason: `"${exec.name}" is not one of this conversation's tools -- call one of these instead: ${callable}` }
