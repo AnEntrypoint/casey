@@ -21,7 +21,7 @@ import { installToolAllowlist } from '../../freddie-bundle/src/case-tools/tool-a
 import { installCasePrompt } from '../../freddie-bundle/src/case-tools/case-prompt.js'
 import { LOCATION_STALE_MS } from '../hooks/prompt-context.js'
 import { resolveTierValue } from '../contact-tiers.js'
-import { eraseCaseSessions } from '../store/agent-sessions.js'
+import { eraseCaseSessions, agentKeyFor } from '../store/agent-sessions.js'
 
 let _ctx = null
 export function setAgentContext(ctx) {
@@ -79,6 +79,7 @@ const currentSystemPrompt = new Map()
 // rung on the next turn (a role code claimed mid-conversation would otherwise be
 // inert until the agent idled out).
 const currentAllowedNames = new Map()
+
 
 // IDLE TTL, not a count cap, and the choice is a correctness one rather than a
 // tuning preference. A count cap ("keep the newest N agents") evicts by
@@ -160,9 +161,10 @@ export async function evictAgent(sessionKey, reason) {
   const entry = liveAgents.get(sessionKey)
   if (!entry) return null
   liveAgents.delete(sessionKey)
-  currentToolCtx.delete(sessionKey)
-  currentSystemPrompt.delete(sessionKey)
-  currentAllowedNames.delete(sessionKey)
+  const akey = entry.akey || sessionKey
+  currentToolCtx.delete(akey)
+  currentSystemPrompt.delete(akey)
+  currentAllowedNames.delete(akey)
   stopSweepTimerIfEmpty()
   const idleMs = Date.now() - entry.lastUsedAt
   try {
@@ -209,14 +211,14 @@ export function liveAgentStats(nowMs = Date.now()) {
   }
 }
 
-async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames, tier) {
+async function getOrCreateAgent(sessionKey, akey, provider, model, enabledToolNames, tier) {
   const ctx = requireCtx()
   const existing = liveAgents.get(sessionKey)
   if (existing) {
     existing.lastUsedAt = Date.now()
     return existing.agent
   }
-  const sessionId = SessionId(sessionKey)
+  const sessionId = SessionId(akey)
   const agentOptions = { provider, model }
   // One setup for BOTH paths below. A resumed agent is published exactly like a
   // created one, so it needs the same allowlist install -- see the security
@@ -229,8 +231,8 @@ async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames, t
   // on freddie's bare "You are an AI agent powered by Freddie" with an empty
   // deployment-persona slot, which is the exact defect it exists to close.
   const setup = (agentCtx) => {
-    installToolAllowlist(agentCtx, () => currentAllowedNames.get(sessionKey) || enabledToolNames)
-    installCasePrompt(agentCtx, () => currentSystemPrompt.get(sessionKey) || '', () => currentAllowedNames.get(sessionKey) || enabledToolNames)
+    installToolAllowlist(agentCtx, () => currentAllowedNames.get(akey) || enabledToolNames)
+    installCasePrompt(agentCtx, () => currentSystemPrompt.get(akey) || '', () => currentAllowedNames.get(akey) || enabledToolNames)
   }
   // RESUME FIRST, create only for a session that has never existed. This is the
   // ordering the eviction policy above depends on: a case whose agent was
@@ -255,7 +257,7 @@ async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames, t
     }
   }
   if (handle) {
-    liveAgents.set(sessionKey, { agent: handle.agent, dispose: handle.dispose, lastUsedAt: Date.now(), tier })
+    liveAgents.set(sessionKey, { agent: handle.agent, dispose: handle.dispose, lastUsedAt: Date.now(), tier, akey })
     ensureSweepTimer()
     return handle.agent
   }
@@ -275,7 +277,7 @@ async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames, t
     // is neither, so it must not be returned here directly.
     setup,
   })
-  liveAgents.set(sessionKey, { agent: handle.agent, dispose: handle.dispose, lastUsedAt: Date.now(), tier })
+  liveAgents.set(sessionKey, { agent: handle.agent, dispose: handle.dispose, lastUsedAt: Date.now(), tier, akey })
   ensureSweepTimer()
   return handle.agent
 }
@@ -393,6 +395,7 @@ export async function runTurn({
     await evictAgent(sessionKey, 'tier_changed')
     eraseCaseSessions([String(sessionKey).replace(/^case:/, '')])
   }
+  const akey = agentKeyFor(sessionKey)
 
   // Resolve enabledToolsets/disabledToolsets into a real tool-name allowlist.
   // enabledToolsets:['cases'] means every case_* tool name; disabledToolsets
@@ -411,7 +414,7 @@ export async function runTurn({
   const composedSystemPrompt = systemPrompt
     || messages.find(m => m?.role === 'system')?.content
     || ''
-  if (composedSystemPrompt) currentSystemPrompt.set(sessionKey, composedSystemPrompt)
+  if (composedSystemPrompt) currentSystemPrompt.set(akey, composedSystemPrompt)
   else console.error(JSON.stringify({
     t: new Date().toISOString(), level: 'error', component: 'agent',
     // Loud, not silent: this turn runs without casey's domain prompt -- no
@@ -421,13 +424,13 @@ export async function runTurn({
     msg: 'agent_turn_without_case_system_prompt', sessionKey,
   }))
 
-  currentAllowedNames.set(sessionKey, enabledToolNames)
-  const agent = await getOrCreateAgent(sessionKey, provider, model, enabledToolNames, turnTier)
+  currentAllowedNames.set(akey, enabledToolNames)
+  const agent = await getOrCreateAgent(sessionKey, akey, provider, model, enabledToolNames, turnTier)
   // Publish this turn's toolCtx BEFORE followup() so case-tools/index.js's
   // getToolCtx() thunk (read at each tool dispatch during this turn) sees
   // the current call's author/tier/store/activeCaseBinding, not a stale one
   // from a prior turn on the same reused agent.
-  currentToolCtx.set(sessionKey, toolCtx || {})
+  currentToolCtx.set(akey, toolCtx || {})
   await agent.whenIdle()
   const firstSeq = agent.session.seq
 

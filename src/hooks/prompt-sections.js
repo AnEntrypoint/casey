@@ -288,6 +288,13 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     `recording data, never a substitute for actually replying. After any tool call,`,
     `compose and send your reply text. Never end on a tool call alone.`,
     ...persona.replyStyleRules,
+    // The same rule for every deployment, whatever its persona says: the reply is
+    // read in a phone chat that shows markdown as stray symbols. hooks/plain-text.js
+    // rewrites what still slips through, so this is the instruction, not the fence.
+    `MESSAGE FORMAT: this is a phone chat, so write plain sentences. Never use double`,
+    `asterisks, # headings, tables, pipes, backticks, bullet lists or numbered lists.`,
+    `To stress a single word, put single asterisks round just that word. Give several`,
+    `items in one flowing sentence, never as a list.`,
     ``,
     // The asking rule is already stated in full twice above (the TOP TWO
     // paragraph in GATHER, and the persona's own reply-style rule). A third

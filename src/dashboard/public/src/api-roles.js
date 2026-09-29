@@ -21,9 +21,11 @@ const FIELD_ROLES = ['eco_ranger', 'animal_health_technician'];
 export const currentRole = () => (state.currentUser && state.currentUser.role) || null;
 // Fail-closed the same way the server is: anything that is not a known staff
 // role is treated as the field team's narrow screens.
-export const isFieldRole = () => !!state.authed && !['admin', 'operator', 'secretary'].includes(currentRole());
+export const isFieldRole = () => !!state.authed && !['admin', 'operator', 'secretary', 'viewer'].includes(currentRole());
+// A read-only viewer (UCT, third parties) is neither staff nor field team: views/viewer-app.js.
+export const isViewerRole = () => !!state.authed && currentRole() === 'viewer';
 export const isTechnician = () => currentRole() === 'animal_health_technician';
-export const ROLE_NAME = { eco_ranger: 'Eco Ranger', animal_health_technician: 'Animal Health Technician' };
+export const ROLE_NAME = { eco_ranger: 'Eco Ranger', animal_health_technician: 'Animal Health Technician', viewer: 'Read-only viewer' };
 export const roleName = () => ROLE_NAME[currentRole()] || 'Field team';
 export { FIELD_ROLES };
 

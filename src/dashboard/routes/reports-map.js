@@ -1,0 +1,304 @@
+// reports-map.js -- the read-only, PII-free "which diseases are we finding, and
+// where" surface: the resolved map, the disease reports, the heat grid and a
+// viewer-safe CSV. These are the ONLY case-derived routes a `viewer` login (UCT,
+// third parties: dashboard/roles.js) may reach, and staff use the same routes
+// from the Overview section, so there is one implementation and one privacy rule.
+//
+// WHAT "RESOLVED" MEANS HERE. A case is on the resolved map only when it is in a
+// finished stage (resolved/closed) AND carries an identified_disease. That field
+// is recorded ONLY at sign-off by an animal health technician (report-fields.yml
+// signoff_diagnosis, never_inferred, refused for a ranger by roleGate), so its
+// presence is the sign-off. A case a staff member closed from the console without
+// a diagnosis is deliberately absent: it was not signed off by a technician.
+//
+// WHAT NEVER LEAVES. Every projection below is an allowlist built field by field
+// (never a spread of the case row): no name, phone, external_id, ref, id, subject,
+// summary, free text, assignee, media or reporter. What is released about a case:
+//   point   lat/lon rounded to 0.01 degree (~1.1 km, so a farm is not pinpointed),
+//           the disease label (letters only, 60 chars; a label fewer than the floor of cases
+//           carry is shown as 'Other (rare)'), the species label, and the
+//           WEEK it was signed off (the Monday), never the day or the time.
+//   counts  disease x region x month rollups, every cell below privacy.js's
+//           MIN_AGGREGATE_CELL folded into 'other/sparse' (and dropped if that
+//           bucket is itself under the floor), so no rollup names a group of 1-4.
+// The technician's disease text is free text, so it is sanitised to letters,
+// spaces, hyphens, apostrophes and brackets: digits (a phone number typed into
+// the box) and punctuation are stripped, and a label that is empty after that is
+// treated as not recorded.
+//
+// deps: store, wrap, authed, csvCell
+import { parseReport } from '../../timestamp.js'
+import { statedArea } from '../../areas.js'
+import { isDone } from '../../signoff-desk.js'
+import { SIGNOFF_DIAGNOSIS_FIELDS } from '../../store/report-shape.js'
+import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY, UNSUPPRESSED_BUCKET_KEYS } from '../../privacy.js'
+import { mountRoutes } from './register.js'
+
+const POOL_CAP = 10000
+const DISEASE_KEY = SIGNOFF_DIAGNOSIS_FIELDS[0] || 'identified_disease'
+const SAST_OFFSET_MS = 2 * 3600e3
+const HEAT_CELL_DEG = 0.1          // ~11 km, a grid cell of the "all reports" heat layer
+const POINT_ROUND = 100            // 0.01 degree ~ 1.1 km
+
+// ---------- cleaning: everything free-text is reduced before it is ever counted ----------
+
+// Letters (any script), spaces, hyphen, apostrophe, brackets. No digits, no @, no
+// slashes: nothing that can carry a number, an id or a link.
+export function cleanLabel(raw, max = 60) {
+  return String(raw == null ? '' : raw)
+    .replace(/[^\p{L}\s'()\-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim()
+}
+
+const labelKey = (label) => label.toLowerCase()
+
+// A time bound: unix seconds, or an ISO date (2026-03-31). null when absent.
+export function parseBound(v, endOfDay = false) {
+  if (v == null || v === '') return null
+  const s = String(v).trim()
+  if (/^\d{9,11}$/.test(s)) return Number(s)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const ms = Date.parse(s + 'T00:00:00Z')
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) + (endOfDay ? 86399 : 0) : NaN
+  }
+  return NaN
+}
+
+const isoDate = (sec) => new Date(sec * 1000 + SAST_OFFSET_MS).toISOString().slice(0, 10)
+export const monthOf = (sec) => isoDate(sec).slice(0, 7)
+// The time grain of a rollup: month (default), quarter or year. A coarser grain is how a
+// small deployment gets cells large enough to be released at all.
+export function periodOf(sec, grain = 'month') {
+  const m = monthOf(sec)
+  if (grain === 'year') return m.slice(0, 4)
+  if (grain === 'quarter') return m.slice(0, 4) + '-Q' + (Math.floor((Number(m.slice(5)) - 1) / 3) + 1)
+  return m
+}
+// The Monday of the week (SAST), as a date: the coarsest useful "when".
+export function weekStartOf(sec) {
+  const d = new Date(sec * 1000 + SAST_OFFSET_MS)
+  const back = (d.getUTCDay() + 6) % 7
+  return new Date(d.getTime() - back * 86400e3).toISOString().slice(0, 10)
+}
+
+const round2 = (n) => Math.round(n * POINT_ROUND) / POINT_ROUND
+function coords(c) {
+  if (c.lat == null || c.lat === '' || c.lon == null || c.lon === '') return null
+  const lat = Number(c.lat), lon = Number(c.lon)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null
+  return { lat, lon }
+}
+
+// ---------- the pool: signed-off cases, projected once ----------
+
+async function resolvedSeconds(store, cases) {
+  const at = new Map()
+  const byCase = await store.listEventsByCase(cases.map(c => c.id)).catch(() => new Map())
+  for (const c of cases) {
+    let t = null
+    for (const e of byCase.get(c.id) || []) {
+      if (e.kind !== 'transition') continue
+      let d = e.data
+      if (typeof d === 'string') { try { d = JSON.parse(d) } catch { d = {} } }
+      if (d && isDone({ status: d.to })) t = Number(e.created_at)
+    }
+    at.set(c.id, Number.isFinite(t) ? t : Number(c.updated_at || c.created_at) || 0)
+  }
+  return at
+}
+
+// The ONE projection. Every released datum about a case is named here.
+export function resolvedRow(c, report, resolvedSec) {
+  const disease = cleanLabel(report[DISEASE_KEY])
+  if (!disease) return null
+  const species = cleanLabel(report.species, 40) || 'Not stated'
+  const area = cleanLabel(statedArea(report), 60)
+  const p = coords(c)
+  return {
+    disease, species, region: area || 'unknown', sec: resolvedSec,
+    ll: p ? { lat: round2(p.lat), lon: round2(p.lon) } : null,
+  }
+}
+
+// Species is free text too and gets the same treatment. A label held by fewer than the floor of signed-off cases (all time, so the answer does not
+// shift with the window asked for) is shown as this instead: it is free text a technician typed,
+// and a label only one case carries is the likeliest place for a name to have been typed.
+export const RARE_LABEL = 'Other (rare)'
+
+export async function loadResolved(store, { from = null, to = null } = {}) {
+  const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
+  const done = all.filter(c => isDone(c) && c.channel !== 'system')
+  const withDx = done.filter(c => cleanLabel(parseReport(c)[DISEASE_KEY]))
+  const at = await resolvedSeconds(store, withDx)
+  const raw = withDx.map(c => resolvedRow(c, parseReport(c), at.get(c.id))).filter(Boolean)
+  // Writers spell one thing several ways ("upper lambasi", "Upper Lambasi"): group on the lower-cased
+  // text and show the spelling most often written.
+  for (const field of ['disease', 'species', 'region']) {
+    const spellings = new Map()
+    for (const r of raw) {
+      const m = spellings.get(labelKey(r[field])) || new Map()
+      m.set(r[field], (m.get(r[field]) || 0) + 1); spellings.set(labelKey(r[field]), m)
+    }
+    const best = new Map([...spellings].map(([k, m]) => [k, [...m.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0][0]]))
+    for (const r of raw) r[field] = best.get(labelKey(r[field]))
+  }
+  const held = new Map(), kinds = new Map()
+  for (const r of raw) { held.set(labelKey(r.disease), (held.get(labelKey(r.disease)) || 0) + 1); kinds.set(labelKey(r.species), (kinds.get(labelKey(r.species)) || 0) + 1) }
+  const rows = []
+  for (const r of raw) {
+    if (from != null && r.sec < from) continue
+    if (to != null && r.sec > to) continue
+    if ((held.get(labelKey(r.disease)) || 0) < MIN_AGGREGATE_CELL) r.disease = RARE_LABEL
+    if ((kinds.get(labelKey(r.species)) || 0) < MIN_AGGREGATE_CELL) r.species = RARE_LABEL
+    rows.push(r)
+  }
+  return rows
+}
+
+// ---------- k-anonymous rollups ----------
+
+// Group rows by `dims` (functions of a row -> string). A group under the floor is
+// folded into ONE bucket whose every dim reads 'other/sparse'; that bucket is
+// released only when it reaches the floor itself. A single-dimension group named
+// 'unknown' is exempt (privacy.js: it names nothing).
+export function rollup(rows, dims, k = MIN_AGGREGATE_CELL) {
+  const groups = new Map()
+  for (const r of rows) {
+    const vals = dims.map(d => d(r))
+    const key = JSON.stringify(vals)
+    const g = groups.get(key)
+    if (g) g.count++; else groups.set(key, { vals, count: 1 })
+  }
+  const out = []
+  let sparse = 0
+  for (const g of groups.values()) {
+    const exempt = dims.length === 1 && UNSUPPRESSED_BUCKET_KEYS.has(g.vals[0])
+    if (g.count >= k || exempt) out.push(g); else sparse += g.count
+  }
+  if (sparse >= k) out.push({ vals: dims.map(() => SPARSE_BUCKET_KEY), count: sparse })
+  return out.sort((a, b) => b.count - a.count || String(a.vals).localeCompare(String(b.vals)))
+}
+
+const named = (dimNames) => (g) => Object.fromEntries([...dimNames.map((n, i) => [n, g.vals[i]]), ['count', g.count]])
+
+export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}) {
+  const inRegion = region ? rows.filter(r => labelKey(r.region) === labelKey(region)) : rows
+  const dis = (r) => r.disease, reg = (r) => r.region, mon = (r) => periodOf(r.sec, grain)
+  const cells = rollup(inRegion, [dis, reg, mon])
+  const total = cells.reduce((s, g) => s + g.count, 0)
+  return {
+    k: MIN_AGGREGATE_CELL, grain,
+    // Every figure below is a released (>= k) group; `total` is the sum of the
+    // released cells only, so nothing can be got by subtracting shown from total.
+    total,
+    by_disease: rollup(inRegion, [dis]).map(named(['disease'])),
+    by_region: rollup(rows, [reg]).map(named(['region'])),
+    by_month: rollup(inRegion, [mon]).map(named(['month'])),
+    by_disease_month: rollup(inRegion, [dis, mon]).map(named(['disease', 'month'])),
+    by_disease_region: rollup(rows, [dis, reg]).map(named(['disease', 'region'])),
+    by_species: rollup(inRegion, [(r) => r.species]).map(named(['species'])),
+    cells: cells.map(named(['disease', 'region', 'month'])),   // `month` holds the period of `grain`
+  }
+}
+
+// ---------- handlers ----------
+
+function windowOf(req, res) {
+  const from = parseBound(req.query.from), to = parseBound(req.query.to, true)
+  if (Number.isNaN(from) || Number.isNaN(to)) { res.status(400).json({ error: 'from and to must be a date like 2026-03-31 or unix seconds' }); return null }
+  return { from, to }
+}
+const grainOf = (req) => (['month', 'quarter', 'year'].includes(req.query.grain) ? req.query.grain : 'month')
+const asked = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 80) : null)
+
+export function getResolvedMap({ store, authed }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const w = windowOf(req, res); if (!w) return
+    const region = asked(req.query.region)
+    let rows = await loadResolved(store, w)
+    if (region) rows = rows.filter(r => labelKey(r.region) === labelKey(region))
+    const points = rows.filter(r => r.ll).map(r => ({
+      lat: r.ll.lat, lon: r.ll.lon, disease: r.disease, species: r.species, resolved_at: weekStartOf(r.sec),
+    })).sort((a, b) => a.resolved_at < b.resolved_at ? -1 : a.resolved_at > b.resolved_at ? 1 : 0)
+    res.json({ count: points.length, without_location: rows.length - points.length, precision_km: 1, points })
+  }
+}
+
+export function getDiseases({ store, authed }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const w = windowOf(req, res); if (!w) return
+    const rows = await loadResolved(store, w)
+    res.json(buildDiseaseReport(rows, { region: asked(req.query.region), grain: grainOf(req) }))
+  }
+}
+
+// Aggregate grid cells. scope=resolved (default): signed-off cases; scope=all: every
+// report's location, disease not involved. A cell under the floor is not released at all.
+export function getHeat({ store, authed }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const w = windowOf(req, res); if (!w) return
+    const scope = req.query.scope === 'all' ? 'all' : 'resolved'
+    const disease = asked(req.query.disease) ? cleanLabel(req.query.disease) : null
+    const pts = []
+    if (scope === 'resolved') {
+      for (const r of await loadResolved(store, w)) {
+        if (r.ll && (!disease || labelKey(r.disease) === labelKey(disease))) pts.push(r.ll)
+      }
+    } else {
+      const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
+      for (const c of all) {
+        if (c.channel === 'system') continue
+        const t = Number(c.created_at)
+        if (w.from != null && t < w.from) continue
+        if (w.to != null && t > w.to) continue
+        const p = coords(c)
+        if (p) pts.push(p)
+      }
+    }
+    const cellOf = (n) => Math.floor(n / HEAT_CELL_DEG)
+    const cells = new Map()
+    for (const p of pts) {
+      const key = cellOf(p.lat) + ':' + cellOf(p.lon)
+      const g = cells.get(key)
+      if (g) g.count++; else cells.set(key, { i: cellOf(p.lat), j: cellOf(p.lon), count: 1 })
+    }
+    const released = [...cells.values()].filter(g => g.count >= MIN_AGGREGATE_CELL).map(g => ({
+      lat: Math.round((g.i + 0.5) * HEAT_CELL_DEG * 1000) / 1000,
+      lon: Math.round((g.j + 0.5) * HEAT_CELL_DEG * 1000) / 1000,
+      count: g.count,
+    })).sort((a, b) => b.count - a.count)
+    res.json({ k: MIN_AGGREGATE_CELL, scope, cell_deg: HEAT_CELL_DEG, total: released.reduce((s, c) => s + c.count, 0), cells: released })
+  }
+}
+
+// The viewer-safe export: the released disease x region x month cells and nothing else.
+export function getReportsCsv({ store, authed, csvCell }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const w = windowOf(req, res); if (!w) return
+    const rep = buildDiseaseReport(await loadResolved(store, w), { region: asked(req.query.region), grain: grainOf(req) })
+    const lines = [['view', 'disease', 'region', 'period', 'cases'].join(',')]
+    const add = (view, list, cols) => { for (const c of list) lines.push([view, ...cols.map(k => csvCell(c[k] ?? 'all')), csvCell(c.count)].join(',')) }
+    add('disease', rep.by_disease, ['disease', 'region', 'month'])
+    add('disease_by_region', rep.by_disease_region, ['disease', 'region', 'month'])
+    add('disease_by_period', rep.by_disease_month, ['disease', 'region', 'month'])
+    add('disease_region_period', rep.cells, ['disease', 'region', 'month'])
+    lines.push(`# Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under ${SPARSE_BUCKET_KEY}. No case-level or personal data is included.`)
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', 'attachment; filename="resolved-cases-by-disease.csv"')
+    res.send(lines.join('\n'))
+  }
+}
+
+const ROUTES = [
+  ['get', '/api/reports/resolved-map', getResolvedMap],
+  ['get', '/api/reports/diseases', getDiseases],
+  ['get', '/api/reports/heat', getHeat],
+  ['get', '/api/reports/export.csv', getReportsCsv],
+]
+
+export function registerReportsMap(app, deps) {
+  mountRoutes(app, deps, ROUTES)
+}

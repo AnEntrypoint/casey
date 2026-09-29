@@ -24,7 +24,7 @@ import { MANDATORY_MINIMUM_FIELDS, REPORT_ENTITY_LABEL, missingMandatoryMinimum,
 import { evData } from './safe.js'
 import { writeGate, recordedOn } from './team-focus.js'
 import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn } from './case-tools-team-shared.js'
-import { inSignOffQueue, withdrawHandoff } from './signoff-desk.js'
+import { inSignOffQueue, withdrawHandoff, isHandedOff, sendBackToRanger } from './signoff-desk.js'
 import { mergeTag } from './hooks/heuristics.js'
 
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
@@ -109,7 +109,7 @@ export function buildTeamReviewTools(store) {
         return { ok: true, recorded_on: r.on, ref: c.ref, reopened_to: 'in_progress' }
       }),
     defTool('case_ask_ranger', 'cases',
-      'Ask the field worker who filed a record for a missing fact, by WhatsApp through the assistant\'s number. Only when the person who filed it is a field worker; a member of the public is asked by the assistant itself. Omit `text` and the missing required facts are asked for. Refused, and says so, if they asked us to stop or last wrote more than 24 hours ago.',
+      'Ask the field worker who filed a record for a missing fact, by WhatsApp through the assistant\'s number. Only when the person who filed it is a field worker; a member of the public is asked by the assistant itself, so for a record a ranger handed over this instead sends it back to that ranger with your text as the question (nothing is sent to anyone). Omit `text` and the missing required facts are asked for. Refused, and says so, if they asked us to stop or last wrote more than 24 hours ago.',
       { type: 'object', properties: { case: str('Record reference or id'), text: str('Optional: what to ask, in their language') }, required: ['case'] },
       async ({ case: ref, text }, ctx) => {
         const r = await lookup(store, ctx, ref, { gate: true }); if (r.fail) return r.fail
@@ -117,6 +117,12 @@ export function buildTeamReviewTools(store) {
         let reporter = null
         try { reporter = c.contact_id ? await store().getContact(c.contact_id) : null } catch { reporter = null }
         if (!atLeast(reporter?.tier, TIER_FIELD_WORKER)) {
+          // A public reporter is asked by the assistant. A record a ranger handed over
+          // still goes back to that ranger, with the question, and nothing is sent.
+          if (isHandedOff(c)) {
+            const back = await sendBackToRanger(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, text: String(text || '').trim(), data: actorData(ctx) })
+            return back.ok ? { ok: true, sent_back_to_the_ranger: true, delivered: false, recorded_on: r.on, taken_off_the_sign_off_desk: true } : { error: back.error }
+          }
           return { error: 'The person who filed this is a member of the public, not a field worker, so the assistant asks them itself. Do not message them from here.' }
         }
         const missing = missingMandatoryMinimum(parseReport(c)).map(fieldLabel)

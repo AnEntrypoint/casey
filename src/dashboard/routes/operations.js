@@ -372,7 +372,8 @@ export function getConfig({ store, authed, SAST_TZ, resolveWhatsappAdapter, fmtP
     let botNumber = ''
     try { botNumber = fmtPhone27(resolveWhatsappAdapter?.()?.displayNumber?.() || '') } catch { /* best-effort */ }
     res.json({
-      whatsapp_number: botNumber,
+      // A viewer (read-only, aggregate) is shown no phone number at all, the bot's included.
+      whatsapp_number: req.caseyAccount?.role === 'viewer' ? '' : botNumber,
       // Whether a deployer mounted the optional /api/runs/* routes (CASEY_EXTRA_DASHBOARD_ROUTES);
       // the SPA does not probe them when this is false.
       run_routes: !!process.env.CASEY_EXTRA_DASHBOARD_ROUTES,

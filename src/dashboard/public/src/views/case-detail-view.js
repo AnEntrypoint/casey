@@ -22,6 +22,7 @@ import { FieldsEditor } from './case-detail/fields-editor.js';
 import { Transitions } from './case-detail/transitions.js';
 import { ReplyBox } from './case-detail/reply-box.js';
 import { Timeline } from './case-detail/timeline.js';
+import { AreaNote } from './case-detail/area-note.js';
 import { DedupPanel, loadDuplicateSuggestions } from './case-detail/dedup-panel.js';
 import { SiteHistoryPanel, loadSiteHistory } from './case-detail/site-history.js';
 import { SplitDialogTrigger, SplitDialog } from './case-detail/split-dialog.js';
@@ -148,6 +149,7 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
         showBack ? backControl(onClose) : null,
         CaseHeader({ c, suggestedAssignee: suggested_assignee, onReload: reload, onOpenShare: openShareDialog, onOpenSnooze: openSnoozeDialog }),
         LinkedReportsNote({ caseId: id }),
+        AreaNote({ c, area: state.caseDetail.area, onReload: () => reload(id) }),
         CaseProgress({ status: c.status }),
         // ORDER IS THE ARGUMENT HERE: read the evidence, then act, then the
         // surfaces you rarely touch. Measured before this change, on a real

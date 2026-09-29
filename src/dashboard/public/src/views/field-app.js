@@ -16,6 +16,7 @@ import { Skeleton, Alert, Panel, Row as KitRow } from '/design/src/components/co
 import { state, schedule, closeModal } from '../state.js';
 import { AccountMenu, LogoutEverywhereConfirmDialog } from '../components/account-menu.js';
 import { ConnectionBanner } from '../components/connection-banner.js';
+import { FeedbackDialog } from '../components/feedback-dialog.js';
 import { ToastTray } from '../components/toast-tray.js';
 import { Dialog, confirmDialog } from '../components/dialog-shell.js';
 import { MapPanel } from '../panels/map-panel.js';
@@ -28,6 +29,8 @@ import { stageLabel, headline, rel } from '../format.js';
 import { brandName, entityLabel, entityLabelPlural, EntityLabelPlural, countOf } from '../vocabulary.js';
 import { ViewTitle, VIEW_TITLE_ID } from './view-title.js';
 import { FieldCaseView, resetFieldCase } from './field-case.js';
+import { MyDay, refreshMyDay } from './my-day.js';
+import { holderName } from './field-names.js';
 const h = webjsx.createElement;
 
 const fs = { view: 'home', mine: [], signoff: [], mineTotal: 0, loaded: false, loading: false, error: '' };
@@ -46,6 +49,7 @@ export async function refreshFieldLists() {
     fs.error = '';
   } catch (e) { fs.error = 'Could not load your ' + entityLabelPlural() + '. Check your signal and try again.'; }
   fs.loading = false; fs.loaded = true; schedule();
+  refreshMyDay();
 }
 
 function parseReport(raw) { try { return raw ? JSON.parse(raw) : {}; } catch { return {}; } }
@@ -65,7 +69,16 @@ function worstFirst(list) {
 }
 
 function openReport(id) { pushHash({ caseId: id }); setActiveId(id); }
+function openRef(ref) { const hit = [...fs.mine, ...fs.signoff].find((c) => c.ref === ref); if (hit) openReport(hit.id); }
 function closeReport() { pushHash({ caseId: null }); setActiveId(null); resetFieldCase(); refreshFieldLists(); }
+
+// A report a ranger has handed over: the technician is told who sent it; the ranger is told it is
+// with the technician now.
+function handedNote(c) {
+  if (!tagsOf(c).includes('handed-off')) return '';
+  if (isTechnician()) { const from = holderName(c.assignee); return from ? 'Sent by ' + from : 'Sent by a ranger'; }
+  return 'With the technician for sign-off';
+}
 
 function Row(c, { showMissing = true } = {}) {
   const r = parseReport(c.report);
@@ -79,7 +92,7 @@ function Row(c, { showMissing = true } = {}) {
     // Stage and age ride in the sub line, not the kit's right-hand meta: on a phone that column took half the
     // row and squeezed the title into two words a line.
     key: c.id, title: what || headline(c.subject || 'No details yet'),
-    sub: [c.ref, stageLabel(c.status) + (c.last_event_at ? ' -- ' + rel(c.last_event_at) : ''), sentBack ? 'Sent back to you -- open it to see what is needed' : '', need].filter(Boolean).join('. '),
+    sub: [c.ref, stageLabel(c.status) + (c.last_event_at ? ' -- ' + rel(c.last_event_at) : ''), sentBack ? 'Sent back to you -- open it to see what is needed' : '', handedNote(c), need].filter(Boolean).join('. '),
     rail: sentBack ? 'flame' : (mandatory().length && !missing.length ? 'green' : undefined),
     onClick: () => openReport(c.id),
   });
@@ -114,13 +127,17 @@ function Home() {
     const rest = open.filter((c) => missingOf(c).length);
     body.push(List('Ready to sign off', worstFirst(ready), 'Nothing is waiting for sign-off right now.', { showMissing: false }));
     body.push(List('Your other ' + entityLabelPlural() + ', still being gathered', rest, 'You have no other open ' + entityLabelPlural() + '.'));
+    body.push(MyDay({ onOpenRef: openRef, tech: true }));
+    body.push(MyDay({ onOpenRef: openRef, tech: true, part: 'after' }));
   } else {
+    body.push(MyDay({ onOpenRef: openRef }));
     body.push(List('My ' + entityLabelPlural(), open, 'No ' + entityLabel() + ' is assigned to you right now. When an operator gives you one it shows up here.'));
+    body.push(MyDay({ onOpenRef: openRef, part: 'after' }));
     // Nothing assigned means nothing to place: an empty map of the whole country only says "no reports have
     // come in", which is a claim about the deployment, not about this person.
     if (open.length) body.push(Panel({ title: 'Where mine are', children: h('div', { class: 'field-map-small' }, MapPanel()) }));
   }
-  return h('div', { class: 'field-home' }, ...body);
+  return h('div', { class: 'field-home' }, ...body.filter(Boolean));
 }
 
 function MapView() {
@@ -177,6 +194,7 @@ export function FieldApp() {
       main: [main], bannerLabel: 'Top bar', mainLabelledby: VIEW_TITLE_ID,
     }),
     FieldHelp(),
+    FeedbackDialog(),
     LogoutEverywhereConfirmDialog(),
     ToastTray());
 }

@@ -25,7 +25,10 @@ import {
 } from './turn-outcome.js'
 import { resolveAdapter, sendGuaranteedFallback, sendAgentReply } from './delivery.js'
 import { makeTypingIndicator } from './typing.js'
+import { normaliseReply } from './plain-text.js'
+import { decideNotice, composeNotice, recordNoticeShown } from '../first-contact-notice.js'
 import { tryRegisterByCode } from './role-registration.js'
+import { parseReport } from '../timestamp.js'
 
 export async function runInboundTurn(receiver, deps, { platform, msg, channel, external_id, replyTo }) {
   const { store, log, admission, autoRespond, llmStatus, notifyHandoff } = deps
@@ -162,6 +165,16 @@ async function driveAgentTurn(deps, {
   const degraded = errored || isFallback
 
   text = await correctOutboundRef({ store, fresh, text, result, inboundText, contact })
+  // Markdown the phone would show literally is rewritten (hooks/plain-text.js). WhatsApp
+  // only: Discord renders markdown itself.
+  if (text && channel === 'whatsapp') {
+    const plain = normaliseReply(text)
+    if (plain.changed) {
+      text = plain.text
+      try { await store.appendEvent(fresh.id, observation('REPLY-FORMAT-NORMALISED: markdown syntax rewritten for WhatsApp')) }
+      catch (e) { log.warn?.('[casey] format-normalised marker failed', { caseId: fresh.id, error: e.message }) }
+    }
+  }
   if (!degraded) await clearAiOffline({ store, log, fresh })
 
   const held = await holdReplyForHuman({
@@ -222,7 +235,23 @@ async function driveAgentTurn(deps, {
     })
   }
 
-  const { reply } = await sendAgentReply({ store, log, adapter, fresh, channel, replyTo, platform, text, isFallback, degraded })
+  // FIRST-CONTACT NOTICE, appended after the answer (first-contact-notice.js). Never for a
+  // fallback or degraded turn, and never allowed to hold the reply back.
+  let notice = null
+  if (!degraded && !isFallback && text) {
+    notice = await decideNotice(store, { fresh, events, contact }).catch(() => null)
+    if (notice) {
+      const body = await composeNotice(callLLM, notice, { inboundText, language: parseReport(fresh).language_detected }).catch(() => null)
+      if (body) text = `${text}\n\n${body}`
+      else { notice = null; await store.appendEvent(fresh.id, observation('NOTICE-NOT-COMPOSED: the first-contact notice could not be composed; it is still owed')).catch(() => {}) }
+    }
+  }
+  const { reply, delivered } = await sendAgentReply({ store, log, adapter, fresh, channel, replyTo, platform, text, isFallback, degraded })
+  // The first-contact notice is recorded only once a reply that carries it was delivered.
+  if (delivered && notice) {
+    try { await recordNoticeShown(store, fresh.id, notice) }
+    catch (e) { log.warn?.('[casey] notice_shown record failed', { caseId: fresh.id, error: e.message }) }
+  }
   // GUARANTEED-RESPONSE FSM, end: the real reply attempt (success or a failed
   // send, either way nothing more is coming) is the last point a typing indicator
   // should still be showing.

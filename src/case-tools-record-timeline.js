@@ -219,6 +219,8 @@ export function buildCaseTimelineTools(store, { stageValues }) {
           if (still.length) return { error: `every required fact is recorded and it is the technician's to finish, but the sign-off also needs ${still.map(fieldLabel).join(' and ')}, and ${still.length === 1 ? 'that is' : 'those are'} not recorded. Ask them for ${still.length === 1 ? 'it' : 'them'} in one plain sentence, then call this again with ${still.join(' and ')} set to exactly what they said. Do not suggest ${still.length === 1 ? 'one' : 'either'} yourself and do not use stage names.` }
           const tooLong = Object.keys(given).filter(k => given[k].length > APPEND_FIELD_MAX_LEN)
           if (tooLong.length) return { error: `${tooLong.map(fieldLabel).join(', ')} is too long to record (over ${APPEND_FIELD_MAX_LEN} characters). Nothing was changed. Ask for a shorter version.` }
+          // Nothing is written for a move the workflow will refuse anyway.
+          if (to !== c.status && !store().availableTransitions(c, AGENT_USER).includes(to)) return { error: `cannot move ${c.status} -> ${to}; allowed: ${store().availableTransitions(c, AGENT_USER).join(', ')}` }
           if (Object.keys(given).length) {
             const merged = await store().mergeReport(c.id, given, AGENT_USER, { bypassObserve: true, autoAssign: false })
             if (merged.error) return { error: merged.error }

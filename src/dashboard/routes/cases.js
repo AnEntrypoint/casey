@@ -26,7 +26,7 @@ import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27, markInvisibles } from '../../format.js'
 import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES } from '../../store/report-shape.js'
-import { withdrawHandoff } from '../../signoff-desk.js'
+import { sendBackToRanger } from '../../signoff-desk.js'
 import { areaInfoFor } from '../../areas.js'
 import { isKnownValueField, invalidateKnownValues } from '../../field-values.js'
 import { BRAND } from '../brand.js'
@@ -1399,12 +1399,7 @@ export function postSendBack({ store, authed, str, actingOperator }) {
     const missing = Array.isArray(req.body?.missing) ? req.body.missing.filter(k => typeof k === 'string').slice(0, 20) : []
     if (!text.trim() && !missing.length) return res.status(400).json({ error: 'Say what is missing so it can be fixed.' })
     const op = actingOperator(req)
-    const tags = tagList(c)
-    if (!tags.includes('sent-back')) await store.updateCase(c.id, { tags: [...tags, 'sent-back'].join(',') }, op)
-    const line = `Sent back by ${op.name || op.id}${missing.length ? `: still needed -- ${missing.join(', ')}` : ''}${text.trim() ? `. ${text.trim()}` : ''}`
-    await store.appendEvent(c.id, { kind: 'note', actor: 'operator', text: line, data: { by: op.id, sent_back: true, missing } })
-    // A record a ranger handed over goes back off the desk to its ranger.
-    await withdrawHandoff(store, c.id, { by: op.name || op.id, user: op, reason: 'sent back' })
+    await sendBackToRanger(store, c.id, { by: op.name || op.id, user: op, text, missing, data: { by: op.id } })
     res.json({ ok: true })
   }
 }

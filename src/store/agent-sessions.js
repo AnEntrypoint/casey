@@ -57,7 +57,8 @@ export function findCaseSessionDirs(caseIds, root = freddieSessionsRoot()) {
     try { agents = fs.readdirSync(projectDir, { withFileTypes: true }) } catch { continue }
     for (const a of agents) {
       if (!a.isDirectory()) continue
-      if (wanted.has(decodeAgentDirName(a.name))) out.push(path.join(projectDir, a.name))
+      // `case:<id>` and every role-change epoch of it, `case:<id>#<n>` (run-turn.js).
+      if (wanted.has(decodeAgentDirName(a.name).replace(/#\d+$/, ''))) out.push(path.join(projectDir, a.name))
     }
   }
   return out
@@ -68,9 +69,20 @@ export function findCaseSessionDirs(caseIds, root = freddieSessionsRoot()) {
 // filesystem failure here must not undo or fail it -- it must be REPORTED
 // instead, which is why the return value names what was left behind rather than
 // only what was removed.
+// The freddie session id a conversation runs under. freddie's persistence tracks a
+// session id in memory for the life of the process, so erasing a transcript from disk
+// and then creating an agent under the SAME id collides ("already bound to a
+// different live session"). Every erase therefore moves the conversation to the next
+// epoch, `case:<id>#<n>`: an id this process has never used, so the fresh conversation
+// starts empty. Epoch 0 is the plain `case:<id>`. In memory only: after a restart the
+// plain id is free again, its transcript having been erased.
+const epochs = new Map()
+export const agentKeyFor = (sessionKey) => (epochs.get(sessionKey) ? `${sessionKey}#${epochs.get(sessionKey)}` : sessionKey)
+
 export function eraseCaseSessions(caseIds, { log = console, root = freddieSessionsRoot() } = {}) {
   const removed = []
   const failed = []
+  for (const id of caseIds) epochs.set(`case:${id}`, (epochs.get(`case:${id}`) || 0) + 1)
   for (const dir of findCaseSessionDirs(caseIds, root)) {
     try { fs.rmSync(dir, { recursive: true, force: true }); removed.push(dir) }
     catch (e) {
