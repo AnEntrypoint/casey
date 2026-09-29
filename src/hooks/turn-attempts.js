@@ -37,6 +37,8 @@ import { TURN_HARD_DEADLINE_MS } from './turn-deadlines.js'
 // number of extra round trips rather than doubling every contact's wait
 // indefinitely.
 export const MAX_TOOL_CHOICE_ATTEMPTS = 3
+// Retries a repeat-ask flag may spend (the rest of the budget stays for tool-choice misses).
+const REPEAT_ASK_RETRIES = Math.max(0, Number(process.env.CASEY_REPEAT_ASK_RETRIES ?? 1) || 0)
 
 // Every case tool's literal name, resolved ONCE from the live toolset at module
 // load (buildCaseToolset(null) needs no store for names -- see
@@ -579,7 +581,9 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // The judge is instructed to write exactly "repeat-ask", the same contract
   // "multi-ask" has had all along.
   if (verdict.reasons?.some(r => /repeat.?ask/i.test(r))) {
-    if (canRetry) {
+    // One retry, not the whole budget: being asked twice is an irritation, and every
+    // retry is a full extra turn (an agent loop plus a judge call) added to the wait.
+    if (canRetry && attempt <= REPEAT_ASK_RETRIES) {
       log.warn?.('[casey] reply re-asked something already asked or already recorded; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPEAT-ASK: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
       return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it asked again for something this person has already been asked or has already told you'

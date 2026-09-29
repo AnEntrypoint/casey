@@ -327,18 +327,17 @@ try {
   // value, which the seeded reports above never produce. So make it empty for real: answer the list
   // request with no values, drop the cache, kick one render, and count. Fixed code asks once per cache
   // lifetime (1 to 3 requests); the loop asked hundreds of times and burned the whole render budget.
+  const emptyFrom = await renders()
   // A lower cap for this probe only: a loop then ends in a second or two as a failed check instead of a locked tab.
   await evalJs(`(() => { const W = window; W.__fvCalls = 0; W.__renderCap = W.__renders + 200; W.__fvFetch = W.fetch
     W.fetch = (u, ...a) => { if (String(u).includes('/api/field-values?')) { W.__fvCalls++; return Promise.resolve(new Response('{"values":[]}', { headers: { 'content-type': 'application/json' } })) } return W.__fvFetch(u, ...a) }
     return import('/src/known-values.js').then((m) => { m.invalidateKnownValues(); return import('/src/state.js') }).then((st) => { st.schedule(); return 1 }) })()`)
-  await sleep(1500)
-  const emptyFrom = await renders()
-  await sleep(6000)
+  await sleep(7500)
   const emptyIdle = (await renders()) - emptyFrom
   const fvCalls = await evalJs('window.__fvCalls')
   await evalJs(`(() => { window.__renderCap = 0; if (window.__fvFetch) window.fetch = window.__fvFetch; return import('/src/known-values.js').then((m) => { m.invalidateKnownValues(); return 1 }) })()`)
   check(fvCalls >= 1 && fvCalls <= 3, 'an empty known-values list is asked for once, not on every render', `${fvCalls} requests`)
-  check(emptyIdle <= 5, 'an empty known-values list does not keep the page re-rendering', `${emptyIdle} renders in 6 s (budget 5)`)
+  check(emptyIdle <= 12, 'an empty known-values list does not keep the page re-rendering', `${emptyIdle} renders in 7.5 s (budget 12; the loop spends its whole cap of 200)`)
   await evalJs(`location.hash = 'home=cases&case=' + ${JSON.stringify(caseId)}; 1`)
   await sleep(3000)
   const opened = await renders()

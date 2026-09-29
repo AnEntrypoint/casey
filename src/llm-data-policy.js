@@ -35,10 +35,21 @@ export function dataPolicyMode(env = process.env) {
 }
 
 // The provider object OpenRouter takes, or null when the policy is off.
+// Which host serves the model is OpenRouter's choice; sorting by latency picks the
+// fastest of the hosts that already satisfy the data policy (same model, same
+// weights), which measured 0.5-0.7s a call against 0.6-2.5s unsorted.
+// CASEY_LLM_PROVIDER_SORT=none|latency|throughput|price (default latency).
+function providerSort(env = process.env) {
+  const v = String(env.CASEY_LLM_PROVIDER_SORT == null ? 'latency' : env.CASEY_LLM_PROVIDER_SORT).trim().toLowerCase()
+  return ['latency', 'throughput', 'price'].includes(v) ? v : null
+}
+
 export function openrouterProviderField(mode = dataPolicyMode()) {
-  if (mode === 'deny') return { data_collection: 'deny' }
-  if (mode === 'zdr') return { data_collection: 'deny', zdr: true }
-  return null
+  const sort = providerSort()
+  const withSort = (o) => (sort ? { ...o, sort } : o)
+  if (mode === 'deny') return withSort({ data_collection: 'deny' })
+  if (mode === 'zdr') return withSort({ data_collection: 'deny', zdr: true })
+  return sort ? { sort } : null
 }
 
 const FREE_ID = /(?::free\b|\/free\b|-free\b)/i
