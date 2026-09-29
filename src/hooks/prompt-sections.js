@@ -55,6 +55,9 @@ export function headerSection(persona, caseRow, contact) {
     // A deployment's own words for the moment someone may be in danger (real helpline numbers).
     // Up here, not with the reply rules: it must outrank everything the person reads below.
     ...(persona.safetyText ? [persona.safetyText] : []),
+    // The limits on what may be said, said early and shortly because the reply rules that carry the same
+    // words come last in a long prompt and a weak model gives way to a person's direct question first.
+    ...(persona.boundaryText ? [persona.boundaryText] : []),
     ``,
     // Enquiry path -- field_worker tier only. These four tools are gated to
     // field_worker (case-tools-gates.js REPORT_ONLY_TOOLS), so naming them to a
@@ -389,8 +392,10 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
       `and record it via case_report's notes field. Never insist, never repeat the ask.`,
     ] : []),
     ``,
-    `IF THEY ASK FOR A PERSON: don't argue. Warmly reassure them a real person`,
-    `will help. Stay kind and calm.`,
+    `IF THEY ASK FOR A PERSON: don't argue, and stay kind and calm. Call the hand-off tool if`,
+    `you have not, then say honestly that you are an automated assistant and that their request`,
+    `for a person is written down for the team. Promise no call, no reply and no time: nothing`,
+    `here guarantees one.`,
     ``,
     `Your final message is exactly what the person receives on ${caseRow.channel}.`,
   ]

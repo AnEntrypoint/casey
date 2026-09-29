@@ -152,21 +152,23 @@ export async function tagAiOffline({ store, log, fresh }) {
 // approve/discard.
 export async function holdReplyForHuman({
   store, log, fresh, notifyHandoff, msg, channel, replyTo, platform,
-  text, isFallback, jargonReasons, falseConfirmReasons,
+  text, isFallback, jargonReasons, falseConfirmReasons, adviceReasons,
 }) {
-  if (jargonReasons || falseConfirmReasons) {
-    const heldReasons = jargonReasons || falseConfirmReasons
-    const marker = jargonReasons ? 'JARGON-HELD' : 'FALSE-CONFIRMATION-HELD'
+  if (jargonReasons || falseConfirmReasons || adviceReasons) {
+    const heldReasons = jargonReasons || falseConfirmReasons || adviceReasons
+    const marker = jargonReasons ? 'JARGON-HELD' : falseConfirmReasons ? 'FALSE-CONFIRMATION-HELD' : 'ADVICE-HELD'
     const holdNote = jargonReasons
       ? `${marker}: reply withheld -- ${heldReasons.join('; ')}; held for a human to reword plainly.`
-      : `${marker}: reply withheld -- ${heldReasons.join('; ')}; the reply claims something was recorded but no write actually succeeded this turn; held for a human to check and reword.`
+      : falseConfirmReasons
+        ? `${marker}: reply withheld -- ${heldReasons.join('; ')}; the reply claims something was recorded but no write actually succeeded this turn; held for a human to check and reword.`
+        : `${marker}: reply withheld -- ${heldReasons.join('; ')}; the reply gives advice and the bot only connects people; held for a human to answer or reword.`
     await store.appendEvent(fresh.id, observation(holdNote))
     await store.appendEvent(fresh.id, {
       kind: 'draft', actor: 'agent', channel,
-      text, data: { to: replyTo, fallback: isFallback, draft: true, jargon: jargonReasons, falseConfirmation: falseConfirmReasons },
+      text, data: { to: replyTo, fallback: isFallback, draft: true, jargon: jargonReasons, falseConfirmation: falseConfirmReasons, advice: adviceReasons },
     })
     await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, extraTags: ['draft-pending'], flagLabel: 'reply-hold', notifyLabel: 'reply-hold' })
-    return { to: replyTo, text: '', platform, caseId: fresh.id, drafted: true, jargonHeld: jargonReasons, falseConfirmationHeld: falseConfirmReasons }
+    return { to: replyTo, text: '', platform, caseId: fresh.id, drafted: true, jargonHeld: jargonReasons, falseConfirmationHeld: falseConfirmReasons, adviceHeld: adviceReasons }
   }
   if (canAgentAct(fresh, 'reply') === 'draft') {
     await store.appendEvent(fresh.id, {

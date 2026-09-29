@@ -29,7 +29,9 @@
 // /farewell.?gap/ retries with the last-chance push restated then SENDS ANYWAY,
 // /repeat.?ask/ retries then SENDS ANYWAY,
 // /repeated|echo|stock|meta.?commentary|planning narration/ retries then BLANKS
-// the reply, /multi.?ask|wall of text/ retries then SENDS ANYWAY, and
+// the reply, /multi.?ask|wall of text/ retries then SENDS ANYWAY,
+// /advice.?given/ retries then HOLDS the reply for a human (advice is worse than silence),
+// /promise.?made|wrong.?language|safety.?line.?missing/ retry then SEND ANYWAY, and
 // anything matching neither (TOOL REFUSAL) is sent as-is. Renaming a heading
 // here silently reroutes that reply to the send-anyway branch.
 //
@@ -68,7 +70,7 @@
 // fact about tool-call results, not text classification), the judgment of
 // whether the REPLY'S WORDS claim a write happened is the model's job, same
 // as every other shape here.
-export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [] } = {}) {
+export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [] } = {}) {
   if (!replyText || !String(replyText).trim()) return { clean: true, reasons: [], category: null }
   if (typeof callLLM !== 'function') return { clean: true, reasons: [], category: null }
 
@@ -127,14 +129,17 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     // answering neither". Retryable with the reasons fed back (see
     // turn-attempts.js's multi-ask branch), and sent anyway once the budget is
     // spent -- a wall of text is still a real answer, and silence is worse.
-    `7. MULTI-ASK WALL OF TEXT: the reply asks THREE OR MORE distinct questions,`,
-    `   or presents what it wants to know as a numbered or bulleted LIST, or as a`,
-    `   form of separate lines to fill in. This person is reading on a phone, in`,
-    `   a hurry, often in their second or third language, and the assistant is`,
-    `   allowed at most ONE question naming at most TWO still-missing things,`,
-    `   woven into one natural sentence. A warm single sentence that happens to`,
-    `   mention two things is CLEAN; a list, a form, or a third question is not.`,
-    `   Judge the SHAPE only -- never whether the questions are good ones.`,
+    `7. MULTI-ASK WALL OF TEXT: the reply asks MORE THAN ONE question, or presents what`,
+    `   it wants to know as a numbered or bulleted LIST, or as a form of separate lines`,
+    `   to fill in. This person is reading on a phone, in a hurry, often in their second`,
+    `   or third language, and the assistant is allowed exactly ONE question naming at`,
+    `   most TWO still-missing things, woven into one natural sentence. A statement`,
+    `   (an acknowledgement, what is written down, what is still needed) is not a`,
+    `   question; a second question, however short, is one too many. A warm single`,
+    `   sentence that happens to mention two things is CLEAN; a list, a form, or a`,
+    `   second question is not. Judge the SHAPE only -- never whether the questions`,
+    `   are good ones.`,
+    shape ? `   The system counted ${shape.questions} question mark(s) and ${shape.listLines} list line(s) in the candidate (a system fact -- trust it over your own count).` : null,
     hadSuccessfulWrite === false ? [
       `8. FALSE CONFIRMATION: NO field/report/detail was actually recorded this`,
       `   turn (a system fact, given to you directly -- trust it over the reply's`,
@@ -228,6 +233,46 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   (c) a recap of what they said, which is not an ask.`,
     `   Write the reason as "repeat-ask".`,
     ].join('\n') : null,
+    // Shapes 11-13 are always shown. Each is judged by the model reading the reply, and each
+    // has a COINED reason word for the router in turn-attempts.js (see this file's header).
+    `11. ADVICE GIVEN: the assistant connects people and never advises; it is not a vet. Flag a`,
+    `   reply that tells the person what to give, do, keep, avoid or watch for (a medicine, dose,`,
+    `   remedy, vaccine, feed, moving, separating, isolating, selling, slaughtering, eating,`,
+    `   burying, washing or any handling or safety step, or a "you should"), reassures them that`,
+    `   something is or is not safe, says whether the animals will live, names or guesses what`,
+    `   disease it is or explains it, or says that something is legal or illegal. Where the person`,
+    `   may be in danger, the helpline numbers and a warm acknowledgement are CLEAN, but further`,
+    `   counselling or instructions are advice.`,
+    adviceRefusal ? `   The only thing a reply may offer in place of advice is this, in any words: ${adviceRefusal}. Saying that is CLEAN.` : null,
+    `   ASKING what the person has already given or done is CLEAN. Write the reason as "advice-given".`,
+    `12. PROMISE THE SYSTEM DOES NOT KEEP: nothing here alerts, phones, messages or sends`,
+    `   anyone; a report is recorded and the animal health team reads reports later.`,
+    `   Flag a reply that says or implies that a person, the team or a vet has been`,
+    `   alerted, asked, flagged, passed it to, told to act, is on the way, will come,`,
+    `   phone, call back, contact, follow up, reply or be in touch, that it will chase or`,
+    `   arrange something, or that anything will happen by some time, or OFFERS to have someone`,
+    `   call, contact, ask or fetch for them ("shall I ask a person to call you"). "Your report is`,
+    `   recorded" and "the animal health team reads reports" are CLEAN, and so is saying`,
+    `   kindly that it cannot say whether or when anyone will come or call. A general statement`,
+    `   that the team reads the report and can follow up is CLEAN; that it WILL is not.`,
+    controlNoted ? `   The person asked for a human (or to stop) and the system DID register that this turn (a system fact): saying their request is written down is CLEAN; saying anyone will reply, call or come, or when, is not.` : null,
+    `   Write the reason as "promise-made".`,
+    safetyNumbers.length && latestInbound ? [
+      `14. SAFETY LINE MISSING: read the PERSON'S LATEST MESSAGE below. If it says they may hurt`,
+      `   or kill themselves or someone else, the reply MUST contain these helpline numbers, written out:`,
+      `   ${safetyNumbers.join(', ')} (a system fact: the candidate reply does NOT contain all of them).`,
+      `   If the latest message says nothing of the kind, this shape does not apply. Write the reason as`,
+      `   "safety-line-missing".`,
+    ].join('\n') : null,
+    latestInbound ? [
+      `13. WRONG LANGUAGE: compare the language of the reply's own sentences with the language`,
+      `   of the PERSON'S LATEST MESSAGE shown below. If they differ -- English to an`,
+      `   Afrikaans message, isiZulu to an isiXhosa one, isiXhosa to an English one --`,
+      `   flag it. Names, places, a reference code and words the person used themselves`,
+      `   do not count. If the latest message is too short to tell its language (a number,`,
+      `   "ok", thanks, an emoji, a name) this shape does not apply. Write the reason as`,
+      `   "wrong-language".`,
+    ].join('\n') : null,
     ``,
     `A reply that is a genuine, warm, on-topic message actually addressed TO the`,
     `person -- even if short, even if it asks a question, even if it is in a`,
@@ -254,7 +299,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `above, or when jargon is combined with any other shape (the reply has no`,
     `real content worth saving in that case). Some shapes above are numbered but`,
     `only listed when they apply -- judge only the shapes actually shown to you,`,
-    `and never treat a gap in the numbering as a shape withheld. Three shapes`,
+    `and never treat a gap in the numbering as a shape withheld. Some shapes`,
     // Named conditionally, and that is load-bearing rather than tidy: naming
     // "farewell-gap" while shape 9 is not shown invites the token for a shape the
     // judge was never given, and the caller then composes a retry instruction
@@ -262,20 +307,25 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     // in a sentence aimed at a person. Only offer a token whose shape is present.
     `have a REQUIRED reason word so the caller can route them (see this file's`,
     `header: the shape heading words are a wire protocol, not prose): shape 7`,
-    `"multi-ask"${missingFacts.length ? `, shape 9 "farewell-gap"` : ''}${(lastOutboundText || knownFacts.length) ? `, shape 10 "repeat-ask"` : ''}.`,
+    `"multi-ask"${missingFacts.length ? `, shape 9 "farewell-gap"` : ''}${(lastOutboundText || knownFacts.length) ? `, shape 10 "repeat-ask"` : ''}, shape 11 "advice-given", shape 12 "promise-made"${latestInbound ? `, shape 13 "wrong-language"` : ''}${safetyNumbers.length && latestInbound ? `, shape 14 "safety-line-missing"` : ''}.`,
   ].filter(line => line !== null).join('\n')
 
-  let raw
-  try {
-    const result = await callLLM({ messages: [{ role: 'user', content: judgePrompt }], tools: [] })
-    raw = (result?.content || '').toString().trim()
-  } catch {
-    // A judge-call failure must never block a real reply from reaching the
-    // person: the judge is a quality gate, not the reply-generation path, so
-    // it fails OPEN (treat as clean) rather than holding every reply hostage
-    // to this second call's own reliability.
-    return { clean: true, reasons: [], category: null }
+  // One more try when the call fails or comes back empty: a judge that fails open passes ADVICE and
+  // promises as well as everything else, and a transient provider miss is the usual cause.
+  let raw = ''
+  for (let tryNo = 0; tryNo < 2 && !raw; tryNo++) {
+    try {
+      const result = await callLLM({ messages: [{ role: 'user', content: judgePrompt }], tools: [] })
+      raw = (result?.content || '').toString().trim()
+    } catch {
+      raw = ''
+    }
   }
+  // A judge-call failure must never block a real reply from reaching the
+  // person: the judge is a quality gate, not the reply-generation path, so
+  // it fails OPEN (treat as clean) rather than holding every reply hostage
+  // to this second call's own reliability.
+  if (!raw) return { clean: true, reasons: [], category: null }
 
   try {
     // The judge is instructed to return ONLY JSON, but a real model can still
