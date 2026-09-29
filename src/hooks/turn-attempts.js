@@ -39,6 +39,11 @@ import { TURN_HARD_DEADLINE_MS } from './turn-deadlines.js'
 // number of extra round trips rather than doubling every contact's wait
 // indefinitely.
 export const MAX_TOOL_CHOICE_ATTEMPTS = 3
+// A SOFT flag (two questions, a repeat, a promise, the wrong language, a missing farewell ask) may cost at most
+// this many extra attempts in total across all soft flags: each attempt is a full agent turn plus a judge call
+// (10-13s), and flags used to stack one retry each (a 35s reply to "seeping eyes, not standing up"). HARD flags
+// (advice, stray phone numbers or sites, prompt/tool-name leaks, false confirmations) keep the whole budget.
+const SOFT_RETRIES = Math.max(0, Number(process.env.CASEY_SOFT_RETRIES ?? 1) || 0)
 // Retries a repeat-ask flag may spend (the rest of the budget stays for tool-choice misses).
 const REPEAT_ASK_RETRIES = Math.max(0, Number(process.env.CASEY_REPEAT_ASK_RETRIES ?? 1) || 0)
 
@@ -388,6 +393,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     catch (e) { log.warn?.('[casey] failed to record attempt observation', { caseId: fresh.id, error: e.message }) }
   }
   const canRetry = attempt < MAX_TOOL_CHOICE_ATTEMPTS
+  const softCanRetry = canRetry && attempt <= SOFT_RETRIES
   if (!candidate) {
     log.warn?.('[casey] agent turn produced empty reply', { caseId: fresh.id, attempt })
     await note(`empty reply on attempt ${attempt}${canRetry ? '; retrying' : ''}`)
@@ -572,7 +578,8 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   const faults = faultRoutes.filter(([re]) => verdict.reasons?.some(r => re.test(r))).map(([, text]) => text)
   if (faults.length) {
     const alsoMulti = verdict.reasons?.some(r => /multi.?ask|wall of text/i.test(r)) ? ' Also ask only ONE question naming at most TWO things, with no list.' : ''
-    if (canRetry) {
+    const hardFault = verdict.reasons?.some(r => /advice.?given|safety.?line.?missing/i.test(r))
+    if (hardFault ? canRetry : softCanRetry) {
       log.warn?.('[casey] reply judge flagged advice, a promise or the language; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
       return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because ${faults.join('; and because ')}.${alsoMulti} Keep it short, warm and in plain sentences, and never say any of this to them.]` }
@@ -614,7 +621,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // must never do is compose an instruction to a real person out of an empty
   // array. With no list, fall through to the generic route below.
   if (missingFacts.length && verdict.reasons?.some(r => /farewell.?gap/i.test(r))) {
-    if (canRetry) {
+    if (softCanRetry) {
       log.warn?.('[casey] reply said goodbye with on-site-critical facts still missing; retrying turn with feedback', { caseId: fresh.id, attempt, missing: missingFacts })
       await note(`FAREWELL-GAP: reply closed the conversation with ${missingFacts.join(', ')} still blank; retrying turn with feedback (attempt ${attempt})`)
       return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it said goodbye while '
@@ -679,7 +686,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // answers the person, and the alternative is silence on a real report. So a
   // budget-exhausted multi-ask falls through to the send-anyway branch below.
   if (verdict.reasons?.some(r => /multi.?ask|wall of text|too many questions/i.test(r))) {
-    if (canRetry) {
+    if (softCanRetry) {
       log.warn?.('[casey] reply judge flagged a multi-ask reply; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
       return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things you still need, woven into a single natural sentence. No numbered list, no bullets, no separate lines to fill in. They are reading on a phone.]" }

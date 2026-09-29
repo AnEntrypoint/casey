@@ -264,7 +264,7 @@ async function driveAgentTurn(deps, {
   // Skipped for team members (their prompt carries the reference and gaps), for someone who
   // opted out, and whenever the reply is a fallback or held.
   if (!degraded && !isFallback && text && !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !tagList(fresh).includes('opted-out')) {
-    const line = await composeProgress(callLLM, fresh, { inboundText }).catch(() => '')
+    const line = await composeProgress(callLLM, fresh, { inboundText, language: parseReport(fresh).language_detected }).catch(() => '')
     if (line) text = `${text}\n\n${line}`
   }
 

@@ -161,6 +161,31 @@ export class WhatsappAdapter extends EventEmitter {
     return r.id
   }
 
+  // Remember the newest inbound message id per sender, so the typing indicator can answer it.
+  _noteInbound(from, wamid) {
+    if (!this._lastInbound) this._lastInbound = new Map()
+    this._lastInbound.set(String(from), { id: String(wamid), at: Date.now(), typed: false })
+    if (this._lastInbound.size > 500) this._lastInbound.delete(this._lastInbound.keys().next().value)
+  }
+
+  // Read tick plus "typing..." (Meta Cloud API): while the bot works, the person sees that the message
+  // arrived instead of silence for 5-35 seconds. Shown by WhatsApp for up to 25s or until our reply.
+  // Sent once per inbound message, only to a person who has just written to us, best-effort (a failure is
+  // ignored: it is a courtesy, never load-bearing). CASEY_WHATSAPP_TYPING=0 turns it off.
+  startTyping(to) {
+    if (String(process.env.CASEY_WHATSAPP_TYPING ?? '1') === '0' || !this.token || !this.phoneId) return
+    const rec = this._lastInbound?.get(String(to))
+    if (!rec || rec.typed || Date.now() - rec.at > 120000) return
+    rec.typed = true
+    fetchWithTimeout(`${this.api}/${encodeURIComponent(this.phoneId)}/messages`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', status: 'read', message_id: rec.id, typing_indicator: { type: 'text' } }),
+    }, 5000).catch(() => {})
+  }
+
+  stopTyping() {}
+
   async send(reply) {
     if (!this.token) throw new Error('WhatsappAdapter: token required')
     // Verify actual delivery, not just that fetch() itself didn't throw: a
@@ -330,6 +355,7 @@ export function dispatchWhatsappWebhookBody(adapter, body, now = Date.now()) {
         raw: m,
         ...(location ? { location } : {}),
       }
+      adapter._noteInbound?.(m.from, m.id)
       // `sticker` is deliberately NOT in this list. It is image/webp and would
       // download like a photo, but hooks/media-intake.js records a photo only
       // for a real image, so the bytes would be fetched on every sticker and
