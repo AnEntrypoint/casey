@@ -179,9 +179,11 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
 // blocking the reply. In observe mode the COLUMN write is correctly refused (no
 // automatic edits) but the arrival still lands on the timeline, since observe is
 // exactly the mode with no agent narration to compensate.
-// Returns '' when the pin was recorded (or there was none), else a system note for
+// Returns '' when there was no pin (or a person is handling the record), a note saying
+// it WAS stored when it was, else a system note for
 // this turn's prompt saying the position was NOT stored, so the reply cannot say
 // "got it" about a pin that reached no record.
+const PIN_STORED = '\n\n[System note: the location pin they shared was saved on the map as their exact position. Do not ask for coordinates, GPS numbers or another pin, and do not write that coordinates were unreadable; ask about the place only if a name or landmark is still missing.]'
 const PIN_NOT_STORED = (why) => `\n\n[System note: the location pin they shared ${why}, so NO position was stored. Do not say you have their location; tell them plainly it did not come through and ask where the animals are (a town or farm name, or send the pin again).]`
 export async function recordInboundLocation({ store, log, caseId, msg }) {
   const pin = msg.location
@@ -208,7 +210,10 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
     await store.appendEvent(caseId, observation(
       `LOCATION PIN RECEIVED: lat ${pin.lat}, lon ${pin.lon}${place ? ` -- WhatsApp labels this spot "${truncate(place, 200)}" (its own label, not the person's words)` : ''}. Read off the person's own device and ${recorded}.`,
     ))
-    return ''
+    // A stored pin gets a note too: with only the timeline line to go on, the
+    // model was seen asking for "GPS numbers" and filing "coordinates not
+    // readable" into the record's notes right after a pin that WAS stored.
+    return res?.error === 'observe' ? '' : PIN_STORED
   } catch (e) { log.warn?.('[casey] location pin mark failed', { caseId, error: e.message }); return PIN_NOT_STORED('could not be saved just now') }
 }
 
