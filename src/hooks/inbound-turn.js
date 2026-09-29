@@ -120,6 +120,15 @@ async function driveAgentTurn(deps, {
   // and the fallback's fast-vs-long tone choice (hooks/delivery.js).
   const turnStartedAt = Date.now()
 
+  // The first-contact notice does not depend on the answer, so its wording is composed
+  // WHILE the answer is being written rather than after it (it was a serial ~7 second
+  // step on a first message). Whether to attach it is still decided below, once the
+  // turn is known not to be degraded.
+  const noticeReady = isBackgroundRedrive ? Promise.resolve(null)
+    : decideNotice(store, { fresh, events, contact })
+      .then(async (n) => (n ? { notice: n, body: await composeNotice(callLLM, n, { inboundText }).catch(() => null) } : null))
+      .catch(() => null)
+
   const turn = await runAgentTurn({
     store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
     channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend, ingressRecorded,
@@ -239,9 +248,10 @@ async function driveAgentTurn(deps, {
   // fallback or degraded turn, and never allowed to hold the reply back.
   let notice = null
   if (!degraded && !isFallback && text) {
-    notice = await decideNotice(store, { fresh, events, contact }).catch(() => null)
+    const early = await noticeReady
+    notice = early ? early.notice : null
     if (notice) {
-      const body = await composeNotice(callLLM, notice, { inboundText, language: parseReport(fresh).language_detected }).catch(() => null)
+      const body = early.body
       if (body) text = `${text}\n\n${body}`
       else { notice = null; await store.appendEvent(fresh.id, observation('NOTICE-NOT-COMPOSED: the first-contact notice could not be composed; it is still owed')).catch(() => {}) }
     }

@@ -123,6 +123,10 @@ from it, which is what catches a branch rewritten back into an equality.
 casey amplifies the team's workflow -- it does not
 impose domain-specific rules or escalation; priority stays with people.
 
+**Every reply says how far the report has got and what is still needed** (`hooks/prompt-sections.js`, `PROGRESS IN EVERY REPLY`; team members get the same idea in `hooks/prompt-roles.js`, `PROGRESS EVERY TIME`). The still-needed names are computed labels (mandatory minimum first, then the on-site-critical facts), never the model's guess; the sentence is a statement, not a second question, so the one-ask rule and report-not-assert still hold; nothing is claimed as recorded that "report so far" does not hold. It is a prompt rule guarded at load by `selfCheckLoadBearingPromptContent`, not a code gate, because a code gate would have to classify language.
+
+**Reply latency levers.** The first-contact notice is composed WHILE the answer is written (`hooks/inbound-turn.js` `noticeReady`), not after it. `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS=15000` (a stalled call gives up sooner than the 30s it used to take; normal calls take 1-7s), `ACPTOAPI_SAME_LINK_RETRY_BASE_MS=300` and `ACPTOAPI_SAME_LINK_CONSECUTIVE_REASON_CAP=2` (an empty answer is retried once after 0.3s, then the chain moves on; DeepSeek sometimes returns nothing as its final message after a tool call, and an identical retry repeats it). A repeat-ask flag spends at most `CASEY_REPEAT_ASK_RETRIES` (default 1) full re-runs, and `CASEY_LLM_PROVIDER_SORT` (default `latency`, `none` to disable) prefers the fastest host that already satisfies the data policy. Measure with a harness that passes the real `makeResilientCallLLM` brain (without it the reply judge and the notice are silently off and every number is optimistic).
+
 ## Configuration architecture
 
 casey's domain (report/ticket field vocabulary, agent persona, thatcher
