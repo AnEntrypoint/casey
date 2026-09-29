@@ -67,6 +67,17 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
     // overrides the 2h default.
     const followUpWindow = new Map()   // `${channel_id}:${author_id}` -> expiry ms
     const FOLLOWUP_MS = Number(process.env.CASEY_DISCORD_FOLLOWUP_MS) || 2 * 3600e3
+    // Pre-READY hold queue: a guild message that arrives before gateway.js has
+    // captured a.botUserId cannot be evaluated for @mention (see botMentioned's
+    // fail-closed comment below) -- but READY is imminent by construction, so
+    // rather than discarding a possibly-addressed-to-us message outright, hold
+    // it briefly and re-run it through this same filter once botUserId is
+    // known. Bounded on both axes (count and age) so a gateway that never
+    // reaches READY cannot leak memory or replay something stale minutes
+    // later into a conversation that has moved on.
+    const pendingIdentityUnknown = []
+    const PENDING_IDENTITY_MAX = 50
+    const PENDING_IDENTITY_MAX_AGE_MS = 15000
     // Seed the window from already-open Discord cases: the map is in-memory,
     // so without this a restart mid-conversation fails closed and silently
     // eats a known contact's next plain follow-up until they re-mention. An
@@ -102,6 +113,20 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
         const botMentioned = !!a.botUserId && mentions.some(u => u.id === a.botUserId)
         const followKey = `${raw.channel_id || ''}:${raw?.author?.id || ''}`
         const inConversation = !isDM && !botMentioned && (followUpWindow.get(followKey) || 0) > Date.now()
+        // Hold rather than drop: identity genuinely unknown yet, and this is
+        // the first pass over this message (msg._identityReplay tells a
+        // replayed-from-queue call apart from a first arrival, so a message
+        // still unresolved on replay -- e.g. READY carried a mention-less
+        // guild chatter message -- falls through to the ordinary fail-closed
+        // branch below instead of re-queuing forever).
+        if (!isDM && !a.botUserId && !msg._identityReplay) {
+          const now = Date.now()
+          while (pendingIdentityUnknown.length && now - pendingIdentityUnknown[0].at > PENDING_IDENTITY_MAX_AGE_MS) pendingIdentityUnknown.shift()
+          if (pendingIdentityUnknown.length >= PENDING_IDENTITY_MAX) pendingIdentityUnknown.shift()
+          pendingIdentityUnknown.push({ msg, rest, at: now })
+          log?.info?.('[discord] message held pending gateway identity', { channelId: raw.channel_id || null, guildId: raw.guild_id || null })
+          return false
+        }
         if (!isDM && !botMentioned && !inConversation) {
           // The fail-closed branch above is NOT the same thing as ordinary guild
           // chatter, and only one of the two is a loss. A message casey could
@@ -157,7 +182,18 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
     // the adapter -- stamps connectedAt so GET /api/health reflects true
     // receive-liveness (a live TCP socket is not the same as a dead gateway
     // delivering no inbound; see AGENTS.md's receive-liveness principle).
-    a.on('ready', () => markConnected('discord'))
+    a.on('ready', () => {
+      markConnected('discord')
+      // Drain anything held above while botUserId was still unknown, now that
+      // it is. Age-filtered again here (not just on push) since a message can
+      // sit in the queue right up to the staleness bound before READY lands.
+      const now = Date.now()
+      const held = pendingIdentityUnknown.splice(0, pendingIdentityUnknown.length)
+      for (const { msg, rest, at } of held) {
+        if (now - at > PENDING_IDENTITY_MAX_AGE_MS) continue
+        a.emit('message', { ...msg, _identityReplay: true }, ...rest)
+      }
+    })
     // Outbound delivery is verified inside DiscordAdapter.send(), which routes
     // through verifiedSend() and throws on a non-2xx / errored response body,
     // so a failed send already rejects here.
