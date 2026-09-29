@@ -20,10 +20,9 @@
 // contact's new case carries the fact forward with a `notice_carried` event so the
 // scan happens once per case).
 //
-// CHECK. Language cannot be classified here, so the one structural check is a literal
-// token: `persona.noticeAnchor` (default STOP, the deterministic control word the person
-// must type) has to appear in the composed notice. Without it the notice is retried once
-// and then left off, unrecorded, so it is still owed on the next turn.
+// CHECK. Language cannot be classified here. The notice names no command word; if a deployment
+// sets `persona.noticeAnchor` to a literal word, the composed notice must contain it, else it
+// is retried once and then left off, unrecorded, so it is still owed on the next turn.
 
 import { loadDomainConfig } from './config-loader.js'
 import { atLeast, resolveTierValue, TIER_FIELD_WORKER } from './contact-tiers.js'
@@ -38,7 +37,7 @@ const asText = (v) => (Array.isArray(v) ? v.join(' ') : String(v || '')).replace
 export function noticeSettings(tier) {
   const staff = atLeast(resolveTierValue(tier), TIER_FIELD_WORKER)
   const text = asText(staff ? persona.staffNoticeText : persona.noticeText)
-  const anchor = staff ? asText(persona.staffNoticeAnchor) : asText(persona.noticeAnchor ?? 'STOP')
+  const anchor = staff ? asText(persona.staffNoticeAnchor) : asText(persona.noticeAnchor)
   return { kind: staff ? 'staff' : 'public', version: String(persona.noticeVersion || '1'), text, anchor }
 }
 
