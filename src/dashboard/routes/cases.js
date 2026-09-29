@@ -21,6 +21,7 @@
 //   AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
 //   computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
 //   getRoster, sendReply, UNCLAIMED_ASSIGNEE, printableReport
+import { normalizeMsisdn } from '../../role-invites.js'
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27, markInvisibles } from '../../format.js'
@@ -232,9 +233,12 @@ export function postCase({ store, authed, str, actingOperator, computeFillRate }
     }
     // external_id must be stable for dedup; normalise phone digits (keep leading +)
     // then fall back to web-<ms> if normalisation yields empty (e.g. '+' only).
-    const normPhone = phone ? phone.replace(/[\s\-()]/g, '') : ''
-    const external_id = normPhone && /^[+0-9]/.test(normPhone) ? normPhone : `web-${Date.now()}`
-    const contact = { name: name || 'operator', phone: phone || '' }
+    // The international digit form is the key a WhatsApp webhook later delivers for
+    // the same person, so a report opened here and their own chat are one contact,
+    // and the wa.me link can be built.
+    const normPhone = phone ? normalizeMsisdn(phone) : ''
+    const external_id = normPhone || `web-${Date.now()}`
+    const contact = { display_name: name || 'operator', name: name || 'operator', phone: phone || '' }
     const { case: c, created } = await store.findOrCreateCase({ channel: 'web', external_id, contact, subject: subject || 'Field report' })
     // If a case already exists for this phone, return 409 so the client can offer to open it
     if (!created) {
@@ -365,7 +369,7 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
     if (isFieldAccount(req.caseyAccount) && req.caseyAccess === 'write') {
       const op = actingOperator(req)
       const missing = missingFor(c)
-      const digits = c.channel === 'whatsapp' ? String(c.external_id || '').replace(/\D/g, '') : ''
+      const digits = (c.channel === 'whatsapp' || /^\+?\d{9,15}$/.test(String(c.external_id || ''))) ? String(c.external_id || '').replace(/\D/g, '') : ''
       const text = `Hello, ${op.name} here, following up on your ${REPORT_ENTITY_LABEL} ${c.ref}. Please send a message to our WhatsApp assistant again`
         + (missing.length ? ` and tell it: ${missing.map(fieldLabel).join(', ')}.` : ' so we can finish it.') + ' Thank you.'
       // First name only: enough to be sure it is the right person on the phone,
