@@ -62,6 +62,7 @@ import { registerExternalLinks } from './routes/external-links.js'
 import { registerSyncApi } from './routes/sync-api.js'
 import { registerMap } from './routes/map.js'
 import { registerReports } from './routes/reports.js'
+import { registerReportsMap } from './routes/reports-map.js'
 import { registerOperations } from './routes/operations.js'
 import { registerTiles, CLIENT_TILE_URL } from './routes/tiles.js'
 const esc = escapeHtml
@@ -786,6 +787,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerSyncApi(app, deps)
   registerMap(app, deps)
   registerReports(app, deps)
+  registerReportsMap(app, deps)
   registerOperations(app, deps)
   registerTeam(app, deps)
   registerAreas(app, deps)

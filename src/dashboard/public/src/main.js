@@ -32,7 +32,11 @@ import { ContactsPanel } from './panels/contacts-panel.js';
 import { SecretaryPanel } from './panels/secretary-panel.js';
 import { ExternalLinksPanel } from './panels/external-links-panel.js';
 import { NudgesPanel } from './panels/nudges-panel.js';
-import { isFieldRole } from './api-roles.js';
+import { AreasPanel } from './panels/areas-panel.js';
+import { FeedbackPanel } from './panels/feedback-panel.js';
+import { isFieldRole, isViewerRole } from './api-roles.js';
+import { ResolvedMapPanel } from './panels/resolved-map-panel.js';
+import { DiseaseReportsPanel } from './panels/disease-reports-panel.js';
 import { refreshFieldLists } from './views/field-app.js';
 import { resetFieldCase } from './views/field-case.js';
 
@@ -74,6 +78,10 @@ registerPanelBody('contacts', ContactsPanel);
 registerPanelBody('secretary', SecretaryPanel);
 registerPanelBody('external_links', ExternalLinksPanel);
 registerPanelBody('nudges', NudgesPanel);
+registerPanelBody('areas', AreasPanel);
+registerPanelBody('feedback', FeedbackPanel);
+registerPanelBody('resolved_map', ResolvedMapPanel);
+registerPanelBody('disease_reports', DiseaseReportsPanel);
 
 // Dialog-shaped modals (settings/stats are quick-glance overlays that never
 // displace the case queue; help/onboarding/skills share the same Dialog
@@ -141,7 +149,7 @@ installGlobalKeyboard();
 // checklist once logged in -- all localStorage-gated, shown at most once
 // unless the operator explicitly reopens via the Topbar help button.
 function maybeShowOnboarding() {
-  if (isFieldRole()) return;   // the field team's screen has its own short help
+  if (isFieldRole() || isViewerRole()) return;   // the field team's and the viewer's screens have their own short help
   if (!onboarded()) { openModal('onboarding'); return; }
   if (!helpSeen()) markHelpSeen();
   // username, not id: /api/whoami returns { authed, username, display_name,
@@ -230,6 +238,7 @@ async function refreshDegradedTurns() {
 }
 
 export async function refreshAll() {
+  if (isViewerRole()) { await loadCaseyConfig(); return; }   // the viewer's panels load their own aggregates
   if (isFieldRole()) { await Promise.all([loadCaseyConfig(), refreshFieldLists()]); return; }
   // loadCaseyConfig() runs here too, not just in boot() -- a login that
   // happens after the pre-login boot attempt's own /api/config call failed
@@ -247,6 +256,7 @@ registerRefreshAll(refreshAll);
 
 async function boot() {
   await loadCaseyConfig();
+  if (isViewerRole()) return;   // the viewer's screen (views/viewer-app.js) loads its own aggregates
   if (isFieldRole()) {
     // The field team's screen (views/field-app.js): config, the open-report deep link,
     // and their own lists. None of the operator polls below apply to them.
@@ -378,7 +388,7 @@ const onMapHome = () => !state.activePanel && state.homeView === 'map';
 // repopulates every surface these feed, and a tick that skips costs nothing --
 // so there is no second place that has to remember to start a timer, and a
 // session lost mid-shift stops the traffic by itself.
-const polling = () => state.authed && !isFieldRole();
+const polling = () => state.authed && !isFieldRole() && !isViewerRole();
 // The polling cadence, named rather than left as five bare numbers inline.
 // This is not housekeeping: every one of these is traffic on what AGENTS.md
 // describes as a metered, intermittent rural link, so how often each surface

@@ -23,6 +23,8 @@ import { confirmDialog } from '../components/dialog-shell.js';
 import { stageLabel, headline } from '../format.js';
 import { entityLabel, EntityLabel } from '../vocabulary.js';
 import { isTechnician, fetchFieldCase, postFieldNote, postFieldIntake, postFieldTransition, postFieldLocation, postSendBack, assigneeName } from '../api-roles.js';
+import { postHandoff } from '../api-team.js';
+import { holderName } from './field-names.js';
 import { CaseProgress } from './case-detail/progress.js';
 import { Timeline } from './case-detail/timeline.js';
 import { ReplyBox } from './case-detail/reply-box.js';
@@ -89,7 +91,7 @@ const safeWa = (u) => (typeof u === 'string' && u.startsWith('https://wa.me/') ?
 function Header(c, data, write) {
   const r = parseReport(c.report);
   const where = [has(r, 'species') ? String(r.species) : '', has(r, 'location') ? String(r.location) : ''].filter(Boolean);
-  const holder = write ? 'You' : (assigneeName(c.assignee) || 'Nobody yet');
+  const holder = write ? 'You' : (holderName(c.assignee) || assigneeName(c.assignee) || 'Nobody yet');
   return h('div', { class: 'casey-case-header', role: 'region', 'aria-label': 'Which ' + entityLabel() + ' this is' },
     h('div', { class: 'casey-case-header-top' }, h('span', { class: 'casey-case-ref-text' }, c.ref + ' -- ' + (where.length ? where.join(' in ') : headline(c.subject || 'No details yet')))),
     h('div', { class: 'casey-meta-id casey-hint' },
@@ -156,6 +158,25 @@ async function sendBack(c, r) {
   catch (e) { toast(await failed(e, 'It was not sent back. Nothing changed -- try again.'), 'err'); }
 }
 
+const tagsOf = (c) => String(c.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
+const isHandedOver = (c) => tagsOf(c).includes('handed-off');
+
+// The ranger's hand-over: the record is complete, so the technician is told it is ready for sign-off.
+// The ranger keeps the report and can still add to it; the technician's "send back" reverses it.
+async function sendToTechnician(c) {
+  const ok = await confirmDialog({
+    title: 'Send ' + c.ref + ' to the technician?',
+    message: 'This tells the animal health technician that ' + identity(c) + ' is complete and ready to sign off. You keep the ' + entityLabel() + ' and can still add to it. If the technician needs more, they send it back to you.',
+    inputLabel: 'A note for the technician (optional)', confirmLabel: 'Send ' + c.ref,
+  });
+  if (ok === null || ok === undefined) return;
+  try {
+    const j = await postHandoff(c.id, c.ref, ok);
+    toast(j && j.already ? c.ref + ' had already been sent to the technician.' : 'Sent ' + c.ref + ' to the technician.', 'ok');
+    await reload();
+  } catch (e) { toast(await failed(e, c.ref + ' was not sent. Nothing changed -- try again.'), 'err'); await reload(); }
+}
+
 function SignOffCard(c, data, r, write) {
   const tech = isTechnician();
   const missing = mandatory().filter((f) => !has(r, f.key));
@@ -173,6 +194,9 @@ function SignOffCard(c, data, r, write) {
     children: [
       Checklist(c, r),
       !mandatory().length ? h('p', { class: 'casey-hint' }, 'Nothing is required before sign-off on this deployment.') : null,
+      !tech && write && isHandedOver(c) ? h('p', { class: 'casey-hint' }, 'Sent to the technician for sign-off. They will sign it off, or send it back to you with what is missing. If you sent it by mistake, ask the technician or an operator to send it back.') : null,
+      !tech && write && !isHandedOver(c) && mandatory().length && !missing.length ? h('div', { class: 'casey-timeline-actions' },
+        Btn({ variant: 'primary', class: 'field-handoff', children: 'Send to technician', 'aria-label': 'Send ' + c.ref + ' to the technician', onClick: () => sendToTechnician(c) })) : null,
       tech ? h('div', { class: 'casey-timeline-actions' },
         Btn({ variant: 'primary', disabled: !canSign, children: 'Sign off ' + c.ref, onClick: () => signOff(c, data), title: canSign ? 'Finish this ' + entityLabel() : 'Not ready: ' + (missing.length ? 'something is still missing' : 'it cannot move to done from here') }),
         Btn({ variant: 'ghost', children: 'Send back to ranger', onClick: () => sendBack(c, r) })) : null,

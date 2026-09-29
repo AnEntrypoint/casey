@@ -122,6 +122,8 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
       items: [
         { key: 'stats', glyph: Icon('activity', { size: 15 }), label: 'Stats', onClick: () => openModal('stats') },
         { key: 'metrics', glyph: Icon('page', { size: 15 }), label: 'Metrics', onClick: (e) => navClick(e, () => openPanelRoute('metrics')), active: state.activePanel === 'metrics' },
+        { key: 'resolved_map', glyph: Icon('globe', { size: 15 }), label: 'Resolved map', onClick: (e) => navClick(e, () => openPanelRoute('resolved_map')), active: state.activePanel === 'resolved_map' },
+        { key: 'disease_reports', glyph: Icon('page', { size: 15 }), label: 'Disease reports', onClick: (e) => navClick(e, () => openPanelRoute('disease_reports')), active: state.activePanel === 'disease_reports' },
         { key: 'distribution', glyph: Icon('grid', { size: 15 }), label: 'Distribution', onClick: (e) => navClick(e, () => openPanelRoute('distribution')), active: state.activePanel === 'distribution' },
         { key: 'activity', glyph: Icon('thread', { size: 15 }), label: 'Activity', onClick: (e) => navClick(e, () => openPanelRoute('activity')), active: state.activePanel === 'activity' },
         { key: 'handover', glyph: Icon('external-link', { size: 15 }), label: 'Shift handover', onClick: (e) => navClick(e, () => openPanelRoute('handover')), active: state.activePanel === 'handover' },
@@ -134,8 +136,10 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
       items: [
         { key: 'team', glyph: Icon('members', { size: 15 }), label: 'Team workload', onClick: (e) => navClick(e, () => openPanelRoute('team')), active: state.activePanel === 'team' },
         { key: 'contacts', glyph: Icon('members', { size: 15 }), label: 'Reporters', onClick: (e) => navClick(e, () => openPanelRoute('contacts')), active: state.activePanel === 'contacts' },
+        { key: 'areas', glyph: Icon('globe', { size: 15 }), label: 'Areas', onClick: (e) => navClick(e, () => openPanelRoute('areas')), active: state.activePanel === 'areas' },
         { key: 'nudges', glyph: Icon('activity', { size: 15 }), label: 'Who needs a nudge', onClick: (e) => navClick(e, () => openPanelRoute('nudges')), active: state.activePanel === 'nudges' },
         { key: 'secretary', glyph: Icon('external-link', { size: 15 }), label: 'Follow-up calls', onClick: (e) => navClick(e, () => openPanelRoute('secretary')), active: state.activePanel === 'secretary' },
+        { key: 'feedback', glyph: Icon('thread', { size: 15 }), label: 'Feedback', onClick: (e) => navClick(e, () => openPanelRoute('feedback')), active: state.activePanel === 'feedback' },
         { key: 'external_links', glyph: Icon('link', { size: 15 }), label: 'Cross-system links', onClick: (e) => navClick(e, () => openPanelRoute('external_links')), active: state.activePanel === 'external_links' },
       ],
     },

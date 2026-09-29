@@ -10,8 +10,9 @@ import { Dropdown } from 'ds/components/overlay-primitives.js';
 import { Btn, Icon } from 'ds/components/shell.js';
 import { state, setTheme, openModal, closeModal } from '../state.js';
 import { doLogout, doLogoutEverywhere } from '../auth.js';
-import { toast } from '../toasts.js';
+import { toast, failMsg } from '../toasts.js';
 import { Dialog } from './dialog-shell.js';
+import { openFeedback } from './feedback-dialog.js';
 const h = webjsx.createElement;
 
 export function applyTheme(t) {
@@ -116,6 +117,7 @@ export function AccountMenu() {
   const items = [
     { id: 'theme', label: state.theme === 'herd' ? 'Switch to dark theme' : 'Switch to light theme', glyph: Icon(state.theme === 'herd' ? 'moon' : 'sun', { size: 14 }) },
     { id: 'help', label: 'Help', glyph: Icon('help', { size: 14 }) },
+    { id: 'feedback', label: 'Send feedback', glyph: Icon('thread', { size: 14 }) },
     { separator: true },
     { id: 'logout', label: 'Log out' },
     { id: 'logout-everywhere', label: 'Log out everywhere else', danger: true },
@@ -123,6 +125,7 @@ export function AccountMenu() {
   const onSelect = (id) => {
     if (id === 'theme') chooseTheme(state.theme === 'herd' ? 'herd-ink' : 'herd');
     else if (id === 'help') openModal('help');
+    else if (id === 'feedback') openFeedback();
     else if (id === 'logout') doLogout();
     else if (id === 'logout-everywhere') openLogoutEverywhereConfirm();
   };

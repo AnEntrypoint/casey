@@ -75,8 +75,11 @@ process.env.CASEY_COOKIE_SECURE = '0'
 const { createCaseStore } = await import(path.join(SRC, 'case-store.js'))
 const { createAccount } = await import(path.join(SRC, 'dashboard/auth.js'))
 const { createDashboard } = await import(path.join(SRC, 'dashboard/server.js'))
+const { runViewerChecks } = await import('./gui-check-viewer.mjs')
+const { runTeamChecks } = await import('./gui-check-team.mjs')
 
 const failures = []
+const ONLY_DONE = Symbol('only-done')
 const check = (ok, label, detail) => {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'}  ${label}${detail == null ? '' : '  -- ' + detail}`)
   if (!ok) failures.push(label)
@@ -96,6 +99,7 @@ async function seed() {
   await mk('-aht', 'animal_health_technician', 'GUI Technician', { contactPhone: '083 333 4444' })
   await mk('-rng2', 'eco_ranger', 'GUI Ranger Two')
   await mk('-rng0', 'eco_ranger', 'GUI Nocases')
+  await mk('-vw', 'viewer', 'GUI Viewer')
   await store.registerContact({ channel: 'whatsapp', external_id: '27821112222', display_name: 'GUI Ranger', tier: 'field_worker' })
   const ac = await store.registerContact({ channel: 'whatsapp', external_id: '27833334444', display_name: 'GUI Technician', tier: 'animal_health_technician' })
   await store.registerContact({ channel: 'whatsapp', external_id: '27790001111', display_name: 'Public Pete', tier: 'reporter' })
@@ -243,6 +247,13 @@ try {
     const W = window; W.__renders = 0; const q = W.queueMicrotask.bind(W);
     W.queueMicrotask = (f) => { if (/schedule/.test((new Error().stack || '').split('\\n')[2] || '')) { if (++W.__renders > (W.__renderCap || 3000)) return } return q(f) };
   })()` })
+
+  // The read-only viewer's checks (scripts/gui-check-viewer.mjs) seed 300 more reports, so they run last in a
+  // full run; GUI_CHECK_ONLY=viewer runs just them, against the same scratch store and dashboard.
+  const viewerCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, store, PORT, USER, PW, ids, archive, seenConsole, seenFailed, bodyText, send })
+  const teamCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, setField, key, store, base, USER, PW, ids, archive, seenConsole, bodyText, createAccount, SRC })
+  if (process.env.GUI_CHECK_ONLY === 'viewer') { await runViewerChecks(viewerCtx()); throw ONLY_DONE }
+  if (process.env.GUI_CHECK_ONLY === 'team') { await runTeamChecks(teamCtx()); throw ONLY_DONE }
 
   await viewport('d')
   await asUser('', '', 5000)
@@ -649,9 +660,14 @@ try {
   await asUser('-rng', '', 3500)
   await clickText('GUI Ranger'); await sleep(600)
   await axeBoth('eco ranger account menu open (danger item)')
+
+  await runTeamChecks(teamCtx())
+  await runViewerChecks(viewerCtx())
 } catch (e) {
-  console.error('[gui-check] ERROR:', e.message)
-  failures.push('harness: ' + e.message)
+  if (e !== ONLY_DONE) {
+    console.error('[gui-check] ERROR:', e.message)
+    failures.push('harness: ' + e.message)
+  }
 } finally {
   try { ws && ws.close() } catch { /* closing a dead socket is not a failure */ }
   try { chrome && chrome.kill() } catch { /* already gone */ }

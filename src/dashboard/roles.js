@@ -1,9 +1,12 @@
 // dashboard/roles.js -- the ONE place that decides what a dashboard login may do.
 //
-// operator_account.role is one of two families:
+// operator_account.role is one of three families:
 //   STAFF  admin | operator | secretary   -- the operator console, unchanged.
 //   FIELD  eco_ranger | animal_health_technician -- the field team's GUI: only
 //          their own work, never the running of the team.
+//   VIEWER viewer -- UCT and third parties: READ-ONLY, aggregate views only. It
+//          reaches no case, contact, number, assignee, account or media at all;
+//          its allowlist below is a handful of PII-free aggregate routes.
 // resolveRole() is fail-closed: a missing, empty, corrupt or forged role value
 // resolves to the LEAST privileged rung (eco_ranger), never to operator. The
 // staff roles are matched by exact name, so a new rung added elsewhere can never
@@ -27,7 +30,8 @@ import { MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMa
 
 export const STAFF_ROLES = ['admin', 'operator', 'secretary']
 export const FIELD_ROLES = ['eco_ranger', 'animal_health_technician']
-export const ACCOUNT_ROLES = [...STAFF_ROLES, ...FIELD_ROLES]
+export const VIEWER_ROLES = ['viewer']
+export const ACCOUNT_ROLES = [...STAFF_ROLES, ...FIELD_ROLES, ...VIEWER_ROLES]
 export const LEAST_PRIVILEGED_ROLE = 'eco_ranger'
 
 export function resolveRole(value) {
@@ -36,6 +40,8 @@ export function resolveRole(value) {
 export const roleOf = (acct) => resolveRole(acct?.role)
 export const isStaffAccount = (acct) => STAFF_ROLES.includes(acct?.role)
 export const isFieldAccount = (acct) => !isStaffAccount(acct)
+// Exact-name match, like the staff roles: nothing resolves to viewer by accident.
+export const isViewer = (acct) => VIEWER_ROLES.includes(acct?.role)
 export const isTechnician = (acct) => roleOf(acct) === 'animal_health_technician'
 
 const digits = (v) => String(v == null ? '' : v).replace(/\D/g, '')
@@ -137,12 +143,41 @@ const FIELD_ROUTES = [
 
 const deny = (res, status, error, code) => res.status(status).json({ error, code })
 
+// The viewer's whole reach. Deny by default: a viewer gets these exact method+path
+// pairs and NOTHING else under /api or /media. Audited one by one (a route is here
+// only when its payload is proven PII-free):
+//   /api/config, /api/logout-everywhere   no case data (settings, labels; a self-only session action)
+//   /api/overview                         counts by stage, per-day totals, medians: no row, no name
+//   /api/reports/*                        reports-map.js: k-anonymised, allowlist-projected, no ref/id/name/number
+// Refused on purpose (each carries a person or an identifiable small group):
+//   /api/stats (intake-mode ops detail, not needed), /api/geo + /api/distribution (open-case place and
+//   symptom rollups, not disease-signed-off and not k-folded by disease), /api/clusters (member refs),
+//   /api/report.csv|json|html (operator names and workload), /api/cases/export.csv and everything
+//   under /api/cases, /api/contacts, /api/accounts, /api/team-members, /api/map/*, /media.
+const VIEWER_ROUTES = [
+  ['GET', /^\/api\/config$/],
+  ['GET', /^\/api\/overview$/],
+  ['POST', /^\/api\/logout-everywhere$/],
+  ['GET', /^\/api\/reports\/(resolved-map|diseases|heat|export\.csv)$/],
+]
+
+function viewerGate(req, res, next) {
+  const lp = req.path.toLowerCase()
+  // Media is never a viewer's, whatever the spelling (Express matches '/MEDIA' too).
+  if (lp.startsWith('/media')) return deny(res, 404, 'not found')
+  if (!lp.startsWith('/api/') && lp !== '/api') return next()   // shell assets and tiles carry no case data
+  if (req.path === '/api/whoami' || req.path === '/api/logout' || req.path === '/api/change-password' || req.path === '/api/login') return next()
+  if (VIEWER_ROUTES.some(([m, re]) => m === req.method && re.test(req.path))) { req.caseyRole = 'viewer'; return next() }
+  return deny(res, 403, 'This is not available for your login.', 'role_forbidden')
+}
+
 export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
   return async (req, res, next) => {
     try {
       const acct = req.caseyAccount
       if (!acct) return next()              // the session gate owns the 401
       if (isStaffAccount(acct)) return next()
+      if (isViewer(acct)) return viewerGate(req, res, next)
       req.caseyRole = roleOf(acct)
       acct._contact = await resolveContact(store, acct)
       const p = req.path

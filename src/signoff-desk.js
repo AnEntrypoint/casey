@@ -81,3 +81,18 @@ export async function withdrawHandoff(store, caseId, { by = 'a team member', use
     return { ok: true, was: true, ref: c.ref }
   })
 }
+
+// The technician sends a record back to whoever is working it, saying what is
+// missing: the `sent-back` tag (the ranger's list puts it first), one note on the
+// timeline, and the hand-over withdrawn. Nothing is sent to any channel. Used by
+// the dashboard send-back and by case_ask_ranger for a record the public filed.
+export async function sendBackToRanger(store, caseId, { by = 'a team member', user, text = '', missing = [], data = {} } = {}) {
+  const c = await store.getCase(caseId)
+  if (!c || c.channel === 'system') return { ok: false, error: 'No such record.' }
+  const tags = tagList(c)
+  if (!tags.includes('sent-back')) await store.updateCase(c.id, { tags: mergeTag(c.tags || '', 'sent-back') }, user)
+  const line = `Sent back by ${by}${missing.length ? `: still needed -- ${missing.join(', ')}` : ''}${String(text).trim() ? `. ${String(text).trim()}` : ''}`
+  await store.appendEvent(c.id, { kind: 'note', actor: 'operator', text: line, data: { ...data, by: data.by || by, sent_back: true, missing } })
+  await withdrawHandoff(store, c.id, { by, user, reason: 'sent back' })
+  return { ok: true, ref: c.ref }
+}

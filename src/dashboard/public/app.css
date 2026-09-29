@@ -1413,3 +1413,24 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-people-filter { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; justify-content: space-between; margin-bottom: var(--space-3); }
 .ds-people-page { display: flex; flex-direction: column; gap: var(--space-4); }
 .ds-people { overflow-x: auto; }
+
+/* ---- areas, bulk team add, feedback (panels/areas-panel.js, bulk-team-add.js, feedback-panel.js) ----
+   Layout only, on kit tokens. Kit primitives tried first: Panel/Row/DetailRow/Table carry every
+   surface; these classes only arrange a Select and its button beside a Row (no kit "row with a
+   control" primitive exists: a Row that is a button cannot hold another button), and stack the
+   two Feedback tables. No rule here sets a colour, size or background that a kit rule also sets,
+   so none needs the .ds-247420 scope prefix. */
+.ds-area-item { display: flex; flex-direction: column; gap: var(--space-2); padding-bottom: var(--space-3); }
+.ds-area-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
+.ds-area-actions .ds-field { flex: 1 1 200px; }
+.ds-bulk-results { display: flex; flex-direction: column; gap: var(--space-3); }
+.ds-bulk-summary { margin: 0; font-size: var(--fs-sm); font-weight: 600; }
+.ds-feedback-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-4); }
+.casey-area-note { display: flex; flex-direction: column; gap: var(--space-2); }
+.casey-area-note .casey-hint { margin: 0; }
+
+/* A Panel given a title and nothing on its right (no `right`, no `count`) makes the title the head's
+   :last-child, and the kit's `.panel-head > :last-child:not(.ds-badge)` rule (meant for the right-hand
+   meta) then sets it in the mono face, weight 500, dim ink. Kit primitive tried: Panel's own props have
+   no way to opt out. The (0,5,0) selector beats the kit's (0,4,0). */
+.ds-247420 .panel-head > .panel-title:last-child:not(.ds-badge) { font-family: inherit; font-weight: inherit; color: inherit; }

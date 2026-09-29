@@ -33,6 +33,7 @@ import { toast, failMsg } from '../toasts.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 import { TeamRegistration, tierOptions } from './team-registration.js';
 import { InviteCodes } from './invite-codes.js';
+import { BulkTeamAdd } from './bulk-team-add.js';
 
 const h = webjsx.createElement;
 
@@ -206,6 +207,7 @@ export function ContactsPanel() {
     });
     return h('div', { class: 'ds-people-page' },
         TeamRegistration({ isAdmin, onDone: () => loader.reload() }),
+        BulkTeamAdd({ onDone: () => loader.reload() }),
         InviteCodes({ isAdmin }),
         Panel({ title: 'People', children: [body] }));
 }

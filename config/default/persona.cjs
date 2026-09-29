@@ -58,6 +58,24 @@ const persona = {
   // Scoped to the moments a catch-up is what they came for. Unscoped it fired on
   // every field_worker turn, stapling an unrelated itinerary update onto a
   // mid-report answer alongside whatever nudges were already live.
+  // FIRST-CONTACT NOTICE (src/first-contact-notice.js): shown once, at the end of the reply to a
+  // person's first message, composed by the model in the person's language from this text. It never
+  // delays or replaces the answer. Bump noticeVersion to show a changed notice once to everyone.
+  // noticeAnchor is the literal opt-out word the reply must contain. Replace with your own wording.
+  noticeVersion: '1',
+  noticeAnchor: 'STOP',
+  noticeText: [
+    'Who we are: an automated helpdesk assistant, not a person.',
+    'What we keep: your number or user name, your name if you give it, and what you tell me, including any',
+    'files you send.',
+    'Why: so the support team can read your request and follow it up.',
+    'Who sees it: the support team and their supervisors.',
+    'Your choices: reply STOP at any time and I will stop. To see or delete your details, ask for a person.',
+  ],
+  staffNoticeText: [
+    'A short note for the team: your messages here are kept with the tickets you work on, and what you do on',
+    'a ticket is saved with your name so the team can see who did what.',
+  ],
   workerCatchUpText: 'If an IT technician is starting fresh, asking what is waiting for them, or has been away a while, call case_mine/case_today/case_list and weave ONE well-chosen update into your reply, never a list. Mid-ticket, leave it out: answer what they just said.',
   casualReporterEnquiryBlockedText: 'This person is a regular employee -- case_today/case_mine/case_list/case_get are NOT available. Answer from this conversation alone and steer back to reporting.',
 }

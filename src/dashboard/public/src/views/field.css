@@ -12,4 +12,5 @@
    already one column. Kit primitives kept as they are; only the space
    beneath them is set, and the column's own gap does the spacing. */
 .field-home { display: flex; flex-direction: column; gap: var(--space-4); }
+.field-day { display: flex; flex-direction: column; gap: var(--space-4); } /* My day: three kit panels in a column, same rhythm as .field-home */
 .ds-247420 .casey-detail-pane .ds-section, .ds-247420 .field-home .panel { margin-block: 0; }

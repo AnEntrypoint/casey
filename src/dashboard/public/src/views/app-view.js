@@ -17,7 +17,9 @@ import { ConnectionBanner } from '../components/connection-banner.js';
 import { ToastTray } from '../components/toast-tray.js';
 import { LoginGate } from './login-gate.js';
 import { FieldApp } from './field-app.js';
-import { isFieldRole } from '../api-roles.js';
+import { ViewerApp } from './viewer-app.js';
+import { FeedbackDialog } from '../components/feedback-dialog.js';
+import { isFieldRole, isViewerRole } from '../api-roles.js';
 import { Dialog } from '../components/dialog-shell.js';
 import { CaseListDetailLayout } from './case-list-detail-layout.js';
 import { MapCommandCenter } from './map-command-center.js';
@@ -48,7 +50,7 @@ const WIDE_MODALS = new Set(['settings', 'stats']);
 const SELF_WRAPPED_MODALS = new Set(['help', 'onboarding', 'skills']);
 function ModalMount() {
   const name = state.activeModal;
-  if (!name || name === 'confirm-logout-everywhere') return null;
+  if (!name || name === 'confirm-logout-everywhere' || name === 'feedback') return null;
   const body = modalBodies[name] ? modalBodies[name]() : h('p', {}, 'Loading...');
   if (SELF_WRAPPED_MODALS.has(name)) return body;
   return Dialog({ open: true, title: modalTitle(name), onClose: closeModal, children: body, wide: WIDE_MODALS.has(name) });
@@ -265,6 +267,7 @@ export function App() {
 
   // The field team (eco ranger, animal health technician) get their own screen,
   // not the operator console with pieces hidden (views/field-app.js).
+  if (isViewerRole()) return ViewerApp();
   if (isFieldRole()) return FieldApp();
 
   // brand/leaf are config-driven (dashboard_ui.brand/dashboard_ui.leaf, see
@@ -339,6 +342,7 @@ export function App() {
     // kit change to landmark roles.
     AppShell({ topbar, crumb, side, status, main: [MainContent()], bannerLabel: 'Top bar', mainLabelledby: VIEW_TITLE_ID }),
     ModalMount(),
+    FeedbackDialog(),
     LogoutEverywhereConfirmDialog(),
     ToastTray()
   );

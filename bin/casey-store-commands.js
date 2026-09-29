@@ -595,7 +595,7 @@ export async function cmdOperators({ flags, rest }) {
   const ACCOUNT_ROLES = ['admin', 'operator', 'secretary', 'eco_ranger', 'animal_health_technician']
   if (sub === 'add') {
     const username = positional[0]
-    if (!username) { say('usage: casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary]'); await closeAndExit(store, 1) }
+    if (!username) { say('usage: casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary|eco_ranger|animal_health_technician|viewer]'); await closeAndExit(store, 1) }
     if (flags.role !== undefined) await requireOneOf(store, 'role', flags.role, ACCOUNT_ROLES)
     if (flags.password === true) { say(bad('--password needs a value (omit it entirely to have one generated).')); await closeAndExit(store, 1) }
     const password = typeof flags.password === 'string' ? flags.password : randomBytes(10).toString('hex')
