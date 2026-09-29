@@ -184,6 +184,13 @@ async function driveAgentTurn(deps, {
   // out on THIS case, its report is the whole warrant, and advanceIntake is a
   // no-op for a case already past `new` or holding nothing.
   if (startedOnId && startedOnId !== fresh?.id) {
+    // The reply (if any) lands on the case the turn ended on, so the case it STARTED
+    // on holds a TURN-START with nothing after it. Left like that the resume sweep
+    // reads the message as unanswered and replays it after every restart, opening a
+    // fresh case and answering the person a second time. This marker completes it
+    // (casey-resume-scan.js completesTurn), positionally like an outbound would.
+    try { await store.appendEvent(startedOnId, observation(`TURN-HANDED-OFF:${msgId} continued on ${fresh?.ref || fresh?.id}`)) }
+    catch (e) { log.warn?.('[casey] turn hand-off marker failed', { caseId: startedOnId, error: e.message }) }
     const departed = await store.getCase(startedOnId).catch(() => null)
     if (departed?.report) {
       await advanceIntake({ store, log, fresh: departed, inboundText, media, reportLanded: true, replySending: false })

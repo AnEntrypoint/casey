@@ -34,6 +34,9 @@ import { evData } from './safe.js'
 // resumeMaxAgeMs still bound it, and a contact who did resend has a real outbound
 // on the timeline which completes the old msgId here.
 export function completesTurn(ev) {
+  // A turn that ended on a DIFFERENT case (case_new/case_switch) answered there; the
+  // case it started on carries this marker instead of an outbound.
+  if (ev?.kind === 'observation' && typeof ev.text === 'string' && ev.text.startsWith('TURN-HANDED-OFF:')) return true
   if (ev?.kind !== 'outbound' && ev?.kind !== 'draft') return false
   return evData(ev).guaranteedFallback !== true
 }
