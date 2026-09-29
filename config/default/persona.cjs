@@ -61,16 +61,16 @@ const persona = {
   // FIRST-CONTACT NOTICE (src/first-contact-notice.js): shown once, at the end of the reply to a
   // person's first message, composed by the model in the person's language from this text. It never
   // delays or replaces the answer. Bump noticeVersion to show a changed notice once to everyone.
-  // noticeAnchor is the literal opt-out word the reply must contain. Replace with your own wording.
-  noticeVersion: '1',
-  noticeAnchor: 'STOP',
+  // noticeAnchor, when non-empty, is a literal word the composed notice must contain (empty by default: no command word). Replace with your own wording.
+  noticeVersion: '2',
+  noticeAnchor: '',
   noticeText: [
     'Who we are: an automated helpdesk assistant, not a person.',
     'What we keep: your number or user name, your name if you give it, and what you tell me, including any',
     'files you send.',
     'Why: so the support team can read your request and follow it up.',
     'Who sees it: the support team and their supervisors.',
-    'Your choices: reply STOP at any time and I will stop. To see or delete your details, ask for a person.',
+    'If you want me to stop, or want your details removed, just tell me and a person will help.',
   ],
   staffNoticeText: [
     'A short note for the team: your messages here are kept with the tickets you work on, and what you do on',
