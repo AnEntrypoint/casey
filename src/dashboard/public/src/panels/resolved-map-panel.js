@@ -117,7 +117,7 @@ export function ResolvedMapPanel() {
   const ranked = diseaseRank(all);
   if (rm.mode !== 'dots' && untilEnd) ensureHeat(untilEnd);
 
-  const canvas = h('div', { id: 'rm-canvas', key: 'rm-canvas', class: 'ds-map-canvas', role: 'region', 'aria-label': 'Map of signed-off cases', 'aria-describedby': 'rm-summary' });
+  const canvas = h('div', { id: 'rm-canvas', key: 'rm-canvas', class: 'ds-map-canvas rep-map', role: 'region', 'aria-label': 'Map of signed-off cases', 'aria-describedby': 'rm-summary' });
   queueMicrotask(() => { const c = document.getElementById('rm-canvas'); if (c) paint(c, dots, weeks); });
 
   const heatNote = rm.mode !== 'dots' && rm.heat && rm.heat.error ? Alert({ kind: 'warn', children: rm.heat.error }) : null;

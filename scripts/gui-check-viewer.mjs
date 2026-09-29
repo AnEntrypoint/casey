@@ -15,6 +15,8 @@
 import http from 'node:http'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const { resolveRole, ACCOUNT_ROLES, isViewer } = await import(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'dashboard', 'roles.js'))
 import { seedResolved } from './gui-seed-resolved.mjs'
 
 const ALLOWED = [
@@ -82,6 +84,15 @@ export async function runViewerChecks(c) {
 
   // ---- 1. role x route matrix (as the viewer, in the browser, then raw for the spellings a browser normalises away)
   console.log('\nviewer: role x route matrix')
+  check(resolveRole('viewer') === 'viewer' && ['wizard', 'Viewer', 'VIEWER', ' viewer', '', null, undefined, 'viewer,admin'].every((v) => resolveRole(v) === 'eco_ranger'), 'only the exact name viewer resolves to viewer; a forged, cased, blank or missing role resolves to least privilege (eco_ranger), never to viewer or staff', ACCOUNT_ROLES.join(','))
+  check(isViewer({ role: 'viewer' }) && !isViewer({ role: 'Viewer' }) && !isViewer({ role: 'admin' }) && !isViewer(null), 'isViewer is an exact-name test')
+  {
+    const adm = (await fetch(`http://127.0.0.1:${PORT}/api/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: USER, password: PW }) })).headers.get('set-cookie').split(';')[0]
+    const mk = async (username, role) => { const r = await fetch(`http://127.0.0.1:${PORT}/api/accounts`, { method: 'POST', headers: { 'content-type': 'application/json', cookie: adm }, body: JSON.stringify({ username, password: PW + 'x1', display_name: 'Made ' + username, role }) }); return [r.status, await r.json().catch(() => ({}))] }
+    const okA = await mk('guicheck-vw2', 'viewer'), badA = await mk('guicheck-bad', 'viewer-admin')
+    check(okA[0] < 300 && (okA[1].account || okA[1]).role === 'viewer', 'the admin account API creates a viewer login', okA[0] + ' ' + JSON.stringify(okA[1]).slice(0, 120))
+    check(badA[0] === 400, 'the admin account API refuses an unknown role', badA[0] + ' ' + JSON.stringify(badA[1]).slice(0, 100))
+  }
   await viewport('d')
   await asUser('-vw', '', 5000)
   const cookie = await (async () => {
@@ -163,7 +174,9 @@ export async function runViewerChecks(c) {
   check(!map.points.some((p) => /Dlamini|0821/.test(p.disease)) && map.points.some((p) => p.disease === 'Other (rare)'), 'a disease label with a name and number typed into it is stripped of the number and shown as "Other (rare)"', [...new Set(map.points.map((p) => p.disease))].join(', ').slice(0, 200))
   const dis = JSON.parse(payloads.find(([p]) => p === '/api/reports/diseases')[1])
   const cells = dis.cells.concat(dis.by_disease, dis.by_region, dis.by_month, dis.by_disease_month, dis.by_disease_region, dis.by_species)
-  check(cells.length > 10 && cells.every((x) => x.count >= dis.k), `every released group has at least ${dis.k} cases`, `${cells.length} groups; smallest ${Math.min(...cells.map((x) => x.count))}`)
+  // privacy.js exempts exactly one thing: a single-dimension 'unknown' group (it names nothing to fold away).
+  const under = cells.filter((x) => x.count < dis.k)
+  check(cells.length > 10 && under.every((x) => x.region === 'unknown' && Object.keys(x).length === 2), `every released group has at least ${dis.k} cases (only the by-area "area not stated" line may be smaller)`, `${cells.length} groups; under the floor: ${JSON.stringify(under)}`)
   const heat = JSON.parse(payloads.find(([p]) => p === '/api/reports/heat')[1])
   check(heat.cells.length > 3 && heat.cells.every((x) => x.count >= heat.k), 'every heat cell holds at least the floor of cases', `${heat.cells.length} cells`)
   const csv = payloads.find(([p]) => p === '/api/reports/export.csv')[1]
@@ -192,12 +205,15 @@ export async function runViewerChecks(c) {
     dots: document.querySelectorAll('#rm-canvas path.leaflet-interactive').length, cloud: document.querySelectorAll('.rep-cloud li').length,
     kpi: document.querySelectorAll('.ds-kpi, .kpi').length, bars: document.querySelectorAll('.ds-bar-chart, .bar-chart, [class*=bar-row], [class*=barchart]').length,
     title: (document.querySelector('h1') || {}).innerText, status: (document.querySelector('[aria-label="Status bar"]') || {}).innerText,
+    mapBox: (() => { const r = document.getElementById('rm-canvas').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)] })(),
+    tiles: document.querySelectorAll('#rm-canvas img.leaflet-tile').length,
     slider: !!document.querySelector('.ds-slider-range'), play: !![...document.querySelectorAll('button')].find((b) => /Play time-lapse/.test(b.innerText)),
     csv: (document.querySelector('a[href^="/api/reports/export.csv"]') || {}).href || '',
     scrollW: document.documentElement.scrollWidth, innerW: innerWidth, text: document.body.innerText.slice(0, 4000),
   }))()`))
   check(v.nav.length === 3 && v.nav.join('|').includes('Resolved cases map'), 'viewer nav is only Overview, Resolved cases map and Disease reports', v.nav.join(' | '))
   check(!v.console && v.canvas, 'the viewer sees its own screen, not the operator console, and it has the map')
+  check(v.mapBox[1] >= 280 && v.mapBox[0] >= 300, 'the map has a real size on the page (not a collapsed box with dots inside)', v.mapBox.join(' x '))
   check(v.dots === map.count, 'the map draws one dot per signed-off case with a place', `${v.dots} dots for ${map.count} points`)
   check(v.cloud >= 3 && v.slider && v.play && /export\.csv/.test(v.csv), 'word cloud, time slider, play button and export link are on the screen', `cloud ${v.cloud}, csv ${v.csv.replace(/^https?:\/\/[^/]+/, '')}`)
   check(!/CASE-\d|Seed Farmer|GUI Ranger|0\d{9}|Dlamini/.test(v.text), 'no reference, name or number appears anywhere on the viewer screen')

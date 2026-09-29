@@ -11,6 +11,7 @@ export async function runTeamChecks(c) {
   const SMALL_JS = `JSON.stringify([...document.querySelectorAll('a[href], button, input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, summary, [role=button]')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !e.closest('.leaflet-container') && !e.classList.contains('app-status-toggle') && (r.height < 43.5 || r.width < 43.5) }).map((e) => e.tagName.toLowerCase() + '.' + String(e.className).split(' ')[0] + ' ' + Math.round(e.getBoundingClientRect().width) + 'x' + Math.round(e.getBoundingClientRect().height) + ' ' + (e.getAttribute('aria-label') || e.innerText || e.name || '').replace(/\\n/g, ' ').slice(0, 24)))`
   const { upsertArea } = await import(path.join(SRC, 'areas.js'))
 
+  const consoleFrom = seenConsole.length
   console.log('\nareas, bulk add, feedback, my day, hand-over: seeding')
   const r3 = await store.registerContact({ channel: 'whatsapp', external_id: '27845556666', display_name: 'GUI Ranger Three', tier: 'field_worker' })
   await createAccount(store, { username: USER + '-rng3', password: PW, displayName: 'GUI Ranger Three', role: 'eco_ranger', mustChangePassword: false, contactPhone: '084 555 6666' })
@@ -204,6 +205,6 @@ export async function runTeamChecks(c) {
   await viewport('d')
 
   archive()
-  const consoleBad = seenConsole.filter((m) => !/status of 404/.test(m) && !/<\/(api\/)?tiles?\//.test(m) && !/<\/api\/ready>/.test(m))
+  const consoleBad = seenConsole.slice(consoleFrom).filter((m) => !/status of 404/.test(m) && !/<\/(api\/)?tiles?\//.test(m) && !/<\/api\/ready>/.test(m))
   check(consoleBad.length === 0, 'browser console clean across the new screens', consoleBad[0] || 'no errors or warnings')
 }

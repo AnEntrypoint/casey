@@ -59,7 +59,7 @@ export function DiseaseReportsPanel() {
         [top ? top.disease : '--', 'Most common'],
         [String(areas.length), 'Areas with enough cases to name'],
       ] }),
-      diseases.length ? Section({ title: 'Diseases found', children: [WordCloud(diseases), BarChart({ items: bars(diseases.slice(0, 12), 'disease') })] }) : null,
+      diseases.length ? Section({ title: 'Diseases found', children: h('div', { class: 'rep-stack' }, WordCloud(diseases), BarChart({ items: bars(diseases.slice(0, 12), 'disease') })) }) : null,
       areas.length ? Section({ title: 'Where they were found', children: [BarChart({ items: bars(areas.slice(0, 12), 'region') })] }) : null,
       r.by_month.length ? Section({ title: 'When they were signed off ' + '(' + grainName + ')', children: [BarChart({ items: r.by_month.slice().sort((a, b) => String(a.month).localeCompare(String(b.month))).map((x) => ({ label: nice(x.month), value: x.count })) })] }) : null,
       r.by_disease_region.length ? Section({ title: 'Disease by area', children: [Table({ headers: ['Disease', 'Area', 'Cases'], rows: r.by_disease_region.slice(0, 25).map((x) => [nice(x.disease), nice(x.region), String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet' })] }) : null,

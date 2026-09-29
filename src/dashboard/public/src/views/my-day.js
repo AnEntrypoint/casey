@@ -92,7 +92,7 @@ export function MyDay({ onOpenRef, part = 'top', tech = false }) {
       needs.length ? Panel({
         key: 'needs', title: 'My day: what each one still needs', count: d.needs_total || needs.length,
         children: [
-          ...needs.map((n) => Row({ key: n.ref, title: n.what ? n.ref + ' -- ' + n.what : n.ref, sub: stageLabel(n.stage) + '. ' + (n.needs || []).join('. '), onClick: onOpenRef ? () => onOpenRef(n.ref) : undefined })),
+          ...needs.map((n) => Row({ key: n.ref, title: n.what || n.ref, sub: n.ref + '. ' + stageLabel(n.stage) + '. ' + (n.needs || []).join('. '), onClick: onOpenRef ? () => onOpenRef(n.ref) : undefined })),
           d.needs_total > d.needs_shown ? h('p', { key: 'more', class: 'casey-hint' }, 'Showing ' + d.needs_shown + ' of ' + d.needs_total + ' ' + entityLabelPlural() + '.') : null,
         ].filter(Boolean),
       }) : null);

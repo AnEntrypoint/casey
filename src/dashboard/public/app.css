@@ -254,6 +254,10 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    draws its label in the --danger FILL red (3.65:1 light, 3.49:1 dark) where --danger-ink exists. */
 .ds-247420 :is(.ds-filter-pill, .chip).tone-live { color: color-mix(in oklab, var(--sky) 70%, var(--fg)); }
 .ds-247420 .is-danger > .ds-dropdown-label { color: var(--danger-ink); }
+/* The kit sets the "Done" stage pill's text in --green-deep (#133F10) with no dark-theme counterpart, so on the dark
+   theme it is 1.05:1 against the dark pill (axe color-contrast) as soon as one report is done. --green is the
+   dark theme's readable green. Kit primitive tried: FilterPills' `tone` prop, which only picks the class. */
+.ds-247420[data-theme="herd-ink"] .ds-filter-pill.tone-success { color: var(--green); }
 
 /* The kit's SearchInput is content-sized (303px), which clipped every placeholder here ("Search a
    reference or what it is a..."). Let it take the room its container has, up to a readable line. */

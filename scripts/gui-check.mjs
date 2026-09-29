@@ -661,7 +661,7 @@ try {
   await clickText('GUI Ranger'); await sleep(600)
   await axeBoth('eco ranger account menu open (danger item)')
 
-  await runTeamChecks(teamCtx())
+  if (process.env.GUI_CHECK_SKIP !== 'team') await runTeamChecks(teamCtx())
   await runViewerChecks(viewerCtx())
 } catch (e) {
   if (e !== ONLY_DONE) {
