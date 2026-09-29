@@ -171,7 +171,7 @@ function rawActionItems({ refreshAll } = {}) {
 // `relabel` is {key: newLabel}. `group_labels` is {oldGroupName: newGroupName}.
 // Absent config (casey's own default, uhh) -- returns the raw sections
 // unchanged.
-// Role-scoped nav: the secretary role exists to work the follow-up queue,
+// Role-scoped nav: the legacy secretary role (shown as Operator) exists to work the follow-up queue,
 // not admin/analyst-grade tooling -- only what that role needs to know on
 // every page. Hidden items are
 // still reachable to an admin/operator; this is a per-role floor, applied

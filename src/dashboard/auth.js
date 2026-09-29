@@ -153,6 +153,10 @@ export async function listAccounts(store) {
 }
 
 export async function createAccount(store, { username, password, displayName, role = 'operator', mustChangePassword = false, contactPhone = '' }) {
+  // The team's name for this person is Operator. 'secretary' is a LEGACY alias: an
+  // existing account stored with it keeps working (roles.js still accepts it), but a
+  // NEW account is always created as 'operator'.
+  if (role === 'secretary') role = 'operator'
   const sid = slugUsername(username)
   if (!sid) throw new Error('invalid username')
   if (sid === UNCLAIMED_ASSIGNEE) throw new Error(`"${sid}" is reserved (it marks an unclaimed report) -- pick another username`)

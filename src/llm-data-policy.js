@@ -1,12 +1,12 @@
 // llm-data-policy.js -- what may casey send to which outside processor, and the
 // paper trail that says what was decided.
 //
-// CASEY_LLM_DATA_POLICY (default 'deny'):
+// CASEY_LLM_DATA_POLICY (default 'zdr'):
 //   deny  OpenRouter requests carry provider.data_collection = 'deny': only
 //         endpoints that do not store or train on prompts are eligible.
 //   zdr   deny, plus provider.zdr = true: only Zero-Data-Retention endpoints.
 //   allow the policy is off (the pre-policy behaviour). Recorded loudly.
-// Any other value is treated as 'deny' (fail closed).
+// Any other value is treated as 'zdr' (fail closed).
 //
 // WHAT IS ENFORCED WHERE (measured against OpenRouter 2026-09-29, see
 // docs/data-processors.md in the deployment):
@@ -27,8 +27,8 @@ export const POLICY_MODES = ['deny', 'zdr', 'allow']
 
 let warnedInvalid = false
 export function dataPolicyMode(env = process.env) {
-  const raw = String(env.CASEY_LLM_DATA_POLICY == null ? 'deny' : env.CASEY_LLM_DATA_POLICY).trim().toLowerCase()
-  if (raw === '') return 'deny'
+  const raw = String(env.CASEY_LLM_DATA_POLICY == null ? 'zdr' : env.CASEY_LLM_DATA_POLICY).trim().toLowerCase()
+  if (raw === '') return 'zdr'
   if (POLICY_MODES.includes(raw)) return raw
   if (!warnedInvalid) { warnedInvalid = true; console.warn(`[casey] CASEY_LLM_DATA_POLICY="${raw}" is not one of ${POLICY_MODES.join('/')}; using 'deny'`) }
   return 'deny'
@@ -50,6 +50,19 @@ export function openrouterProviderField(mode = dataPolicyMode()) {
   if (mode === 'deny') return withSort({ data_collection: 'deny' })
   if (mode === 'zdr') return withSort({ data_collection: 'deny', zdr: true })
   return sort ? { sort } : null
+}
+
+// DeepSeek Flash is a thinking model. With thinking on, on average ~220 tokens of every
+// answer go to hidden reasoning, and on 5-6 of 24 short calls the answer budget was
+// consumed by the thinking and the reply came back EMPTY, which our chain then retried
+// (measured 2026-09-29: empty 5-6/24 and 2.2-2.4s with thinking on; 0/24 and 1.2-1.4s off,
+// same host, same policy). Casey's turn is tool-orchestration and short replies, so thinking is
+// off by default. CASEY_LLM_REASONING=on to leave it to the model, or low|medium|high.
+export function reasoningField(env = process.env) {
+  const v = String(env.CASEY_LLM_REASONING == null ? 'off' : env.CASEY_LLM_REASONING).trim().toLowerCase()
+  if (v === 'on' || v === 'default') return null
+  if (['low', 'medium', 'high'].includes(v)) return { reasoning: { effort: v } }
+  return { reasoning: { enabled: false } }
 }
 
 const FREE_ID = /(?::free\b|\/free\b|-free\b)/i
@@ -126,7 +139,7 @@ export function applyDataPolicy(links, { env = process.env, requested = '' } = {
     const c = classifyLink(model)
     if (c.enforcement === 'refused') { dropped.push({ model, reason: c.reason }); continue }
     keptInfo.push({ model, processor: c.processor, enforcement: c.enforcement })
-    kept.push(c.enforcement === 'request' ? { model, provider: field } : { model })
+    kept.push(c.enforcement === 'request' ? { model, provider: field, ...(reasoningField(env) || {}) } : { model })
   }
   const key = `${mode}|${list.join(',')}`
   if (!seenChains.has(key)) {

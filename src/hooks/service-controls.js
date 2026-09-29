@@ -1,34 +1,20 @@
-// hooks/service-controls.js -- the IRREVERSIBLE service controls, and the only
-// deterministic pre-LLM route left in casey.
+// hooks/service-controls.js -- the only deterministic pre-LLM route left in casey,
+// reduced to the bare minimum.
 //
-// STOP (opt-out) and HUMAN (handoff) are legal/service controls, not
-// conversation. They must fire synchronously in any phrasing or language even
-// with the model down, they are never queued, and they are never left to the
-// agent's discretion. They also fire REGARDLESS of autonomy mode: an
-// observe-mode contact can still say STOP or ask for a person, and that request
-// is irreversible and legal, not something an operator's autonomy setting may
-// silently swallow.
+// Language handling is the agent's (case_stop / case_handoff, see
+// heuristics.js). What remains here: the whole-message English word 'stop'
+// applies the opt-out state change at once, and the whole-message word 'help'
+// opts an opted-out contact back in. Both fire REGARDLESS of autonomy mode and
+// ABOVE the LLM-down queue gate and the observe-mode early return.
 //
-// ORDERING IS THE WHOLE POINT of this being its own stage: it must be called
-// ABOVE the LLM-down queue gate and ABOVE the observe-mode early return, or an
-// opt-out during an outage gets queued instead of firing.
-//
-// The SPLIT that makes all of this work: the STATE CHANGE (opt-out tag,
-// needs-human flag, audit trail, handoff notify) is unconditional and does not
-// depend on the LLM. The ACKNOWLEDGEMENT TEXT is not -- it goes through the same
-// real-LLM turn as any other reply, never a canned per-language string. Do not
-// reintroduce such a table: it would be the one deterministic-language
-// exception to the no-mocks/no-fallbacks invariant, and it buys nothing, since
-// the legal action already survives the model being down.
-//
-// Everything else -- status, help, greeting, enquiry, report, extraction -- is
-// the agent's job via the case tools, not this file's.
+// The bot never contacts anyone first, so nothing here needs to beat the model:
+// a STOP the agent reads a moment later, or on recovery from an outage (the
+// queued message is re-driven), causes no message to the contact in between.
+// The acknowledgement TEXT is always the model's, never a canned string.
 
-import { truncate } from './heuristics.js'
 import { tagList } from '../timestamp.js'
-import { mergeTag, dropTag, detectContactIntent, isBareStopKeyword, OPTED_OUT_TAG } from './heuristics.js'
-import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
-import { observation, flagNeedsHuman } from './case-writes.js'
+import { mergeTag, dropTag, detectContactIntent, OPTED_OUT_TAG } from './heuristics.js'
+import { observation } from './case-writes.js'
 
 // Is the LLM backend reporting itself down right now? A status() that itself
 // throws must never be read as "the provider is down" -- swallow and assume up,
@@ -41,23 +27,11 @@ export async function isLlmDown(llmStatus) {
 
 // Runs the irreversible controls for one inbound. Returns a reply object when
 // the turn is finished here, or null to fall through to the ordinary agent turn
-// (which is what composes the STOP/HUMAN acknowledgement in the contact's own
+// (which is what composes the STOP acknowledgement in the contact's own
 // language once the control itself has already taken effect).
-export async function applyServiceControls({ store, log, llmStatus, notifyHandoff, caseRow, inboundText, channel, msg, replyTo, platform }) {
+export async function applyServiceControls({ store, log, llmStatus, caseRow, inboundText, channel, msg, replyTo, platform }) {
   let optedOut = tagList(caseRow).includes(OPTED_OUT_TAG)
-  let intent = detectContactIntent(inboundText)
-  // STOP is the PUBLIC's legal opt-out; for a team member (>= field_worker) it has
-  // no service meaning and "wrong one, stop" mid-shift would silence the bot to
-  // them. So for that tier alone it fires only when the whole message IS a bare
-  // stop keyword; anything longer is ordinary conversation. A reporter (or a
-  // contact whose tier cannot be read) is untouched: fail closed on the legal control.
-  if (intent === 'stop' && !isBareStopKeyword(inboundText)) {
-    try {
-      const contact = caseRow.contact_id ? await store.getContact(caseRow.contact_id) : null
-      if (contact && atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)) intent = null
-    } catch { /* unreadable tier: keep the legal control */ }
-  }
-
+  const intent = detectContactIntent(inboundText)
   // HELP-RESUME: an opted-out contact who asks for help (any supported language)
   // OPTS BACK IN. Keep this path -- it is the only thing that clears the tag, so
   // without it a STOP is a permanent dead-end.
@@ -80,76 +54,23 @@ export async function applyServiceControls({ store, log, llmStatus, notifyHandof
   }
 
   // Respect a prior opt-out: once someone said STOP, do not auto-reply again
-  // unless they explicitly ask for help (handled above) or a human.
-  if (optedOut && intent !== 'human') {
+  // unless they explicitly ask for help (handled above).
+  if (optedOut) {
     await store.appendEvent(caseRow.id, observation('contact previously opted out; no auto-reply'))
     return { to: replyTo, text: '', platform, caseId: caseRow.id, optedOut: true }
   }
 
-  if (intent !== 'stop' && intent !== 'human') return null
+  if (intent !== 'stop') return null
 
-  if (intent === 'human') {
-    // STATE-CHANGING WRITE FIRST, independently guarded: an irreversible
-    // control's tag must persist independent of whether its own audit note
-    // lands. Ordered the other way round, a transient store error on the
-    // leading append throws before the flag is ever written and the fact that
-    // a handoff was requested is lost silently.
-    //
-    // Flag needs-human as an OBSERVABLE signal; do NOT auto-raise priority --
-    // casey amplifies the organisers' intent, it does not impose escalation. The
-    // tag surfaces the request in the triage inbox; priority stays where the
-    // people set it. detectContactIntent can return 'human' on any number of
-    // messages in one conversation, so the notify must fire only on the FIRST
-    // handoff for this case -- flagNeedsHuman's notify-once rule (see
-    // case-writes.js) is what enforces that; mergeTag alone is idempotent, the
-    // notify is not.
-    await flagNeedsHuman({
-      store, log, caseRow, notifyHandoff, channel, from: msg.from,
-      flagLabel: 'handoff', notifyLabel: 'handoff',
-    })
-    try { await store.appendEvent(caseRow.id, observation('HANDOFF REQUESTED: contact asked for a human. Needs an operator.')) }
-    catch (e) { log.warn?.('[casey] handoff audit event failed', { caseId: caseRow.id, error: e.message }) }
-  } else {
-    // Same ordering rule as the human branch: the opt-out tag write must never
-    // be gated behind its own audit append succeeding first.
-    //
-    // `tags` ACCUMULATES across both writes in this branch and is never re-derived
-    // from caseRow.tags a second time. That is the whole point: caseRow is the row
-    // as it was read BEFORE this function ran, so a second
-    // mergeTag(caseRow.tags, ...) writes a tag string computed from a row that no
-    // longer exists and silently drops whatever the first write added. Live
-    // witnessed: a STOP carrying report content (the ordinary shape -- "please
-    // stop messaging me, the cattle at the dip tank are still drooling") wrote
-    // opted-out, then the stop-with-content write below replaced the column with
-    // stale-tags + needs-human, so the opt-out tag was gone by the end of the same
-    // function. The contact had opted out, casey's own row said they had not, and
-    // the next inbound got an auto-reply -- an irreversible legal control undone
-    // two statements after it was applied.
-    let tags = mergeTag(caseRow.tags, OPTED_OUT_TAG)
-    try { await store.updateCase(caseRow.id, { tags }) }
-    catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: caseRow.id, error: e.message }) }
-    try { await store.appendEvent(caseRow.id, observation('OPT-OUT: contact asked to stop messaging.')) }
-    catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: caseRow.id, error: e.message }) }
-    // A stop can arrive packed with real report content ("...please stop
-    // messaging me"). The agent never sees it -- opt-out means no further
-    // engagement, correctly -- so any facts in the same message would otherwise
-    // rest silently in the append-only inbound event with nothing making them
-    // actionable. A distinct, worst-first-visible observation gives a human the
-    // chance to read and act on it manually.
-    if (String(inboundText || '').trim().length >= 20) {
-      await store.appendEvent(caseRow.id, observation(
-        `STOP-WITH-CONTENT: the opt-out message also carried possible report content -- review manually: ${truncate(inboundText, 300)}`,
-        { guardrail: 'stop_with_content' },
-      ))
-      tags = mergeTag(tags, 'needs-human')
-      try { await store.updateCase(caseRow.id, { tags }) }
-      catch (e) { log.warn?.('[casey] stop-with-content flag failed', { caseId: caseRow.id, error: e.message }) }
-    }
-  }
+  // The opt-out tag write must never be gated behind its own audit append.
+  try { await store.updateCase(caseRow.id, { tags: mergeTag(caseRow.tags, OPTED_OUT_TAG) }) }
+  catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: caseRow.id, error: e.message }) }
+  try { await store.appendEvent(caseRow.id, observation('OPT-OUT: contact asked to stop messaging.')) }
+  catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: caseRow.id, error: e.message }) }
 
   if (await isLlmDown(llmStatus)) {
-    log.error?.('[casey] LLM backend down; opt-out/handoff state recorded but no reply composed (no hardcoded-language fallback)', { caseId: caseRow.id, intent })
-    await store.appendEvent(caseRow.id, observation(`${intent.toUpperCase()}-ACK-DEGRADED: LLM unreachable; the ${intent} control itself was applied, but no acknowledgement reply could be composed.`, { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
+    log.error?.('[casey] LLM backend down; opt-out state recorded but no reply composed (no hardcoded-language fallback)', { caseId: caseRow.id, intent })
+    await store.appendEvent(caseRow.id, observation(`STOP-ACK-DEGRADED: LLM unreachable; the opt-out itself was applied, but no acknowledgement reply could be composed.`, { degraded_turn: true, reason: 'llm_down_on_irreversible_control' }))
     return { to: replyTo, text: '', platform, caseId: caseRow.id, intent, degraded: true }
   }
   // Fall through: the control already took effect unconditionally above, and the

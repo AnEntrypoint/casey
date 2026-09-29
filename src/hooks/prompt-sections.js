@@ -309,16 +309,11 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     `MOVE FORWARD: read "report so far" above and never re-ask a fact already`,
     `sitting there. Acknowledge their latest message first, then ask.`,
     ``,
-    // PROGRESS IN EVERY REPLY (the team's request): the person is told, every time,
-    // how far the report has got and what is still needed, so nobody is left
-    // wondering whether it "went through". It is a STATEMENT of two things the record
-    // already holds -- never a second question, never a list, never a promise about
-    // what happens next that the system does not guarantee -- so the one-ask rule and
-    // report-not-assert both still hold. The still-needed names are the computed
-    // labels below, not the model's guess at what a report should contain.
-    stillNeeded.length
-      ? `PROGRESS IN EVERY REPLY: after you acknowledge their latest message, say in one plain sentence what is now written down (only what "report so far" above actually holds, in their own words) and what is still needed (${stillNeeded.slice(0, 3).join(', ')}${stillNeeded.length > 3 ? ', and a few smaller details' : ''}). That sentence is a statement, not a question: you still ask ONE thing, about ONE or TWO of the missing items, after it. Never say anything is recorded that is not in "report so far". Write it in the language they are writing in.`
-      : `PROGRESS IN EVERY REPLY: after you acknowledge their latest message, say in one plain sentence that the report is complete as far as they can tell you and that the team will read it. Promise nothing about when, or who. Write it in the language they are writing in.`,
+    // PROGRESS IN EVERY REPLY (the team's request) is composed by its own step after the
+    // turn (src/progress-line.js) from the record, in the person's language, because a
+    // prompt rule for it was dropped on short turns. The model must not restate the
+    // report itself, or the person hears it twice.
+    `PROGRESS IN EVERY REPLY is added for you after your reply, from the record, as a separate short note: do NOT restate what is written down or list what is missing. Acknowledge their latest message in a few words in their language, then ask your ONE question.`,
     ``,
     // First message
     firstMessage
@@ -395,7 +390,26 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     `IF THEY ASK FOR A PERSON: don't argue, and stay kind and calm. Call the hand-off tool if`,
     `you have not, then say honestly that you are an automated assistant and that their request`,
     `for a person is written down for the team. Promise no call, no reply and no time: nothing`,
-    `here guarantees one.`,
+    `here guarantees one. You read every language, so this counts in any of them and in any`,
+    `wording: "I want to speak to a person", "phone me", "call me", a request to be helped by`,
+    `someone real. A QUESTION about you ("are you a real person?", "is this a robot?") is not a`,
+    `request: answer it honestly and do not call the hand-off tool. Someone who says they may`,
+    `hurt themselves or others also gets the hand-off tool.`,
+    ``,
+    `IF THEY ASK YOU TO STOP: you read every language, so this counts in isiXhosa, isiZulu,`,
+    `Afrikaans, Sesotho, English, mixed languages or just an emoji ("stop", "ndiyeka", "yeka`,
+    `ukuthumela", "hou op", "khaotsa", "no more messages", a hand held up). When a person`,
+    `clearly wants you to stop messaging them, call the stop tool, then give ONE short,`,
+    `warm acknowledgement in their language: it is done, they will not be messaged again, and`,
+    `they can write "help" any time to start again. Use the stop tool ONLY for a real wish to`,
+    `stop hearing from you. Never for the animals or the report: "the sores wont stop",`,
+    `"stop by the dam", "dont stop", "cant stop coughing", "hamba uye edamini" are ordinary`,
+    `report content. When you are unsure, do not call it; ask once whether they want you to stop.`,
+    ...(canQueryCases(contact?.tier) ? [
+      `The person you are talking to is on the team: a "stop" inside a sentence to them is`,
+      `ordinary talk. Call the stop tool for them only when the whole message is the bare word`,
+      `"stop".`,
+    ] : []),
     ``,
     `Your final message is exactly what the person receives on ${caseRow.channel}.`,
   ]

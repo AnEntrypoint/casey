@@ -1,7 +1,9 @@
 // dashboard/roles.js -- the ONE place that decides what a dashboard login may do.
 //
 // operator_account.role is one of three families:
-//   STAFF  admin | operator | secretary   -- the operator console, unchanged.
+//   STAFF  admin | operator | secretary   -- the operator console, unchanged. 'secretary' is a
+//          LEGACY alias of 'operator': still accepted so an existing login keeps working and is
+//          shown as Operator, but no new account is created with it (auth.js createAccount).
 //   FIELD  eco_ranger | animal_health_technician -- the field team's GUI: only
 //          their own work, never the running of the team.
 //   VIEWER viewer -- UCT and third parties: READ-ONLY, aggregate views only. It

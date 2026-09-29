@@ -80,6 +80,16 @@ export function hadSuccessfulWrite(result) {
   return false
 }
 
+// Did the agent register an opt-out or a request for a person this attempt
+// (case_stop / case_handoff returned ok)? The judge is told it is a system fact,
+// so "your request is written down" reads as true.
+export function controlRegistered(result, only = null) {
+  for (const { name, parsed } of toolResults(result)) {
+    if ((only ? name === only : (name === 'case_stop' || name === 'case_handoff')) && parsed?.ok === true) return true
+  }
+  return false
+}
+
 // The mutating tool calls this attempt made that were REFUSED, with the refusal
 // the tool itself wrote.
 //

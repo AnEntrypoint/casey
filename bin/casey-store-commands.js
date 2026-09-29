@@ -607,15 +607,13 @@ export async function cmdOperators({ flags, rest }) {
   const store = await openStore()
   const sub = rest[0]
   const positional = rest.slice(1).filter(a => !a.startsWith('--'))
-  // dashboard/auth.js's createAccount accepts admin, secretary and operator.
-  // The CLI collapsed everything that was not 'admin' to 'operator', so
-  // `--role secretary` reported "created account (role: operator)" and exited
-  // 0 -- a flag accepted, silently changed, and confirmed as if it had been
-  // honoured. The roles live here once, and an unknown one is refused.
+  // dashboard/auth.js's createAccount accepts the roles below; the legacy 'secretary'
+  // is still accepted but creates an 'operator' (the team's name), and the confirmation
+  // line below prints the role that was really stored. An unknown role is refused.
   const { ACCOUNT_ROLES } = await import('../src/dashboard/roles.js')
   if (sub === 'add') {
     const username = positional[0]
-    if (!username) { say('usage: casey operators add <username> [--password ...] [--name ...] [--role admin|operator|secretary|eco_ranger|animal_health_technician|viewer]'); await closeAndExit(store, 1) }
+    if (!username) { say('usage: casey operators add <username> [--password ...] [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]'); await closeAndExit(store, 1) }
     if (flags.role !== undefined) await requireOneOf(store, 'role', flags.role, ACCOUNT_ROLES)
     if (flags.password === true) { say(bad('--password needs a value (omit it entirely to have one generated).')); await closeAndExit(store, 1) }
     const password = typeof flags.password === 'string' ? flags.password : randomBytes(10).toString('hex')
@@ -636,7 +634,7 @@ export async function cmdOperators({ flags, rest }) {
       // side by side was comparing 2026-09-05T12:30:21.365Z against
       // "05 Sept 2026, 14:30 SAST" and doing the offset in their head.
       const seen = a.last_login_at ? fmtTimeSAST(Math.floor(Date.parse(a.last_login_at) / 1000)) : null
-      console.log(`${bold(a.username)}\t${a.role}\t${status}\t${a.display_name || ''}\t${dim(seen || 'never logged in')}`)
+      console.log(`${bold(a.username)}\t${a.role === 'secretary' ? 'operator (stored as legacy secretary)' : a.role}\t${status}\t${a.display_name || ''}\t${dim(seen || 'never logged in')}`)
     }
     await closeAndExit(store, 0)
   }

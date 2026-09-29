@@ -46,7 +46,7 @@ function roleTable() {
 
 export function mapRole(word) {
   const w = norm(word)
-  if (w === 'secretary') return { error: 'a secretary is a dashboard login, not a WhatsApp role; create it under Accounts' }
+  if (w === 'secretary') return { error: 'an operator dashboard login is not a WhatsApp role; create it under Accounts' }
   if (!w) return { error: 'no role given' }
   const tier = roleTable().get(w)
   if (!tier || tier === TIER_REPORTER) return { error: `"${clean(word, 40)}" is not a role this import knows (use ${tierLabel(TIER_FIELD_WORKER, TIER_LABELS)}, ${tierLabel(TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_LABELS)} or ${tierLabel(TIER_OPERATOR, TIER_LABELS)})` }

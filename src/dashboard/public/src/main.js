@@ -278,7 +278,7 @@ async function boot() {
   // effect: the case-list home view was reachable only by clicking the nav item,
   // and a bookmark or a shared link to it silently landed on the map instead.
   const noDeepLink = !hv.caseId && !hv.view && !hv.inbox && !hv.home && !state.activePanel;
-  // The secretary role exists to work the follow-up queue -- land them there
+  // The legacy secretary role (shown as Operator) exists to work the follow-up queue -- land them there
   // by default, ahead of the deployment-wide dashboard_ui.default_view, since
   // it is more specific to what this role actually needs to know every time
   // they open the dashboard.
