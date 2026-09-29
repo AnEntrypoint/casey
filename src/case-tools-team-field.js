@@ -31,16 +31,17 @@ import { OPTED_OUT_TAG, RESERVED_TAG, mergeTag, dropTag } from './hooks/heuristi
 import { sendStaffMessage, releaseCase, staffLabel } from './hooks/staff-outbound.js'
 import { staffNotices, pendingDispatchesFor } from './staff-notices.js'
 import { evData } from './safe.js'
+import { reporterSummary } from './phone-persons.js'
 import { refsIn, writeGate, recordedOn, identifyingLine, proposeFocus, confirmFocus, setFocus, focusOf, clearFocusForCase } from './team-focus.js'
 import {
-  APPEND_FIELDS, CRITICAL_FIELDS, REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_ENTITY_LABEL,
+  APPEND_FIELDS, CRITICAL_FIELDS, REPORT_FIELD_DEFS, SYSTEM_SET_FIELDS, REPORT_GEO_FIELD_DEFS, REPORT_ENTITY_LABEL,
   missingMandatoryMinimum, fieldLabel, SIGNOFF_DIAGNOSIS_FIELDS,
 } from './store/report-shape.js'
 import { UNCLAIMED_ASSIGNEE } from './case-store.js'
 import { APPEND_FIELD_MAX_LEN } from './store/report-merge.js'
 import { signOffCandidates } from './case-tools-team-review.js'
 import {
-  NOT_ASSIGNED, doneStages, findCase, authorityOn, deskAuthorityOn, storeUser, actorData, teamRow, cleanRelayed,
+  NOT_ASSIGNED, doneStages, findCase, authorityOn, deskAuthorityOn, storeUser, actorData, teamRow, cleanRelayed, reporterExtras,
 } from './case-tools-team-shared.js'
 
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
@@ -72,15 +73,18 @@ export function buildTeamFieldTools(store, { priorityValues }) {
       { type: 'object', properties: {} },
       async (_args, ctx) => {
         const n = await staffNotices(store(), ctx?.contact, { mark: true, tier: ctx?.tier })
+        // On a shared phone each row says who gave the report and that the phone is shared (phone-persons.js).
+        const { extra: who } = await reporterExtras(store(), [...n.handoffs, ...n.assigned, ...n.dispatches].map(x => x.c))
         return {
           counts: n.counts,
-          ...(n.handoffs.length ? { handed_over_for_sign_off: n.handoffs.map(({ c }) => teamRow(c, ctx, { from_a_ranger: true })) } : {}),
+          ...(n.handoffs.length ? { handed_over_for_sign_off: n.handoffs.map(({ c }) => teamRow(c, ctx, { from_a_ranger: true, ...who(c) })) } : {}),
           assigned: n.assigned.map(({ c, flags }) => teamRow(c, ctx, {
             ...flags,
             still_missing: missingMandatoryMinimum(parseReport(c)).map(fieldLabel),
             reporter_asked_us_to_stop: optedOut(c),
+            ...who(c),
           })),
-          dispatches: n.dispatches.map(({ c, note }) => teamRow(c, ctx, { note })),
+          dispatches: n.dispatches.map(({ c, note }) => teamRow(c, ctx, { note, ...who(c) })),
         }
       }),
     defTool('case_claim', 'cases',
@@ -254,7 +258,12 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         if (optedOut(c)) return { ref: c.ref, withheld: true, reporter_asked_us_to_stop: true, note: 'This person asked us to stop contacting them, so no number is given and they are not to be messaged.' }
         if (c.channel !== 'whatsapp') return { error: 'There is no phone number on this record: the person reached us on another channel.' }
         await store().appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `REPORTER NUMBER SHOWN to ${staffLabel(ctx.contact)}`, data: actorData(ctx, { number_revealed: true }) })
-        return { recorded_on: r.on, ref: c.ref, phone: fmtPhone27(c.external_id), note: 'Message them from your own WhatsApp; say who you are and quote the reference. If they would rather tell the assistant, they can reply on the number they first used.' }
+        // On a shared phone (src/phone-persons.js) say WHO gave the report and that the phone is shared, so the
+        // team member asks for that person by name when they call. Nothing extra while nobody is recorded.
+        const who = await reporterSummary(store(), c.contact_id, c.id).catch(() => null)
+        const person = who && who.reported_by ? { reported_by: { name: who.reported_by.name, ...(who.reported_by.relation ? { relation: who.reported_by.relation } : {}) } } : {}
+        const shared = who && who.people > 1 ? { shared_phone: `shared phone (${who.people} people)` } : {}
+        return { recorded_on: r.on, ref: c.ref, phone: fmtPhone27(c.external_id), ...person, ...shared, note: 'Message them from your own WhatsApp; say who you are and quote the reference.' + (person.reported_by ? ` Ask for ${person.reported_by.name} by name${shared.shared_phone ? ': other people use this phone too, so do not discuss the report with anyone else who answers' : ''}.` : '') + ' If they would rather tell the assistant, they can reply on the number they first used.' }
       }),
     defTool('case_edit', 'cases',
       'Record what you learn on an ASSIGNED record, on the reporter\'s behalf: report facts, coordinates, subject/summary/priority, extra tags, or an internal note. Every entry is written down as relayed by this team member, never as the reporter\'s own words. A fact the reporter already gave is NOT overwritten unless `correct` is true because it is confirmed to have changed. Not for finishing a record.',
@@ -262,7 +271,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         type: 'object',
         properties: {
           case: str('Record reference or id'),
-          ...Object.fromEntries(REPORT_FIELD_DEFS.filter(f => f.key !== 'photos' && f.key !== 'audio').map(f => [f.key, str(f.description)])),
+          ...Object.fromEntries(REPORT_FIELD_DEFS.filter(f => f.key !== 'photos' && f.key !== 'audio' && !SYSTEM_SET_FIELDS.has(f.key)).map(f => [f.key, str(f.description)])),
           ...Object.fromEntries(REPORT_GEO_FIELD_DEFS.map(f => [f.key, { type: 'number', description: f.description }])),
           location_source: str('REQUIRED with lat/lon: "gps" only if exact coordinates were read out or seen; otherwise "estimated". "confirmed" only when the reporter agreed to it.', { enum: ['gps', 'estimated', 'confirmed'] }),
           subject: str('Short title'),

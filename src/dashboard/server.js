@@ -42,6 +42,7 @@ import { fileURLToPath } from 'node:url'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { VISIT_CRITICAL } from '../case-health.js'
 import { REPORT_KEY_ORDER, UNCLAIMED_ASSIGNEE } from '../case-store.js'
+import { SYSTEM_SET_FIELDS } from '../store/report-shape.js'
 import { BRAND, TYPE_SCALE_CSS } from './brand.js'
 import { rankAttention } from '../attn.js'
 import { fmtTimeSAST, isOpenCase, SAST_TZ, fmtPhone27 } from '../format.js'
@@ -59,6 +60,7 @@ import { registerWhatsappWebhook } from './routes/whatsapp-webhook.js'
 import { registerCases } from './routes/cases.js'
 import { registerAccounts } from './routes/accounts.js'
 import { registerContacts } from './routes/contacts.js'
+import { registerPersons } from './routes/persons.js'
 import { registerExternalLinks } from './routes/external-links.js'
 import { registerSyncApi } from './routes/sync-api.js'
 import { registerMap } from './routes/map.js'
@@ -754,9 +756,12 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   function computeFillRate(reportJson) {
     let r = {}
     try { r = reportJson ? JSON.parse(reportJson) : {} } catch { r = {} }
-    const filled = REPORT_KEY_LIST.filter(k => r[k] != null && String(r[k]).trim() !== '').length
+    // A system-set field (uhh's `reported_by`) is written by the system, never filled in by a person, so it is not
+    // part of "how much of the report is filled": a phone with nobody recorded could never reach a full report.
+    const askable = REPORT_KEY_LIST.filter(k => !SYSTEM_SET_FIELDS.has(k))
+    const filled = askable.filter(k => r[k] != null && String(r[k]).trim() !== '').length
     const vcFilled = [...VISIT_CRITICAL_SET].filter(k => r[k] != null && String(r[k]).trim() !== '').length
-    return { total_fields: REPORT_KEY_LIST.length, filled, visit_critical_filled: vcFilled, visit_critical_total: VISIT_CRITICAL_SET.size }
+    return { total_fields: askable.length, filled, visit_critical_filled: vcFilled, visit_critical_total: VISIT_CRITICAL_SET.size }
   }
 
   // Escape a cell value for CSV: neutralize a leading formula-trigger character
@@ -802,6 +807,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerCases(app, deps)
   registerAccounts(app, deps)
   registerContacts(app, deps)
+  registerPersons(app, deps)
   registerExternalLinks(app, deps)
   registerSyncApi(app, deps)
   registerMap(app, deps)

@@ -23,7 +23,7 @@ import { AGENT_USER } from './case-store.js'
 import { MANDATORY_MINIMUM_FIELDS, REPORT_ENTITY_LABEL, missingMandatoryMinimum, fieldLabel } from './store/report-shape.js'
 import { evData } from './safe.js'
 import { writeGate, recordedOn } from './team-focus.js'
-import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn } from './case-tools-team-shared.js'
+import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn, reporterExtras } from './case-tools-team-shared.js'
 import { inSignOffQueue, withdrawHandoff, isHandedOff, sendBackToRanger } from './signoff-desk.js'
 import { mergeTag } from './hooks/heuristics.js'
 
@@ -66,7 +66,8 @@ export function buildTeamReviewTools(store) {
         const rows = await signOffCandidates(store(), ctx)
         rows.sort((a, b) => (Number(a.last_event_at) || 0) - (Number(b.last_event_at) || 0))
         const n = Math.min(Math.max(Number(limit) || 15, 1), 50)
-        return { total: rows.length, shown: Math.min(rows.length, n), cases: rows.slice(0, n).map(c => teamRow(c, ctx, { reporter_asked_us_to_stop: tagList(c).includes(OPTED_OUT_TAG) })) }
+        const { extra: who } = await reporterExtras(store(), rows.slice(0, n))
+        return { total: rows.length, shown: Math.min(rows.length, n), cases: rows.slice(0, n).map(c => teamRow(c, ctx, { reporter_asked_us_to_stop: tagList(c).includes(OPTED_OUT_TAG), ...who(c) })) }
       }),
     defTool('case_review', 'cases',
       'Review ONE record in full before acting on it: every recorded fact, which required ones are missing, the timeline, and the photo and voice-note entries (with the voice-note transcripts). Photo files themselves cannot be shown over chat, only their notes. For records assigned to this person or unassigned.',

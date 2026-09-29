@@ -18,7 +18,7 @@ import { CASE_REF_RE } from './heuristics.js'
 // does not blindly repeat the call: a retry is a fresh runTurn and cannot see
 // the prior attempt's tool results, so without this note it re-opens the case
 // it already opened.
-const MUTATING_TOOLS = new Set(['case_new', 'case_report', 'case_update', 'case_transition', 'case_switch'])
+const MUTATING_TOOLS = new Set(['case_new', 'case_report', 'case_update', 'case_transition', 'case_switch', 'case_speaker'])
 // The narrower set that counts as "a report field was actually WRITTEN this
 // turn" -- ground truth for reply-judge.js's FALSE CONFIRMATION shape (the
 // judge decides whether the reply's WORDS claim a write; this decides whether

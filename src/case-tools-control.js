@@ -12,6 +12,8 @@
 
 import { mergeTag, OPTED_OUT_TAG } from './hooks/heuristics.js'
 import { defTool, str, boundCase } from './case-tools-shared.js'
+import { controlActor } from './phone-persons.js'
+import { canQueryCases } from './contact-tiers.js'
 
 export function buildControlTools(store) {
   return [
@@ -55,7 +57,9 @@ export function buildControlTools(store) {
           if (!c) return
           await store().updateCase(id, { tags: mergeTag(c.tags, OPTED_OUT_TAG) })
         })
-        await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: 'OPT-OUT: the person asked to stop; no more automatic replies.' })
+        // Who asked, on a shared phone: STOP stays per phone, the person who asked is recorded (src/phone-persons.js).
+        const who = ctx?.contact?.id && !canQueryCases(ctx?.tier) ? await controlActor(store(), ctx.contact.id) : {}
+        await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: 'OPT-OUT: the person asked to stop; no more automatic replies.', ...(Object.keys(who).length ? { data: { opt_out: true, ...who } } : {}) })
         return { ok: true }
       }),
     // Same reasoning as case_stop: a handoff request is an irreversible legal

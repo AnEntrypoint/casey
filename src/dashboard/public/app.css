@@ -925,6 +925,15 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    distinguishing these rows from each other. */
 .ds-contact-anon { display: flex; flex-direction: column; gap: var(--space-hair); }
 .ds-contact-anon-sub { font-size: var(--fs-micro); color: var(--fg-3); }
+/* Several people on one phone (persons-dialog.js, contacts-panel.js withPeople): the count sits under the name as
+   small text with its "See who" control beside it, and the dialog stacks a person's name over how they are related.
+   Layout only; colour, type and controls are the kit's. */
+.ds-persons-line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.ds-persons-name { display: flex; flex-direction: column; gap: var(--space-hair); }
+/* Rename in the people dialog: the kit's link colour (--accent-ink) measured 4.16:1 on the dialog ground (axe), so the
+   text colour carries it, underlined so it still reads as a control. Scope-prefixed because the kit's own
+   .btn-link rule outranks a bare class. */
+.ds-247420 .ds-persons-act { color: var(--fg); text-decoration: underline; }
 
 /* ---- shift handover panel (handover-panel.js) ---------------------------- */
 .ds-ho-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }

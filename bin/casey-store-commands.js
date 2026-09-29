@@ -398,6 +398,42 @@ export async function cmdEraseContact({ flags, rest }) {
     say(dim(`  -- list them with ${cyan('casey cases')}.`))
     await closeAndExit(store, 1)
   }
+  // ONE PERSON ON A SHARED PHONE (src/phone-persons.js). --persons lists who is recorded behind the phone (names
+  // and relations, never the number); --person <name|id> erases only that person: their name, the identifying
+  // fields of the reports they gave, and their stored conversations. The phone contact and everyone else on it stay.
+  if (flags.persons || flags.person) {
+    const { listPersons, normName } = await import('../src/phone-persons.js')
+    const people = await listPersons(store, contact.id)
+    if (flags.persons || flags.person === true) {
+      if (!people.length) say(dim('no people are recorded behind this phone.'))
+      for (const p of people) console.log(`${bold(p.id)}\t${p.name}${p.relation ? ` (${p.relation})` : ''}\t${p.reports} report(s)`)
+      await closeAndExit(store, 0)
+    }
+    const want = String(flags.person)
+    const hit = people.find(p => p.id === want) || people.find(p => normName(p.name) === normName(want))
+    if (!hit) {
+      say(bad(`no person "${want}" is recorded behind this phone.`))
+      say(dim('  list them with ') + cyan(`casey erase-contact ${contact.id} --persons`))
+      await closeAndExit(store, 1)
+    }
+    if (!flags.yes) {
+      say(bad(`this would permanently erase ${hit.name} (${hit.reports} report(s)) from a shared phone; the phone and the other people stay.`))
+      say(dim('  it cannot be undone. Re-run with --yes if that is what you want:'))
+      say(dim('    ') + cyan(`casey erase-contact ${contact.id} --person ${hit.id} --yes --reason "..."`))
+      await closeAndExit(store, 1)
+    }
+    try {
+      const result = await store.erasePerson(contact.id, hit.id, { reason: typeof flags.reason === 'string' ? flags.reason : '', operator: { id: 'cli-operator' } })
+      if (!result.ok) { say(bad(`could not erase that person (${result.reason}).`)); await closeAndExit(store, 1) }
+      console.log(green(`erased ${hit.name} from the shared phone; the phone and ${Math.max(0, people.length - 1)} other person(s) were left as they were`))
+      const refs = []
+      for (const cid of result.casesScrubbed) refs.push((await store.getCase(cid).catch(() => null))?.ref || cid)
+      console.log(`reports scrubbed: ${refs.length}` + (refs.length ? '  ' + dim(refs.join(', ')) : ''))
+      if (result.casesFailed?.length) say(bad(`${result.casesFailed.length} report(s) could not be scrubbed -- re-run this command, it is idempotent.`))
+      if (result.sessionsFailed?.length) say(bad(`${result.sessionsFailed.length} stored conversation(s) could not be removed: ${result.sessionsFailed.join(', ')}`))
+      await closeAndExit(store, 0)
+    } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
+  }
   // Irreversible, and it ran on a bare argument with no confirmation of any
   // kind: one mistyped ref scrubbed a live reporter's details with nothing to
   // undo it. --yes keeps the scripted compliance path working (there is no TTY

@@ -17,7 +17,7 @@
 import { loadDomainConfig } from '../config-loader.js'
 import { MANDATORY_MINIMUM_FIELDS } from '../store/report-shape.js'
 import { buildPromptContext } from './prompt-context.js'
-import { headerSection, caseContextSection, gatherSection, replySection } from './prompt-sections.js'
+import { headerSection, caseContextSection, gatherSection, replySection, speakerSection } from './prompt-sections.js'
 import { roleSection, feedbackSection } from './prompt-roles.js'
 import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR } from '../contact-tiers.js'
 
@@ -31,7 +31,7 @@ const { persona } = loadDomainConfig()
 // the contact), and it spells out plain-language REPLY rules -- mirror the
 // contact's language, short warm sentences, one question, no jargon, greet+give
 // the reference on first contact, and reassure when a human is requested.
-export function caseSystemPrompt(caseRow, events, contact) {
+export function caseSystemPrompt(caseRow, events, contact, speaker = null) {
   const ctx = buildPromptContext(caseRow, events)
   return [
     // --- Private structured context ---
@@ -50,6 +50,8 @@ export function caseSystemPrompt(caseRow, events, contact) {
     ...roleSection(persona, caseRow, contact),
     // --- Comments about the assistant itself (every tier) ---
     ...feedbackSection(),
+    // --- Several people may share this phone (public contacts only) ---
+    ...speakerSection(persona, contact, speaker),
   ].join('\n')
 }
 
@@ -177,6 +179,30 @@ function selfCheckLoadBearingPromptContent() {
     // Every tier can say something about the assistant itself; that goes to case_feedback, never into a report.
     { name: 'comments-about-the-assistant go to case_feedback', pattern: /COMMENTS ABOUT YOU[\s\S]*case_feedback/ },
   ]
+  // Several people on one phone (hooks/prompt-sections.js speakerSection): the standing rule is on every public
+  // prompt, the question and the privacy rule appear only when two or more people are known, and none of it
+  // reaches a team member. Asserted in both directions so an edit cannot ungate it or drop it.
+  const person = (id, name, relation = '') => ({ id, name, relation, first_seen: 1, last_seen: 1, reports: 0 })
+  const two = [person('pp_a', 'Sipho', 'husband'), person('pp_b', 'Nomsa', 'wife')]
+  const base = { count: 2, people: two, current: null, previous: null, stale: false, awaiting: false, needs_ask: true, open_report_by: null }
+  const askText = caseSystemPrompt(caseRow, events, staleContact, base)
+  const knownText = caseSystemPrompt(caseRow, events, staleContact, { ...base, current: two[1], needs_ask: false, open_report_by: two[0] })
+  const oneText = caseSystemPrompt(caseRow, events, staleContact, { ...base, count: 1, people: [two[0]], current: two[0], needs_ask: false })
+  const sharedRules = [
+    { name: 'shared-phone standing rule (case_speaker when someone says who is writing)', pattern: /SEVERAL PEOPLE MAY SHARE THIS PHONE[\s\S]*case_speaker[\s\S]*Never guess a name/, all: [text, askText, knownText, oneText] },
+    { name: 'ask who is writing, once, as the one ask', pattern: /ask ONCE[\s\S]*ONE ask of this reply/, all: [askText] },
+    { name: 'a different writer starts a new report', pattern: /case_new/, all: [knownText] },
+    { name: 'privacy between people on one phone', pattern: /PRIVACY BETWEEN PEOPLE ON ONE PHONE[\s\S]*never tell one person another person's name/, all: [askText, knownText] },
+  ]
+  for (const { name, pattern, all } of sharedRules) {
+    for (const t of all) if (!pattern.test(t)) throw new Error(`caseSystemPrompt regression: shared-phone instruction missing (${name}). See hooks/prompt-sections.js speakerSection and AGENTS.md "Several people on one phone".`)
+  }
+  for (const t of [text, oneText]) {
+    if (/MORE THAN ONE PERSON HAS USED THIS PHONE|PRIVACY BETWEEN PEOPLE ON ONE PHONE/.test(t)) throw new Error('caseSystemPrompt regression: the several-people block is rendered for a phone with at most one known person, which must get no extra question.')
+  }
+  for (const t of [workerText, signOffText, operatorText]) {
+    if (/SEVERAL PEOPLE MAY SHARE THIS PHONE/.test(t)) throw new Error('caseSystemPrompt regression: the shared-phone rule leaked to a team member (public contacts only).')
+  }
   for (const { name, pattern } of required) {
     if (!pattern.test(text)) {
       throw new Error(`caseSystemPrompt regression: required phrase missing (${name}). A prompt rewrite silently dropped a load-bearing behavioral instruction -- see AGENTS.md's prompt-steering notes.`)
@@ -230,7 +256,8 @@ function selfCheckFenceIntegrity() {
     report: JSON.stringify({ notes: payload }),
   }
   const events = [{ kind: 'inbound', actor: 'contact', text: payload, created_at: new Date().toISOString() }]
-  const text = caseSystemPrompt(caseRow, events, {})
+  const evil = { id: 'pp_x', name: payload, relation: payload, first_seen: 1, last_seen: 1, reports: 0 }
+  const text = caseSystemPrompt(caseRow, events, {}, { count: 2, people: [evil, { ...evil, id: 'pp_y' }], current: evil, previous: null, stale: false, awaiting: false, needs_ask: false, open_report_by: { ...evil, id: 'pp_y' } })
   const markers = text.match(/<<(?:DATA|END)>>/g) || []
   if (!markers.length) {
     throw new Error('caseSystemPrompt regression: the <<DATA>>/<<END>> untrusted-data fence emitted no markers at all. Contact-supplied text is now reaching the prompt with no boundary -- see hooks/prompt-context.js fenced().')

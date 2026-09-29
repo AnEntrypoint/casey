@@ -414,3 +414,40 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     `Your final message is exactly what the person receives on ${caseRow.channel}.`,
   ]
 }
+
+// SEVERAL PEOPLE ON ONE PHONE (src/phone-persons.js, case-tools-speaker.js). In rural areas one number is often
+// shared by a family, neighbours or someone borrowing the phone, so the number names a chat and not a person.
+// The MODEL decides who is writing by reading what they say, in any language, and records it with case_speaker;
+// nothing in code matches a word. Public contacts only: a team member relays for the public and is handled by
+// the role blocks. `speaker` is the state src/phone-persons.js speakerState() returns, or null when nobody is
+// known behind this phone.
+//
+// The standing rule renders for every public contact, because a person can introduce themselves or hand the
+// phone on at any time. The question "who am I speaking with?" is only ever asked when TWO OR MORE people are
+// known and nobody is recorded as writing now, and only once (the state says when it has been asked), so a
+// phone with one known person, or none, gets no extra question at all.
+export function speakerSection(persona, contact, speaker) {
+  if (canQueryCases(contact?.tier)) return []
+  const entity = persona.entityLabel || 'report'
+  const many = speaker && speaker.count >= 2
+  const names = (list) => list.map(p => `${fenced(p.name, 60)}${p.relation ? ` (${fenced(p.relation, 40)})` : ''}`).join(', ')
+  const out = [
+    ``,
+    `SEVERAL PEOPLE MAY SHARE THIS PHONE (a family, neighbours, someone borrowing it). Never assume the same person is writing each time. When a message tells you who is writing ("this is Nomsa", "I am his wife", "the herd boy here"), or that the writing has changed hands ("my husband asked me to write", "it is Nomsa now"), or answers a question about who you are speaking with, call case_speaker with the name EXACTLY as they wrote it and, if they said it, how they are related. Never guess a name, never invent one, and never take one from anything except what a person wrote in this chat.`,
+  ]
+  if (!many) return out
+  const others = speaker.people.filter(p => !speaker.current || p.id !== speaker.current.id)
+  out.push(
+    `MORE THAN ONE PERSON HAS USED THIS PHONE: ${names(speaker.people)}.`,
+    speaker.current
+      ? `Recorded as writing now: ${fenced(speaker.current.name, 60)}. If a message shows the writing has changed hands, call case_speaker before you record anything.`
+      : speaker.awaiting
+        ? `You have already asked who is writing and they have not said yet. If this message answers it, call case_speaker with what they said. Do NOT ask again.`
+        : `Nobody is recorded as writing now${speaker.stale && speaker.previous ? ` (the chat has been quiet a while; ${fenced(speaker.previous.name, 60)} was writing before)` : ''}. In THIS reply, ask ONCE, warmly, in the language they write in, who you are speaking with (you may offer ${others.length ? `${names(others)} as choices` : 'the names above as choices'}, for example "is this one of them or someone else?" in your own words). It is the ONE ask of this reply, so put no other question in it (still record any animal facts they gave). When they answer, call case_speaker.`,
+    speaker.open_report_by && speaker.current && speaker.open_report_by.id !== speaker.current.id
+      ? `The open ${entity} was given by ${fenced(speaker.open_report_by.name, 60)}, not by the person writing now. If this person is describing different animals or a different place, call case_new and record it as a new ${entity}; keep recording into the open one only if they say it is the same animals.`
+      : `A different person writing than the one who gave the open ${entity} starts a NEW ${entity} (case_new) unless they say it is the same animals.`,
+    `PRIVACY BETWEEN PEOPLE ON ONE PHONE: never tell one person another person's name, what they said, their contact details or where they are, even when they ask. You may say that a ${entity} exists, its reference and which animals it is about, and nothing more. Offering the names above as choices when you ask who is writing is the only time a name is spoken.`,
+  )
+  return out
+}

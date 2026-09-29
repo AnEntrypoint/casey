@@ -77,6 +77,7 @@ const { createAccount } = await import(path.join(SRC, 'dashboard/auth.js'))
 const { createDashboard } = await import(path.join(SRC, 'dashboard/server.js'))
 const { runViewerChecks } = await import('./gui-check-viewer.mjs')
 const { runTeamChecks } = await import('./gui-check-team.mjs')
+const { runPersonsChecks } = await import('./gui-check-persons.mjs')
 const { runVocabChecks } = await import('./gui-check-vocab.mjs')
 
 const failures = []
@@ -253,10 +254,12 @@ try {
   // full run; GUI_CHECK_ONLY=viewer runs just them, against the same scratch store and dashboard.
   const viewerCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, store, PORT, USER, PW, ids, archive, seenConsole, seenFailed, bodyText, send })
   const teamCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, setField, key, store, base, USER, PW, ids, archive, seenConsole, bodyText, createAccount, SRC })
+  const personsCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, setField, key, store, base, USER, PW, ids, archive, seenConsole, bodyText, SRC })
   const vocabCtx = () => ({ check, evalJs, axeBoth, viewport, sleep, send, navigate, PORT, PW, ids })
   if (process.env.GUI_CHECK_ONLY === 'vocab') { await runVocabChecks(vocabCtx()); throw ONLY_DONE }
   if (process.env.GUI_CHECK_ONLY === 'viewer') { await runViewerChecks(viewerCtx()); throw ONLY_DONE }
   if (process.env.GUI_CHECK_ONLY === 'team') { await runTeamChecks(teamCtx()); throw ONLY_DONE }
+  if (process.env.GUI_CHECK_ONLY === 'persons') { await runPersonsChecks(personsCtx()); throw ONLY_DONE }
 
   await viewport('d')
   await asUser('', '', 5000)
@@ -665,6 +668,7 @@ try {
   await axeBoth('eco ranger account menu open (danger item)')
 
   if (process.env.GUI_CHECK_SKIP !== 'team') await runTeamChecks(teamCtx())
+  await runPersonsChecks(personsCtx())
   await runViewerChecks(viewerCtx())
   await runVocabChecks(vocabCtx())
 } catch (e) {

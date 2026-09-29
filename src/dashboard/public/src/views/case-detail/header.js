@@ -115,9 +115,20 @@ function intakeNote(tags) {
 
 const h = webjsx.createElement;
 
+// Who gave this report on a phone several people use (src/phone-persons.js): "Reported by Nomsa (wife), shared phone:
+// 3 people". Nothing while nobody is recorded for the phone, so a single-person phone shows no new line. The name
+// is the one the person gave; the server sends no key and no number.
+function reporterLine(reporter) {
+    if (!reporter) return null;
+    const by = reporter.reported_by;
+    if (!by && !reporter.shared_phone) return null;
+    const who = by ? 'Reported by ' + by.name + (by.relation ? ' (' + by.relation + ')' : '') : 'Reporter not recorded';
+    return h('p', { class: 'casey-hint casey-reporter-line' }, who + (reporter.shared_phone ? ', shared phone: ' + reporter.people_on_phone + ' people' : ''));
+}
+
 async function reloadCase(id, onReload) { if (onReload) await onReload(id); }
 
-export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpenSnooze, key } = {}) {
+export function CaseHeader({ c, suggestedAssignee, reporter, onReload, onOpenShare, onOpenSnooze, key } = {}) {
     const disclosed = state._headerDisclosed === c.id;
     const setDisclosed = (v) => { state._headerDisclosed = v ? c.id : null; schedule(); };
     const isMine = state.currentUser && c.assignee === state.currentUser.username;
@@ -199,6 +210,7 @@ export function CaseHeader({ c, suggestedAssignee, onReload, onOpenShare, onOpen
         // and the one an operator can actually read on a handset.
         h('div', { class: 'casey-meta-id casey-hint' }, c.ref),
         h('p', { class: 'casey-hint' }, todoHintText(c)),
+        reporterLine(reporter),
         healthNotes(c.tags),
         intakeNote(c.tags),
         h('div', { class: 'casey-case-meta' },

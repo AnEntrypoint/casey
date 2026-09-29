@@ -64,7 +64,7 @@ export const DEFAULT_RETENTION_ACTION = 'archive'
 // exists, to answer "is a policy even configured").
 export const RETENTION_PII_REPORT_FIELDS = [
   'owner_name', 'owner_contact', 'present_person', 'present_person_relation',
-  'contact_fallback', 'photos', 'audio',
+  'contact_fallback', 'reported_by', 'photos', 'audio',
 ]
 
 // Why a case was kept. The dry-run prints these verbatim, so an operator reading

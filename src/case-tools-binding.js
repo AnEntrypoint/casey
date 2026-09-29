@@ -12,6 +12,15 @@ import { parseReport, tagList } from './timestamp.js'
 import {
   defTool, str, ownsCase, enquiryRow, boundCase, rebindActiveCase,
 } from './case-tools-shared.js'
+import { canQueryCases } from './contact-tiers.js'
+import { stampReporter } from './phone-persons.js'
+
+// A public report belongs to the person recorded as writing (src/phone-persons.js). Best effort, and
+// a no-op for a phone where nobody has been recorded, so a single-person phone is unchanged.
+async function stampSpeaker(store, ctx, caseId) {
+  if (!ctx?.contact?.id || canQueryCases(ctx?.tier)) return
+  try { await stampReporter(store(), ctx.contact.id, caseId) } catch { /* bookkeeping never blocks the tool */ }
+}
 
 // Does this case already hold report content? A case whose report blob is
 // absent/empty/unparseable holds nothing, so it IS the fresh case a case_new
@@ -90,6 +99,7 @@ export function buildBindingTools(store) {
         // situations recorded -- fill this one first, then ask again.
         if (currentIsFresh) {
           rebindActiveCase(ctx, current)
+          await stampSpeaker(store, ctx, current.id)
           return {
             ok: true,
             activeCase: enquiryRow(current),
@@ -131,6 +141,7 @@ export function buildBindingTools(store) {
         // object (visible to every later call this turn AND the handler's
         // next retry attempt) plus this call's own flat ctx fields.
         rebindActiveCase(ctx, c)
+        await stampSpeaker(store, ctx, c.id)
         return { ok: true, activeCase: enquiryRow(c) }
       }),
     // Ownership-gated re-bind of the conversation's active case by ref -- lets a

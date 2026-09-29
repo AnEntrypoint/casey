@@ -100,7 +100,7 @@ function Header(c, data, write) {
   return h('div', { class: 'casey-case-header', role: 'region', 'aria-label': 'Which ' + entityLabel() + ' this is' },
     h('div', { class: 'casey-case-header-top' }, h('span', { class: 'casey-case-ref-text' }, c.ref + ' -- ' + (where.length ? where.join(' in ') : headline(c.subject || 'No details yet')))),
     h('div', { class: 'casey-meta-id casey-hint' },
-      'Reporter: ' + (data.reporter_first_name || (write ? 'name not given' : 'not shown')) + ' | Held by: ' + holder + ' | Stage: ' + stageLabel(c.status)));
+      'Reporter: ' + (data.reporter_first_name || (write ? 'name not given' : 'not shown')) + (data.reporter && data.reporter.shared_phone ? ' (shared phone, ' + data.reporter.people_on_phone + ' people)' : '') + ' | Held by: ' + holder + ' | Stage: ' + stageLabel(c.status)));
 }
 
 function Checklist(c, r) {
@@ -216,6 +216,9 @@ function ContactCard(c, data) {
     title: 'Reach the reporter',
     children: [
       h('p', {}, c.external_id_formatted ? 'Number: ' + c.external_id_formatted : 'No number is on file for this ' + entityLabel() + '.'),
+      // Several people can use one phone: say who gave this report so they ask for that person by name, and
+      // that whoever answers may be someone else (src/phone-persons.js). Nothing for a phone with nobody recorded.
+      data.reporter && data.reporter.reported_by ? h('p', { class: 'casey-hint' }, 'Ask for ' + data.reporter.reported_by.name + (data.reporter.reported_by.relation ? ' (' + data.reporter.reported_by.relation + ')' : '') + (data.reporter.shared_phone ? '. Other people use this phone too, so do not discuss the ' + entityLabel() + ' with anyone else who answers.' : '.')) : null,
       wa ? h('a', { class: 'btn btn-primary', href: wa, target: '_blank', rel: 'noopener noreferrer' }, 'Message reporter on WhatsApp') : null,
       h('p', { class: 'casey-hint' }, 'The message asks them to write to the assistant again' + ((data.missing_facts || []).length ? ' and lists what is still needed.' : '.') + ' Showing this number is written to the timeline.'),
     ].filter(Boolean),

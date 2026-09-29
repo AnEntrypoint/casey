@@ -15,11 +15,13 @@
 
 import { AGENT_USER, REPORT_KEYS } from './case-store.js'
 import { toStorable } from './store/guards.js'
-import { REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_TOOL_NAME, REPORT_TOOL_DESCRIPTION, SIGNOFF_DIAGNOSIS_FIELDS } from './store/report-shape.js'
+import { REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_TOOL_NAME, REPORT_TOOL_DESCRIPTION, SIGNOFF_DIAGNOSIS_FIELDS, SYSTEM_SET_FIELDS } from './store/report-shape.js'
 import { normalizeLocation } from './location-normalize.js'
 import { recordProvenanceObservation } from './provenance-wire.js'
 import { defTool, str, pick, boundCase, isValidLatLon } from './case-tools-shared.js'
 import { findCase, deskAuthorityOn } from './case-tools-team-shared.js'
+import { canQueryCases } from './contact-tiers.js'
+import { stampReporter } from './phone-persons.js'
 
 const OBSERVE_BLOCKED = { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
 const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed'])
@@ -32,7 +34,7 @@ export function buildCaseReportTools(store) {
         type: 'object',
         properties: {
           id: str('Case id'),
-          ...Object.fromEntries(REPORT_FIELD_DEFS.map(f => [f.key, str(f.description)])),
+          ...Object.fromEntries(REPORT_FIELD_DEFS.filter(f => !SYSTEM_SET_FIELDS.has(f.key)).map(f => [f.key, str(f.description)])),
           ...Object.fromEntries(REPORT_GEO_FIELD_DEFS.map(f => [f.key, { type: 'number', description: f.description }])),
           location_source: str(
             'REQUIRED whenever lat/lon are supplied. "gps" ONLY if the person read out exact coordinates. ' +
@@ -62,6 +64,10 @@ export function buildCaseReportTools(store) {
         const merged = await mergeIncomingReport(store, id, incoming)
         if (merged.error) return { error: merged.error }
         const { res, priorReport } = merged
+        // A public report is stamped with the person recorded as writing (src/phone-persons.js): their name
+        // in `reported_by` while it is empty, and their id on the timeline. Nothing happens on a phone where
+        // nobody has been recorded.
+        if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { try { await stampReporter(store(), ctx.contact.id, id) } catch { /* bookkeeping */ } }
 
         let locationKept = ''
         if (hasLatLon) {

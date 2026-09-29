@@ -104,6 +104,7 @@ export const VOCAB_CLIENT_SECTIONS = ['ui', 'glossary', 'stages', 'legend', 'for
 export const VOCAB_BOT_KEYS = {
   notice: 'noticeText',
   staff_notice: 'staffNoticeText',
+  new_person_notice: 'newPersonNoticeText',
   photo_nudge: 'photoNudge.text',
   location_confirm: 'locationConfirmNudge',
   worker_catch_up: 'workerCatchUpText',

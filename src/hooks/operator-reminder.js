@@ -34,6 +34,7 @@ import { BREACH_LABEL } from '../case-health.js'
 import { evData } from '../safe.js'
 import { REPORT_ENTITY_LABEL } from '../store/report-shape.js'
 import { proactiveRefusal } from '../proactive-sends.js'
+import { reporterFirstName } from '../phone-persons.js'
 
 // Same product-level cap the sibling text routes in dashboard/routes/cases.js
 // enforce on an operator-supplied string.
@@ -99,7 +100,7 @@ function priorReminder(recent) {
 // what is about to be sent). stageNote in heuristics.js carries the same
 // limitation for the same reason. An operator who knows the contact writes in
 // isiXhosa passes their own text instead -- which is what the override exists for.
-export function composeReminderText(caseRow, { quietForMs = null, breaches = [] } = {}) {
+export function composeReminderText(caseRow, { quietForMs = null, breaches = [], name = '' } = {}) {
   const ref = caseRow?.ref ? ` (${caseRow.ref})` : ''
   const quiet = Number.isFinite(quietForMs) && quietForMs >= QUIET_WORTH_MENTIONING_MS
     ? ` We have not heard from you in about ${hoursSince(quietForMs)}.`
@@ -116,7 +117,9 @@ export function composeReminderText(caseRow, { quietForMs = null, breaches = [] 
   // a team here would mean hardcoding one deployment's domain vocabulary into
   // casey's source -- exactly what report-fields.yml's entity_label exists to
   // avoid. The one domain word in this sentence comes from config.
-  return `Hello -- this is about the ${REPORT_ENTITY_LABEL} you sent us${ref}.${quiet}${because}`
+  // On a shared phone (src/phone-persons.js) the person who gave the report is greeted by the first name they
+  // gave, so whoever holds the phone can tell it is for them. No recorded person: the greeting is unchanged.
+  return `Hello${name ? ` ${name}` : ''} -- this is about the ${REPORT_ENTITY_LABEL} you sent us${ref}.${quiet}${because}`
     + ` If anything has changed, or if there is anything more you can tell us, please reply here and let us know.`
     + ` If there is nothing to add, that is also worth knowing -- just say so.`
 }
@@ -189,7 +192,7 @@ export async function prepareReminder({ store, caseRow, overrideText = null, now
   const breaches = tagList(caseRow).filter(t => t.startsWith('health:')).map(t => t.slice('health:'.length))
   const text = overrideText != null && String(overrideText).trim()
     ? String(overrideText).trim()
-    : composeReminderText(caseRow, { quietForMs, breaches })
+    : composeReminderText(caseRow, { quietForMs, breaches, name: await reporterFirstName(store, caseRow) })
   if (text.length > REMINDER_MAX_LEN) return { ok: false, status: 413, error: `text too long (max ${REMINDER_MAX_LEN})` }
   return { ok: true, text, quietForMs, breaches, operator_authored: !!(overrideText && String(overrideText).trim()) }
 }

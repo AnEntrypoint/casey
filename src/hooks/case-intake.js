@@ -19,6 +19,8 @@ import { truncate, stripChannelMarkup, mergeTag, dropTag } from './heuristics.js
 import { isContactAssignee } from '../case-assignment.js'
 import { recordDroppedInbound } from './dropped-intake.js'
 import { tagList } from '../timestamp.js'
+import { stampReporter } from '../phone-persons.js'
+import { resolveTierValue, TIER_REPORTER } from '../contact-tiers.js'
 
 // Platform message id for dedup: Discord/WhatsApp put it on raw.id; fall back to
 // an explicit msg.id.
@@ -227,6 +229,12 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   } catch (e) { log.warn?.('[casey] intake_mode tag failed', { error: e.message }) }
   try { await store.appendEvent(caseRow.id, { kind: 'note', actor: 'system', text: `Case opened from ${channel}` }) }
   catch (e) { log.warn?.('[casey] case-opened note failed', { caseId: caseRow.id, error: e.message }) }
+  // A new public report opened on a phone where someone is recorded as writing (and has not been idle past
+  // the gap) belongs to that person. A phone where nobody is recorded is untouched (src/phone-persons.js).
+  if (caseRow.contact_id && resolveTierValue(caseRow.reporter_tier) === TIER_REPORTER) {
+    try { await stampReporter(store, caseRow.contact_id, caseRow.id) }
+    catch (e) { log.warn?.('[casey] reporter stamp failed', { caseId: caseRow.id, error: e.message }) }
+  }
   return { promptNote, ingressRecorded }
 }
 

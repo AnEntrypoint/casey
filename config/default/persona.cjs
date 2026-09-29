@@ -76,6 +76,14 @@ const persona = {
     'A short note for the team: your messages here are kept with the tickets you work on, and what you do on',
     'a ticket is saved with your name so the team can see who did what.',
   ],
+  // Shown once to a NEW person on a phone that already saw the notice (several people can share one phone; see
+  // src/first-contact-notice.js). Short. Absent, that person is shown noticeText.
+  newPersonNoticeText: [
+    'Because more than one person uses this phone, this note is for you too: I am an automated helpdesk assistant, not a person.',
+    'I keep your name if you give it and what you tell me, so the support team can read your request and follow it up.',
+    'What you tell me is kept apart from what other people on this phone tell me.',
+    'If you want me to stop, or want your details removed, just tell me and a person will help.',
+  ],
   workerCatchUpText: 'If an IT technician is starting fresh, asking what is waiting for them, or has been away a while, call case_mine/case_today/case_list and weave ONE well-chosen update into your reply, never a list. Mid-ticket, leave it out: answer what they just said.',
   casualReporterEnquiryBlockedText: 'This person is a regular employee -- case_today/case_mine/case_list/case_get are NOT available. Answer from this conversation alone and steer back to reporting.',
 }

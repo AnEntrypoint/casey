@@ -11,6 +11,7 @@
 import { runTurn } from '../agent/run-turn.js'
 import { observation } from './case-writes.js'
 import { caseSystemPrompt } from './prompt.js'
+import { speakerState } from '../phone-persons.js'
 import { buildPromptContext } from './prompt-context.js'
 import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
@@ -22,7 +23,7 @@ import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs, contro
 import { staffNoticeNote } from '../staff-notices.js'
 import { refsIn } from '../team-focus.js'
 import { buildCaseToolset, hiddenToolNamesForTier } from '../case-tools.js'
-import { resolveContactTier, canQueryCases } from '../contact-tiers.js'
+import { resolveContactTier, canQueryCases, TIER_REPORTER } from '../contact-tiers.js'
 import { FAILURE_REASONS } from '../degraded-turns.js'
 import { TURN_HARD_DEADLINE_MS } from './turn-deadlines.js'
 
@@ -150,7 +151,7 @@ export function classifyTurnError(message) {
 export function buildTurnRequest({
   prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
   resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-  staffSend = null, inboundRefs = [], inboundText = '',
+  staffSend = null, inboundRefs = [], inboundText = '', speaker = null,
 }) {
   return {
     // A retry after a judge-blank/false-confirm/empty carries the judge's
@@ -163,7 +164,7 @@ export function buildTurnRequest({
       // the retry's whole problem is that it cannot see the tool result the
       // previous attempt was given.
       + (refusedActions?.length ? `\n\n[System note: these tool calls from your earlier attempt were REFUSED and nothing was recorded by them: ${refusedActions.join('; ')}. Read the refusal, fix the argument it names, and call the tool again so the facts this person gave are actually recorded. Never tell them something is recorded until a tool call has succeeded.]` : ''),
-    messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact) }],
+    messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, speaker) }],
     sessionKey: `case:${fresh.id}`,
     callLLM: turnCallLLM,
     // Nudge the weak model into its first classify/record tool call. freddie
@@ -756,7 +757,7 @@ export async function runAgentTurn({
   // system-prompt-echo hard limit. Built once: buildTurnRequest composes it from
   // the same three arguments on every attempt, and none of them changes inside
   // the loop, so the per-attempt copy and this one are the same string.
-  const systemPromptText = caseSystemPrompt(fresh, events, contact)
+  let systemPromptText = ''
   // The turn's active-case binding, mutable across attempts: a successful
   // case_new/case_switch inside an attempt rebinds via onActiveCaseChange
   // (case-tools.js), and the NEXT retry attempt's toolCtx must be built with the
@@ -765,6 +766,17 @@ export async function runAgentTurn({
   // rebind existed (live-witnessed: a new case's symptoms/location writes
   // rejected, facts lost).
   const turnBinding = { id: fresh.id, ref: fresh.ref }
+  // WHO IS WRITING (src/phone-persons.js), for the public only: the people known behind this phone and who
+  // is recorded as writing now. Null when nobody is known, which leaves the prompt without the shared-phone
+  // block. Re-read on each attempt because case_speaker may have changed it inside the turn.
+  const speakerOn = resolvedTier === TIER_REPORTER && !!contact?.id
+  const readSpeaker = async (touch) => {
+    if (!speakerOn) return null
+    try { return await speakerState(store, contact.id, { touch, caseId: turnBinding.id }) } catch { return null }
+  }
+  let speaker = await readSpeaker(true)
+  const speakerAtStart = speaker
+  systemPromptText = caseSystemPrompt(fresh, events, contact, speaker)
   // Shared across ALL attempts: a retry is a FRESH runTurn that cannot see the
   // prior attempt's tool calls, so without cross-attempt dedupe the model
   // blindly repeats mutating calls and opens a SECOND case for the same report.
@@ -790,11 +802,12 @@ export async function runAgentTurn({
       if (!degradedReason) degradedReason = FAILURE_REASONS.TIMEOUT
       break
     }
+    if (attempt > 1) speaker = await readSpeaker(false)
     try {
       result = await runTurn(buildTurnRequest({
         prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
         resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-        staffSend, inboundRefs, inboundText,
+        staffSend, inboundRefs, inboundText, speaker,
       }))
     } catch (e) {
       errored = true
@@ -864,5 +877,5 @@ export async function runAgentTurn({
   // attempt rebinds it, and the caller's post-turn decisions (the outbound ref
   // correction above all) have to act on that case rather than the one the
   // handler resolved before the turn began -- see driveAgentTurn.
-  return { result, text, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason, activeCase: turnBinding }
+  return { result, text, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason, activeCase: turnBinding, speakerAtStart }
 }

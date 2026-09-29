@@ -147,6 +147,12 @@ export function deriveReportShape(reportFields) {
     throw new Error(`deriveReportShape: area_field names "${AREA_FIELD}", which this config does not declare as a field`)
   }
 
+  // Fields the SYSTEM writes and no conversation, tool or form may: `system_set: true` in report-fields.yml
+  // (uhh's `reported_by`, stamped from the person the model recorded as writing, src/phone-persons.js).
+  // They are shown on every screen like any field but are not offered to the model, the team tools or the
+  // public form, and a write that names one is dropped.
+  const SYSTEM_SET_FIELDS = new Set(reportFields.fields.filter(f => f.system_set).map(f => f.key))
+
   // Fields that APPEND on every write rather than overwrite.
   const APPEND_FIELDS = new Set(reportFields.fields.filter(f => f.append).map(f => f.key))
 
@@ -262,7 +268,7 @@ export function deriveReportShape(reportFields) {
   }
 
   return {
-    FIELD_OPTIONS, hiddenFieldsFor, hiddenFieldsReport,
+    FIELD_OPTIONS, hiddenFieldsFor, hiddenFieldsReport, SYSTEM_SET_FIELDS,
     REPORT_KEYS, REPORT_KEY_ORDER, CRITICAL_FIELDS, APPEND_FIELDS, NEVER_INFERRED_FIELDS,
     SEVERITY_SIGNAL_FIELDS,
     MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum,
@@ -284,6 +290,7 @@ export const REPORT_KEYS = _default.REPORT_KEYS
 export const REPORT_KEY_ORDER = _default.REPORT_KEY_ORDER
 export const CRITICAL_FIELDS = _default.CRITICAL_FIELDS
 export const APPEND_FIELDS = _default.APPEND_FIELDS
+export const SYSTEM_SET_FIELDS = _default.SYSTEM_SET_FIELDS
 export const NEVER_INFERRED_FIELDS = _default.NEVER_INFERRED_FIELDS
 export const SEVERITY_SIGNAL_FIELDS = _default.SEVERITY_SIGNAL_FIELDS
 export const MANDATORY_MINIMUM_FIELDS = _default.MANDATORY_MINIMUM_FIELDS

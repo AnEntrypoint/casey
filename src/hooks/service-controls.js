@@ -15,6 +15,11 @@
 import { tagList } from '../timestamp.js'
 import { mergeTag, dropTag, detectContactIntent, OPTED_OUT_TAG } from './heuristics.js'
 import { observation } from './case-writes.js'
+import { controlActor, forgetSpeakerAfterHelp } from '../phone-persons.js'
+import { resolveTierValue, TIER_REPORTER } from '../contact-tiers.js'
+
+// Shared phones (src/phone-persons.js) apply to the public only.
+const isPublicPhone = (caseRow) => !!caseRow?.contact_id && resolveTierValue(caseRow.reporter_tier) === TIER_REPORTER
 
 // Is the LLM backend reporting itself down right now? A status() that itself
 // throws must never be read as "the provider is down" -- swallow and assume up,
@@ -39,7 +44,12 @@ export async function applyServiceControls({ store, log, llmStatus, caseRow, inb
     try { await store.updateCase(caseRow.id, { tags: dropTag(caseRow.tags, OPTED_OUT_TAG) }) }
     catch (e) { log.warn?.('[casey] opt-back-in untag failed', { caseId: caseRow.id, error: e.message }) }
     optedOut = false
-    await store.appendEvent(caseRow.id, observation('OPT-BACK-IN: contact asked for help after opting out; messages resumed.'))
+    // STOP is per phone, so anyone on it can write HELP. Who did is not known yet (the model has not read it):
+    // the event carries the person last recorded, and the reply that follows asks who is writing when the phone
+    // is shared; case_speaker then adds OPT-BACK-IN-BY (case-tools-speaker.js).
+    const actor = isPublicPhone(caseRow) ? await controlActor(store, caseRow.contact_id) : {}
+    await store.appendEvent(caseRow.id, observation('OPT-BACK-IN: contact asked for help after opting out; messages resumed.', Object.keys(actor).length ? { opt_back_in: true, ...actor } : undefined))
+    if (isPublicPhone(caseRow)) await forgetSpeakerAfterHelp(store, caseRow.contact_id)
     // The state change above is the real, unconditional control. With the LLM
     // down, log loud and send nothing (matching the queue gate) rather than a
     // guessed-language canned string; otherwise fall through so the normal agent
@@ -65,7 +75,8 @@ export async function applyServiceControls({ store, log, llmStatus, caseRow, inb
   // The opt-out tag write must never be gated behind its own audit append.
   try { await store.updateCase(caseRow.id, { tags: mergeTag(caseRow.tags, OPTED_OUT_TAG) }) }
   catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: caseRow.id, error: e.message }) }
-  try { await store.appendEvent(caseRow.id, observation('OPT-OUT: contact asked to stop messaging.')) }
+  const stopActor = isPublicPhone(caseRow) ? await controlActor(store, caseRow.contact_id) : {}
+  try { await store.appendEvent(caseRow.id, observation('OPT-OUT: contact asked to stop messaging.', Object.keys(stopActor).length ? { opt_out: true, ...stopActor } : undefined)) }
   catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: caseRow.id, error: e.message }) }
 
   if (await isLlmDown(llmStatus)) {
