@@ -48,11 +48,11 @@ export function inSignOffQueue(c, unclaimedKey = UNCLAIMED) {
 export async function handoffToTechnician(store, caseId, { by = 'a team member', user, data = {}, note = '' } = {}) {
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
-    if (!c || c.channel === 'system') return { ok: false, code: 'not_found', error: 'No such record.' }
-    if (isDone(c)) return { ok: false, code: 'finished', error: 'That record is already finished, so there is nothing to hand over.' }
+    if (!c || c.channel === 'system') return { ok: false, code: 'not_found', error: 'No such report.' }
+    if (isDone(c)) return { ok: false, code: 'finished', error: 'That report is already finished, so there is nothing to hand over.' }
     const missing = missingMandatoryMinimum(parseReport(c))
     if (missing.length) {
-      return { ok: false, code: 'missing_minimum', missing, error: `Not ready to hand over: ${missing.map(fieldLabel).join(', ')} ${missing.length === 1 ? 'is' : 'are'} still not recorded. Record ${missing.length === 1 ? 'it' : 'them'} first.` }
+      return { ok: false, code: 'missing_minimum', missing, error: `Not ready to hand over: ${missing.map(fieldLabel).join(', ')} ${missing.length === 1 ? 'is' : 'are'} still not written down. Add ${missing.length === 1 ? 'it' : 'them'} first.` }
     }
     if (isHandedOff(c)) return { ok: true, already: true, ref: c.ref }
     await store.updateCase(c.id, { tags: mergeTag(c.tags || '', HANDED_OFF_TAG) }, user)
@@ -70,7 +70,7 @@ export async function handoffToTechnician(store, caseId, { by = 'a team member',
 export async function withdrawHandoff(store, caseId, { by = 'a team member', user, reason = '', data = {} } = {}) {
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
-    if (!c) return { ok: false, code: 'not_found', error: 'No such record.' }
+    if (!c) return { ok: false, code: 'not_found', error: 'No such report.' }
     if (!isHandedOff(c)) return { ok: true, was: false, ref: c.ref }
     await store.updateCase(c.id, { tags: dropTag(c.tags || '', HANDED_OFF_TAG) }, user)
     await store.appendEvent(c.id, {
@@ -88,7 +88,7 @@ export async function withdrawHandoff(store, caseId, { by = 'a team member', use
 // the dashboard send-back and by case_ask_ranger for a record the public filed.
 export async function sendBackToRanger(store, caseId, { by = 'a team member', user, text = '', missing = [], data = {} } = {}) {
   const c = await store.getCase(caseId)
-  if (!c || c.channel === 'system') return { ok: false, error: 'No such record.' }
+  if (!c || c.channel === 'system') return { ok: false, error: 'No such report.' }
   const tags = tagList(c)
   if (!tags.includes('sent-back')) await store.updateCase(c.id, { tags: mergeTag(c.tags || '', 'sent-back') }, user)
   const line = `Sent back by ${by}${missing.length ? `: still needed -- ${missing.join(', ')}` : ''}${String(text).trim() ? `. ${String(text).trim()}` : ''}`

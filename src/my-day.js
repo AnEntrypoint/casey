@@ -97,8 +97,8 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
     const items = []
     const tags = tagList(c)
     if (tags.includes('sent-back')) items.push('sent back by the technician: check what was asked')
-    if (still.length) items.push(`record still needs: ${still.join(', ')}`)
-    else if (!isHandedOff(c)) items.push('record is full: hand it to the technician')
+    if (still.length) items.push(`the report still needs: ${still.join(', ')}`)
+    else if (!isHandedOff(c)) items.push('the report is complete: hand it to the technician')
     else items.push('with the technician for sign-off')
     if (lastInbound.get(c.id)) items.push('the reporter has written and is waiting for an answer')
     const rank = (tags.includes('sent-back') ? 0 : 1) + (lastInbound.get(c.id) ? 0 : 1) * 0.5 + (still.length ? 0 : 0.25)
@@ -131,7 +131,7 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
     needs_shown: needs.length,
     needs_total: mine.length,
   }
-  if (!mineAreas.length) out.note = 'No area is set for this person, so this covers only the records assigned to them.'
+  if (!mineAreas.length) out.note = 'No area is set for this person, so this covers only the reports given to them.'
   if (canSignOff(tier)) {
     const desk = all.filter(c => isOpenCase(c) && inSignOffQueue(c))
     const nodx = SIGNOFF_DIAGNOSIS_FIELDS.length ? desk.filter(c => missingSignoffDiagnosis(parseReport(c)).length) : []

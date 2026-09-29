@@ -12,11 +12,22 @@ import { isContactAssignee, contactIdOfAssignee, assigneeKeyFor } from '../case-
 import { staffLabel } from '../hooks/staff-outbound.js'
 
 // rows: any array; pick(row) returns the assignee value to resolve.
-export async function assigneeNamer(store, rows, pick = (r) => r?.assignee) {
+// { logins: true } also renders a dashboard login (a ranger or technician who works in
+// the GUI) by the display name on its account, from ONE account listing per namer;
+// without it a login passes through unchanged, because the staff screens compare it.
+export async function assigneeNamer(store, rows, pick = (r) => r?.assignee, { logins = false } = {}) {
   const ids = new Set()
+  const wanted = new Set()
   for (const r of rows || []) {
-    const id = contactIdOfAssignee(String(pick(r) || '').trim())
+    const v = String(pick(r) || '').trim()
+    const id = contactIdOfAssignee(v)
     if (id) ids.add(id)
+    else if (v && v !== 'agent') wanted.add(v)
+  }
+  const loginNames = new Map()
+  if (logins && wanted.size) {
+    const accts = await store.t.list('operator_account', {}, { limit: 500 }).catch(() => [])
+    for (const a of accts) if (a?.username && wanted.has(a.username)) loginNames.set(a.username, String(a.display_name || '').trim() || a.username)
   }
   const names = new Map()
   await Promise.all([...ids].map(async (id) => {
@@ -25,7 +36,7 @@ export async function assigneeNamer(store, rows, pick = (r) => r?.assignee) {
   }))
   const name = (value) => {
     const v = String(value ?? '').trim()
-    if (!isContactAssignee(v)) return value ?? ''
+    if (!isContactAssignee(v)) return loginNames.get(v) ?? value ?? ''
     return names.get(contactIdOfAssignee(v)) || 'a team member'
   }
   // Roster entries ({id,name}) for every contact key held in `rows`, so a
@@ -46,7 +57,7 @@ const CONTACT_KEYS = ['assigned_contact_id', 'staff_contact_id', 'dispatch_worke
 export async function nameEventAssignees(store, events, { field = false } = {}) {
   const vals = []
   for (const e of events || []) for (const k of ASSIGNEE_DATA_KEYS) vals.push(e?.data?.[k])
-  const name = await assigneeNamer(store, vals, (v) => v)
+  const name = await assigneeNamer(store, vals, (v) => v, { logins: field })
   return (events || []).map((e) => {
     const d = e?.data
     if (!d || typeof d !== 'object') return e

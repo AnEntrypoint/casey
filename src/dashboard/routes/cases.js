@@ -162,7 +162,7 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       const found = await store.getCaseByRef(ref)
       const seen = found && (!field || caseAccess(found, req.caseyAccount, { unclaimedKey: UNCLAIMED_ASSIGNEE }) !== 'none') ? found : null
       const casesWithFill = seen ? [{ ...seen, fill_rate: computeFillRate(seen.report) }] : []
-      const named = await assigneeNamer(store, casesWithFill)
+      const named = await assigneeNamer(store, casesWithFill, undefined, { logins: field })
       return res.json({ cases: casesWithFill.map(c => caseListProjection({ ...c }, named)), total: casesWithFill.length, limit: casesWithFill.length, offset: 0 })
     }
     const q = req.query.q ? String(req.query.q).slice(0, 200).toLowerCase() : ''
@@ -204,7 +204,8 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       total = await store.countCases(where.channel === undefined ? { ...where, channel: { $ne: 'system' } } : where)
     }
     const casesWithFill = cases.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
-    const named = await assigneeNamer(store, casesWithFill)
+    // A field login reads people by name (never a login); staff screens keep the login they compare.
+    const named = await assigneeNamer(store, casesWithFill, undefined, { logins: field })
     res.json({ cases: casesWithFill.map(c => caseListProjection(c, named)), total, limit, offset })
   }
 }
@@ -217,7 +218,7 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
 // GET /api/cases/:id, where each reveal is written to the timeline.
 async function writeProjection(store, c, req) {
   const field = isFieldAccount(req.caseyAccount)
-  const out = caseDetailProjection(c, await assigneeNamer(store, [c]), { keepKey: !field })
+  const out = caseDetailProjection(c, await assigneeNamer(store, [c], undefined, { logins: field }), { keepKey: !field })
   return field ? detailForAccess(out, 'read') : out
 }
 
@@ -382,7 +383,7 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
       fieldExtras = { ...fieldExtras, reporter_message_link: waLink(digits, text), missing_facts: missing.map(k => ({ key: k, label: fieldLabel(k) })), reporter_first_name: first }
       await noteNumberReveal(store, c, op)
     }
-    const named = await assigneeNamer(store, [c])
+    const named = await assigneeNamer(store, [c], undefined, { logins: isFieldAccount(req.caseyAccount) })
     // Where the report says the animals are, which mapped area that resolves to, and
     // whether the location text points somewhere other than its holder's area. Staff
     // only: it is what the wrong-area correction (POST /api/cases/:id/relocate) reads.

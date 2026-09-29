@@ -17,6 +17,7 @@ const seg = (id) => encodeURIComponent(id);
 
 // ---- areas (routes/areas.js) ------------------------------------------------
 export const fetchAreas = () => json('/api/areas');
+export const fetchWrongArea = (offset, limit) => json('/api/areas/wrong-area?offset=' + (offset || 0) + '&limit=' + (limit || 25));
 export const putArea = (body) => send('PUT', '/api/areas', body);
 export const deleteArea = (id) => json('/api/areas/' + seg(id), { method: 'DELETE' });
 export const postRelocate = (id, body) => send('POST', '/api/cases/' + seg(id) + '/relocate', body);

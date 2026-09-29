@@ -21,8 +21,7 @@ import { Checkbox } from '/design/src/components/form-primitives.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { state, schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
-import { fetchAreas, putArea, deleteArea, postRelocate } from '../api-team.js';
-import { api, ApiError } from '../api.js';
+import { fetchAreas, fetchWrongArea, putArea, deleteArea, postRelocate } from '../api-team.js';
 import { toast, failMsg } from '../toasts.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 import { countOf, entityLabel, entityLabelPlural } from '../vocabulary.js';
@@ -49,7 +48,6 @@ const loader = createPanelLoader({
   apply: (j) => { state._areas = j; ui.wrong = { state: 'idle', rows: [], checked: 0, total: 0 }; },
 });
 
-const parseReport = (raw) => { try { return raw ? JSON.parse(raw) : {}; } catch { return {}; } };
 const areasOf = () => (state._areas && state._areas.areas) || [];
 const splitNames = (s) => String(s || '').split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
 
@@ -122,7 +120,7 @@ function AreaForm() {
         ...slots.map((b, i) => PersonSelect({ key: 'sel-backup-' + i, name: 'area-backup-' + i, label: 'Backup ranger ' + (i + 1), value: b, blank: 'No backup', onChange: (v) => setBackup(i, v) })),
         showBlank ? PersonSelect({ key: 'sel-backup-new', name: 'area-backup-new', label: slots.length ? 'Add another backup' : 'Backup ranger (optional)', value: '', blank: 'No backup', onChange: (v) => setBackup(slots.length, v) }) : null),
       TextField({ key: 'tf-aliases', name: 'area-aliases', label: 'Other names for this area', hint: 'Villages, farms and other spellings people use, separated by commas. Reports that mention any of them count as this area.', value: f.aliases, onInput: (v) => { f.aliases = v; } }),
-      Checkbox({ key: 'ck-apply', name: 'area-apply', checked: f.applyNow, label: 'Also give the open reports nobody holds yet to the ranger now', onChange: (v) => { f.applyNow = v; schedule(); } }),
+      Checkbox({ key: 'ck-apply', name: 'area-apply', checked: f.applyNow, label: 'Also give the open reports from this area that nobody holds yet to the first ranger now', onChange: (v) => { f.applyNow = v; schedule(); } }),
       ui.error ? h('p', { key: 'err', class: 'ds-team-error', role: 'alert' }, ui.error) : null,
       h('div', { key: 'actions', class: 'ds-contact-actions' },
         Btn({ key: 'save', variant: 'primary', disabled: ui.busy, children: ui.busy ? 'Saving...' : (isNew ? 'Add area' : 'Save area'), onClick: saveArea }),
@@ -195,39 +193,20 @@ function Unmapped() {
 
 // ---------- reports that look like they are in the wrong area ----------
 
-// The server names the flag only on a single report's detail (GET /api/cases/:id
-// carries `area.possibly_wrong_area`), so this reads the most recently active open
-// reports one by one, a few at a time, and keeps the flagged ones.
-const CHECK_LIMIT = 60;
-const isOpen = (c) => !['resolved', 'closed'].includes(c.status);
-async function checkWrong() {
+// The server lists the flagged reports (GET /api/areas/wrong-area): one request per
+// page of 25, so nothing is opened one by one. "Show more" asks for the next page.
+const PAGE = 25;
+const wrongRow = (r) => ({ id: r.id, ref: r.ref, report: r.report || {}, holder: r.holder ? r.holder.name : '', flag: r.flag, ranger: r.suggested_ranger ? r.suggested_ranger.name : '' });
+async function checkWrong(more) {
   const w = ui.wrong;
   if (w.state === 'loading') return;
-  ui.wrong = { state: 'loading', rows: [], checked: 0, total: 0 };
+  const keep = more ? w.rows : [];
+  ui.wrong = { state: 'loading', rows: keep, checked: 0, total: w.total || 0 };
   schedule();
   try {
-    const r = await api('/api/cases?limit=200');
-    if (!r.ok) throw new ApiError(r.status, null);
-    const list = ((await r.json()).cases || []).filter(isOpen)
-      .filter((c) => { const rep = parseReport(c.report); return String(rep.location || rep.association || '').trim(); });
-    const pool = list.slice(0, CHECK_LIMIT);
-    const found = [];
-    let next = 0;
-    const worker = async () => {
-      while (next < pool.length) {
-        const c = pool[next++];
-        try {
-          const d = await api('/api/cases/' + encodeURIComponent(c.id));
-          if (!d.ok) continue;
-          const j = await d.json();
-          const flag = j.area && j.area.possibly_wrong_area;
-          if (flag) found.push({ id: c.id, ref: j.case.ref, report: parseReport(j.case.report), holder: j.case.assignee, flag });
-        } catch { /* one report that would not open is skipped, the rest are checked */ }
-      }
-    };
-    await Promise.all([worker(), worker(), worker(), worker()]);
-    ui.wrong = { state: 'done', rows: found, checked: pool.length, total: list.length };
-  } catch { ui.wrong = { state: 'error', rows: [], checked: 0, total: 0 }; }
+    const j = await fetchWrongArea(keep.length, PAGE);
+    ui.wrong = { state: 'done', rows: keep.concat((j.items || []).map(wrongRow)), checked: 0, total: j.total || 0 };
+  } catch { ui.wrong = { state: 'error', rows: keep, checked: 0, total: 0 }; }
   schedule();
 }
 
@@ -262,7 +241,7 @@ function WrongArea() {
   } else if (w.state === 'error') {
     body = Alert({ kind: 'error', children: 'Could not check the ' + entityLabelPlural() + '. Try again in a moment.' });
   } else if (!w.rows.length) {
-    body = h('p', { class: 'casey-hint' }, 'None found. ' + (w.total > w.checked ? 'Checked the ' + w.checked + ' most recently active of ' + w.total + ' open ' + entityLabelPlural() + '.' : 'Checked all ' + w.total + ' open ' + entityLabelPlural() + ' that name a place.'));
+    body = h('p', { class: 'casey-hint' }, 'None found. Every open ' + entityLabel() + ' that names a place is with the ranger for that place.');
   } else {
     body = w.rows.map((r) => {
       const sug = suggestedArea(r.flag);
@@ -270,17 +249,18 @@ function WrongArea() {
       const chosen = areas.find((a) => a.id === chosenId);
       const what = [r.report.species, r.report.location ? 'at ' + r.report.location : ''].filter(Boolean).join(' ');
       return h('div', { key: r.id, class: 'ds-area-item' },
-        Row({ title: what || r.ref, sub: r.ref + '. ' + wrongAreaSentences(r.flag, r.report).join(' ') + ' Now with ' + (r.holder && r.holder !== 'agent' ? personName(ui.people, r.holder) : 'nobody') + '.' }),
+        Row({ title: what || r.ref, sub: r.ref + '. ' + wrongAreaSentences(r.flag, r.report).join(' ') + ' Now with ' + (r.holder || 'nobody') + '.' + (r.ranger ? ' The ranger for the suggested area is ' + r.ranger + '.' : '') }),
         h('div', { class: 'ds-area-actions' },
           Select({ key: 'wp-' + r.id, name: 'move-' + r.id, label: 'Move it to', value: chosenId, options: [{ value: '', label: 'Choose an area' }].concat(options), onChange: (v) => { ui.wrongPick[r.id] = v; schedule(); } }),
           Btn({ variant: 'primary', disabled: !chosen || ui.busyKeys.has('move|' + r.id), children: chosen ? 'Move to ' + chosen.name : 'Move it', 'aria-label': 'Move ' + r.ref + ' to the chosen area', onClick: () => relocate(r, chosen) })));
     });
   }
   return Panel({
-    key: 'area-wrong', title: 'Reports that may be in the wrong area', count: w.rows.length || undefined,
+    key: 'area-wrong', title: 'Reports that may be in the wrong area', count: w.total || undefined,
     children: [
       h('div', { key: 'body' }, ...[].concat(body)),
-      h('div', { key: 'look', class: 'ds-contact-actions' }, Btn({ variant: 'ghost', disabled: w.state === 'loading' || !areas.length, children: w.state === 'idle' ? 'Look for them' : 'Look again', onClick: checkWrong })),
+      w.state === 'done' && w.rows.length < w.total ? h('div', { key: 'more', class: 'ds-contact-actions' }, Btn({ variant: 'ghost', children: 'Show more (' + (w.total - w.rows.length) + ' left)', onClick: () => checkWrong(true) })) : null,
+      h('div', { key: 'look', class: 'ds-contact-actions' }, Btn({ variant: 'ghost', disabled: w.state === 'loading' || !areas.length, children: w.state === 'idle' ? 'Look for them' : 'Look again', onClick: () => checkWrong(false) })),
     ],
   });
 }

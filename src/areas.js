@@ -163,7 +163,8 @@ async function rangerName(store, key) {
     const c = await store.getContact(contactIdOfAssignee(key)).catch(() => null)
     return c ? staffLabel(c) : 'a team member'
   }
-  return key
+  const [acct] = await store.t.list('operator_account', { username: String(key) }, { limit: 1 }).catch(() => [])
+  return String(acct?.display_name || '').trim() || key
 }
 
 async function normaliseInput(store, areas, input, existing) {
@@ -171,12 +172,12 @@ async function normaliseInput(store, areas, input, existing) {
   if (!name) throw new Error('an area needs a name')
   const primary = String(input.primary ?? existing?.primary ?? '').trim()
   const p = await checkRanger(store, primary)
-  if (!p.ok) throw new Error(`the primary ranger: ${p.why}`)
+  if (!p.ok) throw new Error(`the first ranger: ${p.why}`)
   const backups = [...new Set((input.backups ?? existing?.backups ?? []).map(b => String(b).trim()).filter(Boolean))].filter(b => b !== primary)
   if (backups.length > MAX_BACKUPS) throw new Error(`at most ${MAX_BACKUPS} backup rangers`)
-  for (const b of backups) { const r = await checkRanger(store, b); if (!r.ok) throw new Error(`backup ranger ${b}: ${r.why}`) }
+  for (const b of backups) { const r = await checkRanger(store, b); if (!r.ok) throw new Error(`backup ranger ${await rangerName(store, b)}: ${r.why}`) }
   const aliases = [...new Set((input.aliases ?? existing?.aliases ?? []).map(a => String(a).trim().replace(/\s+/g, ' ').slice(0, 80)).filter(Boolean))]
-  if (aliases.length > MAX_ALIASES) throw new Error(`at most ${MAX_ALIASES} aliases`)
+  if (aliases.length > MAX_ALIASES) throw new Error(`at most ${MAX_ALIASES} other names for one area`)
   // Two areas must never claim the same spelling, or resolution would depend on order.
   const mine = new Set([name, ...aliases].map(norm))
   for (const other of areas) {
@@ -266,7 +267,7 @@ export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR } = 
   if (!AREA_FIELD) return { assigned: false, why: 'no area field configured' }
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
-    if (!c || c.channel === 'system' || !isOpenCase(c)) return { assigned: false, why: 'not an open record' }
+    if (!c || c.channel === 'system' || !isOpenCase(c)) return { assigned: false, why: 'not an open report' }
     if (!isUnheld(c)) return { assigned: false, why: 'already held by someone' }
     const areas = await loadAreas(store)
     if (!areas.length) return { assigned: false, why: 'no areas mapped' }
@@ -282,21 +283,28 @@ export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR } = 
     await store.updateCase(c.id, { assignee: pick.key }, user)
     const data = { assignee: pick.key, by: 'area-router', assigned_name: pick.name, area_id: hit.area.id, area_name: hit.area.name, matched_by: hit.matched_by, area_auto_assigned: true }
     if (pick.contact) data.assigned_contact_id = pick.contact.id
-    await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: `assigned automatically to ${pick.name} (area ${hit.area.name})`, data })
+    await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: `given automatically to ${pick.name} (area ${hit.area.name})`, data })
     return { assigned: true, to: pick.key, name: pick.name, area: hit.area.name, ref: c.ref, matched_by: hit.matched_by }
   })
 }
 
-// After an operator maps a new area (or fixes a spelling), give it to the open
-// unassigned cases it now resolves.
-export async function applyAreasToUnassigned(store, { user = SYSTEM_ACTOR } = {}) {
+// After an operator maps a new area (or fixes a spelling), give the open unassigned
+// cases THAT AREA now resolves to its ranger. `area` is the area just edited: only a
+// case whose stated area or place resolves to it (its name or an alias) is touched, so
+// saving one area never hands out reports that belong to another or to none. `skipped`
+// counts only the cases in scope that could not be given out (no valid ranger, or the
+// case had been handed out once already).
+export async function applyAreasToUnassigned(store, { user = SYSTEM_ACTOR, area = null } = {}) {
   const areas = await loadAreas(store)
   const out = { assigned: [], skipped: 0 }
-  if (!areas.length || !AREA_FIELD) return out
+  if (!areas.length || !AREA_FIELD || !area) return out
   const open = (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system' && isOpenCase(c) && isUnheld(c))
   for (const c of open) {
-    const r = await autoAssignByArea(store, c.id, { user }).catch(() => ({ assigned: false }))
-    if (r.assigned) out.assigned.push({ ref: r.ref, area: r.area, to: r.name })
+    const r = parseReport(c)
+    const hit = resolveArea(areas, { association: statedArea(r), location: r.location })
+    if (!hit || hit.area.id !== area.id) continue
+    const res = await autoAssignByArea(store, c.id, { user }).catch(() => ({ assigned: false }))
+    if (res.assigned) out.assigned.push({ ref: res.ref, area: res.area, to: res.name })
     else out.skipped += 1
   }
   return out
@@ -350,6 +358,38 @@ export function possiblyWrongArea(caseRow, areas) {
   return { reasons, location_area: brief(locHit?.area), association_area: brief(assocHit?.area), assignee_areas: mine.map(brief) }
 }
 
+// Every open case flagged by possiblyWrongArea, most recently active first, as plain
+// rows for the wrong-area list: what the report is, the area it counts as now, the area
+// it seems to belong in and that area's first valid ranger. Holder and ranger are
+// returned as KEYS (`holder_key`, `suggested_ranger_key`) for the route to name.
+export async function wrongAreaCases(store, areas = null) {
+  const list = areas || await loadAreas(store)
+  if (!list.length || !AREA_FIELD) return []
+  const open = (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system' && isOpenCase(c))
+  open.sort((x, y) => (Number(y.last_event_at) || 0) - (Number(x.last_event_at) || 0))
+  const rows = []
+  const rangerOf = new Map()
+  for (const c of open) {
+    const flag = possiblyWrongArea(c, list)
+    if (!flag) continue
+    const r = parseReport(c)
+    const now = resolveArea(list, { association: statedArea(r), location: r.location })
+    const sug = flag.location_area || flag.association_area
+    const target = sug ? list.find(a => a.id === sug.id) : null
+    if (target && !rangerOf.has(target.id)) rangerOf.set(target.id, (await pickRanger(store, target, null))?.key || '')
+    rows.push({
+      id: c.id, ref: c.ref, subject: c.subject || '',
+      report: { species: r.species != null ? String(r.species) : '', location: r.location != null ? String(r.location) : '', association: statedArea(r) },
+      current_area: now ? { id: now.area.id, name: now.area.name } : null,
+      suggested_area: sug ? { id: sug.id, name: sug.name } : null,
+      suggested_ranger_key: target ? rangerOf.get(target.id) : '',
+      reasons: flag.reasons, flag,
+      holder_key: isUnheld(c) ? '' : String(c.assignee).trim(),
+    })
+  }
+  return rows
+}
+
 // The area facts a staff case detail carries.
 export async function areaInfoFor(store, caseRow, areas = null) {
   if (!AREA_FIELD) return null
@@ -371,17 +411,17 @@ export async function areaInfoFor(store, caseRow, areas = null) {
 // mapped yet (then no automatic ranger exists, so pass `assignee` or leave the
 // holder as it was). `assignee` always wins over the area's ranger.
 export async function relocateCase(store, caseId, { area = '', association = '', assignee = '', reassign = true, reason = '', by = 'an operator', user = SYSTEM_ACTOR } = {}) {
-  if (!AREA_FIELD) return { ok: false, error: 'no area field is configured for this deployment' }
+  if (!AREA_FIELD) return { ok: false, error: 'areas are not set up for this system' }
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
-    if (!c || c.channel === 'system') return { ok: false, error: 'No such record.' }
-    if (!isOpenCase(c)) return { ok: false, error: 'That record is finished. Reopen it before moving it to another area.' }
+    if (!c || c.channel === 'system') return { ok: false, error: 'No such report.' }
+    if (!isOpenCase(c)) return { ok: false, error: 'That report is finished. Reopen it before moving it to another area.' }
     const areas = await loadAreas(store)
     const wanted = String(area || '').trim()
     const target = wanted ? findArea(areas, wanted) : null
-    if (wanted && !target) return { ok: false, error: `No area called "${wanted.slice(0, 80)}". Map it first, or give the place as "association".` }
+    if (wanted && !target) return { ok: false, error: `No area called "${wanted.slice(0, 80)}". Add the area first, or write the place in your own words.` }
     const spelling = target ? target.name : String(association || '').trim().slice(0, 120)
-    if (!spelling) return { ok: false, error: 'Say which area the record belongs in.' }
+    if (!spelling) return { ok: false, error: 'Say which area the report belongs in.' }
 
     const report = parseReport(c)
     const oldStated = statedArea(report)
@@ -391,12 +431,12 @@ export async function relocateCase(store, caseId, { area = '', association = '',
     let next = null
     if (assignee) {
       const r = await checkRanger(store, assignee)
-      if (!r.ok) return { ok: false, error: `That assignee cannot be used: ${r.why}.` }
-      if (r.contact && isOwnConversation(c, r.contact)) return { ok: false, error: 'That is the reporter\'s own chat, so it cannot be assigned to them.' }
+      if (!r.ok) return { ok: false, error: `That person cannot be used: ${r.why}.` }
+      if (r.contact && isOwnConversation(c, r.contact)) return { ok: false, error: 'That is the reporter\'s own chat, so it cannot be given to them.' }
       next = { key: String(assignee).trim(), name: r.name, contact: r.contact }
     } else if (target && reassign) {
       next = await pickRanger(store, target, c)
-      if (!next) return { ok: false, error: `No valid ranger is set for ${target.name}. Fix the area first, or pass an assignee.` }
+      if (!next) return { ok: false, error: `No valid ranger is set for ${target.name}. Fix the area first, or choose a person.` }
     }
 
     // The area field is a correction: written directly (not through the auto-assign
@@ -418,7 +458,7 @@ export async function relocateCase(store, caseId, { area = '', association = '',
     if (reassigned) { data.assignee = next.key; data.assigned_name = next.name; if (had && had !== UNCLAIMED) data.was = had; if (next.contact) data.assigned_contact_id = next.contact.id }
     await store.appendEvent(c.id, {
       kind: 'action', actor: 'operator',
-      text: `RELOCATED by ${by}: ${data.from_area || 'no area'} -> ${spelling}${reassigned ? `; now with ${next.name}` : ''}${reason ? ` (${String(reason).slice(0, 200)})` : ''}`,
+      text: `Moved to another area by ${by}: ${data.from_area || 'no area'} -> ${spelling}${reassigned ? `; now with ${next.name}` : ''}${reason ? ` (${String(reason).slice(0, 200)})` : ''}`,
       data,
     })
     return { ok: true, ref: c.ref, from_area: data.from_area, to_area: spelling, mapped: !!target, reassigned, assigned_to: next ? { key: next.key, name: next.name } : null }

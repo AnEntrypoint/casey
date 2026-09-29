@@ -159,7 +159,7 @@ export async function planImport(store, input, { isAdmin = false } = {}) {
     if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin) { fail(`only an admin can make someone ${tierLabel(tier, TIER_LABELS)}`); continue }
     const rawPhone = String(r.phone == null ? '' : r.phone).trim()
     const msisdn = normalizeMsisdn(rawPhone)
-    if (rawPhone && !msisdn) { fail('that is not a phone number casey can match (a South African number is 27 plus nine digits)'); continue }
+    if (rawPhone && !msisdn) { fail('that is not a phone number we can use (a South African number is 27 plus nine digits)'); continue }
     const hasPhone = !!msisdn
     if (sp !== false && !hasPhone) { fail('no phone number, so they cannot be registered on WhatsApp'); continue }
     const key = rosterKey({ phone: msisdn, name, area })
