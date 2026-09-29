@@ -505,6 +505,12 @@ export const fetchContacts = (params) => json('/api/contacts' + qs(params));
 export const postContactTier = (id, tier) => post('/api/contacts/' + encodeURIComponent(id) + '/tier', { tier });
 export const postContactErase = (id, reason) => post('/api/contacts/' + encodeURIComponent(id) + '/erase', { reason });
 
+// --- the people behind a shared phone (routes/persons.js) ---
+export const fetchPersons = (contactId) => json('/api/contacts/' + encodeURIComponent(contactId) + '/persons');
+export const postPersonRename = (contactId, body) => post('/api/contacts/' + encodeURIComponent(contactId) + '/persons/rename', body);
+export const postPersonMerge = (contactId, body) => post('/api/contacts/' + encodeURIComponent(contactId) + '/persons/merge', body);
+export const postPersonErase = (contactId, body) => post('/api/contacts/' + encodeURIComponent(contactId) + '/persons/erase', body);
+
 // --- degraded turns ---
 export const fetchDegradedTurns = (params) => json('/api/turns/degraded' + qs(params));
 export const postContactRegister = (phone, name, tier) => post('/api/contacts/register', { phone, name, tier });

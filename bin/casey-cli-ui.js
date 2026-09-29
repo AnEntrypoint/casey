@@ -89,6 +89,8 @@ ${bold('usage:')}
   casey transition <ref|id> <stage> [--reason]  move a case to a stage (legality-checked)
   casey erase-contact <contact|ref> --yes [--reason]  right-to-erasure: irreversibly scrub one person's PII (POPIA/GDPR)
   casey erase-contact --check                   list erasures that started and never finished
+  casey erase-contact <contact> --persons       list the people recorded behind a shared phone (names, never the number)
+  casey erase-contact <contact> --person <name|id> --yes   erase ONE person on a shared phone; the phone and the others stay
   casey retention [--days N] [--yes] [--json]   age-based retention. OFF unless configured; DRY RUN unless --yes
   casey backup [--out <dir>] [--json]           consistent copy of every store, including the ones outside data/
   casey restore <backup-dir> --yes              put a backup back (stop casey first; the live data dir is moved aside)
@@ -225,6 +227,8 @@ export const USAGE = {
   --reason is recorded on the timeline beside the change.`,
   'erase-contact': `casey erase-contact <contact-id|external-id|case-ref> --yes [--reason "..."]
 casey erase-contact --check
+casey erase-contact <contact> --persons
+casey erase-contact <contact> --person <name|id> --yes [--reason "..."]
   IRREVERSIBLE. Scrubs one contact's personal details for a right-to-erasure
   request (POPIA/GDPR). --yes is required: there is nothing to undo it with.
   Accepts the contact id, the contact's channel identifier, or the ref of any
@@ -236,7 +240,13 @@ casey erase-contact --check
   transaction available across them, so it is not atomic -- it writes a durable
   plan before its first change and a completion marker after its last, and a plan
   with no completion is what --check reports. Erasure is idempotent: re-running
-  the command named in that report finishes the job.`,
+  the command named in that report finishes the job.
+  --persons / --person: several people can share one phone (a family, neighbours).
+  --persons lists the people recorded behind the phone by name, never the number.
+  --person <name|id> erases only that person: their name, the identifying fields
+  of the reports they gave and their stored conversations. The phone contact, its
+  routing key and every other person on it are left as they were, and the phone
+  stays as opted in or out as it was (the bot can only ever answer the number).`,
   retention: `casey retention [--days N] [--action archive|erase] [--out <dir>] [--yes] [--json]
   Age-based retention over CLOSED cases. Two safeties, both structural:
   OFF unless configured -- with no CASEY_RETENTION_DAYS and no --days this

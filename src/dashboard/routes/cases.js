@@ -39,6 +39,7 @@ import { atLeast, TIER_FIELD_WORKER } from '../../contact-tiers.js'
 import { findAccountByUsername } from '../auth.js'
 import { isFieldAccount, caseAccess, isAssignedTo, inSignOffQueue, detailForAccess, missingFor } from '../roles.js'
 import { waLink } from '../wa-link.js'
+import { reporterFirstName, reporterSummary } from '../../phone-persons.js'
 import { prepareReminder, OPERATOR_REMINDER_FLAG } from '../../hooks/operator-reminder.js'
 
 // Body keys POST /api/cases/:id/intake accepts that are NOT report fields.
@@ -373,13 +374,16 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
       const op = actingOperator(req)
       const missing = missingFor(c)
       const digits = (c.channel === 'whatsapp' || /^\+?\d{9,15}$/.test(String(c.external_id || ''))) ? String(c.external_id || '').replace(/\D/g, '') : ''
-      const text = `Hello, ${op.name} here, following up on your ${REPORT_ENTITY_LABEL} ${c.ref}. Please send a message to our WhatsApp assistant again`
+      // On a shared phone the person who gave the report is greeted by the first name they gave (phone-persons.js).
+      const personFirst = await reporterFirstName(store, c)
+      const text = `Hello${personFirst ? ` ${personFirst}` : ''}, ${op.name} here, following up on your ${REPORT_ENTITY_LABEL} ${c.ref}. Please send a message to our WhatsApp assistant again`
         + (missing.length ? ` and tell it: ${missing.map(fieldLabel).join(', ')}.` : ' so we can finish it.') + ' Thank you.'
       // First name only: enough to be sure it is the right person on the phone,
       // never the full name or the number.
       const contact = c.contact_id ? await store.getContact(c.contact_id).catch(() => null) : null
       const given = String(contact?.display_name || '').trim()
-      const first = given && given !== contact?.external_id && !/^[\d+\s()-]+$/.test(given) && !/^web-/.test(given) ? given.split(/\s+/)[0].slice(0, 30) : null
+      // The person's own first name wins over the phone's WhatsApp profile name when the report has one.
+      const first = personFirst || (given && given !== contact?.external_id && !/^[\d+\s()-]+$/.test(given) && !/^web-/.test(given) ? given.split(/\s+/)[0].slice(0, 30) : null)
       fieldExtras = { ...fieldExtras, reporter_message_link: waLink(digits, text), missing_facts: missing.map(k => ({ key: k, label: fieldLabel(k) })), reporter_first_name: first }
       await noteNumberReveal(store, c, op)
     }
@@ -388,7 +392,14 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
     // whether the location text points somewhere other than its holder's area. Staff
     // only: it is what the wrong-area correction (POST /api/cases/:id/relocate) reads.
     const area = isFieldAccount(req.caseyAccount) ? null : await areaInfoFor(store, c).catch(() => null)
-    res.json({ ...fieldExtras, ...(area ? { area } : {}), case: detailForAccess(caseDetailProjection(c, named, { keepKey: !isFieldAccount(req.caseyAccount) }), req.caseyAccess), events: (await nameEventAssignees(store, events, { field: isFieldAccount(req.caseyAccount) })).map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
+    // Who gave this report on a shared phone, by name (never a key or a number): staff, and a field login working
+    // the report. Absent while nobody is recorded for the phone, so a single-person phone shows nothing new.
+    const reporterInfo = (!isFieldAccount(req.caseyAccount) || req.caseyAccess === 'write') ? await reporterSummary(store, c.contact_id, c.id).catch(() => null) : null
+    const reporter = reporterInfo ? {
+      people_on_phone: reporterInfo.people, shared_phone: reporterInfo.people > 1,
+      reported_by: reporterInfo.reported_by ? { name: reporterInfo.reported_by.name, relation: reporterInfo.reported_by.relation, ...(isFieldAccount(req.caseyAccount) ? {} : { id: reporterInfo.reported_by.id }) } : null,
+    } : null
+    res.json({ ...fieldExtras, ...(area ? { area } : {}), ...(reporter ? { reporter } : {}), case: detailForAccess(caseDetailProjection(c, named, { keepKey: !isFieldAccount(req.caseyAccount) }), req.caseyAccess), events: (await nameEventAssignees(store, events, { field: isFieldAccount(req.caseyAccount) })).map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
   }
 }
 
@@ -1331,8 +1342,14 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
         + `.act a{background:${BRAND.ground};color:${BRAND.ink};padding:var(--space-2) var(--space-3);border-radius:6px;text-decoration:none;font-size:var(--fs-xs);font-weight:600}`
         + `.act a:hover{background:${BRAND.hover}}`
         + `@media print{.act{display:none}}`
+      // On a shared phone (src/phone-persons.js) the briefing says who gave the report, so whoever rings the number
+      // asks for that person by name. Nothing extra while nobody is recorded for the phone.
+      const who = await reporterSummary(store, c.contact_id, c.id).catch(() => null)
+      // (The name itself is also the report's "Reported by" row below.)
+      const whoLine = who && who.people > 1
+        ? `<p><strong>Reported by:</strong> ${esc(who.reported_by ? who.reported_by.name : 'not recorded')}, shared phone: ${who.people} people</p>` : ''
       const body = `<h1>Field briefing: ${esc(c.ref||c.id)}</h1>
-<p><strong>Subject:</strong> ${esc(c.subject||'')}</p>
+<p><strong>Subject:</strong> ${esc(c.subject||'')}</p>${whoLine}
 <p><strong>Status:</strong> ${esc(c.status||'')} &nbsp; <strong>Channel:</strong> ${esc(c.channel||'')}</p>
 <div class="act">
   <a href="javascript:window.print()">Print this page</a>

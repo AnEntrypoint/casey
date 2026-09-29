@@ -33,7 +33,7 @@ import { evData } from './safe.js'
 import { clearFocusForCase } from './team-focus.js'
 import { signOffCandidates } from './case-tools-team-review.js'
 import { loadAreas, possiblyWrongArea } from './areas.js'
-import { findCase, teamRow, actorData, doneStages } from './case-tools-team-shared.js'
+import { findCase, teamRow, actorData, doneStages, reporterExtras } from './case-tools-team-shared.js'
 
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
 const staffOf = (ctx) => ({ ...(ctx?.contact || {}), tier: ctx?.tier })
@@ -43,7 +43,7 @@ const QUIET_DEFAULT_HOURS = 12
 
 // One short plain line per record for a phone: reference, the headline facts, who
 // holds it, and why it is listed. No markdown, no pipes, no asterisks.
-const phoneLine = (row) => [row.ref, ...ENQUIRY_HEADLINE_FIELDS.map(k => row[k]).filter(Boolean).map(v => String(v).replace(/\s+/g, ' ').slice(0, 40)), row.assignee && row.assignee !== UNCLAIMED_ASSIGNEE ? `with ${row.assignee}` : 'nobody has it', row.why ? String(row.why).replace(/\s+/g, ' ').slice(0, 60) : ''].filter(Boolean).join(', ')
+const phoneLine = (row) => [row.ref, ...ENQUIRY_HEADLINE_FIELDS.map(k => row[k]).filter(Boolean).map(v => String(v).replace(/\s+/g, ' ').slice(0, 40)), row.assignee && row.assignee !== UNCLAIMED_ASSIGNEE ? `with ${row.assignee}` : 'nobody has it', row.why ? String(row.why).replace(/\s+/g, ' ').slice(0, 60) : '', row.by_person || ''].filter(Boolean).join(', ')
 const PLAIN_NOTE = 'Pass these lines on as plain text, one per line, in this order. No tables, no asterisks, no bullets, no markdown.'
 
 const openCases = async (store) => (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system' && isOpenCase(c))
@@ -93,7 +93,10 @@ export function buildTeamOperatorTools(store) {
         const n = Math.min(Math.max(Number(limit) || 5, 1), 25)
         const pick = section && SECTIONS.includes(section) ? [section] : SECTIONS
         const counts = Object.fromEntries(SECTIONS.map(s => [s, by[s].length]))
-        const rows = Object.fromEntries(pick.filter(s => by[s].length).map(s => [s, by[s].slice(0, n).map(c => phoneLine(teamRow(c, ctx, reasons.has(c.id) ? { why: reasons.get(c.id) } : {})))]))
+        // On a shared phone each line also says who gave the report and that the phone is shared (phone-persons.js).
+        const shown = pick.flatMap(s => by[s].slice(0, n))
+        const { text: personTag } = await reporterExtras(store(), shown)
+        const rows = Object.fromEntries(pick.filter(s => by[s].length).map(s => [s, by[s].slice(0, n).map(c => phoneLine(teamRow(c, ctx, { ...(reasons.has(c.id) ? { why: reasons.get(c.id) } : {}), ...personTag(c) })))]))
         const parts = SECTIONS.filter(s => counts[s]).map(s => `${counts[s]} ${s.replace('_', ' ')}`)
         const say = `${open.length} open.${parts.length ? ' ' + parts.join(', ') + '.' : ' Nothing is waiting on anyone.'}`
         return { open_total: open.length, counts, say, lines: rows, note: PLAIN_NOTE }
@@ -106,12 +109,17 @@ export function buildTeamOperatorTools(store) {
         const marker = await store().getShiftMarker().catch(() => null)
         const since = marker?.ts || 0
         const touched = open.filter(c => since && (tsMs(c.last_event_at) || tsMs(c.updated_at) || 0) >= since)
+        const attention = rankAttention(open, Date.now(), { limit: 10 }).items
+        const notTaken = open.filter(c => tagList(c).includes('needs-human') && isUnassigned(c)).slice(0, 10)
+        const drafts = open.filter(c => tagList(c).includes('draft-pending')).slice(0, 10)
+        // Who gave each report on a shared phone (phone-persons.js), in the same plain lines.
+        const { text: personTag } = await reporterExtras(store(), [...attention.map(x => x.c), ...notTaken, ...drafts, ...touched.slice(0, 10)])
         return {
           since: since || null, since_by: marker?.by || null,
-          attention: rankAttention(open, Date.now(), { limit: 10 }).items.map(x => phoneLine(teamRow(x.c, ctx, { why: x.reason }))),
-          handoffs_not_taken: open.filter(c => tagList(c).includes('needs-human') && isUnassigned(c)).slice(0, 10).map(c => phoneLine(teamRow(c, ctx))),
-          held_drafts: open.filter(c => tagList(c).includes('draft-pending')).slice(0, 10).map(c => phoneLine(teamRow(c, ctx))),
-          touched_since: touched.length, touched: touched.slice(0, 10).map(c => phoneLine(teamRow(c, ctx))),
+          attention: attention.map(x => phoneLine(teamRow(x.c, ctx, { why: x.reason, ...personTag(x.c) }))),
+          handoffs_not_taken: notTaken.map(c => phoneLine(teamRow(c, ctx, personTag(c)))),
+          held_drafts: drafts.map(c => phoneLine(teamRow(c, ctx, personTag(c)))),
+          touched_since: touched.length, touched: touched.slice(0, 10).map(c => phoneLine(teamRow(c, ctx, personTag(c)))),
           note: PLAIN_NOTE,
         }
       }),

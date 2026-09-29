@@ -19,7 +19,7 @@ import { CRITICAL_FIELDS, missingMandatoryMinimum, fieldLabel } from './store/re
 import { toPlainChat } from './hooks/plain-text.js'
 
 // Fields that describe the conversation or the record's plumbing, not the animals.
-const SKIP = new Set(['photos', 'audio', 'language_detected', 'association', 'lat', 'lon', 'sites'])
+const SKIP = new Set(['photos', 'audio', 'language_detected', 'association', 'lat', 'lon', 'sites', 'reported_by'])
 const MAX_FACTS = 8
 const MAX_VALUE = 90
 const MAX_OUT = 240

@@ -10,6 +10,7 @@ import { fmtPhone27 } from '../../format.js'
 import { mountRoutes } from './register.js'
 import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, ADMIN_ONLY_TIERS, grantableBy, resolveContactTier } from '../../contact-tiers.js'
 import { createInvite, listInvites, revokeInvite, normalizeMsisdn } from '../../role-invites.js'
+import { countPersonsByContact } from '../../phone-persons.js'
 
 // The one allowlist through which a contact row may reach JSON (AGENTS.md
 // Security invariants). Module-level and named on purpose: the three fields
@@ -71,7 +72,10 @@ export function getContacts({ store, authed }) {
     // any filtering: once public reporters passed 1000 the team (registered earlier) fell off
     // the end and "Team members (0)" was shown over people who exist. So the segment and the
     // search are applied here, over everyone, and the counts say what exists.
-    const all = (await store.listContacts({ limit: 10000 })).map(publicContact)
+    // How many people are recorded behind each phone (src/phone-persons.js): one read for the whole list. A phone
+    // with nobody recorded carries no `people` at all, so a single-person phone looks exactly as before.
+    const people = await countPersonsByContact(store).catch(() => new Map())
+    const all = (await store.listContacts({ limit: 10000 })).map((c) => ({ ...publicContact(c), ...(people.has(c.id) ? { people: people.get(c.id), shared_phone: people.get(c.id) > 1 } : {}) }))
     const team = all.filter((c) => c.tier !== TIER_REPORTER)
     const seg = String(req.query.segment || '')
     const q = String(req.query.q || '').trim().slice(0, 100).toLowerCase().replace(/\s+/g, ' ')

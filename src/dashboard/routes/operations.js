@@ -10,7 +10,7 @@
 import { tagList, parseReport } from '../../timestamp.js'
 import { snapshotDroppedIntake } from '../../hooks/dropped-intake.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
-import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI, TIER_LABELS, MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, FIELD_OPTIONS, hiddenFieldsFor } from '../../store/report-shape.js'
+import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI, TIER_LABELS, MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, FIELD_OPTIONS, hiddenFieldsFor, SYSTEM_SET_FIELDS } from '../../store/report-shape.js'
 import { KNOWN_VALUE_FIELDS, isKnownValueField, readKnownValues, canonicalizeFieldValue } from '../../field-values.js'
 import { mountRoutes } from './register.js'
 import { assigneeNamer } from '../assignee-names.js'
@@ -393,7 +393,11 @@ export function getConfig({ store, authed, SAST_TZ, resolveWhatsappAdapter, fmtP
       // vocabulary the active config package declares (report-fields.yml)
       // instead of a hardcoded animal-health field-label table.
       entity_label: REPORT_ENTITY_LABEL,
-      report_sections: REPORT_SECTIONS,
+      // A system-set field (report-fields.yml `system_set`, uhh's `reported_by`) is written by the system and by
+      // no screen, so the editable sections do not list it (the report page's header states it, and the printed
+      // form and the exports carry it). The keys are served too, for a client that wants to know.
+      report_sections: REPORT_SECTIONS.map(sec => ({ ...sec, keys: sec.keys.filter(([k]) => !SYSTEM_SET_FIELDS.has(k)) })).filter(sec => sec.keys.length),
+      system_set_fields: [...SYSTEM_SET_FIELDS],
       visit_critical: CRITICAL_FIELDS.map(k => ({ key: k, label: fieldLabel(k) })),
       // Which report fields nudge a case's attnScore (attn.js) when the
       // reporter has already given them a non-empty value -- so an operator

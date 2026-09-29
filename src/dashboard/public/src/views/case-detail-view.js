@@ -148,7 +148,7 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
 
     return h('div', { key, class: 'casey-detail-pane', tabindex: '-1', ref: pauseWhileEditing },
         showBack ? backControl(onClose) : null,
-        CaseHeader({ c, suggestedAssignee: suggested_assignee, onReload: reload, onOpenShare: openShareDialog, onOpenSnooze: openSnoozeDialog }),
+        CaseHeader({ c, suggestedAssignee: suggested_assignee, reporter: state.caseDetail.reporter, onReload: reload, onOpenShare: openShareDialog, onOpenSnooze: openSnoozeDialog }),
         LinkedReportsNote({ caseId: id }),
         AreaNote({ c, area: state.caseDetail.area, onReload: () => reload(id) }),
         CaseProgress({ status: c.status }),

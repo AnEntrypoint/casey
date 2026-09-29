@@ -124,6 +124,10 @@ well, and may not speak English as a first language. So casey:
   note** ("Good news. Someone is working on your request now.") so they are kept informed without
   having to ask. Internal stages stay silent, and a person who opted out is never messaged.
 
+## Several people on one phone
+
+A phone number names a chat, not a person: in rural areas a family, neighbours or a herd boy share one phone. casey keeps one contact per number (one open report per conversation, one STOP per phone) and tracks the people behind it: the model records who is writing with `case_speaker`, each report says who gave it ("Reported by Nomsa (wife), shared phone: 3 people"), the privacy notice is shown once per person, STOP stays per phone but is recorded with the person who asked, and one person can be erased without touching the phone or anyone else on it (`casey erase-contact <contact> --person <name>`). It is a public-contact feature with no schema change; a phone with one known person behaves as it always did. Details: `AGENTS.md`, "Several people on one phone".
+
 ## Reporter access tiers
 
 Anyone messaging in defaults to the **reporter** tier: casual, public, report-only.
@@ -230,6 +234,8 @@ node bin/casey.js health        # read-only guardrail summary (writes nothing)
 node bin/casey.js sweep         # run the health-guardrail sweep once now (writes tags/observations)
 node bin/casey.js transition <ref|id> <stage> [--reason]   # legality-checked stage move
 node bin/casey.js erase-contact <contact|ref> --yes [--reason]  # irreversibly scrub a contact's PII
+node bin/casey.js erase-contact <contact> --persons            # who is recorded behind a shared phone
+node bin/casey.js erase-contact <contact> --person <name> --yes  # erase ONE person on a shared phone
 node bin/casey.js operators <add|list|disable|enable> ...  # dashboard login accounts (break-glass)
 node bin/casey.js roles <list|assign|demote|invite|invites|revoke|release|link> ...  # the team model from a terminal (same store methods as the dashboard)
 node bin/casey.js doctor --no-network   # skip doctor's read-only Meta and public-URL checks
@@ -284,6 +290,7 @@ AGENTS.md "Supervised runtime" for the full env-var set.
 | `CASEY_DESCRIBE_PHOTOS=1` | Opt-in: describe an inbound photo (visible detail relevant to the active domain's report fields) into the case (needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). Off by default (external data egress). |
 | `CASEY_VOICE_REPLIES=1` | Opt-in: speak the reply back as a voice note so a reporter who cannot read still hears it (needs `OPENAI_API_KEY` or `ELEVENLABS_API_KEY`). Additive to the text, fail-open, off by default (external data egress). |
 | `CASEY_LOG=silent` | Silence casey's structured JSON logs. |
+| `CASEY_SPEAKER_GAP_HOURS`, `CASEY_MAX_PERSONS_PER_PHONE` | Shared phones: hours of quiet after which nobody is assumed to still be writing (default 8), and the most people kept per phone (default 12). |
 | `CASEY_RELOAD=0` | Disable hot-reload (crash-restart stays on). |
 | `CASEY_RELOAD_PATHS` | Comma-separated extra dirs to watch for reload (default `src/` + `../freddie/src`). |
 | `CASEY_RECEIVE_SILENCE_MS` | Restart a channel that went silent this long (zombie-receive self-heal; default 0 = off). |

@@ -26,7 +26,7 @@ import { atLeast, TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIA
 // fill-if-empty semantics). case_split stays field_worker-only: it edits an
 // EXISTING case's already-recorded history, a materially different risk
 // than opening a brand new empty one.
-export const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stop', 'case_handoff', 'case_new', 'case_feedback'])
+export const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stop', 'case_handoff', 'case_new', 'case_feedback', 'case_speaker'])
 
 // The MINIMUM rung of every team tool (case-tools-team*.js). Any non-report tool
 // not listed here needs field_worker, exactly as before. A RANK test through

@@ -32,6 +32,7 @@ import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers
 import { tryRegisterByCode } from './role-registration.js'
 import { parseReport, tagList } from '../timestamp.js'
 import { controlRegistered } from './turn-results.js'
+import { speakerState, noteAsked } from '../phone-persons.js'
 
 export async function runInboundTurn(receiver, deps, { platform, msg, channel, external_id, replyTo }) {
   const { store, log, admission, autoRespond, llmStatus, notifyHandoff } = deps
@@ -127,10 +128,17 @@ async function driveAgentTurn(deps, {
   // WHILE the answer is being written rather than after it (it was a serial ~7 second
   // step on a first message). Whether to attach it is still decided below, once the
   // turn is known not to be degraded.
-  const noticeReady = isBackgroundRedrive ? Promise.resolve(null)
-    : decideNotice(store, { fresh, events, contact })
-      .then(async (n) => (n ? { notice: n, body: await composeNotice(callLLM, n, { inboundText }).catch(() => null) } : null))
-      .catch(() => null)
+  //
+  // On a shared phone (src/phone-persons.js) the notice is owed per PERSON, so it is decided for whoever is
+  // recorded as writing when the turn starts; if the model records a different person during the turn, it is
+  // decided again below for that person.
+  const isPublic = !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !!contact?.id
+  const speakerNow = () => (isPublic ? speakerState(store, contact.id).catch(() => null) : Promise.resolve(null))
+  const speakerBefore = await speakerNow()
+  const noticeFor = (caseRow, speaker) => decideNotice(store, { fresh: caseRow, events, contact, speaker })
+    .then(async (n) => (n ? { notice: n, body: await composeNotice(callLLM, n, { inboundText }).catch(() => null) } : null))
+    .catch(() => null)
+  const noticeReady = isBackgroundRedrive ? Promise.resolve(null) : noticeFor(fresh, speakerBefore)
 
   const turn = await runAgentTurn({
     store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
@@ -272,7 +280,11 @@ async function driveAgentTurn(deps, {
   // fallback or degraded turn, and never allowed to hold the reply back.
   let notice = null
   if (!degraded && !isFallback && text) {
-    const early = await noticeReady
+    let early = await noticeReady
+    if (!isBackgroundRedrive && isPublic) {
+      const after = await speakerNow()
+      if ((after?.current?.id || null) !== (speakerBefore?.current?.id || null)) early = await noticeFor(fresh, after)
+    }
     notice = early ? early.notice : null
     if (notice) {
       const body = early.body
@@ -285,6 +297,13 @@ async function driveAgentTurn(deps, {
   if (delivered && notice) {
     try { await recordNoticeShown(store, fresh.id, notice) }
     catch (e) { log.warn?.('[casey] notice_shown record failed', { caseId: fresh.id, error: e.message }) }
+  }
+  // Casey was told to ask who is writing (two or more people known, nobody recorded): once the reply that
+  // carries the question was delivered and nobody has been recorded since, remember it, so the question is
+  // asked once and the next message is read as the answer (src/phone-persons.js).
+  if (delivered && !isBackgroundRedrive && isPublic && turn.speakerAtStart?.needs_ask) {
+    try { const now = await speakerNow(); if (now && !now.current) await noteAsked(store, contact.id) }
+    catch (e) { log.warn?.('[casey] asked-who marker failed', { caseId: fresh.id, error: e.message }) }
   }
   // GUARANTEED-RESPONSE FSM, end: the real reply attempt (success or a failed
   // send, either way nothing more is coming) is the last point a typing indicator

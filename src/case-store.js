@@ -30,7 +30,7 @@ const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
 import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable, installVersionGuard } from './store/guards.js'
-import { REPORT_KEYS, REPORT_KEY_ORDER, AREA_FIELD } from './store/report-shape.js'
+import { REPORT_KEYS, REPORT_KEY_ORDER, AREA_FIELD, SYSTEM_SET_FIELDS } from './store/report-shape.js'
 import { TIER_ORDER, TIER_FIELD_WORKER, atLeast, resolveTierValue } from './contact-tiers.js'
 import { isContactAssignee } from './case-assignment.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
@@ -799,7 +799,15 @@ export class CaseStore {
   // A write that touched the area field or the location also routes an unassigned
   // case to its area's ranger (src/areas.js). `autoAssign:false` is for the callers
   // that make the assignment decision themselves (an operator's relocate).
-  async mergeReport(caseId, incoming, user = AGENT_USER, { bypassObserve = false, autoAssign = true } = {}) {
+  //
+  // `system: true` is for the code that stamps a system-set field (phone-persons.js's reported_by). Every
+  // other caller -- the model, the team tools, the dashboard, the public form, the sync API -- has such a
+  // field dropped here, whatever it sent (report-fields.yml `system_set: true`).
+  async mergeReport(caseId, incoming, user = AGENT_USER, { bypassObserve = false, autoAssign = true, system = false } = {}) {
+    if (!system && SYSTEM_SET_FIELDS.size) {
+      incoming = { ...incoming }
+      for (const k of SYSTEM_SET_FIELDS) delete incoming[k]
+    }
     const res = await this._mergeReportLocked(caseId, incoming, user, { bypassObserve })
     if (autoAssign && !res.error && AREA_FIELD && (AREA_FIELD in incoming || 'location' in incoming)) {
       try {
@@ -1204,7 +1212,7 @@ export class CaseStore {
   // list for its own dry-run display and the two are checked against each other
   // by no mechanism -- they are the same list because both describe the same
   // decision about which fields identify a person.
-  static PII_REPORT_FIELDS = ['owner_name', 'owner_contact', 'present_person', 'present_person_relation', 'contact_fallback', 'photos', 'audio']
+  static PII_REPORT_FIELDS = ['owner_name', 'owner_contact', 'present_person', 'present_person_relation', 'contact_fallback', 'reported_by', 'photos', 'audio']
 
   static PII_CONTACT_FIELDS = { external_id: '[erased]', display_name: '[erased]', handle: '', notes: '', last_location_lat: null, last_location_lon: null, last_location_at: '', last_report_lat: null, last_report_lon: null, last_report_at: '', last_report_case_id: '' }
 
@@ -1219,7 +1227,11 @@ export class CaseStore {
   // throws on a version conflict: an uncaught throw here would abort an
   // irreversible, documented "every case scrubbed" action after only some cases
   // were touched, so the caller records the failure and carries on to the rest.
-  async _erasePiiOnCase(caseRow, { reason = '', operator = SYSTEM_USER } = {}) {
+  //
+  // `personOnly: true` is the erasure of ONE person on a shared phone (erasePerson): only the identifying
+  // report fields go. The routing key, `author_key` and the delivered-reply destinations stay, because they
+  // are the PHONE's, and the phone contact and the other people on it are not being erased.
+  async _erasePiiOnCase(caseRow, { reason = '', operator = SYSTEM_USER, personOnly = false } = {}) {
     const PII_REPORT_FIELDS = CaseStore.PII_REPORT_FIELDS
     const ERASE_RETRY_LIMIT = 3
     // Locked and re-read (same discipline as mergeReport): a concurrent
@@ -1249,7 +1261,7 @@ export class CaseStore {
           // inbound match an erased case. It carries no ':' because
           // splitExternalId treats that as a Discord container separator.
           const erasedKey = `[erased]-${c.id}`
-          const hadKeyPII = c.external_id !== erasedKey || c.author_key !== erasedKey
+          const hadKeyPII = !personOnly && (c.external_id !== erasedKey || c.author_key !== erasedKey)
           if (!hadPII && !hadKeyPII) return 'nothing-to-do'
           for (const k of PII_REPORT_FIELDS) report[k] = null
           try {
@@ -1258,19 +1270,21 @@ export class CaseStore {
             // only ever NULLs existing PII fields, never invents text, so it goes
             // straight to thatcher rather than through updateCase/updateCaseQuiet's
             // guard.
-            await this.t.update('case', c.id, { report: JSON.stringify(report), external_id: erasedKey, author_key: erasedKey }, SYSTEM_USER,
+            await this.t.update('case', c.id, personOnly ? { report: JSON.stringify(report) } : { report: JSON.stringify(report), external_id: erasedKey, author_key: erasedKey }, SYSTEM_USER,
               c._version != null ? { expectedVersion: c._version } : {})
             await this.appendEvent(c.id, {
               kind: 'action', actor: 'system', touch: false,
-              text: `PII erasure: contact data, report identifying fields and the case routing key scrubbed${reason ? ` (${reason})` : ''}`,
-              data: { erasure: true, by: operator?.id || 'system', fields: [...PII_REPORT_FIELDS, 'external_id', 'author_key'] },
+              text: personOnly
+                ? `PII erasure: the identifying report fields of one person on a shared phone were scrubbed${reason ? ` (${reason})` : ''}`
+                : `PII erasure: contact data, report identifying fields and the case routing key scrubbed${reason ? ` (${reason})` : ''}`,
+              data: { erasure: true, by: operator?.id || 'system', fields: personOnly ? [...PII_REPORT_FIELDS] : [...PII_REPORT_FIELDS, 'external_id', 'author_key'] },
             })
             // The number survives a third time inside the event log: a delivered
             // reply records its destination as `data.to`. AGENTS.md's
             // aggregate rule already forbids emitting that field, but forbidding
             // its EMISSION is not erasing it, and a right-to-erasure request is
             // about what is held, not only about what is shown.
-            await this._scrubEventDestinations(c.id, erasedKey)
+            if (!personOnly) await this._scrubEventDestinations(c.id, erasedKey)
             return 'scrubbed'
           } catch (e) {
             if (e.code !== 'conflict') throw e
@@ -1347,6 +1361,8 @@ export class CaseStore {
     }
     // Feedback comments and training-roster rows are theirs too (src/feedback.js).
     try { rewritten += await (await import('./feedback.js')).scrubPersonalLogs(this, ids, user) } catch { /* additive, like the rest of this scrub */ }
+    // The people who shared this phone: their names and relations go with it (src/phone-persons.js).
+    try { rewritten += await (await import('./phone-persons.js')).scrubPersonsFor(this, ids, user) } catch { /* additive */ }
     return rewritten
   }
 
@@ -1413,6 +1429,47 @@ export class CaseStore {
       } catch { continue }
     }
     return [...plans.values()]
+  }
+
+  // ERASE ONE PERSON ON A SHARED PHONE (POPIA): their name and relation, the identifying fields of the reports
+  // they gave (`personOnly` in _erasePiiOnCase), the stored conversations of those reports, and their id on the
+  // timeline. The phone contact, its routing key, the other people on it and their reports are left alone. The
+  // bot can still only answer the number, so this never opts the phone out and never touches STOP.
+  // Idempotent, and journalled like eraseContact so an interrupted run is visible (person-erasure-plan/-done).
+  async erasePerson(contactId, personId, { reason = '', operator = SYSTEM_USER } = {}) {
+    const contact = await this.getContact(contactId)
+    if (!contact) throw new Error(`erasePerson: no such contact ${contactId}`)
+    const { casesOf, erasePerson: eraseInLog, listPersons } = await import('./phone-persons.js')
+    if (!(await listPersons(this, contactId)).some(p => p.id === personId)) return { ok: false, reason: 'not_found' }
+    const cases = await casesOf(this, contactId, personId)
+    const runId = `${contactId}-${personId}-${Date.now()}`
+    await this._recordErasureJournal('person-erasure-plan', { runId, contactId, personId, caseIds: cases.map(c => c.id), by: operator?.id || 'system', reason, ts: Date.now() })
+    // The person's row in the log is erased LAST: until it is, a re-run still knows which reports were theirs.
+    const touched = [], failed = []
+    for (const ref of cases) {
+      const c0 = await this.getCase(ref.id).catch(() => null)
+      if (!c0) continue
+      const outcome = await this._erasePiiOnCase(c0, { reason: reason || 'one person on a shared phone', operator, personOnly: true })
+      if (outcome === 'scrubbed') touched.push(c0.id)
+      else if (outcome === 'conflict') failed.push(c0.id)
+    }
+    await this._redactProvenanceFor(touched, { operator, reason })
+    const sessions = eraseCaseSessions(cases.map(c => c.id), { log: this.log || console })
+    // the person's id, wherever it was written on a timeline (speaker, notice, STOP/HELP attribution)
+    let idsRewritten = 0
+    const evs = await this.t.list('event', { data: { $like: `%${personId}%` } }, { limit: 100000 }).catch(() => [])
+    for (const e of evs) {
+      if (typeof e.data !== 'string' || !e.data.includes(personId)) continue
+      try { await this.t.update('event', e.id, { data: e.data.split(personId).join('[erased]') }, SYSTEM_USER); idsRewritten++ } catch { /* counted by omission */ }
+    }
+    if (failed.length) return { ok: true, complete: false, contactId, personId, casesScrubbed: touched, casesFailed: failed, sessionsErased: sessions.removed.length, sessionsFailed: sessions.failed }
+    const logged = await eraseInLog(this, contactId, personId, { by: `staff:${operator?.id || 'system'}` })
+    await this._recordErasureJournal('person-erasure-done', { runId, contactId, personId, casesScrubbed: touched.length, casesFailed: failed.length, ts: Date.now() })
+    return {
+      ok: logged.ok, complete: logged.ok, contactId, personId, casesScrubbed: touched, casesFailed: failed,
+      logRowsRewritten: logged.rewritten || 0, timelineIdsRewritten: idsRewritten,
+      sessionsErased: sessions.removed.length, sessionsFailed: sessions.failed,
+    }
   }
 
   // The retention path's per-case entry point (src/retention.js's `erase`

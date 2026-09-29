@@ -22,6 +22,7 @@ import { enquiryRow } from './case-tools-shared.js'
 import { staffLabel } from './hooks/staff-outbound.js'
 import { MANDATORY_MINIMUM_BLOCKED_STATUSES } from './store/report-shape.js'
 import { isHandedOff } from './signoff-desk.js'
+import { reportersForCases } from './phone-persons.js'
 
 export const NOT_ASSIGNED = {
   error: 'This one is not assigned to you, so you can look at it but not change it or message the person who reported it. Say that plainly, and offer to ask an operator to assign it to you.',
@@ -85,6 +86,16 @@ export function teamRow(c, ctx, extra = {}) {
   const row = enquiryRow(c)
   row.assignee = publicAssignee(c.assignee, ctx?.contact) || null
   return { ...row, ...extra }
+}
+
+// On a shared phone (src/phone-persons.js) a list row says who gave the report and that the phone is shared, so a team
+// member knows whom to ask for. One read of the log for the whole list; a report with nobody recorded gets nothing.
+// Returns (caseRow) => extra fields for teamRow, and `text(caseRow)` for the plain lines an operator relays.
+export async function reporterExtras(store, cases) {
+  const m = await reportersForCases(store, cases).catch(() => new Map())
+  const extra = (c) => { const w = m.get(c.id); return w ? { ...(w.name ? { reported_by: w.name } : {}), ...(w.people > 1 ? { shared_phone: `shared phone (${w.people} people)` } : {}) } : {} }
+  const text = (c) => { const w = m.get(c.id); return w ? { by_person: [w.name ? `reported by ${w.name}` : '', w.people > 1 ? `shared phone (${w.people} people)` : ''].filter(Boolean).join(', ') } : {} }
+  return { extra, text }
 }
 
 // Media notes carry the saved file's server path; the path is internal and the

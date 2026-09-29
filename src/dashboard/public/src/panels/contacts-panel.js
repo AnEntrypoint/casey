@@ -34,6 +34,7 @@ import { confirmDialog } from '../components/dialog-shell.js';
 import { TeamRegistration, tierOptions } from './team-registration.js';
 import { InviteCodes } from './invite-codes.js';
 import { BulkTeamAdd } from './bulk-team-add.js';
+import { PersonsDialog, openPersonsDialog } from '../components/persons-dialog.js';
 
 const h = webjsx.createElement;
 
@@ -155,6 +156,18 @@ function who(c) {
 }
 
 
+// On a phone several people use (src/phone-persons.js): "3 people share this phone" under the name, and a control that
+// opens the list of who they are. A phone with nobody recorded (nearly all of them) shows nothing extra.
+function withPeople(c, cell) {
+    if (!c.people) return cell;
+    const nm = c.named ? c.display_name : (c.has_number ? c.external_id_formatted : 'this phone');
+    return h('div', { class: 'ds-contact-anon' },
+        cell,
+        h('span', { class: 'ds-contact-anon-sub ds-persons-line' },
+            c.people > 1 ? c.people + ' people share this phone' : '1 person known on this phone',
+            Btn({ size: 'sm', variant: 'link', children: 'See who', 'aria-label': 'See who uses the phone of ' + nm, onClick: () => openPersonsDialog({ id: c.id, label: nm }, () => refetch(0)) })));
+}
+
 export function ContactsPanel() {
     loader.ensureLoaded();
     const isAdmin = !!(state.currentUser && state.currentUser.role === 'admin');
@@ -193,7 +206,7 @@ export function ContactsPanel() {
                     const all = [{ value: TIER_ORDER[0], label: tierLabel(TIER_ORDER[0]) }].concat(opts);
                     if (!all.some((o) => o.value === tier)) all.push({ value: tier, label: tierLabel(tier) });
                     return [
-                        who(c),
+                        withPeople(c, who(c)),
                         channelLabel(c.channel),
                         chip,
                         c.last_location_at ? fmtTime(c.last_location_at) : 'never',
@@ -209,5 +222,6 @@ export function ContactsPanel() {
         TeamRegistration({ isAdmin, onDone: () => loader.reload() }),
         BulkTeamAdd({ onDone: () => loader.reload() }),
         InviteCodes({ isAdmin }),
-        Panel({ title: 'People', children: [body] }));
+        Panel({ title: 'People', children: [body] }),
+        PersonsDialog({}));
 }

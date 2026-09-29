@@ -24,6 +24,8 @@
 //   case-tools-team.js      the role tools, appended: field (case_pending .. case_message),
 //                           technician (signoff_queue, case_review, case_reopen,
 //                           case_ask_ranger), operator (team_*) -- see that file
+//   case-tools-feedback.js  case_feedback, team_feedback
+//   case-tools-speaker.js   case_speaker (who is writing on a shared phone; every tier)
 //   case-tools-shared.js    defTool, the enum-hint ladder, ownsCase, the
 //                           PII projections, the small pure helpers
 //   case-tools-gates.js     REPORT_ONLY_TOOLS, gateByTier, dedupeDuplicateCalls
@@ -48,6 +50,7 @@ import { buildBindingTools } from './case-tools-binding.js'
 import { buildControlTools } from './case-tools-control.js'
 import { buildTeamTools } from './case-tools-team.js'
 import { buildFeedbackTools } from './case-tools-feedback.js'
+import { buildSpeakerTools } from './case-tools-speaker.js'
 
 // Build the array of tool objects bound to an explicit store (used by anywhere
 // that wants the tools without the runtime singleton).
@@ -72,6 +75,7 @@ export function buildCaseToolset(storeOrNull) {
     // surfaces) sit after the original eighteen so their pinned order is untouched.
     ...buildTeamTools(store, enums),
     ...buildFeedbackTools(store),
+    ...buildSpeakerTools(store),
   ]
   return tools.map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
 }
@@ -90,6 +94,7 @@ function selfCheckLoadBearingToolDescriptions() {
   const byName = Object.fromEntries(tools.map(t => [t.name, t]))
   const required = [
     { tool: 'case_update', field: 'case_type', pattern: /directly and explicitly stated/, name: 'case_type must be agent-stated-only, never inferred' },
+    { tool: 'case_speaker', field: null, pattern: /Never guess or invent a name/, name: 'case_speaker must record a name only as a person said it, never a guess' },
     { tool: REPORT_TOOL_NAME, field: 'location_source', pattern: /Never guess "confirmed"/, name: 'location_source "confirmed" must require the contact actually agreeing, never be guessed' },
     // Config-driven: every report field the active config's report-fields.yml
     // flags never_inferred:true carries its own never_inferred_guard_pattern

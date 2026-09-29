@@ -11,6 +11,14 @@ several describe modules (`src/extract.js`, `src/gazetteer.js`, `test.js`,
 `CASEY_OPERATORS`) that no longer exist, which is what a historical entry is
 supposed to look like once the code moves on.
 
+### Added
+- **Several people on one phone.** `src/phone-persons.js` (append-only `phone-persons`
+  singleton), the `case_speaker` tool (the model records who is writing, never a
+  guess), a `system_set` `reported_by` report field, a per-person short privacy notice,
+  STOP recorded with the person who asked, `casey erase-contact --person`, the
+  `/api/contacts/:id/persons` routes and the "See who" dialog. A phone with one known
+  person behaves as before. See AGENTS.md, "Several people on one phone".
+
 ### Fixed
 - **A WhatsApp location pin is recorded instead of discarded.**
   `dispatchWhatsappWebhookBody` branched only on `m.image`/`m.audio`/

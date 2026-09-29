@@ -30,6 +30,7 @@
 import { CASE_REF_RE } from './hooks/heuristics.js'
 import { publicAssignee } from './case-assignment.js'
 import { parseReport } from './timestamp.js'
+import { reporterSummary, firstName } from './phone-persons.js'
 
 export const FOCUS_IDLE_MS = Number(process.env.CASEY_TEAM_FOCUS_IDLE_MS) || 30 * 60e3
 export const PROPOSAL_TTL_MS = 10 * 60e3
@@ -55,7 +56,15 @@ export async function recordedOn(store, c, ctx) {
     const name = String(contact?.display_name || '').trim().split(/\s+/)[0]
     if (name && !/^\+?\d[\d\s()-]*$/.test(name)) first = name.slice(0, 40)
   } catch { /* the first name is a courtesy, never a dependency */ }
-  return { ref: c.ref, what: identifyingLine(c), reporter: first, assigned_to: publicAssignee(c.assignee, ctx?.contact) || 'nobody' }
+  // On a shared phone the WhatsApp profile name is whoever owns the phone, not who gave this report: prefer the
+  // first name of the person recorded for it, and say the phone is shared (src/phone-persons.js).
+  let shared = null
+  try {
+    const who = await reporterSummary(store, c.contact_id, c.id)
+    if (who && who.reported_by) first = firstName(who.reported_by.name).slice(0, 40) || first
+    if (who && who.people > 1) shared = `shared phone (${who.people} people)`
+  } catch { /* same: a courtesy */ }
+  return { ref: c.ref, what: identifyingLine(c), reporter: first, ...(shared ? { shared_phone: shared } : {}), assigned_to: publicAssignee(c.assignee, ctx?.contact) || 'nobody' }
 }
 
 export function focusOf(contactId, now = Date.now()) {
