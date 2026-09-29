@@ -133,7 +133,7 @@ async function driveAgentTurn(deps, {
     store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
     channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend, ingressRecorded,
   })
-  const { result, errored, jargonReasons, falseConfirmReasons, degradedReason } = turn
+  const { result, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason } = turn
   let text = turn.text
 
   // Re-read the case after the agent turn: the agent may have completed intake
@@ -188,7 +188,7 @@ async function driveAgentTurn(deps, {
 
   const held = await holdReplyForHuman({
     store, log, fresh, notifyHandoff, msg, channel, replyTo, platform,
-    text, isFallback, jargonReasons, falseConfirmReasons,
+    text, isFallback, jargonReasons, falseConfirmReasons, adviceReasons,
   })
   if (held) { stopTyping(); return held }
 

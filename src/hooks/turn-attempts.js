@@ -14,7 +14,9 @@ import { caseSystemPrompt } from './prompt.js'
 import { buildPromptContext } from './prompt-context.js'
 import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
-import { stripThinkingBlock, OPTED_OUT_TAG } from './heuristics.js'
+import { replyShape, strayContactDetails } from './plain-text.js'
+import { loadDomainConfig } from '../config-loader.js'
+import { stripThinkingBlock, OPTED_OUT_TAG, detectContactIntent } from './heuristics.js'
 import { tagList } from '../timestamp.js'
 import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs } from './turn-results.js'
 import { staffNoticeNote } from '../staff-notices.js'
@@ -73,7 +75,10 @@ export const CASE_TOOL_NAMES = buildCaseToolset(null).map(t => t.name)
 const MIN_ECHO_WORDS = 8
 const normalizeEcho = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim()
 export function systemPromptEchoRuns(candidate, systemPromptText) {
-  const instructionOnly = String(systemPromptText || '').replace(/<<DATA>>[\s\S]*?<<END>>/g, ' ')
+  // The persona's own statement of what to say instead of advice is the CONTENT of a correct reply, not an
+  // instruction to hide: a reply that conveys it in nearly its words is right, so it is not compared.
+  const offered = loadDomainConfig().persona.adviceRefusalText
+  const instructionOnly = String(systemPromptText || '').replace(/<<DATA>>[\s\S]*?<<END>>/g, ' ').split(offered || '\u0000').join(' ')
   const hay = normalizeEcho(candidate)
   if (!hay) return []
   const hits = []
@@ -472,9 +477,37 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // USER DIRECTIVE: no deterministic text classification anywhere -- what the
   // reply MEANS is judged by the single real-LLM judgeReply call
   // (hooks/reply-judge.js), never a regex/word-list.
-  const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result)
+  // A number or web address the deployment never wrote. Where the persona carries a safety text
+  // (the helplines it stands behind), a reply may repeat a number from that text or from the
+  // person's own message -- and nothing else. Compared as
+  // digits and address syntax, so it needs no judge call: the retry is spent straight away.
+  const persona = loadDomainConfig().persona
+  const stray = persona.safetyText
+    ? strayContactDetails(candidate, [persona.safetyText, inboundText, process.env.CASEY_PUBLIC_URL, fresh.ref])
+    : []
+  if (stray.length) {
+    if (canRetry) {
+      log.warn?.('[casey] reply carries a number or address nobody configured; retrying turn with feedback', { caseId: fresh.id, attempt, stray })
+      await note(`STRAY-CONTACT-DETAIL: reply carried ${stray.join(', ')}; retrying turn with feedback (attempt ${attempt})`)
+      return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because it gave ${stray.join(', ')}, which is not in your instructions. Remove that, and keep the numbers that ARE in your safety instructions, written out in full, if the person may be in danger. Give no other phone number, text-message number or web address, and no other country. No list.]` }
+    }
+    await store.appendEvent(fresh.id, observation(`STRAY-CONTACT-DETAIL-BUT-SENT: reply carried ${stray.join(', ')}`))
+  }
+  // The STOP and HUMAN controls take effect before the agent speaks (service-controls.js), so the
+  // acknowledgement is a true statement even though no report was written this turn.
+  const intent = detectContactIntent(inboundText)
+  const controlNoted = intent === 'human' || intent === 'stop'
+  const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result) || controlNoted
+  const safetyNumbers = persona.safetyText ? strayContactDetails(persona.safetyText, [candidate]) : []
   const { missingFacts = [], knownFacts = [] } = factsForJudge ? await factsForJudge() : {}
-  const verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts })
+  const shape = replyShape(candidate)
+  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  // The reply-shape rule is a COUNT: one question, no list. Two question marks or two list lines
+  // is a multi-ask whatever the judge made of the sentences, so a clean verdict is overridden.
+  // Only a clean one: a real fault the judge found keeps its own route.
+  if (verdict.clean && (shape.questions >= 2 || shape.listLines >= 2)) {
+    verdict = { clean: false, category: 'other', reasons: [`multi-ask: ${shape.questions} questions and ${shape.listLines} list lines counted by the system`] }
+  }
   if (verdict.clean) return { done: true, text: candidate }
   // INTERNAL JARGON LEAK (reply-judge.js shape 6) is the shape whose fix is the
   // most purely mechanical of all of them: the reply's content is already right
@@ -524,6 +557,38 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it claimed something was recorded or opened when nothing actually was. If the contact reported something new, call the case_new or case_report tool FIRST and wait for its result before replying. Never claim an action you did not actually perform.]' }
     }
     return { done: true, text: candidate, falseConfirmReasons: verdict.reasons }
+  }
+  // ADVICE GIVEN, A PROMISE THE SYSTEM DOES NOT KEEP, THE WRONG LANGUAGE (reply-judge.js shapes 11-13).
+  // The content is recoverable in each case and a fresh roll usually fixes it, so all three are retried
+  // with the fault named; on a spent budget the reply is sent anyway, as every other shape here is,
+  // because silence on a real report is worse. One branch, one feedback, so a reply with two of these
+  // faults is told about both. A multi-ask riding along is named too.
+  const faultRoutes = [
+    [/advice.?given/i, `it gave advice (a treatment, medicine, dose, precaution, handling step, reassurance, counselling, "you should", a disease guess or a claim that something is legal or safe). You connect people and never advise, whatever they asked. Where the person may be in danger, give warm words and the helpline numbers from your safety instructions only. Otherwise, if they asked what to do about the animals, convey only this, in your own words: ${persona.adviceRefusalText || 'you do not give advice'}. Then carry on with the report`],
+    [/promise.?made/i, 'it said or implied that someone has been alerted, asked or flagged, will come, phone, reply or follow up. Nothing here does that. Do not claim anything about what happens to it next; if they asked when or whether someone will come or call, say kindly that you cannot say'],
+    [/safety.?line.?missing/i, `the person may be in danger and it did not include the helpline numbers from your safety instructions (${safetyNumbers.join(', ')}). Write them out in full, in two or three warm plain sentences, with no other number and no list`],
+    [/wrong.?language/i, "it was not in the language of their latest message. Write the whole reply again in exactly the language their latest message is written in, and no other"],
+  ]
+  const faults = faultRoutes.filter(([re]) => verdict.reasons?.some(r => re.test(r))).map(([, text]) => text)
+  if (faults.length) {
+    const alsoMulti = verdict.reasons?.some(r => /multi.?ask|wall of text/i.test(r)) ? ' Also ask only ONE question naming at most TWO things, with no list.' : ''
+    if (canRetry) {
+      log.warn?.('[casey] reply judge flagged advice, a promise or the language; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
+      await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
+      return { done: false, retryFeedback: `\n\n[System note: your previous reply was not sent because ${faults.join('; and because ')}.${alsoMulti} Keep it short, warm and in plain sentences, and never say any of this to them.]` }
+    }
+    // ADVICE IS WORSE THAN SILENCE: unlike every other shape here, a reply that still gives advice on a
+    // spent budget is HELD for a human (turn-outcome.js's draft hold), not sent. The one exception is a
+    // reply that carries every configured safety number, or that the judge says should have (safety-line-missing):
+    // it answers a person in danger, and holding that would leave them with nothing.
+    const crisisReply = persona.safetyText && (!safetyNumbers.length || verdict.reasons.some(r => /safety.?line.?missing/i.test(r)))
+    if (faultRoutes[0][0].test(verdict.reasons.join(' ')) && !crisisReply) {
+      log.warn?.('[casey] reply still gave advice on a spent retry budget; holding for a human', { caseId: fresh.id, reasons: verdict.reasons })
+      return { done: true, text: candidate, adviceReasons: verdict.reasons }
+    }
+    log.warn?.('[casey] reply judge flagged a promise, the language or advice in a crisis reply on a spent retry budget; sending anyway', { caseId: fresh.id, reasons: verdict.reasons })
+    await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED-BUT-SENT: ${verdict.reasons.join('; ')}`))
+    return { done: true, text: candidate }
   }
   // FAREWELL WITH FACTS STILL MISSING (reply-judge.js shape 9): the reply signed
   // off while a fact that cannot be got once the person leaves the animals is
@@ -588,8 +653,8 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       await note(`REPEAT-ASK: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
       return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it asked again for something this person has already been asked or has already told you'
         + (knownFacts.length ? ` -- these are already recorded: ${knownFacts.join(', ')}` : '')
-        + (missingFacts.length ? `. Ask instead about ${missingFacts[0]}, which is genuinely still missing` : '. Ask about something genuinely still missing, or simply acknowledge what they said and ask nothing')
-        + '. Rewording the same question does not make it a new one.]' }
+        + (missingFacts.length ? `. Still missing: ${missingFacts.slice(0, 3).join(', ')}. Ask about one of those that your last message did NOT already ask about, or simply acknowledge what they said and ask nothing` : '. Ask about something genuinely still missing that your last message did not already ask about, or simply acknowledge what they said and ask nothing')
+        + '. Rewording the same question does not make it a new one, and a person who skipped a question has answered it as far as they will.]' }
     }
     log.warn?.('[casey] reply re-asked a known fact on a spent retry budget; sending anyway', { caseId: fresh.id, reasons: verdict.reasons })
     await store.appendEvent(fresh.id, observation(`REPEAT-ASK-BUT-SENT: ${verdict.reasons.join('; ')}`))
@@ -709,7 +774,7 @@ export async function runAgentTurn({
   let turnWroteSomething = false
 
   let result, text = '', errored = false, degradedReason = null
-  let jargonReasons = null, falseConfirmReasons = null, retryFeedback = null
+  let jargonReasons = null, falseConfirmReasons = null, adviceReasons = null, retryFeedback = null
 
   for (let attempt = 1; attempt <= MAX_TOOL_CHOICE_ATTEMPTS; attempt++) {
     const timeoutMs = attemptTimeout({ isBackgroundRedrive, turnStartedAt })
@@ -785,11 +850,12 @@ export async function runAgentTurn({
     text = verdict.text
     jargonReasons = verdict.jargonReasons || null
     falseConfirmReasons = verdict.falseConfirmReasons || null
+    adviceReasons = verdict.adviceReasons || null
     break
   }
   // turnBinding is the case this turn ENDED on. A case_new/case_switch inside an
   // attempt rebinds it, and the caller's post-turn decisions (the outbound ref
   // correction above all) have to act on that case rather than the one the
   // handler resolved before the turn began -- see driveAgentTurn.
-  return { result, text, errored, jargonReasons, falseConfirmReasons, degradedReason, activeCase: turnBinding }
+  return { result, text, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason, activeCase: turnBinding }
 }

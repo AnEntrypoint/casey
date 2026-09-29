@@ -319,7 +319,14 @@ const AMBIGUOUS_MAX_WORDS = 3
 // ('ngicela ukukhuluma nomuntu' etc.) are multi-word and untouched by this
 // gate, so a genuine handoff request in any of these languages still fires at
 // any length.
-const AMBIGUOUS_HUMAN_KEYS = new Set(['human',
+// The English bare-noun keys are here for the same reason: 'person', 'real person' and 'real human'
+// fired at any length, so a QUESTION about the assistant ("are you a real person?", "is this a real
+// person") or a sentence about someone on site ("the person there says ...") handed the record to a
+// human, while "phone me" did not. A request for a person is a request VERB plus the noun, and the
+// verb phrases ('speak to', 'talk to', 'call me', 'representative') stay unambiguous; the bare noun now
+// fires only as the whole short message ("real person please"), and anything longer goes to the agent,
+// which has case_handoff.
+const AMBIGUOUS_HUMAN_KEYS = new Set(['human', 'person', 'real person', 'real human',
   'umuntu', 'umntu', 'umuntfu',          // zu/xh/ss bare 'person'
   'motho', 'mongwe',                     // st/tn bare 'person'/'someone'
   'munhu', 'muthu',                      // ts/ve bare 'person'
@@ -354,6 +361,8 @@ const HUMAN_KEYS = [
 const HUMAN_EXCLUDE = [
   'a person told me', 'person told me', 'someone told me', 'another person',
   'in person', 'no person', 'wrong person',
+  // A question ABOUT the assistant ("are you human") is not a request for one.
+  'are you',
   'someone come', 'someone came', 'anyone coming', 'did someone',
   'a person is here', 'a person is looking after', 'there is a person',
   'the person looking after', 'person looking after the animals',
