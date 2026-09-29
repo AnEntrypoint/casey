@@ -21,6 +21,7 @@ import { isAssignedTo, isOwnConversation, publicAssignee } from './case-assignme
 import { enquiryRow } from './case-tools-shared.js'
 import { staffLabel } from './hooks/staff-outbound.js'
 import { MANDATORY_MINIMUM_BLOCKED_STATUSES } from './store/report-shape.js'
+import { isHandedOff } from './signoff-desk.js'
 
 export const NOT_ASSIGNED = {
   error: 'This one is not assigned to you, so you can look at it but not change it or message the person who reported it. Say that plainly, and offer to ask an operator to assign it to you.',
@@ -49,8 +50,9 @@ export function authorityOn(ctx, caseRow) {
   return null
 }
 
-// The technician's wider reach: the sign-off desk sees records assigned to them AND
-// the unassigned ones (the signoff_queue set). Same grant names as authorityOn.
+// The technician's wider reach: the sign-off desk sees records assigned to them, the
+// unassigned ones and the ones a ranger HANDED OVER (the signoff_queue set, see
+// signoff-desk.js). Same grant names as authorityOn.
 export function deskAuthorityOn(ctx, caseRow) {
   const direct = authorityOn(ctx, caseRow)
   if (direct) return direct
@@ -58,7 +60,7 @@ export function deskAuthorityOn(ctx, caseRow) {
   // The same exclusion authorityOn applies above: a technician's OWN filed
   // report is never widened into their desk, even unassigned/unclaimed --
   // otherwise the person who reported it could review and sign it off.
-  if (atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN) && (!a || a === UNCLAIMED_ASSIGNEE) && !isOwnConversation(caseRow, ctx?.contact)) return 'assigned'
+  if (atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN) && (!a || a === UNCLAIMED_ASSIGNEE || isHandedOff(caseRow)) && !isOwnConversation(caseRow, ctx?.contact)) return 'assigned'
   return null
 }
 

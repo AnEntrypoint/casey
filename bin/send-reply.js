@@ -24,6 +24,7 @@
 // process stays where it is.
 
 import { caseDeliveryTarget } from '../src/hooks/handler.js'
+import { proactiveRefusal } from '../src/proactive-sends.js'
 
 // THROWS when the channel has no adapter, and must keep throwing. Every caller
 // decides delivery the same way -- `try { await sendReply(...); delivered = true }
@@ -47,6 +48,8 @@ import { caseDeliveryTarget } from '../src/hooks/handler.js'
 // on the timeline as a note explicitly marked NOT SENT.
 export function makeSendReply(casey) {
   return (caseRow, text) => {
+    const noStart = proactiveRefusal({})
+    if (noStart) return Promise.reject(new Error(noStart))
     const a = casey.adapters[caseRow.channel]
     if (!a?.send) {
       return Promise.reject(new Error(`no adapter for channel "${caseRow.channel}" -- nothing was sent`))

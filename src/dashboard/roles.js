@@ -22,7 +22,8 @@ import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
 import { isAssignedTo as contactHoldsCase } from '../case-assignment.js'
 import { parseReport, tagList } from '../timestamp.js'
 import { RESERVED_TAG } from '../hooks/heuristics.js'
-import { MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum, fieldLabel, REPORT_ENTITY_LABEL } from '../store/report-shape.js'
+import { inSignOffQueue } from '../signoff-desk.js'
+import { MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum, fieldLabel, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, missingSignoffDiagnosis } from '../store/report-shape.js'
 
 export const STAFF_ROLES = ['admin', 'operator', 'secretary']
 export const FIELD_ROLES = ['eco_ranger', 'animal_health_technician']
@@ -73,14 +74,17 @@ export function missingFor(c) {
   return missingMandatoryMinimum(parseReport(c))
 }
 
-// A case a technician may sign off although nobody has been assigned: open, its
-// mandatory minimum met, and unheld.
-export function inSignOffQueue(c, unclaimedKey) {
-  if (isDoneStatus(c?.status)) return false
-  const a = String(c?.assignee || '').trim()
-  if (a && a !== unclaimedKey) return false
-  return missingFor(c).length === 0
+// The sign-off diagnosis still to record, counting what the request itself carries
+// (the SPA sends identified_disease / recommended_resolution with the done-stage move).
+export function missingDiagnosisFor(c, body) {
+  const given = {}
+  for (const k of SIGNOFF_DIAGNOSIS_FIELDS) if (typeof body?.[k] === 'string' && body[k].trim()) given[k] = body[k].trim()
+  return missingSignoffDiagnosis({ ...parseReport(c), ...given })
 }
+
+// The sign-off desk's queue rule lives once in signoff-desk.js (handed over by its
+// triage owner, or unheld and complete); this is the same predicate.
+export { inSignOffQueue }
 
 // 'write' | 'read' | 'none'
 export function caseAccess(c, acct, { unclaimedKey = 'agent' } = {}) {
@@ -111,19 +115,24 @@ const FIELD_ROUTES = [
   ['GET', /^\/api\/config$/, 'open'],
   ['GET', /^\/api\/operators$/, 'open'],
   ['POST', /^\/api\/logout-everywhere$/, 'open'],
+  ['POST', /^\/api\/feedback$/, 'open'],
   ['GET', /^\/api\/cases$/, 'scoped-list'],
   ['POST', /^\/api\/cases$/, 'open'],
   ['GET', /^\/api\/map\/cases$/, 'scoped-list'],
   ['GET', new RegExp(`^${CASE}$`), { access: 'read' }],
   ['GET', new RegExp(`^${CASE}/events$`), { access: 'read' }],
   ['PATCH', new RegExp(`^${CASE}$`), { access: 'write', patch: true }],
-  ['POST', new RegExp(`^${CASE}/intake$`), { access: 'write' }],
+  ['POST', new RegExp(`^${CASE}/intake$`), { access: 'write', intake: true }],
   ['POST', new RegExp(`^${CASE}/note$`), { access: 'write' }],
   ['POST', new RegExp(`^${CASE}/reply$`), { access: 'write' }],
   ['POST', new RegExp(`^${CASE}/remind$`), { access: 'write' }],
   ['POST', new RegExp(`^${CASE}/location$`), { access: 'write' }],
   ['POST', new RegExp(`^${CASE}/transition$`), { access: 'write', transition: true }],
   ['POST', new RegExp(`^${CASE}/send-back$`), { access: 'signoff', tech: true }],
+  // Hand a full record to the sign-off desk: a write on a case assigned to the login.
+  ['POST', new RegExp(`^${CASE}/handoff$`), { access: 'write' }],
+  // The login's OWN day (routes/areas.js): identity comes from the session, never a parameter.
+  ['GET', /^\/api\/my-day$/, 'open'],
 ]
 
 const deny = (res, status, error, code) => res.status(status).json({ error, code })
@@ -184,6 +193,11 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
       if (rule.access === 'signoff' && access === 'read' && !(isTechnician(acct) && inSignOffQueue(c, UNCLAIMED_ASSIGNEE))) {
         return deny(res, 403, 'This case is not assigned to you, so you can look but not change it.', 'not_assigned')
       }
+      // The diagnosis is the technician's, recorded with the sign-off: a ranger's intake
+      // form does not carry it in.
+      if (rule.intake && !isTechnician(acct) && SIGNOFF_DIAGNOSIS_FIELDS.some(k => k in b)) {
+        return deny(res, 403, 'The animal health technician records the diagnosis, when signing the report off.', 'role_forbidden')
+      }
       if (rule.patch) {
         const bad = Object.keys(b).filter(k => !PATCH_KEYS_FIELD.has(k))
         if (bad.length) return deny(res, 403, 'You cannot change who a case is assigned to or how it is handled.', 'role_forbidden')
@@ -197,6 +211,10 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
         if (!isTechnician(acct)) return deny(res, 403, 'Only an animal health technician can sign a case off.', 'signoff_forbidden')
         const missing = missingFor(c)
         if (missing.length) return deny(res, 400, `Cannot sign off yet: still missing ${missing.map(fieldLabel).join(', ')}.`, 'missing_minimum')
+        // Third and separate: the diagnosis. Staff closing a case from the console are not
+        // asked for it (they never reach this branch).
+        const noDiagnosis = missingDiagnosisFor(c, b)
+        if (noDiagnosis.length) return deny(res, 400, `Cannot sign off yet: ${noDiagnosis.map(fieldLabel).join(' and ')} ${noDiagnosis.length === 1 ? 'is' : 'are'} not recorded.`, 'missing_diagnosis')
       }
       next()
     } catch (e) {
@@ -210,7 +228,7 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
 // refused with 409 when that is not the reference of the case id in the URL, so
 // a stale tab or a wrong-case click can never land on a different case. Optional:
 // a caller that sends none behaves exactly as before. Applies to every role.
-const REF_GUARDED = /^\/api\/cases\/([^/]+)\/(intake|note|transition|reply|remind|location|send-back)$|^\/api\/cases\/([^/]+)$/
+const REF_GUARDED = /^\/api\/cases\/([^/]+)\/(intake|note|transition|reply|remind|location|send-back|relocate|handoff)$|^\/api\/cases\/([^/]+)$/
 export function expectedRefGuard({ store }) {
   return async (req, res, next) => {
     try {

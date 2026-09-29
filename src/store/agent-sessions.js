@@ -16,8 +16,10 @@
 //     and an unnoticed copy of contact content lives somewhere nobody looks.
 //   * It is now load-bearing rather than incidental: run-turn.js resumes an
 //     evicted agent from this file, so deleting one is deleting real state, not
-//     tidying a cache. That is correct for an erasure and wrong for anything
-//     else, which is why nothing here deletes on any other trigger.
+//     tidying a cache. That is correct for an erasure and for a change of the
+//     contact's role (the old transcript holds refusals given to the old role;
+//     case-store.js _afterTierChange, run-turn.js), and wrong for anything else,
+//     which is why nothing here deletes on any other trigger.
 //
 // The directory name is matched by DECODING it rather than by re-implementing
 // freddie's escaping. `case:` becomes `case~003A`, and guessing at that rule

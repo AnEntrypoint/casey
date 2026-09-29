@@ -110,6 +110,43 @@ export function deriveReportShape(reportFields) {
     return MANDATORY_MINIMUM_FIELDS.filter(k => rep[k] == null || String(rep[k]).trim() === '')
   }
 
+  // THE SIGN-OFF DIAGNOSIS: what the animal health technician must record when
+  // they sign a record off -- the identified disease and the recommended
+  // resolution. A THIRD condition on the same move that mandatory_minimum's
+  // stages gate, and deliberately a separate list: the mandatory minimum is what
+  // the REPORTER side must supply, and reporters are never asked for a
+  // diagnosis. Opt-in like the minimum (absent: empty list, every consumer a
+  // no-op) and validated loudly for the same reason:
+  //
+  //   signoff_diagnosis:
+  //     fields: [identified_disease, recommended_resolution]
+  const diagBlock = reportFields.signoff_diagnosis || null
+  let SIGNOFF_DIAGNOSIS_FIELDS = []
+  if (diagBlock) {
+    if (!Array.isArray(diagBlock.fields) || !diagBlock.fields.length) {
+      throw new Error('deriveReportShape: signoff_diagnosis declared but signoff_diagnosis.fields[] is missing or empty -- name the fields a sign-off must record, or remove the whole block')
+    }
+    const unknownDx = diagBlock.fields.filter(k => !REPORT_KEYS.has(k))
+    if (unknownDx.length) {
+      throw new Error(`deriveReportShape: signoff_diagnosis.fields names field(s) this config does not declare: ${unknownDx.join(', ')}`)
+    }
+    SIGNOFF_DIAGNOSIS_FIELDS = diagBlock.fields
+  }
+  // Same blank test as missingMandatoryMinimum (a recorded 0 is present, a
+  // whitespace-only string is blank), in the config's own declaration order.
+  const missingSignoffDiagnosis = (reportObj) => {
+    const rep = reportObj || {}
+    return SIGNOFF_DIAGNOSIS_FIELDS.filter(k => rep[k] == null || String(rep[k]).trim() === '')
+  }
+
+  // The report field that carries the area/association a case belongs to (the
+  // key src/areas.js matches against the area mapping). Config-declared and
+  // opt-in: absent, no area routing exists. It must be a declared field.
+  const AREA_FIELD = reportFields.area_field || null
+  if (AREA_FIELD && !REPORT_KEYS.has(AREA_FIELD)) {
+    throw new Error(`deriveReportShape: area_field names "${AREA_FIELD}", which this config does not declare as a field`)
+  }
+
   // Fields that APPEND on every write rather than overwrite.
   const APPEND_FIELDS = new Set(reportFields.fields.filter(f => f.append).map(f => f.key))
 
@@ -184,6 +221,7 @@ export function deriveReportShape(reportFields) {
     REPORT_KEYS, REPORT_KEY_ORDER, CRITICAL_FIELDS, APPEND_FIELDS, NEVER_INFERRED_FIELDS,
     SEVERITY_SIGNAL_FIELDS,
     MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum,
+    SIGNOFF_DIAGNOSIS_FIELDS, missingSignoffDiagnosis, AREA_FIELD,
     ENQUIRY_HEADLINE_FIELDS, FIELD_LABELS, fieldLabel, REPORT_SECTIONS,
     REPORT_ENTITY_LABEL: reportFields.entity_label || 'report',
     REPORT_TOOL_NAME: reportFields.tool_name || 'case_report',
@@ -206,6 +244,9 @@ export const SEVERITY_SIGNAL_FIELDS = _default.SEVERITY_SIGNAL_FIELDS
 export const MANDATORY_MINIMUM_FIELDS = _default.MANDATORY_MINIMUM_FIELDS
 export const MANDATORY_MINIMUM_BLOCKED_STATUSES = _default.MANDATORY_MINIMUM_BLOCKED_STATUSES
 export const missingMandatoryMinimum = _default.missingMandatoryMinimum
+export const SIGNOFF_DIAGNOSIS_FIELDS = _default.SIGNOFF_DIAGNOSIS_FIELDS
+export const missingSignoffDiagnosis = _default.missingSignoffDiagnosis
+export const AREA_FIELD = _default.AREA_FIELD
 export const ENQUIRY_HEADLINE_FIELDS = _default.ENQUIRY_HEADLINE_FIELDS
 export const FIELD_LABELS = _default.FIELD_LABELS
 export const fieldLabel = _default.fieldLabel

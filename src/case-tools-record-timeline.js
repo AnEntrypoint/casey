@@ -11,12 +11,16 @@ import { defTool, str, ownsCase, OBSERVE_TEXT_MAX_LEN } from './case-tools-share
 import { parseReport } from './timestamp.js'
 import { canSignOff, canQueryCases } from './contact-tiers.js'
 import { isAssignedTo } from './case-assignment.js'
-import { doneStages, authorityOn } from './case-tools-team-shared.js'
+import { doneStages, authorityOn, actorData, cleanRelayed } from './case-tools-team-shared.js'
+import { isHandedOff } from './signoff-desk.js'
+import { staffLabel } from './hooks/staff-outbound.js'
 import { writeGate, recordedOn, clearFocusForCase } from './team-focus.js'
 import {
   MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES,
   missingMandatoryMinimum, fieldLabel, REPORT_TOOL_NAME, REPORT_ENTITY_LABEL,
+  SIGNOFF_DIAGNOSIS_FIELDS, missingSignoffDiagnosis, REPORT_FIELD_DEFS,
 } from './store/report-shape.js'
+import { APPEND_FIELD_MAX_LEN } from './store/report-merge.js'
 
 // The mandatory-minimum sentence appended to case_transition's own description,
 // so the requirement is SCHEMA-VISIBLE to the model before it ever attempts the
@@ -50,6 +54,15 @@ function mandatoryMinimumDescriptionClause() {
 function signOffAuthorityDescriptionClause() {
   if (!MANDATORY_MINIMUM_BLOCKED_STATUSES.length) return ''
   return ` Marking a ${REPORT_ENTITY_LABEL} ${MANDATORY_MINIMUM_BLOCKED_STATUSES.join('/')} is ALSO restricted to the animal health technician who signs it off, so this tool refuses that move for anyone else even when every fact is recorded. When it does, leave the ${REPORT_ENTITY_LABEL} as it is and say nothing about it: it stays open and the right person finishes it.`
+}
+
+// The THIRD condition on a sign-off, for the same reason the other two are named in
+// the description: the technician records the identified disease and the recommended
+// resolution WITH the sign-off, and the model must know to ask for them before it
+// calls. Empty (byte-identical description) when the config declares no such block.
+function diagnosisDescriptionClause() {
+  if (!SIGNOFF_DIAGNOSIS_FIELDS.length) return ''
+  return ` A sign-off also records ${SIGNOFF_DIAGNOSIS_FIELDS.map(fieldLabel).join(' and ')}: pass ${SIGNOFF_DIAGNOSIS_FIELDS.join(' and ')} here, exactly as the technician stated them, and this tool REFUSES the move while either is blank. Never suggest or work out either one yourself.`
 }
 
 export function buildCaseTimelineTools(store, { stageValues }) {
@@ -88,17 +101,19 @@ export function buildCaseTimelineTools(store, { stageValues }) {
       // over.
       'Move the case to a new workflow stage. Valid targets depend on current stage (new->triaging->in_progress->waiting->resolved->closed, with reopen paths). Call case_get first if unsure. Honour the case autonomy setting. Every stage name here is internal bookkeeping: never say one to the person, and never describe what you just did in these words.'
       + mandatoryMinimumDescriptionClause()
-      + signOffAuthorityDescriptionClause(),
+      + signOffAuthorityDescriptionClause()
+      + diagnosisDescriptionClause(),
       {
         type: 'object',
         properties: {
           id: str('Case id'),
           to: str('Target stage', { enum: stageValues }),
           reason: str('Why you are transitioning (recorded on the timeline)'),
+          ...Object.fromEntries(SIGNOFF_DIAGNOSIS_FIELDS.map(k => [k, str(REPORT_FIELD_DEFS.find(f => f.key === k)?.description || k)])),
         },
         required: ['id', 'to'],
       },
-      async ({ id, to, reason = '' }, ctx) => {
+      async ({ id, to, reason = '', ...diagnosisArgs }, ctx) => {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const author = ctx?.author || ctx?.principal?.id
@@ -111,7 +126,7 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         // That path is write-gated like the rest of the team family: the record
         // must be the confirmed focus, and the message must not name another.
         const unassigned = !String(c.assignee || '').trim() || String(c.assignee).trim() === 'agent'
-        const signOffDesk = canSignOff(ctx?.tier) && doneStages().includes(to) && (isAssignedTo(c, ctx?.contact) || unassigned)
+        const signOffDesk = canSignOff(ctx?.tier) && doneStages().includes(to) && (isAssignedTo(c, ctx?.contact) || unassigned || isHandedOff(c))
         const owns = ownsCase(c.external_id, author)
         // An assignee or an operator who asks for a FINISHED stage is answered by the
         // two checks below (which fact is missing / that finishing is not theirs), not
@@ -188,6 +203,27 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         if (MANDATORY_MINIMUM_BLOCKED_STATUSES.includes(to) && !canSignOff(ctx?.tier)) {
           if (canQueryCases(ctx?.tier)) return { error: `every required fact is recorded, but finishing a ${REPORT_ENTITY_LABEL} is not something they can do: only the animal health technician signs it off. Tell them so plainly in one sentence, and that it stays open until the technician finishes it. Do not use stage names.` }
           return { error: `this ${REPORT_ENTITY_LABEL} is complete but signing it off is not yours to do -- only the animal health technician marks one ${MANDATORY_MINIMUM_BLOCKED_STATUSES.join('/')}. Nothing is missing and nothing needs asking: every fact is already recorded. Say NOTHING about this to the person -- no stage, no tool, no permission, no refusal. Thank them warmly for what they gave you and let them go; it stays open, and the person who signs these off will finish it.` }
+        }
+        // THE DIAGNOSIS, the third condition: only reached by a technician (the two
+        // checks above already refused everyone else), and only for a done stage. It
+        // is recorded here, in the same call, because the sign-off desk includes
+        // records the technician does not hold, which case_edit cannot write to.
+        // Its own plain refusal, distinct from the other two.
+        if (MANDATORY_MINIMUM_BLOCKED_STATUSES.includes(to) && SIGNOFF_DIAGNOSIS_FIELDS.length) {
+          const given = {}
+          for (const k of SIGNOFF_DIAGNOSIS_FIELDS) {
+            const v = cleanRelayed(diagnosisArgs[k])
+            if (typeof v === 'string' && v.trim()) given[k] = v.trim()
+          }
+          const still = missingSignoffDiagnosis({ ...parseReport(c), ...given })
+          if (still.length) return { error: `every required fact is recorded and it is the technician's to finish, but the sign-off also needs ${still.map(fieldLabel).join(' and ')}, and ${still.length === 1 ? 'that is' : 'those are'} not recorded. Ask them for ${still.length === 1 ? 'it' : 'them'} in one plain sentence, then call this again with ${still.join(' and ')} set to exactly what they said. Do not suggest ${still.length === 1 ? 'one' : 'either'} yourself and do not use stage names.` }
+          const tooLong = Object.keys(given).filter(k => given[k].length > APPEND_FIELD_MAX_LEN)
+          if (tooLong.length) return { error: `${tooLong.map(fieldLabel).join(', ')} is too long to record (over ${APPEND_FIELD_MAX_LEN} characters). Nothing was changed. Ask for a shorter version.` }
+          if (Object.keys(given).length) {
+            const merged = await store().mergeReport(c.id, given, AGENT_USER, { bypassObserve: true, autoAssign: false })
+            if (merged.error) return { error: merged.error }
+            await store().appendEvent(c.id, { kind: 'action', actor: 'operator', text: `diagnosis recorded at sign-off by ${staffLabel(ctx?.contact)}: ${Object.keys(given).map(fieldLabel).join(', ')}`, data: actorData(ctx, { on_behalf: true, signoff: true, ...given }) })
+          }
         }
         try {
           await store().transition(id, to, { user: AGENT_USER, reason })

@@ -253,7 +253,9 @@ export async function cmdHealth({ flags }) {
     if (breaches.length) breachedCases++
     for (const b of breaches) { const tag = b.breach || 'breach'; breachCounts[tag] = (breachCounts[tag] || 0) + 1 }
   }
-  if (flags.json) { console.log(JSON.stringify({ open: open.length, breachedCases, corrupt, breaches: breachCounts }, null, 2)); await closeAndExit(store, 0) }
+  const { feedbackCounts } = await import('../src/feedback.js')
+  const feedback = await feedbackCounts(store).catch(() => ({ total: 0, last_7_days: 0 }))
+  if (flags.json) { console.log(JSON.stringify({ open: open.length, breachedCases, corrupt, breaches: breachCounts, feedback }, null, 2)); await closeAndExit(store, 0) }
   console.log(bold('casey health') + dim('  (read-only -- nothing written)'))
   console.log(`open cases: ${open.length}   with a guardrail breach: ${breachedCases}` + (corrupt ? red(`   corrupt rows skipped: ${corrupt}`) : ''))
   const entries = Object.entries(breachCounts).sort((a, b) => b[1] - a[1])
@@ -261,6 +263,7 @@ export async function cmdHealth({ flags }) {
   for (const [tag, n] of entries) console.log(`  ${n}\t${tag}\t${dim(BREACH_MEANING[tag] || tag)}`)
   if (entries.length) console.log(dim(`\n  a case can breach more than one guardrail, so these add up past ${breachedCases}.`))
   if (entries.length) console.log(dim('  record them on the cases with ') + cyan('casey sweep') + dim('.'))
+  console.log(`tester feedback: ${feedback.total} comment(s), ${feedback.last_7_days} in the last 7 days` + dim('  (staff read them at /api/feedback)'))
   await closeAndExit(store, 0)
 }
 

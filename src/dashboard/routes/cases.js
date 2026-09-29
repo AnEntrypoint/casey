@@ -25,7 +25,9 @@ import { normalizeMsisdn } from '../../role-invites.js'
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27, markInvisibles } from '../../format.js'
-import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL } from '../../store/report-shape.js'
+import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES } from '../../store/report-shape.js'
+import { withdrawHandoff } from '../../signoff-desk.js'
+import { areaInfoFor } from '../../areas.js'
 import { isKnownValueField, invalidateKnownValues } from '../../field-values.js'
 import { BRAND } from '../brand.js'
 import { mountRoutes } from './register.js'
@@ -381,7 +383,11 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
       await noteNumberReveal(store, c, op)
     }
     const named = await assigneeNamer(store, [c])
-    res.json({ ...fieldExtras, case: detailForAccess(caseDetailProjection(c, named, { keepKey: !isFieldAccount(req.caseyAccount) }), req.caseyAccess), events: (await nameEventAssignees(store, events, { field: isFieldAccount(req.caseyAccount) })).map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
+    // Where the report says the animals are, which mapped area that resolves to, and
+    // whether the location text points somewhere other than its holder's area. Staff
+    // only: it is what the wrong-area correction (POST /api/cases/:id/relocate) reads.
+    const area = isFieldAccount(req.caseyAccount) ? null : await areaInfoFor(store, c).catch(() => null)
+    res.json({ ...fieldExtras, ...(area ? { area } : {}), case: detailForAccess(caseDetailProjection(c, named, { keepKey: !isFieldAccount(req.caseyAccount) }), req.caseyAccess), events: (await nameEventAssignees(store, events, { field: isFieldAccount(req.caseyAccount) })).map(eventProjection), events_total, transitions, report_fill_rate, suggested_assignee, case_type_source })
   }
 }
 
@@ -619,6 +625,19 @@ export function postTransition({ store, authed, str, actingOperator }) {
     const legal = store.availableTransitions(c, op)
     if (to !== c.status && !legal.includes(to)) {
       return res.status(400).json({ error: `cannot transition to '${to}'`, allowed: legal })
+    }
+    // The diagnosis rides with the sign-off: the identified disease and the
+    // recommended resolution, when the caller sends them with a done-stage move. The
+    // technician's login is REQUIRED to have them (roles.js roleGate); a staff login may
+    // send them but is never asked to.
+    if (MANDATORY_MINIMUM_BLOCKED_STATUSES.includes(to) && SIGNOFF_DIAGNOSIS_FIELDS.length) {
+      const given = {}
+      for (const k of SIGNOFF_DIAGNOSIS_FIELDS) if (typeof req.body?.[k] === 'string' && req.body[k].trim()) given[k] = req.body[k].trim()
+      if (Object.keys(given).length) {
+        const merged = await store.mergeReport(c.id, given, op, { bypassObserve: true, autoAssign: false })
+        if (merged.error) return res.status(400).json({ error: merged.error })
+        await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `diagnosis recorded at sign-off: ${Object.keys(given).map(fieldLabel).join(', ')}`, data: { by: op.id, signoff: true, ...given } })
+      }
     }
     await store.transition(req.params.id, to, { user: op, reason: reason || 'operator override' })
     const after = await store.getCase(req.params.id)
@@ -1384,6 +1403,8 @@ export function postSendBack({ store, authed, str, actingOperator }) {
     if (!tags.includes('sent-back')) await store.updateCase(c.id, { tags: [...tags, 'sent-back'].join(',') }, op)
     const line = `Sent back by ${op.name || op.id}${missing.length ? `: still needed -- ${missing.join(', ')}` : ''}${text.trim() ? `. ${text.trim()}` : ''}`
     await store.appendEvent(c.id, { kind: 'note', actor: 'operator', text: line, data: { by: op.id, sent_back: true, missing } })
+    // A record a ranger handed over goes back off the desk to its ranger.
+    await withdrawHandoff(store, c.id, { by: op.name || op.id, user: op, reason: 'sent back' })
     res.json({ ok: true })
   }
 }

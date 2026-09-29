@@ -36,6 +36,7 @@ import { OPTED_OUT_TAG } from './heuristics.js'
 import { assigneeKeyFor, isAssignedTo, isOwnConversation } from '../case-assignment.js'
 import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
 import { withoutIssuedCodes } from '../role-invites.js'
+import { proactiveRefusal } from '../proactive-sends.js'
 
 export const STAFF_TEXT_MAX_LEN = 4000
 
@@ -49,8 +50,12 @@ export function staffLabel(contact) {
 
 // Refusal-or-null for messaging this case's reporter right now. Returns
 // { error } (honest, plain) or { recent } when sending is allowed.
-export async function outboundRefusal(store, caseRow, { canSend = null, sendReply = null, now = Date.now() } = {}) {
+export async function outboundRefusal(store, caseRow, { canSend = null, sendReply = null, now = Date.now(), kind = 'message' } = {}) {
   if (!caseRow) return { error: 'no such record' }
+  // Every send through this file starts a conversation (an operator or a tool
+  // decided to write), so CASEY_PROACTIVE_SENDS=off refuses all of them here.
+  const noStart = proactiveRefusal({ kind })
+  if (noStart) return { error: noStart }
   if (!sendReply || (canSend && !canSend(caseRow.channel))) {
     return { error: 'nothing was sent: this conversation is not attached to a messaging channel right now' }
   }
@@ -83,7 +88,7 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
   // would then hold the credential. (A text steered by a report's own words could try.)
   if (await withoutIssuedCodes(store, body).catch(() => null) != null) return { ok: false, error: 'nothing was sent: the message contains a registration code' }
   if (isOwnConversation(caseRow, staff)) return { ok: false, error: 'nothing was sent: that is this same chat with the assistant, not a reporter to message' }
-  const gate = await outboundRefusal(store, caseRow, { canSend, sendReply, now })
+  const gate = await outboundRefusal(store, caseRow, { canSend, sendReply, now, kind: extra?.staff_nudge ? 'staff_nudge' : 'message' })
   if (gate.error) return { ok: false, error: gate.error }
   const by = staffLabel(staff)
   const data = { to: caseRow.external_id, by, by_tier: staff?.tier || '', staff_contact_id: staff?.id || '', ...extra }

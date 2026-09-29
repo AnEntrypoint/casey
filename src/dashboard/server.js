@@ -51,6 +51,9 @@ import { parseJsonArraySafe, parseEventData } from '../safe.js'
 import { registerAuth } from './routes/auth.js'
 import { roleOf } from './roles.js'
 import { registerTeam } from './routes/team.js'
+import { registerAreas } from './routes/areas.js'
+import { registerTeamImport } from './routes/team-import.js'
+import { registerFeedback } from './routes/feedback.js'
 import { registerWhatsappWebhook } from './routes/whatsapp-webhook.js'
 import { registerCases } from './routes/cases.js'
 import { registerAccounts } from './routes/accounts.js'
@@ -785,6 +788,9 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerReports(app, deps)
   registerOperations(app, deps)
   registerTeam(app, deps)
+  registerAreas(app, deps)
+  registerTeamImport(app, deps)
+  registerFeedback(app, deps)
   // The basemap, same-origin, off a bounded on-disk LRU cache -- see
   // routes/tiles.js for the OSM usage-policy argument and the cache bound.
   // Registered here rather than in registerAuth's static block on purpose: it

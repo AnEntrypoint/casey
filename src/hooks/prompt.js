@@ -18,7 +18,7 @@ import { loadDomainConfig } from '../config-loader.js'
 import { MANDATORY_MINIMUM_FIELDS } from '../store/report-shape.js'
 import { buildPromptContext } from './prompt-context.js'
 import { headerSection, caseContextSection, gatherSection, replySection } from './prompt-sections.js'
-import { roleSection } from './prompt-roles.js'
+import { roleSection, feedbackSection } from './prompt-roles.js'
 import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR } from '../contact-tiers.js'
 
 const { persona } = loadDomainConfig()
@@ -48,6 +48,8 @@ export function caseSystemPrompt(caseRow, events, contact) {
     ...replySection(persona, caseRow, contact, ctx),
     // --- What this person's ROLE lets them do (empty for a reporter) ---
     ...roleSection(persona, caseRow, contact),
+    // --- Comments about the assistant itself (every tier) ---
+    ...feedbackSection(),
   ].join('\n')
 }
 
@@ -106,6 +108,8 @@ function selfCheckLoadBearingPromptContent() {
     { name: 'technician two-refusals rule', pattern: /two DIFFERENT refusals/, from: TIER_ANIMAL_HEALTH_TECHNICIAN },
     { name: 'operator desk block', pattern: /OPERATOR DESK/, from: TIER_OPERATOR },
     { name: 'operator cannot sign off', pattern: /CANNOT sign a/, from: TIER_OPERATOR },
+    { name: 'phone-plain-text rule for team replies', pattern: /PLAIN TEXT FOR A PHONE/, from: TIER_FIELD_WORKER },
+    { name: 'queue and handover answered as short plain lines', pattern: /QUEUE AND HANDOVER ANSWERS/, from: TIER_OPERATOR },
   ]
   const composed = { reporter: text, [TIER_FIELD_WORKER]: workerText, [TIER_ANIMAL_HEALTH_TECHNICIAN]: signOffText, [TIER_OPERATOR]: operatorText }
   const rungs = [TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR]
@@ -168,6 +172,8 @@ function selfCheckLoadBearingPromptContent() {
     // is the canary: a reply containing a word the judge bans and the prompt
     // never stated is held as an unsent draft, and the person gets silence.
     { name: 'never-say list matches the reply judge', pattern: /NEVER say these internal words[\s\S]*autonomy/ },
+    // Every tier can say something about the assistant itself; that goes to case_feedback, never into a report.
+    { name: 'comments-about-the-assistant go to case_feedback', pattern: /COMMENTS ABOUT YOU[\s\S]*case_feedback/ },
   ]
   for (const { name, pattern } of required) {
     if (!pattern.test(text)) {

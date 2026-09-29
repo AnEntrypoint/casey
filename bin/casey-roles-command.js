@@ -20,6 +20,9 @@ import { createInvite, listInvites, revokeInvite, normalizeMsisdn } from '../src
 import { fmtPhone27, fmtTimeSAST } from '../src/format.js'
 import { TIER_LABELS } from '../src/store/report-shape.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
+import { readFileSync } from 'node:fs'
+import { runImport, MAX_IMPORT_ROWS, MAX_IMPORT_CHARS } from '../src/team-import.js'
+import { rolloutTable, forgetRoster } from '../src/team-roster.js'
 
 const CLI = { id: 'cli-operator', role: 'operator' }
 const TEAM_TIERS = TIER_ORDER.filter(t => t !== TIER_REPORTER)
@@ -34,7 +37,7 @@ async function findWhatsappContact(store, needle) {
     || null
 }
 
-const usage = () => say('usage: casey roles <list|assign|demote|invite|invites|revoke|release|link> ...   (casey roles --help)')
+const usage = () => say('usage: casey roles <list|assign|demote|invite|invites|revoke|release|link|import|roster> ...   (casey roles --help)')
 
 export async function cmdRoles({ flags, rest }) {
   const store = await openStore()
@@ -62,6 +65,42 @@ export async function cmdRoles({ flags, rest }) {
     for (const a of accounts) {
       const link = a.contact_phone ? dim(` linked to ${fmtPhone27(a.contact_phone)}`) : ''
       console.log(`  ${bold(a.username)}\t${a.role}\t${a.disabled === '1' ? red('[disabled]') : green('[active]')}${link}`)
+    }
+    await closeAndExit(store, 0)
+  }
+
+  if (sub === 'import') {
+    const file = pos[0]
+    if (!file) await fail('usage: casey roles import <file.csv> [--dry-run] [--yes]', 'columns: name, phone, role, association, smartphone (yes/no). Nothing is written without --yes.')
+    let csv
+    try { csv = readFileSync(file, 'utf8') } catch { await fail(`cannot read "${file}".`) }
+    if (csv.length > MAX_IMPORT_CHARS) await fail(`that file is too large (over ${MAX_IMPORT_CHARS} characters); split it into parts of at most ${MAX_IMPORT_ROWS} people.`)
+    const apply = !!flags.yes && !flags['dry-run']
+    let out
+    try { out = await runImport(store, { csv }, { dryRun: !apply, isAdmin: true, by: 'cli-operator' }) } catch (e) { await fail(e.message) }
+    if (flags.json) { console.log(JSON.stringify(out, null, 2)); await closeAndExit(store, 0) }
+    const col = { create: green, update: cyan, skip: dim, error: red }
+    for (const r of out.results) console.log(`  line ${String(r.line).padEnd(4)} ${(col[r.action] || dim)(r.action.padEnd(6))} ${bold(r.name || '(no name)')}${r.role ? dim('  ' + r.role) : ''}${r.area ? dim('  ' + r.area) : ''}${r.phone ? dim('  ' + r.phone) : ''}  ${dim(r.reason)}`)
+    const s = out.summary
+    console.log(`\n${s.create} to create, ${s.update} to update, ${s.skip} skipped, ${s.error} with errors.`)
+    if (apply) console.log(green('applied.') + dim('  nobody was messaged; they take effect on their next WhatsApp message.'))
+    else console.log(dim(flags['dry-run'] ? 'dry run: nothing was written.' : 'preview only: nothing was written. Re-run with --yes to apply.'))
+    await closeAndExit(store, s.error && apply ? 2 : 0)
+  }
+
+  if (sub === 'roster') {
+    if (flags.forget) {
+      const gone = await forgetRoster(store, typeof flags.forget === 'string' ? flags.forget : pos[0] || '', 'cli-operator')
+      console.log(gone ? green('removed from the roster.') : dim('no such person on the roster.'))
+      await closeAndExit(store, gone ? 0 : 1)
+    }
+    const t = await rolloutTable(store)
+    if (flags.json) { console.log(JSON.stringify(t, null, 2)); await closeAndExit(store, 0) }
+    if (!t.areas.length) console.log(dim('the roster is empty -- casey roles import <file.csv> --yes'))
+    else {
+      const w = Math.max(11, ...t.areas.map(a => a.area.length))
+      console.log(bold('association'.padEnd(w)) + bold('  total  smartphones  registered  first-message  first-case'))
+      for (const a of [...t.areas, { area: 'ALL', ...t.totals }]) console.log(`${a.area.padEnd(w)}  ${String(a.total).padStart(5)}  ${String(a.smartphones).padStart(11)}  ${String(a.registered).padStart(10)}  ${String(a.first_message).padStart(13)}  ${String(a.first_case).padStart(10)}`)
     }
     await closeAndExit(store, 0)
   }

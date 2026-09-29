@@ -28,17 +28,23 @@ import { createInvite, normalizeMsisdn } from './role-invites.js'
 import { sendStaffMessage, pendingDraft, releaseCase, staffLabel } from './hooks/staff-outbound.js'
 import { dropTag } from './hooks/heuristics.js'
 import { UNCLAIMED_ASSIGNEE } from './case-store.js'
-import { TIER_LABELS } from './store/report-shape.js'
+import { TIER_LABELS, ENQUIRY_HEADLINE_FIELDS } from './store/report-shape.js'
 import { evData } from './safe.js'
 import { clearFocusForCase } from './team-focus.js'
 import { signOffCandidates } from './case-tools-team-review.js'
+import { loadAreas, possiblyWrongArea } from './areas.js'
 import { findCase, teamRow, actorData, doneStages } from './case-tools-team-shared.js'
 
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
 const staffOf = (ctx) => ({ ...(ctx?.contact || {}), tier: ctx?.tier })
 const opUser = (ctx) => ({ id: staffLabel(ctx?.contact), role: 'operator' })
-const SECTIONS = ['unassigned', 'needs_human', 'unreplied', 'drafts', 'flagged', 'signoff', 'attention']
+const SECTIONS = ['unassigned', 'needs_human', 'unreplied', 'drafts', 'flagged', 'signoff', 'wrong_area', 'attention']
 const QUIET_DEFAULT_HOURS = 12
+
+// One short plain line per record for a phone: reference, the headline facts, who
+// holds it, and why it is listed. No markdown, no pipes, no asterisks.
+const phoneLine = (row) => [row.ref, ...ENQUIRY_HEADLINE_FIELDS.map(k => row[k]).filter(Boolean).map(v => String(v).replace(/\s+/g, ' ').slice(0, 40)), row.assignee && row.assignee !== UNCLAIMED_ASSIGNEE ? `with ${row.assignee}` : 'nobody has it', row.why ? String(row.why).replace(/\s+/g, ' ').slice(0, 60) : ''].filter(Boolean).join(', ')
+const PLAIN_NOTE = 'Pass these lines on as plain text, one per line, in this order. No tables, no asterisks, no bullets, no markdown.'
 
 const openCases = async (store) => (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system' && isOpenCase(c))
 const isUnassigned = (c) => { const a = String(c.assignee || '').trim(); return !a || a === UNCLAIMED_ASSIGNEE }
@@ -62,12 +68,14 @@ export async function resolveTeamContact(store, name) {
 export function buildTeamOperatorTools(store) {
   return [
     defTool('team_queue', 'cases',
-      'The operator work queue: how many records sit in each section (unassigned, wanting a person, unanswered because the assistant was down, held drafts, flagged replies, ready to sign off, needing attention) and the top rows of each. Pass `section` for one section with more rows. PII-free.',
+      'The operator work queue: how many records sit in each section (unassigned, wanting a person, unanswered because the assistant was down, held drafts, flagged replies, ready to sign off, possibly filed under the wrong area, needing attention) and the top rows of each. Pass `section` for one section with more rows. PII-free. Rows come back as short plain lines to relay as plain text.',
       { type: 'object', properties: { section: str('One section only', { enum: SECTIONS }), limit: { type: 'number', default: 5 } } },
       async ({ section, limit = 5 }, ctx) => {
         const open = await openCases(store())
         const now = Date.now()
         const ranked = rankAttention(open, now, { limit: 0 })
+        const areaList = await loadAreas(store())
+        const wrongArea = new Map(open.map(c => [c.id, possiblyWrongArea(c, areaList)]).filter(([, w]) => w))
         const by = {
           unassigned: open.filter(isUnassigned),
           needs_human: open.filter(c => tagList(c).includes('needs-human')),
@@ -75,17 +83,23 @@ export function buildTeamOperatorTools(store) {
           drafts: open.filter(c => tagList(c).includes('draft-pending')),
           flagged: open.filter(c => tagList(c).includes('flagged-reply')),
           signoff: await signOffCandidates(store(), ctx),
+          wrong_area: open.filter(c => wrongArea.has(c.id)),
           attention: ranked.items.map(x => x.c),
         }
         const reasons = new Map(ranked.items.map(x => [x.c.id, x.reason]))
+        // A record whose location text points at an area other than the one its holder
+        // covers (areas.js possiblyWrongArea): say where it may belong, on every listing.
+        for (const [id, w] of wrongArea) reasons.set(id, `${reasons.has(id) ? reasons.get(id) + '; ' : ''}may belong in ${w.location_area?.name || w.association_area?.name || 'another area'}`)
         const n = Math.min(Math.max(Number(limit) || 5, 1), 25)
         const pick = section && SECTIONS.includes(section) ? [section] : SECTIONS
         const counts = Object.fromEntries(SECTIONS.map(s => [s, by[s].length]))
-        const rows = Object.fromEntries(pick.filter(s => by[s].length).map(s => [s, by[s].slice(0, n).map(c => teamRow(c, ctx, reasons.has(c.id) ? { why: reasons.get(c.id) } : {}))]))
-        return { open_total: open.length, counts, rows }
+        const rows = Object.fromEntries(pick.filter(s => by[s].length).map(s => [s, by[s].slice(0, n).map(c => phoneLine(teamRow(c, ctx, reasons.has(c.id) ? { why: reasons.get(c.id) } : {})))]))
+        const parts = SECTIONS.filter(s => counts[s]).map(s => `${counts[s]} ${s.replace('_', ' ')}`)
+        const say = `${open.length} open.${parts.length ? ' ' + parts.join(', ') + '.' : ' Nothing is waiting on anyone.'}`
+        return { open_total: open.length, counts, say, lines: rows, note: PLAIN_NOTE }
       }),
     defTool('team_handover', 'cases',
-      'Shift handover summary: what needs attention now, hand-offs nobody has taken, held drafts, and what was touched since the shift marker. PII-free. Use when the operator asks for a handover or what changed.',
+      'Shift handover summary: what needs attention now, hand-offs nobody has taken, held drafts, and what was touched since the shift marker, as short plain lines to relay as plain text. PII-free. Use when the operator asks for a handover or what changed.',
       { type: 'object', properties: {} },
       async (_args, ctx) => {
         const open = await openCases(store())
@@ -94,10 +108,11 @@ export function buildTeamOperatorTools(store) {
         const touched = open.filter(c => since && (tsMs(c.last_event_at) || tsMs(c.updated_at) || 0) >= since)
         return {
           since: since || null, since_by: marker?.by || null,
-          attention: rankAttention(open, Date.now(), { limit: 10 }).items.map(x => teamRow(x.c, ctx, { why: x.reason })),
-          handoffs_not_taken: open.filter(c => tagList(c).includes('needs-human') && isUnassigned(c)).slice(0, 10).map(c => teamRow(c, ctx)),
-          held_drafts: open.filter(c => tagList(c).includes('draft-pending')).slice(0, 10).map(c => teamRow(c, ctx)),
-          touched_since: touched.length, touched: touched.slice(0, 10).map(c => teamRow(c, ctx)),
+          attention: rankAttention(open, Date.now(), { limit: 10 }).items.map(x => phoneLine(teamRow(x.c, ctx, { why: x.reason }))),
+          handoffs_not_taken: open.filter(c => tagList(c).includes('needs-human') && isUnassigned(c)).slice(0, 10).map(c => phoneLine(teamRow(c, ctx))),
+          held_drafts: open.filter(c => tagList(c).includes('draft-pending')).slice(0, 10).map(c => phoneLine(teamRow(c, ctx))),
+          touched_since: touched.length, touched: touched.slice(0, 10).map(c => phoneLine(teamRow(c, ctx))),
+          note: PLAIN_NOTE,
         }
       }),
     defTool('team_assign', 'cases',
@@ -231,7 +246,7 @@ export function buildTeamOperatorTools(store) {
         return { team: team.map(k => ({ name: staffLabel(k), role: TIER_LABELS[resolveTierValue(k.tier)], open_assigned: open.filter(c => isAssignedTo(c, k)).length })) }
       }),
     defTool('team_quiet_staff', 'cases',
-      `Team members whose assigned records have gone quiet: nothing from them since the assignment (or for ${QUIET_DEFAULT_HOURS}+ hours), ranked by how long, with whether the reporter is waiting, their number for a direct nudge, whether the assistant can still reach them (their own 24h window), and a drafted nudge. Deliberately shows THEIR number; never a reporter's.`,
+      `Team members whose assigned records have gone quiet: nothing from them since the assignment (or for ${QUIET_DEFAULT_HOURS}+ hours), ranked by how long, with whether the reporter is waiting, their number for a direct nudge, whether the assistant can still reach them (their own 24h window), and a drafted nudge. Deliberately shows THEIR number; never a reporter's. To see what is behind a quiet ranger (their area's cases today, what each still needs) use team_ranger_day with their name.`,
       { type: 'object', properties: { hours: { type: 'number', description: `Quiet for at least this many hours (default ${QUIET_DEFAULT_HOURS})` } } },
       async ({ hours = QUIET_DEFAULT_HOURS }, ctx) => {
         const threshold = Math.max(Number.isFinite(Number(hours)) ? Number(hours) : QUIET_DEFAULT_HOURS, 0) * 3600e3
@@ -266,7 +281,7 @@ export function buildTeamOperatorTools(store) {
           cases.sort((a, b) => b.quiet_hours - a.quiet_hours)
           out.push({
             name: staffLabel(k), role: TIER_LABELS[resolveTierValue(k.tier)], phone: fmtPhone27(k.external_id),
-            reachable_through_assistant: reachable, waiting_reporters: cases.filter(x => x.reporter_waiting).length, cases: cases.slice(0, 8),
+            reachable_through_assistant: reachable, see_their_day_with: 'team_ranger_day', waiting_reporters: cases.filter(x => x.reporter_waiting).length, cases: cases.slice(0, 8),
             nudge_text: `Hello ${staffLabel(k).split(' ')[0]}, it is ${staffLabel(ctx.contact)} from the team. ${cases.length === 1 ? `${cases[0].ref} has` : `${cases.length} of your records have`} been quiet${cases.some(x => x.reporter_waiting) ? ' and the reporter is waiting to hear from you' : ''}. Can you update us or tell us if someone else should take ${cases.length === 1 ? 'it' : 'them'}?`,
           })
         }

@@ -18,6 +18,7 @@ import { stageNote, OPTED_OUT_TAG } from './heuristics.js'
 import { tagList } from '../timestamp.js'
 import { caseDeliveryTarget } from './handler.js'
 import { tsMs } from '../timestamp.js'
+import { proactiveRefusal } from '../proactive-sends.js'
 
 // Meta's free-form reply window. A constant rather than an env var on purpose:
 // it is a platform rule, not a tuning knob, and a deployment that "raised" it
@@ -89,6 +90,16 @@ export function makeTransitionNotifier(store, sendReply, { log = console } = {})
     if (tagList(caseRow).includes(OPTED_OUT_TAG)) return
     const text = stageNote(to)
     if (!text) return
+    // A stage note is casey writing first. With proactive sends off it is recorded
+    // as not sent and never handed to sendReply.
+    if (proactiveRefusal({ kind: 'stage-note' })) {
+      await store.appendEvent(caseRow.id, {
+        kind: 'observation', actor: 'system',
+        text: 'Stage note not sent -- this deployment does not start conversations (CASEY_PROACTIVE_SENDS=off).',
+        data: { proactive: 'stage-note', stage: to, suppressed: 'proactive_off' },
+      }).catch(() => {})
+      return
+    }
     let recent = []
     try {
       recent = await store.listEventsPage(caseRow.id, { limit: 25, offset: 0 })
