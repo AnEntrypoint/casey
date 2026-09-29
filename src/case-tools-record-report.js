@@ -106,9 +106,24 @@ async function namesHeldRecord(store, ctx) {
   return null
 }
 
+async function namesARecord(store, id) {
+  const key = String(id ?? '').trim()
+  if (!key) return false
+  try {
+    if (await store().getCase(key)) return true
+    return !!(typeof store().getCaseByRef === 'function' && await store().getCaseByRef(key))
+  } catch { return true }   // unreadable: fail toward the refusal
+}
+
 async function resolveReportTarget(store, id, ctx) {
   const bound = boundCase(ctx)
   if (bound.id && (id === bound.id || id === bound.ref)) return { id: bound.id }
+  // The write always lands on the active record, so the id is only a guard against
+  // a name that points at SOMEONE ELSE'S record. Two names are not that and are
+  // taken as the active record rather than refused (a refusal here lost the new
+  // sighting's place and pin): the record this turn just left when it opened or
+  // switched to the active one, and a placeholder that names no record at all.
+  if (bound.id && (ctx?.activeCaseBinding?.left?.has(id) || !(await namesARecord(store, id)))) return { id: bound.id }
   try {
     const logTarget = bound.id || id
     await store().appendEvent(logTarget, {

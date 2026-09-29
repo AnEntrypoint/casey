@@ -8,7 +8,7 @@
 // deps: store, wrap, actingOperator, authed, isAdmin
 import { fmtPhone27 } from '../../format.js'
 import { mountRoutes } from './register.js'
-import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, resolveContactTier } from '../../contact-tiers.js'
+import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, ADMIN_ONLY_TIERS, grantableBy, resolveContactTier } from '../../contact-tiers.js'
 import { createInvite, listInvites, revokeInvite, normalizeMsisdn } from '../../role-invites.js'
 
 // The one allowlist through which a contact row may reach JSON (AGENTS.md
@@ -93,8 +93,8 @@ export function postContactTier({ store, authed, isAdmin, actingOperator }) {
       // rather than quietly coerced (see case-store.js's setContactTier for why
       // reads coerce and writes refuse).
       if (!TIER_ORDER.includes(tier)) return res.status(400).json({ error: `tier must be one of ${TIER_ORDER.map(t => `"${t}"`).join(', ')}` })
-      // The operator rung is the team-management rung: only an admin may grant it.
-      if (tier === TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can make someone an operator' })
+      // The operator and technician rungs (team management, sign-off): only an admin may grant them.
+      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: `only an admin can make someone ${tier === TIER_OPERATOR ? 'an operator' : 'a technician'}` })
       // The operator rung is an admin's to give AND to take away.
       const existing = await store.getContact(req.params.id)
       if (existing && resolveContactTier(existing) === TIER_OPERATOR && tier !== TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
@@ -133,7 +133,7 @@ export function postContactRegister({ store, authed, isAdmin, actingOperator }) 
       const external_id = normalizeMsisdn(phone)
       if (!external_id) return res.status(400).json({ error: 'that does not look like a phone number -- use the full number, e.g. 079 091 5297 or +27 79 091 5297' })
       if (!TIER_ORDER.includes(tier) || tier === TIER_REPORTER) return res.status(400).json({ error: `role must be one of ${TIER_ORDER.filter(t => t !== TIER_REPORTER).map(t => `"${t}"`).join(', ')}` })
-      if (tier === TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can make someone an operator' })
+      if (ADMIN_ONLY_TIERS.includes(tier) && !isAdmin(req)) return res.status(403).json({ error: `only an admin can make someone ${tier === TIER_OPERATOR ? 'an operator' : 'a technician'}` })
       const known = (await store.listContacts({ limit: 1000 })).find(k => k.channel === 'whatsapp' && k.external_id === external_id)
       if (known && resolveContactTier(known) === TIER_OPERATOR && tier !== TIER_OPERATOR && !isAdmin(req)) return res.status(403).json({ error: 'only an admin can change an operator' })
       const contact = await store.registerContact({ channel: 'whatsapp', external_id, display_name: String(name || '').trim().slice(0, 80), tier }, { id: actingOperator(req).id, role: 'operator' })
@@ -161,7 +161,7 @@ export function postRoleInvite({ store, authed, isAdmin, actingOperator }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     try {
       const { tier, label, ttl_hours, max_uses } = req.body || {}
-      const grantableTiers = TIER_ORDER.filter(t => t !== TIER_REPORTER && (t !== TIER_OPERATOR || isAdmin(req)))
+      const grantableTiers = grantableBy(isAdmin(req))
       const invite = await createInvite(store, { tier, label, ttlHours: ttl_hours, maxUses: max_uses, by: actingOperator(req).id, grantableTiers })
       res.json({ invite })
     } catch (e) { res.status(400).json({ error: e.message }) }

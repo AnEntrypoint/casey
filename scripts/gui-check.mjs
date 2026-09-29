@@ -340,11 +340,15 @@ try {
   await asUser('', '#home=cases&case=' + ids.C, 3500)
   const opts = JSON.parse(await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); return JSON.stringify(s ? { opts: [...s.options].map((o) => o.value), cur: s.value } : null) })()`))
   check(!!opts && opts.cur === '' && !opts.opts.includes('agent'), 'a report held by the assistant reads "Nobody yet" in the Assigned-to picker, not the raw word agent', opts && `current "${opts.cur}"`)
-  await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); s.value = ${JSON.stringify(USER + '-rng')}; s.dispatchEvent(new Event('change', { bubbles: true })); return 1 })()`)
+  // A ranger who is BOTH a WhatsApp contact and a linked dashboard login is one person: the picker
+  // lists them once and assigns with the contact key (which the login resolves through contact_phone).
+  const rangerOpts = JSON.parse(await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); return JSON.stringify([...s.options].filter((o) => /^GUI Ranger \\(/.test(o.text)).map((o) => o.value)) })()`))
+  check(rangerOpts.length === 1 && rangerOpts[0].startsWith('contact:'), 'a ranger who is both a contact and a linked login is listed once, by the contact key', JSON.stringify(rangerOpts))
+  await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); s.value = ${JSON.stringify(rangerOpts[0] || '')}; s.dispatchEvent(new Event('change', { bubbles: true })); return 1 })()`)
   await sleep(300)
   await clickText('Save edits'); await sleep(1500)
   const assigned = await api('GET', '/api/cases/' + ids.C)
-  check(assigned.j && assigned.j.case.assignee === USER + '-rng', 'the operator assigned the report to a ranger through the picker', assigned.j && assigned.j.case.assignee)
+  check(assigned.j && assigned.j.case.assignee === rangerOpts[0], 'the operator assigned the report to a ranger through the picker', assigned.j && assigned.j.case.assignee)
 
   await asUser('', '#home=cases&case=does-not-exist', 3000)
   const gone = await evalJs(`(document.querySelector('.case-detail-pane') || {}).innerText`)

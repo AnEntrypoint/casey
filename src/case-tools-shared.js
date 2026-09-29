@@ -160,7 +160,14 @@ export function boundCase(ctx) {
 // attempt) and the flat per-copy fields (this call's own ctx).
 export function rebindActiveCase(ctx, c) {
   if (!ctx || !c) return
-  if (ctx.activeCaseBinding) { ctx.activeCaseBinding.id = c.id; ctx.activeCaseBinding.ref = c.ref }
+  if (ctx.activeCaseBinding) {
+    // The record this turn just LEFT stays nameable for the rest of the turn: a model
+    // that opened a new record and then wrote the new sighting/pin against the
+    // previous one's reference meant the record it just opened (case-tools-record-report.js).
+    const b = ctx.activeCaseBinding
+    if (b.id && b.id !== c.id) (b.left ||= new Set()).add(b.id).add(b.ref)
+    b.id = c.id; b.ref = c.ref
+  }
   ctx.activeCaseId = c.id
   ctx.activeCaseRef = c.ref
 }

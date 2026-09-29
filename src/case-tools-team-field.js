@@ -83,7 +83,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         }
       }),
     defTool('case_claim', 'cases',
-      'Take an unassigned open record for THIS team member (assign it to them). Refuses one that is already with someone else. Use when they say they will take it or it is theirs to do.',
+      'Take an unassigned open record for THIS team member (assign it to them) -- only one an operator has offered to them (see case_pending dispatches); anything else is refused, and they should ask an operator to assign it. Refuses one that is already with someone else.',
       { type: 'object', properties: { case: str('Record reference or id') }, required: ['case'] },
       async ({ case: ref }, ctx) => {
         const c0 = await findCase(store(), ref)
@@ -101,6 +101,11 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           if (current === key) return { ok: true, ref: c.ref, note: 'Already assigned to you.' }
           if (current && current !== UNCLAIMED_ASSIGNEE) {
             return { error: 'That one is already with someone else. Ask an operator to move it if it should be yours.' }
+          }
+          // No self-service from the unassigned pool: a ranger or technician takes a record
+          // only when an operator has offered it to THEM. An operator assigns freely.
+          if (!isOperator(ctx.tier) && !(await pendingDispatchesFor(store(), ctx.contact, [c])).length) {
+            return { error: 'That record has not been offered to you, so it is not yours to take. Ask an operator to assign it to you.' }
           }
           const by = staffLabel(ctx.contact)
           await store().updateCase(c.id, { assignee: key }, storeUser(ctx, isOperator(ctx.tier) ? 'operator' : 'assigned'))

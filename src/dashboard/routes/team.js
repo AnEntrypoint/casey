@@ -19,22 +19,30 @@ const HOUR = 3600e3
 
 // The people a case can be assigned to: registered team members reached over
 // WhatsApp (assigned by their contact key) and dashboard logins for the field
-// roles (assigned by username).
+// roles (assigned by username). A login linked (contact_phone) to a listed
+// WhatsApp team member is that same person: the picker assigns with the contact
+// key (which the login also holds through roles.js's contact_phone resolution), so
+// the login is carried as an ALIAS (`alias_of` = the contact key), not as a second
+// choice. It stays in the payload so a report already held under the username still
+// resolves to a name; the picker skips aliases. An unlinked login is listed as before.
 export function getTeamMembers({ store, authed, listAccounts }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const members = []
+    const contactKeyByPhone = new Map()
     const contacts = await store.listContacts({ limit: 500 })
     for (const c of contacts) {
       const tier = resolveContactTier(c)
       if (tier !== TIER_FIELD_WORKER && tier !== TIER_ANIMAL_HEALTH_TECHNICIAN) continue
       const key = assigneeKeyFor(c)
       if (!key) continue
+      if (c.channel === 'whatsapp') contactKeyByPhone.set(normalizeMsisdn(c.external_id), key)
       members.push({ key, name: c.display_name && c.display_name !== c.external_id ? c.display_name : fmtPhone27(c.external_id), role: TIER_LABELS[tier], via: 'WhatsApp' })
     }
     for (const a of await listAccounts(store)) {
       if (a.disabled === '1' || !FIELD_ROLES.includes(a.role)) continue
-      members.push({ key: a.username, name: a.display_name || a.username, role: ROLE_LABEL[a.role], via: 'Dashboard login' })
+      const alias_of = contactKeyByPhone.get(normalizeMsisdn(a.contact_phone)) || undefined
+      members.push({ key: a.username, name: a.display_name || a.username, role: ROLE_LABEL[a.role], via: 'Dashboard login', ...(alias_of ? { alias_of } : {}) })
     }
     members.sort((x, y) => x.name.localeCompare(y.name))
     res.json({ members })

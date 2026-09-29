@@ -199,7 +199,7 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   // hooks/media-relay.js. Everyone else, and a team member with nothing
   // assigned, takes the unchanged path below.
   const route = await routeStaffArtifact({ store, log, caseRow, msg, inboundText, msgId: messageId(msg) })
-  const promptNote = route ? await noteRoute({ store, log, caseRow, route, msg }) : ''
+  let promptNote = route ? await noteRoute({ store, log, caseRow, route, msg }) : ''
   const ingressRecorded = route?.mode === 'relay'
   if (ingressRecorded) {
     const relay = { by: staffLabel(route.contact), contactId: route.contact.id }
@@ -213,7 +213,7 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   // because the model never sees the webhook payload the coordinates arrive in.
   // Runs BEFORE inbound-turn.js re-reads the case, so this turn's prompt already
   // carries the real position and its provenance.
-  if (route?.mode !== 'relay') await recordInboundLocation({ store, log, caseId: caseRow.id, msg })
+  if (route?.mode !== 'relay') promptNote += (await recordInboundLocation({ store, log, caseId: caseRow.id, msg })) || ''
   if (!created) return { promptNote, ingressRecorded }
   if (!caseRow.subject) {
     const subj = truncate(inboundText || media || 'New conversation', 80)

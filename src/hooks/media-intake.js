@@ -25,6 +25,7 @@ import { truncate } from './heuristics.js'
 import { observation } from './case-writes.js'
 import { transcribeAudioDetailed, describePhoto } from './media.js'
 import { isValidLatLon } from '../case-tools-shared.js'
+import { withoutIssuedCodes } from '../role-invites.js'
 
 // Short description of any non-text content, so a media-only message is never
 // summarised as "empty". Also feeds the new-case subject seed and the agent
@@ -178,9 +179,13 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
 // blocking the reply. In observe mode the COLUMN write is correctly refused (no
 // automatic edits) but the arrival still lands on the timeline, since observe is
 // exactly the mode with no agent narration to compensate.
+// Returns '' when the pin was recorded (or there was none), else a system note for
+// this turn's prompt saying the position was NOT stored, so the reply cannot say
+// "got it" about a pin that reached no record.
+const PIN_NOT_STORED = (why) => `\n\n[System note: the location pin they shared ${why}, so NO position was stored. Do not say you have their location; tell them plainly it did not come through and ask where the animals are (a town or farm name, or send the pin again).]`
 export async function recordInboundLocation({ store, log, caseId, msg }) {
   const pin = msg.location
-  if (!pin) return
+  if (!pin) return ''
   // An out-of-range pair is surfaced, not silently treated as "no pin sent":
   // a map point that never appears with no explanation is the failure mode
   // case_report's own range check was added to close.
@@ -188,14 +193,14 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
     log.warn?.('[casey] location pin out of range; not recorded', { caseId, lat: pin.lat, lon: pin.lon })
     try { await store.appendEvent(caseId, observation(`LOCATION PIN REJECTED: the shared position was out of range (lat=${pin.lat}, lon=${pin.lon}) and was not recorded. Ask where they are.`)) }
     catch (e) { log.warn?.('[casey] location pin rejection note failed', { caseId, error: e.message }) }
-    return
+    return PIN_NOT_STORED('was not a real position (it was out of range)')
   }
   const place = [pin.name, pin.address].filter(Boolean).join(', ')
   try {
     const res = await store.updateCaseChecked(caseId, { lat: pin.lat, lon: pin.lon, location_source: 'gps' })
     if (res?.error && res.error !== 'observe') {
       log.warn?.('[casey] location pin write failed', { caseId, error: res.error })
-      return
+      return PIN_NOT_STORED('could not be saved just now')
     }
     const recorded = res?.error === 'observe'
       ? 'not recorded on the map (a person is handling this themselves)'
@@ -203,7 +208,8 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
     await store.appendEvent(caseId, observation(
       `LOCATION PIN RECEIVED: lat ${pin.lat}, lon ${pin.lon}${place ? ` -- WhatsApp labels this spot "${truncate(place, 200)}" (its own label, not the person's words)` : ''}. Read off the person's own device and ${recorded}.`,
     ))
-  } catch (e) { log.warn?.('[casey] location pin mark failed', { caseId, error: e.message }) }
+    return ''
+  } catch (e) { log.warn?.('[casey] location pin mark failed', { caseId, error: e.message }); return PIN_NOT_STORED('could not be saved just now') }
 }
 
 // Record every media artifact this message carried. Photo first, then audio,
@@ -223,6 +229,13 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
   }
 
   const tr = audioItem ? await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType) : { text: '', error: '' }
+  // A code spoken in a voice note is scrubbed exactly like a typed one before the
+  // transcript reaches the timeline, the report note or the model. If the scrub
+  // itself fails the transcript is dropped rather than kept unredacted.
+  if (tr.text) {
+    try { const clean = await withoutIssuedCodes(store, tr.text); if (clean != null) tr.text = clean }
+    catch (e) { log.error?.('[casey] transcript code redaction failed', { caseId, error: e.message }); tr.text = ''; tr.error = tr.error || 'transcript withheld' }
+  }
   if (audioItem) {
     // The audio log line: what arrived, what became of it. The bytes themselves
     // are saved by recordArrival below and the path lands on the timeline event.

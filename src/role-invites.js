@@ -16,7 +16,7 @@
 // returned once, at creation, and cannot be recovered afterwards.
 
 import crypto from 'node:crypto'
-import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, resolveTierValue } from './contact-tiers.js'
+import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, grantableBy, resolveTierValue } from './contact-tiers.js'
 import { taggedObservations } from './store/settings-log.js'
 
 // Crockford-ish: no 0/O/1/I/L, so a code read aloud or typed off a screen
@@ -123,13 +123,13 @@ function statusOf(v, now) {
 const publicView = (v, now) => ({ id: v.id, tier: v.tier, label: v.label, created_by: v.by, created_at: v.created_at, expires_at: v.expires_at, uses: v.uses, max_uses: v.max_uses, status: statusOf(v, now) })
 
 // `grantableTiers`: the rungs the CREATOR may hand out. The dashboard passes
-// every rung for an admin and everything below operator for anyone else; an
-// operator-rung phone passes everything below operator. Reporter is never worth
-// inviting, and operator needs an admin -- a promotion to the team-management
-// rung is the one grant that must not be self-serve.
-export async function createInvite(store, { tier, label = '', ttlHours = DEFAULT_TTL_HOURS, maxUses = 1, by = 'operator', grantableTiers = TIER_ORDER.filter(t => t !== TIER_REPORTER && t !== TIER_OPERATOR), now = Date.now() } = {}) {
+// every rung for an admin and only the eco-ranger rung for anyone else; an
+// operator-rung phone passes the same. Reporter is never worth inviting, and the
+// operator and technician rungs need an admin -- team management and sign-off
+// authority are the grants that must not be self-serve.
+export async function createInvite(store, { tier, label = '', ttlHours = DEFAULT_TTL_HOURS, maxUses = 1, by = 'operator', grantableTiers = grantableBy(false), now = Date.now() } = {}) {
   if (!TIER_ORDER.includes(tier) || tier === TIER_REPORTER) throw new Error(`tier must be one of ${TIER_ORDER.filter(t => t !== TIER_REPORTER).join(', ')}`)
-  if (!grantableTiers.includes(tier)) throw new Error(`you cannot invite someone as ${tier}${tier === TIER_OPERATOR ? ' -- only an admin can' : ''}`)
+  if (!grantableTiers.includes(tier)) throw new Error(`you cannot invite someone as ${tier}${grantableBy(true).includes(tier) && !grantableBy(false).includes(tier) ? ' -- only an admin can' : ''}`)
   const ttl = Math.min(Math.max(Number(ttlHours) || DEFAULT_TTL_HOURS, 1), MAX_TTL_HOURS)
   const uses = Math.min(Math.max(Math.floor(Number(maxUses)) || 1, 1), 25)
   const code = generateCode()

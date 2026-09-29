@@ -55,7 +55,10 @@ export function deskAuthorityOn(ctx, caseRow) {
   const direct = authorityOn(ctx, caseRow)
   if (direct) return direct
   const a = String(caseRow?.assignee || '').trim()
-  if (atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN) && (!a || a === UNCLAIMED_ASSIGNEE)) return 'assigned'
+  // The same exclusion authorityOn applies above: a technician's OWN filed
+  // report is never widened into their desk, even unassigned/unclaimed --
+  // otherwise the person who reported it could review and sign it off.
+  if (atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN) && (!a || a === UNCLAIMED_ASSIGNEE) && !isOwnConversation(caseRow, ctx?.contact)) return 'assigned'
   return null
 }
 

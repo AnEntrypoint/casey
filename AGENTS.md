@@ -33,6 +33,8 @@ carries its own default.
 | `animal_health_technician` | Everything above, plus the EXCLUSIVE authority to move a report to a done stage. | See the AHT-exclusive-signoff principle under Design principles. |
 | `operator` | Everything above EXCEPT sign-off: the team-management rung (work the queue, reply to reporters, assign, issue role invites) for a team member who mainly uses the dashboard but must be able to work over WhatsApp too. | Sits above the technician on the ladder, and `canSignOff` is an equality test, so it does NOT inherit sign-off. Only an admin may grant it. |
 
+**Only an admin may grant the operator rung OR the technician rung (sign-off authority).** `contact-tiers.js`'s `grantableBy(isAdmin)` is the one filter: the dashboard tier/register/invite routes, the WhatsApp `team_register`/`team_invite` tools and `role-invites.js`'s `createInvite` default all use it, and the role dropdowns in the SPA (`team-registration.js` `assignableTiers`) hide those options for a non-admin. An operator (or an operator-rung phone) may still grant the field-worker (eco ranger) rung. `casey roles` acts with shell/admin authority.
+
 **Team media on site (`hooks/media-relay.js`).** A ranger or technician
 (>= `field_worker`) messages the bot on the reporter's behalf, so their photos,
 voice notes and location pins must never reach the wrong record. Media is filed
@@ -53,6 +55,8 @@ check-in position (`case_checkin` semantics); the record's own lat/lon
 where the animals are, when it uses `case_edit` with the pin's exact
 coordinates. The same rung rule for STOP is in the STOP/HUMAN bullet below.
 
+**Which record a `case_report` lands on, and an unstored pin.** `case_report` always writes the turn's ACTIVE record; its `id` argument is only a guard against naming someone else's record. So an `id` that is the record this turn just left through `case_new`/`case_switch` (`activeCaseBinding.left`), or that names no record at all (a placeholder such as "new"), is taken as the active record instead of refused, which used to drop the new sighting's place and pin; another contact's real record is still refused. A location pin that could not be stored (out of range, write failed) puts a system note on that turn's prompt (`media-intake.js` `recordInboundLocation` -> `applyInboundSideEffects`'s `promptNote`) so the reply never says it has the position.
+
 **A phone number gets a role by exactly two mechanisms, neither reachable from
 a contact's own free text.** (1) An operator ASSIGNS it in the dashboard:
 `POST /api/contacts/:id/tier` for an existing contact, or `POST
@@ -68,13 +72,13 @@ cannot decide the outcome, and a wrong guess opens no case. Codes live in
 `src/role-invites.js` as an append-only audited log on a `role-invites` system
 singleton case (no schema change), only a SHA-256 is stored (the plain code is
 returned once at creation), single use by default, 72h default life, claims are
-serialised per code, a code never DEMOTES, at most 100 unused codes exist at once, a code sitting inside a longer message registers nobody and is stripped from the text before it is stored or shown to the model (`withoutIssuedCodes`; a space-separated code counts only when it matches one we issued), and wrong guesses are capped per
-contact (5/hour) and deployment-wide (40/hour). The operator rung can be granted
+serialised per code, a code never DEMOTES, at most 100 unused codes exist at once, a code sitting inside a longer message registers nobody and is stripped from the text before it is stored or shown to the model (`withoutIssuedCodes`; a space-separated code counts only when it matches one we issued; a voice-note transcript goes through the same scrubber in `media-intake.js` before it reaches the timeline or report note), and wrong guesses are capped per
+contact (5/hour) and deployment-wide (200/hour). The operator and technician rungs can be granted
 only by an admin, by either mechanism. Both end in `setContactTier`.
 
 Promotion is operator-assigned via the dashboard (`POST
-/api/contacts/:id/tier`, any authed operator except for the operator rung, which
-needs an admin) and
+/api/contacts/:id/tier`, any authed operator except for the operator and technician rungs, which
+need an admin) and
 `case-store.js`'s `setContactTier`. No `case_*` tool touches `contact.tier`, so
 it is never contact-self-service or LLM-settable. The WRITE boundary REFUSES an
 unrecognised value (validated against `TIER_ORDER`); the READ path COERCES one
@@ -106,7 +110,9 @@ state of all twenty comparisons before `contact-tiers.js` existed. Use
 composes the TOP rung's prompt and throws if an elevated instruction is missing
 from it, which is what catches a branch rewritten back into an equality.
 
-**Erasing a contact reaches their role too** (`CaseStore._scrubRoleReferences`): the rung drops to `reporter`, the contact id in assignment/notice/dispatch events becomes `[erased]`, their claim record in the role-invite log is overwritten and the label of the code they used is blanked. **`casey retention` never expires a role/invite/notice singleton** (`channel:'system'` is kept before any age is read). **A record is only ever held by someone who can act on it.** Dropping a contact below the field rung (`setContactTier`, `registerContact`) or deleting a field login releases every open record they held (`CaseStore.releaseCasesHeldBy`: unassigned, `observe` back to `auto`, recorded), the dashboard PATCH refuses an assignee who is not on the team or a login that does not exist, and no path assigns a record to the person whose own chat it is (`case-assignment.js`'s `isOwnConversation`; `sendStaffMessage` and `authorityOn` refuse it too). `case_claim` and dispatch accept read, check and write under one lock per record, so two people claiming at once cannot both be told yes. A ranger's dashboard reply moves `auto` to `observe` exactly as their WhatsApp reply does. A reply to a team member may name any record they typed or hold (`turn-outcome.js` `namedRefsToKeep`); only a reference that resolves to nothing they hold is rewritten to the conversation's own, and `case_report` refuses a message that names a held record so a relayed sighting is never filed on the person's own report.
+**Erasing a contact reaches their role too** (`CaseStore._scrubRoleReferences`): the rung drops to `reporter`, the contact id in assignment/notice/dispatch events becomes `[erased]`, their claim record in the role-invite log is overwritten and the label of the code they used is blanked. **`casey retention` never expires a role/invite/notice singleton** (`channel:'system'` is kept before any age is read). **A record is only ever held by someone who can act on it.** Dropping a contact below the field rung (`setContactTier`, `registerContact`) or deleting a field login releases every open record they held (`CaseStore.releaseCasesHeldBy`: unassigned, `observe` back to `auto`, recorded), the dashboard PATCH refuses an assignee who is not on the team or a login that does not exist, and no path assigns a record to the person whose own chat it is (`case-assignment.js`'s `isOwnConversation`; `sendStaffMessage` and `authorityOn` refuse it too). `case_claim` (a ranger or technician may take an unassigned record ONLY when an operator has queued a dispatch suggestion for THAT person; there is no unassigned-pool self-service, an operator claims freely) and dispatch accept read, check and write under one lock per record, so two people claiming at once cannot both be told yes. A ranger's dashboard reply moves `auto` to `observe` exactly as their WhatsApp reply does. A reply to a team member may name any record they typed or hold (`turn-outcome.js` `namedRefsToKeep`); only a reference that resolves to nothing they hold is rewritten to the conversation's own, and `case_report` refuses a message that names a held record so a relayed sighting is never filed on the person's own report.
+
+**Assignee picker.** `GET /api/team-members` lists a person once: a dashboard login whose `contact_phone` matches a listed WhatsApp team member is that member and is not listed again, so the picker assigns with the contact key (which the login also holds through `roles.js`'s `contact_phone` resolution); a login with no matching contact is listed by username as before.
 
 **Assignee display and dashboard assignment.** A stored `contact:<id>` assignee is storage, never display: `src/dashboard/assignee-names.js` builds one namer per request and every dashboard payload that shows an assignee (lists, workload, handover, health, attention, map, csv, timeline data) uses it, so a WhatsApp team member appears by name; only the case DETAIL keeps the key (for a dashboard operator, so the editor's picker can seed). `PATCH /api/cases/:id` may change the assignee on an `observe` case; a change or unassign runs `hooks/staff-outbound.js`'s `releaseCase` (back to `auto`) and `clearFocusForCase`, and an assignment to a contact writes an event with `assigned_contact_id`, which is what `staff-notices.js` reads as "newly assigned". The bot's own number reaches the SPA as `whatsapp_number` on `/api/config`, read best-effort from the Graph API by `WhatsappAdapter.displayNumber()`.
 
@@ -1199,6 +1205,7 @@ AND at least one breaching case exists AND zero operator replies landed on a
 breaching case inside `detectCoverageGap`'s window (default 1 hour). A roster of
 zero means "no one is expected to cover", so an unstaffed deployment does not
 page on every quiet hour. Replies to unrelated open cases do not clear the gap.
+The rising edge is held in the durable `AlertGate` (`alerts/state.json`, key `coverage_gap`, via `Casey._coverageEdge`), not in memory, so a hot reload or restart does not re-page a standing gap; it clears after the gate's 15-minute hold-down.
 
 **Sweep mechanics:** a re-entrancy guard prevents overlapping passes;
 observations are appended BEFORE tag writes (prevents silent loss on retry); a
@@ -1712,7 +1719,11 @@ without restart-on-crash.
   model or url, since a url can carry a key. A degraded instance still answers
   200: `ready` means "may this instance take traffic", and a casey whose
   provider is down is still the one that accepts the inbound and re-drives it on
-  recovery. Only an unreachable store is a 503.
+  recovery. Only an unreachable store is a 503: a `SQLITE_BUSY` read is retried once
+  after 75ms and, if still busy, answers 200 with `store:"busy"` (a write holds the
+  file; never a false red). `/api/config` carries `run_routes` (whether
+  `CASEY_EXTRA_DASHBOARD_ROUTES` mounted the optional `/api/runs/*` routes) so the SPA
+  does not probe routes that 404 on every page load.
   Admin-only routes additionally require `role: 'admin'`, read from the live
   `operator_account` row, never from the cookie.
   A FIELD login (`eco_ranger`, `animal_health_technician`) is fenced by
