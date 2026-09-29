@@ -12,6 +12,9 @@ import { TIER_LABELS, fieldLabel } from '../../store/report-shape.js'
 import { fmtPhone27 } from '../../format.js'
 import { waLink } from '../wa-link.js'
 import { missingFor, FIELD_ROLES } from '../roles.js'
+import { parseReport } from '../../timestamp.js'
+import { loadAreas, resolveArea, statedArea } from '../../areas.js'
+import { buildTeamMetrics, DEFAULT_STUCK_HOURS } from '../../ranger-metrics.js'
 
 const ROLE_LABEL = { eco_ranger: TIER_LABELS[TIER_FIELD_WORKER], animal_health_technician: TIER_LABELS[TIER_ANIMAL_HEALTH_TECHNICIAN] }
 const NUDGE_CASE_CAP = 300
@@ -133,9 +136,62 @@ function acct_by(d, key, accounts) {
   return accounts.has(key.toLowerCase()) && String(d.by || '').toLowerCase() === key.toLowerCase()
 }
 
+// The field team as ranger-metrics.js wants it: one person per human, with every
+// key they can be held under (WhatsApp contact key and/or dashboard username; a
+// login linked by phone to a listed contact is folded into that contact) and the
+// names and ids their timeline events carry. Names only -- never a phone or login
+// in the payload built from this.
+export async function teamPeople(store, listAccounts) {
+  const people = []
+  const byPhone = new Map()
+  for (const c of await store.listContacts({ limit: 500 })) {
+    const tier = resolveContactTier(c)
+    if (tier !== TIER_FIELD_WORKER && tier !== TIER_ANIMAL_HEALTH_TECHNICIAN) continue
+    const key = assigneeKeyFor(c)
+    if (!key) continue
+    const name = c.display_name && c.display_name !== c.external_id ? c.display_name : fmtPhone27(c.external_id)
+    const p = { id: key, name, role: TIER_LABELS[tier], keys: [key], ids: [key, c.id, name] }
+    people.push(p)
+    if (c.channel === 'whatsapp') byPhone.set(normalizeMsisdn(c.external_id), p)
+  }
+  for (const a of await listAccounts(store)) {
+    if (a.disabled === '1' || !FIELD_ROLES.includes(a.role)) continue
+    const name = a.display_name || a.username
+    const linked = byPhone.get(normalizeMsisdn(a.contact_phone))
+    if (linked) { linked.keys.push(a.username); linked.ids.push(a.username, name); continue }
+    people.push({ id: a.username, name, role: ROLE_LABEL[a.role], keys: [a.username], ids: [a.username, name] })
+  }
+  return people
+}
+
+// GET /api/metrics/team -- STAFF only (roles.js denies every other family by
+// default; nothing is added to its field or viewer allowlists). See ranger-metrics.js
+// for what each figure means. ?stuck_hours=N (default 48), ?since_days=N (default all).
+export function getTeamMetrics({ store, authed, UNCLAIMED_ASSIGNEE, listAccounts }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const stuckHours = Math.min(24 * 365, Math.max(1, Number(req.query.stuck_hours) || DEFAULT_STUCK_HOURS))
+    const sinceDays = Number(req.query.since_days)
+    const now = Date.now()
+    const cases = (await store.listCases({}, { limit: 5000, offset: 0 })).filter(c => c.channel !== 'system')
+    const people = await teamPeople(store, listAccounts)
+    const eventsByCase = await store.listEventsByCase(cases.map(c => c.id))
+    const areas = await loadAreas(store).catch(() => [])
+    const groupOf = (c) => {
+      const report = parseReport(c)
+      const stated = statedArea(report)
+      const hit = resolveArea(areas, { association: stated, location: report.location })
+      return hit ? hit.area.name : (stated || 'unknown')
+    }
+    const out = buildTeamMetrics({ cases, eventsByCase, people, groupOf, now, stuckHours, sinceMs: sinceDays > 0 ? now - sinceDays * 24 * HOUR : 0, unclaimed: UNCLAIMED_ASSIGNEE })
+    res.json(out)
+  }
+}
+
 const ROUTES = [
   ['get', '/api/team-members', getTeamMembers],
   ['get', '/api/nudges', getNudges],
+  ['get', '/api/metrics/team', getTeamMetrics],
 ]
 
 export function registerTeam(app, deps) {

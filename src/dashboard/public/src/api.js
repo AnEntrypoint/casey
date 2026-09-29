@@ -435,6 +435,9 @@ export const patchCaseApi = (id, body) => patch('/api/cases/' + encodeURICompone
 export const postTransition = (id, to, reason) => post('/api/cases/' + encodeURIComponent(id) + '/transition', { to, reason });
 export const postSnooze = (id, minutes) => post('/api/cases/' + encodeURIComponent(id) + '/snooze', { minutes });
 export const postNote = (id, text, field) => post('/api/cases/' + encodeURIComponent(id) + '/note', field ? { text, field } : { text });
+// "Show in English" for one message the reporter sent (routes/translate.js). The reference rides
+// along so a stale tab can never translate into the wrong report's timeline.
+export const postTranslateEvent = (id, eventId, ref) => post('/api/cases/' + encodeURIComponent(id) + '/events/' + encodeURIComponent(eventId) + '/translate', ref ? { expected_ref: ref } : {});
 export const postFlagReply = (id, eventId, reason) => post('/api/cases/' + encodeURIComponent(id) + '/flag-reply', { event_id: eventId, reason });
 export const postIntake = (id, fieldOrBody, value) => {
   const body = (value !== undefined) ? { field: fieldOrBody, value } : fieldOrBody;

@@ -20,6 +20,7 @@ import { Btn } from '/design/src/components/shell/atoms.js';
 import { Slider } from '/design/src/components/slider.js';
 import { Icon } from '/design/src/components/shell.js';
 import { schedule } from '../state.js';
+import { word } from '../words.js';
 import { fetchHeat } from '../api-reports.js';
 import { rd, rf, ensureReports, reloadReports, windowParams } from './reports-data.js';
 import { ReportFilters } from './reports-filters.js';
@@ -96,9 +97,9 @@ function paint(canvas, dots, weeks) {
 function Legend(ranked) {
   if (rm.mode !== 'dots') return null;
   const shown = ranked.slice(0, PAL.length);
-  return h('ul', { class: 'rep-legend', 'aria-label': 'Disease colours' },
+  return h('ul', { class: 'rep-legend', 'aria-label': word('legend.disease_colours') },
     ...shown.map((d, i) => h('li', { key: d, class: 'rep-legend-item' }, h('span', { class: 'rep-sw rep-sw-' + i, 'aria-hidden': 'true' }), d)),
-    ranked.length > PAL.length ? h('li', { key: '_o', class: 'rep-legend-item' }, h('span', { class: 'rep-sw rep-sw-o', 'aria-hidden': 'true' }), 'Other diseases') : null);
+    ranked.length > PAL.length ? h('li', { key: '_o', class: 'rep-legend-item' }, h('span', { class: 'rep-sw rep-sw-o', 'aria-hidden': 'true' }), word('legend.other_diseases')) : null);
 }
 
 export function ResolvedMapPanel() {

@@ -20,7 +20,7 @@ import { Btn } from '/design/src/components/shell/atoms.js';
 import {
     state, schedule, setActiveId, setMapFilter, clearMapFilter, setRailMode,
 } from '../state.js';
-import { urgencyByCaseId, filterIsActive, URGENCY_BAND_LABEL, QUEUE_NAME } from '../map-model.js';
+import { urgencyByCaseId, filterIsActive, URGENCY_BAND_LABEL, queueName } from '../map-model.js';
 import {
     mapStateRef, refresh, counts, queueRows, filterOptions, loadSummary,
     unresolvedSummaryText, unresolvedNoteText, isStale, updatedAt,
@@ -257,7 +257,7 @@ function mapUnresolvedDisclosure() {
 // show where. Here the table sits in the rail and the map stays put beside it,
 // with the matching map overlay switched on so the two agree.
 const RAIL_MODES = {
-    queue: { label: QUEUE_NAME, body: attentionFeed },
+    queue: { label: queueName(), body: attentionFeed },
     clusters: { label: 'Related reports', body: () => ClustersPanel({ railed: true }) },
     geo: { label: 'Hotspots', body: () => GeoPanel({ railed: true }) },
 };

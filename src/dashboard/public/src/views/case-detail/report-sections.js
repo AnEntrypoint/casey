@@ -9,6 +9,8 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Section, Alert } from '/design/src/components/content.js';
 import { ReportField } from './report-field.js';
 import { state } from '../../state.js';
+import { word } from '../../words.js';
+import { EntityLabel } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
 // [key, plain-language label, section] -- driven by the live /api/config
@@ -25,7 +27,16 @@ const h = webjsx.createElement;
 // plain casey/uhh deployment or before the per-case fetch resolves, in which
 // case this falls back to the global config exactly as before this existed.
 const activeConfig = () => state.runConfig || state.config;
-const reportSections = () => activeConfig()?.report_sections || [];
+// The fields THIS login's screens hide (dashboard_ui.hidden_fields, resolved per role by the
+// server). A display setting only: the stored report, the bot and the exports keep every
+// field. A section left with no visible field disappears with them, on screen and on paper.
+const hiddenKeys = () => new Set(activeConfig()?.hidden_fields || []);
+const reportSections = () => {
+    const hide = hiddenKeys();
+    return (activeConfig()?.report_sections || [])
+        .map(sec => ({ ...sec, keys: sec.keys.filter(([k]) => !hide.has(k)) }))
+        .filter(sec => sec.keys.length);
+};
 const visitCritical = () => (activeConfig()?.visit_critical || []).map(f => [f.key, f.label]);
 
 const has = (r, k) => r[k] != null && String(r[k]).trim() !== '';
@@ -81,7 +92,7 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
     // who sees a green banner on every healthy report stops reading the
     // banner, which is precisely the reading habit the amber one depends on.
     const readyBanner = (any && missingVC.length)
-        ? Alert({ kind: 'warn', title: 'Still missing for a visit', children: missingVC.map(([, l]) => l).join(', ') + ' -- ask now while still reachable.' })
+        ? Alert({ kind: 'warn', title: word('ui.missing_for_visit_title'), children: missingVC.map(([, l]) => l).join(', ') + ' ' + word('ui.missing_for_visit_hint') })
         : null;
 
     const audioVal = has(r, 'audio') ? String(r.audio).trim() : '';
@@ -100,7 +111,7 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
 
     const entityLabel = activeConfig()?.entity_label || 'report';
     return h('div', { key, class: 'casey-report' },
-        h('div', { class: 'casey-report-head' }, `${entityLabel[0].toUpperCase()}${entityLabel.slice(1)} details`),
+        h('div', { class: 'casey-report-head' }, `${EntityLabel()} ${word('ui.details_heading_suffix')}`),
         any ? null : h('p', { class: 'casey-hint' }, 'Nothing has been recorded on this ' + entityLabel + ' yet. Tap any line below to fill it in.'),
         readyBanner, audioBanner,
         ...sections.map(sec => h('div', { key: sec.title }, Section({

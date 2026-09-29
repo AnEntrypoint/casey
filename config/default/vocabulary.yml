@@ -1,0 +1,100 @@
+# vocabulary.yml -- the words people read, in one file.
+#
+# WHO EDITS THIS: the team, not a programmer. Change the text after the colon;
+# leave the key (the part before the colon) exactly as it is. Save, then restart
+# the service (or ask whoever runs it to). docs/vocabulary-guide.md explains every
+# key, where it shows up, and the isiXhosa / isiZulu columns for native speakers.
+#
+# PLACEHOLDERS: {brand} is the product name, {entity} is what a record is called
+# ("report"), {entity_plural} is "reports", {language} and {ref} fill in at the
+# point of use. Keep them, exactly as written, in any sentence that has them.
+#
+# If a key is missing or empty here, the word falls back to the built-in default
+# and `casey doctor` lists the key. Nothing breaks.
+#
+# THE DEFAULT ENGLISH BELOW IS PLACEHOLDER WORDING. The team decides the final words.
+
+version: 1
+
+# --- Shown on screen when the phone or computer has lost its network. -----------
+# The team's decision: say "network", the word the community knows, not "signal".
+ui:
+  offline_title: "Offline -- no network"
+  offline_login_line: "This device cannot reach the dashboard, so signing in will not work yet."
+  offline_login_wait: "Leave this page open -- the form works again as soon as the network comes back. Nothing here is broken and nothing has been lost."
+  login_check_failed: "This device cannot reach the dashboard right now, so it could not check your details. Try again once you have network."
+  login_password_failed: "This device cannot reach the dashboard right now, so the new password was not set. Try again once you have network."
+  load_one_failed: "Could not load this {entity}. Check your network, then go back to the list and open it again."
+  load_list_failed: "Could not load your {entity_plural}. Check your network and try again."
+  load_disease_reports_failed: "Could not load the disease reports. Check your network and try again."
+  # --- On a report's page and on the paper form. ---
+  not_given_yet: "not given yet"
+  missing_for_visit_title: "Still missing for a visit"
+  missing_for_visit_hint: "-- ask now while still reachable."
+  details_heading_suffix: "details"
+  # --- The animal picker (used wherever a field has a fixed list of answers). ---
+  pick_one: "Choose one"
+  other_write_it: "Other (write it)"
+  other_write_label: "Write it here"
+  # --- Reading a message written in another language. ---
+  translate_button: "Show in English"
+  translate_busy: "Translating..."
+  translate_label: "machine translation (may be wrong)"
+  translate_failed: "Could not translate this message. Try again in a minute."
+  translate_unavailable: "Translation is not switched on here."
+  translate_too_long: "This message is too long to translate."
+  translate_rate: "Too many translations just now. Wait a minute and try again."
+  language_chip: "Written in {language}"
+
+# --- Plain-words explanations shown when someone hovers a term. -----------------
+glossary:
+  autonomy: How much {brand} is allowed to do on its own for this {entity}.
+  auto: '{brand} answers this person by itself, using its own judgement.'
+  assisted: '{brand} writes a reply and waits for you to approve or edit it before it sends.'
+  observe: '{brand} only listens and records. It never replies; only you can answer.'
+  stage: How far along this conversation is, from a new message through to done.
+  handoff: This {entity} has been handed to a person. {brand} will not reply on its own until you do.
+  priority: How urgent this {entity} is, so the team knows what to work on first.
+  channel: Which app the person is messaging from (WhatsApp or Discord), or how the {entity} was entered (by hand, or the public form).
+  case_type: 'What kind of {entity} this is: a cluster of symptom reports, a routine follow-up, a lab sample, or an import alert. {brand} records what was reported, not a diagnosis.'
+  sla: The time target the team has set for replying to a waiting {entity}.
+  breach: A {entity} that has gone past its reply-time target and needs attention.
+  draft: A reply {brand} has written but not sent yet. It is waiting for you to send or discard it.
+  claim: Marking a {entity} as yours, so the rest of the team knows you have it and does not answer the same person twice.
+  reference: The short code (like CASE-1042-4KGBXQ7M) that identifies this {entity}. Share it with the person if they ask.
+  inbox: 'The "Needs a person" list: {entity_plural} ranked worst-first by how urgently they need a reply.'
+  guardrail: An automatic check that flags a {entity} which may be stuck or overdue, so a person notices it.
+  external_id: The internal address {brand} uses to message this person on their channel. Never shown to a field worker, for privacy.
+  field_worker: 'A reporter an operator has trusted with extra access: their own open {entity_plural}, "near me" lookups, and location check-ins.'
+  reporter: The default access level for anyone who messages {brand}. Report-only, casual, public.
+  animal_health_technician: Everything a trusted reporter has, plus the only authority to sign a {entity} off as done. Nobody else can finish one over WhatsApp, however complete it is.
+  operator: 'A team member who runs the queue: replies to people, assigns {entity_plural}, invites others into a role. Can query everything a technician can, but cannot sign a {entity} off over WhatsApp.'
+  remind: Sends the person ONE message asking them to report back, on the channel they wrote in. Only for a {entity} that has gone quiet, never for someone who asked us to stop, and not twice in a row without them answering first.
+
+# --- What each step of a report is called. The key is the stored stage; do not
+# rename keys, only the words. A stage this deployment adds shows under its own name.
+stages:
+  new: "New"
+  triaging: "Looking into it"
+  in_progress: "Working on it"
+  waiting: "Waiting"
+  resolved: "Done"
+  closed: "Closed"
+
+# --- The map key and the labels that sit on pins and rows. ----------------------
+legend:
+  queue_name: "Needs a person"
+  urgency_3: "needs a person now"
+  urgency_2: "needs a look today"
+  urgency_1: "can wait"
+  location_gps: "exact GPS"
+  location_estimated: "estimated, unconfirmed"
+  location_confirmed: "estimated, confirmed by worker"
+  other_diseases: "Other diseases"
+  disease_colours: "Disease colours"
+
+# --- The public form and the printed form: group headings. ---------------------
+form:
+  group_critical: "Needed before a team can visit"
+  group_other: "More detail"
+  other_write_label: "If Other, write it here"

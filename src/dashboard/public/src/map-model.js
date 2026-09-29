@@ -20,6 +20,7 @@
 // depending on the other.
 
 import { state } from './state.js';
+import { word } from './words.js';
 
 // ---- the queue's name ---------------------------------------------------
 // The worst-first queue is ONE list and it has ONE name. It used to be called
@@ -29,7 +30,7 @@ import { state } from './state.js';
 // one thing, taught to an operator on their first shift. Every surface that
 // names it imports this, for the same reason the urgency ladder below lives
 // here rather than in each consumer.
-export const QUEUE_NAME = 'Needs a person';
+export const queueName = () => word('legend.queue_name');
 
 // ---- where a coordinate came from ---------------------------------------
 // The provenance ladder a lat/lon arrives on. Three surfaces read it -- the
@@ -40,7 +41,12 @@ export const QUEUE_NAME = 'Needs a person';
 // 'unset' (a row predating the field) is deliberately unlabelled: it says
 // nothing rather than implying a false certainty either way.
 export const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed', 'unset']);
-export const LOCATION_SOURCE_LABEL = { gps: 'exact GPS', estimated: 'estimated, unconfirmed', confirmed: 'estimated, confirmed by worker' };
+// Read on demand, from config/vocabulary.yml (legend.location_*), so the words are the team's.
+export const LOCATION_SOURCE_LABEL = {
+  get gps() { return word('legend.location_gps'); },
+  get estimated() { return word('legend.location_estimated'); },
+  get confirmed() { return word('legend.location_confirmed'); },
+};
 
 // ---- urgency ------------------------------------------------------------
 // attn.js's score, cut into three bands. These exact thresholds were already
@@ -52,9 +58,9 @@ export const LOCATION_SOURCE_LABEL = { gps: 'exact GPS', estimated: 'estimated, 
 // name for it beside the four the UI already had. The list has one name
 // (QUEUE_NAME); these three say how soon, not where.
 export const URGENCY_BAND_LABEL = {
-  3: 'needs a person now',
-  2: 'needs a look today',
-  1: 'can wait',
+  get 3() { return word('legend.urgency_3'); },
+  get 2() { return word('legend.urgency_2'); },
+  get 1() { return word('legend.urgency_1'); },
 };
 
 export function urgencyBand(score) {

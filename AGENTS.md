@@ -141,8 +141,10 @@ resolved by `src/config-loader.js` at process start:
   resolved twice over, separately: by `case-store.js`'s `CaseStore`
   constructor and by `config-loader.js`'s `readThatcherFieldEnum`, each
   `CASEY_CONFIG_DIR`-or-`process.cwd()` (NOT `config/default/`). So
-  `config/default/` ships exactly two files -- `persona.cjs` and
-  `report-fields.yml` -- and the third comes from this repo's own root. A
+  `config/default/` ships exactly three files -- `persona.cjs`,
+  `report-fields.yml` and `vocabulary.yml` (the bundled default words; a deployment's
+  own `vocabulary.yml` is layered over it) -- and `thatcher.config.yml` comes from this
+  repo's own root. A
   deployer who copies `config/default/` as the template for a new config
   package gets a dir casey will boot against but whose entity/workflow schema
   silently comes from wherever the process happens to be running: copy the root
@@ -202,6 +204,46 @@ resolved by `src/config-loader.js` at process start:
   logic (the `<<DATA>>` delimiter safety, the stale-location check, the
   `returnedAfterGap` timing, the `firstMessage` branch) -- only the
   domain-specific TEXT comes from config.
+- `vocabulary.yml` (optional per deployment, bundled defaults in
+  `config/default/vocabulary.yml`) is the ONE file of the words people read, loaded by
+  `config-loader.js`'s `loadVocabulary()` and laid over the two files above by
+  `applyVocabulary()` (pure; the raw files are never edited). Leaves are flat dotted keys
+  holding a string or a list of strings. Sections: `ui`, `glossary`, `stages`, `legend`,
+  `form` (dashboard and public-form words, served to the browser inside the shell as
+  `<script type="application/json" id="casey-vocab">` and read by `public/src/words.js`
+  `word()`/`wordsIn()`/`hasWord()`; the shell's build id hashes them so the service worker
+  refetches), and, applied server-side: `fields.<key>.label|form_label|form_hint`
+  (display_label / public_label / public_hint), `sections.<slug>`, `tiers.<tier>`
+  (dashboard_ui.tier_labels), `nav.<item>` (dashboard_ui.nav.relabel), `app.brand|leaf`,
+  `bot.<name>` (persona `noticeText`, `staffNoticeText`, `photoNudge.text`,
+  `locationConfirmNudge`, `workerCatchUpText`, `casualReporterEnquiryBlockedText`,
+  `returnedAfterGapText`; `VOCAB_BOT_KEYS`). A key absent or blank in the deployment file
+  falls back per key to the bundled default (and, for fields/tiers/nav, to what
+  report-fields.yml still says), never blank and never a throw. `casey doctor`'s
+  Vocabulary section (`runVocabularyChecks`) lists keys the deployment file lacks, blank or
+  non-text values, and keys nothing reads; what a deployment owes is derived from its own
+  fields, tiers and persona (`expectedKeys`). A deployment package's `vocabulary.yml` owns
+  the wording that used to sit in `report-fields.yml` (`display_label`, `public_*`,
+  `tier_labels`, `nav.relabel`, `brand`, `leaf`) and `persona.cjs`'s notice/nudge texts;
+  `docs/vocabulary-guide.md` in uhh is the team's guide. The public form's group headings
+  read `vocabWord('form.*')` at load. Client wording the SPA still spells itself (button
+  and dialog copy, timeline labels, health labels, the public form's error sentences) is
+  listed in that guide as not yet migrated.
+- `report-fields.yml` field `options: [...]` (a fixed list of usual answers, e.g.
+  `species`) is a convenience and never a gate: `report-shape.js` exports `FIELD_OPTIONS`
+  and extends the field's tool description ("Usual answers ... anything else is recorded as
+  said"); `/api/config` serves `field_options`; the SPA edits such a field with
+  `components/option-field.js` (native Select ending in "Other (write it)" + a text box; a
+  stored value not on the list re-opens under Other) and the public `/report` form renders a
+  `<select>` plus a `<key>__other` text input (`OTHER_CHOICE` in `routes/auth.js`). The
+  store, intake route and bot accept any text.
+- `dashboard_ui.hidden_fields` (`all | staff | eco_ranger | animal_health_technician` ->
+  field keys) hides fields from a screen; `report-shape.js` `hiddenFieldsFor(role)` resolves
+  it, `/api/config` serves the caller's `hidden_fields`, `report-sections.js`, `field-case.js`
+  and the printable briefing (`getReportHtml`) drop those rows. Display only: the bot still
+  asks, the report and exports keep every field. The mandatory minimum, sign-off diagnosis,
+  area field and visit-critical fields are never hidden (ignored server-side, warned by
+  `casey doctor`).
 - `thatcher.config.yml` is written/adapted the same way any
   thatcher-consuming project would (see "thatcher / busybase chain" below).
 
@@ -652,7 +694,7 @@ bin/casey.js               CLI entry; bin/casey-cli.mjs holds the COMMANDS table
                            (bin/casey-doctor-checks.js renders doctor's Meta and role rows; bin/casey-roles-command.js is `casey roles`, a thin wrapper over registerContact / setContactTier / releaseCasesHeldBy and role-invites.js)
 freddie-bundle/            casey's own Cordis plugins mounted into freddie's real boot() -- case-tools (defineTool wraps src/case-tools.js), llm-acptoapi (a real LlmAdapter), platform (WhatsApp/Discord wiring onto ctx.webServer), tool-allowlist (the security enforcement boundary); boot.js also owns the Cordis HMR scope + its escalation-to-restart net and keeps cordis.patch.yml itself live
 src/
-  config-loader.js         resolves CASEY_CONFIG_DIR (or config/default/) -- report-fields.yml + persona.cjs, synchronous
+  config-loader.js         resolves CASEY_CONFIG_DIR (or config/default/) -- report-fields.yml + persona.cjs, synchronous; also loadVocabulary()/applyVocabulary()/clientVocabulary()/vocabWord() for vocabulary.yml (see Configuration architecture)
   store/report-shape.js    single choke point deriving REPORT_KEYS/CRITICAL_FIELDS/APPEND_FIELDS/REPORT_SECTIONS/etc from the loaded config
   store/guards.js          write-side coercion for busybase (toStorable), row guards
   casey.js                 top-level assembly: store + adapters + freddie boot (freddie-bundle/boot.js) + gateway shim + logger
@@ -686,7 +728,10 @@ src/
   dashboard/routes/reports-map.js  the read-only, PII-free disease reports: GET /api/reports/resolved-map|diseases|heat|export.csv (the only case-derived routes a viewer login reaches; staff use them from the Overview nav)
   dashboard/roles.js       THE dashboard-login role authority: STAFF (admin/operator/secretary) vs FIELD (eco_ranger/animal_health_technician) vs VIEWER (viewer: aggregate routes only, viewerGate), fail-closed resolveRole (unknown/absent -> eco_ranger), caseAccess (write = assigned, read = own report or, for a technician, the sign-off queue, none = 404), the deny-by-default roleGate route table and expectedRefGuard
   dashboard/wa-link.js     the one wa.me click-to-chat builder (9-15 digits or no link; text stripped, capped, percent-encoded)
-  dashboard/routes/team.js operator-only GET /api/team-members (assignable people, keyed for case-assignment.js) and GET /api/nudges (assigned reports per person with the clocks to nudge on + a drafted wa.me link)
+  dashboard/routes/translate.js  POST /api/cases/:id/events/:eventId/translate: "Show in English" for ONE message a contact sent (see below)
+  dashboard/public/src/words.js  the SPA's read of vocabulary.yml (word/wordsIn/hasWord); components/option-field.js the dropdown-with-Other editor
+  dashboard/routes/team.js operator-only GET /api/team-members (assignable people, keyed for case-assignment.js) and GET /api/nudges (assigned reports per person with the clocks to nudge on + a drafted wa.me link); GET /api/metrics/team (staff only by omission from every roleGate allowlist: per-person and per-area first-action time, hand-over-to-sign-off time, nudges, stuck reports; the same numbers as the `team response` line of `casey health`)
+  ranger-metrics.js        pure team response metrics over timeline events (buildTeamMetrics): a holding = one person as assignee between assignment events; a person's act = a non-bot, non-reporter, non-reminder event naming them (staff_contact_id, data.by, `relayed by`, transition reason prefix); nudges = `operator_reminder` outbounds during the holding (a wa.me click leaves no event, so it is not counted); area rows under the privacy.js floor fold into `other/sparse`
   case-machine.js          xstate case lifecycle machine
   case-health.js           per-case health/guardrail signals
   case-sweep.js            periodic health-guardrail sweep, including team-coverage-gap detection
@@ -819,6 +864,8 @@ photo details / mark where I am. Client calls live in `api-roles.js`. Operators
 get `panels/nudges-panel.js` ("Who needs a nudge") and an assignee picker fed by
 `/api/team-members` in `fields-editor.js`. No FIELD screen shows accounts, teams,
 metrics, thresholds or exports; the server would refuse them regardless.
+
+**"Show in English" (`routes/translate.js`).** `POST /api/cases/:id/events/:eventId/translate` translates ONE message a contact sent (kind `inbound`, actor `contact`; anything else is 400) on request: staff, or a ranger/technician on a report assigned to them (`roles.js` row `{access:'write'}`, so read-only access and a viewer never reach it; `expectedRefGuard` also covers it). The model sees that message's text and a fixed instruction only. ONE model, DeepSeek Flash (`CASEY_TRANSLATE_MODEL`, else the first DeepSeek Flash link of `CASEY_LLM_MODEL`; any other is 503, never substituted), called through the same seam as a turn (the dashboard's resilient `callLLM`, else `agent/acptoapi-bridge.js` `callLLM`), so `resolveChainLinks` puts `provider.data_collection = deny` on the request. The reply is stored as a system observation whose text is `translation:<eventId>` (`data.english`, `data.language`, `touch:false`) so it is paid once and any role reads it for free; the SPA folds those rows under their message (`views/case-detail/timeline.js`) and labels the result `ui.translate_label`. Text over 2000 characters is 413; a login gets `CASEY_TRANSLATE_RATE_PER_MIN` (default 10) fresh translations a minute (429 + Retry-After), cached reads do not count. Observations never enter the bot's context (`prompt-context.js` CONTEXT_KINDS). A STOP contact's messages remain translatable: nothing is sent to anyone. The Timeline heading shows a "Written in <language>" chip from `report.language_detected`. `scripts/gui-check-vocab.mjs` (run by `gui-check`, alone with `GUI_CHECK_ONLY=vocab`) boots a second dashboard with a stand-in model at the server boundary and holds these guarantees, the species dropdown and the hidden-field checks.
 
 **The `viewer` role (UCT, third parties): aggregate views only, never a case.** `roleGate` hands a viewer to `viewerGate` BEFORE the field table, and its allowlist is exactly: `GET /api/config` (the bot's own number is blanked for it), `GET /api/overview`, `POST /api/logout-everywhere`, the ungated `whoami`/`logout`/`change-password`, and the four routes of `routes/reports-map.js`: `GET /api/reports/resolved-map`, `/diseases`, `/heat`, `/export.csv` (all take `from`/`to` as a date or unix seconds, and `region`; `grain=month|quarter|year` on the rollups). Everything else under `/api` is 403 `role_forbidden` (exact-case table, so `/API/cases`, a trailing slash, `HEAD`/`OPTIONS`, dot segments and encoded dots all miss) and everything under `/media` is 404, in any spelling. The audit of the existing aggregate routes, each read for what it can carry: `/api/overview` allowed (stage counts, per-day totals, medians, no row); REFUSED are `/api/stats` (intake-mode operations, not needed), `/api/geo` and `/api/distribution` (open-case place and symptom rollups: not disease-signed-off, and their small-cell rules are per place, not per disease), `/api/clusters` (member references), `/api/report.csv|json|html` (operator names and workload), `/api/cases/export.csv` (case rows), and every case, contact, account, team, map and dispatch route. The viewer-safe export is `/api/reports/export.csv`, built from the released rollups only. A resolved case is one in a done stage that carries `identified_disease`, a field recorded only at sign-off by the animal health technician (`never_inferred`, refused for a ranger by `roleGate`); a case a staff member closed from the console with no diagnosis is deliberately absent. `reports-map.js` projects by allowlist, field by field: a dot is `{lat, lon, disease, species, resolved_at}` with lat/lon rounded to 0.01 degree (about 1 km) and `resolved_at` the Monday of the week of sign-off; a rollup group under `CASEY_MIN_AGGREGATE_CELL` (`privacy.js`) is folded into `other/sparse` and dropped if that bucket is itself under the floor, and each response's `total` is the sum of released groups only so it cannot be subtracted against; a heat cell under the floor is not sent at all. Disease and species are technician/model free text, so they are reduced to letters, spaces, hyphens, apostrophes and brackets (a typed phone number cannot survive) and a label fewer than the floor of signed-off cases carry is shown as `Other (rare)`. `resolveRole` and `isViewer` are exact-name tests: a forged, cased, blank or missing value is the least privileged rung (`eco_ranger`), never a viewer and never staff. Client: `views/viewer-app.js` (its own frame, like `field-app.js`; `api-roles.js` `isViewerRole`, and `isFieldRole` excludes viewer) shows `panels/resolved-map-panel.js` (dots coloured by disease, time slider with play, heat of signed-off cases, heat of all reports, disease filter) and `panels/disease-reports-panel.js` (headline figures, word cloud, bars by disease, area and period, table, export) under one shared area/period filter (`panels/reports-data.js`); staff reach the same two panels as `resolved_map` and `disease_reports` in the Reports & Admin nav group. `scripts/gui-check-viewer.mjs` (run by `gui-check`, alone with `GUI_CHECK_ONLY=viewer`) holds the role x route matrix, the PII scan of every viewer payload, the 300-report budget and the screen checks.
 
@@ -1112,6 +1159,7 @@ from the name alone.
 | `CASEY_LLM_MODEL` | Default `claude/sonnet` (`src/llm.js`), chosen because a weaker model has repeatedly dropped tool calls or repeated questions during casey's multi-step extraction+tool-orchestration turn. `auto` builds acptoapi's real fallback chain rather than pinning one model. |
 | `CASEY_LLM_DATA_POLICY` | Default `deny`. `src/llm-data-policy.js`, applied in `acptoapi-bridge.js`'s `resolveChainLinks` (the one seam both the bridge and the freddie-bundle adapter pass through). `deny` puts `provider.data_collection = "deny"` on every OpenRouter chain link, `zdr` adds `provider.zdr = true`, `allow` turns the policy off (`casey doctor` warns). Links with no checkable no-training guarantee (`:free` ids, `claude/*` ACP wrappers, unknown brands, `queue/`/`chain/` names) are dropped and audited; a chain left empty throws. Voice-note transcription uses chat completions under `deny`/`zdr` because OpenRouter's `/audio/transcriptions` ignores the `provider` object; `CASEY_TRANSCRIBE_CHAT_MODEL` overrides that chain. ElevenLabs voice replies are refused unless `allow`. `CASEY_LLM_AUDIT_FILE` (default `data/llm-audit/llm-data-policy.jsonl`, `0` off) is the audit trail: metadata only, never prompt text or a contact identifier. Register: `docs/data-processors.md` in the uhh deployment. |
 | `CASEY_PROACTIVE_SENDS` | Default `off`. `src/proactive-sends.js`. `off`: every send casey, an operator button or a tool STARTS refuses with a plain reason and `adapter.send` is never called -- `Casey.sendReply` / `bin/send-reply.js` `makeSendReply` (dashboard reply, remind, bulk, draft approve), `hooks/staff-outbound.js` (`case_message`, `team_remind`, `team_draft`, `case_ask_ranger`, `team_nudge_staff`, whose refusal points at the wa.me link in the nudges panel), `prepareReminder`, and `makeTransitionNotifier` (records "not sent"). `window`: allowed inside the 24h service window as before. Never gated: the agent reply, the guaranteed-fallback reply, STOP/HUMAN acknowledgements, staff notices (delivered inside the assignee's own in-window turn), operator alert webhooks. Any other value is `off`. |
+| `CASEY_TRANSLATE_MODEL`, `CASEY_TRANSLATE_RATE_PER_MIN`, `CASEY_TRANSLATE_TIMEOUT_MS` | "Show in English" (`routes/translate.js`). The model must be a DeepSeek Flash link (default: the first one in `CASEY_LLM_MODEL`; none means the route answers 503); fresh translations per login per minute (default 10); model deadline (default 20000). |
 | `CASEY_TZ`, `CASEY_TZ_LABEL`, `CASEY_COUNTRY_CODE` | Default to a South African deployment (SAST, +27, SA-shaped digit grouping); digit-grouping stays SA-shaped regardless of country code (a fully correct international formatter needs a per-country grouping table, out of scope). |
 | `CASEY_TRANSCRIBE_VOICE_NOTES` (ON by default when a provider key exists; `=0` opts out), `CASEY_DESCRIBE_PHOTOS`, `CASEY_VOICE_REPLIES` (both off by default) | All three fail-open (`src/hooks/media.js`): each sends real bytes (audio/image/text) to an external API, a deliberate opt-in data-egress point. Any failure degrades silently to the original text-only/manual path, never blocking the reply. |
 | `CASEY_LOCATION_STALE_MS` | Read once from `process.env` at module load, not via the async thresholds store -- `caseSystemPrompt` is deliberately a pure, synchronous function. |

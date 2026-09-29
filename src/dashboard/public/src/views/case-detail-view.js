@@ -21,7 +21,7 @@ import { ResearchNotesPanel } from './case-detail/research-notes.js';
 import { FieldsEditor } from './case-detail/fields-editor.js';
 import { Transitions } from './case-detail/transitions.js';
 import { ReplyBox } from './case-detail/reply-box.js';
-import { Timeline } from './case-detail/timeline.js';
+import { Timeline, reportLanguage } from './case-detail/timeline.js';
 import { AreaNote } from './case-detail/area-note.js';
 import { DedupPanel, loadDuplicateSuggestions } from './case-detail/dedup-panel.js';
 import { SiteHistoryPanel, loadSiteHistory } from './case-detail/site-history.js';
@@ -31,6 +31,7 @@ import { ShareDialog, openShareDialog } from './case-detail/share-dialog.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 import { clusterNoteFor, canDispatchFor, dispatchWorkerFor } from '../panels/map-panel.js';
 import { brandName, entityLabel, entityLabelPlural, countOf } from '../vocabulary.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 let _loadedFor = null;
@@ -65,7 +66,7 @@ export async function loadCaseDetail(id) {
         // Never the server's own word ("not found"): a 404 means merged, removed or a stale link.
         setCaseDetailError((e && e.status === 404)
             ? 'This ' + entityLabel() + ' is not here any more. It may have been merged or removed -- go back to the list and open it again.'
-            : 'Could not load this ' + entityLabel() + '. Check your signal, then go back to the list and open it again.');
+            : word('ui.load_one_failed'));
     }
 }
 
@@ -197,7 +198,7 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
                 catch (e) { toast(await failMsg(e, 'The note was not saved. Nothing was added to the timeline -- try again.'), 'err'); }
             } })
         ),
-        Timeline({ caseId: id, events, eventsTotal: events_total }),
+        Timeline({ caseId: id, events, eventsTotal: events_total, canTranslate: true, caseRef: c.ref, language: reportLanguage(c) }),
         SplitDialog({ onReload: reload }),
         SnoozeDialog({ onReload: reload }),
         ShareDialog({})

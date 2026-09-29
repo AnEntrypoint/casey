@@ -20,7 +20,7 @@ import * as webjsx from 'webjsx';
 import { Chip, Badge, Heading } from 'ds/components/shell.js';
 import { state, setActiveId, setInboxMode, schedule } from '../../state.js';
 import { rel, waitFmt, isMine, channelLabel } from '../../format.js';
-import { urgencyBand, URGENCY_BAND_LABEL, QUEUE_NAME } from '../../map-model.js';
+import { urgencyBand, URGENCY_BAND_LABEL, queueName } from '../../map-model.js';
 import { pushHash } from '../../route.js';
 import { QueueMore } from '../../components/filter-chip.js';
 const h = webjsx.createElement;
@@ -115,8 +115,8 @@ export function InboxPanel() {
   const shown = ranked.slice(0, cap);
 
   if (!shown.length) {
-    return h('div', { class: 'triage', 'aria-label': QUEUE_NAME },
-      Heading({ level: 2, children: QUEUE_NAME }),
+    return h('div', { class: 'triage', 'aria-label': queueName() },
+      Heading({ level: 2, children: queueName() }),
       h('div', { class: 'calm' }, state.mineOnly
         ? 'Nothing you have claimed needs you right now. Turn off "yours" below to see everyone else\'s.'
         : 'All caught up. Nothing needs a person right now. A new one will show up here the moment someone needs you.')
@@ -126,12 +126,12 @@ export function InboxPanel() {
   // The list role sits on the rows' own wrapper: a role=list may own only listitems,
   // and the heading beside them made the whole block an axe aria-required-children hit.
   // display:contents (app.css) keeps the wrapper out of the layout.
-  return h('div', { class: 'triage', 'aria-label': QUEUE_NAME },
+  return h('div', { class: 'triage', 'aria-label': queueName() },
     h('div', { key: 'head', class: 'triage-head' },
-      Heading({ level: 2, children: QUEUE_NAME }),
+      Heading({ level: 2, children: queueName() }),
       Badge({ tone: 'blue', children: String(ranked.length) })
     ),
-    h('div', { key: 'rows', class: 'triage-rows', role: 'list', 'aria-label': QUEUE_NAME }, ...shown.map(InboxRow)),
+    h('div', { key: 'rows', class: 'triage-rows', role: 'list', 'aria-label': queueName() }, ...shown.map(InboxRow)),
     // The true total sits on the control that reveals the rest, so the count
     // in the head above can never silently disagree with the rows below it.
     ranked.length > shown.length

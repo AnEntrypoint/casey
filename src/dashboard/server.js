@@ -50,6 +50,7 @@ import { escapeHtml } from 'anentrypoint-design/html-escape.js'
 import { parseJsonArraySafe, parseEventData } from '../safe.js'
 import { registerAuth } from './routes/auth.js'
 import { roleOf } from './roles.js'
+import { clientVocabulary } from '../config-loader.js'
 import { registerTeam } from './routes/team.js'
 import { registerAreas } from './routes/areas.js'
 import { registerTeamImport } from './routes/team-import.js'
@@ -64,6 +65,7 @@ import { registerMap } from './routes/map.js'
 import { registerReports } from './routes/reports.js'
 import { registerReportsMap } from './routes/reports-map.js'
 import { registerOperations } from './routes/operations.js'
+import { registerTranslate } from './routes/translate.js'
 import { registerTiles, CLIENT_TILE_URL } from './routes/tiles.js'
 const esc = escapeHtml
 import {
@@ -329,6 +331,20 @@ function tileShellHead(html) {
     (_m, a, b) => a + esc(CLIENT_TILE_URL) + b)
 }
 
+// THE WORDS (vocabulary.yml), handed to the browser inside the served shell. No login
+// is needed and none of it is case data (labels, glossary, stage names). Read
+// synchronously by the SPA's words.js before the first render, so a screen never flashes a
+// key, and the service worker's cached shell carries them offline. Escaped so a word can
+// never close the tag.
+function vocabularyJson() {
+  return JSON.stringify(clientVocabulary()).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029')
+}
+function vocabularyShellHead(html) {
+  const i = html.lastIndexOf('</head>')
+  if (i < 0) return html
+  return html.slice(0, i) + `<script type="application/json" id="casey-vocab">${vocabularyJson()}</script>\n` + html.slice(i)
+}
+
 // Injected into the SERVED bytes, never into the file on disk, so index.html
 // stays the single hand-maintained statement of what the shell links and the
 // generated half cannot drift from the real import graph.
@@ -364,6 +380,9 @@ function shellBuildId(publicDir, assetUrls) {
   // otherwise ship new shell bytes under an unchanged cache name and the
   // service worker would go on serving the previous basemap wiring.
   h.update('tiles:' + CLIENT_TILE_URL + '\n')
+  // Same reason again: the vocabulary is rewritten into the served shell from a file the
+  // team edits, so new words must be a new cache.
+  h.update('vocab:' + vocabularyJson() + '\n')
   const walk = (dir, rel) => {
     const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
     for (const e of entries) {
@@ -601,7 +620,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   })()
   const SHELL_ASSET_URLS = SHELL_HTML_SOURCE ? shellAssetUrls(SHELL_HTML_SOURCE) : []
   const SHELL_MODULE_URLS = SHELL_HTML_SOURCE ? shellModuleGraph(SHELL_HTML_SOURCE, PUBLIC_DIR) : []
-  const SHELL_HTML = SHELL_HTML_SOURCE ? tileShellHead(brandShellHead(injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS))) : null
+  const SHELL_HTML = SHELL_HTML_SOURCE ? vocabularyShellHead(tileShellHead(brandShellHead(injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS)))) : null
   // The module graph is hashed into the build id but deliberately NOT
   // precached. Two reasons, pulling in opposite directions:
   //
@@ -789,6 +808,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerReports(app, deps)
   registerReportsMap(app, deps)
   registerOperations(app, deps)
+  registerTranslate(app, deps)
   registerTeam(app, deps)
   registerAreas(app, deps)
   registerTeamImport(app, deps)

@@ -24,6 +24,7 @@
 //   markLogin, getAccount, changePassword, esc, wrap
 import { mergeTag } from '../../hooks/heuristics.js'
 import { DASHBOARD_UI, REPORT_FIELD_DEFS, fieldLabel } from '../../store/report-shape.js'
+import { vocabWord } from '../../config-loader.js'
 import { BRAND, TYPE_SCALE_CSS } from '../brand.js'
 import { parseReport } from '../../timestamp.js'
 import { mountRoutes } from './register.js'
@@ -104,6 +105,10 @@ const ENTITY = BRAND.entityLabel || 'report'
 // number at all.
 const FIELD_MAXLEN = 4000
 
+// The value the public form's dropdown posts when the person chose "Other (write it)"; the
+// words themselves arrive in `<key>__other`.
+const OTHER_CHOICE = '__other__'
+
 // Fields shown on the public contact form -- the deployment's OWN declared
 // report vocabulary (report-fields.yml, via report-shape.js), never a second
 // hand-written list.
@@ -136,6 +141,10 @@ const PUBLIC_FIELDS = (() => {
     multiline: f.multiline === true,
     critical: f.critical_for_visit === true,
     section: String(f.section || '').trim(),
+    // A fixed list of usual answers (report-fields.yml `options`): shown as a dropdown that
+    // ends in "Other (write it)" with a box beside it. A convenience, not a gate -- any text
+    // is still accepted (see OTHER_CHOICE in postReport).
+    options: Array.isArray(f.options) ? f.options.map(String) : [],
   })
   // Critical first, then the rest, each in declaration order. The criticals
   // have to be contiguous because they form the first contact-facing group,
@@ -168,8 +177,9 @@ const PUBLIC_FIELDS = (() => {
 // reading a case ("Visit critical"), not for a farmer answering questions.
 // A section a deployer has not named at all falls back to one plain bucket
 // rather than rendering an empty heading.
-const CRITICAL_GROUP_TITLE = 'Needed before a team can visit'
-const UNSECTIONED_GROUP_TITLE = 'More detail'
+// Both headings are the team's words (config/vocabulary.yml, form.group_critical / form.group_other).
+const CRITICAL_GROUP_TITLE = vocabWord('form.group_critical', 'Needed before a team can visit')
+const UNSECTIONED_GROUP_TITLE = vocabWord('form.group_other', 'More detail')
 const PUBLIC_GROUPS = (() => {
   const groups = []
   const critical = PUBLIC_FIELDS.filter(f => f.critical)
@@ -315,13 +325,21 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
   // The essential marker is a real word for assistive tech and an asterisk for
   // everyone else. aria-label on a bare <span> is ignored the same way the
   // progress wrapper's was; a visually-hidden word is not.
-  const fieldHtml = ({ key, label, hint, multiline, critical }) => {
+  const fieldHtml = ({ key, label, hint, multiline, critical, options = [] }) => {
     const id = 'f-' + esc(key)
     const hintId = hint ? id + '-hint' : ''
     const val = esc(report[key] || '')
     const placeholder = hint ? ` placeholder="${esc(hint)}"` : ''
     const describedBy = hintId ? ` aria-describedby="${hintId}"` : ''
-    const inp = multiline
+    // A field with a list of usual answers is a native <select> (works with no script, on any
+    // handset) plus a plain box for the "Other" case. A saved answer that is not on the list
+    // re-opens as Other with its words in the box.
+    const listed = options.find(o => o.toLowerCase() === String(report[key] || '').trim().toLowerCase())
+    const otherOn = !!String(report[key] || '').trim() && !listed
+    const inp = options.length
+      ? `<select id="${id}" name="${esc(key)}"${describedBy}><option value="">${esc(vocabWord('ui.pick_one', 'Choose one'))}</option>${options.map(o => `<option value="${esc(o)}"${listed === o ? ' selected' : ''}>${esc(o.charAt(0).toUpperCase() + o.slice(1))}</option>`).join('')}<option value="${OTHER_CHOICE}"${otherOn ? ' selected' : ''}>${esc(vocabWord('ui.other_write_it', 'Other (write it)'))}</option></select>`
+        + `<label class="other-lab" for="${id}-other">${esc(vocabWord('form.other_write_label', 'If Other, write it here'))}</label><input id="${id}-other" type="text" name="${esc(key)}__other" value="${otherOn ? val : ''}" maxlength="500">`
+      : multiline
       ? `<textarea id="${id}" name="${esc(key)}" rows="3"${placeholder}${describedBy} maxlength="${FIELD_MAXLEN}">${val}</textarea>`
       : `<input id="${id}" type="text" name="${esc(key)}"${placeholder}${describedBy} value="${val}" maxlength="500">`
     const vcMark = critical ? ' <span class="req" aria-hidden="true">*</span><span class="vh"> (essential)</span>' : ''
@@ -446,6 +464,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
      legibility gain, on the surface whose main problem is its length. */
   label{display:block;font-size:var(--fs-xs);line-height:var(--lh-snug);font-weight:600;margin:0 0 var(--space-1)}
   .hint{font-size:var(--fs-tiny);color:#5a6674;margin-top:var(--space-1)}
+  .other-lab{margin-top:var(--space-2);font-weight:400}
   .req{color:${BRAND.accent};font-weight:700}
   /* input[type=tel] is named explicitly. It used to fall outside this
      selector, so the phone field alone rendered at the browser's own default
@@ -453,10 +472,10 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
      and under the 16px floor below which iOS Safari zooms the page on focus,
      which on a narrow phone throws the rest of the form off screen. The
      16px here is that floor, not a taste. */
-  input[type=text],input[type=tel],textarea{width:100%;border:1px solid #c8d0da;border-radius:6px;
+  input[type=text],input[type=tel],textarea,select{width:100%;border:1px solid #c8d0da;border-radius:6px;
     padding:var(--space-2-75) var(--space-2-75);font-size:var(--fs-body);font-family:inherit;
     background:#fff;color:#1a1f29;min-height:44px;-webkit-appearance:none}
-  input:focus,textarea:focus{outline:2px solid ${BRAND.ground};border-color:${BRAND.ground}}
+  input:focus,textarea:focus,select:focus{outline:2px solid ${BRAND.ground};border-color:${BRAND.ground}}
   textarea{resize:vertical;min-height:80px;line-height:var(--lh-base)}
   button[type=submit]{width:100%;background:${BRAND.ground};color:${BRAND.ink};border:0;border-radius:8px;
     padding:var(--space-2-75);font-size:var(--fs-body);font-weight:600;cursor:pointer;
@@ -581,7 +600,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
   const form = document.querySelector('form')
   const DRAFT_KEY = 'casey.report.draft.' + (new URLSearchParams(location.search).get('ref') || 'new')
   const draftNote = document.getElementById('draft-note')
-  const fields = () => [...form.querySelectorAll('input[type=text],input[type=tel],textarea')]
+  const fields = () => [...form.querySelectorAll('input[type=text],input[type=tel],textarea,select')]
   const saveDraft = () => {
     try {
       const d = {}
@@ -739,8 +758,10 @@ export function postReport({ store, esc }) {
     // wrong reference or a mistyped number no longer costs somebody the
     // twenty-four answers underneath it.
     const submitted = {}
-    for (const { key } of PUBLIC_FIELDS) {
-      const v = req.body[key]
+    for (const { key, options } of PUBLIC_FIELDS) {
+      let v = req.body[key]
+      // "Other (write it)" on a dropdown: the answer is what they wrote beside it.
+      if (options.length && v === OTHER_CHOICE) v = req.body[key + '__other']
       if (v == null || typeof v !== 'string') continue
       const trimmed = v.trim()
       if (trimmed) submitted[key] = trimmed

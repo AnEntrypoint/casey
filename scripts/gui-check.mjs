@@ -77,6 +77,7 @@ const { createAccount } = await import(path.join(SRC, 'dashboard/auth.js'))
 const { createDashboard } = await import(path.join(SRC, 'dashboard/server.js'))
 const { runViewerChecks } = await import('./gui-check-viewer.mjs')
 const { runTeamChecks } = await import('./gui-check-team.mjs')
+const { runVocabChecks } = await import('./gui-check-vocab.mjs')
 
 const failures = []
 const ONLY_DONE = Symbol('only-done')
@@ -252,6 +253,8 @@ try {
   // full run; GUI_CHECK_ONLY=viewer runs just them, against the same scratch store and dashboard.
   const viewerCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, store, PORT, USER, PW, ids, archive, seenConsole, seenFailed, bodyText, send })
   const teamCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, setField, key, store, base, USER, PW, ids, archive, seenConsole, bodyText, createAccount, SRC })
+  const vocabCtx = () => ({ check, evalJs, axeBoth, viewport, sleep, send, navigate, PORT, PW, ids })
+  if (process.env.GUI_CHECK_ONLY === 'vocab') { await runVocabChecks(vocabCtx()); throw ONLY_DONE }
   if (process.env.GUI_CHECK_ONLY === 'viewer') { await runViewerChecks(viewerCtx()); throw ONLY_DONE }
   if (process.env.GUI_CHECK_ONLY === 'team') { await runTeamChecks(teamCtx()); throw ONLY_DONE }
 
@@ -663,6 +666,7 @@ try {
 
   if (process.env.GUI_CHECK_SKIP !== 'team') await runTeamChecks(teamCtx())
   await runViewerChecks(viewerCtx())
+  await runVocabChecks(vocabCtx())
 } catch (e) {
   if (e !== ONLY_DONE) {
     console.error('[gui-check] ERROR:', e.message)

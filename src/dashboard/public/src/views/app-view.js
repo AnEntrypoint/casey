@@ -9,7 +9,7 @@ import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton, Btn } from 'ds
 import { state, closeModal, openModal } from '../state.js';
 import { buildSideSections, buildActionItems, backToCases, panelTitle, openQueue } from './nav-config.js';
 import { HealthNotices } from '../components/health-notices.js';
-import { QUEUE_NAME } from '../map-model.js';
+import { queueName } from '../map-model.js';
 import { AccountMenu, LogoutEverywhereConfirmDialog } from '../components/account-menu.js';
 import { NotificationsCenter } from '../components/notifications-center.js';
 import { HandoffBanner } from '../components/handoff-banner.js';
@@ -202,8 +202,8 @@ function AttentionLead() {
   return h('button', {
     type: 'button',
     class: 'ds-attn-lead' + (n ? ' is-waiting' : ''),
-    title: 'Open the "' + QUEUE_NAME + '" list',
-    'aria-label': label + ', open the ' + QUEUE_NAME + ' list',
+    title: 'Open the "' + queueName() + '" list',
+    'aria-label': label + ', open the ' + queueName() + ' list',
     onclick: openQueue,
   },
     h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('activity', { size: 15 })),

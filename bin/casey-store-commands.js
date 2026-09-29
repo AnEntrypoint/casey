@@ -255,7 +255,8 @@ export async function cmdHealth({ flags }) {
   }
   const { feedbackCounts } = await import('../src/feedback.js')
   const feedback = await feedbackCounts(store).catch(() => ({ total: 0, last_7_days: 0 }))
-  if (flags.json) { console.log(JSON.stringify({ open: open.length, breachedCases, corrupt, breaches: breachCounts, feedback }, null, 2)); await closeAndExit(store, 0) }
+  const team = await teamMetricsSummary(store).catch(() => null)
+  if (flags.json) { console.log(JSON.stringify({ open: open.length, breachedCases, corrupt, breaches: breachCounts, feedback, team }, null, 2)); await closeAndExit(store, 0) }
   console.log(bold('casey health') + dim('  (read-only -- nothing written)'))
   console.log(`open cases: ${open.length}   with a guardrail breach: ${breachedCases}` + (corrupt ? red(`   corrupt rows skipped: ${corrupt}`) : ''))
   const entries = Object.entries(breachCounts).sort((a, b) => b[1] - a[1])
@@ -264,7 +265,26 @@ export async function cmdHealth({ flags }) {
   if (entries.length) console.log(dim(`\n  a case can breach more than one guardrail, so these add up past ${breachedCases}.`))
   if (entries.length) console.log(dim('  record them on the cases with ') + cyan('casey sweep') + dim('.'))
   console.log(`tester feedback: ${feedback.total} comment(s), ${feedback.last_7_days} in the last 7 days` + dim('  (staff read them at /api/feedback)'))
+  if (team) console.log(teamMetricsLine(team) + dim('  (staff read the per-person figures at /api/metrics/team)'))
   await closeAndExit(store, 0)
+}
+
+// The team's headline human-response figures for `casey health`: the same numbers
+// GET /api/metrics/team serves (src/ranger-metrics.js), without names.
+async function teamMetricsSummary(store) {
+  const { buildTeamMetrics } = await import('../src/ranger-metrics.js')
+  const { teamPeople } = await import('../src/dashboard/routes/team.js')
+  const { listAccounts } = await import('../src/dashboard/auth.js')
+  const { UNCLAIMED_ASSIGNEE } = await import('../src/case-store.js')
+  const cases = (await store.listCases({}, { limit: 5000, offset: 0 })).filter(c => c.channel !== 'system')
+  const m = buildTeamMetrics({ cases, eventsByCase: await store.listEventsByCase(cases.map(c => c.id)), people: await teamPeople(store, listAccounts), now: Date.now(), unclaimed: UNCLAIMED_ASSIGNEE })
+  const o = m.overall
+  return { stuck_hours: m.stuck_hours, assigned: o.assigned, first_action: o.first_action, signoff: o.signoff, nudges: o.nudges, nudge_share: o.nudge_share, stuck: o.stuck }
+}
+function teamMetricsLine(t) {
+  const h = (ms) => (ms == null ? 'n/a' : ms < 3600e3 ? Math.round(ms / 60e3) + 'm' : Math.round(ms / 360e3) / 10 + 'h')
+  const share = t.nudge_share == null ? 'n/a' : Math.round(t.nudge_share * 100) + '%'
+  return `team response: ${t.assigned} holding(s); first action median ${h(t.first_action?.median_ms)} / p90 ${h(t.first_action?.p90_ms)}; hand-over to sign-off median ${h(t.signoff?.median_ms)}; nudged ${share} (${t.nudges} sent); stuck over ${t.stuck_hours}h: ${t.stuck}`
 }
 
 export async function cmdSweep({ flags }) {

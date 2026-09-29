@@ -30,7 +30,7 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Alert } from '/design/src/components/content/feedback.js';
 import { state } from '../state.js';
-import { URGENCY_BAND_LABEL, QUEUE_NAME, LOCATION_SOURCE_LABEL } from '../map-model.js';
+import { URGENCY_BAND_LABEL, queueName, LOCATION_SOURCE_LABEL } from '../map-model.js';
 import { STATUS_TOKEN } from './map-markers.js';
 import {
     mapStateRef, refresh, discardMap, counts, loadSummary, loadError, hasLoadedOnce,
@@ -131,7 +131,7 @@ function mapLegend() {
         ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
             h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), stageLabel(k))),
         h('span', { key: 'urgent', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-urgent', 'data-urgency': '3' }), QUEUE_NAME),
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-urgent', 'data-urgency': '3' }), queueName()),
         h('span', { key: 'loc-estimated', class: 'ds-map-legend-item' },
             h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-dashed' }), sentence(LOCATION_SOURCE_LABEL.estimated)));
 }
@@ -207,7 +207,7 @@ function mapTextEquivalent() {
             + [3, 2, 1].map((b) => c.bands[b] + ' marked "' + URGENCY_BAND_LABEL[b] + '"').join(', ')
             + ', and ' + c.bands[0] + ' with nothing chasing them.');
     }
-    parts.push(countOf(c.attention) + (c.attention === 1 ? ' is' : ' are') + ' in the "' + QUEUE_NAME + '" list beside the map, and ' + c.today + ' came in today.');
+    parts.push(countOf(c.attention) + (c.attention === 1 ? ' is' : ' are') + ' in the "' + queueName() + '" list beside the map, and ' + c.today + ' came in today.');
     // The same sentence the no-location disclosure shows, not a second wording
     // of it: a report that cannot be plotted is a surveillance blind spot, and
     // it must be as audible as it is visible.

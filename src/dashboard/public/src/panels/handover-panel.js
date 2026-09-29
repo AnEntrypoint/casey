@@ -11,11 +11,11 @@ import { createPanelLoader } from './panel-load.js';
 import { fetchHandover, postStartShift } from '../api.js';
 import { fmtTime, eventKindLabel, actorLabel } from '../format.js';
 import { entityLabel } from '../vocabulary.js';
-import { QUEUE_NAME } from '../map-model.js';
+import { queueName } from '../map-model.js';
 import { toast } from '../toasts.js';
 
 const SECTION_EMPTY_TEXT = {
-    [QUEUE_NAME]: 'Nothing needs a person right now.',
+    [queueName()]: 'Nothing needs a person right now.',
     'Asked for a person, not answered yet': 'Nobody is waiting for an answer.',
     'Unsent drafts': 'No unsent drafts.',
     'Changed this shift': 'Nothing has changed yet this shift.',
@@ -69,7 +69,7 @@ function handoverBody(j) {
     loadRoster(schedule);
     return h('div', {},
         h('div', { class: 'ds-ho-since' }, `Since ${j.since ? fmtTime(j.since) : 'the last day'}${j.since_by ? ' (' + j.since_by + ')' : ''}`),
-        hoSection(QUEUE_NAME, j.attention, (r, i) => h('div', { key: i, class: 'ds-ho-row' },
+        hoSection(queueName(), j.attention, (r, i) => h('div', { key: i, class: 'ds-ho-row' },
             refLink(r.ref, r.id), ' ', h('span', { class: 'ds-muted' }, r.subject || '(no subject)'), ' ', h('span', { class: 'ds-ho-why' }, r.reason || ''),
             holder(r.assignee) ? h('span', { class: 'ds-ho-assignee' }, Chip({ tone: 'accent', size: 'sm', children: holder(r.assignee) })) : null)),
         hoSection('Asked for a person, not answered yet', j.handoffs, (r, i) => h('div', { key: i, class: 'ds-ho-row' },

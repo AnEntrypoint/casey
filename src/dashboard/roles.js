@@ -130,6 +130,8 @@ const FIELD_ROUTES = [
   ['PATCH', new RegExp(`^${CASE}$`), { access: 'write', patch: true }],
   ['POST', new RegExp(`^${CASE}/intake$`), { access: 'write', intake: true }],
   ['POST', new RegExp(`^${CASE}/note$`), { access: 'write' }],
+  // "Show in English" on one message the reporter sent (routes/translate.js): write access only, never read-only.
+  ['POST', new RegExp(`^${CASE}/events/([^/]+)/translate$`), { access: 'write' }],
   ['POST', new RegExp(`^${CASE}/reply$`), { access: 'write' }],
   ['POST', new RegExp(`^${CASE}/remind$`), { access: 'write' }],
   ['POST', new RegExp(`^${CASE}/location$`), { access: 'write' }],
@@ -263,7 +265,7 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
 // refused with 409 when that is not the reference of the case id in the URL, so
 // a stale tab or a wrong-case click can never land on a different case. Optional:
 // a caller that sends none behaves exactly as before. Applies to every role.
-const REF_GUARDED = /^\/api\/cases\/([^/]+)\/(intake|note|transition|reply|remind|location|send-back|relocate|handoff)$|^\/api\/cases\/([^/]+)$/
+const REF_GUARDED = /^\/api\/cases\/([^/]+)\/(intake|note|transition|reply|remind|location|send-back|relocate|handoff)$|^\/api\/cases\/([^/]+)$|^\/api\/cases\/([^/]+)\/events\/[^/]+\/translate$/
 export function expectedRefGuard({ store }) {
   return async (req, res, next) => {
     try {
@@ -271,7 +273,7 @@ export function expectedRefGuard({ store }) {
       if (want == null || !(req.method === 'POST' || req.method === 'PATCH')) return next()
       const m = REF_GUARDED.exec(req.path)
       if (!m || (m[3] && req.method !== 'PATCH')) return next()
-      const c = await store.getCase(decodeURIComponent(m[1] || m[3]))
+      const c = await store.getCase(decodeURIComponent(m[1] || m[3] || m[4]))
       if (!c) return next()   // the route answers its own 404
       if (typeof want !== 'string' || want.trim() !== String(c.ref)) {
         return res.status(409).json({ error: `This screen is showing a different ${REPORT_ENTITY_LABEL} from the one being changed (expected ${String(want).slice(0, 40)}, this is ${c.ref}). Nothing was saved -- reload and open the right one.`, code: 'wrong_case' })
