@@ -118,6 +118,19 @@ export function canSignOff(value) {
   return resolveTierValue(value) === TIER_ANIMAL_HEALTH_TECHNICIAN
 }
 
+// The rungs only an ADMIN may grant: operator (team management) and the
+// technician (sign-off authority). Every grant route -- dashboard tier/register/
+// invite, WhatsApp team_register/team_invite, role-invite claims minted by a
+// non-admin -- filters through `grantableBy`, so a rung cannot be handed out on
+// one route that another refuses.
+export const ADMIN_ONLY_TIERS = [TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR]
+
+// The team rungs a granter may hand out: everything above reporter, minus the
+// admin-only rungs unless `isAdmin`.
+export function grantableBy(isAdmin) {
+  return TIER_ORDER.filter(t => t !== TIER_REPORTER && (isAdmin || !ADMIN_ONLY_TIERS.includes(t)))
+}
+
 // casey's OWN labels -- generic, domain-neutral, and the fallback when a
 // deployment declares none. A deployment renames a rung for its own people
 // through `report-fields.yml`'s `dashboard_ui.tier_labels` (uhh calls

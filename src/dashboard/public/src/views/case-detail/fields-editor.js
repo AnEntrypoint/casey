@@ -93,10 +93,13 @@ function assigneeControl(d, set) {
     // inner key, and webjsx patched the <input> in place instead of swapping it for
     // a <select> when the list arrived.
     if (!roster.length) return h('div', { key: 'assignee-text' }, TextField({ label: 'Assignee', value: d.assignee, onInput: (v) => set('assignee', v) }));
-    const opts = [{ value: '', label: 'Nobody yet' }, ...roster.map((m) => ({ value: m.key, label: m.name + ' (' + m.role + ', ' + m.via + ')' }))];
+    // A login linked to a WhatsApp team member is that member (alias_of): listed once, by the contact key.
+    const opts = [{ value: '', label: 'Nobody yet' }, ...roster.filter((m) => !m.alias_of).map((m) => ({ value: m.key, label: m.name + ' (' + m.role + ', ' + m.via + ')' }))];
     // 'agent' is the assistant holding a report nobody has taken: that IS "Nobody yet" to a
     // person, so it selects that option instead of showing the raw word as a third choice.
-    const current = d.assignee === 'agent' ? '' : (d.assignee || '');
+    const held = d.assignee === 'agent' ? '' : (d.assignee || '');
+    const aliasOf = (roster.find((m) => m.key === held) || {}).alias_of;
+    const current = aliasOf || held;
     if (current && !opts.some((o) => o.value === current)) opts.push({ value: current, label: d.assignee_label || current });
     return h('div', { key: 'assignee-pick' }, Select({ label: 'Assigned to', value: current, options: opts, onChange: (v) => set('assignee', v) }));
 }

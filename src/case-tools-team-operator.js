@@ -22,7 +22,7 @@ import { defTool, str } from './case-tools-shared.js'
 import { tagList, tsMs } from './timestamp.js'
 import { isOpenCase, fmtPhone27 } from './format.js'
 import { rankAttention } from './attn.js'
-import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, TIER_FIELD_WORKER, atLeast, resolveTierValue } from './contact-tiers.js'
+import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, TIER_FIELD_WORKER, grantableBy, atLeast, resolveTierValue } from './contact-tiers.js'
 import { assigneeKeyFor, isAssignedTo, isOwnConversation, contactIdOfAssignee, isContactAssignee } from './case-assignment.js'
 import { createInvite, normalizeMsisdn } from './role-invites.js'
 import { sendStaffMessage, pendingDraft, releaseCase, staffLabel } from './hooks/staff-outbound.js'
@@ -179,11 +179,11 @@ export function buildTeamOperatorTools(store) {
         return sent.ok ? { ok: true, delivered: true, ref: c.ref, text: plan.text } : { ok: false, delivered: false, ref: c.ref, error: sent.error }
       }),
     defTool('team_invite', 'cases',
-      'Create a one-time WhatsApp code that puts whoever sends it (as their only message, to this number) into a role. Roles you can grant: field worker or animal health technician. The code is shown once: read it to the operator to pass on.',
+      'Create a one-time WhatsApp code that puts whoever sends it (as their only message, to this number) into a role. The role you can grant: field worker. Only an admin, from the dashboard, can grant animal health technician (sign-off) or operator. The code is shown once: read it to the operator to pass on.',
       {
         type: 'object',
         properties: {
-          role: str('Role to grant', { enum: TIER_ORDER.filter(t => t !== TIER_REPORTER && t !== TIER_OPERATOR) }),
+          role: str('Role to grant', { enum: grantableBy(false) }),
           label: str('Optional note about who it is for'),
           ttl_hours: { type: 'number', description: 'Hours the code stays valid (default 72)' },
         },
@@ -191,23 +191,23 @@ export function buildTeamOperatorTools(store) {
       },
       async ({ role, label = '', ttl_hours }, ctx) => {
         try {
-          const inv = await createInvite(store(), { tier: role, label, ttlHours: ttl_hours, by: staffLabel(ctx.contact), grantableTiers: TIER_ORDER.filter(t => t !== TIER_REPORTER && t !== TIER_OPERATOR) })
+          const inv = await createInvite(store(), { tier: role, label, ttlHours: ttl_hours, by: staffLabel(ctx.contact), grantableTiers: grantableBy(false) })
           return { ok: true, code: inv.code, role: TIER_LABELS[inv.tier], expires_at: inv.expires_at, single_use: true }
         } catch (e) { return { error: e.message } }
       }),
     defTool('team_register', 'cases',
-      'Put a phone number into a role right now (field worker or animal health technician), creating the contact if it has never written in. Never demotes someone and cannot make an operator.',
+      'Put a phone number into a role right now (field worker), creating the contact if it has never written in. Never demotes someone; only an admin, from the dashboard, can make an animal health technician or an operator.',
       {
         type: 'object',
         properties: {
           phone: str('The phone number, e.g. 082 123 4567 or +27821234567'),
-          role: str('Role to grant', { enum: TIER_ORDER.filter(t => t !== TIER_REPORTER && t !== TIER_OPERATOR) }),
+          role: str('Role to grant', { enum: grantableBy(false) }),
           name: str('Their name'),
         },
         required: ['phone', 'role'],
       },
       async ({ phone, role, name = '' }, ctx) => {
-        if (!TIER_ORDER.filter(t => t !== TIER_REPORTER && t !== TIER_OPERATOR).includes(role)) return { error: 'That role cannot be granted from here.' }
+        if (!grantableBy(false).includes(role)) return { error: 'That role cannot be granted from here.' }
         const external_id = normalizeMsisdn(phone)
         if (!external_id) return { error: 'That does not look like a phone number. Ask for it again.' }
         // A role is granted only to a number the operator typed in THIS message. Text

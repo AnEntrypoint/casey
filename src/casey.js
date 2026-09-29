@@ -491,7 +491,7 @@ export class Casey {
     const open = allCases.filter(isOpenCase)
     const breaching = open.filter(c => tagList(c).some(t => CASE_HEALTH_SET.has(t)))
     if (!breaching.length) {                        // no breaches -> gap is impossible
-      this._coverageGapActive = false
+      await this._coverageEdge(false, null, now)
       return
     }
     // detectCoverageGap only reads events for cases whose tags intersect the
@@ -502,18 +502,29 @@ export class Casey {
     for (const c of breaching) eventsByCaseId.set(c.id, await this.store.listEvents(c.id).catch(() => []))
     const { detectCoverageGap } = await import('./case-sweep.js')
     const verdict = detectCoverageGap(open, eventsByCaseId, roster, now)
-    if (verdict.gap && !this._coverageGapActive) {
-      // Rising edge: page once. Reuse the breach webhook transport; the synthetic
-      // case carries a stable ref so the alert reads as a team-coverage page, not a
-      // per-case one. No external_id -- aggregate-only.
-      this._coverageGapActive = true
-      try { await this._notifyBreach({ ref: 'TEAM-COVERAGE' }, 'coverage_gap', verdict.reason) }
-      catch (e) { this.log?.warn?.('[casey] coverage-gap page failed', { error: e.message }) }
-      this.log?.warn?.('[casey] coverage gap', { open_breaches: verdict.open_breaches, roster_size: verdict.roster_size })
-    } else if (!verdict.gap) {
-      this._coverageGapActive = false               // falling edge: armed to page again
-    }
+    await this._coverageEdge(verdict.gap, verdict, now)
     return verdict
+  }
+
+  // The rising/falling-edge rule for the team coverage gap. Held in the durable
+  // AlertGate (alerts/state.json), never in memory: a hot reload or restart
+  // resets memory, and a standing gap was re-paged every sweep after each reload.
+  // Falls back to the in-memory flag only when the gate could not be built.
+  async _coverageEdge(gap, verdict, now) {
+    let edge = null
+    if (this._alertGate) {
+      try { edge = this._alertGate.evaluate('coverage_gap', !!gap, now) }
+      catch (e) { this.log?.warn?.('[casey] alert gate failed', { condition: 'coverage_gap', error: e.message }) }
+    } else if (gap && !this._coverageGapActive) { this._coverageGapActive = true; edge = { edge: 'raised', since: now, forMs: 0 } }
+    else if (!gap) this._coverageGapActive = false
+    if (!edge) return
+    // No external_id -- aggregate-only; the synthetic ref reads as a team-coverage alert.
+    const detail = edge.edge === 'cleared'
+      ? `coverage_gap has resolved; it stood for ${Math.round(edge.forMs / 60000)} minute(s)`
+      : (verdict?.reason || 'coverage_gap')
+    try { await this._notifyBreach({ ref: 'TEAM-COVERAGE' }, 'coverage_gap', detail, { event: edge.edge, since: edge.since, forMs: edge.forMs, at: now }) }
+    catch (e) { this.log?.warn?.('[casey] coverage-gap page failed', { error: e.message }) }
+    if (edge.edge === 'raised') this.log?.warn?.('[casey] coverage gap', { open_breaches: verdict?.open_breaches, roster_size: verdict?.roster_size })
   }
 
   // Start (or restart) the periodic guardrail sweep. Opt-in: a non-positive

@@ -995,8 +995,19 @@ export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSwee
   }
   return async (req, res) => {
     const started = Date.now()
+    // A write holding the sqlite file makes a read fail instantly (busy_timeout 0). That
+    // is a busy store, not an unreachable one: retry once after a short wait, and if it is
+    // still busy answer ready with store:'busy' -- never a false red on a liveness probe.
+    const isBusy = (e) => /SQLITE_BUSY|database is locked|database table is locked/i.test(String(e?.message || e))
+    let storeState = 'ok'
     try {
-      await store.countCases({})
+      try { await store.countCases({}) }
+      catch (e) {
+        if (!isBusy(e)) throw e
+        await new Promise(r => setTimeout(r, 75))
+        try { await store.countCases({}) }
+        catch (e2) { if (!isBusy(e2)) throw e2; storeState = 'busy' }
+      }
     } catch (e) {
       // Bound the error so a hostile/huge store error cannot bloat the probe body.
       return res.status(503).json({
@@ -1011,7 +1022,7 @@ export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSwee
     // is ready, and the body says the extra signals could not be gathered.
     try { snapshot = await degradationSnapshot() }
     catch { snapshot = { degraded: true, degraded_reasons: ['checks_unavailable'], checks: { store: 'ok', llm: 'no_answer', gateway: 'no_answer', runtime: 'no_answer', queue: null } } }
-    res.json({ ready: true, store: 'ok', took_ms, ...snapshot, capabilities })
+    res.json({ ready: true, store: storeState, took_ms, ...snapshot, capabilities })
   }
 }
 

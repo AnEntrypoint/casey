@@ -389,6 +389,10 @@ const absentRunRoutes = new Set();
 
 async function optionalRunRoute(kind, id) {
   if (absentRunRoutes.has(kind)) return null;
+  // /api/config says outright whether the deployment mounted these routes; only a
+  // server that predates the flag (field absent) is probed.
+  const cfg = readLastKnown('config');
+  if (cfg && cfg.run_routes === false) return null;
   try {
     const r = await api('/api/runs/' + encodeURIComponent(id) + '/' + kind);
     if (r.status === 404) { absentRunRoutes.add(kind); return null; }

@@ -373,6 +373,9 @@ export function getConfig({ store, authed, SAST_TZ, resolveWhatsappAdapter, fmtP
     try { botNumber = fmtPhone27(resolveWhatsappAdapter?.()?.displayNumber?.() || '') } catch { /* best-effort */ }
     res.json({
       whatsapp_number: botNumber,
+      // Whether a deployer mounted the optional /api/runs/* routes (CASEY_EXTRA_DASHBOARD_ROUTES);
+      // the SPA does not probe them when this is false.
+      run_routes: !!process.env.CASEY_EXTRA_DASHBOARD_ROUTES,
       stages: store.getValidStatuses(),
       open_stages: typeof store.getOpenStatuses === 'function' ? store.getOpenStatuses() : [],
       case_type: typeof store.getFieldEnum === 'function' ? store.getFieldEnum('case.case_type', []) : [],

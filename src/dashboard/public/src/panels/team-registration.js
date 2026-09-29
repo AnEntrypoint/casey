@@ -20,9 +20,9 @@ const h = webjsx.createElement;
 
 const form = { phone: '', name: '', tier: TIER_ORDER[1], busy: false, error: null };
 
-/** @returns {string[]} the rungs a person can be registered into (never the default rung; the top one only for an admin). */
+/** @returns {string[]} the rungs a person can be registered into (never the default rung; only an admin may grant the rungs above the first team rung: sign-off and operator). */
 export function assignableTiers(isAdmin) {
-    return TIER_ORDER.slice(1).filter((t) => isAdmin || t !== TIER_ORDER[TIER_ORDER.length - 1]);
+    return isAdmin ? TIER_ORDER.slice(1) : TIER_ORDER.slice(1, 2);
 }
 
 export function tierOptions(isAdmin) {
