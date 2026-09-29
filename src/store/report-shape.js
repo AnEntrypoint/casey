@@ -217,7 +217,52 @@ export function deriveReportShape(reportFields) {
     TIER_ORDER.map(tier => [tier, tierLabel(tier, DASHBOARD_UI?.tier_labels || null)]),
   )
 
+  // FIELDS WITH A FIXED LIST OF ANSWERS (report-fields.yml `options: [...]`), e.g. species.
+  // The list is a CONVENIENCE, never a gate: the dashboard and the public form offer it as a
+  // dropdown with an "Other (write it)" entry, and the bot, the intake route and the store
+  // all still accept any text (an ostrich is a legitimate species). The bot's field
+  // description is extended here so the model uses the listed spelling when the person
+  // clearly means one of them, and records their own words otherwise.
+  const FIELD_OPTIONS = Object.fromEntries(reportFields.fields
+    .filter(f => Array.isArray(f.options) && f.options.map(o => String(o).trim()).filter(Boolean).length)
+    .map(f => [f.key, [...new Set(f.options.map(o => String(o).trim()).filter(Boolean))]]))
+  const withOptionsNote = (f) => FIELD_OPTIONS[f.key]
+    ? { ...f, description: `${f.description || ''} Usual answers: ${FIELD_OPTIONS[f.key].join(', ')}. If they clearly mean one of these, record it with exactly that spelling; if it is anything else (an ostrich, a camel), record their own word as they said it -- never force it into this list.`.trim() }
+    : f
+
+  // HIDING A FIELD FROM A SCREEN (dashboard_ui.hidden_fields). A display setting only: nothing
+  // is deleted, the bot still asks and records, exports and the stored report keep every
+  // field. Groups: all | staff (admin, operator, secretary) | eco_ranger |
+  // animal_health_technician. The fields the system stands on can never be hidden: the
+  // mandatory minimum, the technician's sign-off diagnosis, the area field and the
+  // visit-critical fields -- hiding one would leave a person asked to act on a fact they
+  // cannot see.
+  const HIDE_GROUPS = ['all', 'staff', 'eco_ranger', 'animal_health_technician']
+  const NEVER_HIDDEN = new Set([...MANDATORY_MINIMUM_FIELDS, ...SIGNOFF_DIAGNOSIS_FIELDS, ...CRITICAL_FIELDS, ...(AREA_FIELD ? [AREA_FIELD] : [])])
+  const hiddenCfg = (DASHBOARD_UI && DASHBOARD_UI.hidden_fields && typeof DASHBOARD_UI.hidden_fields === 'object') ? DASHBOARD_UI.hidden_fields : {}
+  const groupOf = (role) => (role === 'admin' || role === 'operator' || role === 'secretary') ? 'staff' : (HIDE_GROUPS.includes(role) ? role : null)
+  const listOf = (g) => (Array.isArray(hiddenCfg[g]) ? hiddenCfg[g] : []).map(String)
+  function hiddenFieldsFor(role) {
+    const g = groupOf(role)
+    const keys = new Set([...listOf('all'), ...(g ? listOf(g) : [])])
+    return [...keys].filter(k => REPORT_KEYS.has(k) && !NEVER_HIDDEN.has(k))
+  }
+  function hiddenFieldsReport() {
+    const rows = []
+    for (const g of Object.keys(hiddenCfg)) {
+      if (!HIDE_GROUPS.includes(g)) { rows.push({ level: 'warn', text: `dashboard_ui.hidden_fields: "${g}" is not a screen group (use ${HIDE_GROUPS.join(', ')}); ignored`, fix: 'rename or remove that entry in report-fields.yml' }); continue }
+      for (const k of listOf(g)) {
+        if (!REPORT_KEYS.has(k)) rows.push({ level: 'warn', text: `dashboard_ui.hidden_fields.${g}: "${k}" is not a report field; ignored`, fix: 'check the spelling against report-fields.yml' })
+        else if (NEVER_HIDDEN.has(k)) rows.push({ level: 'warn', text: `dashboard_ui.hidden_fields.${g}: "${k}" is part of the mandatory / visit-critical / sign-off set and stays visible`, fix: 'remove it from hidden_fields' })
+      }
+    }
+    const shown = HIDE_GROUPS.map(g => [g, hiddenFieldsFor(g)]).filter(([, ks]) => ks.length)
+    rows.push({ level: 'ok', text: shown.length ? 'fields hidden on screens: ' + shown.map(([g, ks]) => `${g} [${ks.join(', ')}]`).join('; ') + ' (data untouched)' : 'no fields are hidden on any screen' })
+    return rows
+  }
+
   return {
+    FIELD_OPTIONS, hiddenFieldsFor, hiddenFieldsReport,
     REPORT_KEYS, REPORT_KEY_ORDER, CRITICAL_FIELDS, APPEND_FIELDS, NEVER_INFERRED_FIELDS,
     SEVERITY_SIGNAL_FIELDS,
     MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum,
@@ -226,7 +271,7 @@ export function deriveReportShape(reportFields) {
     REPORT_ENTITY_LABEL: reportFields.entity_label || 'report',
     REPORT_TOOL_NAME: reportFields.tool_name || 'case_report',
     REPORT_TOOL_DESCRIPTION: reportFields.tool_description || '',
-    REPORT_FIELD_DEFS: reportFields.fields,
+    REPORT_FIELD_DEFS: reportFields.fields.map(withOptionsNote),
     REPORT_GEO_FIELD_DEFS: reportFields.geo_fields || [],
     DASHBOARD_UI,
     TIER_LABELS,
@@ -257,4 +302,7 @@ export const REPORT_TOOL_DESCRIPTION = _default.REPORT_TOOL_DESCRIPTION
 export const REPORT_FIELD_DEFS = _default.REPORT_FIELD_DEFS
 export const REPORT_GEO_FIELD_DEFS = _default.REPORT_GEO_FIELD_DEFS
 export const DASHBOARD_UI = _default.DASHBOARD_UI
+export const FIELD_OPTIONS = _default.FIELD_OPTIONS
+export const hiddenFieldsFor = _default.hiddenFieldsFor
+export const hiddenFieldsReport = _default.hiddenFieldsReport
 export const TIER_LABELS = _default.TIER_LABELS

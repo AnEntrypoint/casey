@@ -55,6 +55,26 @@ export async function runRoleChecks() {
   return render(rows)
 }
 
+// Vocabulary: the words file (vocabulary.yml in the config dir) and which of its keys are
+// missing, so the team can see what still falls back to the built-in wording. Offline and
+// read-only. A missing key is a warning, never a failure: the fallback word is shown and
+// nothing breaks. See docs/vocabulary-guide.md.
+export async function runVocabularyChecks() {
+  const { loadDomainConfig } = await import('../src/config-loader.js')
+  const { vocabulary: v, dir } = loadDomainConfig()
+  console.log(bold('\nVocabulary') + dim('  (the words people read; one file the team edits)'))
+  const out = []
+  const shown = (keys) => keys.slice(0, 30).join(', ') + (keys.length > 30 ? `, and ${keys.length - 30} more` : '')
+  if (!v.hasFile) out.push({ level: 'warn', text: `no vocabulary.yml in ${dir}: every word uses the built-in default`, fix: 'copy config/default/vocabulary.yml into the config dir and edit it' })
+  else out.push({ level: 'ok', text: `vocabulary: ${Object.keys(v.words).length} words in force from ${v.file}` })
+  if (v.missing.length) out.push({ level: 'warn', text: `${v.missing.length} word(s) missing from vocabulary.yml (the built-in wording is used): ${shown(v.missing)}`, fix: 'add each key to vocabulary.yml; docs/vocabulary-guide.md lists what every key does' })
+  if (v.invalid.length) out.push({ level: 'warn', text: `${v.invalid.length} vocabulary key(s) are blank or not plain text and were ignored: ${shown(v.invalid)}`, fix: 'give each one a line of text (bot texts may be a list of lines)' })
+  if (v.unknown.length) out.push({ level: 'warn', text: `${v.unknown.length} vocabulary key(s) that nothing reads (a typo?): ${shown(v.unknown)}`, fix: 'compare the spelling with docs/vocabulary-guide.md' })
+  const { hiddenFieldsReport } = await import('../src/store/report-shape.js')
+  for (const r of hiddenFieldsReport()) out.push(r)
+  return render(out)
+}
+
 // "Data processors": every outside party casey sends personal or animal data to,
 // and the policy in force for each. Offline and read-only: it reads the env and
 // the policy module, contacts nobody. A policy of 'allow', or a chain link the

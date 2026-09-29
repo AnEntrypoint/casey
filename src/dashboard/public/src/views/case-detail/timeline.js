@@ -4,10 +4,12 @@
 // pagination.
 
 import * as webjsx from '/design/vendor/webjsx/index.js';
-import { Btn, Icon, IconButton } from '/design/src/components/shell.js';
+import { Btn, Chip, Icon, IconButton } from '/design/src/components/shell.js';
 import { SearchInput, LogRow } from '/design/src/components/content.js';
 import { state, schedule, appendTimelineEvents, setTimelineSearch } from '../../state.js';
-import { fetchCaseEvents, postFlagReply } from '../../api.js';
+import { fetchCaseEvents, postFlagReply, postTranslateEvent } from '../../api.js';
+import { word } from '../../words.js';
+import { toast, failMsg } from '../../toasts.js';
 import { rel, fmtTime, reportValue } from '../../format.js';
 import { eventIcon, eventTone } from '../../icons-map.js';
 import { confirmDialog } from '../../components/dialog-shell.js';
@@ -83,7 +85,52 @@ function rowLabel(e) {
     return label;
 }
 
-function TimelineRow({ e, caseId, key } = {}) {
+// ---- "Show in English" ---------------------------------------------------------------
+// One message at a time, on request (routes/translate.js). The original stays on screen; the
+// translation sits under it, labelled as a machine's. A translation already paid for arrives
+// with the events as a system observation `translation:<eventId>` and is shown without a click.
+const TRANSLATION_PREFIX = 'translation:';
+const isTranslationRow = (e) => e.kind === 'observation' && typeof e.text === 'string' && e.text.startsWith(TRANSLATION_PREFIX);
+function evData(e) { if (e.data && typeof e.data === 'object') return e.data; try { return e.data ? JSON.parse(e.data) : {}; } catch { return {}; } }
+// eventId -> { english, language } from the observations already loaded.
+function storedTranslations(events) {
+    const out = {};
+    for (const e of events) {
+        if (!isTranslationRow(e)) continue;
+        const d = evData(e);
+        if (d && typeof d.english === 'string' && d.english) out[e.text.slice(TRANSLATION_PREFIX.length)] = { english: d.english, language: d.language || '' };
+    }
+    return out;
+}
+const isContactMessage = (e) => e.kind === 'inbound' && e.actor === 'contact';
+/** @returns {string} the language the bot recorded for this report (report.language_detected), '' if none. */
+export function reportLanguage(c) {
+    try { const r = c && c.report ? JSON.parse(c.report) : {}; const l = r && r.language_detected; return typeof l === 'string' ? l.trim().slice(0, 40) : ''; } catch { return ''; }
+}
+function trState() { return state._translate || (state._translate = {}); }
+
+async function showInEnglish(caseId, caseRef, e) {
+    const tr = trState();
+    if (tr[e.id] && tr[e.id].busy) return;
+    tr[e.id] = { busy: true }; schedule();
+    try {
+        const r = await postTranslateEvent(caseId, e.id, caseRef);
+        tr[e.id] = { english: r.english, language: r.language || '', label: r.label || '' };
+    } catch (err) {
+        delete tr[e.id];
+        toast(await failMsg(err, word('ui.translate_failed')), 'err');
+    }
+    schedule();
+}
+
+function TranslationNote({ shown, key } = {}) {
+    const from = shown.language ? shown.language + ' > English -- ' : '';
+    return h('div', { key, class: 'casey-ev-translation', role: 'status', 'data-translation-of': '1' },
+        Chip({ size: 'sm', tag: true, children: from + word('ui.translate_label') }),
+        h('span', { class: 'casey-ev-translated' }, reportValue(shown.english || '')));
+}
+
+function TimelineRow({ e, caseId, caseRef, canTranslate, shown, key } = {}) {
     const flagged = e._flagged || e.data?.flagged_reply;
     return LogRow({
         key, kind: e.kind, tone: eventTone(e.kind),
@@ -97,7 +144,12 @@ function TimelineRow({ e, caseId, key } = {}) {
         // reporter could send through casey is ever cut, and the true length is
         // stated when it is.
         text: reportValue(e.text || ''),
-        trailing: e.kind === 'outbound' && !flagged
+        trailing: (canTranslate && isContactMessage(e) && !shown)
+            ? Btn({ size: 'sm', variant: 'ghost', class: 'casey-translate-btn', disabled: !!(trState()[e.id] && trState()[e.id].busy),
+                'aria-label': word('ui.translate_button') + ': ' + reportValue(e.text || '').slice(0, 40),
+                children: (trState()[e.id] && trState()[e.id].busy) ? word('ui.translate_busy') : word('ui.translate_button'),
+                onClick: () => showInEnglish(caseId, caseRef, e) })
+            : e.kind === 'outbound' && !flagged
             ? IconButton({ icon: Icon('warn', { size: 12 }), title: 'Flag this reply as bad/off-target', onClick: () => flagReply(caseId, e) })
             : (e.kind === 'outbound' && flagged ? h('span', { class: 'casey-ev-flagged', title: 'Flagged for review' }, Icon('warn', { size: 12 })) : null),
         // Wrapped so the exact timestamp stays available on hover -- LogRow
@@ -106,16 +158,19 @@ function TimelineRow({ e, caseId, key } = {}) {
     });
 }
 
-export function Timeline({ caseId, events, eventsTotal, key } = {}) {
+export function Timeline({ caseId, events, eventsTotal, key, canTranslate = false, caseRef = null, language = '' } = {}) {
     const q = (state.timelineSearch || '').toLowerCase().trim();
     // Search the words on screen AND the underlying kind/actor keys: an
     // operator types what they can see ("reporter"), a maintainer types what
     // the store calls it ("inbound"), and both were true of this box before
     // the labels were rewritten. Only the first would be after, if the keys
     // were dropped from the haystack.
+    const stored = storedTranslations(events);
+    // The translation observations are bookkeeping: they appear under their message, not as rows.
+    const shownEvents = events.filter(e => !isTranslationRow(e));
     const filtered = q
-        ? events.filter(e => (e.kind + ' ' + e.actor + ' ' + rowLabel(e) + ' ' + (e.text || '')).toLowerCase().includes(q))
-        : events;
+        ? shownEvents.filter(e => (e.kind + ' ' + e.actor + ' ' + rowLabel(e) + ' ' + (e.text || '')).toLowerCase().includes(q))
+        : shownEvents;
     const hasMore = eventsTotal != null && events.length < eventsTotal;
 
     const loadMore = async () => {
@@ -133,9 +188,15 @@ export function Timeline({ caseId, events, eventsTotal, key } = {}) {
         // is more behind the "Load older events" button, so it is only shown
         // then, and then it is said rather than divided.
         h('h3', { class: 'casey-timeline-head' }, 'Timeline',
-            hasMore ? ' -- showing the latest ' + events.length + ' of ' + eventsTotal : ''),
+            hasMore ? ' -- showing the latest ' + events.length + ' of ' + eventsTotal : '',
+            // What the bot recorded as the language this person writes in. Shown next to the
+            // translate buttons because it tells staff whether pressing one is worth it.
+            ...(language ? [' ', Chip({ size: 'sm', tag: true, tone: 'accent', children: word('ui.language_chip', { language }) })] : [])),
         SearchInput({ value: state.timelineSearch || '', placeholder: 'Search timeline...', onInput: setTimelineSearch, resultCount: q ? filtered.length + ' matching' : null }),
-        h('div', { class: 'casey-timeline', id: 'timeline' }, ...filtered.map((e, i) => TimelineRow({ key: e.id || i, e, caseId }))),
+        h('div', { class: 'casey-timeline', id: 'timeline' }, ...filtered.flatMap((e, i) => {
+            const shown = canTranslate && isContactMessage(e) ? (trState()[e.id] && trState()[e.id].english ? trState()[e.id] : stored[e.id]) : null;
+            return [TimelineRow({ key: e.id || i, e, caseId, caseRef, canTranslate, shown }), shown ? TranslationNote({ key: 'tr-' + (e.id || i), shown }) : null].filter(Boolean);
+        })),
         hasMore ? Btn({ variant: 'ghost', size: 'sm', class: 'casey-load-older', onClick: loadMore, children: 'Load older events' }) : null
     );
 }

@@ -25,7 +25,7 @@ import { normalizeMsisdn } from '../../role-invites.js'
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27, markInvisibles } from '../../format.js'
-import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES } from '../../store/report-shape.js'
+import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, hiddenFieldsFor } from '../../store/report-shape.js'
 import { sendBackToRanger } from '../../signoff-desk.js'
 import { areaInfoFor } from '../../areas.js'
 import { isKnownValueField, invalidateKnownValues } from '../../field-values.js'
@@ -1280,7 +1280,10 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
       // to /media/<path> so a field-team briefing can actually open the photo/
       // voice note, not just read that one arrived.
       const mediaLinkRe = /\(saved: (media\/[^)]+)\)/g
-      const rows = REPORT_KEY_LIST.map(k => {
+      // The briefing is a printed page for this login, so it drops the fields this login's screens
+      // hide (dashboard_ui.hidden_fields) -- a display choice; the stored report is untouched.
+      const hidden = new Set(hiddenFieldsFor(req.caseyAccount && req.caseyAccount.role))
+      const rows = REPORT_KEY_LIST.filter(k => !hidden.has(k)).map(k => {
         // Unrecorded: the words on screen, the writing space on paper. The
         // shared print stylesheet hides .ds-print-blank and reveals
         // .ds-fill-lines, so neither is a decision this route has to make

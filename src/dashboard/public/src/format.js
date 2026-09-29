@@ -8,6 +8,7 @@
 
 import { state } from './state.js';
 import { brandName } from './vocabulary.js';
+import { word, hasWord } from './words.js';
 
 function tz() { return (state.config && state.config.tz) || 'Africa/Johannesburg'; }
 function tzLabel() { return (state.config && state.config.tz_label != null) ? state.config.tz_label : 'SAST'; }
@@ -99,16 +100,13 @@ export function fmtPhone(v) {
   return s;
 }
 
-const STAGE_LABEL = {
-  new: 'New', triaging: 'Looking into it', in_progress: 'Working on it',
-  waiting: 'Waiting', resolved: 'Done', closed: 'Closed',
-};
+// The stage names live in config/vocabulary.yml under stages.* (words.js).
 // The only stage name an operator ever reads. It used to be gated behind a
 // "plain-language mode" flag that defaulted off, so the raw thatcher enum
 // (in_progress, triaging) was what actually shipped on screen. A workflow
 // stage with no entry here (a deployment-added stage) still degrades to its
 // raw name -- that is a missing label, not a mode.
-export function stageLabel(s) { return STAGE_LABEL[s] || s; }
+export function stageLabel(s) { return hasWord('stages.' + s) ? word('stages.' + s) : s; }
 
 // Plain-English label for a health:* guardrail tag -- shared between the
 // case-list's collapsed/expanded guardrail chips and the case-detail

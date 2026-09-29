@@ -26,10 +26,11 @@ import { isTechnician, fetchFieldCase, postFieldNote, postFieldIntake, postField
 import { postHandoff } from '../api-team.js';
 import { holderName } from './field-names.js';
 import { CaseProgress } from './case-detail/progress.js';
-import { Timeline } from './case-detail/timeline.js';
+import { Timeline, reportLanguage } from './case-detail/timeline.js';
 import { ReplyBox } from './case-detail/reply-box.js';
 import { Transitions } from './case-detail/transitions.js';
 import { FieldsEditor } from './case-detail/fields-editor.js';
+import { OptionField, fieldOptions, resetOptionField } from '../components/option-field.js';
 const h = webjsx.createElement;
 
 const fc = { id: null, data: null, loading: false, error: '', confirmedFor: null, draft: {}, note: '', busy: false, lost: false };
@@ -39,9 +40,13 @@ const has = (r, k) => r[k] != null && String(r[k]).trim() !== '';
 const cfg = () => state.config || {};
 const mandatory = () => (cfg().mandatory_minimum && cfg().mandatory_minimum.fields) || [];
 const doneStages = () => new Set(['resolved', 'closed', ...(((cfg().mandatory_minimum || {}).blocks_transition_to) || [])]);
-const fieldDefs = () => (cfg().report_sections || []).flatMap((s) => s.keys.map(([k, label, multi]) => ({ key: k, label, multi, section: s.title })));
+// Fields this login's screen hides (dashboard_ui.hidden_fields, resolved per role by the
+// server): a display setting, the stored report keeps them. Never a mandatory field.
+const hiddenKeys = () => new Set(cfg().hidden_fields || []);
+const fieldDefs = () => (cfg().report_sections || []).flatMap((s) => s.keys.map(([k, label, multi]) => ({ key: k, label, multi, section: s.title }))).filter((d) => !hiddenKeys().has(d.key));
 
 async function load(id) {
+  resetOptionField();
   fc.id = id; fc.loading = true; fc.error = ''; fc.lost = false; fc.data = null; fc.confirmedFor = null; fc.draft = {}; fc.note = '';
   try { fc.data = await fetchFieldCase(id); }
   catch (e) { fc.error = (e && e.status === 404) ? 'This ' + entityLabel() + ' is not one you can open.' : 'Could not open this ' + entityLabel() + '. Go back and try again.'; }
@@ -237,7 +242,7 @@ async function saveRecord(c) {
   try {
     if (Object.keys(fields).length) await postFieldIntake(c.id, c.ref, fields);
     if (note) await postFieldNote(c.id, c.ref, note, true);
-    fc.draft = {}; fc.note = ''; fc.busy = false;
+    fc.draft = {}; fc.note = ''; fc.busy = false; resetOptionField();
     await reload();
     toast('Saved to ' + identity(fc.data.case) + '.', 'ok');
     refocusSave();
@@ -255,7 +260,13 @@ function RecordForm(c, r) {
   const first = defs.filter((d) => missingKeys.has(d.key));
   const rest = defs.filter((d) => !missingKeys.has(d.key));
   const set = (k, v) => { fc.draft[k] = v; schedule(); };
-  const field = (d) => TextField({ key: d.key, label: d.label + (has(r, d.key) ? ' (now: ' + String(r[d.key]).slice(0, 40) + ')' : ''), multiline: !!d.multi, rows: d.multi ? 2 : undefined, value: fc.draft[d.key] || '', onInput: (v) => set(d.key, v) });
+  const field = (d) => {
+    const label = d.label + (has(r, d.key) ? ' (now: ' + String(r[d.key]).slice(0, 40) + ')' : '');
+    const opts = fieldOptions(d.key);
+    // A field with a fixed list of usual answers (species) is a dropdown ending in "Other (write it)".
+    if (opts.length) return OptionField({ key: d.key, name: 'fld-' + d.key, label, value: fc.draft[d.key] || '', options: opts, onChange: (v) => set(d.key, v) });
+    return TextField({ key: d.key, label, multiline: !!d.multi, rows: d.multi ? 2 : undefined, value: fc.draft[d.key] || '', onInput: (v) => set(d.key, v) });
+  };
   return Section({
     title: 'Record what you learned on ' + identity(c),
     children: [
@@ -339,7 +350,7 @@ export function FieldCaseView({ id, onBack }) {
     editable ? ReplyBox({ c, events, onReload: reload1 }) : null,
     editable ? h('details', {}, h('summary', {}, 'Change the title, priority or labels of ' + c.ref),
       FieldsEditor({ c, caseTypeSource: null, onSaved: reload1, limited: true, expectedRef: c.ref, beforeSave: () => confirmOnce(c), titleNote: 'Editing ' + identity(c) })) : null,
-    Timeline({ caseId: id, events, eventsTotal: events_total }));
+    Timeline({ caseId: id, events, eventsTotal: events_total, canTranslate: editable, caseRef: c.ref, language: reportLanguage(c) }));
 }
 
 export function resetFieldCase() { fc.id = null; fc.data = null; fc.error = ''; fc.loading = false; }

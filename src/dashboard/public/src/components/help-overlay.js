@@ -23,7 +23,7 @@ import { Btn, Lede } from '/design/src/components/shell/atoms.js';
 import { Dialog } from './dialog-shell.js';
 import { glossary } from '../glossary.js';
 import { brandName } from '../vocabulary.js';
-import { QUEUE_NAME } from '../map-model.js';
+import { queueName } from '../map-model.js';
 const h = webjsx.createElement;
 
 const KEY = 'casey_help_seen';
@@ -65,7 +65,7 @@ export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
         children: [
             Lede({ children: `${brand} reads the messages people send on WhatsApp and Discord, writes down what they report, and puts the ones that need you at the top of this screen. Here is what you are looking at, in plain words.` }),
 
-            h('h3', { key: 'h-queue' }, `The "${QUEUE_NAME}" list`),
+            h('h3', { key: 'h-queue' }, `The "${queueName()}" list`),
             h('p', { key: 'p-queue' }, 'It is the list beside the map, and it is the whole job: the report that needs somebody most is at the top. Each row leads with what the report is about, then the reference code, then one line saying why it is in the list. Tap a row to open it.'),
             h('p', { key: 'p-band' }, 'A coloured stripe runs down the left edge of a row. Red means it needs a person now, amber means it needs a look today, grey means it can wait. The map beside the list marks the same reports the same way, and the legend on the map says what every pin colour and outline means.'),
 

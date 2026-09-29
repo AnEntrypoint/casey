@@ -31,6 +31,7 @@ import { checkSession } from '../auth.js';
 import { state, schedule, setAuthed, setConfig } from '../state.js';
 import { runRefreshAll } from './nav-config.js';
 import { brandName } from '../vocabulary.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 const local = {
@@ -56,7 +57,7 @@ const local = {
 // produced the literal word "offline" here, since that is the service worker's
 // own envelope text.
 function loginMessage(e) {
-  if (isOfflineError(e)) return 'This device cannot reach the dashboard right now, so it could not check your details. Try again once you have signal.';
+  if (isOfflineError(e)) return word('ui.login_check_failed');
   if (e instanceof ApiError && e.status === 401) return 'That username and password do not match. Check both and try again -- if you cannot get in, ask whoever set up your account.';
   // The catch-all. It reaches here only when the server answered with something
   // other than 401 -- a 500, a 503 that was not the offline envelope -- so the
@@ -69,7 +70,7 @@ function loginMessage(e) {
 }
 
 function changeMessage(e) {
-  if (isOfflineError(e)) return 'This device cannot reach the dashboard right now, so the new password was not set. Try again once you have signal.';
+  if (isOfflineError(e)) return word('ui.login_password_failed');
   if (e instanceof ApiError && e.status === 401) return 'The password you were given is not right. Check it and try again.';
   if (e instanceof ApiError && e.body && e.body.error) return e.body.error;
   // Same shape as loginMessage's catch-all, and the same reason: the operator

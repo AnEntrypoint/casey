@@ -27,6 +27,7 @@ import { pushHash } from '../route.js';
 import { setActiveId } from '../state.js';
 import { stageLabel, headline, rel } from '../format.js';
 import { brandName, entityLabel, entityLabelPlural, EntityLabelPlural, countOf } from '../vocabulary.js';
+import { word } from '../words.js';
 import { ViewTitle, VIEW_TITLE_ID } from './view-title.js';
 import { FieldCaseView, resetFieldCase } from './field-case.js';
 import { MyDay, refreshMyDay } from './my-day.js';
@@ -47,7 +48,7 @@ export async function refreshFieldLists() {
     fs.mineTotal = (mine && typeof mine.total === 'number') ? mine.total : fs.mine.length;
     fs.signoff = (signoff && signoff.cases) || [];
     fs.error = '';
-  } catch (e) { fs.error = 'Could not load your ' + entityLabelPlural() + '. Check your signal and try again.'; }
+  } catch (e) { fs.error = word('ui.load_list_failed'); }
   fs.loading = false; fs.loaded = true; schedule();
   refreshMyDay();
 }

@@ -20,6 +20,8 @@ import { toast, failMsg } from '../../toasts.js';
 import { postIntake, postNote } from '../../api.js';
 import { SOURCE_LABEL } from '../../icons-map.js';
 import { reportValue } from '../../format.js';
+import { word } from '../../words.js';
+import { OptionField, fieldOptions, resetOptionField } from '../../components/option-field.js';
 import { confirmDialog } from '../../components/dialog-shell.js';
 import { isKnownValueField, knownValues, loadKnownValues, resolveValue, prefetchResolve, matchNotice, invalidateKnownValues } from '../../known-values.js';
 const h = webjsx.createElement;
@@ -52,7 +54,11 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
     const errMap = state._reportFieldErrors || (state._reportFieldErrors = {});
     const savingSet = state._reportFieldSaving || (state._reportFieldSaving = new Set());
 
-    const combo = isKnownValueField(k);
+    // A field with a fixed list of usual answers (species) edits as a dropdown ending in
+    // "Other (write it)" -- see option-field.js. That replaces the free-text combo box: the
+    // list is the team's, and Other is the way out for anything not on it.
+    const opts = fieldOptions(k);
+    const combo = !opts.length && isKnownValueField(k);
     const canonMap = state._reportFieldCanon || (state._reportFieldCanon = {});
     const checkingSet = state._reportFieldChecking || (state._reportFieldChecking = new Set());
 
@@ -60,6 +66,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
         draftMap[editKey] = value || '';
         delete errMap[editKey];
         delete canonMap[editKey];
+        resetOptionField('rf-' + k);
         state._reportFieldEditing = editKey;
         // Warm the option list as the editor opens. Cached and shared, so this
         // is a no-op on every open after the first (and the case-detail load
@@ -76,7 +83,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
         // twenty-eight of these render at once.
         setTimeout(() => {
             const row = document.querySelector('[data-field="' + CSS.escape(k) + '"]');
-            const box = row && row.querySelector('input,textarea');
+            const box = row && row.querySelector('select,input,textarea');
             if (box) { box.focus(); if (box.select) box.select(); }
         }, 0);
     };
@@ -178,7 +185,15 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             children: 'Keep "' + canonMap[editKey].typed + '" instead', onClick: keepTyped,
         })) : null;
 
-    const valueNode = editing
+    const valueNode = editing && opts.length
+        ? OptionField({
+            key: 'edit', name: 'rf-' + k,
+            value: draftMap[editKey] != null ? draftMap[editKey] : (value || ''),
+            options: opts, maxLength: REPORT_FIELD_MAXLEN,
+            hint: errMap[editKey] || null,
+            onChange: (v) => { draftMap[editKey] = v; schedule(); },
+        })
+        : editing
         ? TextField({
             key: 'edit',
             // name is what the kit derives the datalist id from, so it has to be
@@ -231,7 +246,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             // inline-flex box: an anonymous flex item cannot be given
             // min-width:0 and is measured at max-content, which is what froze
             // the renderer on an oversized field (see format.js reportValue).
-            value ? h('span', { class: 'casey-rep-value' }, reportValue(value)) : (sayMissing ? h('span', { class: 'casey-rep-missing ds-print-blank' }, 'not given yet') : null),
+            value ? h('span', { class: 'casey-rep-value' }, reportValue(value)) : (sayMissing ? h('span', { class: 'casey-rep-missing ds-print-blank' }, word('ui.not_given_yet')) : null),
             value ? null : FillLines({ lines: multiline ? 3 : 1 }),
             Icon('pencil', { size: 12 }),
             // THIS MARKER STAYS, and it is the one place in the case view

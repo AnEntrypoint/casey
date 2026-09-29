@@ -226,6 +226,11 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    the back control is the first child of .casey-detail-pane, the real scroll
    container, and would otherwise scroll away like .ds-rail-back above. */
 .casey-back-btn { position: sticky; top: 0; z-index: var(--z-raised); }
+/* The kit's Btn link variant is transparent (.ds-247420 .btn-link sets background: none), so a
+   sticky one is measured against whatever scrolls beneath it: over a grey log row or field note
+   the link text fell to 4.16:1. An opaque page ground keeps it at its own contrast. Kit primitive
+   tried: Btn variant 'link' as is; the scope prefix is needed to outrank the kit's own rule. */
+.ds-247420 .casey-back-btn { background: var(--bg); }
 /* A real word with a real hit target, never a bare chevron. */
 .ds-rail-disclosure > summary {
   cursor: pointer; padding: var(--space-3); font-weight: 600;

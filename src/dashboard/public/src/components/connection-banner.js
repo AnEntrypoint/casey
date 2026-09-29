@@ -19,6 +19,7 @@ import * as webjsx from 'webjsx';
 import { Alert } from 'ds/components/content.js';
 import { state } from '../state.js';
 import { fmtTime } from '../format.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 // The kit's Alert(kind:'warn') tints only its icon and leaves the panel
@@ -52,10 +53,10 @@ export function ConnectionBanner() {
     },
       Alert({
         kind: 'warn',
-        title: 'Offline -- no signal',
+        title: word('ui.offline_title'),
         children: [
-          h('div', { key: 'gate' }, 'This device cannot reach the dashboard, so signing in will not work yet.'),
-          h('div', { key: 'wait' }, 'Leave this page open -- the form works again as soon as the link comes back. Nothing here is broken and nothing has been lost.'),
+          h('div', { key: 'gate' }, word('ui.offline_login_line')),
+          h('div', { key: 'wait' }, word('ui.offline_login_wait')),
         ],
       })
     );
@@ -76,6 +77,6 @@ export function ConnectionBanner() {
     'data-conn-state': 'offline',
     style: BAND,
   },
-    Alert({ kind: 'warn', title: 'Offline -- no signal', children: lines })
+    Alert({ kind: 'warn', title: word('ui.offline_title'), children: lines })
   );
 }

@@ -10,7 +10,7 @@
 import { tagList, parseReport } from '../../timestamp.js'
 import { snapshotDroppedIntake } from '../../hooks/dropped-intake.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
-import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI, TIER_LABELS, MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES } from '../../store/report-shape.js'
+import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI, TIER_LABELS, MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, FIELD_OPTIONS, hiddenFieldsFor } from '../../store/report-shape.js'
 import { KNOWN_VALUE_FIELDS, isKnownValueField, readKnownValues, canonicalizeFieldValue } from '../../field-values.js'
 import { mountRoutes } from './register.js'
 import { assigneeNamer } from '../assignee-names.js'
@@ -417,6 +417,13 @@ export function getConfig({ store, authed, SAST_TZ, resolveWhatsappAdapter, fmtP
       // mandatory_minimum), so the field-team screens can show what is still missing.
       mandatory_minimum: { fields: MANDATORY_MINIMUM_FIELDS.map(k => ({ key: k, label: fieldLabel(k) })), blocks_transition_to: MANDATORY_MINIMUM_BLOCKED_STATUSES },
       dashboard_ui: DASHBOARD_UI,
+      // Fields with a fixed list of answers (report-fields.yml `options`): the SPA edits them
+      // as a dropdown ending in "Other (write it)". A convenience only -- the server still
+      // accepts any text on these fields.
+      field_options: FIELD_OPTIONS,
+      // The report fields THIS login's screens hide (dashboard_ui.hidden_fields). A display
+      // setting: the data is stored, exported and asked for as before.
+      hidden_fields: hiddenFieldsFor(req.caseyAccount?.role),
       // What each contact access tier is CALLED here, one entry per rung of
       // contact-tiers.js's ladder, ALREADY RESOLVED against the deployment's own
       // dashboard_ui.tier_labels with casey's generic label as the fallback -- so

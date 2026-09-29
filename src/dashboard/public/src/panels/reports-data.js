@@ -7,6 +7,7 @@
 // A change refetches; a superseded response is dropped by the generation counter,
 // so a quick second choice is never overwritten by the slower first one.
 import { schedule } from '../state.js';
+import { word } from '../words.js';
 import { fetchResolvedMap, fetchDiseaseReport } from '../api-reports.js';
 
 export const PERIODS = [
@@ -39,7 +40,7 @@ export function reloadReports() {
       if (gen !== generation) return;
       rd.report = report; rd.points = map; rd.error = '';
     })
-    .catch(() => { if (gen === generation) rd.error = 'Could not load the disease reports. Check your signal and try again.'; })
+    .catch(() => { if (gen === generation) rd.error = word('ui.load_disease_reports_failed'); })
     .finally(() => { if (gen === generation) { rd.loading = false; rd.loaded = true; schedule(); } });
 }
 export function ensureReports() { if (!rd.loaded && !rd.loading) reloadReports(); }
