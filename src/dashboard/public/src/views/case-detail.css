@@ -271,3 +271,9 @@
 @media (pointer: coarse){
   .casey-detail-pane .casey-rep-editable,.casey-detail-pane .casey-rep-note-btn,.casey-detail-pane .casey-meta-toggle,.casey-detail-pane .casey-research-note-toggle{min-height:44px;min-width:44px}
 }
+
+/* A contact can send one very long unbroken string (a URL, a run of characters). The kit's
+   LogRow text span has no wrap fallback, so the string pushed the row's buttons over it.
+   Kit primitive tried: LogRow itself (no prop for wrapping); the .ds-247420 prefix is needed
+   to outrank the kit's own rule. */
+.ds-247420 .ds-log-row .ds-log-text { min-width: 0; overflow-wrap: anywhere; }
