@@ -325,8 +325,8 @@ try {
   // The known-values filter bar asked for its list on EVERY render while the list was empty, and each
   // answer scheduled another render: an unbounded loop that only exists when a field has no recorded
   // value, which the seeded reports above never produce. So make it empty for real: answer the list
-  // request with no values, drop the cache, kick one render, and count. Fixed code asks once per cache
-  // lifetime (1 to 3 requests); the loop asked hundreds of times and burned the whole render budget.
+  // request with no values, drop the cache, kick one render, and count renders: fixed code settles in a
+  // handful, the loop re-renders until the probe's cap (200).
   const emptyFrom = await renders()
   // A lower cap for this probe only: a loop then ends in a second or two as a failed check instead of a locked tab.
   await evalJs(`(() => { const W = window; W.__fvCalls = 0; W.__renderCap = W.__renders + 200; W.__fvFetch = W.fetch
@@ -336,7 +336,7 @@ try {
   const emptyIdle = (await renders()) - emptyFrom
   const fvCalls = await evalJs('window.__fvCalls')
   await evalJs(`(() => { window.__renderCap = 0; if (window.__fvFetch) window.fetch = window.__fvFetch; return import('/src/known-values.js').then((m) => { m.invalidateKnownValues(); return 1 }) })()`)
-  check(fvCalls >= 1 && fvCalls <= 3, 'an empty known-values list is asked for once, not on every render', `${fvCalls} requests`)
+  check(fvCalls >= 1 && fvCalls <= 3, 'the empty-list probe reached the filter bar (its list was requested, not answered from a stale cache)', `${fvCalls} requests`)
   check(emptyIdle <= 12, 'an empty known-values list does not keep the page re-rendering', `${emptyIdle} renders in 7.5 s (budget 12; the loop spends its whole cap of 200)`)
   await evalJs(`location.hash = 'home=cases&case=' + ${JSON.stringify(caseId)}; 1`)
   await sleep(3000)
@@ -610,7 +610,14 @@ try {
   await key('Escape'); await sleep(400)
   await asUser('-aht', '#case=' + ids.G, 3500)
   await clickText('Sign off CASE'); await sleep(600)
-  await evalJs(`(() => { const b = [...document.querySelectorAll('[role=dialog] button')].find((x) => /^Sign off/.test(x.innerText)); b.click(); b.click(); return 1 })()`)
+  await evalJs(`(() => { const b = [...document.querySelectorAll('[role=dialog] button')].find((x) => /^Sign off/.test(x.innerText)); b.click(); return 1 })()`)
+  // The sign-off then asks for the diagnosis: the disease identified, then the recommendation.
+  const asked = []
+  for (const answer of ['Foot-and-mouth disease suspected', 'Isolate the herd and call the state vet']) {
+    await sleep(700)
+    asked.push(await evalJs(`(() => { const d = document.querySelector('[role=dialog]'); if (!d) return 'none'; const i = d.querySelector('input, textarea'); if (i) { const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(i), 'value').set; set.call(i, ${JSON.stringify(answer)}); i.dispatchEvent(new Event('input', { bubbles: true })) } const b = [...d.querySelectorAll('button')].find((x) => /^Continue/.test(x.innerText)); if (b) b.click(); return d.querySelector('h1,h2,[class*=title]') ? d.querySelector('h1,h2,[class*=title]').innerText : 'dialog' })()`))
+  }
+  check(asked.every((t) => /Disease identified|Recommended resolution/.test(t)), 'sign-off asks for the disease identified and the recommended resolution', JSON.stringify(asked))
   await sleep(2800)
   const so = await api('GET', '/api/cases/' + ids.G)
   check(so.j && so.j.case.status === 'resolved', 'a complete report is signed off (double click: one transition)', so.j && so.j.case.status)

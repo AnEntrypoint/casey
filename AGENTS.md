@@ -891,7 +891,7 @@ chromium binary exists. Every assertion in it is a regression that actually
 shipped at least once, so add to it rather than replacing it. A regression that
 only exists on data the seed does not produce needs the data forced: the
 known-values filter bar re-rendered forever on an EMPTY list, so the check
-stubs `/api/field-values` to answer no values and counts requests and renders.
+stubs `/api/field-values` to answer no values and counts renders (a fixed tree settles in a handful, the loop spends the probe cap of 200; proven against a scratch copy with the bug put back).
 
 ### Live reload: two mechanisms, one boundary
 

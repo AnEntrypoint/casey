@@ -37,7 +37,7 @@ export const fetchFieldCase = (id) => json('/api/cases/' + seg(id));
 export const postFieldNote = (id, ref, text, relayed) => send('POST', '/api/cases/' + seg(id) + '/note', { text, relayed: !!relayed, expected_ref: ref });
 export const postFieldIntake = (id, ref, fields) => send('POST', '/api/cases/' + seg(id) + '/intake', { ...fields, expected_ref: ref });
 export const patchFieldCase = (id, ref, body) => send('PATCH', '/api/cases/' + seg(id), { ...body, expected_ref: ref });
-export const postFieldTransition = (id, ref, to, reason) => send('POST', '/api/cases/' + seg(id) + '/transition', { to, reason, expected_ref: ref });
+export const postFieldTransition = (id, ref, to, reason, extra) => send('POST', '/api/cases/' + seg(id) + '/transition', { ...(extra || {}), to, reason, expected_ref: ref });
 export const postFieldLocation = (id, ref, lat, lon) => send('POST', '/api/cases/' + seg(id) + '/location', { lat, lon, expected_ref: ref });
 export const postSendBack = (id, ref, text, missing) => send('POST', '/api/cases/' + seg(id) + '/send-back', { text, missing, expected_ref: ref });
 

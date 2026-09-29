@@ -111,10 +111,26 @@ function Checklist(c, r) {
 const doneFrom = (transitions) => (transitions || []).find((t) => doneStages().has(t));
 const canReachDone = (transitions) => !!doneFrom(transitions) || (transitions || []).includes('in_progress');
 
+// The two facts a sign-off records (report-fields.yml signoff_diagnosis).
+const SIGNOFF_ASKS = [
+  ['identified_disease', 'Disease identified', 'What do you find this to be? Write what you found, in your own words.'],
+  ['recommended_resolution', 'Recommended resolution', 'What should be done? This is recorded with the sign-off.'],
+];
+
 async function signOff(c, data) {
   if (!canReachDone(data.transitions)) { toast('This ' + entityLabel() + ' cannot be signed off from where it is now.', 'warn'); return; }
   const ok = await confirmDialog({ title: 'Sign off ' + c.ref + '?', message: 'This closes ' + identity(c) + ' as finished. Only do this once help has been given.', confirmLabel: 'Sign off ' + c.ref });
   if (ok === null || ok === undefined) return;
+  // The diagnosis rides with the sign-off: the disease identified and what is recommended.
+  // Only what the record does not already hold is asked for (a technician's earlier entry stands).
+  const diagnosis = {};
+  const report = parseReport(c.report);
+  for (const [key, label, hint] of SIGNOFF_ASKS) {
+    if (has(report, key)) continue;
+    const text = await confirmDialog({ title: label + ' -- ' + c.ref, message: hint, inputLabel: label, confirmLabel: 'Continue' });
+    if (text === null || text === undefined) return;
+    if (String(text).trim()) diagnosis[key] = String(text).trim();
+  }
   try {
     let to = doneFrom(data.transitions);
     if (!to) {
@@ -123,7 +139,7 @@ async function signOff(c, data) {
       to = doneFrom(again.transitions);
       if (!to) throw new Error('It could not be moved to done from there.');
     }
-    await postFieldTransition(c.id, c.ref, to, 'signed off by technician');
+    await postFieldTransition(c.id, c.ref, to, 'signed off by technician', diagnosis);
     toast('Signed off ' + identity(c) + '.', 'ok'); await reload();
   } catch (e) { toast(await failed(e, 'It was not signed off. Nothing changed -- try again.'), 'err'); await reload(); }
 }
