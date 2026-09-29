@@ -163,7 +163,7 @@ export async function runTeamChecks(c) {
   const tiles = JSON.parse(await evalJs(`JSON.stringify([...document.querySelectorAll('.kpi-card')].map((e) => e.innerText.replace(/\\s+/g, ' ').trim()))`))
   check(/My day: in your area/.test(ht) && /My day: your reports/.test(ht) && /My day: what changed since it began/.test(ht), 'the ranger home has the My day block: area, own reports, what changed')
   check(tiles.includes(day.j.yours.open_now + ' Open now') && tiles.includes(day.j.yours.record_full_not_handed_over + ' Complete, not yet sent'), 'the My day figures are the server\'s figures', tiles.join(' | '))
-  check(/what each one still needs/i.test(ht) && /record is full: hand it to the technician|record still needs/.test(ht), 'My day says what each report still needs')
+  check(/what each one still needs/i.test(ht) && /report is complete: hand it to the technician|report still needs/.test(ht), 'My day says what each report still needs')
   check(!/\b(record_full|handed_to_desk|by_stage|assignee)\b/.test(ht), 'My day shows no field names')
   await axeBoth('ranger home with My day')
   await viewport('p')

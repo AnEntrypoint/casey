@@ -29,8 +29,13 @@ export function getFeedback({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const names = new Map()
+    let logins = null   // one account listing per request, read only when a login sent feedback
     const nameOf = async (from) => {
-      if (String(from).startsWith('login:')) return String(from).slice(6)
+      if (String(from).startsWith('login:')) {
+        const user = String(from).slice(6)
+        if (!logins) logins = new Map((await store.t.list('operator_account', {}, { limit: 500 }).catch(() => [])).map(a => [a.username, String(a.display_name || '').trim()]))
+        return logins.get(user) || '(no name)'
+      }
       if (!names.has(from)) { const c = await store.getContact(from).catch(() => null); const n = String(c?.display_name || '').trim(); names.set(from, n && !/^\+?[\d\s()-]{6,}$/.test(n) ? n : '(no name)') }
       return names.get(from)
     }
