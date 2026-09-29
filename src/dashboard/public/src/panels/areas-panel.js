@@ -270,7 +270,7 @@ function WrongArea() {
       const chosen = areas.find((a) => a.id === chosenId);
       const what = [r.report.species, r.report.location ? 'at ' + r.report.location : ''].filter(Boolean).join(' ');
       return h('div', { key: r.id, class: 'ds-area-item' },
-        Row({ title: r.ref + (what ? ' -- ' + what : ''), sub: wrongAreaSentences(r.flag, r.report).join(' ') + ' Now with ' + (r.holder && r.holder !== 'agent' ? personName(ui.people, r.holder) : 'nobody') + '.' }),
+        Row({ title: what || r.ref, sub: r.ref + '. ' + wrongAreaSentences(r.flag, r.report).join(' ') + ' Now with ' + (r.holder && r.holder !== 'agent' ? personName(ui.people, r.holder) : 'nobody') + '.' }),
         h('div', { class: 'ds-area-actions' },
           Select({ key: 'wp-' + r.id, name: 'move-' + r.id, label: 'Move it to', value: chosenId, options: [{ value: '', label: 'Choose an area' }].concat(options), onChange: (v) => { ui.wrongPick[r.id] = v; schedule(); } }),
           Btn({ variant: 'primary', disabled: !chosen || ui.busyKeys.has('move|' + r.id), children: chosen ? 'Move to ' + chosen.name : 'Move it', 'aria-label': 'Move ' + r.ref + ' to the chosen area', onClick: () => relocate(r, chosen) })));

@@ -7,7 +7,12 @@
 /* Vertical rhythm inside a report panel: the kit's Section carries a full page's gap. */
 .ds-247420 .rep-stack { display: flex; flex-direction: column; gap: var(--space-4); }
 .ds-247420 .rep-stack .ds-section { margin-block: 0; }
-.ds-247420 .rep-filters { align-items: flex-end; flex-wrap: wrap; }
+.ds-247420 .rep-filters { display: flex; justify-content: flex-start; align-items: flex-end; flex-wrap: wrap; gap: var(--space-3); }
+.ds-247420 .rep-filters .ds-field { flex: 1 1 12rem; max-width: 20rem; }
+
+/* The map canvas has no intrinsic size and no kit primitive sizes a Leaflet canvas (field.css says the same
+   of its own maps): a viewport-relative height, with a floor so a short phone in landscape still shows a map. */
+.ds-247420 .rep-map { height: 60vh; min-height: 18rem; background: var(--bg-2); }
 .ds-247420 .viewer-main { display: flex; flex-direction: column; gap: var(--space-4); }
 .ds-247420 .viewer-main .panel { margin-block: 0; }
 
