@@ -112,6 +112,10 @@ from it, which is what catches a branch rewritten back into an equality.
 
 **Erasing a contact reaches their role too** (`CaseStore._scrubRoleReferences`): the rung drops to `reporter`, the contact id in assignment/notice/dispatch events becomes `[erased]`, their claim record in the role-invite log is overwritten and the label of the code they used is blanked. **`casey retention` never expires a role/invite/notice singleton** (`channel:'system'` is kept before any age is read). **A record is only ever held by someone who can act on it.** Dropping a contact below the field rung (`setContactTier`, `registerContact`) or deleting a field login releases every open record they held (`CaseStore.releaseCasesHeldBy`: unassigned, `observe` back to `auto`, recorded), the dashboard PATCH refuses an assignee who is not on the team or a login that does not exist, and no path assigns a record to the person whose own chat it is (`case-assignment.js`'s `isOwnConversation`; `sendStaffMessage` and `authorityOn` refuse it too). `case_claim` (a ranger or technician may take an unassigned record ONLY when an operator has queued a dispatch suggestion for THAT person; there is no unassigned-pool self-service, an operator claims freely) and dispatch accept read, check and write under one lock per record, so two people claiming at once cannot both be told yes. A ranger's dashboard reply moves `auto` to `observe` exactly as their WhatsApp reply does. A reply to a team member may name any record they typed or hold (`turn-outcome.js` `namedRefsToKeep`); only a reference that resolves to nothing they hold is rewritten to the conversation's own, and `case_report` refuses a message that names a held record so a relayed sighting is never filed on the person's own report.
 
+**Bulk registration and the training roster.** `casey roles import <file.csv> [--dry-run] [--yes]` and `POST /api/roles/import {csv|rows, dry_run}` (`routes/team-import.js`; staff only because `roles.js`'s `roleGate` never lists it for a field login) are one implementation, `src/team-import.js`: rows `name, phone, role, association, smartphone`, the role read through `tierLabel`/`TIER_LABELS` plus short forms ('Eco Ranger', 'AHT'), the number through `normalizeMsisdn`, at most 500 rows and 90000 characters, a preview by default (the route writes only for `dry_run:false`, the CLI only with `--yes`). Each row is `create`/`update`/`skip`/`error` with a plain reason (bad number, duplicate in the file, holds a higher rung and is never demoted, unknown role, a secretary is a login not a contact rung, `grantableBy`: technician and operator rows need an admin); a re-run is all `skip`. The association is stored as an `Association: ...` line in `contact.notes` and returned as `area` on the row result. A person with `smartphone: no` is never registered on WhatsApp: `src/team-roster.js` keeps the training roster as an append-only audited `team-roster` system singleton (the `role-invites.js` pattern, one event per registration, replayed for current state), and `rolloutTable` / `casey roles roster` / `GET /api/roles/roster` derive total, smartphones, registered, first message (an inbound event on their own conversation) and first report (a non-empty report on it) per association from contacts and cases. Read paths use `peekSingletonCaseId` so a read-only command never creates the singleton. Logs and results carry only the last three digits of a number.
+
+**Feedback about the system, kept apart from reports.** `case_feedback` (`case-tools-feedback.js`, in `REPORT_ONLY_TOOLS`, so every tier) saves a comment on the assistant or service itself into the append-only `feedback` singleton (`src/feedback.js`: contact id or `login:<username>`, tier, language, conversation id, text capped at 600 characters with long digit runs masked, 20 a day per person) and never touches the report; the prompt (`hooks/prompt-roles.js` `feedbackSection`, guarded in `prompt.js`) tells the model when to use it and nothing matches keywords. `POST /api/feedback {text, language?}` is the GUI half and is the one write a FIELD login may make outside cases (`roles.js` row); `GET /api/feedback?limit=` (`routes/feedback.js`) and the operator tool `team_feedback` are staff only, newest first with counts by week and tier. Erasing a person calls `feedback.js`'s `scrubPersonalLogs` from `_scrubRoleReferences`, which overwrites their comments and their training-roster rows. The team_* queue and handover tools return short plain lines (`say`, `lines`) and the role prompt blocks ask for plain text with no tables or markdown on a phone.
+
 **Assignee picker.** `GET /api/team-members` lists a person once: a dashboard login whose `contact_phone` matches a listed WhatsApp team member is that member and is not listed again, so the picker assigns with the contact key (which the login also holds through `roles.js`'s `contact_phone` resolution); a login with no matching contact is listed by username as before.
 
 **Assignee display and dashboard assignment.** A stored `contact:<id>` assignee is storage, never display: `src/dashboard/assignee-names.js` builds one namer per request and every dashboard payload that shows an assignee (lists, workload, handover, health, attention, map, csv, timeline data) uses it, so a WhatsApp team member appears by name; only the case DETAIL keeps the key (for a dashboard operator, so the editor's picker can seed). `PATCH /api/cases/:id` may change the assignee on an `observe` case; a change or unassign runs `hooks/staff-outbound.js`'s `releaseCase` (back to `auto`) and `clearFocusForCase`, and an assignment to a contact writes an event with `assigned_contact_id`, which is what `staff-notices.js` reads as "newly assigned". The bot's own number reaches the SPA as `whatsapp_number` on `/api/config`, read best-effort from the Graph API by `WhatsappAdapter.displayNumber()`.
@@ -322,7 +326,7 @@ alongside freddie's `@freddie/freddie-base` bundle:
 - `freddie-bundle/boot.js::bootCasey()` composes `@freddie/freddie-base`'s
   own `cordis.patch.yml` rows with casey's own (`freddie-bundle/cordis.patch.yml`)
   into one flattened patch array, then calls freddie's real `boot()`.
-- `freddie-bundle/src/case-tools/index.js` -- casey's 18 original `case_*` tools plus the 24 team tools (`case-tools-team*.js`),
+- `freddie-bundle/src/case-tools/index.js` -- casey's 18 original `case_*` tools plus the 24 team tools (`case-tools-team*.js`) and the two feedback tools (`case-tools-feedback.js`),
   reusing `src/case-tools.js`'s existing definitions/handlers unchanged,
   wrapped as real freddie `defineTool()` calls registered on `ctx.tools`
   (`schema-adapt.js` mechanically translates casey's plain-JSON-Schema
@@ -518,7 +522,7 @@ sibling modules it composes, grouped by the surface they serve:
 `case_today`, `case_checkin`, `case_idle`), `case-tools-binding.js`
 (`case_new`, `case_switch`), `case-tools-control.js` (`case_stop`,
 `case_handoff`), and -- APPENDED after them, so the pinned order above is untouched --
-`case-tools-team.js` (24 role tools, below), with `case-tools-shared.js` holding `defTool`, the enum-hint
+`case-tools-team.js` (24 role tools, below), then `case-tools-feedback.js` (`case_feedback`, `team_feedback`), with `case-tools-shared.js` holding `defTool`, the enum-hint
 ladder and `ownsCase`. **The composition order is pinned deliberately** -- it
 is the order freddie serializes tool schemas into every request, so it is
 prompt-visible text like the descriptions themselves. Do not reorder it
@@ -660,6 +664,11 @@ src/
   provenance-wire.js       additive bridge from case_report into the provenance subsystem (src/core/, src/packs/)
   contact-tiers.js         THE contact access ladder: TIER_ORDER, fail-closed resolveTierValue, the atLeast/canQueryCases rank tests and canSignOff (see "The contact access ladder")
   case-tools-team.js      the ROLE tools, appended after the original 18 and gated per rung by case-tools-gates.js TOOL_MIN_TIER (a RANK test; hidden from a lower tier's schema by hiddenToolNamesForTier through the same disabledToolsets seam): -team-field.js (field_worker: case_pending case_claim case_release case_dispatch_reply case_focus case_gaps case_contact case_edit case_stage case_message), -team-review.js (animal_health_technician: signoff_queue case_review case_reopen case_ask_ranger; sign-off itself stays case_transition's canSignOff equality), -team-operator.js (operator: team_queue team_handover team_assign team_draft team_remind team_invite team_register team_roster team_quiet_staff team_nudge_staff); -team-shared.js holds authorityOn (operator, or an assignee on THEIR assigned record; deskAuthorityOn adds the technician's unassigned queue) and teamRow (PII-free)
+  team-import.js           bulk registration: CSV/JSON rows -> per-row create/update/skip/error plan, applied only when asked (`casey roles import`, POST /api/roles/import)
+  team-roster.js           the training roster (append-only `team-roster` singleton) and the derived rollout table
+  feedback.js              the append-only `feedback` singleton (case_feedback / POST /api/feedback) and the erasure hook scrubPersonalLogs
+  case-tools-feedback.js   case_feedback (every tier) and team_feedback (operator)
+  dashboard/routes/team-import.js  staff POST /api/roles/import, GET /api/roles/roster;  dashboard/routes/feedback.js  POST /api/feedback (any login), GET /api/feedback (staff)
   case-assignment.js       tiny fail-closed assignee predicate: assigneeKeyFor(contact) = 'contact:<id>', isAssignedTo(caseRow, contact), isContactAssignee, contactIdOfAssignee, publicAssignee (renders a key as 'you' / 'a team member'); legacy usernames and 'agent' keep their meaning
   hooks/media-relay.js     where a team member's photo / voice note / location pin goes: filed on their CONFIRMED, fresh, assigned focus (writeGate) attributed as relayed, else kept on their own chat with a prompt note that makes the model ask which record; a ranger's pin is their OWN position (see "Team media on site")
   team-focus.js            which record a ranger/technician is working on, in code: writeGate refuses an unconfirmed record, a record the inbound message does not name, or two named at once; confirmation must come in a LATER turn; recordedOn is the shape every team write returns; state is in memory (restart = ask again)
@@ -697,7 +706,9 @@ src/
   hooks/operator-reminder.js  the operator-initiated nudge: the four guards and the composed text for POST /api/cases/:id/remind (send itself reuses sendReply, never a second mechanism)
   hooks/turn-deadlines.js  CASEY_TURN_HARD/SOFT_DEADLINE_MS and the two truthful status strings
   hooks/typing.js          the typing indicator start/stop pair, best-effort by construction
-  hooks/media.js           voice-note/photo/voice-reply media tools, all opt-in and fail-open
+  hooks/media.js           voice-note/photo/voice-reply media tools, all opt-in and fail-open; transcription goes through chat completions under the data policy
+  llm-data-policy.js       CASEY_LLM_DATA_POLICY: the OpenRouter provider object, link classification, the audit trail, the processor list for `casey doctor`
+  proactive-sends.js       CASEY_PROACTIVE_SENDS: the gate and the refusal sentence for every bot/operator/tool-initiated send
   llm.js                   model call wiring; self-healing backend that re-resolves a recovered provider
   supervisor.js            fork/kill/watch parent, composed from supervisor-state.js (machine value + validated fire + /api/runtime snapshot), -worker-process.js (fork + IPC contract + ready/exit), -crash-policy.js (crash budget, backoff ladder, exit 44), -restart.js (the sequential drain-then-respawn cycle -- the two-writers-on-the-db boundary), -health.js (HEALTH tick -> degraded, incl. detectZombieReceive); supervisor-reload-watch.js owns the FULL-RESTART watch list (casey's own src/ + freddie's framework/ -- the trees Cordis HMR cannot replace in place)
   dashboard/server.js      express API + anentrypoint-design SPA; map/reporters/accounts routes
@@ -770,6 +781,7 @@ FIELD login reaches only the rows of its allowlist and everything else is 403:
 | `GET /api/cases/:id`, `/events`, `/media/<caseId>/*` | `read` or better |
 | `PATCH` (subject/summary/priority/tags/case_type only -- never assignee or autonomy), `/intake`, `/note`, `/reply`, `/remind`, `/location`, `/transition` | `write` = the case is assigned to them (their username, or the `contact:<id>` key of the contact their `contact_phone` links to) |
 | `POST /api/cases/:id/send-back` | technician only, on an assigned case or one in the sign-off queue |
+| `POST /api/feedback` | a comment about the system itself; stored against the login, never a case (`GET` is staff only) |
 
 `caseAccess`: `write` = assigned; `read` = their own report (`external_id` is
 their linked number) or, for a technician, an open case with the mandatory minimum
@@ -876,7 +888,10 @@ sqlite store, drives headless Chromium over CDP, and reads the rendered DOM. It
 adds no mocks and is not a test suite -- it is the manual/live verification
 this file mandates, made repeatable, and it skips loudly with exit 0 when no
 chromium binary exists. Every assertion in it is a regression that actually
-shipped at least once, so add to it rather than replacing it.
+shipped at least once, so add to it rather than replacing it. A regression that
+only exists on data the seed does not produce needs the data forced: the
+known-values filter bar re-rendered forever on an EMPTY list, so the check
+stubs `/api/field-values` to answer no values and counts requests and renders.
 
 ### Live reload: two mechanisms, one boundary
 
@@ -1077,6 +1092,8 @@ from the name alone.
 | `CASEY_SESSION_SECRET` | Random per process start when unset, so a restart invalidates every session. Set explicitly for sessions to survive a restart. |
 | `CASEY_OPERATORS` | Removed. The roster reads from the `operator_account` table directly; setting this has no effect. |
 | `CASEY_LLM_MODEL` | Default `claude/sonnet` (`src/llm.js`), chosen because a weaker model has repeatedly dropped tool calls or repeated questions during casey's multi-step extraction+tool-orchestration turn. `auto` builds acptoapi's real fallback chain rather than pinning one model. |
+| `CASEY_LLM_DATA_POLICY` | Default `deny`. `src/llm-data-policy.js`, applied in `acptoapi-bridge.js`'s `resolveChainLinks` (the one seam both the bridge and the freddie-bundle adapter pass through). `deny` puts `provider.data_collection = "deny"` on every OpenRouter chain link, `zdr` adds `provider.zdr = true`, `allow` turns the policy off (`casey doctor` warns). Links with no checkable no-training guarantee (`:free` ids, `claude/*` ACP wrappers, unknown brands, `queue/`/`chain/` names) are dropped and audited; a chain left empty throws. Voice-note transcription uses chat completions under `deny`/`zdr` because OpenRouter's `/audio/transcriptions` ignores the `provider` object; `CASEY_TRANSCRIBE_CHAT_MODEL` overrides that chain. ElevenLabs voice replies are refused unless `allow`. `CASEY_LLM_AUDIT_FILE` (default `data/llm-audit/llm-data-policy.jsonl`, `0` off) is the audit trail: metadata only, never prompt text or a contact identifier. Register: `docs/data-processors.md` in the uhh deployment. |
+| `CASEY_PROACTIVE_SENDS` | Default `off`. `src/proactive-sends.js`. `off`: every send casey, an operator button or a tool STARTS refuses with a plain reason and `adapter.send` is never called -- `Casey.sendReply` / `bin/send-reply.js` `makeSendReply` (dashboard reply, remind, bulk, draft approve), `hooks/staff-outbound.js` (`case_message`, `team_remind`, `team_draft`, `case_ask_ranger`, `team_nudge_staff`, whose refusal points at the wa.me link in the nudges panel), `prepareReminder`, and `makeTransitionNotifier` (records "not sent"). `window`: allowed inside the 24h service window as before. Never gated: the agent reply, the guaranteed-fallback reply, STOP/HUMAN acknowledgements, staff notices (delivered inside the assignee's own in-window turn), operator alert webhooks. Any other value is `off`. |
 | `CASEY_TZ`, `CASEY_TZ_LABEL`, `CASEY_COUNTRY_CODE` | Default to a South African deployment (SAST, +27, SA-shaped digit grouping); digit-grouping stays SA-shaped regardless of country code (a fully correct international formatter needs a per-country grouping table, out of scope). |
 | `CASEY_TRANSCRIBE_VOICE_NOTES` (ON by default when a provider key exists; `=0` opts out), `CASEY_DESCRIBE_PHOTOS`, `CASEY_VOICE_REPLIES` (both off by default) | All three fail-open (`src/hooks/media.js`): each sends real bytes (audio/image/text) to an external API, a deliberate opt-in data-egress point. Any failure degrades silently to the original text-only/manual path, never blocking the reply. |
 | `CASEY_LOCATION_STALE_MS` | Read once from `process.env` at module load, not via the async thresholds store -- `caseSystemPrompt` is deliberately a pure, synchronous function. |
@@ -1272,6 +1289,21 @@ without restart-on-crash.
   trouble") rather than silence -- this is honesty about the wait, not
   about the report; it invents nothing about the case. A background
   resume/queue re-drive stays silent on degrade.
+- **Personal data goes only to processors casey can hold to a no-training
+  policy, and the decision is written down.** Every LLM request runs under
+  `CASEY_LLM_DATA_POLICY` (default `deny`): OpenRouter is asked, per request, to
+  route only to endpoints that neither store nor train on prompts, and a model
+  that cannot satisfy that (free tier, an ACP wrapper, an unknown brand) is
+  dropped rather than tried. A policy casey cannot enforce is not claimed: the
+  dedicated transcription endpoint ignores it, so it is not used under `deny`.
+  `llm-data-policy.js` writes each chain decision and each served call to an
+  append-only audit file, and `casey doctor` prints the processor list.
+- **The bot never contacts anybody; everybody contacts the bot.** With
+  `CASEY_PROACTIVE_SENDS=off` (default) casey answers a message that just arrived
+  and does nothing else outbound to a person: no operator-button send, no tool
+  send, no stage-change note. Reaching someone first is the operator's own phone,
+  via the click-to-chat link. This is one gate at the sending seams, not a
+  per-caller flag, so a new caller of `sendReply` is covered by construction.
 - **The reporter is usually a field worker relaying a farmer's animals, not
   the owner.** The agent asks only what the worker can see or relay --
   never "when you first noticed it" -- and records who's on-site and their

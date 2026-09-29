@@ -30,7 +30,7 @@ const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
 import { DERIVED_ONLY_FIELDS, writeGuardViolation, toStorable, installVersionGuard } from './store/guards.js'
-import { REPORT_KEYS, REPORT_KEY_ORDER } from './store/report-shape.js'
+import { REPORT_KEYS, REPORT_KEY_ORDER, AREA_FIELD } from './store/report-shape.js'
 import { TIER_ORDER, TIER_FIELD_WORKER, atLeast, resolveTierValue } from './contact-tiers.js'
 import { isContactAssignee } from './case-assignment.js'
 import { byCreatedAscList, byCreatedDescList } from './store/query.js'
@@ -425,9 +425,36 @@ export class CaseStore {
   // else and report success).
   async setContactTier(contactId, tier, user = SYSTEM_USER) {
     if (!TIER_ORDER.includes(tier)) throw new Error(`invalid tier: ${tier} -- expected one of ${TIER_ORDER.join(', ')}`)
+    const before = (await this.getContact(contactId).catch(() => null))?.tier
     const updated = await this.t.update('contact', contactId, { tier }, user)
     await this._releaseHeldCases(contactId, tier, user)
+    await this._afterTierChange(contactId, before, tier)
     return updated
+  }
+
+  // A contact's agent conversation was held while they were a different rung: the
+  // earlier refusals ("that is not something I can look up") sit in that transcript
+  // and the model keeps repeating them after a promotion. So when the EFFECTIVE rung
+  // changes, the stored agent transcripts for the contact's own conversations are
+  // discarded and each open one gets a timeline note. The live in-memory agent is
+  // recreated by run-turn.js, which compares the rung it was built for with the
+  // turn's rung. Best-effort: a failure here must never fail the role change.
+  async _afterTierChange(contactId, before, after) {
+    const from = resolveTierValue(before)
+    const to = resolveTierValue(after)
+    if (from === to) return { reset: false }
+    try {
+      const own = (await this.t.list('case', { contact_id: contactId }, { limit: 200 })).filter(c => c.channel !== 'system')
+      if (!own.length) return { reset: true, cases: 0 }
+      const erased = eraseCaseSessions(own.map(c => c.id), { log: this.log })
+      for (const c of own.filter(x => x.status !== 'resolved' && x.status !== 'closed')) {
+        await this.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `assistant conversation restarted: this contact's role changed (${from} -> ${to})`, data: { session_reset: true, from, to }, touch: false })
+      }
+      return { reset: true, cases: own.length, removed: erased.removed.length, failed: erased.failed.length }
+    } catch (e) {
+      this.log?.warn?.('[casey] session reset after tier change failed', { contactId, error: e.message })
+      return { reset: false, error: e.message }
+    }
   }
 
   // A person who drops below the field rung can no longer act on the records assigned
@@ -470,6 +497,7 @@ export class CaseStore {
     if (display_name && (!contact.display_name || contact.display_name === contact.external_id)) patch.display_name = display_name
     await this.t.update('contact', contact.id, patch, user)
     await this._releaseHeldCases(contact.id, tier, user)
+    await this._afterTierChange(contact.id, contact.tier, tier)
     return this.getContact(contact.id)
   }
 
@@ -768,7 +796,21 @@ export class CaseStore {
   // `bypassObserve` is for a HUMAN writing through a team tool (case_edit): observe
   // mode stops the ASSISTANT acting, and it is exactly the mode a person takes a
   // case into when they take over, so their own edits must not be refused by it.
-  async mergeReport(caseId, incoming, user = AGENT_USER, { bypassObserve = false } = {}) {
+  // A write that touched the area field or the location also routes an unassigned
+  // case to its area's ranger (src/areas.js). `autoAssign:false` is for the callers
+  // that make the assignment decision themselves (an operator's relocate).
+  async mergeReport(caseId, incoming, user = AGENT_USER, { bypassObserve = false, autoAssign = true } = {}) {
+    const res = await this._mergeReportLocked(caseId, incoming, user, { bypassObserve })
+    if (autoAssign && !res.error && AREA_FIELD && (AREA_FIELD in incoming || 'location' in incoming)) {
+      try {
+        const { autoAssignByArea } = await import('./areas.js')
+        await autoAssignByArea(this, caseId)
+      } catch (e) { this.log?.warn?.('[casey] area auto-assign failed', { caseId, error: e.message }) }
+    }
+    return res
+  }
+
+  async _mergeReportLocked(caseId, incoming, user = AGENT_USER, { bypassObserve = false } = {}) {
     const invalid = Object.keys(incoming).filter(k => !REPORT_KEYS.has(k))
     if (invalid.length) return { error: `invalid report fields: ${invalid.join(', ')}` }
     const c0 = await this.getCase(caseId)
@@ -1303,6 +1345,8 @@ export class CaseStore {
         try { await this.t.update('event', e.id, { data: rewrite(e.data) }, user); rewritten++ } catch { /* counted by omission */ }
       }
     }
+    // Feedback comments and training-roster rows are theirs too (src/feedback.js).
+    try { rewritten += await (await import('./feedback.js')).scrubPersonalLogs(this, ids, user) } catch { /* additive, like the rest of this scrub */ }
     return rewritten
   }
 

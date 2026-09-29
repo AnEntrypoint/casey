@@ -11,7 +11,7 @@ import path from 'node:path'
 import { ROOT, bold, dim, green, red, cyan, ok, bad, warn, pkgVersion, hasCreds, partialCreds, portFree } from './casey-cli-ui.js'
 import { checkConfigDrift } from './casey-config-drift.js'
 import { RawLog } from '../src/core/raw-log.js'
-import { runMetaChecks, runRoleChecks } from './casey-doctor-checks.js'
+import { runMetaChecks, runRoleChecks, runDataProcessorChecks } from './casey-doctor-checks.js'
 
 const ENV_TEMPLATE = `# casey environment -- fill in the channels you want, leave the rest blank.
 # Discord:
@@ -428,6 +428,7 @@ export async function cmdDoctor({ flags }) {
   // never a crash of the preflight.
   try { problems += await runMetaChecks(flags) } catch (e) { console.log(warn(`Meta checks could not run (${e.message})`)) }
   try { problems += await runRoleChecks() } catch (e) { console.log(warn(`role checks could not run (${e.message})`)) }
+  try { problems += await runDataProcessorChecks() } catch (e) { console.log(warn(`data processor checks could not run (${e.message})`)) }
   console.log('')
   // port
   const port = Number(flags.port || 4000)

@@ -26,7 +26,7 @@ import { atLeast, TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIA
 // fill-if-empty semantics). case_split stays field_worker-only: it edits an
 // EXISTING case's already-recorded history, a materially different risk
 // than opening a brand new empty one.
-export const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stop', 'case_handoff', 'case_new'])
+export const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stop', 'case_handoff', 'case_new', 'case_feedback'])
 
 // The MINIMUM rung of every team tool (case-tools-team*.js). Any non-report tool
 // not listed here needs field_worker, exactly as before. A RANK test through
@@ -44,7 +44,9 @@ export const TOOL_MIN_TIER = {
   team_queue: TIER_OPERATOR, team_handover: TIER_OPERATOR, team_assign: TIER_OPERATOR,
   team_draft: TIER_OPERATOR, team_remind: TIER_OPERATOR, team_invite: TIER_OPERATOR,
   team_register: TIER_OPERATOR, team_roster: TIER_OPERATOR, team_quiet_staff: TIER_OPERATOR,
-  team_nudge_staff: TIER_OPERATOR,
+  team_nudge_staff: TIER_OPERATOR, team_feedback: TIER_OPERATOR,
+  case_handoff_to_technician: TIER_FIELD_WORKER, case_my_day: TIER_FIELD_WORKER,
+  team_ranger_day: TIER_OPERATOR, team_relocate_case: TIER_OPERATOR,
 }
 
 export function minTierOf(name) {

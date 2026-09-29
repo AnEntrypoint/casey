@@ -54,3 +54,25 @@ export async function runRoleChecks() {
   const { rows } = await checkRoleSetup(dbFile, { openStatuses })
   return render(rows)
 }
+
+// "Data processors": every outside party casey sends personal or animal data to,
+// and the policy in force for each. Offline and read-only: it reads the env and
+// the policy module, contacts nobody. A policy of 'allow', or a chain link the
+// policy would refuse, is a warning with the exact fix.
+export async function runDataProcessorChecks() {
+  const { describeProcessors, auditFile } = await import('../src/llm-data-policy.js')
+  const { mode, rows } = describeProcessors(process.env)
+  console.log(bold('\nData processors') + dim('  (who receives personal data, and under what policy; nothing is contacted)'))
+  const out = []
+  if (mode === 'allow') out.push({ level: 'warn', text: 'CASEY_LLM_DATA_POLICY=allow: the no-training routing policy is OFF', fix: 'remove CASEY_LLM_DATA_POLICY (default deny) or set it to deny / zdr' })
+  else out.push({ level: 'ok', text: `LLM data policy: ${mode}${mode === 'zdr' ? ' (zero-retention endpoints only)' : ' (no-training endpoints only)'}` })
+  for (const r of rows) {
+    const bad = /REFUSED|NONE/.test(r.policy)
+    out.push({ level: bad && mode !== 'allow' && /^chat LLM/.test(r.processor) ? 'warn' : 'skip', text: `${r.processor}: ${r.policy} -- ${r.state}; data: ${r.data}`, ...(bad && /^chat LLM/.test(r.processor) && mode !== 'allow' ? { fix: 'remove this model from CASEY_LLM_MODEL (it is skipped at runtime anyway)' } : {}) })
+  }
+  const af = auditFile(process.env)
+  out.push({ level: 'skip', text: af ? `policy audit trail: ${af}` : 'policy audit trail is OFF (CASEY_LLM_AUDIT_FILE=0)' })
+  const proactive = String(process.env.CASEY_PROACTIVE_SENDS || 'off').trim().toLowerCase()
+  out.push({ level: 'skip', text: `proactive sends (bot-initiated messages): ${proactive === 'window' ? 'window (allowed inside the 24h service window)' : 'off (the bot only answers people who write to it)'}` })
+  return render(out)
+}

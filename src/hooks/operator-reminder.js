@@ -33,6 +33,7 @@ import { withinSessionWindow, sessionWindowHours } from './notifiers.js'
 import { BREACH_LABEL } from '../case-health.js'
 import { evData } from '../safe.js'
 import { REPORT_ENTITY_LABEL } from '../store/report-shape.js'
+import { proactiveRefusal } from '../proactive-sends.js'
 
 // Same product-level cap the sibling text routes in dashboard/routes/cases.js
 // enforce on an operator-supplied string.
@@ -134,6 +135,8 @@ export function composeReminderText(caseRow, { quietForMs = null, breaches = [] 
 // properties of the contact and the channel, not of who wrote the sentence.
 export async function prepareReminder({ store, caseRow, overrideText = null, now = Date.now() }) {
   if (!caseRow) return { ok: false, status: 404, error: 'not found' }
+  const noStart = proactiveRefusal({ kind: 'message' })
+  if (noStart) return { ok: false, status: 409, error: noStart }
   // A report that is already finished has nothing to report back about, and a
   // nudge on one reads to the contact as though the team has lost track of it.
   if (caseRow.status === 'resolved' || caseRow.status === 'closed') {

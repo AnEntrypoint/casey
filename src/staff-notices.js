@@ -17,7 +17,12 @@
 //                when case_pending has shown them what was new, so the same
 //                news is not announced twice;
 //   waiting      the reporter's last inbound is newer than the last staff
-//                outbound -- derived, so it stays listed until someone answers.
+//                outbound -- derived, so it stays listed until someone answers;
+//   sent back    an event with data.sent_back / data.handoff_withdrawn (the
+//                technician returned a record to its ranger), news to that ranger;
+//   handed over  an event with data.handed_off on a record carrying the
+//                `handed-off` tag (signoff-desk.js): news to every technician,
+//                announced per technician like an assignment.
 //
 // PII-free by construction: rows carry ref, stage, place and species through
 // enquiryRow's headline fields, and never the contact's phone number.
@@ -26,6 +31,9 @@ import { tagList } from './timestamp.js'
 import { assigneeKeyFor } from './case-assignment.js'
 import { isOpenCase } from './format.js'
 import { evData } from './safe.js'
+import { canSignOff } from './contact-tiers.js'
+import { isHandedOff } from './signoff-desk.js'
+import { isOwnConversation } from './case-assignment.js'
 
 export const NOTICE_CASE_CAP = 25
 
@@ -47,8 +55,10 @@ export function assignedCaseState(events, contact) {
   // and the reporter has not written since. Nothing they were told reached them.
   const iOutAny = lastIndex(events, e => e.kind === 'outbound')
   const undelivered = iOutAny > iIn && iOutAny >= 0 && dataOf(events[iOutAny]).delivered === false
+  const iSentBack = lastIndex(events, e => { const d = dataOf(e); return d.sent_back === true || d.handoff_withdrawn === true })
   return {
     reply_undelivered: undelivered,
+    sent_back: iSentBack > iAnnounced,
     new_assignment: iAssigned > iAnnounced,
     waiting_for_you: iIn > iOut,
     new_reply: iIn > iAnnounced && iIn > iOut,
@@ -72,29 +82,43 @@ export async function pendingDispatchesFor(store, contact, cases) {
 
 // { assigned:[{case,flags}], dispatches:[{case,note}], counts }. With mark:true,
 // every assigned case that carried news is stamped announced so it is news once.
-export async function staffNotices(store, contact, { mark = false, cap = NOTICE_CASE_CAP } = {}) {
+export async function staffNotices(store, contact, { mark = false, cap = NOTICE_CASE_CAP, tier = undefined } = {}) {
   const key = assigneeKeyFor(contact)
-  if (!key) return { assigned: [], dispatches: [], counts: { assigned: 0, new_assignments: 0, new_replies: 0, dispatches: 0, undelivered: 0 } }
+  if (!key) return { assigned: [], dispatches: [], handoffs: [], counts: { assigned: 0, new_assignments: 0, new_replies: 0, dispatches: 0, undelivered: 0, sent_back: 0, new_handoffs: 0 } }
   const mine = (await store.listCases({ assignee: key }, { limit: cap * 4 })).filter(isOpenCase).slice(0, cap)
   const assigned = []
   for (const c of mine) {
     const events = await store.listEvents(c.id)
     const flags = assignedCaseState(events, contact)
     assigned.push({ c, flags })
-    if (mark && (flags.new_assignment || flags.new_reply)) {
+    if (mark && (flags.new_assignment || flags.new_reply || flags.sent_back)) {
       await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: 'NOTICE ANNOUNCED to the assignee', data: { announced_to: contact.id }, touch: false })
     }
   }
   const everything = await store.listCases({}, { limit: 10000, offset: 0 })
   const dispatches = await pendingDispatchesFor(store, contact, everything)
+  // The sign-off desk's own news: records rangers handed over that this technician
+  // has not been told about yet.
+  const handoffs = []
+  if (canSignOff(tier ?? contact?.tier)) {
+    for (const c of everything.filter(x => x.channel !== 'system' && isOpenCase(x) && isHandedOff(x) && !isOwnConversation(x, contact)).slice(0, cap)) {
+      const events = await store.listEvents(c.id)
+      if (lastIndex(events, e => dataOf(e).handed_off === true) > lastIndex(events, e => e.kind === 'observation' && dataOf(e).announced_to === contact.id)) {
+        handoffs.push({ c })
+        if (mark) await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: 'NOTICE ANNOUNCED to the sign-off desk', data: { announced_to: contact.id }, touch: false })
+      }
+    }
+  }
   return {
-    assigned, dispatches,
+    assigned, dispatches, handoffs,
     counts: {
       assigned: assigned.length,
       new_assignments: assigned.filter(a => a.flags.new_assignment).length,
       new_replies: assigned.filter(a => a.flags.new_reply).length,
       undelivered: assigned.filter(a => a.flags.reply_undelivered).length,
       dispatches: dispatches.length,
+      sent_back: assigned.filter(a => a.flags.sent_back).length,
+      new_handoffs: handoffs.length,
     },
   }
 }
@@ -104,11 +128,13 @@ export async function staffNotices(store, contact, { mark = false, cap = NOTICE_
 export async function staffNoticeNote(store, contact) {
   let n
   try { n = (await staffNotices(store, contact)).counts } catch { return '' }
-  if (!n.new_assignments && !n.new_replies && !n.dispatches && !n.undelivered) return ''
+  if (!n.new_assignments && !n.new_replies && !n.dispatches && !n.undelivered && !n.sent_back && !n.new_handoffs) return ''
   const bits = []
   if (n.new_assignments) bits.push(`${n.new_assignments} newly assigned to them`)
   if (n.new_replies) bits.push(`${n.new_replies} where the reporter has answered`)
   if (n.dispatches) bits.push(`${n.dispatches} suggested for them to attend`)
+  if (n.sent_back) bits.push(`${n.sent_back} sent back to them by the technician`)
+  if (n.new_handoffs) bits.push(`${n.new_handoffs} handed over to the sign-off desk by a ranger`)
   if (n.undelivered) bits.push(`${n.undelivered} where WhatsApp did not deliver the last reply (the reporter has to message first, or be phoned)`)
   return `\n\n[System note: waiting for this team member: ${bits.join('; ')}. Call case_pending, and after dealing with what they just said, tell them briefly in your own words. It is queued news, not a new message from them.]`
 }

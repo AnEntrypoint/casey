@@ -47,6 +47,7 @@ import { buildWorkerTools } from './case-tools-worker.js'
 import { buildBindingTools } from './case-tools-binding.js'
 import { buildControlTools } from './case-tools-control.js'
 import { buildTeamTools } from './case-tools-team.js'
+import { buildFeedbackTools } from './case-tools-feedback.js'
 
 // Build the array of tool objects bound to an explicit store (used by anywhere
 // that wants the tools without the runtime singleton).
@@ -70,6 +71,7 @@ export function buildCaseToolset(storeOrNull) {
     // Appended, never interleaved: the team tools (field / technician / operator
     // surfaces) sit after the original eighteen so their pinned order is untouched.
     ...buildTeamTools(store, enums),
+    ...buildFeedbackTools(store),
   ]
   return tools.map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
 }

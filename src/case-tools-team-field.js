@@ -34,7 +34,7 @@ import { evData } from './safe.js'
 import { refsIn, writeGate, recordedOn, identifyingLine, proposeFocus, confirmFocus, setFocus, focusOf, clearFocusForCase } from './team-focus.js'
 import {
   APPEND_FIELDS, CRITICAL_FIELDS, REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_ENTITY_LABEL,
-  missingMandatoryMinimum, fieldLabel,
+  missingMandatoryMinimum, fieldLabel, SIGNOFF_DIAGNOSIS_FIELDS,
 } from './store/report-shape.js'
 import { UNCLAIMED_ASSIGNEE } from './case-store.js'
 import { APPEND_FIELD_MAX_LEN } from './store/report-merge.js'
@@ -71,9 +71,10 @@ export function buildTeamFieldTools(store, { priorityValues }) {
       'What is waiting for THIS team member: records assigned to them (with any that are newly assigned or where the reporter has answered since they last looked), dispatch suggestions to attend, and for each assigned record what facts are still missing. Call it when they ask what is new or what they should do, and whenever a note says something is waiting. Showing them marks the news as announced.',
       { type: 'object', properties: {} },
       async (_args, ctx) => {
-        const n = await staffNotices(store(), ctx?.contact, { mark: true })
+        const n = await staffNotices(store(), ctx?.contact, { mark: true, tier: ctx?.tier })
         return {
           counts: n.counts,
+          ...(n.handoffs.length ? { handed_over_for_sign_off: n.handoffs.map(({ c }) => teamRow(c, ctx, { from_a_ranger: true })) } : {}),
           assigned: n.assigned.map(({ c, flags }) => teamRow(c, ctx, {
             ...flags,
             still_missing: missingMandatoryMinimum(parseReport(c)).map(fieldLabel),
@@ -276,6 +277,9 @@ export function buildTeamFieldTools(store, { priorityValues }) {
       async ({ case: ref, lat, lon, location_source, subject, summary, priority, add_tags, note, correct = false, ...fields }, ctx) => {
         subject = cleanRelayed(subject); summary = cleanRelayed(summary); add_tags = cleanRelayed(add_tags); note = cleanRelayed(note)
         for (const k of Object.keys(fields)) fields[k] = cleanRelayed(fields[k])
+        // The diagnosis is recorded by the technician at sign-off, never relayed through the ranger's edit.
+        const notDiagnosis = canSignOff(ctx?.tier) ? [] : SIGNOFF_DIAGNOSIS_FIELDS.filter(k => k in fields)
+        for (const k of notDiagnosis) delete fields[k]
         const r = await lookupTeamCase(store, ctx, ref); if (r.fail) return r.fail
         const { c, authority } = r
         if (!isOpenCase(c)) return FINISHED
@@ -306,7 +310,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         }
         const tagsToAdd = String(add_tags || '').split(',').map(t => t.trim()).filter(Boolean)
         if (tagsToAdd.some(t => RESERVED_TAG.test(t))) return { error: 'Those tags are set by the system itself and cannot be added by hand.' }
-        if (!Object.keys(incoming).length && !hasLatLon && !Object.keys(columns).length && !tagsToAdd.length && !note) return { error: 'Nothing to record was supplied.' }
+        if (!Object.keys(incoming).length && !hasLatLon && !Object.keys(columns).length && !tagsToAdd.length && !note) return { error: notDiagnosis.length ? 'The diagnosis is not recorded from here: the technician records it when signing off. Nothing was changed.' : 'Nothing to record was supplied.' }
         const recorded = []
         if (Object.keys(incoming).length) {
           const merged = await store().mergeReport(c.id, incoming, user, { bypassObserve: true })
@@ -342,7 +346,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           })
         }
         if (note) await store().appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `NOTE from ${by}: ${String(note).slice(0, 4000)}`, data: actorData(ctx) })
-        return { ok: true, recorded_on: r.on, ref: c.ref, recorded: [...new Set(recorded)], ...(note ? { noted: true } : {}) }
+        return { ok: true, recorded_on: r.on, ref: c.ref, recorded: [...new Set(recorded)], ...(note ? { noted: true } : {}), ...(notDiagnosis.length ? { not_recorded: `${notDiagnosis.join(', ')}: the technician records these when signing off` } : {}) }
       }),
     defTool('case_stage', 'cases',
       'Move an ASSIGNED record to another working stage (not a finished one). Use when the team member says work has started, it is waiting on something, or it is back in progress. Never say the stage name to the reporter.',

@@ -23,7 +23,9 @@ import { AGENT_USER } from './case-store.js'
 import { MANDATORY_MINIMUM_FIELDS, REPORT_ENTITY_LABEL, missingMandatoryMinimum, fieldLabel } from './store/report-shape.js'
 import { evData } from './safe.js'
 import { writeGate, recordedOn } from './team-focus.js'
-import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn } from './case-tools-team-shared.js'
+import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn } from './case-tools-team-shared.js'
+import { inSignOffQueue, withdrawHandoff } from './signoff-desk.js'
+import { mergeTag } from './hooks/heuristics.js'
 
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
 const REVIEW_EVENT_CAP = 60
@@ -37,10 +39,13 @@ const isComplete = (c) => missingMandatoryMinimum(parseReport(c)).length === 0
 // Who may look at / work on this record from the technician surface.
 export const visibleToSignOffDesk = deskAuthorityOn
 
-// Records complete per the mandatory minimum and not yet done, visible to this asker.
+// The sign-off queue for this asker: open records holding the mandatory minimum that
+// are either on the desk (handed over by their ranger, or held by nobody -- the one
+// rule in signoff-desk.js) or assigned to the asker themself. A complete record still
+// with its ranger and not handed over is NOT listed: the ranger has not released it.
 export async function signOffCandidates(store, ctx, { limit = 200 } = {}) {
   const open = (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system' && isOpenCase(c) && !done(c))
-  return open.filter(c => isComplete(c) && visibleToSignOffDesk(ctx, c)).slice(0, limit)
+  return open.filter(c => isComplete(c) && visibleToSignOffDesk(ctx, c) && (inSignOffQueue(c) || authorityOn(ctx, c) === 'assigned')).slice(0, limit)
 }
 
 async function lookup(store, ctx, ref, { gate = false } = {}) {
@@ -55,7 +60,7 @@ async function lookup(store, ctx, ref, { gate = false } = {}) {
 export function buildTeamReviewTools(store) {
   return [
     defTool('signoff_queue', 'cases',
-      `The sign-off queue: open ${REPORT_ENTITY_LABEL}s that already hold every required fact${MANDATORY_MINIMUM_FIELDS.length ? '' : ' (no required-fact list is configured, so every open one counts)'} and are not yet finished, assigned to this person or to nobody. Call it when they ask what is ready to finish or what needs their sign-off. Listing a record does not finish it.`,
+      `The sign-off queue: open ${REPORT_ENTITY_LABEL}s that already hold every required fact${MANDATORY_MINIMUM_FIELDS.length ? '' : ' (no required-fact list is configured, so every open one counts)'} and are not yet finished, that a ranger has handed over, that nobody holds, or that are assigned to this person. Call it when they ask what is ready to finish or what needs their sign-off. Listing a record does not finish it.`,
       { type: 'object', properties: { limit: { type: 'number', default: 15 } } },
       async ({ limit = 15 }, ctx) => {
         const rows = await signOffCandidates(store(), ctx)
@@ -122,7 +127,12 @@ export function buildTeamReviewTools(store) {
           store: store(), sendReply: ctx?.sendReply, canSend: ctx?.canSend, caseRow: c, text: body,
           staff: { ...(ctx.contact || {}), tier: ctx.tier }, claim: false, answers: false, extra: { asked_missing: true },
         })
-        return sent.ok ? { ok: true, delivered: true, recorded_on: r.on, asked_for: missing } : { ok: false, delivered: false, recorded_on: r.on, error: sent.error }
+        if (!sent.ok) return { ok: false, delivered: false, recorded_on: r.on, error: sent.error }
+        // Asking for more takes the record back off the desk and puts it with its
+        // ranger as "sent back" (the dashboard's send-back does the same).
+        const back = await withdrawHandoff(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, reason: 'more information asked for', data: actorData(ctx) })
+        if (back.was) { const fresh = await store().getCase(c.id); await store().updateCase(c.id, { tags: mergeTag(fresh.tags || '', 'sent-back') }, AGENT_USER) }
+        return { ok: true, delivered: true, recorded_on: r.on, asked_for: missing, ...(back.was ? { taken_off_the_sign_off_desk: true } : {}) }
       }),
   ]
 }

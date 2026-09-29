@@ -15,7 +15,7 @@
 
 import { AGENT_USER, REPORT_KEYS } from './case-store.js'
 import { toStorable } from './store/guards.js'
-import { REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_TOOL_NAME, REPORT_TOOL_DESCRIPTION } from './store/report-shape.js'
+import { REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_TOOL_NAME, REPORT_TOOL_DESCRIPTION, SIGNOFF_DIAGNOSIS_FIELDS } from './store/report-shape.js'
 import { normalizeLocation } from './location-normalize.js'
 import { recordProvenanceObservation } from './provenance-wire.js'
 import { defTool, str, pick, boundCase, isValidLatLon } from './case-tools-shared.js'
@@ -45,6 +45,10 @@ export function buildCaseReportTools(store) {
         required: ['id'],
       },
       async ({ id, lat, lon, location_source, ...fields }, ctx) => {
+        // The diagnosis is the technician's, recorded at sign-off (case_transition) or
+        // by the dashboard: never something a report, from anyone, carries in.
+        const notDiagnosis = SIGNOFF_DIAGNOSIS_FIELDS.filter(k => k in fields)
+        for (const k of notDiagnosis) delete fields[k]
         const elsewhere = await namesHeldRecord(store, ctx)
         if (elsewhere) return { error: `This message is about ${elsewhere}, a record held by this team member, not about their own report. Nothing was recorded on their own report. Say which record it is (${elsewhere}), ask them to confirm it in their next message, then use case_focus and case_edit for it.` }
         const target = await resolveReportTarget(store, id, ctx)
@@ -71,7 +75,7 @@ export function buildCaseReportTools(store) {
         await syncDerivedLocation(store, id, incoming)
         await auditReportWrite(store, id, { incoming, priorReport, hasLatLon, lat, lon })
         await wireProvenance(store, ctx, id, { incoming, res, hasLatLon, lat, lon })
-        return { ok: true, report: res.report, fieldsRecorded: recordedFields(incoming, hasLatLon), ...(locationKept ? { locationKept } : {}), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
+        return { ok: true, report: res.report, fieldsRecorded: recordedFields(incoming, hasLatLon), ...(notDiagnosis.length ? { notRecorded: `${notDiagnosis.join(', ')} -- only the animal health technician records these, when signing off; say nothing about it` } : {}), ...(locationKept ? { locationKept } : {}), ...(res.cappedFields?.length ? { cappedFields: res.cappedFields } : {}) }
       }),
   ]
 }

@@ -13,6 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { truncate } from './heuristics.js'
 import { fetchWithTimeout } from '../adapters/webhook-platform-base.js'
+import { dataPolicyMode, openrouterProviderField, auditWrite } from '../llm-data-policy.js'
 
 // None of the three dispatchTool calls below carry any timeout of their own
 // (freddie's dispatch path and the bare fetch() calls beneath it are both
@@ -52,6 +53,17 @@ function withTimeout(promise, ms) {
 // with CASEY_TRANSCRIBE_MODEL (comma-separated).
 const OPENROUTER_TRANSCRIBE_MODELS = (process.env.CASEY_TRANSCRIBE_MODEL || 'google/gemini-3.5-transcribe,openai/whisper-large-v3').split(',').map(x => x.trim()).filter(Boolean)
 
+// DATA POLICY (CASEY_LLM_DATA_POLICY, src/llm-data-policy.js). OpenRouter's
+// /audio/transcriptions IGNORES the request's provider object (measured
+// 2026-09-29: a nonexistent provider.only still answered 200), so with the
+// policy on, no dedicated transcription model can be held to no-training and
+// none is used. Voice notes are transcribed instead through /chat/completions
+// with an audio-capable chat model, where provider.data_collection / zdr are
+// enforced (a nonexistent provider.only answers 404). CASEY_TRANSCRIBE_CHAT_MODEL
+// overrides the comma-separated chain.
+const OPENROUTER_TRANSCRIBE_CHAT_MODELS = (process.env.CASEY_TRANSCRIBE_CHAT_MODEL || 'google/gemini-2.5-flash,mistralai/voxtral-small-24b-2507').split(',').map(x => x.trim()).filter(Boolean)
+const NO_SPEECH = 'NO_SPEECH'
+
 function openrouterKey() {
   if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY
   try {
@@ -79,6 +91,28 @@ async function transcribeViaOpenrouter(buffer, mimeType, model) {
   return { text, error: text ? '' : `${model}: no intelligible speech` }
 }
 
+async function transcribeViaOpenrouterChat(buffer, mimeType, model, providerField) {
+  const key = openrouterKey()
+  if (!key) return { text: '', error: 'no OPENROUTER_API_KEY' }
+  const r = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model, max_tokens: 1024, provider: providerField,
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: `Transcribe this voice note verbatim in the language spoken. Output only the transcript. If there is no intelligible speech, output exactly ${NO_SPEECH}.` },
+        { type: 'input_audio', input_audio: { data: buffer.toString('base64'), format: audioFormat(mimeType) } },
+      ] }],
+    }),
+  }, MEDIA_TOOL_TIMEOUT_MS)
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok) return { text: '', error: `${model} ${r.status}: ${truncate(j?.error?.message || '', 160)}` }
+  const raw = j?.choices?.[0]?.message?.content
+  const text = String(Array.isArray(raw) ? raw.map(p => p?.text || '').join('') : (raw || '')).trim()
+  if (!text || text === NO_SPEECH) return { text: '', error: `${model}: no intelligible speech`, noSpeech: true, served_by: j?.provider || null }
+  return { text, error: '', served_by: j?.provider || null }
+}
+
 // Returns {text, provider, ms, error}. `text` is '' on any failure or opt-out.
 export async function transcribeAudioDetailed(buffer, mimeType) {
   const t0 = Date.now()
@@ -96,11 +130,16 @@ export async function transcribeAudioDetailed(buffer, mimeType) {
       } finally { try { fs.unlinkSync(tmpPath) } catch { /* best effort cleanup */ } }
     }
     let last = { text: '', error: 'no transcription model configured', provider: 'none' }
-    for (const model of OPENROUTER_TRANSCRIBE_MODELS) {
+    const mode = dataPolicyMode()
+    const providerField = openrouterProviderField(mode)
+    const chatPath = mode !== 'allow'
+    for (const model of (chatPath ? OPENROUTER_TRANSCRIBE_CHAT_MODELS : OPENROUTER_TRANSCRIBE_MODELS)) {
       let res
-      try { res = await transcribeViaOpenrouter(buffer, mimeType, model) } catch (e) { res = { text: '', error: `${model}: ${String(e?.message || e)}` } }
+      try { res = chatPath ? await transcribeViaOpenrouterChat(buffer, mimeType, model, providerField) : await transcribeViaOpenrouter(buffer, mimeType, model) } catch (e) { res = { text: '', error: `${model}: ${String(e?.message || e)}` } }
       last = { ...res, provider: `openrouter:${model}` }
-      if (res.text) break
+      auditWrite({ event: 'transcribe', policy: mode, endpoint: chatPath ? 'chat/completions' : 'audio/transcriptions', provider_field: providerField, model, ok: !!res.text, served_by: res.served_by || null })
+      // A model that heard nothing is an answer; a second model asked about the same silence tends to invent words.
+      if (res.text || res.noSpeech) break
     }
     return { ...last, ms: Date.now() - t0 }
   } catch (e) {
@@ -149,6 +188,8 @@ export async function describePhoto(buffer, mimeType) {
 export async function synthesizeVoice(text) {
   if (process.env.CASEY_VOICE_REPLIES !== '1') return null
   if (!process.env.OPENAI_API_KEY && !process.env.ELEVENLABS_API_KEY) return null
+  // ElevenLabs has no no-training guarantee casey can check: with the data policy on it is not used.
+  if (!process.env.OPENAI_API_KEY && dataPolicyMode() !== 'allow') return null
   const spoken = (text || '').trim()
   if (!spoken) return null
   try {

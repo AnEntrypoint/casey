@@ -15,17 +15,22 @@
 //   operator                   case-tools-team-operator.js
 //     team_queue team_handover team_assign team_draft team_remind team_invite
 //     team_register team_roster team_quiet_staff team_nudge_staff
+//   area / hand-over / day model   case-tools-team-desk.js
+//     case_handoff_to_technician case_my_day (field_worker), team_ranger_day
+//     team_relocate_case (operator)
 //
 // Order within this list is pinned like the rest: append, never reorder.
 
 import { buildTeamFieldTools } from './case-tools-team-field.js'
 import { buildTeamReviewTools } from './case-tools-team-review.js'
 import { buildTeamOperatorTools } from './case-tools-team-operator.js'
+import { buildTeamDeskTools } from './case-tools-team-desk.js'
 
 export function buildTeamTools(store, enums) {
   return [
     ...buildTeamFieldTools(store, enums),
     ...buildTeamReviewTools(store),
     ...buildTeamOperatorTools(store),
+    ...buildTeamDeskTools(store),
   ]
 }

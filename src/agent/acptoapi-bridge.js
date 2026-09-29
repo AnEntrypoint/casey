@@ -6,6 +6,8 @@
 // acptoapi's OpenAI-compatible wire format -- chain resolution, provider
 // selection, and reachability all delegate straight to acptoapi's own
 // exports rather than reimplementing them.
+import { dataPolicyMode, applyDataPolicy, auditServed } from '../llm-data-policy.js'
+
 const ACPTOAPI_TIMEOUT_MS = Number(process.env.ACPTOAPI_TIMEOUT_MS) || 240000
 export const REACHABILITY_PROBE_TIMEOUT_MS = Number(process.env.ACPTOAPI_REACHABILITY_PROBE_TIMEOUT_MS) || 45000
 const REACHABILITY_PROBE_CHAIN_LINK_CAP = 3
@@ -55,10 +57,29 @@ export function isConfiguredChainSyntax(model) {
 // relied on the catch: buildAutoChain returns 20 links for 'auto', 1 for a
 // real model name, and 20 for an empty string or null, throwing on none of
 // them.
+//
+// DATA POLICY (src/llm-data-policy.js, CASEY_LLM_DATA_POLICY, default 'deny').
+// This is the one seam both callers pass through, so the policy is applied
+// here: with the policy on, the result is always an ARRAY of chain links, the
+// OpenRouter ones carrying provider.data_collection (and zdr) so acptoapi puts
+// them in the request body, and links with no checkable no-training guarantee
+// (free tier, ACP wrappers, unknown brands) are dropped and audited. Named
+// queue/ and chain/ strings and 'auto' cannot be checked before acptoapi expands
+// them, so 'auto' is expanded here and queue/chain names are refused.
 export async function resolveChainLinks(acptoapi, useModel) {
-  if (isConfiguredChainSyntax(useModel)) return useModel
-  const links = acptoapi.buildAutoChain(useModel)
-  return (Array.isArray(links) && links.length) ? links.map(l => l.model || l) : useModel
+  const mode = dataPolicyMode()
+  if (mode !== 'allow' && typeof useModel === 'string' && (useModel.startsWith('queue/') || useModel.startsWith('chain/'))) {
+    throw new Error(`CASEY_LLM_DATA_POLICY=${mode} cannot check the members of "${useModel}"; list the models explicitly in CASEY_LLM_MODEL`)
+  }
+  let base
+  if (isConfiguredChainSyntax(useModel)) base = useModel
+  else {
+    const links = acptoapi.buildAutoChain(useModel)
+    base = (Array.isArray(links) && links.length) ? links.map(l => l.model || l) : useModel
+  }
+  if (mode === 'allow') { applyDataPolicy(typeof base === 'string' ? base.split(',').map(s => s.trim()).filter(Boolean) : base, { requested: String(useModel) }); return base }
+  const list = typeof base === 'string' ? base.split(',').map(s => s.trim()).filter(Boolean) : base
+  return applyDataPolicy(list, { requested: String(useModel) }).links
 }
 
 function adaptMessage(m) {
@@ -116,6 +137,7 @@ export async function callLLM({ messages, tools = [], model, tool_choice } = {})
       _timeout,
     ])
   } finally { clearTimeout(_timeoutHandle) }
+  auditServed(json, Array.isArray(chainModel) ? chainModel.map(l => l.model || l).join(',') : chainModel)
   return adaptResponse(json)
 }
 

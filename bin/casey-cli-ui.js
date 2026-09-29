@@ -101,6 +101,8 @@ ${bold('usage:')}
   casey roles assign <phone> <tier> [--name ..] register a number in a role (reporter/field_worker/animal_health_technician/operator)
   casey roles demote <phone|id>                 back to reporter; the reports they held return to the queue
   casey roles invite <tier> [--label ..] [--ttl-hours N] [--uses N]   mint a one-time WhatsApp code (printed once)
+  casey roles import <file.csv> [--dry-run] [--yes]   register a whole team from a spreadsheet (preview first)
+  casey roles roster [--json]                   rollout table per association: total, smartphones, registered, first message, first case
   casey roles invites | revoke <id> | release <holder> | link <username> <phone>
                                                  invite log, revoke a code, free a holder's reports, link a login to a number
   casey sync-import <file> --kind field_visit|farmer|association|follow_up
@@ -145,6 +147,10 @@ export const USAGE = {
     revoke <invite-id>                       kill an unused code
     release <phone|contact-id|username>      unassign every open report a holder has
     link <username> <phone>                  link a dashboard login to its WhatsApp contact
+    import <file.csv> [--dry-run] [--yes]    bulk registration; columns name, phone, role, association, smartphone (max 500 rows).
+                                             Prints a per-row preview (create/update/skip/error); writes only with --yes.
+                                             People without a smartphone go on the training roster, not WhatsApp.
+    roster [--json] [--forget <phone>]       the training roster and rollout table per association
   tiers: field_worker, animal_health_technician, operator (and reporter to demote).
   Acts with admin authority (it needs a shell on the box) and records itself as cli-operator.
   Nothing here sends a WhatsApp message.`,

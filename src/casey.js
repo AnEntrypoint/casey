@@ -33,6 +33,7 @@ import { mergeTag } from './hooks/heuristics.js'
 import { caseDeliveryTarget, splitExternalId } from './hooks/handler.js'
 import { disposeAgent } from './agent/run-turn.js'
 import { applyDeliveryStatus, snapshotDeliveryStatus, countUndeliveredCases } from './delivery-status.js'
+import { proactiveRefusal } from './proactive-sends.js'
 
 const CASE_HEALTH_SET = new Set(ALL_HEALTH_TAGS)
 
@@ -364,6 +365,8 @@ export class Casey {
   // transition notifier and available to the dashboard wiring. No-op (resolves)
   // when the channel adapter is absent, so logging-only setups never throw.
   async sendReply(caseRow, text) {
+    const noStart = proactiveRefusal({})
+    if (noStart) throw new Error(noStart)
     const a = this.adapters[caseRow.channel]
     if (a?.send) await a.send({ to: caseDeliveryTarget(caseRow), text })
   }

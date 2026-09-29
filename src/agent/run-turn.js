@@ -20,6 +20,8 @@ import { SessionId } from '@freddie/freddie-session'
 import { installToolAllowlist } from '../../freddie-bundle/src/case-tools/tool-allowlist.js'
 import { installCasePrompt } from '../../freddie-bundle/src/case-tools/case-prompt.js'
 import { LOCATION_STALE_MS } from '../hooks/prompt-context.js'
+import { resolveTierValue } from '../contact-tiers.js'
+import { eraseCaseSessions } from '../store/agent-sessions.js'
 
 let _ctx = null
 export function setAgentContext(ctx) {
@@ -50,9 +52,9 @@ function requireCtx() {
 // differs on every runTurn() call even though the agent itself is reused.
 // case-tools/index.js's plugin reads this cell (via getToolCtx()) at EACH
 // tool dispatch, not once at agent-creation time -- installToolAllowlist's
-// own setup() only runs once per agent, so the allowlist itself is fixed at
-// creation (tier changes would need a fresh agent, which casey does not
-// currently do since tier is stable per-contact in practice).
+// own setup() only runs once per agent. The allowlist is read through a per-turn
+// cell (currentAllowedNames), and a change of the contact's rung replaces the whole
+// agent (runTurn's tier check), so neither tools nor transcript outlive a role change.
 const liveAgents = new Map()
 const currentToolCtx = new Map()
 
@@ -207,7 +209,7 @@ export function liveAgentStats(nowMs = Date.now()) {
   }
 }
 
-async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames) {
+async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames, tier) {
   const ctx = requireCtx()
   const existing = liveAgents.get(sessionKey)
   if (existing) {
@@ -253,7 +255,7 @@ async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames) {
     }
   }
   if (handle) {
-    liveAgents.set(sessionKey, { agent: handle.agent, dispose: handle.dispose, lastUsedAt: Date.now() })
+    liveAgents.set(sessionKey, { agent: handle.agent, dispose: handle.dispose, lastUsedAt: Date.now(), tier })
     ensureSweepTimer()
     return handle.agent
   }
@@ -273,7 +275,7 @@ async function getOrCreateAgent(sessionKey, provider, model, enabledToolNames) {
     // is neither, so it must not be returned here directly.
     setup,
   })
-  liveAgents.set(sessionKey, { agent: handle.agent, dispose: handle.dispose, lastUsedAt: Date.now() })
+  liveAgents.set(sessionKey, { agent: handle.agent, dispose: handle.dispose, lastUsedAt: Date.now(), tier })
   ensureSweepTimer()
   return handle.agent
 }
@@ -375,6 +377,23 @@ export async function runTurn({
   // adapter, not the agent layer, is what understands chain syntax.
   model = process.env.CASEY_LLM_MODEL || process.env.FREDDIE_LLM_MODEL || null,
 } = {}) {
+  // A CONTACT WHOSE ROLE CHANGED starts a fresh conversation with the assistant. The
+  // agent keeps its transcript, and a transcript from when they were a public reporter
+  // holds refusals ("that is not something I can look up") the model keeps repeating
+  // after a promotion. So a live agent built for another rung is released and its
+  // stored transcript removed (the disposer may flush once more, hence erase AFTER),
+  // and the create below starts empty. The case's own record and timeline are in the
+  // store and reach the new agent through the prompt, so nothing the contact said is
+  // lost. The store erases the stored transcripts at the moment of the change
+  // (case-store.js _afterTierChange); this covers a live agent, including one in a
+  // worker that another process (the CLI) changed the role under.
+  const turnTier = resolveTierValue(toolCtx?.tier)
+  const liveEntry = liveAgents.get(sessionKey)
+  if (liveEntry && liveEntry.tier !== turnTier) {
+    await evictAgent(sessionKey, 'tier_changed')
+    eraseCaseSessions([String(sessionKey).replace(/^case:/, '')])
+  }
+
   // Resolve enabledToolsets/disabledToolsets into a real tool-name allowlist.
   // enabledToolsets:['cases'] means every case_* tool name; disabledToolsets
   // further excludes specific names (reporter-tier field_worker-gated tools) --
@@ -403,7 +422,7 @@ export async function runTurn({
   }))
 
   currentAllowedNames.set(sessionKey, enabledToolNames)
-  const agent = await getOrCreateAgent(sessionKey, provider, model, enabledToolNames)
+  const agent = await getOrCreateAgent(sessionKey, provider, model, enabledToolNames, turnTier)
   // Publish this turn's toolCtx BEFORE followup() so case-tools/index.js's
   // getToolCtx() thunk (read at each tool dispatch during this turn) sees
   // the current call's author/tier/store/activeCaseBinding, not a stale one

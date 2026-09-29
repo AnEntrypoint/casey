@@ -14,7 +14,7 @@ export const OPTED_OUT_TAG = 'opted-out'
 // Tags the system owns (opt-out, hand-off, draft and health flags, intake mode):
 // no team member's hand -- WhatsApp tool or dashboard field login -- adds, drops
 // or rewrites one. Clearing 'opted-out' by editing tags would undo a STOP.
-export const RESERVED_TAG = /^(opted-out|needs-human|draft-pending|ai-offline|flagged-reply|dispatch-suggested|health:|intake_mode:)/i
+export const RESERVED_TAG = /^(opted-out|needs-human|draft-pending|ai-offline|flagged-reply|dispatch-suggested|handed-off|health:|intake_mode:)/i
 
 // Shared truncate helper.
 export function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '...' : s }
