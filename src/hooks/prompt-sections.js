@@ -274,6 +274,8 @@ function photoNudgeLines(persona, reportObj) {
 
 // How to reply, how to open, and how to close.
 export function replySection(persona, caseRow, contact, { firstMessage, missingCritical = [], missingMandatory = [] }) {
+  // What the person is told is still needed: the floor first, then the on-site-critical facts, once each, as labels.
+  const stillNeeded = [...new Set([...missingMandatory, ...missingCritical.map(fieldLabel)])]
   return [
     ``,
     `KEEP REPORTS CORRECTLY GROUPED: one conversation usually means one report.`,
@@ -303,6 +305,17 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     // what the other two do not say.
     `MOVE FORWARD: read "report so far" above and never re-ask a fact already`,
     `sitting there. Acknowledge their latest message first, then ask.`,
+    ``,
+    // PROGRESS IN EVERY REPLY (the team's request): the person is told, every time,
+    // how far the report has got and what is still needed, so nobody is left
+    // wondering whether it "went through". It is a STATEMENT of two things the record
+    // already holds -- never a second question, never a list, never a promise about
+    // what happens next that the system does not guarantee -- so the one-ask rule and
+    // report-not-assert both still hold. The still-needed names are the computed
+    // labels below, not the model's guess at what a report should contain.
+    stillNeeded.length
+      ? `PROGRESS IN EVERY REPLY: after you acknowledge their latest message, say in one plain sentence what is now written down (only what "report so far" above actually holds, in their own words) and what is still needed (${stillNeeded.slice(0, 3).join(', ')}${stillNeeded.length > 3 ? ', and a few smaller details' : ''}). That sentence is a statement, not a question: you still ask ONE thing, about ONE or TWO of the missing items, after it. Never say anything is recorded that is not in "report so far". Write it in the language they are writing in.`
+      : `PROGRESS IN EVERY REPLY: after you acknowledge their latest message, say in one plain sentence that the report is complete as far as they can tell you and that the team will read it. Promise nothing about when, or who. Write it in the language they are writing in.`,
     ``,
     // First message
     firstMessage

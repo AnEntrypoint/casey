@@ -166,6 +166,7 @@ function selfCheckLoadBearingPromptContent() {
     // bundled default config declares none and must still boot.
     ...(MANDATORY_MINIMUM_FIELDS.length ? [{ name: 'mandatory-minimum floor named before a farewell is final', pattern: /MANDATORY MINIMUM -- still blank:/ }] : []),
     { name: 'plain-text message format rule', pattern: /MESSAGE FORMAT: this is a phone chat/ },
+    { name: 'progress and what remains in every reply', pattern: /PROGRESS IN EVERY REPLY/ },
     { name: 'complete-report-is-not-a-dead-end invitation', pattern: /NOT A DEAD-END/ },
     // The never-say list must stay EQUAL to the literal word list
     // hooks/reply-judge.js holds a reply for. 'autonomy' is the last word on
