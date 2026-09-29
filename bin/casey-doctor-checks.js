@@ -9,7 +9,8 @@
 // dim. Offline is a quiet single row, never a wall of red.
 
 import path from 'node:path'
-import { existsSync } from 'node:fs'
+import fs, { existsSync } from 'node:fs'
+import os from 'node:os'
 import { bold, dim, green, red, cyan, ok, bad, warn, hasCreds } from './casey-cli-ui.js'
 import { createCaseStore } from '../src/case-store.js'
 
@@ -90,6 +91,23 @@ export async function runDataProcessorChecks() {
     const bad = /REFUSED|NONE/.test(r.policy)
     out.push({ level: bad && mode !== 'allow' && /^chat LLM/.test(r.processor) ? 'warn' : 'skip', text: `${r.processor}: ${r.policy} -- ${r.state}; data: ${r.data}`, ...(bad && /^chat LLM/.test(r.processor) && mode !== 'allow' ? { fix: 'remove this model from CASEY_LLM_MODEL (it is skipped at runtime anyway)' } : {}) })
   }
+  // The chat model is paid per call and OpenRouter refuses requests (HTTP 402) when the ACCOUNT balance
+  // is low, several in flight at once first. A key's own spending limit is a different number and says
+  // nothing about the balance, so read the balance itself (a read-only GET, no personal data).
+  try {
+    const key = process.env.OPENROUTER_API_KEY || (() => { try { return /^OPENROUTER_API_KEY=(.+)$/m.exec(fs.readFileSync(path.join(os.homedir(), '.acptoapi', '.env'), 'utf8'))?.[1]?.trim() } catch { return '' } })()
+    if (key && process.env.CASEY_DOCTOR_OFFLINE !== '1') {
+      const r = await fetch('https://openrouter.ai/api/v1/credits', { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(6000) })
+      const d = (await r.json())?.data
+      if (d && Number.isFinite(d.total_credits) && Number.isFinite(d.total_usage)) {
+        const left = d.total_credits - d.total_usage
+        const min = Number(process.env.CASEY_CREDIT_WARN_USD) || 3
+        out.push(left < min
+          ? { level: left < 1 ? 'fail' : 'warn', text: `OpenRouter balance is $${left.toFixed(2)} (of $${d.total_credits.toFixed(2)} bought): below $${min}, so the bot can start refusing replies`, fix: 'top up credits at https://openrouter.ai/credits (the key\'s own limit is separate and does not add balance)' }
+          : { level: 'ok', text: `OpenRouter balance $${left.toFixed(2)} left` })
+      }
+    }
+  } catch { /* offline or unreadable: say nothing rather than guess */ }
   const af = auditFile(process.env)
   out.push({ level: 'skip', text: af ? `policy audit trail: ${af}` : 'policy audit trail is OFF (CASEY_LLM_AUDIT_FILE=0)' })
   const proactive = String(process.env.CASEY_PROACTIVE_SENDS || 'off').trim().toLowerCase()

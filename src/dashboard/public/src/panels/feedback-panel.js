@@ -33,7 +33,7 @@ const loader = createPanelLoader({
 
 // The stored kind of person is either a dashboard role or a WhatsApp rung; both
 // are shown as the words this deployment uses for that person.
-const ROLE_WORD = { admin: 'Administrator', operator: 'Operator', secretary: 'Secretary' };
+const ROLE_WORD = { admin: 'Administrator', operator: 'Operator', secretary: 'Operator' };
 export function roleWord(k) {
   if (ROLE_WORD[k]) return ROLE_WORD[k];
   const t = k === 'eco_ranger' ? 'field_worker' : k;

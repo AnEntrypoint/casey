@@ -230,22 +230,19 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   return { promptNote, ingressRecorded }
 }
 
-// IRREVERSIBLE SERVICE CONTROLS + observe mode -- the only deterministic
-// pre-LLM route left. Returns a finished reply, or null to fall through to the
-// agent turn.
+// THE BARE-MINIMUM SERVICE CONTROLS + observe mode. Returns a finished reply, or
+// null to fall through to the agent turn.
 //
 // PURE LLM otherwise: casey does NOT deterministically extract report fields,
-// and there is no keyword/shape router. STOP (opt-out) and HUMAN (handoff) are
-// legal/service controls that must fire synchronously in any language even with
-// the model down -- never queued, never left to the agent's discretion, and
-// they must fire REGARDLESS of autonomy mode, so they run BEFORE the
-// observe-mode gate. The control's own state change is unconditional and
-// happens inside applyServiceControls; a null return falls through so the
-// ordinary agent turn composes the acknowledgement in the contact's own
-// language rather than from a hardcoded per-language string.
+// and there is no keyword/shape router. Only the whole-message words 'stop' and
+// 'help' are handled here (service-controls.js); STOP in any language or
+// phrasing, and a request for a person, are the agent's via case_stop /
+// case_handoff. The bare word's state change runs BEFORE the observe-mode gate;
+// in observe mode no agent turn runs, so a phrased STOP there only surfaces the
+// case for an operator (needs-human below).
 export async function applyPreTurnControls({ store, log, llmStatus, notifyHandoff, fresh, inboundText, channel, msg, replyTo, platform }) {
   const controlled = await applyServiceControls({
-    store, log, llmStatus, notifyHandoff,
+    store, log, llmStatus,
     caseRow: fresh, inboundText, channel, msg, replyTo, platform,
   })
   if (controlled) return controlled
@@ -266,7 +263,7 @@ export async function applyPreTurnControls({ store, log, llmStatus, notifyHandof
     // (case-assignment.js): they are already on it, the operators' triage inbox
     // does not need a second pin per reporter message, and the assignee is told in
     // their own next in-window turn (staff-notices.js derives "the reporter has
-    // answered" from this same inbound). STOP/HUMAN already fired above.
+    // answered" from this same inbound).
     if (!isContactAssignee(fresh.assignee)) {
       await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, flagLabel: 'observe needs-human', notifyLabel: 'observe handoff' })
     }
@@ -282,9 +279,9 @@ export async function applyPreTurnControls({ store, log, llmStatus, notifyHandof
 // TURN-START (so the resume sweep does not also claim it). USER DIRECTIVE: no
 // fallback text -- log loud, send nothing, rely on the queue to re-drive once
 // the provider (the in-process acptoapi bridge) is actually reachable. Guarded
-// once per msgId. STOP/HUMAN are handled by the deterministic short-circuit
-// ABOVE this gate, so an opt-out during an outage still fires synchronously and
-// is never queued.
+// once per msgId. A STOP or request for a person written during an outage is
+// queued like any message and read by the agent on recovery; nothing is sent to
+// the contact in between (the bot only replies), so the delay costs no message.
 //
 // isLlmDown carries the swallow-and-assume-up catch (a status() that itself
 // throws must never gate an inbound into the queue) and the not-a-function

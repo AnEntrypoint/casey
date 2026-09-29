@@ -1,4 +1,4 @@
-// Secretary panel -- the phone-follow-up queue for staff dedicated to calling
+// Follow-up calls panel (internal name: secretary) -- the phone-follow-up queue for staff dedicated to calling
 // reporters back on loose ends (2026-08 Herd Health kickoff dev notes, STEP 3:
 // "we want to set up a secretarial view for people who are dedicated to
 // contact people over the phone to follow up"). Backs onto the same
@@ -7,7 +7,7 @@
 // report.location so a caller sees "N dropped in Bizana, M in Lusikisiki"
 // instead of a flat list. Pull-based only -- casey never pushes a WhatsApp
 // notification for this (WhatsApp's per-message fee structure), so this view
-// IS the follow-up mechanism: a secretary opens it, sees who to phone, and
+// IS the follow-up mechanism: an operator opens it, sees who to phone, and
 // calls. Content-swap panel (state.activePanel === 'secretary'). Row click
 // opens the case (via setActiveId, same convention as offline/clusters
 // panels) where the real phone number is available as a tel: link.
@@ -64,7 +64,7 @@ function setFilter(f) {
 
 // Client-side only: the assignee filter above is the server-side narrowing
 // (a refetch), but nothing narrows the 40+ rows already on screen by who the
-// farmer is or where -- a secretary working the phone queue has no way to
+// farmer is or where -- an operator working the phone queue has no way to
 // jump straight to "the Bizana one" without scanning every place section.
 // Matches ref/subject/reason/assignee/place, the same fields already visible
 // in the table, so a hit is never surprising.

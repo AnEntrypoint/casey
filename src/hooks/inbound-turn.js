@@ -27,8 +27,11 @@ import { resolveAdapter, sendGuaranteedFallback, sendAgentReply } from './delive
 import { makeTypingIndicator } from './typing.js'
 import { normaliseReply } from './plain-text.js'
 import { decideNotice, composeNotice, recordNoticeShown } from '../first-contact-notice.js'
+import { composeProgress } from '../progress-line.js'
+import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
 import { tryRegisterByCode } from './role-registration.js'
-import { parseReport } from '../timestamp.js'
+import { parseReport, tagList } from '../timestamp.js'
+import { controlRegistered } from './turn-results.js'
 
 export async function runInboundTurn(receiver, deps, { platform, msg, channel, external_id, replyTo }) {
   const { store, log, admission, autoRespond, llmStatus, notifyHandoff } = deps
@@ -163,7 +166,18 @@ async function driveAgentTurn(deps, {
   // leaves it behind, and it may hold a full report the reporter just gave. See
   // the advanceIntake call below for why it still needs advancing.
   const startedOnId = fresh.id
+  // case_handoff (the agent's read of a request for a person, in any language) only
+  // sets the tag; the team is told here, once, on the first flag -- the same
+  // notify-once rule flagNeedsHuman applies (hooks/case-writes.js).
+  const wasFlagged = tagList(fresh).includes('needs-human')
+  const handoffAsked = controlRegistered(result, 'case_handoff')
+  const preTurnCase = fresh
   fresh = await store.getCase(endedOnId).catch(() => null) || await store.getCase(fresh.id).catch(() => fresh)
+
+  if (handoffAsked && !wasFlagged && notifyHandoff) {
+    try { await notifyHandoff({ case: preTurnCase, channel, from: msg.from }) }
+    catch (e) { log.warn?.('[casey] handoff notify failed', { caseId: preTurnCase.id, error: e.message }) }
+  }
 
   // Reaching here with empty text means the whole genuine retry budget (attempts
   // x hard deadline) was spent.
@@ -242,6 +256,16 @@ async function driveAgentTurn(deps, {
       store, log, adapter, fresh, channel, replyTo, platform,
       turnStartedAt, stopTyping,
     })
+  }
+
+  // PROGRESS LINE: every reply to a member of the public that has something on record ends
+  // with where the report stands and what is still needed (progress-line.js), composed in
+  // their language from the record, so nobody is left wondering whether it went through.
+  // Skipped for team members (their prompt carries the reference and gaps), for someone who
+  // opted out, and whenever the reply is a fallback or held.
+  if (!degraded && !isFallback && text && !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !tagList(fresh).includes('opted-out')) {
+    const line = await composeProgress(callLLM, fresh, { inboundText }).catch(() => '')
+    if (line) text = `${text}\n\n${line}`
   }
 
   // FIRST-CONTACT NOTICE, appended after the answer (first-contact-notice.js). Never for a

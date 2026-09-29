@@ -18,7 +18,7 @@ import { replyShape, strayContactDetails } from './plain-text.js'
 import { loadDomainConfig } from '../config-loader.js'
 import { stripThinkingBlock, OPTED_OUT_TAG, detectContactIntent } from './heuristics.js'
 import { tagList } from '../timestamp.js'
-import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs } from './turn-results.js'
+import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs, controlRegistered } from './turn-results.js'
 import { staffNoticeNote } from '../staff-notices.js'
 import { refsIn } from '../team-focus.js'
 import { buildCaseToolset, hiddenToolNamesForTier } from '../case-tools.js'
@@ -493,10 +493,10 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     }
     await store.appendEvent(fresh.id, observation(`STRAY-CONTACT-DETAIL-BUT-SENT: reply carried ${stray.join(', ')}`))
   }
-  // The STOP and HUMAN controls take effect before the agent speaks (service-controls.js), so the
+  // The STOP and HUMAN controls are registered by the agent's own case_stop / case_handoff calls
+  // (or, for the bare word 'stop', before the agent speaks -- service-controls.js), so the
   // acknowledgement is a true statement even though no report was written this turn.
-  const intent = detectContactIntent(inboundText)
-  const controlNoted = intent === 'human' || intent === 'stop'
+  const controlNoted = controlRegistered(result) || detectContactIntent(inboundText) === 'stop'
   const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result) || controlNoted
   const safetyNumbers = persona.safetyText ? strayContactDetails(persona.safetyText, [candidate]) : []
   const { missingFacts = [], knownFacts = [] } = factsForJudge ? await factsForJudge() : {}
