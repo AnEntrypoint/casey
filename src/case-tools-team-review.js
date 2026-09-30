@@ -22,7 +22,7 @@ import { sendStaffMessage, staffLabel } from './hooks/staff-outbound.js'
 import { AGENT_USER } from './case-store.js'
 import { MANDATORY_MINIMUM_FIELDS, REPORT_ENTITY_LABEL, missingMandatoryMinimum, fieldLabel } from './store/report-shape.js'
 import { evData } from './safe.js'
-import { writeGate, recordedOn } from './team-focus.js'
+import { writeGate, recordedOn, setFocus } from './team-focus.js'
 import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn, reporterExtras } from './case-tools-team-shared.js'
 import { inSignOffQueue, withdrawHandoff, isHandedOff, sendBackToRanger } from './signoff-desk.js'
 import { mergeTag } from './hooks/heuristics.js'
@@ -75,6 +75,9 @@ export function buildTeamReviewTools(store) {
       async ({ case: ref }, ctx) => {
         const r = await lookup(store, ctx, ref); if (r.fail) return r.fail
         const { c } = r
+        // Reviewing the record their own message names makes it their working record, so the follow-up ("it is foot and mouth, sign it
+        // off") does not have to repeat the reference (team-focus.js writeGate: the message names it exactly).
+        if (ctx?.contact?.id && (ctx.inboundRefs || []).length === 1 && ctx.inboundRefs[0] === String(c.ref).toUpperCase()) setFocus(ctx.contact.id, c)
         const events = (await store().listEvents(c.id)).filter(e => !(e.kind === 'observation' && evData(e).announced_to))
         const slim = slimCase(c)
         if (slim.report) {

@@ -13,6 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { truncate } from './heuristics.js'
 import { fetchWithTimeout } from '../adapters/webhook-platform-base.js'
+import { transcribeLocal, localSttEnabled } from './local-stt.js'
 import { dataPolicyMode, openrouterProviderField, auditWrite } from '../llm-data-policy.js'
 
 // None of the three dispatchTool calls below carry any timeout of their own
@@ -33,7 +34,8 @@ function withTimeout(promise, ms) {
   })
 }
 
-// Best-effort voice-note transcription, ON whenever a provider key exists
+// Best-effort voice-note transcription, ON whenever a provider key exists (or the
+// offline local whisper fallback, hooks/local-stt.js, is installed: CASEY_LOCAL_STT=0 turns it off)
 // (CASEY_TRANSCRIBE_VOICE_NOTES=0 opts out -- it sends the audio bytes to an
 // external API). Provider order: OpenAI Whisper via src/agent/media-tools.js's
 // transcribe() when OPENAI_API_KEY is set, else an OpenRouter audio-capable
@@ -133,13 +135,21 @@ export async function transcribeAudioDetailed(buffer, mimeType) {
     const mode = dataPolicyMode()
     const providerField = openrouterProviderField(mode)
     const chatPath = mode !== 'allow'
-    for (const model of (chatPath ? OPENROUTER_TRANSCRIBE_CHAT_MODELS : OPENROUTER_TRANSCRIBE_MODELS)) {
+    // No OpenRouter key and a local fallback switched on: skip the provider calls that cannot succeed.
+    const models = (!openrouterKey() && localSttEnabled()) ? [] : (chatPath ? OPENROUTER_TRANSCRIBE_CHAT_MODELS : OPENROUTER_TRANSCRIBE_MODELS)
+    for (const model of models) {
       let res
       try { res = chatPath ? await transcribeViaOpenrouterChat(buffer, mimeType, model, providerField) : await transcribeViaOpenrouter(buffer, mimeType, model) } catch (e) { res = { text: '', error: `${model}: ${String(e?.message || e)}` } }
       last = { ...res, provider: `openrouter:${model}` }
       auditWrite({ event: 'transcribe', policy: mode, endpoint: chatPath ? 'chat/completions' : 'audio/transcriptions', provider_field: providerField, model, ok: !!res.text, served_by: res.served_by || null })
       // A model that heard nothing is an answer; a second model asked about the same silence tends to invent words.
       if (res.text || res.noSpeech) break
+    }
+    if (!last.text && !last.noSpeech && localSttEnabled()) {
+      // Offline fallback (hooks/local-stt.js): nothing leaves this machine, so the data policy does not apply.
+      const local = await transcribeLocal(buffer, mimeType)
+      if (local.text) return { ...local, ms: Date.now() - t0 }
+      last = { ...last, error: [last.error, local.error].filter(Boolean).join('; ') }
     }
     return { ...last, ms: Date.now() - t0 }
   } catch (e) {

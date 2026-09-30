@@ -53,6 +53,7 @@ import { buildTeamTools } from './case-tools-team.js'
 import { buildFeedbackTools } from './case-tools-feedback.js'
 import { buildSpeakerTools } from './case-tools-speaker.js'
 import { buildConsentTools } from './case-tools-consent.js'
+import { buildClarifyTools } from './case-tools-clarify.js'
 
 // Build the array of tool objects bound to an explicit store (used by anywhere
 // that wants the tools without the runtime singleton).
@@ -79,6 +80,7 @@ export function buildCaseToolset(storeOrNull) {
     ...buildFeedbackTools(store),
     ...buildSpeakerTools(store),
     ...buildConsentTools(store),
+    ...buildClarifyTools(store),
   ]
   return tools.map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
 }

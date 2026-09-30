@@ -205,7 +205,11 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   // assigned, takes the unchanged path below.
   const route = await routeStaffArtifact({ store, log, caseRow, msg, inboundText, msgId: messageId(msg) })
   let promptNote = route ? await noteRoute({ store, log, caseRow, route, msg }) : ''
-  if (msg._transcript?.text) promptNote += VOICE_TRANSCRIBED
+  if (msg._transcript?.text) {
+    promptNote += VOICE_TRANSCRIBED
+    // The local machine transcriber follows only a few languages; when it says it detected one it cannot follow, the text is very likely wrong.
+    if (msg._transcript.languageSupported === false) promptNote += `\n\n[System note: the machine heard this voice note as ${String(msg._transcript.language || 'a language it does not follow reliably').slice(0, 30)}, which it cannot follow reliably, so the transcript is very likely wrong: do not act on it unless it is plainly clear, and keep the voice note saved for the team.]`
+  }
   const ingressRecorded = route?.mode === 'relay'
   if (ingressRecorded) {
     const relay = { by: staffLabel(route.contact), contactId: route.contact.id }

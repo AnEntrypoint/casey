@@ -34,6 +34,7 @@ import { parseReport, tagList } from '../timestamp.js'
 import { controlRegistered } from './turn-results.js'
 import { speakerState, noteAsked } from '../phone-persons.js'
 import { consentManaged, consentState } from '../phone-consent.js'
+import { noteReturn } from '../return-clarify.js'
 
 export async function runInboundTurn(receiver, deps, { platform, msg, channel, external_id, replyTo }) {
   const { store, log, admission, autoRespond, llmStatus, notifyHandoff } = deps
@@ -76,7 +77,10 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
   // maze, decides the reply.
   const contact = fresh.contact_id ? await store.getContact(fresh.contact_id).catch(() => null) : null
   const events = await store.listEvents(fresh.id)
-  const basePrompt = inboundText || (media ? `The contact sent ${media} with no text. Acknowledge and ask how you can help.` : 'The contact sent an empty message. Acknowledge politely.')
+  const isVoice = media && /audio|voice/i.test(media)
+  const basePrompt = inboundText || (isVoice
+    ? 'The contact sent a voice note that could not be turned into text. It is saved with their report for the team to listen to. Do not guess what it said and record nothing from it: tell them kindly, in their language, that it is saved and that you cannot hear it yourself, and ask them to type the important facts (or say them again in a short voice note).'
+    : media ? `The contact sent ${media} with no text. Acknowledge and ask how you can help.` : 'The contact sent an empty message. Acknowledge politely.')
   const prompt = basePrompt + promptNote
 
   const queued = await llmDownQueueGate({ store, log, llmStatus, fresh, events, msg, msgId, replyTo, platform })
@@ -141,6 +145,8 @@ async function driveAgentTurn(deps, {
     .catch(() => null)
   const noticeReady = isBackgroundRedrive ? Promise.resolve(null) : noticeFor(fresh, speakerBefore)
 
+  // A public number writing again after a gap to a report that is already complete: note it, so the reply asks first (return-clarify.js).
+  if (isPublic && !isBackgroundRedrive) await noteReturn(store, { caseRow: fresh, events, contact, msgId }).catch(() => {})
   const turn = await runAgentTurn({
     store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
     channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend, ingressRecorded,

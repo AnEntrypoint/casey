@@ -277,10 +277,12 @@ function photoNudgeLines(persona, reportObj) {
 }
 
 // How to reply, how to open, and how to close.
-export function replySection(persona, caseRow, contact, { firstMessage, missingCritical = [], missingMandatory = [], consent = null }) {
+export function replySection(persona, caseRow, contact, { firstMessage, missingCritical = [], missingMandatory = [], consent = null, ret = null }) {
   // What the person is told is still needed: the floor first, then the on-site-critical facts, once each, as labels.
   const stillNeeded = [...new Set([...missingMandatory, ...missingCritical.map(fieldLabel)])]
   const consentOwed = (consent === 'none' || consent === 'declined') && !canQueryCases(contact?.tier)
+  // A return to a complete report (src/return-clarify.js) is the reply's one question, after consent.
+  const returnOwed = !!ret?.owed && !consentOwed && !canQueryCases(contact?.tier)
   return [
     ``,
     `KEEP REPORTS CORRECTLY GROUPED: one conversation usually means one report.`,
@@ -314,7 +316,9 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     // THE ONE QUESTION is chosen here, in code, from the record, so the model is handed it rather than ranking
     // the gaps itself: two questions in one reply, or asking for something already recorded, are what the reply
     // gates retry, and each retry is a whole extra turn.
-    ...(canQueryCases(contact?.tier) ? [] : consentOwed
+    ...(canQueryCases(contact?.tier) ? [] : returnOwed
+      ? [`THE ONE QUESTION FOR THIS REPLY is the question described under RETURNING TO A COMPLETE REPORT below, and nothing else: ask no other question and do not ask for more facts yet.`, ``]
+      : consentOwed
       ? [`THE ONE QUESTION FOR THIS REPLY is the check described under CHECK BEFORE RECORDING below, and nothing else: ask no other question and do not ask about the ${persona.entitySubjectPlural} yet.`, ``]
       : stillNeeded.length
         ? [`THE ONE QUESTION FOR THIS REPLY: ask about ${stillNeeded[0]}${stillNeeded[1] ? ` (and ${stillNeeded[1]} only if it fits the same short sentence naturally)` : ''}, and nothing else. One question mark in the whole reply. Never ask about anything already recorded above, and never ask again what your last message asked: if they have not answered it, acknowledge what they did say and move on.`, ``]
@@ -333,7 +337,7 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
       ? [`FIRST MESSAGE.${canQueryCases(contact?.tier) ? ` If it's an enquiry, answer from tools.` : ''} If greeting/report:`,
          `(a) greet warmly, thank ONLY if they actually described ${persona.entitySubjectPlural};`,
          `(b) give reference ${caseRow.ref} (reproduce exactly, write sentence around it);`,
-         ...(consentOwed ? [`(c) no other question: the one check below is your only question.`] : [`(c) MAY add one gentle question. Vary phrasing.`]),
+         ...(consentOwed || returnOwed ? [`(c) no other question: the one check below is your only question.`] : [`(c) MAY add one gentle question. Vary phrasing.`]),
          // Typing a form needs data, a browser and reading -- three things this
          // conversation cannot assume. Offered, never pushed, and never as the
          // route they have to take to be heard.
@@ -480,5 +484,21 @@ export function consentSection(persona, contact, consent) {
     ``,
     `CHECK BEFORE RECORDING. This phone has not yet said it is okay for the team to keep what it sends, so case_report will not write anything yet. In THIS reply, as your ONE question, tell them in your own warm words and in their language, in two short sentences at most and no list, what matters here: ${facts} Then ask if that is okay. Put it in your own words: do not copy this wording and never call it a notice, policy, terms or consent. Even a bare greeting gets this question, and if you asked it before and they have not answered (they may have missed it, or written about the animals instead), ask it again in fresh words, gently, in every reply until they answer. If they have already described animals, answer that warmly first (if someone may be in danger the safety rule still comes first) and then ask; remember what they said. Never use the words follow up, pass on, look at or help, and never say what the team will do with it. If their very first message already says the team may keep what they send, call case_consent with agreed true and volunteered true instead of asking. Say accurately who can see it (the team, eco rangers and technicians; never that only the team does, or that nobody else does), and ask it as a plain yes-or-no question whose yes means they agree (for example 'is it okay if...?'), never as 'is there a problem if...'. Do not call case_report until they have said yes (it would write nothing), and never say or imply that anything has been noted, recorded or saved. Never say you need consent or permission first, and do not announce what you are about to do: just talk to them.`,
     `When their latest message answers your question, calling case_consent comes FIRST, before case_report and before you reply. When they answer yes in any wording or language, call case_consent with agreed true and then record, with case_report, everything they have told you in this chat; do not ask again. If they say no, call case_consent with agreed false, tell them kindly that nothing will be kept, and offer a person from the team (case_handoff). A ${entity} described is not a yes: ask.`,
+  ]
+}
+
+// RETURNING TO A COMPLETE REPORT (src/return-clarify.js). `ret` is returnState(): { owed, species, location, person }. Null or not owed, a
+// team member, or while consent is still owed (consent comes first): no section. While owed, case_report and case_new write nothing.
+export function returnSection(persona, contact, ret, consent) {
+  if (!ret?.owed || canQueryCases(contact?.tier) || consent === 'none' || consent === 'declined') return []
+  const entity = persona.entityLabel || 'report'
+  const what = [fenced(ret.species, 40), fenced(ret.location, 60)].filter(Boolean).join(' at ')
+  const who = ret.person
+    ? `and confirm who is writing: ask whether it is ${fenced(ret.person, 60)} again`
+    : `and ask who is writing, because nobody on this phone is a registered team member`
+  return [
+    ``,
+    `RETURNING TO A COMPLETE REPORT. This person already has a full ${entity} on file${what ? ` (${what})` : ''} and has written again after a while. Before you record anything, in THIS reply, as your ONE question, ask in their language whether this is MORE about that ${entity} or a NEW problem, naming that ${entity} in a few plain words, ${who}. Put both in one short natural sentence, in your own words. Do not call case_report or case_new until they answer, and never say or imply that anything has been noted. If they said who they are or what it is about in this very message, call case_clarify now instead of asking.`,
+    `When they answer, call case_clarify ONCE: same_report true or false, and who is writing (name, or same_person true when they confirm the person on file). Then: more about the same ${entity} means record what they add with case_report; a new problem means case_new and record it there. Do not ask again.`,
   ]
 }

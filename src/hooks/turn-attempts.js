@@ -13,6 +13,7 @@ import { observation } from './case-writes.js'
 import { caseSystemPrompt } from './prompt.js'
 import { speakerState } from '../phone-persons.js'
 import { consentManaged, consentState } from '../phone-consent.js'
+import { returnState } from '../return-clarify.js'
 import { buildPromptContext } from './prompt-context.js'
 import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
@@ -20,6 +21,8 @@ import { replyShape, strayContactDetails } from './plain-text.js'
 import { loadDomainConfig } from '../config-loader.js'
 import { stripThinkingBlock, OPTED_OUT_TAG, detectContactIntent } from './heuristics.js'
 import { tagList, parseReport } from '../timestamp.js'
+import { setFocus } from '../team-focus.js'
+import { deskAuthorityOn } from '../case-tools-team-shared.js'
 import { composeAdviceRefusal } from '../advice-refusal.js'
 import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs, controlRegistered } from './turn-results.js'
 import { staffNoticeNote } from '../staff-notices.js'
@@ -153,7 +156,7 @@ export function classifyTurnError(message) {
 export function buildTurnRequest({
   prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
   resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-  staffSend = null, inboundRefs = [], inboundText = '', speaker = null, consent = null,
+  staffSend = null, inboundRefs = [], inboundText = '', speaker = null, consent = null, ret = null,
 }) {
   return {
     // A retry after a judge-blank/false-confirm/empty carries the judge's
@@ -166,7 +169,7 @@ export function buildTurnRequest({
       // the retry's whole problem is that it cannot see the tool result the
       // previous attempt was given.
       + (refusedActions?.length ? `\n\n[System note: these tool calls from your earlier attempt were REFUSED and nothing was recorded by them: ${refusedActions.join('; ')}. Read the refusal, fix the argument it names, and call the tool again so the facts this person gave are actually recorded. Never tell them something is recorded until a tool call has succeeded.]` : ''),
-    messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, speaker, consent) }],
+    messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, speaker, consent, ret) }],
     sessionKey: `case:${fresh.id}`,
     callLLM: turnCallLLM,
     // Nudge the weak model into its first classify/record tool call. freddie
@@ -390,7 +393,7 @@ export async function reportFactsForJudge(store, fallbackRow, events, caseId = f
 // leak) return before the judge is ever called, and on those attempts the store
 // read behind it is pure waste inside a live turn's hard deadline. Awaited once,
 // immediately before the judge call that is the first thing to need it.
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, isStaff = false, isTechnician = false }) {
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, returnOn = false, isStaff = false, isTechnician = false }) {
   // What a refusal offers instead: a reporter is steered back to reporting; a team member to their own work.
   const offerThing = isStaff ? 'offer what is waiting for them (their assigned reports)' : 'offer the one thing you can help with: hearing about an animal that is sick or has died'
   const note = async (text) => {
@@ -515,6 +518,8 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // While this number has not agreed, EVERY reply must ask (phone-consent.js); read after this attempt's tool calls,
   // so a yes the model just recorded with case_consent ends the requirement.
   const consentOwed = consentOn && !!fresh.contact_id && await consentState(store, fresh.contact_id, { caseId: fresh.id }) === 'none'
+  // A person back at a complete report must be asked (consent, if owed, comes first); read after this attempt's tool calls so an answer just recorded ends it.
+  const clarifyOwed = returnOn && !consentOwed && !!fresh.id && (await returnState(store, await store.getCase(fresh.id).catch(() => null), { id: fresh.contact_id, tier: 'reporter' })).owed
   // The language the model recorded for this person, read AFTER this attempt's writes: the judge compares the reply
   // with the latest message and with this recorded fact, which stops it flagging a correct reply in a less common language.
   let recordedLanguage = ''
@@ -531,7 +536,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     await note(`REPLY-JUDGE-FLAGGED: multi-ask: ${shape.questions} questions and ${shape.listLines} list lines counted by the system; retrying turn with feedback (attempt ${attempt})`)
     return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things, with no list, and one question mark in the whole reply.]" }
   }
-  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, clarifyOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
   // A team member uses the dashboard's own words (report references, 'case', 'priority'), so a jargon verdict is not a
   // fault for them; the technician's recorded recommended resolution is theirs, not advice from the assistant.
   if (isStaff && !verdict.clean && verdict.reasons?.length) {
@@ -546,7 +551,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   }
   // While consent is owed the ONE question a reply may ask is the consent question, so a repeat-ask verdict can only be
   // that question asked again; it is required until they answer and is never a fault. Other reasons stand.
-  if (consentOwed && !verdict.clean && verdict.reasons?.length) {
+  if ((consentOwed || clarifyOwed) && !verdict.clean && verdict.reasons?.length) {
     const rest = verdict.reasons.filter(r => !/repeat.?ask/i.test(r))
     if (rest.length !== verdict.reasons.length) verdict = rest.length ? { ...verdict, reasons: rest } : { clean: true, reasons: [], category: null }
   }
@@ -628,12 +633,13 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     [/promise.?made/i, 'it said or implied that someone has been alerted, asked or flagged, will come, phone, reply or follow up. Nothing here does that. Do not claim anything about what happens to it next; if they asked when or whether someone will come or call, say kindly that you cannot say'],
     [/safety.?line.?missing/i, `the person may be in danger and it did not include the helpline numbers from your safety instructions (${safetyNumbers.join(', ')}). Write them out in full, in two or three warm plain sentences, with no other number and no list`],
     [/wrong.?language/i, "it was not in the language of their latest message. Write the whole reply again in exactly the language their latest message is written in, and no other"],
+    [/clarify.?not.?asked/i, "it did not ask whether this is more about their existing report or a new problem, and who is writing. This person came back to a report that is already complete, so in this reply ask that in one short natural sentence in their language, naming the report in a few words, and ask who is writing; it is your one question. If their latest message already answers it, call case_clarify first"],
     [/consent.?not.?asked/i, "it did not ask whether it is okay for the team to keep what they send, and this number has not agreed yet. In this reply say briefly, in your own words and their language, what is kept and who can see it, and ask if that is okay: it is your one question. If their latest message already answers that question, call case_consent first (agreed true for a yes, false for a no)"],
   ]
   const faults = faultRoutes.filter(([re]) => verdict.reasons?.some(r => re.test(r))).map(([, text]) => text)
   if (faults.length) {
     const alsoMulti = verdict.reasons?.some(r => /multi.?ask|wall of text/i.test(r)) ? ' Also ask only ONE question naming at most TWO things, with no list.' : ''
-    const hardFault = verdict.reasons?.some(r => /advice.?given|safety.?line.?missing|consent.?not.?asked/i.test(r))
+    const hardFault = verdict.reasons?.some(r => /advice.?given|safety.?line.?missing|consent.?not.?asked|clarify.?not.?asked/i.test(r))
     if (hardFault ? canRetry : softCanRetry) {
       log.warn?.('[casey] reply judge flagged advice, a promise or the language; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
@@ -812,6 +818,14 @@ export async function runAgentTurn({
   // is delivered. Reporter tier never computes it.
   if (canQueryCases(resolvedTier) && contact?.id) prompt += await staffNoticeNote(store, contact)
   const inboundRefs = refsIn(inboundText)
+  // A team member whose own message names exactly one report they have authority over is now working on it: focus is set from
+  // what THEY typed (team-focus.js), so the next message need not repeat the reference. The model cannot do this and cannot undo it.
+  if (canQueryCases(resolvedTier) && contact?.id && inboundRefs.length === 1) {
+    try {
+      const named = await store.getCaseByRef(inboundRefs[0])
+      if (named && named.channel !== 'system' && deskAuthorityOn({ contact, tier: resolvedTier }, named)) setFocus(contact.id, named)
+    } catch { /* the gate still asks */ }
+  }
   // Prior outbound for the repeat guard, hoisted: no new outbound can land
   // between attempts of THIS message's own turn, so one lookup serves all.
   const lastOutboundText = [...events].reverse().find(e => e.kind === 'outbound')?.text || null
@@ -842,7 +856,11 @@ export async function runAgentTurn({
   const consentOn = consentManaged() && resolvedTier === TIER_REPORTER && !!contact?.id
   const readConsent = async () => (consentOn ? consentState(store, contact.id, { caseId: turnBinding.id }) : null)
   let consent = await readConsent()
-  systemPromptText = caseSystemPrompt(fresh, events, contact, speaker, consent)
+  // A public number back at a complete report (src/return-clarify.js): null for a team member or when nothing is owed.
+  const returnOn = resolvedTier === TIER_REPORTER && !!contact?.id
+  const readReturn = async () => (returnOn ? returnState(store, await store.getCase(turnBinding.id).catch(() => null), contact) : null)
+  let ret = await readReturn()
+  systemPromptText = caseSystemPrompt(fresh, events, contact, speaker, consent, ret)
   // Shared across ALL attempts: a retry is a FRESH runTurn that cannot see the
   // prior attempt's tool calls, so without cross-attempt dedupe the model
   // blindly repeats mutating calls and opens a SECOND case for the same report.
@@ -868,12 +886,12 @@ export async function runAgentTurn({
       if (!degradedReason) degradedReason = FAILURE_REASONS.TIMEOUT
       break
     }
-    if (attempt > 1) { speaker = await readSpeaker(false); consent = await readConsent() }
+    if (attempt > 1) { speaker = await readSpeaker(false); consent = await readConsent(); ret = await readReturn() }
     try {
       result = await runTurn(buildTurnRequest({
         prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
         resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-        staffSend, inboundRefs, inboundText, speaker, consent,
+        staffSend, inboundRefs, inboundText, speaker, consent, ret,
       }))
     } catch (e) {
       errored = true
@@ -926,7 +944,7 @@ export async function runAgentTurn({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
       priorAttemptWrote: turnWroteSomething || ingressRecorded, systemPromptText,
       staffRefs: canQueryCases(resolvedTier) ? touchedRefs(result) : [],
-      consentOn, isStaff: canQueryCases(resolvedTier), isTechnician: canSignOff(resolvedTier),
+      consentOn, returnOn, isStaff: canQueryCases(resolvedTier), isTechnician: canSignOff(resolvedTier),
       // Read AFTER this attempt's writes and against the case the attempt ended
       // bound to (case_new/case_switch can have moved it) -- see
       // reportFactsForJudge for why a pre-turn snapshot is the wrong input, and

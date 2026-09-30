@@ -14,6 +14,7 @@ import {
 } from './case-tools-shared.js'
 import { canQueryCases } from './contact-tiers.js'
 import { stampReporter } from './phone-persons.js'
+import { returnGate } from './return-clarify.js'
 
 // A public report belongs to the person recorded as writing (src/phone-persons.js). Best effort, and
 // a no-op for a phone where nobody has been recorded, so a single-person phone is unchanged.
@@ -60,6 +61,8 @@ export function buildBindingTools(store) {
       `Start a NEW ${REPORT_ENTITY_LABEL} for this person and record into that one from now on. Use ONLY when they are clearly starting a fresh ${REPORT_ENTITY_LABEL} (different animals, a different place, a different incident), never on your own initiative.`,
       { type: 'object', properties: { subject: str('Optional short subject') } },
       async ({ subject }, ctx) => {
+        // Opening a new report is one of the two answers to the return question; it waits for that answer (return-clarify.js).
+        if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { const held = await returnGate(store(), ctx); if (held) return held }
         const author = ctx?.author || ctx?.principal?.id
         if (!store().createCase) return { error: 'store does not support explicit case creation' }
         // Reuse THIS turn's own (channel, external_id) -- the real conversation

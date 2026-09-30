@@ -110,6 +110,10 @@ export function writeGate(ctx, c, now = Date.now()) {
   if (others.length) {
     return { error: `The message names ${others[0]} but this would be recorded on ${c.ref}. Nothing was recorded. Ask which one they mean.` }
   }
+  // The team member's OWN message names exactly this record (the references are pulled out of what THEY typed, never out of a
+  // report's text or the model's words): that is the human identifying the record, so it is confirmed at once. Without this a
+  // technician who types "sign off CASE-1234 as ..." was still made to say yes on a later turn, and the model fumbled that dance.
+  if (named.length === 1 && named[0] === ours) { if (me) setFocus(me, c, now); return null }
   const f = me ? focusOf(me, now) : null
   if (f && f.caseId === c.id) { f.lastUsedAt = now; return null }
   proposeFocus(me, c, ctx?.dedupeCache, now)
