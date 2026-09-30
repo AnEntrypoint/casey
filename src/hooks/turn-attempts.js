@@ -25,7 +25,7 @@ import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs, contro
 import { staffNoticeNote } from '../staff-notices.js'
 import { refsIn } from '../team-focus.js'
 import { buildCaseToolset, hiddenToolNamesForTier } from '../case-tools.js'
-import { resolveContactTier, canQueryCases, TIER_REPORTER } from '../contact-tiers.js'
+import { resolveContactTier, canQueryCases, canSignOff, TIER_REPORTER } from '../contact-tiers.js'
 import { FAILURE_REASONS } from '../degraded-turns.js'
 import { TURN_HARD_DEADLINE_MS } from './turn-deadlines.js'
 
@@ -390,7 +390,9 @@ export async function reportFactsForJudge(store, fallbackRow, events, caseId = f
 // leak) return before the judge is ever called, and on those attempts the store
 // read behind it is pure waste inside a live turn's hard deadline. Awaited once,
 // immediately before the judge call that is the first thing to need it.
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false }) {
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, isStaff = false, isTechnician = false }) {
+  // What a refusal offers instead: a reporter is steered back to reporting; a team member to their own work.
+  const offerThing = isStaff ? 'offer what is waiting for them (their assigned reports)' : 'offer the one thing you can help with: hearing about an animal that is sick or has died'
   const note = async (text) => {
     try { await store.appendEvent(fresh.id, observation(text)) }
     catch (e) { log.warn?.('[casey] failed to record attempt observation', { caseId: fresh.id, error: e.message }) }
@@ -462,7 +464,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       await note(`TOOL-NAME-LEAK: reply named ${leakedToolNames.join(', ')}; retrying turn with feedback (attempt ${attempt})`)
       return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it named internal tools this person must never read: '
         + leakedToolNames.join(', ')
-        + '. Never name, list or describe your own tools, access, capabilities or limitations. Say the same thing again warmly in their own plain language, or -- if you cannot help with what they asked -- say so in one plain sentence and offer the one thing you can help with: hearing about an animal that is sick or has died.]' }
+        + '. Never name, list or describe your own tools, access, capabilities or limitations. Say the same thing again warmly in their own plain language, or -- if you cannot help with what they asked -- say so in one plain sentence and ' + offerThing + '.]' }
     }
     log.warn?.('[casey] reply names casey internal tools on a spent retry budget; holding for a human', { caseId: fresh.id, tools: leakedToolNames })
     return { done: true, text: candidate, jargonReasons: [`named internal tools: ${leakedToolNames.join(', ')}`] }
@@ -528,6 +530,12 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things, with no list, and one question mark in the whole reply.]" }
   }
   let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  // A team member uses the dashboard's own words (report references, 'case', 'priority'), so a jargon verdict is not a
+  // fault for them; the technician's recorded recommended resolution is theirs, not advice from the assistant.
+  if (isStaff && !verdict.clean && verdict.reasons?.length) {
+    const rest = verdict.reasons.filter(r => !/jargon/i.test(r) && !(isTechnician && /advice.?given/i.test(r)))
+    if (rest.length !== verdict.reasons.length) verdict = rest.length ? { ...verdict, reasons: rest, category: 'other' } : { clean: true, reasons: [], category: null }
+  }
   // A STOP is honoured by the system (case_stop, recorded on the timeline), so a confirmation that says they will not be
   // messaged is true, not a promise; it is judged like any other reply for everything else.
   if (!verdict.clean && verdict.reasons?.length && controlRegistered(result, 'case_stop')) {
@@ -771,7 +779,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
     return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent: '
       + verdict.reasons.join('; ')
-      + '. Answer the person directly and warmly instead. Never describe your own tools, access, capabilities or limitations, and never list what you are able to do -- if you cannot help with what they asked, say so in one plain sentence and offer the one thing you can help with: hearing about an animal that is sick or has died.]' }
+      + '. Answer the person directly and warmly instead. Never describe your own tools, access, capabilities or limitations, and never list what you are able to do -- if you cannot help with what they asked, say so in one plain sentence and ' + offerThing + '.]' }
   }
   log.warn?.('[casey] reply judge flagged the composed reply; sending anyway', { caseId: fresh.id, reasons: verdict.reasons })
   await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED-BUT-SENT: ${verdict.reasons.join('; ')}`))
@@ -916,7 +924,7 @@ export async function runAgentTurn({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
       priorAttemptWrote: turnWroteSomething || ingressRecorded, systemPromptText,
       staffRefs: canQueryCases(resolvedTier) ? touchedRefs(result) : [],
-      consentOn,
+      consentOn, isStaff: canQueryCases(resolvedTier), isTechnician: canSignOff(resolvedTier),
       // Read AFTER this attempt's writes and against the case the attempt ended
       // bound to (case_new/case_switch can have moved it) -- see
       // reportFactsForJudge for why a pre-turn snapshot is the wrong input, and
@@ -925,6 +933,11 @@ export async function runAgentTurn({
     })
     if (!verdict.done) { retryFeedback = verdict.retryFeedback; continue }
     text = verdict.text
+    // A held reply reaches nobody, and a team member has no reviewer waiting: send it, and keep the flag on the timeline.
+    if (canQueryCases(resolvedTier) && (verdict.jargonReasons || verdict.falseConfirmReasons || verdict.adviceReasons)) {
+      await store.appendEvent(fresh.id, observation(`STAFF-REPLY-SENT-DESPITE-FLAG: ${(verdict.jargonReasons || verdict.falseConfirmReasons || verdict.adviceReasons).join('; ')}; a held reply would have left the team member with nothing`)).catch(() => {})
+      verdict.jargonReasons = verdict.falseConfirmReasons = verdict.adviceReasons = null
+    }
     jargonReasons = verdict.jargonReasons || null
     falseConfirmReasons = verdict.falseConfirmReasons || null
     adviceReasons = verdict.adviceReasons || null

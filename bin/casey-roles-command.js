@@ -17,6 +17,7 @@
 import { createCaseStore } from '../src/case-store.js'
 import { TIER_ORDER, TIER_REPORTER, resolveTierValue, atLeast, TIER_FIELD_WORKER, tierLabel } from '../src/contact-tiers.js'
 import { createInvite, createInvites, listInvites, revokeInvite, normalizeMsisdn } from '../src/role-invites.js'
+import { mapRole } from '../src/team-import.js'
 import { fmtPhone27, fmtTimeSAST } from '../src/format.js'
 import { TIER_LABELS } from '../src/store/report-shape.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
@@ -106,9 +107,9 @@ export async function cmdRoles({ flags, rest }) {
   }
 
   if (sub === 'assign') {
-    const [phone, tier] = pos
+    const phone = pos[0]; let tier = pos[1]
     if (!phone || !tier) await fail('usage: casey roles assign <phone> <tier> [--name "..."]', `tiers: ${TEAM_TIERS.join(', ')} (or reporter to demote)`)
-    if (!TIER_ORDER.includes(tier)) await fail(`there is no tier "${tier}".`, `one of: ${TIER_ORDER.join(', ')}`)
+    if (!TIER_ORDER.includes(tier)) { const m = mapRole(tier); if (m.tier) tier = m.tier; else await fail(`there is no tier "${pos[1]}".`, `one of: ${TIER_ORDER.join(', ')}, or a role word such as "Eco Ranger"`) }
     const external_id = normalizeMsisdn(phone)
     if (!external_id) await fail(`"${phone}" is not a phone number casey can match.`, 'a South African number is 27 plus nine digits, e.g. "079 091 5297" or "+27 79 091 5297".')
     try {
@@ -130,7 +131,8 @@ export async function cmdRoles({ flags, rest }) {
   }
 
   if (sub === 'invite') {
-    const tier = pos[0]
+    let tier = pos[0]
+    if (tier && !TEAM_TIERS.includes(tier)) { const m = mapRole(tier); if (m.tier && TEAM_TIERS.includes(m.tier)) tier = m.tier }
     if (!tier || !TEAM_TIERS.includes(tier)) await fail('usage: casey roles invite <tier> [--label "..."] [--ttl-hours 72] [--uses 1] [--count N [--out codes.txt]]', `tiers: ${TEAM_TIERS.join(', ')}`)
     try {
       const base = {
@@ -138,17 +140,24 @@ export async function cmdRoles({ flags, rest }) {
         ttlHours: flags['ttl-hours'] === true ? undefined : flags['ttl-hours'], maxUses: flags.uses === true ? undefined : flags.uses,
         by: 'cli-operator', grantableTiers: TEAM_TIERS,
       }
-      // --count N: a batch of single-use codes, one per person, to hand out. Each code is shown once (only its hash is
-      // stored); --out writes them, one per line, to a file only this user can read.
-      if (flags.count !== undefined && flags.count !== true) {
-        const invs = await createInvites(store, { ...base, count: flags.count })
-        if (typeof flags.out === 'string') {
-          const { writeFileSync } = await import('node:fs')
-          writeFileSync(flags.out, invs.map(i => `${i.code}\t${i.label}`).join('\n') + '\n', { mode: 0o600 })
-          console.log(green(`${invs.length} one-time codes for ${tier} written to ${flags.out}`) + dim('   (code, tab, label; keep the file private and delete it once handed out)'))
+      // --count N (or --out FILE): a batch of single-use codes, one per person, to hand out. Every option is checked BEFORE a
+      // code is made, and the output file is created first, so a bad path or number never mints codes that are then lost.
+      const whole = (name, v, lo, hi) => { const n = Number(v); if (v === true || !Number.isInteger(n) || n < lo || n > hi) throw new Error(`--${name} must be a whole number from ${lo} to ${hi}`); return n }
+      if (flags.uses !== undefined) base.maxUses = whole('uses', flags.uses, 1, 25)
+      if (flags['ttl-hours'] !== undefined) base.ttlHours = whole('ttl-hours', flags['ttl-hours'], 1, 24 * 30)
+      const outFile = typeof flags.out === 'string' ? flags.out : null
+      if (flags.out !== undefined && !outFile) throw new Error('--out needs a file name')
+      if (flags.count !== undefined || outFile) {
+        const count = flags.count === undefined ? 1 : whole('count', flags.count, 1, 100)
+        const { writeFileSync, chmodSync } = await import('node:fs')
+        if (outFile) { writeFileSync(outFile, '', { mode: 0o600 }); chmodSync(outFile, 0o600) }
+        const invs = await createInvites(store, { ...base, count })
+        if (outFile) {
+          writeFileSync(outFile, invs.map(i => `${i.code}\t${i.label}`).join('\n') + '\n', { mode: 0o600 })
+          console.log(green(`${invs.length} one-time code${invs.length === 1 ? '' : 's'} for ${tier} written to ${outFile}`) + dim('   (code, tab, label; keep the file private and delete it once handed out)'))
         } else {
           for (const i of invs) console.log(bold(i.code) + dim(`   ${i.label}`))
-          console.log(green(`${invs.length} one-time codes for ${tier}`) + dim('   (shown once; only their hashes are stored)'))
+          console.log(green(`${invs.length} one-time code${invs.length === 1 ? '' : 's'} for ${tier}`) + dim('   (shown once; only their hashes are stored)'))
         }
         console.log(dim(`  each expires ${fmtTimeSAST(Math.floor(invs[0].expires_at / 1000))} and works for ${invs[0].max_uses} use(s).`))
         console.log(dim('  each person sends exactly their code, and nothing else, to the bot number on WhatsApp.'))

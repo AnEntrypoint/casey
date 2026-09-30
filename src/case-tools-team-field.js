@@ -57,7 +57,8 @@ const optedOut = (c) => tagList(c).includes(OPTED_OUT_TAG)
 const lookupTeamCase = async (store, ctx, ref, { gate = true } = {}) => {
   const c = await findCase(store(), ref)
   if (!c) return { fail: NO_SUCH }
-  const authority = authorityOn(ctx, c)
+  // deskAuthorityOn is authorityOn plus the technician's sign-off desk (unassigned and handed-over reports), so a technician can read and edit what is on their desk.
+  const authority = deskAuthorityOn(ctx, c)
   if (!authority) return { fail: NOT_ASSIGNED }
   if (gate && authority === 'assigned') {
     const refused = writeGate(ctx, c)

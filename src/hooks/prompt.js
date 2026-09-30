@@ -108,7 +108,9 @@ function selfCheckLoadBearingPromptContent() {
   const operatorText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_OPERATOR })
   const roleBlocks = [
     { name: 'field team block (which record first, confirm before writing)', pattern: /WHICH RECORD FIRST/, from: TIER_FIELD_WORKER },
-    { name: 'field team block (finishing is not theirs)', pattern: /FINISHING IS NOT YOURS/, from: TIER_FIELD_WORKER },
+    { name: 'field team block (finishing is not theirs)', pattern: /FINISHING IS NOT YOURS/, from: TIER_FIELD_WORKER, exact: [TIER_FIELD_WORKER, TIER_OPERATOR] },
+    // The technician signs off: the ranger's 'finishing is not yours' line is replaced for that rung, never stacked on it (it contradicted the desk block).
+    { name: 'technician finishing rule (the desk signs off)', pattern: /FINISHING\. This person is also the technician who signs/, from: TIER_ANIMAL_HEALTH_TECHNICIAN, exact: [TIER_ANIMAL_HEALTH_TECHNICIAN] },
     { name: 'technician sign-off desk block', pattern: /SIGN-OFF DESK/, from: TIER_ANIMAL_HEALTH_TECHNICIAN },
     { name: 'technician two-refusals rule', pattern: /two DIFFERENT refusals/, from: TIER_ANIMAL_HEALTH_TECHNICIAN },
     { name: 'operator desk block', pattern: /OPERATOR DESK/, from: TIER_OPERATOR },
@@ -118,10 +120,10 @@ function selfCheckLoadBearingPromptContent() {
   ]
   const composed = { reporter: text, [TIER_FIELD_WORKER]: workerText, [TIER_ANIMAL_HEALTH_TECHNICIAN]: signOffText, [TIER_OPERATOR]: operatorText }
   const rungs = [TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR]
-  for (const { name, pattern, from } of roleBlocks) {
+  for (const { name, pattern, from, exact } of roleBlocks) {
     if (pattern.test(text)) throw new Error(`caseSystemPrompt regression: role block leaked to the reporter tier (${name}).`)
     for (const rung of rungs) {
-      const want = rungs.indexOf(rung) >= rungs.indexOf(from)
+      const want = exact ? exact.includes(rung) : rungs.indexOf(rung) >= rungs.indexOf(from)
       if (pattern.test(composed[rung]) !== want) {
         throw new Error(`caseSystemPrompt regression: role block ${want ? 'missing at' : 'leaked to'} the ${rung} tier (${name}). Each rung gets its own block and every rung above it -- see hooks/prompt-roles.js.`)
       }
