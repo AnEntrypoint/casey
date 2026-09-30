@@ -70,7 +70,7 @@
 // fact about tool-call results, not text classification), the judgment of
 // whether the REPLY'S WORDS claim a write happened is the model's job, same
 // as every other shape here.
-export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [], consentOwed = false, recordedLanguage = '' } = {}) {
+export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [], consentOwed = false, clarifyOwed = false, recordedLanguage = '' } = {}) {
   if (!replyText || !String(replyText).trim()) return { clean: true, reasons: [], category: null }
   if (typeof callLLM !== 'function') return { clean: true, reasons: [], category: null }
 
@@ -272,6 +272,13 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   greets, or only asks about the animals, or only acknowledges, without that question, is flagged. Write the`,
       `   reason as "consent-not-asked".`,
     ].join('\n') : null,
+    // Only listed while a person who came back to a complete report has not yet said whether it is more on it or a new problem.
+    clarifyOwed ? [
+      `16. RETURN NOT CLARIFIED: this person came back to a report that is already complete and has not yet said whether`,
+      `   the new message is MORE about that report or a NEW problem (a system fact). The reply MUST ask that, in their`,
+      `   language, and ask who is writing. A reply that only acknowledges, or records, or asks for more facts about the`,
+      `   animals, without that question, is flagged. Write the reason as "clarify-not-asked".`,
+    ].join('\n') : null,
     latestInbound ? [
       `13. WRONG LANGUAGE: compare the language of the reply's own sentences with the language`,
       `   of the PERSON'S LATEST MESSAGE shown below. If they differ -- English to an`,
@@ -315,7 +322,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     // in a sentence aimed at a person. Only offer a token whose shape is present.
     `have a REQUIRED reason word so the caller can route them (see this file's`,
     `header: the shape heading words are a wire protocol, not prose): shape 7`,
-    `"multi-ask"${missingFacts.length ? `, shape 9 "farewell-gap"` : ''}${(lastOutboundText || knownFacts.length) ? `, shape 10 "repeat-ask"` : ''}, shape 11 "advice-given", shape 12 "promise-made"${consentOwed ? `, shape 15 "consent-not-asked"` : ''}${latestInbound ? `, shape 13 "wrong-language"` : ''}${safetyNumbers.length && latestInbound ? `, shape 14 "safety-line-missing"` : ''}.`,
+    `"multi-ask"${missingFacts.length ? `, shape 9 "farewell-gap"` : ''}${(lastOutboundText || knownFacts.length) ? `, shape 10 "repeat-ask"` : ''}, shape 11 "advice-given", shape 12 "promise-made"${consentOwed ? `, shape 15 "consent-not-asked"` : ''}${clarifyOwed ? `, shape 16 "clarify-not-asked"` : ''}${latestInbound ? `, shape 13 "wrong-language"` : ''}${safetyNumbers.length && latestInbound ? `, shape 14 "safety-line-missing"` : ''}.`,
   ].filter(line => line !== null).join('\n')
 
   // One more try when the call fails or comes back empty: a judge that fails open passes ADVICE and

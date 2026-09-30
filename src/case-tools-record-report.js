@@ -23,6 +23,7 @@ import { findCase, deskAuthorityOn } from './case-tools-team-shared.js'
 import { canQueryCases } from './contact-tiers.js'
 import { stampReporter } from './phone-persons.js'
 import { consentManaged, consentState } from './phone-consent.js'
+import { returnGate } from './return-clarify.js'
 
 const OBSERVE_BLOCKED = { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
 const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed'])
@@ -60,6 +61,8 @@ export function buildCaseReportTools(store) {
         // by the dashboard: never something a report, from anyone, carries in.
         const notDiagnosis = SIGNOFF_DIAGNOSIS_FIELDS.filter(k => k in fields)
         for (const k of notDiagnosis) delete fields[k]
+        // A complete report that was written to again after a gap: ask first (return-clarify.js); nothing is written until they answer.
+        if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { const held = await returnGate(store(), ctx); if (held) return held }
         const elsewhere = await namesHeldRecord(store, ctx)
         if (elsewhere) return { error: `This message is about ${elsewhere}, a record held by this team member, not about their own report. Nothing was recorded on their own report. Say which record it is (${elsewhere}), ask them to confirm it in their next message, then use case_focus and case_edit for it.` }
         const target = await resolveReportTarget(store, id, ctx)

@@ -18,7 +18,7 @@ import { loadDomainConfig } from '../config-loader.js'
 import { MANDATORY_MINIMUM_FIELDS } from '../store/report-shape.js'
 import { buildPromptContext } from './prompt-context.js'
 import { consentManaged } from '../phone-consent.js'
-import { headerSection, caseContextSection, gatherSection, replySection, speakerSection, consentSection } from './prompt-sections.js'
+import { headerSection, caseContextSection, gatherSection, replySection, speakerSection, consentSection, returnSection } from './prompt-sections.js'
 import { roleSection, feedbackSection } from './prompt-roles.js'
 import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR } from '../contact-tiers.js'
 
@@ -32,7 +32,7 @@ const { persona } = loadDomainConfig()
 // the contact), and it spells out plain-language REPLY rules -- mirror the
 // contact's language, short warm sentences, one question, no jargon, greet+give
 // the reference on first contact, and reassure when a human is requested.
-export function caseSystemPrompt(caseRow, events, contact, speaker = null, consent = null) {
+export function caseSystemPrompt(caseRow, events, contact, speaker = null, consent = null, ret = null) {
   const ctx = buildPromptContext(caseRow, events)
   return [
     // --- Private structured context ---
@@ -46,7 +46,7 @@ export function caseSystemPrompt(caseRow, events, contact, speaker = null, conse
     // --- What to gather ---
     ...gatherSection(persona, caseRow, contact, ctx),
     // --- How to reply ---
-    ...replySection(persona, caseRow, contact, { ...ctx, consent }),
+    ...replySection(persona, caseRow, contact, { ...ctx, consent, ret }),
     // --- What this person's ROLE lets them do (empty for a reporter) ---
     ...roleSection(persona, caseRow, contact),
     // --- Comments about the assistant itself (every tier) ---
@@ -55,6 +55,8 @@ export function caseSystemPrompt(caseRow, events, contact, speaker = null, conse
     ...speakerSection(persona, contact, speaker),
     // --- The once-per-number yes, asked in conversation (public contacts, deployments that set consentText) ---
     ...consentSection(persona, contact, consent),
+    // --- A person back at a complete report: more on it, or a new problem, and who is writing ---
+    ...returnSection(persona, contact, ret, consent),
   ].join('\n')
 }
 
@@ -204,6 +206,15 @@ function selfCheckLoadBearingPromptContent() {
   }
   for (const t of [text, oneText]) {
     if (/MORE THAN ONE PERSON HAS USED THIS PHONE|PRIVACY BETWEEN PEOPLE ON ONE PHONE/.test(t)) throw new Error('caseSystemPrompt regression: the several-people block is rendered for a phone with at most one known person, which must get no extra question.')
+  }
+  {
+    const ret = { owed: true, species: 'goats', location: 'Lambasi', person: 'Thabo' }
+    const asks = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', ret)
+    const quiet = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', { owed: false })
+    const team = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_FIELD_WORKER }, null, null, ret)
+    if (!/RETURNING TO A COMPLETE REPORT[\s\S]*case_clarify[\s\S]*THE ONE QUESTION/.test(asks + caseSystemPrompt(caseRow, events, staleContact, null, 'agreed', ret))) throw new Error('caseSystemPrompt regression: the return-to-a-complete-report question is missing. See hooks/prompt-sections.js returnSection and return-clarify.js.')
+    if (/RETURNING TO A COMPLETE REPORT/.test(quiet)) throw new Error('caseSystemPrompt regression: the return question is rendered when none is owed.')
+    if (/RETURNING TO A COMPLETE REPORT/.test(team)) throw new Error('caseSystemPrompt regression: the return question is rendered for a team member.')
   }
   if (consentManaged()) {
     const askConsent = caseSystemPrompt(caseRow, events, staleContact, null, 'none')

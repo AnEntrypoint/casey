@@ -209,6 +209,7 @@ export function describeProcessors(env = process.env) {
   }
   const stt = mode === 'allow' ? 'dedicated /audio/transcriptions models' : 'chat-completions audio models (policy enforced)'
   rows.push({ processor: 'voice transcription (OpenRouter)', data: 'voice-note audio', policy: mode === 'allow' ? 'NONE' : llmPolicy, state: stt })
+  if (env.CASEY_LOCAL_STT !== '0') rows.push({ processor: 'voice transcription (local whisper)', data: 'voice-note audio stays on this machine', policy: 'not applicable: no third party', state: 'offline fallback when OpenRouter has no key or returns nothing; needs scripts/setup-local-stt.sh' })
   if (env.OPENAI_API_KEY) rows.push({ processor: 'voice transcription / photo / tts (OpenAI direct)', data: 'audio, photos, reply text', policy: 'vendor terms (OpenAI API); not enforceable per request', state: 'key present' })
   if (env.CASEY_VOICE_REPLIES === '1' && env.ELEVENLABS_API_KEY) rows.push({ processor: 'voice replies (ElevenLabs)', data: 'reply text', policy: mode === 'allow' ? 'NONE' : 'REFUSED', state: mode === 'allow' ? 'active' : 'blocked by data policy (no verifiable no-training guarantee)' })
   rows.push({ processor: 'WhatsApp Cloud API (Meta Graph)', data: 'every message to and from contacts (the channel itself)', policy: 'Meta terms; not an LLM processor', state: env.WHATSAPP_API_TOKEN ? 'configured' : 'not configured' })
