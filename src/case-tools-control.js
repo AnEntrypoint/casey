@@ -60,7 +60,8 @@ export function buildControlTools(store) {
         // Who asked, on a shared phone: STOP stays per phone, the person who asked is recorded (src/phone-persons.js).
         const who = ctx?.contact?.id && !canQueryCases(ctx?.tier) ? await controlActor(store(), ctx.contact.id) : {}
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text: 'OPT-OUT: the person asked to stop; no more automatic replies.', ...(Object.keys(who).length ? { data: { opt_out: true, ...who } } : {}) })
-        return { ok: true }
+        // A team member can always switch replies back on: say how, so a bare stop never leaves them unable to reach the assistant.
+        return canQueryCases(ctx?.tier) ? { ok: true, note: 'Tell them kindly, in their language, that sending HELP on its own starts the replies again.' } : { ok: true }
       }),
     // Same reasoning as case_stop: a handoff request is an irreversible legal
     // control, not a content edit, so it deliberately bypasses the observe guard.

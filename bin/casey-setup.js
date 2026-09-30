@@ -439,7 +439,18 @@ export async function cmdDoctor({ flags }) {
   // to start a dashboard that cannot bind, in the one command whose whole job
   // is to catch that before they try.
   if (await portFree(port)) console.log(ok(`port ${port} is free`))
-  else { console.log(bad(`port ${port} is in use - start with --port <other>`)); problems++ }
+  else {
+    // A busy port is only a problem when something OTHER than casey holds it: casey's own unauthenticated /api/ready answers
+    // when this deployment is already running, and then the port is doing its job.
+    let held = false
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/api/ready`, { signal: AbortSignal.timeout(3000) })
+      const j = await r.json().catch(() => null)
+      held = !!(j && typeof j === 'object' && 'ready' in j)
+    } catch { held = false }
+    if (held) console.log(ok(`port ${port} is held by a running casey (this is expected while it is up)`))
+    else { console.log(bad(`port ${port} is in use by something else - start with --port <other>`)); problems++ }
+  }
   // With no channel configured `casey up` genuinely cannot start -- the row
   // above says so in as many words -- so recommending it as the next step
   // contradicted the report the operator had just read. `casey dashboard`
