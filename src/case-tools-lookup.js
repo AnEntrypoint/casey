@@ -7,6 +7,8 @@
 
 import { normalizeLocation } from './location-normalize.js'
 import { parseReport } from './timestamp.js'
+import { findCase } from './case-tools-team-shared.js'
+import { canQueryCases } from './contact-tiers.js'
 import {
   defTool, str, ownsCase, slimCase, slimEvent, enquiryRow, haversineKm,
 } from './case-tools-shared.js'
@@ -14,11 +16,14 @@ import {
 export function buildLookupTools(store, { stageValues }) {
   return [
     defTool('case_get', 'cases',
-      'Fetch a case by id, including its recent timeline events. Use to refresh your view before acting.',
-      { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
+      'Fetch a case by id or reference, including its recent timeline events. Use to refresh your view before acting.',
+      { type: 'object', properties: { id: str('Case id or reference') }, required: ['id'] },
       async ({ id }, ctx) => {
-        const c = await store().getCase(id)
+        // The id OR the reference (CASE-1234-ABCD): people and the model both say the reference. Ownership scoping below is
+        // unchanged, so someone else's report still comes back PII-free; a system singleton is never a report.
+        const c = await findCase(store(), id)
         if (!c) return { error: `no case ${id}` }
+        id = c.id
         // case_get's `id` param is agent-chosen -- the model can ask about ANY
         // case, not just the asking worker's own (a status ask like "how is
         // CASE-1234 going" names a ref the model resolves to some id). Ownership
@@ -33,7 +38,10 @@ export function buildLookupTools(store, { stageValues }) {
         // as not-owned (PII-free) rather than defaulting to full access.
         const owns = ownsCase(c.external_id, author)
         const events = owns ? await store().listEvents(id, { limit: 30 }) : []
-        return { case: owns ? slimCase(c) : enquiryRow(c), events: events.map(slimEvent) }
+        // This view of someone else's report is deliberately short (headline facts only). A team member must not read a short view as
+        // an empty report: say so, and name the tools that show everything recorded.
+        const short = !owns && canQueryCases(ctx?.tier) ? { note: 'This is a SHORT view: it leaves out most recorded facts, so never tell anyone the report is empty or a stub from it. To read everything recorded use case_review (technician) or case_gaps (other team members).' } : {}
+        return { case: owns ? slimCase(c) : enquiryRow(c), events: events.map(slimEvent), ...short }
       }),
     defTool('case_list', 'cases',
       // The old description carried a quoted sample reply ("the nearest on

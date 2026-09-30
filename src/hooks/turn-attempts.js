@@ -524,7 +524,9 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // the outcome: the judge would be asked about a reply that is going to be rewritten whatever it says, so the
   // call (a serial several seconds) is skipped. Any other fault is found on the retry, and the last attempt is
   // always judged in full, so nothing is let through unjudged.
-  if (softCanRetry && (shape.questions >= 2 || shape.listLines >= 2)) {
+  // The one-question rule is for the PUBLIC: a team member is answered in full, and the retry wording (acknowledge, then ONE question) would push
+  // them into the reporter script, so it never applies to them.
+  if (!isStaff && softCanRetry && (shape.questions >= 2 || shape.listLines >= 2)) {
     log.warn?.('[casey] reply asked several things at once (counted by the system); retrying turn with feedback', { caseId: fresh.id, attempt, questions: shape.questions, listLines: shape.listLines })
     await note(`REPLY-JUDGE-FLAGGED: multi-ask: ${shape.questions} questions and ${shape.listLines} list lines counted by the system; retrying turn with feedback (attempt ${attempt})`)
     return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things, with no list, and one question mark in the whole reply.]" }
@@ -533,7 +535,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // A team member uses the dashboard's own words (report references, 'case', 'priority'), so a jargon verdict is not a
   // fault for them; the technician's recorded recommended resolution is theirs, not advice from the assistant.
   if (isStaff && !verdict.clean && verdict.reasons?.length) {
-    const rest = verdict.reasons.filter(r => !/jargon/i.test(r) && !(isTechnician && /advice.?given/i.test(r)))
+    const rest = verdict.reasons.filter(r => !/jargon|multi.?ask|wall of text|repeat.?ask/i.test(r) && !(isTechnician && /advice.?given/i.test(r)))
     if (rest.length !== verdict.reasons.length) verdict = rest.length ? { ...verdict, reasons: rest, category: 'other' } : { clean: true, reasons: [], category: null }
   }
   // A STOP is honoured by the system (case_stop, recorded on the timeline), so a confirmation that says they will not be
@@ -551,7 +553,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // The reply-shape rule is a COUNT: one question, no list. Two question marks or two list lines
   // is a multi-ask whatever the judge made of the sentences, so a clean verdict is overridden.
   // Only a clean one: a real fault the judge found keeps its own route.
-  if (verdict.clean && (shape.questions >= 2 || shape.listLines >= 2)) {
+  if (!isStaff && verdict.clean && (shape.questions >= 2 || shape.listLines >= 2)) {
     verdict = { clean: false, category: 'other', reasons: [`multi-ask: ${shape.questions} questions and ${shape.listLines} list lines counted by the system`] }
   }
   if (verdict.clean) return { done: true, text: candidate }
