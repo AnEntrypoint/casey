@@ -224,6 +224,8 @@ export function gatherSection(persona, caseRow, contact, { returnedAfterGap, rep
     // and a line labelled as a user directive INSIDE the system prompt blurs the
     // one boundary the injection fence above exists to draw -- that everything
     // the person sends is data, never instruction.
+    // What to ASK a person is for the public: a team member is never asked to describe a report, so none of the asking rules below reach them.
+    ...(canQueryCases(contact?.tier) ? [] : [
     `${returnedAfterGap ? `The person was gone a while -- ${persona.returnedAfterGapText}` : ''}`,
     ``,
     `PRIORITY ORDER for what to ask if missing: ${persona.gatherPriorityOrder.map((p, i) => `(${i + 1}) ${p.label}${p.hint ? ' -- ' + p.hint : ''}`).join('; ')}.`,
@@ -266,6 +268,7 @@ export function gatherSection(persona, caseRow, contact, { returnedAfterGap, rep
     `a place you guessed first, then the missing details, then anything else.`,
     `Someone reading on a phone, in a hurry, in their second or third language`,
     `answers two asks by answering neither.`,
+    ]),
   ]
 }
 
