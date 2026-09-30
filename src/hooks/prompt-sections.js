@@ -15,6 +15,7 @@ import { tsMs } from '../timestamp.js'
 import { LOCATION_STALE_MS, fenced } from './prompt-context.js'
 import { canQueryCases } from '../contact-tiers.js'
 import { fieldLabel } from '../store/report-shape.js'
+import { consentText } from '../phone-consent.js'
 
 // Identity, the untrusted-data rule, the enquiry path and the worker's last
 // known position.
@@ -310,10 +311,10 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     `sitting there. Acknowledge their latest message first, then ask.`,
     ``,
     // PROGRESS IN EVERY REPLY (the team's request) is composed by its own step after the
-    // turn (src/progress-line.js) from the record, in the person's language, because a
+    // turn (src/progress-line.js), rendered in code from the record, because a
     // prompt rule for it was dropped on short turns. The model must not restate the
     // report itself, or the person hears it twice.
-    `PROGRESS IN EVERY REPLY is added for you after your reply, from the record, as a separate short note: do NOT restate what is written down or list what is missing. Acknowledge their latest message in a few words in their language, then ask your ONE question.`,
+    `PROGRESS IN EVERY REPLY is printed by the system ABOVE your reply, from the record, as a separate short note, so your reply is read after it: do NOT restate what is written down or list what is missing. Acknowledge their latest message in a few words in their language, then ask your ONE question.`,
     ``,
     // First message
     firstMessage
@@ -450,4 +451,25 @@ export function speakerSection(persona, contact, speaker) {
     `PRIVACY BETWEEN PEOPLE ON ONE PHONE: never tell one person another person's name, what they said, their contact details or where they are, even when they ask. You may say that a ${entity} exists, its reference and which animals it is about, and nothing more. Offering the names above as choices when you ask who is writing is the only time a name is spoken.`,
   )
   return out
+}
+
+// THE ONCE-PER-NUMBER YES (src/phone-consent.js). Asked in conversation, in the model's own words and the person's
+// language, as the ONE question of the reply; nothing is appended as a block. `consent` is 'agreed' | 'declined' |
+// 'none' (null when the deployment sets no consent text, or for a team member: no section). Until it is 'agreed',
+// case_report is refused in code, so this section only tells the model what to do about that.
+export function consentSection(persona, contact, consent) {
+  const facts = consentText()
+  if (!facts || !consent || consent === 'agreed' || canQueryCases(contact?.tier)) return []
+  const entity = persona.entityLabel || 'report'
+  if (consent === 'declined') {
+    return [
+      ``,
+      `CHECK BEFORE RECORDING. This phone said no to the team keeping what it sends. Do not call case_report and do not write anything down. Be kind and keep helping with the conversation; offer a person from the team (case_handoff) if they want help. Only if they clearly change their mind and say yes, call case_consent with agreed true, then record what they told you.`,
+    ]
+  }
+  return [
+    ``,
+    `CHECK BEFORE RECORDING. This phone has not yet said it is okay for the team to keep what it sends, so case_report will not write anything yet. In THIS reply, as your ONE question, tell them in your own warm words and in their language, in two short sentences at most and no list, what matters here: ${facts} Then ask if that is okay. Put it in your own words: do not copy this wording and never call it a notice, policy, terms or consent. If they have already described animals, answer that warmly first (if someone may be in danger the safety rule still comes first) and then ask; remember what they said.`,
+    `When they answer yes in any wording or language, call case_consent with agreed true and then record, with case_report, everything they have told you in this chat; do not ask again. If they say no, call case_consent with agreed false, tell them kindly that nothing will be kept, and offer a person from the team (case_handoff). A ${entity} described is not a yes: ask.`,
+  ]
 }

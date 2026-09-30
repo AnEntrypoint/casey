@@ -16,8 +16,9 @@
 //   - /audio/transcriptions IGNORES the provider object (a nonexistent
 //     provider.only still answered 200), so no policy can be enforced there;
 //     hooks/media.js therefore transcribes through chat completions instead.
-//   - A direct vendor API (anthropic/, openai/) takes no such field. Those are
-//     admitted on the vendor's published API terms and labelled 'vendor-terms'.
+//   - A direct vendor API (anthropic/, openai/, synthetic/) takes no such field.
+//     Those are admitted on the vendor's published API terms and labelled
+//     'vendor-terms'.
 //   - Everything else (free ACP wrappers, kilo/opencode, groq, nvidia, deepseek
 //     direct, ...) has no no-training guarantee casey can check: dropped.
 import fs from 'node:fs'
@@ -65,10 +66,25 @@ export function reasoningField(env = process.env) {
   return { reasoning: { enabled: false } }
 }
 
+// The same switch for synthetic.new, which takes OpenAI's flat reasoning_effort
+// instead of OpenRouter's reasoning object. The accepted efforts differ per model
+// (GET /openai/v1/models, reasoning_parameters.efforts): DeepSeek V4.1 Flash lists
+// "none"; a model that does not (Kimi K3, Qwen 3.8) needs CASEY_LLM_REASONING=on
+// or one of its own efforts.
+export function syntheticReasoningField(env = process.env) {
+  const v = String(env.CASEY_LLM_REASONING == null ? 'off' : env.CASEY_LLM_REASONING).trim().toLowerCase()
+  if (v === 'on' || v === 'default') return null
+  if (['low', 'medium', 'high'].includes(v)) return { reasoning_effort: v }
+  return { reasoning_effort: 'none' }
+}
+
 const FREE_ID = /(?::free\b|\/free\b|-free\b)/i
 // Direct vendor APIs admitted on their published API terms (no training on API
 // traffic by default). Not enforceable per request; recorded as such.
-const VENDOR_TERMS = { anthropic: 'Anthropic API', openai: 'OpenAI API', bedrock: 'AWS Bedrock' }
+// synthetic: synthetic.new privacy policy (read 2026-09-30) -- prompts and
+// completions are not used for training and are not stored after the API call
+// completes, by Synthetic or its inference partners; processed in the US.
+const VENDOR_TERMS = { anthropic: 'Anthropic API', openai: 'OpenAI API', bedrock: 'AWS Bedrock', synthetic: 'Synthetic (synthetic.new) API' }
 
 // { model, processor, enforcement: 'request'|'vendor-terms'|'refused', reason }
 export function classifyLink(model) {
@@ -139,7 +155,9 @@ export function applyDataPolicy(links, { env = process.env, requested = '' } = {
     const c = classifyLink(model)
     if (c.enforcement === 'refused') { dropped.push({ model, reason: c.reason }); continue }
     keptInfo.push({ model, processor: c.processor, enforcement: c.enforcement })
-    kept.push(c.enforcement === 'request' ? { model, provider: field, ...(reasoningField(env) || {}) } : { model })
+    if (c.enforcement === 'request') kept.push({ model, provider: field, ...(reasoningField(env) || {}) })
+    else if (model.startsWith('synthetic/')) kept.push({ model, ...(syntheticReasoningField(env) || {}) })
+    else kept.push({ model })
   }
   const key = `${mode}|${list.join(',')}`
   if (!seenChains.has(key)) {

@@ -32,6 +32,7 @@ import { atLeast, resolveTierValue, TIER_FIELD_WORKER } from './contact-tiers.js
 import { tagList } from './timestamp.js'
 import { evData } from './safe.js'
 import { toPlainChat } from './hooks/plain-text.js'
+import { consentManaged } from './phone-consent.js'
 
 const { persona } = loadDomainConfig()
 const MAX_OTHER_CASES = 25
@@ -65,6 +66,8 @@ export async function decideNotice(store, { fresh, events = [], contact, speaker
   if (!contact?.id || !fresh || fresh.channel === 'system') return null
   const s = noticeSettings(contact.tier)
   if (!s.text) return null
+  // A deployment that sets consentText asks the public once, in conversation (phone-consent.js), instead of appending a notice.
+  if (s.kind === 'public' && consentManaged()) return null
   const tags = tagList(fresh)
   if (tags.includes('opted-out') || tags.includes('needs-human')) return null
   const who = s.kind === 'public' ? personOf(speaker) : null
