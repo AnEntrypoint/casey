@@ -9,7 +9,7 @@
 import { fmtPhone27 } from '../../format.js'
 import { mountRoutes } from './register.js'
 import { TIER_ORDER, TIER_REPORTER, TIER_OPERATOR, ADMIN_ONLY_TIERS, grantableBy, resolveContactTier } from '../../contact-tiers.js'
-import { createInvite, listInvites, revokeInvite, normalizeMsisdn } from '../../role-invites.js'
+import { createInvite, createInvites, listInvites, revokeInvite, normalizeMsisdn } from '../../role-invites.js'
 import { countPersonsByContact } from '../../phone-persons.js'
 
 // The one allowlist through which a contact row may reach JSON (AGENTS.md
@@ -164,9 +164,12 @@ export function postRoleInvite({ store, authed, isAdmin, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     try {
-      const { tier, label, ttl_hours, max_uses } = req.body || {}
+      const { tier, label, ttl_hours, max_uses, count } = req.body || {}
       const grantableTiers = grantableBy(isAdmin(req))
-      const invite = await createInvite(store, { tier, label, ttlHours: ttl_hours, maxUses: max_uses, by: actingOperator(req).id, grantableTiers })
+      const opts = { tier, label, ttlHours: ttl_hours, maxUses: max_uses, by: actingOperator(req).id, grantableTiers }
+      // `count` > 1 makes a batch of single-use codes to hand out, each shown once in this response.
+      if (count !== undefined && Number(count) > 1) return res.json({ invites: await createInvites(store, { ...opts, count }) })
+      const invite = await createInvite(store, opts)
       res.json({ invite })
     } catch (e) { res.status(400).json({ error: e.message }) }
   }

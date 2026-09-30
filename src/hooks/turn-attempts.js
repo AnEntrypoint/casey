@@ -389,7 +389,7 @@ export async function reportFactsForJudge(store, fallbackRow, events, caseId = f
 // leak) return before the judge is ever called, and on those attempts the store
 // read behind it is pure waste inside a live turn's hard deadline. Awaited once,
 // immediately before the judge call that is the first thing to need it.
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [] }) {
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false }) {
   const note = async (text) => {
     try { await store.appendEvent(fresh.id, observation(text)) }
     catch (e) { log.warn?.('[casey] failed to record attempt observation', { caseId: fresh.id, error: e.message }) }
@@ -509,6 +509,9 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result) || controlNoted || controlRegistered(result, 'case_consent')
   const safetyNumbers = persona.safetyText ? strayContactDetails(persona.safetyText, [candidate]) : []
   const { missingFacts = [], knownFacts = [] } = factsForJudge ? await factsForJudge() : {}
+  // While this number has not agreed, EVERY reply must ask (phone-consent.js); read after this attempt's tool calls,
+  // so a yes the model just recorded with case_consent ends the requirement.
+  const consentOwed = consentOn && !!fresh.contact_id && await consentState(store, fresh.contact_id, { caseId: fresh.id }) === 'none'
   const shape = replyShape(candidate)
   // The reply-shape rule is a COUNT, and on an attempt that has a retry left a count of two or more already decides
   // the outcome: the judge would be asked about a reply that is going to be rewritten whatever it says, so the
@@ -519,7 +522,13 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     await note(`REPLY-JUDGE-FLAGGED: multi-ask: ${shape.questions} questions and ${shape.listLines} list lines counted by the system; retrying turn with feedback (attempt ${attempt})`)
     return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things, with no list, and one question mark in the whole reply.]" }
   }
-  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  // While consent is owed the ONE question a reply may ask is the consent question, so a repeat-ask verdict can only be
+  // that question asked again; it is required until they answer and is never a fault. Other reasons stand.
+  if (consentOwed && !verdict.clean && verdict.reasons?.length) {
+    const rest = verdict.reasons.filter(r => !/repeat.?ask/i.test(r))
+    if (rest.length !== verdict.reasons.length) verdict = rest.length ? { ...verdict, reasons: rest } : { clean: true, reasons: [], category: null }
+  }
   // The reply-shape rule is a COUNT: one question, no list. Two question marks or two list lines
   // is a multi-ask whatever the judge made of the sentences, so a clean verdict is overridden.
   // Only a clean one: a real fault the judge found keeps its own route.
@@ -578,6 +587,14 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
       return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it claimed something was recorded or opened when nothing actually was. If the contact reported something new, call the case_new or case_report tool FIRST and wait for its result before replying.' + consentHint + ' Never claim an action you did not actually perform.]' }
     }
+    // While the consent gate is what held the write, holding the reply too would answer the person with the
+    // "having trouble" apology: nothing is lost (the message is on the timeline and is recorded once they agree),
+    // so it goes out, and the fault is on the record.
+    if (consentOwed) {
+      log.warn?.('[casey] reply claimed a record the consent gate held, on a spent retry budget; sending anyway', { caseId: fresh.id, reasons: verdict.reasons })
+      await store.appendEvent(fresh.id, observation(`REPLY-JUDGE-FLAGGED-BUT-SENT: ${verdict.reasons.join('; ')} (the write was held for consent)`))
+      return { done: true, text: candidate }
+    }
     return { done: true, text: candidate, falseConfirmReasons: verdict.reasons }
   }
   // ADVICE GIVEN, A PROMISE THE SYSTEM DOES NOT KEEP, THE WRONG LANGUAGE (reply-judge.js shapes 11-13).
@@ -590,11 +607,12 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     [/promise.?made/i, 'it said or implied that someone has been alerted, asked or flagged, will come, phone, reply or follow up. Nothing here does that. Do not claim anything about what happens to it next; if they asked when or whether someone will come or call, say kindly that you cannot say'],
     [/safety.?line.?missing/i, `the person may be in danger and it did not include the helpline numbers from your safety instructions (${safetyNumbers.join(', ')}). Write them out in full, in two or three warm plain sentences, with no other number and no list`],
     [/wrong.?language/i, "it was not in the language of their latest message. Write the whole reply again in exactly the language their latest message is written in, and no other"],
+    [/consent.?not.?asked/i, "it did not ask whether it is okay for the team to keep what they send, and this number has not agreed yet. In this reply say briefly, in your own words and their language, what is kept and who can see it, and ask if that is okay: it is your one question. If their latest message already answers that question, call case_consent first (agreed true for a yes, false for a no)"],
   ]
   const faults = faultRoutes.filter(([re]) => verdict.reasons?.some(r => re.test(r))).map(([, text]) => text)
   if (faults.length) {
     const alsoMulti = verdict.reasons?.some(r => /multi.?ask|wall of text/i.test(r)) ? ' Also ask only ONE question naming at most TWO things, with no list.' : ''
-    const hardFault = verdict.reasons?.some(r => /advice.?given|safety.?line.?missing/i.test(r))
+    const hardFault = verdict.reasons?.some(r => /advice.?given|safety.?line.?missing|consent.?not.?asked/i.test(r))
     if (hardFault ? canRetry : softCanRetry) {
       log.warn?.('[casey] reply judge flagged advice, a promise or the language; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
@@ -879,6 +897,7 @@ export async function runAgentTurn({
       store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
       priorAttemptWrote: turnWroteSomething || ingressRecorded, systemPromptText,
       staffRefs: canQueryCases(resolvedTier) ? touchedRefs(result) : [],
+      consentOn,
       // Read AFTER this attempt's writes and against the case the attempt ended
       // bound to (case_new/case_switch can have moved it) -- see
       // reportFactsForJudge for why a pre-turn snapshot is the wrong input, and
