@@ -168,7 +168,12 @@ export function postRoleInvite({ store, authed, isAdmin, actingOperator }) {
       const grantableTiers = grantableBy(isAdmin(req))
       const opts = { tier, label, ttlHours: ttl_hours, maxUses: max_uses, by: actingOperator(req).id, grantableTiers }
       // `count` > 1 makes a batch of single-use codes to hand out, each shown once in this response.
-      if (count !== undefined && Number(count) > 1) return res.json({ invites: await createInvites(store, { ...opts, count }) })
+      // Anything that is not a whole number from 1 to 100 is refused, never quietly turned into one code.
+      if (count !== undefined && count !== null && count !== '') {
+        const n = typeof count === 'number' || (typeof count === 'string' && /^\s*\d+\s*$/.test(count)) ? Number(count) : NaN
+        if (!Number.isInteger(n) || n < 1 || n > 100) return res.status(400).json({ error: 'How many codes must be a whole number from 1 to 100.' })
+        if (n > 1) return res.json({ invites: await createInvites(store, { ...opts, count: n }) })
+      }
       const invite = await createInvite(store, opts)
       res.json({ invite })
     } catch (e) { res.status(400).json({ error: e.message }) }

@@ -132,15 +132,17 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
     // The stripe is a colour; this is the same fact in words, for a screen
     // reader and for anyone who cannot separate the two warm bands.
     'aria-label': c.ref + ': ' + (band ? (URGENCY_BAND_LABEL[band] + ' -- ') : '') + lead,
-    onclick: (e) => { if (e.target.closest && e.target.closest('.case-row-cb')) return; open(); },
+    onclick: (e) => { if (e.target.closest && e.target.closest('.case-row-cb, .case-row-cbwrap')) return; open(); },
     onkeydown: (e) => { if (e.key === 'Enter') open(); },
   },
-    h('input', {
-      key: 'cb', type: 'checkbox', class: 'case-row-cb', title: 'Select for a bulk action',
-      'aria-label': 'Select ' + entityLabel() + ' ' + c.ref + ' for a bulk action',
-      checked: selected,
-      onclick: (e) => { e.stopPropagation(); toggleBulkSelect(c.id, e.target.checked); },
-    }),
+    // The label is the hit area (44px on a phone, see app.css); the 24px box inside is what is drawn.
+    h('label', { key: 'cbw', class: 'case-row-cbwrap', onclick: (e) => e.stopPropagation() },
+      h('input', {
+        type: 'checkbox', class: 'case-row-cb', title: 'Select for a bulk action',
+        'aria-label': 'Select ' + entityLabel() + ' ' + c.ref + ' for a bulk action',
+        checked: selected,
+        onclick: (e) => { e.stopPropagation(); toggleBulkSelect(c.id, e.target.checked); },
+      })),
     h('div', { key: 'body', class: 'case-row-body' },
       h('div', { key: 'lead', class: 'case-row-lead' }, lead),
       h('div', { key: 'top', class: 'case-row-top' },

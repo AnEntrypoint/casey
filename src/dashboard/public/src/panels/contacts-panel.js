@@ -43,7 +43,7 @@ const busyIds = new Set();
 // Segment: null = automatic (team members if there are any, else everyone). The segment and
 // the search are asked of the server, over every contact: a deployment holds far more public
 // reporters than the panel could ever draw, and the team is the part the operator came for.
-const view = { segment: null, q: '' };
+const view = { segment: null, q: '', addOpen: false };
 
 async function query() {
     const q = view.q.trim();
@@ -53,8 +53,8 @@ async function query() {
 }
 
 const loader = createPanelLoader({
-    what: 'the reporters',
-    label: 'loading reporters',
+    what: 'the people',
+    label: 'loading people',
     fetch: query,
     apply: (j) => { state._contacts = j; },
 });
@@ -218,10 +218,16 @@ export function ContactsPanel() {
             }) : Alert({ kind: 'info', children: 'No one matches that.' }),
             (state._contacts && state._contacts.capped) ? h('p', { class: 'casey-hint' }, 'Showing the first ' + shown.length + ' of ' + state._contacts.matched + '. Search by name or number to find the rest.') : null);
     });
+    // The people table is what this page is for, so it comes first. Registering someone, adding a list
+    // and making invite codes are occasional jobs: they sit behind one "Add people" disclosure (a real
+    // details/summary, so the keyboard and screen readers get it for free).
     return h('div', { class: 'ds-people-page' },
-        TeamRegistration({ isAdmin, onDone: () => loader.reload() }),
-        BulkTeamAdd({ onDone: () => loader.reload() }),
-        InviteCodes({ isAdmin }),
         Panel({ title: 'People', children: [body] }),
+        h('details', { class: 'ds-add-people', key: 'add-people', open: view.addOpen ? true : null, ontoggle: (e) => { view.addOpen = !!e.target.open; } },
+            h('summary', { class: 'ds-add-people-sum' }, 'Add people'),
+            h('div', { class: 'ds-add-people-body' },
+                TeamRegistration({ isAdmin, onDone: () => loader.reload() }),
+                BulkTeamAdd({ onDone: () => loader.reload() }),
+                InviteCodes({ isAdmin }))),
         PersonsDialog({}));
 }

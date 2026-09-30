@@ -57,7 +57,7 @@ export function TeamRegistration({ isAdmin, onDone }) {
             h('div', { class: 'ds-team-row' },
                 TextField({ key: 'tf-phone', name: 'team-phone', label: 'WhatsApp number', type: 'tel', value: form.phone, placeholder: '079 091 5297 or +27 79 091 5297', onInput: (v) => { form.phone = v; form.error = null; } }),
                 TextField({ key: 'tf-name', name: 'team-name', label: 'Name (optional)', value: form.name, placeholder: 'e.g. Thandi Mokoena', maxLength: 80, onInput: (v) => { form.name = v; } }),
-                Select({ key: 'sel-role', name: 'team-role', label: 'Role', value: form.tier, options: tierOptions(isAdmin), onChange: (v) => { form.tier = v; schedule(); } })),
+                Select({ key: 'sel-role', name: 'team-role', label: 'Role for this person', value: form.tier, options: tierOptions(isAdmin), onChange: (v) => { form.tier = v; schedule(); } })),
             h('p', { class: 'ds-team-explain', 'data-role-explain': form.tier }, h('strong', {}, tierLabel(form.tier) + ': '), glossaryLookup(form.tier)),
             form.error ? h('p', { class: 'ds-team-error', role: 'alert' }, form.error) : null,
             h('div', { class: 'ds-contact-actions' },

@@ -277,3 +277,22 @@
    Kit primitive tried: LogRow itself (no prop for wrapping); the .ds-247420 prefix is needed
    to outrank the kit's own rule. */
 .ds-247420 .ds-log-row .ds-log-text { min-width: 0; overflow-wrap: anywhere; }
+
+/* Timeline text: the message column must be allowed to shrink and break, or a long reply
+   or an unbroken run forces one word per line in a narrow rail. Line breaks inside a reply
+   (the "Done:" / "Still needed:" blocks, one "- label: value" per line) are kept. */
+.casey-timeline .ds-log-row{flex-wrap:wrap}
+.casey-timeline .ds-log-text{min-width:0;flex:1 1 12rem;overflow-wrap:anywhere;white-space:pre-line}
+.casey-timeline .ds-log-label{min-width:0;flex:0 1 auto}
+.casey-timeline .casey-ev-actions{flex:0 0 100%;display:flex;justify-content:flex-start}
+.casey-ev-body{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-1)}
+.casey-ev-msg{overflow-wrap:anywhere}
+.casey-ev-quote{font-style:italic;color:var(--fg-2);overflow-wrap:anywhere}
+.casey-sysnotes-btn{align-self:flex-start}
+
+/* An open report gets a usable width on the map home: a 26vw rail (about 330px at 1280) broke
+   every timeline line into one word a row. The map keeps the rest. */
+@container (min-width: 901px) {
+  .app-two-pane-map.has-active > .case-detail-pane { flex-basis: clamp(420px, 36vw, 560px); max-width: clamp(420px, 36vw, 560px); }
+}
+.ds-247420 .casey-ev-body .chip{white-space:normal;max-width:100%;height:auto}
