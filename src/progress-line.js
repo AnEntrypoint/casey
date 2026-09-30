@@ -52,6 +52,11 @@ const plainLabel = (k, fields) => String((fields && fields[k]) || fieldLabel(k))
 export function progressFacts(caseRow) {
   const r = parseReport(caseRow) || {}
   const critical = new Set(CRITICAL_FIELDS)
+  // A shared location pin (or any stored position) IS where the animals are, even with no place written: it counts
+  // as the location, shown as its coordinates so the line stays language-neutral.
+  const lat = Number(caseRow?.lat), lon = Number(caseRow?.lon)
+  const pinned = caseRow?.lat != null && caseRow?.lon != null && Number.isFinite(lat) && Number.isFinite(lon)
+  if (pinned && !clip(r.location)) r.location = `${lat.toFixed(3)}, ${lon.toFixed(3)}`
   const filled = Object.keys(r).filter(k => !SKIP.has(k) && clip(r[k]))
   filled.sort((a, b) => (critical.has(b) ? 1 : 0) - (critical.has(a) ? 1 : 0))
   const have = new Set(Object.keys(r).filter(k => clip(r[k])))
@@ -139,7 +144,7 @@ async function translateOnce(callLLM, language, slug) {
 // neither a checked set nor a cached one costs a call, once.
 export async function formLabelsFor(callLLM, language) {
   const slug = slugOf(language)
-  if (isEnglish(slug)) return { ...ENGLISH, fields: Object.fromEntries(FIELD_KEYS().map(k => [k, plainLabel(k, FIELD_LABELS)])) }
+  if (isEnglish(slug)) return complete(overrides().en) || { ...ENGLISH, fields: Object.fromEntries(FIELD_KEYS().map(k => [k, plainLabel(k, FIELD_LABELS)])) }
   const checked = complete(overrides()[slug])
   if (checked) return checked
   try { const cached = complete(JSON.parse(fs.readFileSync(cacheFile(slug), 'utf8'))); if (cached) return cached } catch { /* not cached yet */ }
