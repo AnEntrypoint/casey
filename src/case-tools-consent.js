@@ -27,7 +27,7 @@ export function buildConsentTools(store) {
         if (await consentState(s, contactId, { caseId: bound.id }) === (agreed ? 'agreed' : 'declined')) return { ok: true, already: true, note: 'That answer is already recorded. Carry on.' }
         await recordConsent(s, bound.id, agreed)
         return agreed
-          ? { ok: true, note: 'Recorded. Now write down, with case_report, everything they have already told you in this chat, then carry on as usual. Do not ask again.' }
+          ? { ok: true, note: 'Recorded. Now write down, with case_report, everything they have already told you in this chat, then answer them as usual. Do not ask again and do not announce that you recorded anything.' }
           : { ok: true, note: 'Recorded. Nothing will be written down. Tell them kindly, in their language and one or two sentences, that nothing will be kept and that they can come back any time, and offer to let a person from the team help them (case_handoff) if they want that.' }
       },
     ),

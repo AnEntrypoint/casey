@@ -505,10 +505,20 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // (or, for the bare word 'stop', before the agent speaks -- service-controls.js), so the
   // acknowledgement is a true statement even though no report was written this turn.
   const controlNoted = controlRegistered(result) || detectContactIntent(inboundText) === 'stop'
-  const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result) || controlNoted
+  // Recording the person's yes/no is a real write: a reply that acknowledges it is telling the truth.
+  const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result) || controlNoted || controlRegistered(result, 'case_consent')
   const safetyNumbers = persona.safetyText ? strayContactDetails(persona.safetyText, [candidate]) : []
   const { missingFacts = [], knownFacts = [] } = factsForJudge ? await factsForJudge() : {}
   const shape = replyShape(candidate)
+  // The reply-shape rule is a COUNT, and on an attempt that has a retry left a count of two or more already decides
+  // the outcome: the judge would be asked about a reply that is going to be rewritten whatever it says, so the
+  // call (a serial several seconds) is skipped. Any other fault is found on the retry, and the last attempt is
+  // always judged in full, so nothing is let through unjudged.
+  if (softCanRetry && (shape.questions >= 2 || shape.listLines >= 2)) {
+    log.warn?.('[casey] reply asked several things at once (counted by the system); retrying turn with feedback', { caseId: fresh.id, attempt, questions: shape.questions, listLines: shape.listLines })
+    await note(`REPLY-JUDGE-FLAGGED: multi-ask: ${shape.questions} questions and ${shape.listLines} list lines counted by the system; retrying turn with feedback (attempt ${attempt})`)
+    return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things, with no list, and one question mark in the whole reply.]" }
+  }
   let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
   // The reply-shape rule is a COUNT: one question, no list. Two question marks or two list lines
   // is a multi-ask whatever the judge made of the sentences, so a clean verdict is overridden.

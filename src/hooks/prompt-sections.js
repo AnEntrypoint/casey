@@ -277,9 +277,10 @@ function photoNudgeLines(persona, reportObj) {
 }
 
 // How to reply, how to open, and how to close.
-export function replySection(persona, caseRow, contact, { firstMessage, missingCritical = [], missingMandatory = [] }) {
+export function replySection(persona, caseRow, contact, { firstMessage, missingCritical = [], missingMandatory = [], consent = null }) {
   // What the person is told is still needed: the floor first, then the on-site-critical facts, once each, as labels.
   const stillNeeded = [...new Set([...missingMandatory, ...missingCritical.map(fieldLabel)])]
+  const consentOwed = (consent === 'none' || consent === 'declined') && !canQueryCases(contact?.tier)
   return [
     ``,
     `KEEP REPORTS CORRECTLY GROUPED: one conversation usually means one report.`,
@@ -310,6 +311,14 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
     `MOVE FORWARD: read "report so far" above and never re-ask a fact already`,
     `sitting there. Acknowledge their latest message first, then ask.`,
     ``,
+    // THE ONE QUESTION is chosen here, in code, from the record, so the model is handed it rather than ranking
+    // the gaps itself: two questions in one reply, or asking for something already recorded, are what the reply
+    // gates retry, and each retry is a whole extra turn.
+    ...(canQueryCases(contact?.tier) ? [] : consentOwed
+      ? [`THE ONE QUESTION FOR THIS REPLY is the check described under CHECK BEFORE RECORDING below, and nothing else: ask no other question and do not ask about the ${persona.entitySubjectPlural} yet.`, ``]
+      : stillNeeded.length
+        ? [`THE ONE QUESTION FOR THIS REPLY: ask about ${stillNeeded[0]}${stillNeeded[1] ? ` (and ${stillNeeded[1]} only if it fits the same short sentence naturally)` : ''}, and nothing else. One question mark in the whole reply. Never ask about anything already recorded above, and never ask again what your last message asked: if they have not answered it, acknowledge what they did say and move on.`, ``]
+        : [`THE ONE QUESTION FOR THIS REPLY: nothing is still needed, so ask no question; acknowledge them warmly and, if it fits, invite a report about other animals or another place.`, ``]),
     // PROGRESS IN EVERY REPLY (the team's request) is composed by its own step after the
     // turn (src/progress-line.js), rendered in code from the record, because a
     // prompt rule for it was dropped on short turns. The model must not restate the
@@ -324,7 +333,7 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
       ? [`FIRST MESSAGE.${canQueryCases(contact?.tier) ? ` If it's an enquiry, answer from tools.` : ''} If greeting/report:`,
          `(a) greet warmly, thank ONLY if they actually described ${persona.entitySubjectPlural};`,
          `(b) give reference ${caseRow.ref} (reproduce exactly, write sentence around it);`,
-         `(c) MAY add one gentle question. Vary phrasing.`,
+         ...(consentOwed ? [`(c) no other question: the one check below is your only question.`] : [`(c) MAY add one gentle question. Vary phrasing.`]),
          // Typing a form needs data, a browser and reading -- three things this
          // conversation cannot assume. Offered, never pushed, and never as the
          // route they have to take to be heard.
@@ -469,7 +478,7 @@ export function consentSection(persona, contact, consent) {
   }
   return [
     ``,
-    `CHECK BEFORE RECORDING. This phone has not yet said it is okay for the team to keep what it sends, so case_report will not write anything yet. In THIS reply, as your ONE question, tell them in your own warm words and in their language, in two short sentences at most and no list, what matters here: ${facts} Then ask if that is okay. Put it in your own words: do not copy this wording and never call it a notice, policy, terms or consent. If they have already described animals, answer that warmly first (if someone may be in danger the safety rule still comes first) and then ask; remember what they said.`,
+    `CHECK BEFORE RECORDING. This phone has not yet said it is okay for the team to keep what it sends, so case_report will not write anything yet. In THIS reply, as your ONE question, tell them in your own warm words and in their language, in two short sentences at most and no list, what matters here: ${facts} Then ask if that is okay. Put it in your own words: do not copy this wording and never call it a notice, policy, terms or consent. Even a bare greeting gets this question. If they have already described animals, answer that warmly first (if someone may be in danger the safety rule still comes first) and then ask; remember what they said. Never say you are recording, noting or writing anything down, never say you need consent or permission first, and do not announce what you are about to do: just talk to them.`,
     `When they answer yes in any wording or language, call case_consent with agreed true and then record, with case_report, everything they have told you in this chat; do not ask again. If they say no, call case_consent with agreed false, tell them kindly that nothing will be kept, and offer a person from the team (case_handoff). A ${entity} described is not a yes: ask.`,
   ]
 }
