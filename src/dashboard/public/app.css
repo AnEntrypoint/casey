@@ -201,7 +201,11 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    operator drives the page that way. Giving the stack itself the scrolling
    role (the same shape .ds-rail-body already uses for the queue) is the fix;
    .ds-rail-back's sticky rule above only does anything once this exists. */
-.ds-rail-stack { overflow-y: auto; overscroll-behavior: contain; }
+.ds-rail-stack { overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: var(--space-6); }
+/* In the rail the case header (title, claim, contact, status, several lines) is a third of the
+   pane; left sticky it sat on top of the Back control and hid the first timeline rows. The worded
+   Back row above stays pinned; the header scrolls away with the body. */
+.ds-rail-stack .casey-case-header { position: static; }
 .ds-rail-head {
   position: sticky; top: 0; z-index: var(--z-raised); background: var(--bg); padding: var(--space-3);
   display: flex; flex-direction: column; gap: var(--space-2);
@@ -450,6 +454,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    defaults to baseline-ish vertical alignment that sits high relative to
    the bold case-row-ref text next to it -- lock the box shape and nudge it
    down to the first text line's optical center. */
+.case-row-cbwrap { display: inline-flex; align-items: flex-start; justify-content: center; flex: 0 0 auto; cursor: pointer; }
 .case-row-cb { width: 24px; height: 24px; aspect-ratio: 1; flex: 0 0 auto; margin: var(--space-half) 0 0; accent-color: var(--accent); }
 .case-row:hover { background: var(--bg-2); }
 .case-row.active { background: var(--bg-2); box-shadow: inset 3px 0 0 var(--accent); }
@@ -1452,3 +1457,39 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
    meta) then sets it in the mono face, weight 500, dim ink. Kit primitive tried: Panel's own props have
    no way to opt out. The (0,5,0) selector beats the kit's (0,4,0). */
 .ds-247420 .panel-head > .panel-title:last-child:not(.ds-badge) { font-family: inherit; font-weight: inherit; color: inherit; }
+
+/* ---- "Add people" disclosure on the People page, and the printable code slips ---- */
+.ds-add-people { border: 1px solid var(--border); border-radius: var(--r-2); background: var(--bg); }
+.ds-add-people-sum { cursor: pointer; padding: var(--space-3); font-weight: 700; min-height: 44px; display: flex; align-items: center; }
+.ds-add-people-sum:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
+.ds-add-people-body { display: flex; flex-direction: column; gap: var(--space-4); padding: 0 var(--space-3) var(--space-3); }
+.ds-invite-status { margin: 0; font-size: var(--fs-sm); font-weight: 600; }
+.ds-invite-status:empty { display: none; }
+.ds-invite-list, .ds-invite-confirm { display: flex; flex-direction: column; gap: var(--space-3); align-items: flex-start; }
+.ds-invite-list > .ds-table-wrap { align-self: stretch; }
+.ds-invite-fresh .ds-invite-code { font-size: var(--fs-lg); white-space: nowrap; overflow-wrap: normal; letter-spacing: 0.08em; }
+#casey-print-slips { display: none; }
+@media print {
+  body.casey-print-slips > *:not(#casey-print-slips) { display: none; }
+  body.casey-print-slips { background: Canvas; }
+  /* Light system colours whatever theme the screen is in: a dark theme's white text would print invisible. */
+  #casey-print-slips { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; color-scheme: light; background: Canvas; color: CanvasText; }
+  .casey-slip { border: 1px dashed currentColor; padding: var(--space-4); break-inside: avoid; }
+  .casey-slip p { margin: 0 0 var(--space-2); }
+  .casey-slip-brand { font-weight: 700; }
+  .casey-slip-code { font-family: var(--ff-mono); font-size: var(--fs-2xl, var(--fs-xl)); font-weight: 700; letter-spacing: 0.12em; }
+  .casey-slip-meta { font-size: var(--fs-sm); }
+}
+
+/* ---- phone targets (<= 768px): every tap target is at least 44px --------------------------------- */
+@media (max-width: 768px) {
+  .ds-247420 .case-row-cbwrap { width: 44px; min-width: 44px; min-height: 44px; align-items: center; margin: calc(var(--space-2) * -1) 0 calc(var(--space-2) * -1) calc(var(--space-2) * -1); }
+  .case-row-cbwrap .case-row-cb { margin: 0; }
+  .ds-247420 .app-status-toggle { width: 44px; height: 44px; }
+}
+/* Phone-width top bar: the two main controls stay, the rest sit behind "More". */
+.ds-247420 .ds-appbar .ds-appbar-more { display: none; }
+@media (max-width: 414px) {
+  .ds-247420 .ds-appbar .ds-appbar-more { display: flex; }
+  .ds-247420 .ds-appbar:not(.is-more-open) .ds-appbar-overflow { display: none; }
+}

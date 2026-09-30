@@ -5,8 +5,8 @@
 // ModalMount (Settings/Stats/Help/Onboarding/Skills).
 
 import * as webjsx from 'webjsx';
-import { AppShell, Topbar, Side, Status, Crumb, Icon, IconButton, Btn } from 'ds/components/shell.js';
-import { state, closeModal, openModal } from '../state.js';
+import { AppShell, Topbar, Side, Status, Crumb, Icon, Btn } from 'ds/components/shell.js';
+import { state, schedule, closeModal, openModal } from '../state.js';
 import { buildSideSections, buildActionItems, backToCases, panelTitle, openQueue } from './nav-config.js';
 import { HealthNotices } from '../components/health-notices.js';
 import { queueName } from '../map-model.js';
@@ -149,7 +149,7 @@ function ActionRow() {
     if (it.href) {
       // A real anchor (Btn renders <a> for a real href), not a JS click -- Export
       // has to actually download. Desk work, so it gives way first like the rest.
-      return h('span', { key: it.key, class: 'ds-action-rare' },
+      return h('span', { key: it.key, class: 'ds-action-rare ds-appbar-overflow' },
         Btn({
           variant: 'ghost', href: it.href, children: face(it),
           title: it.ariaLabel || it.label, 'aria-label': it.ariaLabel || it.label,
@@ -160,7 +160,7 @@ function ActionRow() {
     // the .ds-action-rare rule in app.css. In the mobile grid they come back:
     // space is no longer the constraint there.
     const rare = !it.primary && it.active === undefined;
-    return h('span', { key: it.key, class: rare ? 'ds-action-rare' : 'ds-action-common' },
+    return h('span', { key: it.key, class: (rare ? 'ds-action-rare' : 'ds-action-common') + (it.primary ? '' : ' ds-appbar-overflow') },
       Btn({
         variant: it.primary ? 'primary' : 'ghost',
         children: face(it),
@@ -242,7 +242,7 @@ function StatusBar() {
   const left = [h('span', { key: 'c' }, `${countOf(total)} loaded`)];
   const right = [
     hl && hl.source === 'unwired'
-      ? h('span', { key: 'mode' }, 'Reading the store only -- not attached to the running agent')
+      ? h('span', { key: 'mode' }, 'Replies are not sent from this screen')
       : (gw && gw.ok ? h('span', { key: 'rx' }, 'Receiving reports') : null),
     h('span', { key: 'conn' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected'),
   ].filter(Boolean);
@@ -297,8 +297,16 @@ export function App() {
     AttentionLead(),
     ActionRow(),
     NotificationsCenter(),
-    IconButton({ icon: Icon('help'), title: 'What does this screen mean?', onClick: () => openModal('help') }),
+    // A word beside the glyph: a bare question mark names nothing to someone who has never seen it.
+    h('span', { key: 'help', class: 'ds-action-common ds-appbar-overflow' },
+      Btn({ variant: 'ghost', title: 'What does this screen mean?', 'aria-label': 'Help: what does this screen mean?', onClick: () => openModal('help'),
+        children: [h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('help')), h('span', { key: 'l', class: 'ds-action-label' }, 'Help')] })),
     AccountMenu(),
+    // Phone only (app.css): brings back the controls tucked away at this width.
+    h('span', { key: 'more', class: 'ds-appbar-more' },
+      Btn({ variant: 'ghost', 'aria-expanded': state._appbarMore ? 'true' : 'false', title: 'Show or hide the other buttons',
+        'aria-label': state._appbarMore ? 'Fewer buttons' : 'More buttons', onClick: () => { state._appbarMore = !state._appbarMore; schedule(); },
+        children: [h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('chevron-down')), h('span', { key: 'l', class: 'ds-action-label' }, state._appbarMore ? 'Fewer' : 'More')] })),
   ].filter(Boolean);
   // trail:[brand] gives the merged topbar+crumb chrome its left identity --
   // the design system hides the topbar's own standalone .brand in merged
@@ -317,7 +325,7 @@ export function App() {
   const crumb = Crumb({
     trail: [brand],
     leaf: state.activePanel ? panelPageTitle(state.activePanel) : leaf,
-    right: [h('div', { key: 'appbar', class: 'ds-appbar' }, ...crumbRight)],
+    right: [h('div', { key: 'appbar', class: 'ds-appbar' + (state._appbarMore ? ' is-more-open' : '') }, ...crumbRight)],
   });
   const status = StatusBar();
 

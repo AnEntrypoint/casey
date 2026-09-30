@@ -113,6 +113,23 @@ export function caseListProjection(c, name = (v) => v) {
 // An event's own text and data are the other half of the same surface: the
 // timeline is where an operator actually READS a reporter's words, and
 // store.listEvents hands back the raw rows. Same marking, same reason.
+// Internal bookkeeping the agent writes as observations while it works (reply checks, retries,
+// turn markers). Staff can read it behind a toggle; a field or viewer login never needs it, so
+// the server does not send it to their browser at all.
+const SYSTEM_NOISE_RE = /^\s*(REPLY-JUDGE-FLAGGED|REPEAT-ASK|NOTICE-NOT-COMPOSED|TURN-START|TURN-HANDED-OFF|resume-attempted|RUNTIME)/i
+export const isSystemNoiseEvent = (e) => !!e && e.kind === 'observation' && typeof e.text === 'string' && SYSTEM_NOISE_RE.test(e.text)
+
+// One newest-first page of a case's timeline for this login. Staff get the plain store page; a
+// field or viewer login gets the same page with system bookkeeping removed BEFORE paging, so
+// offsets and the total stay consistent with what that person can actually see.
+export async function timelinePageFor(store, caseId, { limit, offset }, account, parseEventData) {
+  if (!isFieldAccount(account)) {
+    return { events: parseEventData(await store.listEventsPage(caseId, { limit, offset })), total: await store.countEvents(caseId) }
+  }
+  const all = parseEventData(await store.listEvents(caseId)).filter(e => !isSystemNoiseEvent(e)).reverse()
+  return { events: all.slice(offset, offset + limit), total: all.length }
+}
+
 export function eventProjection(e) {
   if (!e || typeof e !== 'object') return e
   return { ...e, text: markInvisibles(e.text), data: markInvisibles(e.data) }
@@ -318,10 +335,9 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
-    const events_total = await store.countEvents(c.id)
     // newest window first by default; UI loads older via /events?offset=
     const limit = clampLimit(req.query.events_limit, 50)
-    const events = parseEventData(await store.listEventsPage(c.id, { limit, offset: 0 }))
+    const { events, total: events_total } = await timelinePageFor(store, c.id, { limit, offset: 0 }, req.caseyAccount, parseEventData)
     const transitions = store.availableTransitions(c, actingOperator(req))
     const report_fill_rate = computeFillRate(c.report)
     // A suggested (never forced) assignee for an unclaimed case: the learned
@@ -464,7 +480,8 @@ export function getCaseEvents({ store, authed, clampLimit, offsetOf, parseEventD
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const limit = clampLimit(req.query.limit, 50)
     const offset = offsetOf(req.query.offset)
-    const events = (await nameEventAssignees(store, parseEventData(await store.listEventsPage(req.params.id, { limit, offset })), { field: isFieldAccount(req.caseyAccount) })).map(eventProjection)
+    const page = await timelinePageFor(store, req.params.id, { limit, offset }, req.caseyAccount, parseEventData)
+    const events = (await nameEventAssignees(store, page.events, { field: isFieldAccount(req.caseyAccount) })).map(eventProjection)
     res.json({ events, offset, limit })
   }
 }

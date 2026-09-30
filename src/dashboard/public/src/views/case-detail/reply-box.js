@@ -90,7 +90,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
             // an operator who is not told will believe it arrived.
             if (j.delivered) replyUndoToast(c.id, () => onReload && onReload(c.id));
             else if (j.sent) toast('Saved to the timeline, but the channel refused it. The contact has NOT received this. Check the timeline.', 'warn');
-            else toast('Saved to the timeline only. This console is not attached to the messaging channels, so nothing was sent to the contact.', 'warn');
+            else toast('Saved to the timeline only. This screen is not connected to WhatsApp, so nothing was sent to the contact.', 'warn');
             if (onReload) await onReload(c.id);
         } catch (e) { state._replySending = false; toast('The reply did not go out. ' + e.message, 'err'); schedule(); }
     };
@@ -124,7 +124,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
                         if (j.delivered) toast('Draft sent to the contact.', 'ok');
                         else toast(j.sent
                             ? 'Saved to the timeline, but the channel refused it. The contact has NOT received this.'
-                            : 'Saved to the timeline only. This console is not attached to the messaging channels, so nothing was sent to the contact.', 'warn');
+                            : 'Saved to the timeline only. This screen is not connected to WhatsApp, so nothing was sent to the contact.', 'warn');
                         if (onReload) await onReload(c.id);
                     } catch (e) { state._replySending = false; toast(await failMsg(e, 'The draft was not sent and is still waiting here. Try again.'), 'err'); schedule(); }
                 } }),
@@ -212,7 +212,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
                         if (j.delivered) toast('Asked them to report back.', 'ok');
                         else toast(j.sent
                             ? 'Saved to the timeline, but the channel refused it. They have NOT received this.'
-                            : 'Saved to the timeline only. This console is not attached to the messaging channels, so nothing was sent.', 'warn');
+                            : 'Saved to the timeline only. This screen is not connected to WhatsApp, so nothing was sent.', 'warn');
                         if (onReload) await onReload(c.id);
                     } catch (e) {
                         state._replySending = false;
