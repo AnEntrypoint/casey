@@ -46,7 +46,7 @@ export function caseSystemPrompt(caseRow, events, contact, speaker = null, conse
     // --- What to gather ---
     ...gatherSection(persona, caseRow, contact, ctx),
     // --- How to reply ---
-    ...replySection(persona, caseRow, contact, ctx),
+    ...replySection(persona, caseRow, contact, { ...ctx, consent }),
     // --- What this person's ROLE lets them do (empty for a reporter) ---
     ...roleSection(persona, caseRow, contact),
     // --- Comments about the assistant itself (every tier) ---
