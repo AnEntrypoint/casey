@@ -127,6 +127,25 @@ function pickMediaItem(msg, kind) {
   return list.find(m => m?.buffer && (m.type === 'audio') === wantAudio) || null
 }
 
+// The voice note's words. Done ONCE per message, at ingress (hooks/case-intake.js openCaseForInbound), so a
+// successful transcript is the message text for everything downstream -- the recorded inbound event, the STOP
+// words, the prompt and the reply judge -- exactly as if it had been typed. recordInboundMedia reuses the
+// same result for the audio note, so the bytes are never transcribed twice. A code spoken in a voice note is
+// scrubbed like a typed one; if the scrub fails the transcript is dropped rather than kept unredacted. A failed
+// transcription leaves `text` empty and the message stays "an audio message", as before.
+export async function transcribeInboundAudio({ store, log, caseId, msg }) {
+  if (msg._transcript) return msg._transcript
+  const audioItem = pickMediaItem(msg, 'audio')
+  if (!audioItem) return { text: '', error: '' }
+  const tr = await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType)
+  if (tr.text) {
+    try { const clean = await withoutIssuedCodes(store, tr.text); if (clean != null) tr.text = clean }
+    catch (e) { log.error?.('[casey] transcript code redaction failed', { caseId, error: e.message }); tr.text = ''; tr.error = tr.error || 'transcript withheld' }
+  }
+  Object.defineProperty(msg, '_transcript', { value: tr, enumerable: false, configurable: true })
+  return tr
+}
+
 // One arrival: save the bytes if the adapter actually downloaded any, append the
 // note to its report field, and make the arrival visible on the timeline.
 async function recordArrival({ store, log, caseId, field, note, kind, mediaItem, eventPrefix, failLabel, relay = null }) {
@@ -184,6 +203,7 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
 // this turn's prompt saying the position was NOT stored, so the reply cannot say
 // "got it" about a pin that reached no record.
 const PIN_STORED = '\n\n[System note: the location pin they shared was saved on the map as their exact position. Do not ask for coordinates, GPS numbers or another pin, and do not write that coordinates were unreadable; ask about the place only if a name or landmark is still missing.]'
+export const VOICE_TRANSCRIBED = '\n\n[System note: this message is an automatic transcript of a voice note, so it may contain mistakes. Treat it as what they said, and if a word matters and looks wrong, check it with them in one short question rather than assuming.]'
 const PIN_NOT_STORED = (why) => `\n\n[System note: the location pin they shared ${why}, so NO position was stored. Do not say you have their location; tell them plainly it did not come through and ask where the animals are (a town or farm name, or send the pin again).]`
 export async function recordInboundLocation({ store, log, caseId, msg }) {
   const pin = msg.location
@@ -233,14 +253,7 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
     })
   }
 
-  const tr = audioItem ? await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType) : { text: '', error: '' }
-  // A code spoken in a voice note is scrubbed exactly like a typed one before the
-  // transcript reaches the timeline, the report note or the model. If the scrub
-  // itself fails the transcript is dropped rather than kept unredacted.
-  if (tr.text) {
-    try { const clean = await withoutIssuedCodes(store, tr.text); if (clean != null) tr.text = clean }
-    catch (e) { log.error?.('[casey] transcript code redaction failed', { caseId, error: e.message }); tr.text = ''; tr.error = tr.error || 'transcript withheld' }
-  }
+  const tr = audioItem ? await transcribeInboundAudio({ store, log, caseId, msg }) : { text: '', error: '' }
   if (audioItem) {
     // The audio log line: what arrived, what became of it. The bytes themselves
     // are saved by recordArrival below and the path lands on the timeline event.

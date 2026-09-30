@@ -569,10 +569,14 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     // fresh attempt with this nudge has a real chance of doing the write for
     // real. Only a budget-exhausted false confirmation falls through to the
     // draft hold.
+    // A write held by the consent gate is the usual reason nothing landed: point the retry at case_consent.
+    const consentHint = (consentManaged() && fresh.contact_id && await consentState(store, fresh.contact_id, { caseId: fresh.id }) !== 'agreed')
+      ? ' If their latest message answers your question about keeping what they send, call case_consent (agreed true for a yes, false for a no) BEFORE anything else; case_report writes nothing until they have agreed.'
+      : ''
     if (canRetry) {
       log.warn?.('[casey] reply judge flagged a false confirmation; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
-      return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it claimed something was recorded or opened when nothing actually was. If the contact reported something new, call the case_new or case_report tool FIRST and wait for its result before replying. Never claim an action you did not actually perform.]' }
+      return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it claimed something was recorded or opened when nothing actually was. If the contact reported something new, call the case_new or case_report tool FIRST and wait for its result before replying.' + consentHint + ' Never claim an action you did not actually perform.]' }
     }
     return { done: true, text: candidate, falseConfirmReasons: verdict.reasons }
   }
