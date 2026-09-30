@@ -266,18 +266,13 @@ async function driveAgentTurn(deps, {
     })
   }
 
-  // PROGRESS LINE: every reply to a member of the public that has something on record ends
-  // with where the report stands and what is still needed (progress-line.js), composed in
-  // their language from the record, so nobody is left wondering whether it went through.
-  // Skipped for team members (their prompt carries the reference and gaps), for someone who
-  // opted out, and whenever the reply is a fallback or held.
-  if (!degraded && !isFallback && text && !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !tagList(fresh).includes('opted-out')) {
-    const line = await composeProgress(callLLM, fresh, { inboundText, language: parseReport(fresh).language_detected }).catch(() => '')
-    if (line) text = `${text}\n\n${line}`
-  }
-
-  // FIRST-CONTACT NOTICE, appended after the answer (first-contact-notice.js). Never for a
-  // fallback or degraded turn, and never allowed to hold the reply back.
+  // FIRST-CONTACT NOTICE and PROGRESS FORM. Every reply to a member of the public that has a case ends with the
+  // report form's state: the finished fields and the unfinished ones (progress-line.js), composed in their language
+  // from the record. When the first-contact notice is owed (first-contact-notice.js) it is written into that same
+  // closing block as plain first-person sentences, not appended as a separate block; if that combined block cannot
+  // be composed the notice is composed and appended on its own. Neither is ever added to a fallback, degraded or
+  // held turn, and neither may hold the reply back. Team members do not get the form (their prompt carries the
+  // reference and gaps); someone who opted out does not either.
   let notice = null
   if (!degraded && !isFallback && text) {
     let early = await noticeReady
@@ -286,7 +281,13 @@ async function driveAgentTurn(deps, {
       if ((after?.current?.id || null) !== (speakerBefore?.current?.id || null)) early = await noticeFor(fresh, after)
     }
     notice = early ? early.notice : null
-    if (notice) {
+    const wantsForm = !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !tagList(fresh).includes('opted-out')
+    let merged = ''
+    if (wantsForm) {
+      merged = await composeProgress(callLLM, fresh, { inboundText, language: parseReport(fresh).language_detected, notice }).catch(() => '')
+      if (merged) text = `${text}\n\n${merged}`
+    }
+    if (notice && !(merged && wantsForm)) {
       const body = early.body
       if (body) text = `${text}\n\n${body}`
       else { notice = null; await store.appendEvent(fresh.id, observation('NOTICE-NOT-COMPOSED: the first-contact notice could not be composed; it is still owed')).catch(() => {}) }
