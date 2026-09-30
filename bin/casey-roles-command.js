@@ -16,7 +16,7 @@
 
 import { createCaseStore } from '../src/case-store.js'
 import { TIER_ORDER, TIER_REPORTER, resolveTierValue, atLeast, TIER_FIELD_WORKER, tierLabel } from '../src/contact-tiers.js'
-import { createInvite, listInvites, revokeInvite, normalizeMsisdn } from '../src/role-invites.js'
+import { createInvite, createInvites, listInvites, revokeInvite, normalizeMsisdn } from '../src/role-invites.js'
 import { fmtPhone27, fmtTimeSAST } from '../src/format.js'
 import { TIER_LABELS } from '../src/store/report-shape.js'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
@@ -131,13 +131,30 @@ export async function cmdRoles({ flags, rest }) {
 
   if (sub === 'invite') {
     const tier = pos[0]
-    if (!tier || !TEAM_TIERS.includes(tier)) await fail('usage: casey roles invite <tier> [--label "..."] [--ttl-hours 72] [--uses 1]', `tiers: ${TEAM_TIERS.join(', ')}`)
+    if (!tier || !TEAM_TIERS.includes(tier)) await fail('usage: casey roles invite <tier> [--label "..."] [--ttl-hours 72] [--uses 1] [--count N [--out codes.txt]]', `tiers: ${TEAM_TIERS.join(', ')}`)
     try {
-      const inv = await createInvite(store, {
+      const base = {
         tier, label: typeof flags.label === 'string' ? flags.label : '',
         ttlHours: flags['ttl-hours'] === true ? undefined : flags['ttl-hours'], maxUses: flags.uses === true ? undefined : flags.uses,
         by: 'cli-operator', grantableTiers: TEAM_TIERS,
-      })
+      }
+      // --count N: a batch of single-use codes, one per person, to hand out. Each code is shown once (only its hash is
+      // stored); --out writes them, one per line, to a file only this user can read.
+      if (flags.count !== undefined && flags.count !== true) {
+        const invs = await createInvites(store, { ...base, count: flags.count })
+        if (typeof flags.out === 'string') {
+          const { writeFileSync } = await import('node:fs')
+          writeFileSync(flags.out, invs.map(i => `${i.code}\t${i.label}`).join('\n') + '\n', { mode: 0o600 })
+          console.log(green(`${invs.length} one-time codes for ${tier} written to ${flags.out}`) + dim('   (code, tab, label; keep the file private and delete it once handed out)'))
+        } else {
+          for (const i of invs) console.log(bold(i.code) + dim(`   ${i.label}`))
+          console.log(green(`${invs.length} one-time codes for ${tier}`) + dim('   (shown once; only their hashes are stored)'))
+        }
+        console.log(dim(`  each expires ${fmtTimeSAST(Math.floor(invs[0].expires_at / 1000))} and works for ${invs[0].max_uses} use(s).`))
+        console.log(dim('  each person sends exactly their code, and nothing else, to the bot number on WhatsApp.'))
+        await closeAndExit(store, 0)
+      }
+      const inv = await createInvite(store, base)
       console.log(green(`one-time code for ${tier}: `) + bold(inv.code) + dim('   (shown once; only its hash is stored)'))
       console.log(dim(`  expires ${fmtTimeSAST(Math.floor(inv.expires_at / 1000))}, ${inv.max_uses} use(s).`))
       console.log(dim('  the person sends exactly that code, and nothing else, to the bot number on WhatsApp.'))

@@ -54,7 +54,7 @@ export function buildCaseReportTools(store) {
           const state = await consentState(store(), ctx.contact.id, { caseId: boundCase(ctx).id })
           if (state !== 'agreed') return { held: true, nothing_recorded: true, note: state === 'declined'
             ? 'This person said no to what is kept, so nothing is written down. Do not record this. Be kind, offer a person from the team (case_handoff) if they want help, and only if they change their mind and say yes call case_consent with agreed true.'
-            : 'Nothing was recorded yet: this phone has not said it is okay for the team to keep what they send. In THIS reply, in your own words, tell them briefly what is kept and ask if that is okay (this is your one question). Do not say you are recording or that you need permission: just talk to them. When they say yes, call case_consent with agreed true and then record everything they have told you in this chat.' }
+            : 'Nothing was recorded, so never say or imply that anything was noted or saved. This phone has not said it is okay for the team to keep what they send. In THIS reply, in your own words, tell them briefly what is kept and ask if that is okay (this is your one question). Do not say you are recording or that you need permission: just talk to them. When they say yes, call case_consent with agreed true and then record everything they have told you in this chat.' }
         }
         // The diagnosis is the technician's, recorded at sign-off (case_transition) or
         // by the dashboard: never something a report, from anyone, carries in.

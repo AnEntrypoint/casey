@@ -142,6 +142,20 @@ export async function createInvite(store, { tier, label = '', ttlHours = DEFAULT
   return { code, ...publicView({ ...rec, hash: rec.h, created_at: rec.at, expires_at: rec.exp, max_uses: rec.max, uses: 0, revoked: false, by: rec.by }, now) }
 }
 
+// A batch of codes to hand out (one per person, e.g. for a team of rangers): `count` separate single-use
+// invites, each with the label numbered ("north reserve 01"). The whole batch is refused up front when it
+// would pass the unused-code cap, so a half-made batch never exists.
+export async function createInvites(store, { count = 1, label = '', now = Date.now(), ...opts } = {}) {
+  const n = Math.floor(Number(count))
+  if (!Number.isFinite(n) || n < 1) throw new Error('count must be a whole number of at least 1')
+  const { invites } = await load(store)
+  const active = [...invites.values()].filter(v => statusOf(v, now) === 'active').length
+  if (n > MAX_ACTIVE_INVITES - active) throw new Error(`that would pass the limit of ${MAX_ACTIVE_INVITES} unused codes (${active} are unused now); ask for at most ${Math.max(0, MAX_ACTIVE_INVITES - active)} or revoke some first`)
+  const out = []
+  for (let i = 1; i <= n; i++) out.push(await createInvite(store, { ...opts, label: n > 1 ? `${String(label || 'code').slice(0, 70)} ${String(i).padStart(2, '0')}` : label, now }))
+  return out
+}
+
 export async function listInvites(store, now = Date.now()) {
   const { invites } = await load(store)
   return [...invites.values()].map(v => publicView(v, now)).sort((a, b) => b.created_at - a.created_at)

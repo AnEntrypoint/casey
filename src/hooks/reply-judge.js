@@ -70,7 +70,7 @@
 // fact about tool-call results, not text classification), the judgment of
 // whether the REPLY'S WORDS claim a write happened is the model's job, same
 // as every other shape here.
-export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [] } = {}) {
+export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [], consentOwed = false } = {}) {
   if (!replyText || !String(replyText).trim()) return { clean: true, reasons: [], category: null }
   if (typeof callLLM !== 'function') return { clean: true, reasons: [], category: null }
 
@@ -218,6 +218,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   on?" are one ask. Shape 3 catches a parroted reply; this catches a`,
     `   fresh-sounding sentence that asks again for what is already known or`,
     `   already asked.`,
+    consentOwed ? `   EXCEPTION while shape 15 is shown: asking whether it is okay for the team to keep what they send is never a repeated ask, however many times it was asked before; it is required until they answer.` : null,
     // Three carve-outs, each one a shape this would otherwise flag on the most
     // ordinary intake turn there is. The first is structural: the two lists
     // handed to you are disjoint by construction, so a still-blank fact can
@@ -264,6 +265,13 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   If the latest message says nothing of the kind, this shape does not apply. Write the reason as`,
       `   "safety-line-missing".`,
     ].join('\n') : null,
+    // Only listed while this number has not yet agreed (phone-consent.js): the reply must ask, every time, until it has.
+    consentOwed ? [
+      `15. CONSENT NOT ASKED: this person's number has not yet said it is okay for the team to keep what they send`,
+      `   (a system fact). The reply MUST clearly ask them, in their language, whether that is okay. A reply that only`,
+      `   greets, or only asks about the animals, or only acknowledges, without that question, is flagged. Write the`,
+      `   reason as "consent-not-asked".`,
+    ].join('\n') : null,
     latestInbound ? [
       `13. WRONG LANGUAGE: compare the language of the reply's own sentences with the language`,
       `   of the PERSON'S LATEST MESSAGE shown below. If they differ -- English to an`,
@@ -307,7 +315,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     // in a sentence aimed at a person. Only offer a token whose shape is present.
     `have a REQUIRED reason word so the caller can route them (see this file's`,
     `header: the shape heading words are a wire protocol, not prose): shape 7`,
-    `"multi-ask"${missingFacts.length ? `, shape 9 "farewell-gap"` : ''}${(lastOutboundText || knownFacts.length) ? `, shape 10 "repeat-ask"` : ''}, shape 11 "advice-given", shape 12 "promise-made"${latestInbound ? `, shape 13 "wrong-language"` : ''}${safetyNumbers.length && latestInbound ? `, shape 14 "safety-line-missing"` : ''}.`,
+    `"multi-ask"${missingFacts.length ? `, shape 9 "farewell-gap"` : ''}${(lastOutboundText || knownFacts.length) ? `, shape 10 "repeat-ask"` : ''}, shape 11 "advice-given", shape 12 "promise-made"${consentOwed ? `, shape 15 "consent-not-asked"` : ''}${latestInbound ? `, shape 13 "wrong-language"` : ''}${safetyNumbers.length && latestInbound ? `, shape 14 "safety-line-missing"` : ''}.`,
   ].filter(line => line !== null).join('\n')
 
   // One more try when the call fails or comes back empty: a judge that fails open passes ADVICE and
