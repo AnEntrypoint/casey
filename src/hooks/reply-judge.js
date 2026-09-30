@@ -70,7 +70,7 @@
 // fact about tool-call results, not text classification), the judgment of
 // whether the REPLY'S WORDS claim a write happened is the model's job, same
 // as every other shape here.
-export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [], consentOwed = false } = {}) {
+export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [], consentOwed = false, recordedLanguage = '' } = {}) {
   if (!replyText || !String(replyText).trim()) return { clean: true, reasons: [], category: null }
   if (typeof callLLM !== 'function') return { clean: true, reasons: [], category: null }
 
@@ -278,7 +278,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   Afrikaans message, isiZulu to an isiXhosa one, isiXhosa to an English one --`,
       `   flag it. Names, places, a reference code and words the person used themselves`,
       `   do not count. If the latest message is too short to tell its language (a number,`,
-      `   "ok", thanks, an emoji, a name) this shape does not apply. Write the reason as`,
+      `   "ok", thanks, an emoji, a name) this shape does not apply.${recordedLanguage ? ` The report records this person's language as "${String(recordedLanguage).replace(/["\n]/g, ' ').slice(0, 40)}" (a system fact): a reply written in that language is correct, and only a reply in a DIFFERENT language is flagged.` : ''} Write the reason as`,
       `   "wrong-language".`,
     ].join('\n') : null,
     ``,

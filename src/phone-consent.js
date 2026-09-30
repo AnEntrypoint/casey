@@ -61,3 +61,20 @@ export async function recordConsent(store, caseId, agreed) {
     touch: false,
   })
 }
+
+// Has the assistant replied to this number before (on this case or any other)? A yes or no can only answer a question
+// that has been put, so case_consent refuses until one reply has gone out; every reply while consent is owed carries
+// the question. Errs toward "yes, it has" when the store cannot be read, so a fault never blocks a real answer.
+export async function repliedBefore(store, contactId, { caseId = null, events = null } = {}) {
+  if (!contactId) return true
+  try {
+    const here = events || (caseId ? await store.listEvents(caseId) : [])
+    if (here.some(e => e.kind === 'outbound')) return true
+    const others = (await store.t.list('case', { contact_id: contactId }, { limit: 200 }))
+      .filter(c => c.id !== caseId && c.channel !== 'system')
+      .slice(0, MAX_OTHER_CASES)
+    if (!others.length) return false
+    const rows = await store.t.list('event', { case_id: { $in: others.map(c => c.id) }, kind: 'outbound' }, { limit: 1 })
+    return rows.length > 0
+  } catch { return true }
+}
