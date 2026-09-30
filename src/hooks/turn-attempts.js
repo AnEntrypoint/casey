@@ -20,6 +20,7 @@ import { replyShape, strayContactDetails } from './plain-text.js'
 import { loadDomainConfig } from '../config-loader.js'
 import { stripThinkingBlock, OPTED_OUT_TAG, detectContactIntent } from './heuristics.js'
 import { tagList, parseReport } from '../timestamp.js'
+import { composeAdviceRefusal } from '../advice-refusal.js'
 import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs, controlRegistered } from './turn-results.js'
 import { staffNoticeNote } from '../staff-notices.js'
 import { refsIn } from '../team-focus.js'
@@ -634,6 +635,14 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     // it answers a person in danger, and holding that would leave them with nothing.
     const crisisReply = persona.safetyText && (!safetyNumbers.length || verdict.reasons.some(r => /safety.?line.?missing/i.test(r)))
     if (faultRoutes[0][0].test(verdict.reasons.join(' ')) && !crisisReply) {
+      // Silence is the worse outcome for someone who asked a real question: answer with a short composed reply that gives
+      // no advice at all (src/advice-refusal.js), keep the withheld text on the timeline for the team, and hold only if that fails.
+      const safe = await composeAdviceRefusal(turnCallLLM, { inboundText, language: recordedLanguage })
+      if (safe) {
+        log.warn?.('[casey] reply still gave advice on a spent retry budget; sent a composed no-advice reply instead', { caseId: fresh.id, reasons: verdict.reasons })
+        await store.appendEvent(fresh.id, observation(`ADVICE-REPLACED: ${verdict.reasons.join('; ')}; the reply gave advice, so a short no-advice reply was sent instead. Withheld text: ${String(candidate).replace(/\s+/g, ' ').slice(0, 300)}`))
+        return { done: true, text: safe }
+      }
       log.warn?.('[casey] reply still gave advice on a spent retry budget; holding for a human', { caseId: fresh.id, reasons: verdict.reasons })
       return { done: true, text: candidate, adviceReasons: verdict.reasons }
     }

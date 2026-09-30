@@ -243,11 +243,13 @@ async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource
   // outside updateCaseChecked's own lock, so it is a precedence rule and not an
   // atomicity guarantee -- the writer it genuinely races is a dashboard operator
   // editing the same row in the same instant, which won before this existed too.
-  if (resolvedLocationSource === 'estimated') {
+  // Anything but a person's own confirmation is refused over a real reading: a model that writes "gps" with coordinates
+  // nobody read out (seen live: a real pin replaced by invented numbers) is an estimate in all but name.
+  if (resolvedLocationSource !== 'confirmed') {
     const prior = await store().getCase(id).catch(() => null)
     const priorSource = prior?.location_source
     if ((priorSource === 'gps' || priorSource === 'confirmed') && prior?.lat != null && prior?.lon != null) {
-      return { locationKept: `this report already holds a ${priorSource} position (lat ${prior.lat}, lon ${prior.lon}); your estimate was not recorded over it. Ask them to confirm or correct that position instead.` }
+      return { locationKept: `this report already holds a ${priorSource} position (lat ${prior.lat}, lon ${prior.lon}); what you wrote was not recorded over it. Do not say you changed it. Ask them to confirm or correct that position instead.` }
     }
   }
   const latLonResult = await store().updateCaseChecked(id, { lat, lon, location_source: resolvedLocationSource }, AGENT_USER)
