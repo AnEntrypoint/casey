@@ -26,6 +26,7 @@
 //                           case_ask_ranger), operator (team_*) -- see that file
 //   case-tools-feedback.js  case_feedback, team_feedback
 //   case-tools-speaker.js   case_speaker (who is writing on a shared phone; every tier)
+//   case-tools-consent.js   case_consent (the once-per-number yes, asked in conversation; every tier)
 //   case-tools-shared.js    defTool, the enum-hint ladder, ownsCase, the
 //                           PII projections, the small pure helpers
 //   case-tools-gates.js     REPORT_ONLY_TOOLS, gateByTier, dedupeDuplicateCalls
@@ -51,6 +52,7 @@ import { buildControlTools } from './case-tools-control.js'
 import { buildTeamTools } from './case-tools-team.js'
 import { buildFeedbackTools } from './case-tools-feedback.js'
 import { buildSpeakerTools } from './case-tools-speaker.js'
+import { buildConsentTools } from './case-tools-consent.js'
 
 // Build the array of tool objects bound to an explicit store (used by anywhere
 // that wants the tools without the runtime singleton).
@@ -76,6 +78,7 @@ export function buildCaseToolset(storeOrNull) {
     ...buildTeamTools(store, enums),
     ...buildFeedbackTools(store),
     ...buildSpeakerTools(store),
+    ...buildConsentTools(store),
   ]
   return tools.map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
 }

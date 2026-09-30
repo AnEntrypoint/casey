@@ -17,7 +17,8 @@
 import { loadDomainConfig } from '../config-loader.js'
 import { MANDATORY_MINIMUM_FIELDS } from '../store/report-shape.js'
 import { buildPromptContext } from './prompt-context.js'
-import { headerSection, caseContextSection, gatherSection, replySection, speakerSection } from './prompt-sections.js'
+import { consentManaged } from '../phone-consent.js'
+import { headerSection, caseContextSection, gatherSection, replySection, speakerSection, consentSection } from './prompt-sections.js'
 import { roleSection, feedbackSection } from './prompt-roles.js'
 import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR } from '../contact-tiers.js'
 
@@ -31,7 +32,7 @@ const { persona } = loadDomainConfig()
 // the contact), and it spells out plain-language REPLY rules -- mirror the
 // contact's language, short warm sentences, one question, no jargon, greet+give
 // the reference on first contact, and reassure when a human is requested.
-export function caseSystemPrompt(caseRow, events, contact, speaker = null) {
+export function caseSystemPrompt(caseRow, events, contact, speaker = null, consent = null) {
   const ctx = buildPromptContext(caseRow, events)
   return [
     // --- Private structured context ---
@@ -52,6 +53,8 @@ export function caseSystemPrompt(caseRow, events, contact, speaker = null) {
     ...feedbackSection(),
     // --- Several people may share this phone (public contacts only) ---
     ...speakerSection(persona, contact, speaker),
+    // --- The once-per-number yes, asked in conversation (public contacts, deployments that set consentText) ---
+    ...consentSection(persona, contact, consent),
   ].join('\n')
 }
 
@@ -199,6 +202,15 @@ function selfCheckLoadBearingPromptContent() {
   }
   for (const t of [text, oneText]) {
     if (/MORE THAN ONE PERSON HAS USED THIS PHONE|PRIVACY BETWEEN PEOPLE ON ONE PHONE/.test(t)) throw new Error('caseSystemPrompt regression: the several-people block is rendered for a phone with at most one known person, which must get no extra question.')
+  }
+  if (consentManaged()) {
+    const askConsent = caseSystemPrompt(caseRow, events, staleContact, null, 'none')
+    const agreedText = caseSystemPrompt(caseRow, events, staleContact, null, 'agreed')
+    const teamText = caseSystemPrompt(caseRow, events, { ...staleContact, tier: TIER_FIELD_WORKER }, null, 'none')
+    if (!/CHECK BEFORE RECORDING[\s\S]*ONE question[\s\S]*case_consent/.test(askConsent)) throw new Error('caseSystemPrompt regression: the once-per-number consent question is missing. See hooks/prompt-sections.js consentSection and phone-consent.js.')
+    for (const [t, why] of [[agreedText, 'a number that already agreed'], [teamText, 'a team member']]) {
+      if (/CHECK BEFORE RECORDING/.test(t)) throw new Error(`caseSystemPrompt regression: the consent question is rendered for ${why}.`)
+    }
   }
   for (const t of [workerText, signOffText, operatorText]) {
     if (/SEVERAL PEOPLE MAY SHARE THIS PHONE/.test(t)) throw new Error('caseSystemPrompt regression: the shared-phone rule leaked to a team member (public contacts only).')

@@ -103,6 +103,7 @@ export const VOCAB_CLIENT_SECTIONS = ['ui', 'glossary', 'stages', 'legend', 'for
 // an object in persona.cjs; its wording is bot.photo_nudge and only `text` is replaced.
 export const VOCAB_BOT_KEYS = {
   notice: 'noticeText',
+  consent: 'consentText',
   staff_notice: 'staffNoticeText',
   new_person_notice: 'newPersonNoticeText',
   photo_nudge: 'photoNudge.text',

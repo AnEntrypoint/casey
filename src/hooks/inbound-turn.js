@@ -27,12 +27,13 @@ import { resolveAdapter, sendGuaranteedFallback, sendAgentReply } from './delive
 import { makeTypingIndicator } from './typing.js'
 import { normaliseReply } from './plain-text.js'
 import { decideNotice, composeNotice, recordNoticeShown } from '../first-contact-notice.js'
-import { composeProgress } from '../progress-line.js'
+import { renderFormProgress, formLabelsFor } from '../progress-line.js'
 import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
 import { tryRegisterByCode } from './role-registration.js'
 import { parseReport, tagList } from '../timestamp.js'
 import { controlRegistered } from './turn-results.js'
 import { speakerState, noteAsked } from '../phone-persons.js'
+import { consentManaged, consentState } from '../phone-consent.js'
 
 export async function runInboundTurn(receiver, deps, { platform, msg, channel, external_id, replyTo }) {
   const { store, log, admission, autoRespond, llmStatus, notifyHandoff } = deps
@@ -266,11 +267,10 @@ async function driveAgentTurn(deps, {
     })
   }
 
-  // FIRST-CONTACT NOTICE and PROGRESS FORM. Every reply to a member of the public that has a case ends with the
-  // report form's state: the finished fields and the unfinished ones (progress-line.js), composed in their language
-  // from the record. When the first-contact notice is owed (first-contact-notice.js) it is written into that same
-  // closing block as plain first-person sentences, not appended as a separate block; if that combined block cannot
-  // be composed the notice is composed and appended on its own. Neither is ever added to a fallback, degraded or
+  // PROGRESS FORM and FIRST-CONTACT NOTICE. Every reply to a member of the public that has a case OPENS with the
+  // report form's state: the finished fields and the unfinished ones (progress-line.js), printed by the system from the
+  // record, with the model's reply after it. A staff notice (first-contact-notice.js) is appended after it as its own paragraph; a public number is
+  // asked once in conversation instead (phone-consent.js). Neither is ever added to a fallback, degraded or
   // held turn, and neither may hold the reply back. Team members do not get the form (their prompt carries the
   // reference and gaps); someone who opted out does not either.
   let notice = null
@@ -282,12 +282,18 @@ async function driveAgentTurn(deps, {
     }
     notice = early ? early.notice : null
     const wantsForm = !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && !tagList(fresh).includes('opted-out')
+      // No form summary before the number has said yes (src/phone-consent.js): nothing is recorded to summarise.
+      && !(consentManaged() && isPublic && await consentState(store, contact.id, { caseId: fresh.id }) !== 'agreed')
     let merged = ''
     if (wantsForm) {
-      merged = await composeProgress(callLLM, fresh, { inboundText, language: parseReport(fresh).language_detected, notice }).catch(() => '')
-      if (merged) text = `${text}\n\n${merged}`
+      // Rendered in code from the record (progress-line.js): no model call on the reply's path, except the one-time
+      // translation of the fixed words the first time a language is seen.
+      const labels = await formLabelsFor(callLLM, parseReport(fresh).language_detected).catch(() => undefined)
+      merged = renderFormProgress(fresh, labels)
+      // The system's own print of the form comes FIRST and the model's reply after it, so the reply is the last thing read.
+      if (merged) text = `${merged}\n\n${text}`
     }
-    if (notice && !(merged && wantsForm)) {
+    if (notice) {
       const body = early.body
       if (body) text = `${text}\n\n${body}`
       else { notice = null; await store.appendEvent(fresh.id, observation('NOTICE-NOT-COMPOSED: the first-contact notice could not be composed; it is still owed')).catch(() => {}) }

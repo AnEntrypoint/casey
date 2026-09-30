@@ -12,6 +12,7 @@ import { runTurn } from '../agent/run-turn.js'
 import { observation } from './case-writes.js'
 import { caseSystemPrompt } from './prompt.js'
 import { speakerState } from '../phone-persons.js'
+import { consentManaged, consentState } from '../phone-consent.js'
 import { buildPromptContext } from './prompt-context.js'
 import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
@@ -151,7 +152,7 @@ export function classifyTurnError(message) {
 export function buildTurnRequest({
   prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
   resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-  staffSend = null, inboundRefs = [], inboundText = '', speaker = null,
+  staffSend = null, inboundRefs = [], inboundText = '', speaker = null, consent = null,
 }) {
   return {
     // A retry after a judge-blank/false-confirm/empty carries the judge's
@@ -164,7 +165,7 @@ export function buildTurnRequest({
       // the retry's whole problem is that it cannot see the tool result the
       // previous attempt was given.
       + (refusedActions?.length ? `\n\n[System note: these tool calls from your earlier attempt were REFUSED and nothing was recorded by them: ${refusedActions.join('; ')}. Read the refusal, fix the argument it names, and call the tool again so the facts this person gave are actually recorded. Never tell them something is recorded until a tool call has succeeded.]` : ''),
-    messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, speaker) }],
+    messages: [{ role: 'system', content: caseSystemPrompt(fresh, events, contact, speaker, consent) }],
     sessionKey: `case:${fresh.id}`,
     callLLM: turnCallLLM,
     // Nudge the weak model into its first classify/record tool call. freddie
@@ -776,7 +777,11 @@ export async function runAgentTurn({
   }
   let speaker = await readSpeaker(true)
   const speakerAtStart = speaker
-  systemPromptText = caseSystemPrompt(fresh, events, contact, speaker)
+  // The once-per-number yes (src/phone-consent.js): null when the deployment sets none or for a team member.
+  const consentOn = consentManaged() && resolvedTier === TIER_REPORTER && !!contact?.id
+  const readConsent = async () => (consentOn ? consentState(store, contact.id, { caseId: turnBinding.id }) : null)
+  let consent = await readConsent()
+  systemPromptText = caseSystemPrompt(fresh, events, contact, speaker, consent)
   // Shared across ALL attempts: a retry is a FRESH runTurn that cannot see the
   // prior attempt's tool calls, so without cross-attempt dedupe the model
   // blindly repeats mutating calls and opens a SECOND case for the same report.
@@ -802,12 +807,12 @@ export async function runAgentTurn({
       if (!degradedReason) degradedReason = FAILURE_REASONS.TIMEOUT
       break
     }
-    if (attempt > 1) speaker = await readSpeaker(false)
+    if (attempt > 1) { speaker = await readSpeaker(false); consent = await readConsent() }
     try {
       result = await runTurn(buildTurnRequest({
         prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
         resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-        staffSend, inboundRefs, inboundText, speaker,
+        staffSend, inboundRefs, inboundText, speaker, consent,
       }))
     } catch (e) {
       errored = true

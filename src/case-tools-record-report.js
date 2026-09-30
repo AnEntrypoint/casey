@@ -22,6 +22,7 @@ import { defTool, str, pick, boundCase, isValidLatLon } from './case-tools-share
 import { findCase, deskAuthorityOn } from './case-tools-team-shared.js'
 import { canQueryCases } from './contact-tiers.js'
 import { stampReporter } from './phone-persons.js'
+import { consentManaged, consentState } from './phone-consent.js'
 
 const OBSERVE_BLOCKED = { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
 const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed'])
@@ -47,6 +48,14 @@ export function buildCaseReportTools(store) {
         required: ['id'],
       },
       async ({ id, lat, lon, location_source, ...fields }, ctx) => {
+        // The consent gate (phone-consent.js): a public number that has not agreed, in conversation, to what
+        // is kept has nothing written. Only this tool is held; the conversation goes on.
+        if (consentManaged() && ctx?.contact?.id && !canQueryCases(ctx?.tier)) {
+          const state = await consentState(store(), ctx.contact.id, { caseId: boundCase(ctx).id })
+          if (state !== 'agreed') return { held: true, nothing_recorded: true, note: state === 'declined'
+            ? 'This person said no to what is kept, so nothing is written down. Do not record this. Be kind, offer a person from the team (case_handoff) if they want help, and only if they change their mind and say yes call case_consent with agreed true.'
+            : 'Nothing was recorded yet: this phone has not said it is okay for the team to keep what they send. In THIS reply, in your own words, tell them briefly what is kept and ask if that is okay (this is your one question). When they say yes, call case_consent with agreed true and then record everything they have told you in this chat.' }
+        }
         // The diagnosis is the technician's, recorded at sign-off (case_transition) or
         // by the dashboard: never something a report, from anyone, carries in.
         const notDiagnosis = SIGNOFF_DIAGNOSIS_FIELDS.filter(k => k in fields)

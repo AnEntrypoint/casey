@@ -21,6 +21,13 @@ async function getAcptoapi() {
     // through `.default` (the full CJS exports object) so every export is
     // reachable regardless of which subset the interop happened to pick up.
     _acptoapi = mod.default && typeof mod.default === 'object' ? mod.default : mod
+    // acptoapi ships no synthetic.new brand. Registered here, not in a launcher,
+    // because the supervised worker is its own process: a brand added to the
+    // parent's table never reaches the process that makes the calls, and the
+    // unknown prefix then falls through to a localhost ACP daemon ("fetch failed").
+    const brandsMod = await import('acptoapi/lib/openai-brands')
+    const brands = brandsMod.default || brandsMod
+    if (!brands.isBrand('synthetic')) brands.registerBrand('synthetic', { url: 'https://api.synthetic.new/openai/v1/chat/completions', envKey: 'SYNTHETIC_API_KEY' })
   }
   return _acptoapi
 }
