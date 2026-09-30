@@ -19,7 +19,7 @@ import { judgeReply } from './reply-judge.js'
 import { replyShape, strayContactDetails } from './plain-text.js'
 import { loadDomainConfig } from '../config-loader.js'
 import { stripThinkingBlock, OPTED_OUT_TAG, detectContactIntent } from './heuristics.js'
-import { tagList } from '../timestamp.js'
+import { tagList, parseReport } from '../timestamp.js'
 import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs, controlRegistered } from './turn-results.js'
 import { staffNoticeNote } from '../staff-notices.js'
 import { refsIn } from '../team-focus.js'
@@ -512,6 +512,10 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // While this number has not agreed, EVERY reply must ask (phone-consent.js); read after this attempt's tool calls,
   // so a yes the model just recorded with case_consent ends the requirement.
   const consentOwed = consentOn && !!fresh.contact_id && await consentState(store, fresh.contact_id, { caseId: fresh.id }) === 'none'
+  // The language the model recorded for this person, read AFTER this attempt's writes: the judge compares the reply
+  // with the latest message and with this recorded fact, which stops it flagging a correct reply in a less common language.
+  let recordedLanguage = ''
+  try { recordedLanguage = String(parseReport(await store.getCase(fresh.id))?.language_detected || '') } catch { /* none */ }
   const shape = replyShape(candidate)
   // The reply-shape rule is a COUNT, and on an attempt that has a retry left a count of two or more already decides
   // the outcome: the judge would be asked about a reply that is going to be rewritten whatever it says, so the
@@ -522,7 +526,13 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     await note(`REPLY-JUDGE-FLAGGED: multi-ask: ${shape.questions} questions and ${shape.listLines} list lines counted by the system; retrying turn with feedback (attempt ${attempt})`)
     return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things, with no list, and one question mark in the whole reply.]" }
   }
-  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  // A STOP is honoured by the system (case_stop, recorded on the timeline), so a confirmation that says they will not be
+  // messaged is true, not a promise; it is judged like any other reply for everything else.
+  if (!verdict.clean && verdict.reasons?.length && controlRegistered(result, 'case_stop')) {
+    const rest = verdict.reasons.filter(r => !/promise.?made/i.test(r))
+    if (rest.length !== verdict.reasons.length) verdict = rest.length ? { ...verdict, reasons: rest } : { clean: true, reasons: [], category: null }
+  }
   // While consent is owed the ONE question a reply may ask is the consent question, so a repeat-ask verdict can only be
   // that question asked again; it is required until they answer and is never a fault. Other reasons stand.
   if (consentOwed && !verdict.clean && verdict.reasons?.length) {

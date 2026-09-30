@@ -7,7 +7,7 @@
 
 import { defTool } from './case-tools-shared.js'
 import { boundCase } from './case-tools-shared.js'
-import { recordConsent, consentState } from './phone-consent.js'
+import { recordConsent, consentState, repliedBefore } from './phone-consent.js'
 
 export function buildConsentTools(store) {
   return [
@@ -24,6 +24,8 @@ export function buildConsentTools(store) {
         const contactId = ctx?.contact?.id
         if (!bound.id || !contactId) return { ok: false, note: 'Nothing could be recorded from here. Carry on with the conversation.' }
         const s = store()
+        // No answer without a question: until a reply has gone out to this number nothing has been asked.
+        if (!(await repliedBefore(s, contactId, { caseId: bound.id }))) return { ok: false, note: 'Nothing has been asked yet, so there is no answer to record. In this reply, ask whether it is okay for the team to keep what they send, and record their answer only when they reply to it.' }
         if (await consentState(s, contactId, { caseId: bound.id }) === (agreed ? 'agreed' : 'declined')) return { ok: true, already: true, note: 'That answer is already recorded. Carry on.' }
         await recordConsent(s, bound.id, agreed)
         return agreed
