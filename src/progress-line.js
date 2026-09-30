@@ -1,8 +1,12 @@
 // progress-line.js -- the form-progress block that closes every reply to a member of the public
 // who has something on record:
 //
-//   Done: Animals goat, How many 3, Where Lambasi
-//   Still needed: Signs, How to find the place
+//   Done:
+//   - Animals: goat
+//   - Where: Lambasi
+//
+//   Still needed:
+//   - Signs
 //
 // It is RENDERED IN CODE from two lists the system already holds (what is written down; what is
 // still missing), with no model call, so it costs no time, is always present and is always true to
@@ -61,7 +65,16 @@ export function progressFacts(caseRow) {
   }
 }
 
-// `labels` is { done, needed, complete, fields?: { key: label } }.
+// `labels` is { done, needed, complete, fields?: { key: label } }. One item per line, because several items run
+// together on a single line are hard to read on a phone:
+//
+//   Done:
+//   - Animals: goat
+//   - Where: Lambasi
+//
+//   Still needed:
+//   - Signs
+//   - How to find the place
 export function renderFormProgress(caseRow, labels = ENGLISH) {
   if (!caseRow) return ''
   const L = { ...ENGLISH, ...(labels || {}) }
@@ -69,10 +82,10 @@ export function renderFormProgress(caseRow, labels = ENGLISH) {
   const { recorded, more, stillNeeded } = progressFacts(caseRow)
   if (!recorded.length && !stillNeeded.length) return ''
   const done = recorded.length
-    ? `${L.done}: ${recorded.map(x => `${plainLabel(x.key, f)} ${x.value}`).join(', ')}${more ? `, +${more}` : ''}`
+    ? [`${L.done}:`, ...recorded.map(x => `- ${plainLabel(x.key, f)}: ${x.value}`), ...(more ? [`- +${more}`] : [])].join('\n')
     : ''
-  const needed = stillNeeded.length ? `${L.needed}: ${stillNeeded.map(k => plainLabel(k, f)).join(', ')}` : L.complete
-  return [done, needed].filter(Boolean).join('\n')
+  const needed = stillNeeded.length ? [`${L.needed}:`, ...stillNeeded.map(k => `- ${plainLabel(k, f)}`)].join('\n') : L.complete
+  return [done, needed].filter(Boolean).join('\n\n')
 }
 
 // ---- the words, per language --------------------------------------------------------------------------

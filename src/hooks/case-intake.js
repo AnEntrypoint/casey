@@ -12,7 +12,7 @@
 
 import { observation, flagNeedsHuman } from './case-writes.js'
 import { applyServiceControls, isLlmDown } from './service-controls.js'
-import { describeMedia, recordInboundMedia, recordInboundLocation } from './media-intake.js'
+import { describeMedia, recordInboundMedia, recordInboundLocation, transcribeInboundAudio, VOICE_TRANSCRIBED } from './media-intake.js'
 import { routeStaffArtifact, recordRelayedLocationPin, noteRoute } from './media-relay.js'
 import { staffLabel } from './staff-outbound.js'
 import { truncate, stripChannelMarkup, mergeTag, dropTag } from './heuristics.js'
@@ -116,7 +116,10 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
   // count and flips a bare greeting out of the content-free path into the
   // case-ack. The raw msg.text is still recorded by recordInbound below for
   // audit; only the reasoning copy is cleaned.
-  const inboundText = stripChannelMarkup(msg.text || '')
+  // A voice note whose transcription succeeded IS the message: its words are the text from here on, beside any
+  // typed caption (media-intake.js transcribeInboundAudio). A failed transcription leaves the text as it was.
+  const spoken = (await transcribeInboundAudio({ store, log, caseId: caseRow.id, msg }).catch(() => null))?.text || ''
+  const inboundText = [stripChannelMarkup(msg.text || ''), spoken].filter(Boolean).join('\n')
   const media = describeMedia(msg)
   let inboundEvent
   try {
@@ -127,7 +130,7 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
     inboundEvent = await store.recordInbound(caseRow, {
       channel,
       text: inboundText || (media ? `[${media}]` : '[empty message]'),
-      data: {}, msg_id: msgId,
+      data: spoken ? { transcribed: true, transcribed_by: 'ai_helper' } : {}, msg_id: msgId,
     })
   } catch (e) {
     // Unguarded, a transient store error here (thatcher busy, a lock timeout)
@@ -202,6 +205,7 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   // assigned, takes the unchanged path below.
   const route = await routeStaffArtifact({ store, log, caseRow, msg, inboundText, msgId: messageId(msg) })
   let promptNote = route ? await noteRoute({ store, log, caseRow, route, msg }) : ''
+  if (msg._transcript?.text) promptNote += VOICE_TRANSCRIBED
   const ingressRecorded = route?.mode === 'relay'
   if (ingressRecorded) {
     const relay = { by: staffLabel(route.contact), contactId: route.contact.id }
