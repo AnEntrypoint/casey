@@ -33,7 +33,8 @@ import { parseReport } from './timestamp.js'
 import { CRITICAL_FIELDS, FIELD_LABELS, REPORT_FIELD_DEFS, missingMandatoryMinimum, fieldLabel } from './store/report-shape.js'
 
 // Fields that describe the conversation or the record's plumbing, not the animals.
-const SKIP = new Set(['photos', 'audio', 'language_detected', 'association', 'lat', 'lon', 'sites', 'reported_by', 'owner_contact'])
+// 'notes' is the free-text catch-all (it can hold anything the person said), so it is never printed back in the summary.
+const SKIP = new Set(['photos', 'audio', 'language_detected', 'association', 'lat', 'lon', 'sites', 'reported_by', 'owner_contact', 'notes'])
 const MAX_FACTS = 8
 const MAX_NEEDED = 5
 const MAX_VALUE = 90
