@@ -27,6 +27,7 @@ import { resumePendingTurnsBody } from './casey-resume.js'
 import { drainQueuedTurnsBody } from './casey-drain.js'
 import { makeChannelAdapter } from './casey-adapters.js'
 import { sweepCases } from './case-sweep.js'
+import { ensurePin, placeText } from './pin-estimate.js'
 import { AlertLog, AlertGate, fileAlertNotifier, SYSTEM_CONDITIONS } from './alert-log.js'
 import { ALL_HEALTH_TAGS } from './case-health.js'
 import { mergeTag } from './hooks/heuristics.js'
@@ -417,6 +418,20 @@ export class Casey {
 
   // Run one health-guardrail sweep now. Exposed for tests and manual runs; the
   // scheduler calls the same path. Isolated: a sweep error is the caller's to log.
+  // Gives up to `limit` open cases that name a place but hold no pin an estimated one, newest first.
+  async backfillPins(limit = 6) {
+    const callLLM = this.opts.callLLM
+    if (typeof callLLM !== 'function') return 0
+    const rows = await this.store.listCases({}, { limit: 400 })
+    let done = 0
+    for (const c of rows) {
+      if (done >= limit) break
+      if (!placeText(c) || c.location_source === 'gps' || c.location_source === 'confirmed' || (c.lat != null && (!c.location_basis || c.location_basis === placeText(c)))) continue
+      if (await ensurePin({ store: this.store, callLLM, log: this.log, caseId: c.id })) done++
+    }
+    return done
+  }
+
   async runSweepOnce(now = Date.now()) {
     // Re-entrancy guard, same pattern as resumePendingTurns/drainQueuedTurns's
     // shared _draining boolean. Without it, a sweep pass that runs longer than
@@ -447,6 +462,8 @@ export class Casey {
       // very next sweep without a restart.
       const thresholds = await this.store.resolveThresholds(this.opts.healthThresholds)
       const summary = await sweepCases(this.store, now, thresholds, { log: this.log, notifyBreach })
+      // Every case with a place on it and no pin gets one (src/pin-estimate.js): the few the reply path missed, and any older ones.
+      await this.backfillPins().catch(e => this.log?.warn?.('[casey] pin backfill failed', { error: e.message }))
       // A completed pass, stamped here rather than in the timer callback: a
       // pass that threw halfway is not a pass, and the sweep_stalled alert must
       // fire on a sweep that is being SCHEDULED and failing just as it does on

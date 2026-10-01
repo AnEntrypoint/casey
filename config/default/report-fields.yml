@@ -93,3 +93,5 @@ geo_fields:
     description: "Latitude of the office/site, if relevant for a multi-site organisation and the employee names a place you can identify. Leave out if the organisation is single-site or the place cannot be identified."
   - key: lon
     description: "Longitude, alongside lat."
+  - key: location_confidence
+    description: "Whole percentage 1-99: how sure you are that lat/lon is where the animals are, judged from your own knowledge of the place described. Give it EVERY time you give lat/lon: a named town or village you know well 60-90; a farm, dip tank, school or other local landmark you can only place roughly 20-50; a vague description 5-15. Exact GPS read out by the person is 100 (set by the system)."

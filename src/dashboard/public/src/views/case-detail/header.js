@@ -118,6 +118,16 @@ const h = webjsx.createElement;
 // Who gave this report on a phone several people use (src/phone-persons.js): "Reported by Nomsa (wife), shared phone:
 // 3 people". Nothing while nobody is recorded for the phone, so a single-person phone shows no new line. The name
 // is the one the person gave; the server sends no key and no number.
+// The pin and how sure it is: "Pin 62% sure (estimated)", or "Pin exact (GPS)"; "No pin yet" while the place is not known.
+const PIN_HOW = { gps: 'GPS', estimated: 'estimated from the place named', confirmed: 'confirmed by the reporter' };
+function pinLine(c) {
+    const has = c && c.lat != null && c.lon != null && Number.isFinite(Number(c.lat)) && Number.isFinite(Number(c.lon));
+    if (!has) return h('p', { class: 'casey-hint casey-pin-line' }, 'No pin yet');
+    const pct = Number.isFinite(Number(c.location_confidence)) && c.location_confidence != null ? Number(c.location_confidence) : null;
+    const how = PIN_HOW[c.location_source] || '';
+    return h('p', { class: 'casey-hint casey-pin-line' }, 'Pin ' + Number(c.lat).toFixed(4) + ', ' + Number(c.lon).toFixed(4) + (pct != null ? ', ' + pct + '% sure' : '') + (how ? ' (' + how + ')' : ''));
+}
+
 function reporterLine(reporter) {
     if (!reporter) return null;
     const by = reporter.reported_by;
@@ -211,6 +221,7 @@ export function CaseHeader({ c, suggestedAssignee, reporter, onReload, onOpenSha
         h('div', { class: 'casey-meta-id casey-hint' }, c.ref),
         h('p', { class: 'casey-hint' }, todoHintText(c)),
         reporterLine(reporter),
+        pinLine(c),
         healthNotes(c.tags),
         intakeNote(c.tags),
         h('div', { class: 'casey-case-meta' },

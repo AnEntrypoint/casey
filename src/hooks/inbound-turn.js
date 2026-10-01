@@ -35,6 +35,9 @@ import { controlRegistered } from './turn-results.js'
 import { speakerState, noteAsked } from '../phone-persons.js'
 import { consentManaged, consentState } from '../phone-consent.js'
 import { noteReturn } from '../return-clarify.js'
+import { ensurePin } from '../pin-estimate.js'
+import { pinAskOwed, pinAskValue } from '../pin-confidence.js'
+import { buildPromptContext } from './prompt-context.js'
 
 export async function runInboundTurn(receiver, deps, { platform, msg, channel, external_id, replyTo }) {
   const { store, log, admission, autoRespond, llmStatus, notifyHandoff } = deps
@@ -147,11 +150,23 @@ async function driveAgentTurn(deps, {
 
   // A public number writing again after a gap to a report that is already complete: note it, so the reply asks first (return-clarify.js).
   if (isPublic && !isBackgroundRedrive) await noteReturn(store, { caseRow: fresh, events, contact, msgId }).catch(() => {})
+  // Is this reply the one that asks for a better location (prompt-sections.js replySection)? Same condition: nothing else still
+  // needed, no consent owed, and the pin a weak guess. Counted so the person is asked at most twice and never twice about the same words.
+  let askedPin = false
+  if (isPublic && !isBackgroundRedrive && pinAskOwed(fresh)) {
+    const pc = buildPromptContext(fresh, events)
+    askedPin = !pc.missingMandatory.length && !pc.missingCritical.length
+      && !(consentManaged() && await consentState(store, contact.id, { caseId: fresh.id }) !== 'agreed')
+  }
   const turn = await runAgentTurn({
     store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
     channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend, ingressRecorded,
   })
   const { result, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason } = turn
+  // A case with a place on it always gets a pin and a confidence (pin-estimate.js): when the agent did not give one, one narrow
+  // call does, off the reply's path. A real or confirmed pin is never touched.
+  if (askedPin && String(turn.text || '').trim()) await store.updateCaseChecked(fresh.id, { pin_ask: pinAskValue(fresh) }).catch(() => {})
+  if (!isBackgroundRedrive && isPublic) void ensurePin({ store, callLLM, log, caseId: turn.activeCase?.id || fresh.id })
   let text = turn.text
 
   // Re-read the case after the agent turn: the agent may have completed intake

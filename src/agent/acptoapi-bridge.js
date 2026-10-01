@@ -18,6 +18,19 @@ const REACHABILITY_PROBE_CHAIN_LINK_CAP = 3
 // the ceiling WAIT their turn here, in order, instead of being refused and retried (a refused hop became an empty
 // reply, then a whole repeated agent turn). CASEY_LLM_CONCURRENCY=0 turns the ceiling off.
 const LLM_CONCURRENCY = process.env.CASEY_LLM_CONCURRENCY != null ? Math.max(0, Number(process.env.CASEY_LLM_CONCURRENCY) || 0) : 4
+// CASEY_LLM_REQUIRE_MODEL pins the one model this deployment may run on (e.g. hf:deepseek-ai/DeepSeek-V4.1-Flash). The
+// chain must resolve to exactly that link (checked in resolveChainLinks) and every reply must report that link as the
+// one that served it (checked here): a reply from anything else is refused, never used.
+const bareModel = (m) => String(m || '').replace(/^synthetic\//, '').trim().toLowerCase()
+export const requiredModel = () => bareModel(process.env.CASEY_LLM_REQUIRE_MODEL)
+function assertServedBy(r) {
+  const want = requiredModel()
+  if (!want || !r || typeof r !== 'object') return r
+  const served = (Array.isArray(r.__chainAttempted) ? r.__chainAttempted.filter(a => a?.ok) : []).map(a => bareModel(a.model))
+  if (served.length && served.every(m => m === want)) return r
+  if (!served.length && !Array.isArray(r.__chainAttempted)) return r   // a direct (non-chain) call carries no attempt list; the link check at resolve time covers it
+  throw new Error(`model guard: CASEY_LLM_REQUIRE_MODEL=${want} but the reply was served by ${served.join(', ') || 'no successful link'}; refused`)
+}
 let _inFlight = 0
 const _waiting = []
 async function withSlot(fn) {
@@ -30,7 +43,7 @@ function limitConcurrency(acptoapi) {
   for (const name of ['chat', 'chatChain']) {
     const orig = acptoapi[name]
     if (typeof orig !== 'function') continue
-    try { acptoapi[name] = (...args) => withSlot(() => orig.apply(acptoapi, args)) } catch { /* a frozen export is left as it was */ }
+    try { acptoapi[name] = (...args) => withSlot(async () => assertServedBy(await orig.apply(acptoapi, args))) } catch { /* a frozen export is left as it was */ }
   }
   try { acptoapi.__casey_limited = true } catch { /* none */ }
 }
@@ -99,6 +112,11 @@ export function isConfiguredChainSyntax(model) {
 // queue/ and chain/ strings and 'auto' cannot be checked before acptoapi expands
 // them, so 'auto' is expanded here and queue/chain names are refused.
 export async function resolveChainLinks(acptoapi, useModel) {
+  const want = requiredModel()
+  if (want) {
+    const only = bareModel(useModel)
+    if (only !== want || String(useModel).includes(',')) throw new Error(`model guard: CASEY_LLM_REQUIRE_MODEL=${want} but CASEY_LLM_MODEL resolves to "${useModel}"; refusing to run on anything else`)
+  }
   const mode = dataPolicyMode()
   if (mode !== 'allow' && typeof useModel === 'string' && (useModel.startsWith('queue/') || useModel.startsWith('chain/'))) {
     throw new Error(`CASEY_LLM_DATA_POLICY=${mode} cannot check the members of "${useModel}"; list the models explicitly in CASEY_LLM_MODEL`)

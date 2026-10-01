@@ -128,6 +128,9 @@ entities:
       lat:         { type: number }                  # site location for proximity (multi-site orgs); optional
       lon:         { type: number }
       location_source: { type: enum, options: [unset, gps, estimated, confirmed], default: unset }
+      location_confidence: { type: number }          # 0-100: how sure the pin is (gps 100; an agent's estimate from a place name carries its own figure). See src/pin-confidence.js.
+      location_basis: { type: text }                 # the place words (where; how to find it) the pin was worked out from; a change means the pin is redone.
+      pin_ask: { type: text }                        # JSON {basis, n}: how often the person was asked for a better location, and at which place words.
                                                      # provenance of lat/lon: gps = the contact read out exact
                                                      # coordinates; estimated = the agent's own best-effort guess
                                                      # from a place name, not yet confirmed back to the contact;

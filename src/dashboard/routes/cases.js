@@ -1419,7 +1419,7 @@ export function postLocation({ store, authed, actingOperator }) {
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
     const op = actingOperator(req)
-    await store.updateCase(c.id, { lat, lon, location_source: 'gps' }, op)
+    await store.updateCase(c.id, { lat, lon, location_source: 'gps', location_confidence: 100 }, op)
     await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'location marked from the field', data: { by: op.id, lat, lon } })
     res.json({ ok: true })
   }

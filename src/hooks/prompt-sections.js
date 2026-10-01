@@ -11,6 +11,7 @@
 // new conditional instruction that matters means adding both an input that
 // triggers it and its phrase to that guard, exactly as before.
 
+import { pinAskOwed } from '../pin-confidence.js'
 import { tsMs } from '../timestamp.js'
 import { LOCATION_STALE_MS, fenced } from './prompt-context.js'
 import { canQueryCases } from '../contact-tiers.js'
@@ -325,6 +326,8 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
       ? [`THE ONE QUESTION FOR THIS REPLY is the check described under CHECK BEFORE RECORDING below, and nothing else: ask no other question and do not ask about the ${persona.entitySubjectPlural} yet.`, ``]
       : stillNeeded.length
         ? [`THE ONE QUESTION FOR THIS REPLY: ask about ${stillNeeded[0]}${stillNeeded[1] ? ` (and ${stillNeeded[1]} only if it fits the same short sentence naturally)` : ''}, and nothing else. One question mark in the whole reply. Never ask about anything already recorded above, and never ask again what your last message asked: if they have not answered it, acknowledge what they did say and move on.`, ``]
+        : pinAskOwed(caseRow)
+        ? [`THE ONE QUESTION FOR THIS REPLY: the place is only roughly known, so the pin on the map is a guess (${caseRow.lat != null ? `${Math.round(Number(caseRow.location_confidence) || 0)}% sure` : 'none yet'}). Ask for ONE better detail in a short natural sentence: the nearest town or village, a landmark, the road, or the farm or dip tank name, or suggest sharing a WhatsApp location pin from where the animals are. When they answer, call case_report with the place written out in full (what they said before AND the new detail) as location, so the pin is worked out again from all of it. One question mark in the whole reply.`, ``]
         : [`THE ONE QUESTION FOR THIS REPLY: nothing is still needed, so ask no question; acknowledge them warmly and, if it fits, invite a report about other animals or another place.`, ``]),
     // PROGRESS IN EVERY REPLY (the team's request) is composed by its own step after the
     // turn (src/progress-line.js), rendered in code from the record, because a

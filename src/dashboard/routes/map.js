@@ -49,6 +49,8 @@ export function mapCaseProjection(c, report, clusterIndex, name = (v) => v) {
     // distinctly so an operator never mistakes a still-unconfirmed guess
     // for a surveyed exact position.
     location_source: c.location_source || 'unset',
+    // 0-100, how sure the pin is (gps 100, an estimate carries its own figure); null on a case that pre-dates it.
+    location_confidence: Number.isFinite(Number(c.location_confidence)) && c.location_confidence != null ? Number(c.location_confidence) : null,
   }
 }
 
