@@ -20,6 +20,16 @@ supposed to look like once the code moves on.
   person behaves as before. See AGENTS.md, "Several people on one phone".
 
 ### Fixed
+- **The bootstrap admin password is no longer printed to the log.** On a fresh
+  deployment `ensureBootstrapAdmin()` printed the generated admin password to
+  stdout, which on the production VM is `/var/log/uhh/uhh.log`, tailed by the
+  Google Cloud Ops Agent and shipped to Cloud Logging -- so a live admin
+  credential landed in a log store readable by anyone with log-reader access.
+  The password is now written to a root-only file (`bootstrap-admin-password.txt`,
+  mode 0600) in the store's data directory and only its PATH is printed; both
+  boot paths (`bin/casey-serve.js`, `bin/worker-dashboard.js`) and the
+  `auth.js` warn line carry the path, never the password. The account is still
+  created once on first boot only, with a forced password change.
 - **Two reply-judge shapes for a returning number: a dropped report and a stale consent ask.**
   Witnessed live on WhatsApp: a person wrote "we have 4 stray dogs that look very ill they're all
   covulsing, you can contact us at the office at <url>", the model called no tool, and the reply

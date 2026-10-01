@@ -225,7 +225,7 @@ export async function cmdDashboard({ flags }) {
   const store = createCaseStore(); await store.init()
   const { ensureBootstrapAdmin } = await import('../src/dashboard/auth.js')
   const boot = await ensureBootstrapAdmin(store, console)
-  if (boot) console.log(green(`bootstrap admin account created -- username: ${bold(boot.username)}  password: ${bold(boot.password)}`) + dim('  (log in once and create named accounts for your team)'))
+  if (boot) console.log(green(`bootstrap admin account created -- username: ${bold(boot.username)}`) + dim(`  password written to ${boot.passwordPath} (read it once, log in, set your own password, then delete that file)`))
   let dash
   try {
     dash = await createDashboard(store, { port: Number(flags.port || 4000) })

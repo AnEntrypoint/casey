@@ -13,11 +13,15 @@
 // Bootstrap: a fresh deployment has no accounts, so nobody could ever log in.
 // ensureBootstrapAdmin() creates a single 'admin' account with a random
 // password on first boot ONLY (never overwrites an existing account), and
-// prints it once to the server log -- the same "admin sets it up, team then
+// writes the password to a root-only file in the store's data directory
+// (mode 0600) whose PATH -- never the password -- is printed to the log, so
+// the credential reaches no log store; the same "admin sets it up, team then
 // self-serves" shape the CLI's `casey operators` commands extend for
 // break-glass recovery.
 
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
 import { normalizeMsisdn } from '../role-invites.js'
 import { ACCOUNT_ROLES } from './roles.js'
 import { UNCLAIMED_ASSIGNEE } from '../case-store.js'
@@ -265,18 +269,40 @@ export async function markLogin(store, id, { now = Date.now() } = {}) {
   return store.t.update('operator_account', id, { last_login_at: new Date(now).toISOString() }, SYSTEM)
 }
 
+// The password file is the ONE channel the generated bootstrap password leaves
+// this process by -- never stdout/stderr and never a log line. Mode 0600 makes
+// it readable by the account casey runs as (root on the production VM) and by
+// no other user, however the log store is configured.
+function writeBootstrapPasswordFile(store, password) {
+  const dataDir = store.dataDir
+  fs.mkdirSync(dataDir, { recursive: true })
+  const file = path.join(dataDir, 'bootstrap-admin-password.txt')
+  fs.writeFileSync(file, password + '\n', { mode: 0o600 })
+  fs.chmodSync(file, 0o600)
+  return file
+}
+
 // Only ever called at boot with no existing accounts -- never overwrites.
 export async function ensureBootstrapAdmin(store, log = console) {
   const existing = await store.t.list('operator_account', {}, { limit: 1 })
   if (existing.length) return null
-  const password = randomHex(6) // 12 hex chars, printed once -- easy to read off a terminal
-  // Forced from the start: a printed random password must not persist
-  // indefinitely as a standing credential. must_change_password gates every
-  // other route (server.js) until the admin sets their own password via
-  // changePassword(), a one-time flow cleared on success.
-  await createAccount(store, { username: 'admin', password, displayName: 'Admin', role: 'admin', mustChangePassword: true })
+  const password = randomHex(6) // 12 hex chars, read once from the file below
+  const passwordPath = writeBootstrapPasswordFile(store, password)
+  try {
+    // Forced from the start: a generated password must not persist
+    // indefinitely as a standing credential. must_change_password gates every
+    // other route (server.js) until the admin sets their own password via
+    // changePassword(), a one-time flow cleared on success.
+    await createAccount(store, { username: 'admin', password, displayName: 'Admin', role: 'admin', mustChangePassword: true })
+  } catch (e) {
+    // No account was created, so nothing can use this password; remove it
+    // rather than leave a live credential in the data directory.
+    try { fs.rmSync(passwordPath, { force: true }) } catch { /* the account never existed, so the file is inert */ }
+    throw e
+  }
   log?.warn?.('[casey] no operator accounts found -- created bootstrap admin account', {
-    username: 'admin', password, note: 'log in once -- you will be required to set your own password before doing anything else',
+    username: 'admin', password_file: passwordPath,
+    note: 'read the password from that file once, log in, set your own password, then delete the file',
   })
-  return { username: 'admin', password }
+  return { username: 'admin', passwordPath }
 }

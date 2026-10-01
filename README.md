@@ -154,7 +154,9 @@ Then open the dashboard URL it printed (default `http://localhost:4000`). `casey
 `doctor` flags partial WhatsApp credentials, a missing `thatcher.config.yml`, an unusable
 `ACPTOAPI_CHAIN_LINK_TIMEOUT_MS`, dirty or off-`main` submodules and a held port instead of
 failing silently. The dashboard uses per-operator login, not a shared token; a fresh deployment
-auto-creates one admin account on first boot and prints its password once.
+auto-creates one admin account on first boot and writes its password to a root-only file in the
+data directory, printing only the path (never the password, which would otherwise land in the
+service log and any log store it is shipped to).
 casey needs at least one real channel (Discord or WhatsApp) configured in `.env` before `casey up`
 will start -- there is no offline demo mode.
 
@@ -284,7 +286,7 @@ AGENTS.md "Supervised runtime" for the full env-var set.
 | `CASEY_WHATSAPP_MAX_AGE_HOURS`, `WHATSAPP_GRAPH_API`, `WHATSAPP_GRAPH_VERSION`, `CASEY_DOCTOR_OFFLINE` | Replay window for signed inbound (default 168h), Graph base URL/version override, and skipping doctor's network rows. |
 | `WHATSAPP_WEBHOOK_PATH` | Path Meta POSTs to (default `/webhooks/whatsapp`). Served on BOTH ports below, so it is the same path either way. There is no `WHATSAPP_WEBHOOK_PORT`. |
 | `CASEY_WEBHOOK_HOST`, `CASEY_WEBHOOK_PORT` | Host/port of the freddie-tree web server carrying that webhook (default `127.0.0.1:4001`) -- a different socket from the dashboard's 4000, because `bin/worker.js` boots the freddie tree first and sharing a port costs the dashboard EADDRINUSE. **Either port is a valid callback URL to publish to Meta:** the same webhook is also served on the dashboard's `--port`, off the same adapter and the same handler, so a deployment behind a reverse proxy that forwards only one port (the dashboard's, since that is where the SPA and `/api/*` live) publishes that one and needs no extra plumbing. No env var switches it on. Meta needs a stable public URL for whichever you publish; use a tunnel in dev. |
-| `CASEY_SESSION_SECRET` | HMAC key signing the dashboard session cookie. The dashboard uses per-operator username/password login (no bearer token, no `?token=`); a fresh deployment with zero accounts auto-creates one admin with a random printed password. Random per process when unset, so a restart logs everyone out -- set it explicitly for sessions to survive a restart. |
+| `CASEY_SESSION_SECRET` | HMAC key signing the dashboard session cookie. The dashboard uses per-operator username/password login (no bearer token, no `?token=`); a fresh deployment with zero accounts auto-creates one admin and writes a random password to a root-only file in the data directory, printing only its path. Random per process when unset, so a restart logs everyone out -- set it explicitly for sessions to survive a restart. |
 | `CASEY_COOKIE_SECURE=0` | Drop the `Secure` flag on the session cookie for a plain-HTTP dev/LAN deployment (Secure is on by default). |
 | `CASEY_TRANSCRIBE_VOICE_NOTES=0` | Opt-OUT of voice-note transcription, which is on by default whenever `OPENAI_API_KEY` (Whisper) or `OPENROUTER_API_KEY` (transcription model, `CASEY_TRANSCRIBE_MODEL`, default chain `google/gemini-3.5-transcribe,openai/whisper-large-v3` on OpenRouter's /audio/transcriptions) exists. The audio bytes go to that external API. The voice note itself is always saved under `media/<case>/`; the transcript (or the reason there is none) lands on the case timeline. |
 | `CASEY_DESCRIBE_PHOTOS=1` | Opt-in: describe an inbound photo (visible detail relevant to the active domain's report fields) into the case (needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). Off by default (external data egress). |
