@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-// check-submodules.mjs -- read-only health check for the deps/* AnEntrypoint
-// submodules (freddie, thatcher, acptoapi, design). Each checkout must track
-// a real branch named "main", never a detached commit -- see AGENTS.md's
-// "Supply-chain integrity" section for why (a detached submodule is how the
-// 2026-08 thatcher HiddenSpawn incident's compromised commit went unnoticed).
-// This script never mutates git state; it only reports. Run via
-// `npm run check-submodules` or as part of `casey doctor`.
 
 import { readFileSync, existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'

@@ -1,15 +1,5 @@
-// install-freddie-deps.mjs -- runs `pnpm install` inside deps/freddie so its
-// ~220-package pnpm workspace (workspace:^ cross-deps npm cannot resolve at
-// all) has each package's own node_modules correctly linked before
-// scripts/link-deps.mjs symlinks each @freddie/* package into casey's own
-// node_modules. See link-deps.mjs's own header comment for the full
-// resolution-strategy rationale.
-//
-// Degrades to a loud warning (never a hard failure) when the submodule isn't
-// checked out or pnpm isn't installed -- matches this repo's existing
-// postinstall discipline (scan-deps.mjs's `|| true`), since a bare clone
-// with no deps/freddie yet, or a machine without pnpm, should not block
-// `npm install` for the rest of the repo.
+
+
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'

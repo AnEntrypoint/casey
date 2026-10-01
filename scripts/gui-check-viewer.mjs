@@ -1,17 +1,5 @@
-// gui-check-viewer.mjs -- the read-only `viewer` role's checks, called from
-// scripts/gui-check.mjs (or alone with GUI_CHECK_ONLY=viewer) against the same
-// scratch store and dashboard. Everything runs against the real server and the
-// real rendered DOM:
-//   1. role x route matrix: a viewer gets 403 (404 for /media) on every case,
-//      contact, account, team, map, export and media route, in every spelling
-//      tried (/API capitalisation, trailing slash, dot segments, encoded dots),
-//      and 200 on exactly the aggregate routes it is meant to have.
-//   2. PII scan: every payload a viewer can fetch is searched for each
-//      reference, id, subject, contact name, phone number, login and free-text
-//      marker the store holds, and for phone-like digit runs.
-//   3. the screen: a 300-report store, dots on the map, region filter, play,
-//      heat, word cloud, export, both themes against axe, a phone width.
-//   4. a 300-report performance budget on the four aggregate routes.
+
+
 import http from 'node:http'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -26,7 +14,6 @@ const ALLOWED = [
   '/api/reports/diseases?from=2026-01-01&to=2026-06-30',
 ]
 
-// The words a viewer must never be shown: every value the store holds that names or locates a person.
 async function forbiddenValues(store) {
   const out = new Set()
   const add = (v) => { const s = String(v == null ? '' : v).trim(); if (s.length >= 4) out.add(s) }
@@ -40,7 +27,6 @@ async function forbiddenValues(store) {
   return [...out]
 }
 
-// A phone-like run in any STRING of the payload (JSON numbers are counts and coordinates, not text).
 const PHONE = /(?<![\d.])(\+?27|0)[\s-]?\d{2}[\s-]?\d{3}[\s-]?\d{4}(?!\d)|\d{8,}/
 function stringsOf(v, out = []) {
   if (typeof v === 'string') out.push(v)
@@ -63,7 +49,7 @@ function rawRequest(port, method, path, cookie) {
 
 export async function runViewerChecks(c) {
   const { check, evalJs, asUser, axeBoth, viewport, sleep, clickText, store, PORT, USER, PW, ids, archive, seenConsole, seenFailed, bodyText, send } = c
-  // GUI_CHECK_SHOTS=<dir> saves a screenshot at the main viewer states, for a human to look at.
+
   const shot = async (name) => {
     if (!process.env.GUI_CHECK_SHOTS) return
     mkdirSync(process.env.GUI_CHECK_SHOTS, { recursive: true })
@@ -74,7 +60,7 @@ export async function runViewerChecks(c) {
   console.log('\nviewer: seed 300 reports (diseases, species, areas, dates, stages)')
   const t0 = Date.now()
   const made = await seedResolved(store, { n: 300 })
-  // One report a technician typed a name and a number into: the label must reach a viewer as neither.
+
   const { case: odd } = await store.findOrCreateCase({ channel: 'whatsapp', external_id: '27790009999', contact: { name: 'Odd Farmer', phone: '27790009999' }, subject: 'Odd report' })
   await store.mergeReport(odd.id, { species: 'cattle', symptoms: 'x', location: 'y', association: 'Upper Lambasi' }, { id: 'seed', role: 'agent' })
   await store.updateCase(odd.id, { lat: -31.55, lon: 29.35 }, { id: 'casey-system', role: 'admin' })
@@ -82,7 +68,6 @@ export async function runViewerChecks(c) {
   for (const to of ['triaging', 'in_progress', 'resolved']) await store.transition(odd.id, to, { user: { id: 'casey-system', role: 'admin' }, reason: 'seed' })
   check(made.resolved > 100 && made.open > 50, 'seeded a spread of stages', `${JSON.stringify(made)} in ${Date.now() - t0}ms`)
 
-  // ---- 1. role x route matrix (as the viewer, in the browser, then raw for the spellings a browser normalises away)
   console.log('\nviewer: role x route matrix')
   check(resolveRole('viewer') === 'viewer' && ['wizard', 'Viewer', 'VIEWER', ' viewer', '', null, undefined, 'viewer,admin'].every((v) => resolveRole(v) === 'eco_ranger'), 'only the exact name viewer resolves to viewer; a forged, cased, blank or missing role resolves to least privilege (eco_ranger), never to viewer or staff', ACCOUNT_ROLES.join(','))
   check(isViewer({ role: 'viewer' }) && !isViewer({ role: 'Viewer' }) && !isViewer({ role: 'admin' }) && !isViewer(null), 'isViewer is an exact-name test')
@@ -126,7 +111,7 @@ export async function runViewerChecks(c) {
   for (const [m, p] of DENY) {
     const r = await rawRequest(PORT, m, p, cookie)
     seen[m + ' ' + p] = r.status
-    // 403 from the viewer gate. 404 is the fail-closed answer for a path no route serves; anything 2xx/3xx/5xx is a hole.
+
     if (!(r.status === 403 || r.status === 404) || /"(ref|external_id|subject)"/.test(r.body)) wrong.push(`${m} ${p} -> ${r.status}`)
   }
   for (const p of MEDIA) {
@@ -143,13 +128,12 @@ export async function runViewerChecks(c) {
   const okRows = []
   for (const p of ALLOWED) { const r = await rawRequest(PORT, 'GET', p, cookie); okRows.push([p, r.status]) }
   check(okRows.every(([, s]) => s === 200), 'the aggregate routes answer 200 for a viewer', okRows.map(([p, s]) => s + ' ' + p.replace('/api/', '')).join(' | ').slice(0, 300))
-  // A forged/unknown role resolves to least privilege, never to viewer power or staff power.
+
   const who = JSON.parse((await rawRequest(PORT, 'GET', '/api/whoami', cookie)).body)
   check(who.role === 'viewer', 'whoami reports the role viewer', JSON.stringify(who))
   console.log('  matrix (method path -> status), witnessed:')
   for (const [k, v] of Object.entries(seen).slice(0, 200)) console.log('    ' + String(v).padEnd(4) + k.slice(0, 90))
 
-  // ---- 2. PII scan of every payload a viewer can fetch
   console.log('\nviewer: PII scan of every payload')
   const bad = [], sizes = []
   const forbidden = await forbiddenValues(store)
@@ -160,7 +144,7 @@ export async function runViewerChecks(c) {
     payloads.push([p, r.body]); sizes.push(r.body.length)
     for (const f of forbidden) if (r.body.includes(f)) bad.push(`${p} contains "${f.slice(0, 30)}"`)
     if (p === '/api/reports/export.csv') { if (PHONE.test(r.body)) bad.push(p + ' has a phone-like run') } else {
-      let j = null; try { j = JSON.parse(r.body) } catch { /* csv / 400 */ }
+      let j = null; try { j = JSON.parse(r.body) } catch {  }
       if (j) for (const s of stringsOf(j)) if (PHONE.test(s)) bad.push(`${p} string "${s.slice(0, 30)}" is phone-like`)
     }
   }
@@ -174,7 +158,7 @@ export async function runViewerChecks(c) {
   check(!map.points.some((p) => /Dlamini|0821/.test(p.disease)) && map.points.some((p) => p.disease === 'Other (rare)'), 'a disease label with a name and number typed into it is stripped of the number and shown as "Other (rare)"', [...new Set(map.points.map((p) => p.disease))].join(', ').slice(0, 200))
   const dis = JSON.parse(payloads.find(([p]) => p === '/api/reports/diseases')[1])
   const cells = dis.cells.concat(dis.by_disease, dis.by_region, dis.by_month, dis.by_disease_month, dis.by_disease_region, dis.by_species)
-  // privacy.js exempts exactly one thing: a single-dimension 'unknown' group (it names nothing to fold away).
+
   const under = cells.filter((x) => x.count < dis.k)
   check(cells.length > 10 && under.every((x) => x.region === 'unknown' && Object.keys(x).length === 2), `every released group has at least ${dis.k} cases (only the by-area "area not stated" line may be smaller)`, `${cells.length} groups; under the floor: ${JSON.stringify(under)}`)
   const heat = JSON.parse(payloads.find(([p]) => p === '/api/reports/heat')[1])
@@ -185,7 +169,6 @@ export async function runViewerChecks(c) {
   const closedNoDx = (await store.listCases({}, { limit: 10000 })).filter((x) => x.status === 'closed' && !/identified_disease/.test(x.report || '')).length
   check(map.count + map.without_location === signed && closedNoDx > 0, 'the resolved map holds exactly the signed-off cases (closed-without-diagnosis and open ones are absent)', `${map.count} + ${map.without_location} no-location = ${signed} signed off; ${closedNoDx} closed without a diagnosis left off`)
 
-  // ---- 4. performance budget at 300 reports
   console.log('\nviewer: performance at ' + (await store.listCases({}, { limit: 10000 })).length + ' reports')
   for (const p of ['/api/reports/resolved-map', '/api/reports/diseases', '/api/reports/heat', '/api/reports/heat?scope=all', '/api/reports/export.csv']) {
     await rawRequest(PORT, 'GET', p, cookie)
@@ -195,7 +178,6 @@ export async function runViewerChecks(c) {
     check(med <= 400, `${p} answers inside its budget (median of 5 <= 400 ms)`, med + ' ms')
   }
 
-  // ---- 3. the screen
   console.log('\nviewer: home screen (desktop)')
   await asUser('-vw', '', 6000)
   await sleep(1500)

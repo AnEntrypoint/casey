@@ -1,13 +1,5 @@
-// gui-check-vocab-server.mjs -- the second dashboard process scripts/gui-check-vocab.mjs drives.
-//
-// Config is read once per process, so a config with fields hidden needs its own process. This boots the
-// REAL dashboard (real Express app, real sqlite store in its own scratch directory) against a config dir
-// the check prepared, seeds the accounts and reports the check asserts on, and prints one `SEED {json}`
-// line. The only substitute is at the server boundary the route documents: the `callLLM` handed to
-// createDashboard is a recorder that answers with a fixed JSON reply and appends each request it received
-// to a file, so the check can read exactly what would have been sent to a model. It reaches no provider.
-//
-// argv: port workdir configDir callsFile     env: GUI_PW (password for every account)
+
+
 import { appendFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -66,15 +58,12 @@ const t4 = await mkcase('27800200004', 'Vocab one-off inbounds', full, 'vadm')
 seed.t4 = { id: t4.id, ref: t4.ref, inbound: [] }
 for (let i = 0; i < 12; i++) seed.t4.inbound.push((await ev(t4, 'inbound', 'contact', 'Molo ' + i)).id)
 
-// A complete report a technician can open, and one the ranger can only look at.
 const t5 = await mkcase('27800200005', 'Vocab technician', { ...full, identifying_traits: 'grey goat' }, 'vaht')
 seed.t5 = { id: t5.id, ref: t5.ref, inbound: (await ev(t5, 'inbound', 'contact', 'Inkomo yam iyagula.')).id }
 
-// Complete and held by nobody: on the technician's sign-off desk, so they may LOOK at it but not change it.
 const t6 = await mkcase('27800200006', 'Vocab sign-off desk', full, '')
 seed.t6 = { id: t6.id, ref: t6.ref, inbound: (await ev(t6, 'inbound', 'contact', 'Izimvu zami zife.')).id }
 
-// The stand-in for the model. Records every request; answers as the real reply is shaped.
 const callLLM = async (req) => {
   appendFileSync(callsFile, JSON.stringify({ model: req.model, messages: req.messages, max_tokens: req.max_tokens }) + '\n')
   const text = String(req.messages[1].content).replace(/^<<MESSAGE>>/, '').replace(/<<END>>$/, '')
