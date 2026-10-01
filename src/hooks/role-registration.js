@@ -1,23 +1,9 @@
-// hooks/role-registration.js -- the deterministic pre-agent intercept that turns
-// a one-time invite code (src/role-invites.js) into a role for the sender's own
-// phone number.
-//
-// It runs in hooks/inbound-turn.js AFTER admission and BEFORE any case is opened
-// or any agent turn starts, and it only ever fires for a message that is nothing
-// but a code (extractCode is strict). So the model never sees a code, cannot
-// decide the outcome, and cannot be argued into a promotion; a failed guess opens
-// no case and leaves no report row behind. The reply is fixed text, sent through
-// the adapter directly -- the same reason the guaranteed fallback is fixed text.
-//
-// Every outcome is audited on the role-invites singleton log (claim on success;
-// a failed attempt is counted in memory and rate-limited, and noted).
+
 
 import { extractCode, claimInvite, attemptsExhausted, noteFailedAttempt, withoutIssuedCodes, issuedLooseCode } from '../role-invites.js'
 import { TIER_LABELS } from '../store/report-shape.js'
 import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR, tierLabel } from '../contact-tiers.js'
 
-// What each role can now do, in plain words a first-time user can act on. Fixed
-// text on purpose: this is the moment a person learns what their phone is for.
 const WELCOME = {
   [TIER_FIELD_WORKER]: (label) => `You are registered as ${label}. Message me the way you already do: describe what you see (animal, how many, where, what is wrong) and send photos or a voice note. Ask "my cases" or "what is open near me" any time. I will also record where you are if you share a location pin.`,
   [TIER_ANIMAL_HEALTH_TECHNICIAN]: (label) => `You are registered as ${label}. You can see and update your cases here, and you are the one who signs a case off as resolved once help has been given -- tell me when a case is done and I will check the record is complete first. Ask "my cases" or "waiting for sign off" any time.`,
@@ -34,8 +20,6 @@ const REFUSAL = {
   alone: 'That message has a registration code in it, so it was not used. To register, send the code on its own, with nothing else in the message.',
 }
 
-// Returns the handled-result object for runInboundTurn to return, or null when
-// the message is not a code (the normal turn then proceeds untouched).
 export async function tryRegisterByCode({ store, log, adapter, msg, channel, external_id, replyTo, platform, labels = TIER_LABELS }) {
   let code = extractCode(msg?.text)
   if (!code) { try { code = await issuedLooseCode(store, msg?.text) } catch { code = null } }
@@ -45,10 +29,7 @@ export async function tryRegisterByCode({ store, log, adapter, msg, channel, ext
     return { ...reply, registration: true }
   }
   if (!code) {
-    // A live code inside a longer message registers nobody, and must not be kept:
-    // the text would land on a public timeline and in front of the model. Strip it;
-    // a short message that was only an attempt at registering gets one plain hint
-    // instead of an agent turn that would answer as if it were a report.
+
     let stripped = null
     try { stripped = await withoutIssuedCodes(store, msg?.text) } catch (e) { log.error?.('[casey] code redaction failed', { channel, error: e.message }) }
     if (stripped == null) return null

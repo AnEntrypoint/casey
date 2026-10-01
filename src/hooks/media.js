@@ -1,12 +1,4 @@
-// hooks/media.js -- casey's opt-in media enrichment pipeline (voice/photo/tts).
-//
-// SECURITY: every function here is dispatched DIRECTLY by casey's own
-// deterministic code. None of them is registered on freddie's ctx.tools or
-// named in the agent's enabledToolsets, so none is model-visible or
-// model-callable -- the guarantee holds with no allowlist dependency at all.
-// Do not expose any of them as a tool: freddie's ctx.tools is one global
-// registry (AGENTS.md, "Architecture"), so a registration here is reachable
-// from a contact-facing conversation.
+
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -16,15 +8,6 @@ import { fetchWithTimeout } from '../adapters/webhook-platform-base.js'
 import { transcribeLocal, localSttEnabled } from './local-stt.js'
 import { dataPolicyMode, openrouterProviderField, auditWrite } from '../llm-data-policy.js'
 
-// None of the three dispatchTool calls below carry any timeout of their own
-// (freddie's dispatch path and the bare fetch() calls beneath it are both
-// unbounded), and transcribeAudio/describePhoto run BEFORE turnStartedAt is
-// set (hooks/inbound-turn.js), so they sit entirely outside
-// CASEY_TURN_HARD_DEADLINE_MS -- a half-open connection to the transcription/
-// vision/tts provider would hang the whole inbound turn and the per-contact
-// concurrency gate forever. Bounded well under the 60s turn hard-deadline
-// (these three effectively steal from that same budget) so a stuck provider
-// still lets the turn's own retry/fallback machinery run with real time left.
 const MEDIA_TOOL_TIMEOUT_MS = Number(process.env.CASEY_MEDIA_TOOL_TIMEOUT_MS) || 12000
 
 function withTimeout(promise, ms) {
@@ -34,35 +17,8 @@ function withTimeout(promise, ms) {
   })
 }
 
-// Best-effort voice-note transcription, ON whenever a provider key exists (or the
-// offline local whisper fallback, hooks/local-stt.js, is installed: CASEY_LOCAL_STT=0 turns it off)
-// (CASEY_TRANSCRIBE_VOICE_NOTES=0 opts out -- it sends the audio bytes to an
-// external API). Provider order: OpenAI Whisper via src/agent/media-tools.js's
-// transcribe() when OPENAI_API_KEY is set, else an OpenRouter audio-capable
-// chat model (WhatsApp voice notes are ogg/opus, which it takes as-is), so the
-// deployment's one OPENROUTER_API_KEY is enough. Degrades to the operator-listens
-// fallback on any failure, and the failure REASON is returned rather than
-// swallowed, so the caller can log why a note has no transcript. The transcript
-// is an ENHANCEMENT to the recorded note, never something the reply depends on.
-// OpenRouter's dedicated /audio/transcriptions endpoint, tried in order. Chosen
-// 2026-09-28 from OpenRouter's live model list + each vendor's language table:
-// google/gemini-3.5-transcribe (~$0.003/min, 85+ languages incl. Afrikaans and
-// Swahili, code-switching) is the best fit for a South African deployment;
-// openai/whisper-large-v3 (~$0.0005/min, 99 languages) is the cheap second link.
-// No dedicated OpenRouter STT model lists isiXhosa or isiZulu (MAI-Transcribe-2
-// lacks even Afrikaans), so those are best-effort on either -- the note always
-// says the transcript is the AI helper's and may be wrong. Override the chain
-// with CASEY_TRANSCRIBE_MODEL (comma-separated).
 const OPENROUTER_TRANSCRIBE_MODELS = (process.env.CASEY_TRANSCRIBE_MODEL || 'google/gemini-3.5-transcribe,openai/whisper-large-v3').split(',').map(x => x.trim()).filter(Boolean)
 
-// DATA POLICY (CASEY_LLM_DATA_POLICY, src/llm-data-policy.js). OpenRouter's
-// /audio/transcriptions IGNORES the request's provider object (measured
-// 2026-09-29: a nonexistent provider.only still answered 200), so with the
-// policy on, no dedicated transcription model can be held to no-training and
-// none is used. Voice notes are transcribed instead through /chat/completions
-// with an audio-capable chat model, where provider.data_collection / zdr are
-// enforced (a nonexistent provider.only answers 404). CASEY_TRANSCRIBE_CHAT_MODEL
-// overrides the comma-separated chain.
 const OPENROUTER_TRANSCRIBE_CHAT_MODELS = (process.env.CASEY_TRANSCRIBE_CHAT_MODEL || 'google/gemini-2.5-flash,mistralai/voxtral-small-24b-2507').split(',').map(x => x.trim()).filter(Boolean)
 const NO_SPEECH = 'NO_SPEECH'
 
@@ -115,7 +71,6 @@ async function transcribeViaOpenrouterChat(buffer, mimeType, model, providerFiel
   return { text, error: '', served_by: j?.provider || null }
 }
 
-// Returns {text, provider, ms, error}. `text` is '' on any failure or opt-out.
 export async function transcribeAudioDetailed(buffer, mimeType) {
   const t0 = Date.now()
   if (process.env.CASEY_TRANSCRIBE_VOICE_NOTES === '0') return { text: '', provider: 'off', ms: 0, error: 'disabled (CASEY_TRANSCRIBE_VOICE_NOTES=0)' }
@@ -129,31 +84,31 @@ export async function transcribeAudioDetailed(buffer, mimeType) {
         const parsed = await withTimeout(transcribe({ file_path: tmpPath }), MEDIA_TOOL_TIMEOUT_MS)
         const text = typeof parsed?.text === 'string' ? parsed.text.trim() : ''
         if (text) return { text, provider: 'whisper', ms: Date.now() - t0, error: '' }
-      } finally { try { fs.unlinkSync(tmpPath) } catch { /* best effort cleanup */ } }
+      } finally { try { fs.unlinkSync(tmpPath) } catch {  } }
     }
     let last = { text: '', error: 'no transcription model configured', provider: 'none' }
     const mode = dataPolicyMode()
     const providerField = openrouterProviderField(mode)
     const chatPath = mode !== 'allow'
-    // No OpenRouter key and a local fallback switched on: skip the provider calls that cannot succeed.
+
     const models = (!openrouterKey() && localSttEnabled()) ? [] : (chatPath ? OPENROUTER_TRANSCRIBE_CHAT_MODELS : OPENROUTER_TRANSCRIBE_MODELS)
     for (const model of models) {
       let res
       try { res = chatPath ? await transcribeViaOpenrouterChat(buffer, mimeType, model, providerField) : await transcribeViaOpenrouter(buffer, mimeType, model) } catch (e) { res = { text: '', error: `${model}: ${String(e?.message || e)}` } }
       last = { ...res, provider: `openrouter:${model}` }
       auditWrite({ event: 'transcribe', policy: mode, endpoint: chatPath ? 'chat/completions' : 'audio/transcriptions', provider_field: providerField, model, ok: !!res.text, served_by: res.served_by || null })
-      // A model that heard nothing is an answer; a second model asked about the same silence tends to invent words.
+
       if (res.text || res.noSpeech) break
     }
     if (!last.text && !last.noSpeech && localSttEnabled()) {
-      // Offline fallback (hooks/local-stt.js): nothing leaves this machine, so the data policy does not apply.
+
       const local = await transcribeLocal(buffer, mimeType)
       if (local.text) return { ...local, ms: Date.now() - t0 }
       last = { ...last, error: [last.error, local.error].filter(Boolean).join('; ') }
     }
     return { ...last, ms: Date.now() - t0 }
   } catch (e) {
-    return { text: '', provider: 'error', ms: Date.now() - t0, error: String(e?.message || e) } // never blocks the reply path
+    return { text: '', provider: 'error', ms: Date.now() - t0, error: String(e?.message || e) }
   }
 }
 
@@ -161,14 +116,6 @@ export async function transcribeAudio(buffer, mimeType) {
   return (await transcribeAudioDetailed(buffer, mimeType)).text
 }
 
-// Best-effort photo description via src/agent/media-tools.js's describeImage()
-// (an acptoapi multimodal chat-completion passthrough) -- OPT-IN, same shape as
-// transcribeAudio above: degrades silently to the operator-opens-the-photo
-// fallback on any failure/absence. Passes the image as a base64 data: URI
-// (describeImage forwards image_url verbatim to acptoapi's multimodal chat)
-// rather than a file path -- no temp file, and no dependency on casey's own
-// /media static route being reachable from wherever acptoapi's provider call
-// actually executes.
 export async function describePhoto(buffer, mimeType) {
   if (process.env.CASEY_DESCRIBE_PHOTOS !== '1') return ''
   if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY) return ''
@@ -182,23 +129,14 @@ export async function describePhoto(buffer, mimeType) {
     }), MEDIA_TOOL_TIMEOUT_MS)
     return typeof parsed?.content === 'string' ? parsed.content.trim() : ''
   } catch {
-    return '' // best-effort only -- a vision-call failure never blocks the reply path
+    return ''
   }
 }
 
-// Best-effort voice REPLY via src/agent/media-tools.js's synthesizeSpeech() (an
-// acptoapi /v1/audio/speech passthrough) -- OPT-IN. It exists for the reporter
-// who can send a voice note but struggles to READ a text reply.
-// Called AFTER the degraded/blanked-reply gate in hooks/inbound-turn.js, so a turn
-// that correctly sent nothing never speaks -- keep the call site below that gate.
-// The audio is ADDITIVE -- the text always sends; a tts failure/absence degrades
-// silently to text-only and never blocks the reply path. Length is capped so a
-// long reply can't run up TTS cost/latency. Returns {data_base64, mime} for the
-// adapter's reply.audio field, or null.
 export async function synthesizeVoice(text) {
   if (process.env.CASEY_VOICE_REPLIES !== '1') return null
   if (!process.env.OPENAI_API_KEY && !process.env.ELEVENLABS_API_KEY) return null
-  // ElevenLabs has no no-training guarantee casey can check: with the data policy on it is not used.
+
   if (!process.env.OPENAI_API_KEY && dataPolicyMode() !== 'allow') return null
   const spoken = (text || '').trim()
   if (!spoken) return null
@@ -209,6 +147,6 @@ export async function synthesizeVoice(text) {
     if (!parsed?.audio_base64) return null
     return { data_base64: parsed.audio_base64, mime: parsed.contentType || 'audio/mpeg' }
   } catch {
-    return null // best-effort only -- a tts failure never blocks the text reply
+    return null
   }
 }

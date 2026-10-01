@@ -1,76 +1,5 @@
-// hooks/reply-judge.js -- real-LLM outbound-reply quality judge.
-//
-// USER DIRECTIVE: no deterministic text classification anywhere -- the LLM
-// is what interprets, judges, and responds. USER DIRECTIVE: cost is not a
-// constraint here -- one extra real LLM round-trip per turn, deliberately,
-// for flawless operation over a cheaper-but-blind heuristic.
-//
-// Distinct from the main conversational turn: this call carries NO tools and a
-// fixed, narrow judging prompt -- it exists only to classify the
-// ALREADY-COMPOSED reply text, never to compose or edit it. The only case
-// context it carries is structural and label-only: whether a write landed this
-// turn, and WHICH report fields are recorded and which are blank, by display
-// label. Never a recorded value, never the report itself.
 
-// judgeReply(callLLM, replyText, { lastOutboundText, hadSuccessfulWrite,
-// latestInbound, missingFacts, knownFacts }) ->
-// real LLM verdict. Returns { clean: boolean, reasons: string[], category:
-// 'jargon'|'other'|null }. clean:false means the reply must not be sent as-
-// is. category:'jargon' is the shape with the most mechanical fix -- real
-// content that just needs one internal word said in plain language -- so
-// turn-attempts.js RETRIES it with the offending words named back to the model,
-// and only a retry-budget-exhausted leak reaches turn-outcome.js's DRAFT hold
-// for a human to reword. Every other shape is category:'other'.
-//
-// The SHAPE HEADING WORDS below are a wire protocol, not prose: turn-attempts.js
-// routes a category:'jargon' verdict by category and a category:'other' verdict
-// by regex over `reasons` -- 'jargon' retries then holds as a draft,
-// /false.?confirm|claims?.*record/ retries then holds as a draft,
-// /farewell.?gap/ retries with the last-chance push restated then SENDS ANYWAY,
-// /repeat.?ask/ retries then SENDS ANYWAY,
-// /repeated|echo|stock|meta.?commentary|planning narration/ retries then BLANKS
-// the reply, /multi.?ask|wall of text/ retries then SENDS ANYWAY,
-// /advice.?given/ retries then HOLDS the reply for a human (advice is worse than silence),
-// /promise.?made|wrong.?language|safety.?line.?missing/ retry then SEND ANYWAY,
-// /consent.?reask|not.?recorded/ retry then SEND ANYWAY, and
-// anything matching neither (TOOL REFUSAL) is sent as-is. Renaming a heading
-// here silently reroutes that reply to the send-anyway branch.
-//
-// EVERY ROUTE MUST MATCH A COINED TOKEN, never ordinary English. `farewell-gap`,
-// `repeat-ask` and `multi-ask` are words no judge writes by accident; a route
-// keyed on a phrase like "already recorded" or "already asked" instead catches a
-// STOCK ACK or a REPEATED REPLY whose reason happens to contain it and sends a
-// reply that should have been blanked, retried under a diagnosis that misnames
-// the fault. The two send-anyway shapes are still ORDERED ahead of the blanking
-// one, because a judge writing "repeated ask" in prose would otherwise be blanked
-// -- silence on a real message, for a reply that does answer the person.
-//
-// missingFacts (plain field LABELS, computed by the caller from the live report
-// via prompt-context.js's missingMandatory/missingCritical, mandatory first)
-// is the same class of input as hadSuccessfulWrite: a structural system fact
-// handed to the judge, never a text classification. knownFacts is its
-// complement -- the labels already recorded. Both exist because two of the
-// shapes below are about the reply's relationship to the RECORD, which no
-// amount of reading the reply's own words can establish.
-//
-// latestInbound (the contact's current message text) lets the judge apply
-// REPEATED REPLY only when the latest message actually called for a fresh
-// answer. It must be passed: without it a content-free "hi again" mid-intake
-// makes a correct warm re-ask of still-missing facts read as "repeated", and
-// the shape blanks the reply on every one of turn-attempts.js's
-// MAX_TOOL_CHOICE_ATTEMPTS (3) attempts, so the contact gets the terminal
-// fallback despite a healthy model.
-//
-// hadSuccessfulWrite (boolean, computed by the caller from this turn's real
-// tool-call results -- turn-results.js's hadSuccessfulWrite(result)) tells
-// the judge whether a case_report/case_update actually succeeded THIS turn,
-// so it can catch the "fail-plausible" shape: a reply confidently saying
-// "recorded"/"noted"/"got it" when nothing was actually written. This is
-// STILL judged by the LLM, not a new regex -- only the true/false fact of
-// "did a write land" is computed deterministically (that's a structural
-// fact about tool-call results, not text classification), the judgment of
-// whether the REPLY'S WORDS claim a write happened is the model's job, same
-// as every other shape here.
+
 export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [], consentOwed = false, consentAgreed = false, clarifyOwed = false, recordedLanguage = '' } = {}) {
   if (!replyText || !String(replyText).trim()) return { clean: true, reasons: [], category: null }
   if (typeof callLLM !== 'function') return { clean: true, reasons: [], category: null }
@@ -105,9 +34,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   TO the person (e.g. "I will reply warmly and ask about the location",`,
     `   "Now I'll wait for their reply", "I've asked one gentle question" --`,
     `   narration about the reply, not the reply itself).`,
-    // Shape 6 (internal jargon words) and shape 7 (more than one question) are decided in CODE
-    // (plain-text.js jargonIn / singleAsk), never asked of this model: a literal word list and a
-    // question-mark count do not need a classifier, and this one misfired on both.
+
     hadSuccessfulWrite === false ? [
       `8. FALSE CONFIRMATION: NO field/report/detail was actually recorded this`,
       `   turn (a system fact, given to you directly -- trust it over the reply's`,
@@ -120,21 +47,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   or genuinely does not touch on recording at all, is fine regardless of`,
       `   this fact.`,
     ].join('\n') : null,
-    // The ONE reply rule the prompt states most emphatically and that had no
-    // gate behind it at all: the on-site last-chance push. Live, twice in a row,
-    // a farewell on a report missing visit-critical facts came back as a warm
-    // send-off asking for none of them -- and nothing caught it, because the
-    // reply IS warm, IS on topic, IS a genuine message to the person, and
-    // therefore CLEAN under every shape above. The prompt already names the
-    // exact missing fields (prompt-sections.js's LAST-CHANCE PUSH / MANDATORY
-    // MINIMUM lines, from prompt-context.js's computed lists), so more prompt
-    // text is not the missing piece -- the gate is. Same shape as the multi-ask
-    // rule getting shape 7: the model is handed the fact, the judge checks the
-    // reply against it, and a miss is retried with the rule restated.
-    //
-    // Gated on the caller actually having a non-empty list, exactly as shape 8
-    // is gated on hadSuccessfulWrite === false: with nothing missing there is
-    // nothing to ask for and a plain goodbye is correct.
+
     missingFacts.length ? [
       `9. FAREWELL WITH FACTS STILL MISSING: these facts are still blank on this`,
       `   person's report and CANNOT be got once they walk away from the animals`,
@@ -151,11 +64,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   conversation on -- is CLEAN and this shape does not apply to it. Judge`,
       `   only whether an ask for one of those facts is present in a closing`,
       `   reply, never whether the ask is phrased well.`,
-      // THE ASK IS SPENT ONCE. Without this, the shape fires again on the very
-      // next turn -- the one where the person has already been asked and has
-      // said they cannot answer -- and the retry instruction then demands the
-      // second ask the standing rules explicitly forbid ("Ask once only. If they
-      // cannot say, or they have already gone, let them go warmly anyway").
+
       `   ONE EXCEPTION, and it overrides everything above: if the PRIOR REPLY`,
       `   shown below already asked for one of those facts, the one ask has been`,
       `   SPENT -- a goodbye now is CLEAN however many facts are still blank, and`,
@@ -163,19 +72,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   they have left, or simply did not answer it. Nobody is asked twice.`,
       `   Write the reason as "farewell-gap".`,
     ].join('\n') : null,
-    // A paraphrased re-ask passed BOTH existing repeat guards: turn-attempts.js's
-    // verbatim guard is a string equality (by design), and shape 3 above is
-    // anchored on the reply being "essentially identical" to the prior one. A
-    // question asked again in different words, or in a different language, is
-    // neither -- so the person is asked twice for the same thing and the prompt's
-    // "never re-ask a fact already sitting there" rule had no gate behind it.
-    // This shape judges the ASK, not the string, which is why it needs the
-    // recorded-facts list: "which farm are they on" cannot be recognised as a
-    // re-ask of a location already recorded from the reply's words alone.
-    // Gated, like shapes 8 and 9, on the input it needs existing at all: with no
-    // prior reply and nothing recorded -- a genuine first message -- there is
-    // nothing a question could be a repeat OF, and listing the shape anyway only
-    // invites a false positive on the one turn where every ask is new.
+
     (lastOutboundText || knownFacts.length) ? [
     `10. REPEATED ASK IN NEW WORDS: the candidate asks the person for something`,
     `   the PRIOR REPLY (shown below, if any) already asked them for, or for a`,
@@ -187,12 +84,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   fresh-sounding sentence that asks again for what is already known or`,
     `   already asked.`,
     consentOwed ? `   EXCEPTION while shape 15 is shown: asking whether it is okay for the team to keep what they send is never a repeated ask, however many times it was asked before; it is required until they answer.` : null,
-    // Three carve-outs, each one a shape this would otherwise flag on the most
-    // ordinary intake turn there is. The first is structural: the two lists
-    // handed to you are disjoint by construction, so a still-blank fact can
-    // never be a repeat however much its NAME resembles a recorded one ("how to
-    // find the place" beside a recorded "where", "how many died" beside a
-    // recorded "how many affected").
+
     `   THREE THINGS ARE ALWAYS CLEAN, whatever they sound like:`,
     `   (a) asking for any fact NOT in the recorded list -- the recorded and the`,
     `   still-missing facts are different facts even when their names are close;`,
@@ -202,8 +94,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   (c) a recap of what they said, which is not an ask.`,
     `   Write the reason as "repeat-ask".`,
     ].join('\n') : null,
-    // Shapes 11-13 are always shown. Each is judged by the model reading the reply, and each
-    // has a COINED reason word for the router in turn-attempts.js (see this file's header).
+
     `11. ADVICE GIVEN: the assistant connects people and never advises; it is not a vet. Flag a`,
     `   reply that tells the person what to give, do, keep, avoid or watch for (a medicine, dose,`,
     `   remedy, vaccine, feed, moving, separating, isolating, selling, slaughtering, eating,`,
@@ -237,24 +128,21 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   If the latest message says nothing of the kind, this shape does not apply. Write the reason as`,
       `   "safety-line-missing".`,
     ].join('\n') : null,
-    // Only listed while this number has not yet agreed (phone-consent.js): the reply must ask, every time, until it has.
+
     consentOwed ? [
       `15. CONSENT NOT ASKED: this person's number has not yet said it is okay for the team to keep what they send`,
       `   (a system fact). The reply MUST clearly ask them, in their language, whether that is okay. A reply that only`,
       `   greets, or only asks about the animals, or only acknowledges, without that question, is flagged. Write the`,
       `   reason as "consent-not-asked".`,
     ].join('\n') : null,
-    // Only listed while a person who came back to a complete report has not yet said whether it is more on it or a new problem.
+
     clarifyOwed ? [
       `16. RETURN NOT CLARIFIED: this person came back to a report that is already complete and has not yet said whether`,
       `   the new message is MORE about that report or a NEW problem (a system fact). The reply MUST ask that, in their`,
       `   language, and ask who is writing. A reply that only acknowledges, or records, or asks for more facts about the`,
       `   animals, without that question, is flagged. Write the reason as "clarify-not-asked".`,
     ].join('\n') : null,
-    // The mirror of shape 15: consent is settled and the model asks anyway. Live-witnessed on a returning number
-    // whose yes was recorded onto an earlier report -- the prompt carries no consent instruction at all in that
-    // state (prompt-sections.js consentSection returns []), so the ask can only have come from the model itself,
-    // and nothing caught it: shape 15 is withheld and every other shape reads the ask as ordinary English.
+
     consentAgreed ? [
       `17. CONSENT ASKED AGAIN: this person's number ALREADY agreed, earlier, that the team may keep what it sends`,
       `   (a system fact, given to you directly -- trust it over anything the reply implies). It is settled and must`,
@@ -263,13 +151,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   down, or any sentence seeking that yes. A reply that does not raise it at all is CLEAN.`,
       `   Write the reason as "consent-reask".`,
     ].join('\n') : null,
-    // Shape 8 catches a reply that CLAIMS a record that never landed; this is the quieter half of the same failure,
-    // and the one no shape covered: the person's message plainly reported animals and the reply neither records them
-    // nor (in the common variant) asks for anything but repeats back the facts they just gave. Live-witnessed on a
-    // first substantive message ("we have 4 stray dogs ... they're all covulsing"): the model asked who was writing
-    // and wrote nothing down, so the report stayed blank and the person was asked to supply it again.  While a
-    // report exists, the system prints the still-missing facts from the RECORD, so one unrecorded turn silently
-    // makes every later reply re-ask for facts already given. Gated exactly like shape 8 on the structural fact.
+
     (hadSuccessfulWrite === false && missingFacts.length && latestInbound) ? [
       `18. NOT RECORDED: read the PERSON'S LATEST MESSAGE below. Apply this shape ONLY if that message plainly`,
       `   describes animals or an event -- a kind of animal, how many, signs of illness, a place, or what happened`,
@@ -287,8 +169,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   wording of the ask.`,
       `   Write the reason as "not-recorded".`,
     ].join('\n') : null,
-    // Shape 13 (wrong language) is its own narrow call below (languageDiffers), not part of this list: it is a
-    // single question and is answered far more reliably alone.
+
     ``,
     `A reply that is a genuine, warm, on-topic message actually addressed TO the`,
     `person -- even if short, even if it asks a question, even if it is in a`,
@@ -297,10 +178,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     ``,
     lastOutboundText ? `PRIOR REPLY ALREADY SENT IN THIS CONVERSATION:\n${String(lastOutboundText).slice(0, 500)}\n` : null,
     latestInbound ? `PERSON'S LATEST MESSAGE (what the candidate reply must answer):\n${String(latestInbound).slice(0, 500)}\n` : null,
-    // LABELS ONLY, never the recorded values: this call is deliberately
-    // context-free about the case (see this file's header), and the values are
-    // the contact's own words, which have no business in a second LLM call that
-    // exists only to judge the shape of one sentence.
+
     knownFacts.length ? `FACTS ALREADY RECORDED ON THIS REPORT (asking for any of these again is shape 10):\n${knownFacts.join(', ')}\n` : null,
     `CANDIDATE REPLY TO JUDGE:`,
     String(replyText).slice(0, 2000),
@@ -325,10 +203,6 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     ].filter(Boolean).join(', ')}. Shapes 1-5 and 8 use "prompt-echo", "stock-ack", "repeated", "tool-refusal", "meta-commentary" and "false-confirmation".`,
   ].filter(line => line !== null).join('\n')
 
-  // One judging pass: the quoted findings that survive (see below), or null when the call failed. A failing
-  // call is retried once because a judge that fails open passes advice and promises as well as everything else,
-  // and a transient provider miss is the usual cause. A judge-call failure must never block a real reply from
-  // reaching the person (this is a quality gate, not the reply path), so after that it fails OPEN.
   const norm = (t) => String(t ?? '').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`]/g, '').replace(/\s+/g, ' ').trim()
   const haystack = norm(replyText)
   const ABSENCE = /farewell.?gap|consent.?not.?asked|clarify.?not.?asked|safety.?line.?missing/i
@@ -339,9 +213,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     }
     if (!raw) return null
     try {
-      // The judge returns ONLY JSON, but a real model can still wrap it in prose or a code fence: take the first
-      // {...} block. A finding about something PRESENT in the reply must quote it, and the quote must really be in
-      // the reply: a flag the reply cannot back up (a word "found" that is not there) is dropped here.
+
       const match = raw.match(/\{[\s\S]*\}/)
       const parsed = JSON.parse(match ? match[0] : raw)
       return (Array.isArray(parsed.findings) ? parsed.findings : [])
@@ -353,21 +225,15 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
   const [first, wrongLanguage] = await Promise.all([pass(), languageDiffers(callLLM, replyText, latestInbound, recordedLanguage)])
   const langReasons = wrongLanguage ? ['wrong-language'] : []
   if (!first || !first.length) return langReasons.length ? { clean: false, reasons: langReasons, category: 'other' } : { clean: true, reasons: [], category: null }
-  // A flag is acted on only when a SECOND pass over the same reply raises it too. One pass of a small judge model
-  // misfires on a clean reply about one time in ten, and each misfire used to cost a whole extra agent turn; the
-  // second pass runs only when the first flagged something, so a clean reply (nearly all of them) costs no more.
+
   const second = await pass()
-  // Except the two whose miss costs the most and whose flag costs one soft retry: a goodbye that spent the on-site
-  // question, and the helpline line for someone in danger. Those act on the first pass.
+
   const FIRST_PASS_ONLY = /farewell.?gap|safety.?line.?missing/i
   const agreed = [...new Set(first)].filter(w => FIRST_PASS_ONLY.test(w) || (second || []).some(x => x.toLowerCase() === w.toLowerCase()))
   const reasons = [...agreed, ...langReasons]
   return reasons.length ? { clean: false, reasons, category: 'other' } : { clean: true, reasons: [], category: null }
 }
 
-// WRONG LANGUAGE, as one narrow question: does the reply use a different language from the person's message?
-// A reply in the language the report records for them also counts as right. Skipped when the message has too few
-// letters to carry a language (a number, "ok", an emoji). Fails open: a failed call flags nothing.
 export async function languageDiffers(callLLM, replyText, latestInbound, recordedLanguage = '') {
   const msg = String(latestInbound || '').trim()
   if ((msg.match(/\p{L}/gu) || []).length < 3 || !String(replyText || '').trim()) return false

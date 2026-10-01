@@ -1,25 +1,4 @@
-// hooks/media-intake.js -- one-shot capture of whatever a message carried
-// BESIDES text, recorded as explicit case state at ingress.
-//
-// A photo of a sick or dead animal, and a voice note from a worker who speaks
-// rather than types, are the two most valuable on-site artifacts and neither can
-// be recovered once the worker leaves. So neither is left to the agent turn to
-// notice and record -- on a media-only message it may not narrate them at all.
-// This runs deterministically, before any LLM is involved, and MUST stay
-// append-only: a worker routinely sends more than one photo across a
-// conversation, and a fill-if-empty write silently discards every arrival after
-// the first.
-//
-// Photo and audio share one parameterised path (save bytes -> compose note ->
-// appendReportField -> observation -> corruption warning); the DIFFERENCES
-// between them -- field name, enrichment step, wording -- are the only thing
-// written twice.
-//
-// Nothing in here may block the reply path: every failure is a warn and a
-// continue. In observe mode appendReportField refuses the report WRITE (that
-// guard stays -- observe means no automatic field edits) but the ARRIVAL must
-// still be visible on the timeline, since observe is exactly the mode with no
-// LLM narration to compensate.
+
 
 import { truncate } from './heuristics.js'
 import { observation } from './case-writes.js'
@@ -27,18 +6,10 @@ import { transcribeAudioDetailed, describePhoto } from './media.js'
 import { isValidLatLon } from '../case-tools-shared.js'
 import { withoutIssuedCodes } from '../role-invites.js'
 
-// Short description of any non-text content, so a media-only message is never
-// summarised as "empty". Also feeds the new-case subject seed and the agent
-// prompt, so it is exported rather than kept private here.
 export function describeMedia(msg) {
   const r = msg.raw || {}
   if (Array.isArray(r.attachments) && r.attachments.length) return `${r.attachments.length} attachment(s)`
-  // Named before the generic `r.type` branch below, which would say "a location
-  // message" -- a pin is not a message with a location in it, it is a position,
-  // and this string is what the agent prompt says the person sent when they sent
-  // nothing else. The coordinates themselves are not repeated here: they are
-  // already on the timeline as their own observation (recordInboundLocation),
-  // which is where a value an operator may act on belongs.
+
   if (msg.location) return 'a location pin'
   if (r.type && r.type !== 'text') return `${/^[aeiou]/i.test(r.type) ? 'an' : 'a'} ${r.type} message`
   if (r.image) return 'an image'
@@ -47,10 +18,6 @@ export function describeMedia(msg) {
   return ''
 }
 
-// Returns a short note when THIS message carries a real image (not a sticker,
-// not audio, not a generic attachment of unknown type), else ''.
-// WhatsApp/Twilio surface images as raw.image, type 'image', or attachments with
-// an image/* content type; all three are matched.
 function inboundImageNote(msg) {
   const r = msg.raw || {}
   if (r.image || r.type === 'image') return 'farmer sent a photo'
@@ -61,17 +28,9 @@ function inboundImageNote(msg) {
   return ''
 }
 
-// Returns '' when THIS message carries no audio. A transcript, when one is
-// available, is folded straight into the recorded note; without one the operator
-// listens and fills the richer detail -- an honest degradation rung, not a
-// silent drop.
 function inboundAudioNote(msg, transcript = '', failure = '') {
   const r = msg.raw || {}
-  // Attributed to the machine, explicitly. A bare 'transcript:' reads as a
-  // record of what was said; this is the AI helper's transcription of audio it
-  // may have got wrong, and an operator acting on a disease report needs to know
-  // which of those they are reading. Same reason the photo note below names its
-  // author: the machine must not present its own output as what someone entered.
+
   const tail = transcript ? ` -- auto-transcript by the AI helper (may be wrong, listen to check): "${truncate(transcript, 1500)}"`
     : failure ? ` -- no auto-transcript could be made (${truncate(failure, 120)})` : ''
   const base = 'farmer sent a voice note (listen and record what it says)' + tail
@@ -83,56 +42,21 @@ function inboundAudioNote(msg, transcript = '', failure = '') {
   return ''
 }
 
-// Does this message carry a photo, a voice note or a location pin (the three
-// on-site artifacts routed by hooks/media-relay.js)? Same detectors recordInbound*
-// use, so the router and the recorder can never disagree about what arrived.
 export function carriesArtifact(msg) {
   return !!(msg?.location || inboundImageNote(msg) || inboundAudioNote(msg))
 }
 
-// A team member relaying on the reporter's behalf: same phrasing as case_edit's
-// `[relayed by <name> on the reporter's behalf ...]`. The note names who sent it
-// instead of "farmer sent", which would be false here.
 function relayedNote(note, relay) {
   if (!relay) return note
   return `[relayed by ${relay.by} on the reporter's behalf] ${note.replace(/^farmer sent/, 'team member sent')}`
 }
 
-// Normalise msg.media across adapter shapes. WhatsApp's adapter resolves a
-// SINGLE object ({type, mimeType, buffer}); Discord's resolves an ARRAY, one
-// entry per attachment. Read msg.media through here, never directly: a bare
-// msg.media.buffer is permanently undefined on Discord (arrays have no
-// .buffer), which strands every Discord photo/voice note at the
-// honest-degradation floor with real downloaded bytes sitting right there.
-// Picking the first entry that actually HAS a buffer (a failed-download entry
-// may be null/error-only) mirrors WhatsApp's own single-object degrade shape;
-// Array.isArray is false for the WhatsApp object, so this is a no-op there.
-//
-// Module-private: recordInboundMedia below is its only caller anywhere in the
-// tree. It was exported alongside describeMedia when this file was lifted out
-// of makeCaseHandler, but describeMedia has real outside consumers (the
-// new-case subject seed and the agent prompt) and this does not -- an export
-// with no importer advertises a seam that isn't one, and invites a second
-// reader of msg.media instead of a second caller of this.
-// The downloaded bytes for ONE kind. Selecting a single item for both kinds
-// loses the other's bytes: one message can carry a photo AND a voice note, they
-// record into different report fields, and picking the first entry with a buffer
-// meant that when the audio came first the photo recorded with no file saved and
-// no auto-description -- silently, since the note still appended. A field photo
-// of a dying animal is not recapturable, so the loss is permanent.
-// An item with no `type` counts as a photo, as it always has.
 function pickMediaItem(msg, kind) {
   const list = Array.isArray(msg.media) ? msg.media : (msg.media ? [msg.media] : [])
   const wantAudio = kind === 'audio'
   return list.find(m => m?.buffer && (m.type === 'audio') === wantAudio) || null
 }
 
-// The voice note's words. Done ONCE per message, at ingress (hooks/case-intake.js openCaseForInbound), so a
-// successful transcript is the message text for everything downstream -- the recorded inbound event, the STOP
-// words, the prompt and the reply judge -- exactly as if it had been typed. recordInboundMedia reuses the
-// same result for the audio note, so the bytes are never transcribed twice. A code spoken in a voice note is
-// scrubbed like a typed one; if the scrub fails the transcript is dropped rather than kept unredacted. A failed
-// transcription leaves `text` empty and the message stays "an audio message", as before.
 export async function transcribeInboundAudio({ store, log, caseId, msg }) {
   if (msg._transcript) return msg._transcript
   const audioItem = pickMediaItem(msg, 'audio')
@@ -146,8 +70,6 @@ export async function transcribeInboundAudio({ store, log, caseId, msg }) {
   return tr
 }
 
-// One arrival: save the bytes if the adapter actually downloaded any, append the
-// note to its report field, and make the arrival visible on the timeline.
 async function recordArrival({ store, log, caseId, field, note, kind, mediaItem, eventPrefix, failLabel, relay = null }) {
   try {
     let text = relayedNote(note, relay)
@@ -156,9 +78,7 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
       text = `${text} (saved: ${savedPath})`
       if (kind === 'photo') {
         const description = await describePhoto(mediaItem.buffer, mediaItem.mimeType)
-        // 'described:' alone reads as the farmer's own description of their photo.
-        // It is the AI helper's, and on a report a vet may act on that difference
-        // matters. Named rather than implied.
+
         if (description) text += ` -- auto-description by the AI helper (not the farmer's words): "${truncate(description, 500)}"`
       }
     }
@@ -173,44 +93,13 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
   } catch (e) { log.warn?.(`[casey] ${failLabel} failed`, { caseId, error: e.message }) }
 }
 
-// A SHARED LOCATION PIN, recorded deterministically at ingress for exactly the
-// reason a photo is: it is a real reading off the person's own device, taken
-// where they are standing right now, and it is not recapturable once they walk
-// away. Left to the agent turn it would be lost twice over -- the model never
-// sees the webhook payload, so it would either say nothing about the place or
-// fill lat/lon with its OWN estimate from a name, which is the one thing the
-// map's provenance ladder exists to keep apart from a real fix.
-//
-// location_source is 'gps', not 'estimated': the ladder's own meaning is HOW the
-// position was arrived at (thatcher.config.yml, map-overlays.js), and this one
-// came from a phone's GPS. 'confirmed' would be wrong too -- that rung means a
-// person agreed with a coordinate somebody else proposed, and nobody proposed
-// this one. 'estimated' is reserved for the model's own guess.
-//
-// Writes the case's own lat/lon COLUMNS, never a report field: the report blob is
-// the person's own words and casey does no field extraction into it (AGENTS.md,
-// "The LLM records the report"). The place NAME/ADDRESS Meta attaches to a pin is
-// its own reverse-geocode label, not what the person said, so it goes on the
-// timeline where its author is visible -- and the model reads that timeline, so
-// it can acknowledge the spot and ask about the animals there.
-//
-// Same failure discipline as every other write in this file: best-effort, never
-// blocking the reply. In observe mode the COLUMN write is correctly refused (no
-// automatic edits) but the arrival still lands on the timeline, since observe is
-// exactly the mode with no agent narration to compensate.
-// Returns '' when there was no pin (or a person is handling the record), a note saying
-// it WAS stored when it was, else a system note for
-// this turn's prompt saying the position was NOT stored, so the reply cannot say
-// "got it" about a pin that reached no record.
 const PIN_STORED = '\n\n[System note: the location pin they shared was saved on the map as their exact position. Do not ask for coordinates, GPS numbers or another pin, and do not write that coordinates were unreadable; ask about the place only if a name or landmark is still missing.]'
 export const VOICE_TRANSCRIBED = '\n\n[System note: this message is an automatic transcript of a voice note, made by a machine, so it can be wrong, cut off or nonsense, and it may be in a language the machine cannot follow. The voice note itself is saved with the report whatever you decide. YOU decide whether the transcript makes enough sense to act on. If it is clear, treat it as what they said. If it is garbled, nonsensical, cut off, contradicts itself or you are unsure what they meant, do NOT act on it: record nothing from it (no case_report, no case_new, no case_consent or case_clarify answer) and never guess a meaning; tell them kindly, in their language, that you could not make out the voice note and ask them to say it again or type it, and say it is saved. If one word matters and looks wrong, check just that word with them in one short question before recording.]'
 const PIN_NOT_STORED = (why) => `\n\n[System note: the location pin they shared ${why}, so NO position was stored. Do not say you have their location; tell them plainly it did not come through and ask where the animals are (a town or farm name, or send the pin again).]`
 export async function recordInboundLocation({ store, log, caseId, msg }) {
   const pin = msg.location
   if (!pin) return ''
-  // An out-of-range pair is surfaced, not silently treated as "no pin sent":
-  // a map point that never appears with no explanation is the failure mode
-  // case_report's own range check was added to close.
+
   if (!isValidLatLon(pin.lat, pin.lon)) {
     log.warn?.('[casey] location pin out of range; not recorded', { caseId, lat: pin.lat, lon: pin.lon })
     try { await store.appendEvent(caseId, observation(`LOCATION PIN REJECTED: the shared position was out of range (lat=${pin.lat}, lon=${pin.lon}) and was not recorded. Ask where they are.`)) }
@@ -230,16 +119,11 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
     await store.appendEvent(caseId, observation(
       `LOCATION PIN RECEIVED: lat ${pin.lat}, lon ${pin.lon}${place ? ` -- WhatsApp labels this spot "${truncate(place, 200)}" (its own label, not the person's words)` : ''}. Read off the person's own device and ${recorded}.`,
     ))
-    // A stored pin gets a note too: with only the timeline line to go on, the
-    // model was seen asking for "GPS numbers" and filing "coordinates not
-    // readable" into the record's notes right after a pin that WAS stored.
+
     return res?.error === 'observe' ? '' : PIN_STORED
   } catch (e) { log.warn?.('[casey] location pin mark failed', { caseId, error: e.message }); return PIN_NOT_STORED('could not be saved just now') }
 }
 
-// Record every media artifact this message carried. Photo first, then audio,
-// preserving the original ordering (transcription runs BEFORE the audio note is
-// composed so a successful transcript is folded into the recorded field).
 export async function recordInboundMedia({ store, log, caseId, msg, relay = null }) {
   const photoItem = pickMediaItem(msg, 'photo')
   const audioItem = pickMediaItem(msg, 'audio')
@@ -255,8 +139,7 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
 
   const tr = audioItem ? await transcribeInboundAudio({ store, log, caseId, msg }) : { text: '', error: '' }
   if (audioItem) {
-    // The audio log line: what arrived, what became of it. The bytes themselves
-    // are saved by recordArrival below and the path lands on the timeline event.
+
     log.info?.('[casey] voice note received', { caseId, mime: audioItem.mimeType, bytes: audioItem.buffer?.length || 0, provider: tr.provider, transcribed: !!tr.text, transcriptChars: tr.text.length, ms: tr.ms, error: tr.error || undefined })
   }
   const audioNote = inboundAudioNote(msg, tr.text, tr.error)
