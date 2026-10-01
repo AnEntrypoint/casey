@@ -147,6 +147,26 @@ const FIELD_ROUTES = [
 
 const deny = (res, status, error, code) => res.status(status).json({ error, code })
 
+// What ONLY an admin may do. An operator runs the day (cases, replies, assignments, the team's sign-ups); an admin also runs the
+// system: who has a login, how the thresholds are set, which areas exist and who covers them, imports and syncs, the audit trail,
+// the runtime, and erasing a person. Enforced here, ahead of the route (and several routes check isAdmin again for their own
+// finer rules, e.g. who may be made an operator). Deny-by-default for operator and the legacy secretary alias; admin passes.
+export const ADMIN_ONLY_ROUTES = [
+  ['GET', /^\/api\/accounts$/], ['POST', /^\/api\/accounts(\/.*)?$/], ['DELETE', /^\/api\/accounts\/[^/]+$/],
+  ['PUT', /^\/api\/thresholds$/], ['POST', /^\/api\/sweep$/],
+  ['PUT', /^\/api\/areas$/], ['DELETE', /^\/api\/areas\/[^/]+$/],
+  ['POST', /^\/api\/sync\/(import|external-links)$/],
+  ['POST', /^\/api\/field-values\/canonicalize$/],
+  ['GET', /^\/api\/audit\.csv$/], ['GET', /^\/api\/runtime$/], ['GET', /^\/api\/health\/provider$/], ['GET', /^\/api\/turns\/degraded$/],
+  ['POST', /^\/api\/roles\/import$/], ['DELETE', /^\/api\/role-invites\/[^/]+$/],
+  ['POST', /^\/api\/contacts\/[^/]+\/erase$/], ['POST', /^\/api\/contacts\/[^/]+\/persons\/erase$/],
+]
+export const isAdminOnlyRoute = (method, path) => ADMIN_ONLY_ROUTES.some(([m, re]) => m === method && re.test(path))
+export const isAdminAccount = (acct) => acct?.role === 'admin'
+
+// A preview ("view as", below) is read-only: the admin sees a login's screens and data and changes nothing as it.
+const PREVIEW_OK = new Set(['/api/whoami', '/api/logout', '/api/logout-everywhere', '/api/login'])
+
 // The viewer's whole reach. Deny by default: a viewer gets these exact method+path
 // pairs and NOTHING else under /api or /media. Audited one by one (a route is here
 // only when its payload is proven PII-free):
@@ -180,7 +200,11 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
     try {
       const acct = req.caseyAccount
       if (!acct) return next()              // the session gate owns the 401
-      if (isStaffAccount(acct)) return next()
+      if (req.caseyViewAs && req.method !== 'GET' && !PREVIEW_OK.has(req.path)) return deny(res, 403, 'You are previewing another login: this is read-only. Leave the preview to make changes.', 'preview_read_only')
+      if (isStaffAccount(acct)) {
+        if (!isAdminAccount(acct) && isAdminOnlyRoute(req.method, req.path)) return deny(res, 403, 'Only an admin can do this.', 'admin_only')
+        return next()
+      }
       if (isViewer(acct)) return viewerGate(req, res, next)
       req.caseyRole = roleOf(acct)
       acct._contact = await resolveContact(store, acct)

@@ -66,6 +66,17 @@ export function sessionMiddleware({ store, parseCookies, verifySession, COOKIE_N
         const liveEpoch = Number(acct?.session_epoch) || 0
         const live = acct && acct.status !== 'deleted' && acct.disabled !== '1'
         if (live && claim.epoch === liveEpoch) req.caseyAccount = acct
+        // VIEW AS: a real admin session may carry `x-view-as: <account id>` to see exactly what that login sees (its screens, its
+        // rows, its limits). The request then runs AS that account but is read-only (roles.js roleGate refuses every write), so a
+        // preview can never act as someone else. Anyone but an admin sending the header is ignored.
+        const viewAs = req.get('x-view-as')
+        if (req.caseyAccount && viewAs && req.caseyAccount.role === 'admin' && viewAs !== req.caseyAccount.id) {
+          const target = await getAccount(store, viewAs)
+          if (target && target.status !== 'deleted' && target.disabled !== '1') {
+            req.caseyViewAs = { by: req.caseyAccount.username, admin: req.caseyAccount }
+            req.caseyAccount = target
+          }
+        }
       }
     } catch { /* a broken/tampered cookie just means not-logged-in, never a crash */ }
     next()
@@ -1106,7 +1117,7 @@ export function getWhoami() {
   return (req, res) => {
     if (!req.caseyAccount) return res.json({ authed: false })
     const a = req.caseyAccount
-    res.json({ authed: true, username: a.username, display_name: a.display_name, role: roleOf(a), contact_linked: !!String(a.contact_phone || '').trim(), must_change_password: a.must_change_password === '1' })
+    res.json({ authed: true, ...(req.caseyViewAs ? { view_as: { by: req.caseyViewAs.by } } : {}), username: a.username, display_name: a.display_name, role: roleOf(a), contact_linked: !!String(a.contact_phone || '').trim(), must_change_password: a.must_change_password === '1' })
   }
 }
 
