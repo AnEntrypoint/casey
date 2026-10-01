@@ -529,9 +529,13 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result) || controlNoted || controlRegistered(result, 'case_consent')
   const safetyNumbers = persona.safetyText ? strayContactDetails(persona.safetyText, [candidate]) : []
   const { missingFacts = [], knownFacts = [] } = factsForJudge ? await factsForJudge() : {}
-  // While this number has not agreed, EVERY reply must ask (phone-consent.js); read after this attempt's tool calls,
-  // so a yes the model just recorded with case_consent ends the requirement.
-  const consentOwed = consentOn && !!fresh.contact_id && await consentState(store, fresh.contact_id, { caseId: fresh.id }) === 'none'
+  // Read once: the one answer decides BOTH whether the reply owes the consent question (shape 15) and whether a reply
+  // that asks it anyway is seeking something already settled (shape 17). consentOn is false for a team member and for
+  // a deployment with no consentText, and then neither shape applies. Read after this attempt's tool calls, so a yes
+  // the model just recorded with case_consent ends the requirement in the same turn.
+  const consentNow = consentOn && fresh.contact_id ? await consentState(store, fresh.contact_id, { caseId: fresh.id }) : null
+  const consentOwed = consentNow === 'none'
+  const consentAgreed = consentNow === 'agreed'
   // A person back at a complete report must be asked (consent, if owed, comes first); read after this attempt's tool calls so an answer just recorded ends it.
   const clarifyOwed = returnOn && !consentOwed && !!fresh.id && (await returnState(store, await store.getCase(fresh.id).catch(() => null), { id: fresh.contact_id, tier: 'reporter' })).owed
   // The language the model recorded for this person, read AFTER this attempt's writes: the judge compares the reply
@@ -554,7 +558,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     await note(`JARGON-LEAK: reply used ${jargon.join(', ')}; retrying turn with feedback (attempt ${attempt})`)
     return { done: false, retryFeedback: jargonFeedback(jargon, fresh.ref) }
   }
-  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, clarifyOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
+  let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, consentAgreed, clarifyOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
   // A team member uses the dashboard's own words (report references, 'case', 'priority'), so a jargon verdict is not a
   // fault for them; the technician's recorded recommended resolution is theirs, not advice from the assistant.
   if (isStaff && !verdict.clean && verdict.reasons?.length) {
@@ -651,11 +655,16 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     [/wrong.?language/i, "it was not in the language of their latest message. Write the whole reply again in exactly the language their latest message is written in, and no other"],
     [/clarify.?not.?asked/i, "it did not ask whether this is more about their existing report or a new problem, and who is writing. This person came back to a report that is already complete, so in this reply ask that in one short natural sentence in their language, naming the report in a few words, and ask who is writing; it is your one question. If their latest message already answers it, call case_clarify first"],
     [/consent.?not.?asked/i, "it did not ask whether it is okay for the team to keep what they send, and this number has not agreed yet. In this reply say briefly, in your own words and their language, what is kept and who can see it, and ask if that is okay: it is your one question. If their latest message already answers that question, call case_consent first (agreed true for a yes, false for a no)"],
+    [/consent.?reask/i, "it asked again whether the team may keep what they send, and this number ALREADY agreed to that earlier: it is settled and must never be asked again. Drop that question completely -- do not say it in any words or language. Make your ONE question the fact that is still missing instead, or if nothing is missing just answer them warmly"],
+    [/not.?recorded/i, "it left what they told you unwritten: they described animals or what is wrong with them and NOTHING was recorded this turn. Call case_report FIRST with everything they have told you in this chat -- the animals, what is wrong, where they are, and anything else they gave -- wait for its result, and only then write your reply. Never ask them for a fact they have already given you, and never say anything was written down unless it was"],
   ]
   const faults = faultRoutes.filter(([re]) => verdict.reasons?.some(r => re.test(r))).map(([, text]) => text)
   if (faults.length) {
     const alsoMulti = verdict.reasons?.some(r => /multi.?ask|wall of text/i.test(r)) ? ' Also ask only ONE question naming at most TWO things, with no list.' : ''
-    const hardFault = verdict.reasons?.some(r => /advice.?given|safety.?line.?missing|consent.?not.?asked|clarify.?not.?asked/i.test(r))
+    // A wrong statement about system state (consent already settled) and a dropped report are both worth the WHOLE
+    // retry budget, like the other hard faults: the first is a definite factual error the person reads, and the
+    // second loses details that cannot be got back once they leave the animals.
+    const hardFault = verdict.reasons?.some(r => /advice.?given|safety.?line.?missing|consent.?not.?asked|clarify.?not.?asked|consent.?reask|not.?recorded/i.test(r))
     if (hardFault ? canRetry : softCanRetry) {
       log.warn?.('[casey] reply judge flagged advice, a promise or the language; retrying turn with feedback', { caseId: fresh.id, attempt, reasons: verdict.reasons })
       await note(`REPLY-JUDGE-FLAGGED: ${verdict.reasons.join('; ')}; retrying turn with feedback (attempt ${attempt})`)
