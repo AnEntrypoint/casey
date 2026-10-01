@@ -1,26 +1,10 @@
-// Casey's own in-process acptoapi bridge -- the same thin shim freddie used
-// to provide (call acptoapi's real chat()/chatChain() in-process, no HTTP
-// hop, no separate daemon), reimplemented directly since freddie's own
-// bridge was removed in a later upstream rewrite. Deliberately minimal: just
-// enough adapting to connect casey's {role, content, tool_calls} shape to
-// acptoapi's OpenAI-compatible wire format -- chain resolution, provider
-// selection, and reachability all delegate straight to acptoapi's own
-// exports rather than reimplementing them.
 import { dataPolicyMode, applyDataPolicy, auditServed } from '../llm-data-policy.js'
 
 const ACPTOAPI_TIMEOUT_MS = Number(process.env.ACPTOAPI_TIMEOUT_MS) || 240000
 export const REACHABILITY_PROBE_TIMEOUT_MS = Number(process.env.ACPTOAPI_REACHABILITY_PROBE_TIMEOUT_MS) || 45000
 const REACHABILITY_PROBE_CHAIN_LINK_CAP = 3
 
-// ONE shared ceiling on in-flight model requests for the whole process (agent hops, the reply judge, notices,
-// label translation: they all go through this module object). The provider answers "429 Too many concurrent
-// requests" above a few simultaneous calls per key and throughput does not rise past about four, so calls above
-// the ceiling WAIT their turn here, in order, instead of being refused and retried (a refused hop became an empty
-// reply, then a whole repeated agent turn). CASEY_LLM_CONCURRENCY=0 turns the ceiling off.
 const LLM_CONCURRENCY = process.env.CASEY_LLM_CONCURRENCY != null ? Math.max(0, Number(process.env.CASEY_LLM_CONCURRENCY) || 0) : 4
-// CASEY_LLM_REQUIRE_MODEL pins the one model this deployment may run on (e.g. hf:deepseek-ai/DeepSeek-V4.1-Flash). The
-// chain must resolve to exactly that link (checked in resolveChainLinks) and every reply must report that link as the
-// one that served it (checked here): a reply from anything else is refused, never used.
 const bareModel = (m) => String(m || '').replace(/^synthetic\//, '').trim().toLowerCase()
 export const requiredModel = () => bareModel(process.env.CASEY_LLM_REQUIRE_MODEL)
 function assertServedBy(r) {
@@ -28,7 +12,7 @@ function assertServedBy(r) {
   if (!want || !r || typeof r !== 'object') return r
   const served = (Array.isArray(r.__chainAttempted) ? r.__chainAttempted.filter(a => a?.ok) : []).map(a => bareModel(a.model))
   if (served.length && served.every(m => m === want)) return r
-  if (!served.length && !Array.isArray(r.__chainAttempted)) return r   // a direct (non-chain) call carries no attempt list; the link check at resolve time covers it
+  if (!served.length && !Array.isArray(r.__chainAttempted)) return r
   throw new Error(`model guard: CASEY_LLM_REQUIRE_MODEL=${want} but the reply was served by ${served.join(', ') || 'no successful link'}; refused`)
 }
 let _inFlight = 0
@@ -43,9 +27,9 @@ function limitConcurrency(acptoapi) {
   for (const name of ['chat', 'chatChain']) {
     const orig = acptoapi[name]
     if (typeof orig !== 'function') continue
-    try { acptoapi[name] = (...args) => withSlot(async () => assertServedBy(await orig.apply(acptoapi, args))) } catch { /* a frozen export is left as it was */ }
+    try { acptoapi[name] = (...args) => withSlot(async () => assertServedBy(await orig.apply(acptoapi, args))) } catch {}
   }
-  try { acptoapi.__casey_limited = true } catch { /* none */ }
+  try { acptoapi.__casey_limited = true } catch {}
 }
 export const llmQueueStats = () => ({ inFlight: _inFlight, waiting: _waiting.length, ceiling: LLM_CONCURRENCY })
 
@@ -53,15 +37,7 @@ let _acptoapi = null
 async function getAcptoapi() {
   if (!_acptoapi) {
     const mod = await import('acptoapi')
-    // acptoapi is a CJS package; Node's CJS-to-ESM interop only statically
-    // detects a SUBSET of module.exports keys as named exports -- read
-    // through `.default` (the full CJS exports object) so every export is
-    // reachable regardless of which subset the interop happened to pick up.
     _acptoapi = mod.default && typeof mod.default === 'object' ? mod.default : mod
-    // acptoapi ships no synthetic.new brand. Registered here, not in a launcher,
-    // because the supervised worker is its own process: a brand added to the
-    // parent's table never reaches the process that makes the calls, and the
-    // unknown prefix then falls through to a localhost ACP daemon ("fetch failed").
     const brandsMod = await import('acptoapi/lib/openai-brands')
     const brands = brandsMod.default || brandsMod
     if (!brands.isBrand('synthetic')) brands.registerBrand('synthetic', { url: 'https://api.synthetic.new/openai/v1/chat/completions', envKey: 'SYNTHETIC_API_KEY' })
@@ -78,39 +54,10 @@ export function getAcptoapiModel(defaultModel = null) {
   return process.env.CASEY_LLM_MODEL || process.env.FREDDIE_LLM_MODEL || defaultModel || null
 }
 
-// A bare 'provider/model' string resolves to exactly ONE provider with no
-// fallback, unless it already uses acptoapi's own chain syntax (comma-list,
-// queue/, chain/) or is the 'auto' sentinel -- those go straight to
-// chat()/chatChain() unchanged. Only a genuinely bare single-model request
-// gets wrapped in acptoapi's own buildAutoChain() for real fallback.
 export function isConfiguredChainSyntax(model) {
   return typeof model === 'string' && (model.includes(',') || model.startsWith('queue/') || model.startsWith('chain/'))
 }
 
-// Exported, and freddie-bundle's llm-acptoapi adapter imports these rather
-// than keeping its own copy. It HAD its own copy, and the two drifted: the
-// bundle's was fixed to stop swallowing a buildAutoChain throw while this one
-// was not, so the same call had two different failure behaviours in one
-// process depending on which module reached it first.
-//
-// The catch that used to sit here is gone for the reason it was removed
-// there. `auto` is not a model any provider answers to -- it is the
-// instruction to BUILD acptoapi's fallback chain. Swallowing the throw handed
-// that literal string on to chat() as if it were a model name, so a broken
-// chain build surfaced as an unrecognised-model error from whichever provider
-// happened to be asked, naming neither `auto` nor the real cause. Nothing
-// relied on the catch: buildAutoChain returns 20 links for 'auto', 1 for a
-// real model name, and 20 for an empty string or null, throwing on none of
-// them.
-//
-// DATA POLICY (src/llm-data-policy.js, CASEY_LLM_DATA_POLICY, default 'deny').
-// This is the one seam both callers pass through, so the policy is applied
-// here: with the policy on, the result is always an ARRAY of chain links, the
-// OpenRouter ones carrying provider.data_collection (and zdr) so acptoapi puts
-// them in the request body, and links with no checkable no-training guarantee
-// (free tier, ACP wrappers, unknown brands) are dropped and audited. Named
-// queue/ and chain/ strings and 'auto' cannot be checked before acptoapi expands
-// them, so 'auto' is expanded here and queue/chain names are refused.
 export async function resolveChainLinks(acptoapi, useModel) {
   const want = requiredModel()
   if (want) {
@@ -174,8 +121,6 @@ export async function callLLM({ messages, tools = [], model, tool_choice } = {})
     ...(hasTools && tool_choice ? { tool_choice } : {}),
     max_tokens: 4096,
   }
-  // acptoapi's chat() is a plain Promise with no AbortSignal support -- the
-  // overall deadline here is enforced by racing a timeout.
   let _timeoutHandle
   const _timeout = new Promise((_, reject) => {
     _timeoutHandle = setTimeout(() => reject(new Error('acptoapi call timeout')), ACPTOAPI_TIMEOUT_MS)

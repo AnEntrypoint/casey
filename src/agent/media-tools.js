@@ -1,11 +1,3 @@
-// Casey's own transcription/vision/tts functions, calling acptoapi directly.
-// Ported from freddie's plugins/tools/media/lib/{transcription,vision,tts}.js
-// (freddie's plugin-host surface was removed in a later upstream rewrite --
-// see AGENTS.md's freddie-port PRD rows). Plain functions, not Cordis tools:
-// dispatched ONLY by casey's own deterministic code (src/hooks/media.js),
-// never through freddie's agent loop / ctx.tools, so they are never
-// model-visible or model-callable -- matching the prior security invariant
-// with no allowlist dependency at all (the strongest form of the guarantee).
 import fs from 'node:fs'
 import { callLLM, getAcptoapiUrl } from './acptoapi-bridge.js'
 
