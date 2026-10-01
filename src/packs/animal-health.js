@@ -1,20 +1,3 @@
-// packs/animal-health.js -- casey's OWN domain, ported to the config-pack
-// format as the FIRST proof pack: zero engine code change, only declarative
-// data. This does NOT replace casey's existing thatcher.config.yml /
-// case-tools.js REPORT_KEYS -- those keep running the live agent
-// conversation exactly as today. This pack is the new provenance
-// subsystem's parallel declarative description of the same domain
-// vocabulary, proving the engine (core/pack-schema.js) can represent it with
-// no animal-health-specific code anywhere in core/.
-//
-// Only `observationForms.sick_or_dead_animal.fields` is read at runtime, by
-// provenance-wire.js, as the allowlist deciding which case_report fields
-// become provenance-tagged findings. The whole pack is validated at that same
-// module load via core/pack-schema.js's loadPack(). `rules`, `views`, `roles`
-// and `strings` are declared and schema-checked but NOT evaluated by anything
-// -- the rule evaluator that would have read `rules` was removed as dead code
-// (see AGENTS.md's Provenance subsystem section); treat them as a documented
-// target shape for a future deployment pack, never as live behaviour.
 
 export const animalHealthPack = {
   id: 'animal-health',
@@ -39,11 +22,6 @@ export const animalHealthPack = {
         treatment_history: { type: 'text', evidenceRequired: false },
         suspected_disease: { type: 'enum', codelist: 'conditions', evidenceRequired: false },
         location: { type: 'geo', evidenceRequired: false },
-        // Distinct from `location` (geo): case_report's `location` report field is a
-        // free-text place description ("5km past the old kraal, blue gate"), which is
-        // NOT the same value as the lat/lon estimate/reading also carried on the same
-        // call -- provenance-wire.js wires both into separate findings so the text
-        // description is never silently discarded when a coordinate pair is present.
         location_text: { type: 'text', evidenceRequired: false },
         photos: { type: 'photo', evidenceRequired: true },
         audio: { type: 'audio', evidenceRequired: false },
@@ -90,12 +68,6 @@ export const animalHealthPack = {
   roles: {
     reporter: { rowAccess: 'none' },
     field_worker: { rowAccess: 'owner' },
-    // The sign-off rung of contact-tiers.js's ladder, declared here for the same
-    // reason every other role in this map is: completeness of the pack's own
-    // declared vocabulary. Nothing evaluates `roles` (AGENTS.md's provenance
-    // section says so explicitly -- only observationForms is read), so this
-    // grants nothing; it is the documented target shape, kept in step with the
-    // ladder so the pack does not describe a two-rung world.
     animal_health_technician: { rowAccess: 'owner' },
     operator: { rowAccess: 'none' },
     district_vet: { rowAccess: 'assigned' },
