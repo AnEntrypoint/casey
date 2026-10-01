@@ -1,26 +1,6 @@
-// external-schema-map.js -- best-effort field crosswalk between casey's own
-// report vocabulary and the MEAT NATURALLY - AHT Field Tracker app's inferred
-// schema.
-//
-// EXTERNAL_SCHEMA below is USER-SUPPLIED and UNCONFIRMED: reconstructed from a
-// live demo walkthrough of the other app plus screenshots, terminal sessions,
-// and meeting discussion -- not a real API contract. Field NAMES here are this
-// side's normalization, not the remote system's wire names, and every type is a
-// hypothesis until a live integration confirms it. This file makes no network
-// call and mutates no
-// casey data on its own -- it is read-only reference data plus a couple of
-// pure mapping helpers, consumed by src/sync/correlate-external.js and
-// src/sync/apply-link.js.
-//
-// ADDITIVE-ONLY GUARANTEE: nothing here adds a field to casey's own case,
-// contact, or event entities. The only fields this module maps a value INTO
-// are casey's existing report-fields.yml REPORT_KEYS and existing contact
-// fields (display_name, external_id). A MEAT NATURALLY field with no casey
-// counterpart is listed under NO_CASEY_COUNTERPART and is never imported.
 
 export const EXTERNAL_SCHEMA = {
   aht_user: {
-    // the Animal Health Technician who logs a visit; a dropdown on their side
     aht_id: 'text',
     aht_name: 'text',
     role: 'text',
@@ -28,7 +8,6 @@ export const EXTERNAL_SCHEMA = {
     allocated_associations: 'text (technician-to-community allocation mapping)',
   },
   association: {
-    // community association a farmer/visit belongs to
     name: 'text',
     province: 'enum: Eastern Cape | KwaZulu-Natal | Free State',
     district_municipality: 'text',
@@ -101,9 +80,6 @@ export const EXTERNAL_SCHEMA = {
   },
 }
 
-// Field-level crosswalk: external field path ("kind.field") -> casey target.
-// `target` is either "report.<REPORT_KEY>" or "contact.<field>". A row with
-// no target is intentionally excluded and belongs in NO_CASEY_COUNTERPART.
 export const FIELD_CROSSWALK = [
   { external: 'aht_user.aht_name', target: 'report.present_person', note: 'the technician on site is the person present; their relation is always the same role, so present_person_relation is left to the casey-side intake rather than stamped from here' },
   { external: 'aht_user.aht_id', target: 'report.present_person', note: 'id fallback, used only when aht_name is absent (the aht_name row above is declared first and wins)' },
@@ -127,52 +103,30 @@ export const FIELD_CROSSWALK = [
   { external: 'follow_up.assigned_association', target: 'report.location', note: 'same best-effort place-name basis as association.name' },
 ]
 
-// Every MEAT NATURALLY field explicitly NOT imported: no casey counterpart.
-// Kept here so a future reader does not re-propose importing them. A one-line
-// reason per row, because "no counterpart" is a judgement and the next reader
-// deserves the argument rather than the verdict.
 export const NO_CASEY_COUNTERPART = [
-  // -- Field visit & batch logging
   { external: 'field_visit.male_attendees', why: 'a meeting headcount of people, not animals -- mapping it onto affected_count/herd_total would put human attendance into an animal-count field feeding the attention ranking' },
   { external: 'field_visit.female_attendees', why: 'same as male_attendees: people at a meeting, never an animal count' },
   { external: 'field_visit.follow_up_required', why: 'their workflow flag; the casey-side case lifecycle is its own xstate machine and is never driven by a remote boolean' },
   { external: 'field_visit.batch_visit_id', why: 'their submission-grouping key -- correlation metadata, belongs in external_link.match_basis/external_ref, never in a report field. Not report.sites either: sites describes a second place a worker actually saw, not how a form was batched' },
-  // -- Travel & vehicle logging
   { external: 'vehicle_trip_log.*', why: 'logistics and expense accounting (trip ids, per-technician monthly kilometres) with no animal-health meaning; the FK to field_visit is correlation metadata external_link already carries' },
-  // -- Geographical & organizational hierarchy
   { external: 'association.district_municipality', why: 'an administrative tier with no report field of its own; place understanding in casey is the words of the reporter plus a model-estimated coordinate, never a gazetteer join' },
   { external: 'association.project_phase', why: 'their programme classification tier -- describes their rollout, not the animals or the place' },
   { external: 'association.target_scope', why: 'the admin level a performance target is set at; a target-setting parameter, not an observation' },
   { external: 'aht_user.allocated_associations', why: 'their staffing roster (technician-to-community allocation); the casey-side coverage/operator model is learned from its own authenticated sessions, never asserted from another system' },
   { external: 'aht_user.role', why: 'their access-control vocabulary; the casey-side contact tier is operator-assigned and fails closed, so it is never settable from outside' },
   { external: 'aht_user.is_active', why: 'their account state, same reason as role' },
-  // -- Daily accountability & officer status
   { external: 'daily_accountability.*', why: 'per-officer daily compliance internals (visits logged, admin days, Submitted/Missing/On Leave/Sick, compliance percent) -- a management-performance surface about their staff, not a fact about a case' },
-  // -- Document vault & resource metadata
   { external: 'document_vault.*', why: 'operational templates, training material, registers and herd/production plans plus their upload metadata. Deliberately NOT report.photos: a vault document is an office artefact, not a field photo of an affected animal, and importing one would put a template into a case evidence field' },
-  // -- Issue & follow-up tracker
   { external: 'follow_up.follow_up_id', why: 'their record id -- correlation metadata for external_link.external_id, not a report value' },
   { external: 'follow_up.status', why: 'their Open/Action Taken/Resolved flag; the casey-side case status comes from its lifecycle machine and an operator transition, never a remote write' },
   { external: 'follow_up.target_resolution_from', why: 'their SLA window; the casey-side SLA clock is attn.js own and must not be reset by a remote schedule' },
   { external: 'follow_up.target_resolution_to', why: 'same as target_resolution_from' },
-  // -- Farmer production census
   { external: 'farmer.cattle_count', why: 'a production census of the whole holding of a farmer, not herd_total at the visited location -- and inferring species from a nonzero count is exactly the guess report-fields.yml forbids' },
   { external: 'farmer.sheep_count', why: 'same as cattle_count' },
   { external: 'farmer.goat_count', why: 'same as cattle_count' },
-  // -- System targets & analytics
   { external: 'targets_analytics.*', why: 'quotas, totals, coverage counts and leaderboard/progress metrics -- derived management analytics, and the casey-side aggregates are computed from its own event log so importing a remote total would double-count' },
 ]
 
-// mapExternalFieldsToReport(externalRecord, kind)
-// externalRecord: a flat object keyed by EXTERNAL_SCHEMA[kind]'s field names.
-// kind: one of EXTERNAL_SCHEMA's own keys (aht_user | association | farmer |
-//   field_visit | vehicle_trip_log | daily_accountability | document_vault |
-//   follow_up | targets_analytics). Kinds with no FIELD_CROSSWALK row of their
-//   own map to {} by construction -- see NO_CASEY_COUNTERPART.
-// Returns a partial report-shape object using ONLY known REPORT_KEYS -- never
-// invents a key outside FIELD_CROSSWALK's declared targets. Fill-if-empty
-// semantics are the caller's job (see report-merge.js's fillIfEmptyReport);
-// this function only maps, it never merges or overwrites.
 export function mapExternalFieldsToReport(externalRecord, kind) {
   const report = {}
   for (const row of FIELD_CROSSWALK) {
@@ -193,10 +147,6 @@ export function mapExternalFieldsToReport(externalRecord, kind) {
   return report
 }
 
-// mapExternalFieldsToContact(externalRecord, kind)
-// Same discipline, restricted to contact.external_id -- never touches
-// display_name/tier/other contact fields, since those carry channel-identity
-// and access-control meaning this crosswalk has no authority over.
 export function mapExternalFieldsToContact(externalRecord, kind) {
   const contact = {}
   for (const row of FIELD_CROSSWALK) {
