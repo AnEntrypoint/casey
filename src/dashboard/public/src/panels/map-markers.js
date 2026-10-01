@@ -96,7 +96,7 @@ function mapMarkerIcon(statusTok, locationSource, urgency, selected) {
 function markerSignature(mapState, filters, urgency) {
     const f = filters || {};
     return [f.species || '', f.type || '', f.status || '', f.band || '', mapState.showClusters ? 1 : 0]
-        .concat((mapState.pins || []).map((p) => `${p.id}:${p.status}:${p.lat}:${p.lon}:${p.location_source}:${urgency.get(p.id) || 0}`))
+        .concat((mapState.pins || []).map((p) => `${p.id}:${p.status}:${p.lat}:${p.lon}:${p.location_source}:${p.location_confidence}:${urgency.get(p.id) || 0}`))
         .join('|');
 }
 
@@ -138,7 +138,7 @@ export function renderMapMarkers(mapState, filters) {
             // IMG; ours is a divIcon, so an `alt` option is silently dropped --
             // measured, not assumed (the first witness of this change came back
             // with alt null on a marker that did have role and tabindex).
-            title: `${p.ref} -- ${stageLabel(p.status)}`,
+            title: `${p.ref} -- ${stageLabel(p.status)}${Number.isFinite(p.location_confidence) ? ` -- pin ${p.location_confidence}% sure` : ''}`,
         });
         // The accessible NAME, set on the element Leaflet actually focuses.
         // Without it a screen reader announces eight identical "button"s and
@@ -152,7 +152,7 @@ export function renderMapMarkers(mapState, filters) {
             // map both say "in progress" / "Working on it" for the same value,
             // and a pin that announces "in_progress" is the third vocabulary on
             // one screen -- read aloud, to the reader least able to guess at it.
-            if (el) el.setAttribute('aria-label', `${EntityLabel()} ${p.ref}, ${stageLabel(p.status)}`);
+            if (el) el.setAttribute('aria-label', `${EntityLabel()} ${p.ref}, ${stageLabel(p.status)}${Number.isFinite(p.location_confidence) ? `, pin ${p.location_confidence}% sure` : ''}`);
         });
         // Select, never pop up. This is the queue-row click and the pin click
         // converging on ONE publisher (state.setActiveId), which is also what

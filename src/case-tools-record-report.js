@@ -24,6 +24,7 @@ import { canQueryCases } from './contact-tiers.js'
 import { stampReporter } from './phone-persons.js'
 import { consentManaged, consentState } from './phone-consent.js'
 import { returnGate } from './return-clarify.js'
+import { pinConfidence, placeText } from './pin-confidence.js'
 
 const OBSERVE_BLOCKED = { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
 const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed'])
@@ -48,7 +49,7 @@ export function buildCaseReportTools(store) {
         },
         required: ['id'],
       },
-      async ({ id, lat, lon, location_source, ...fields }, ctx) => {
+      async ({ id, lat, lon, location_source, location_confidence, ...fields }, ctx) => {
         // The consent gate (phone-consent.js): a public number that has not agreed, in conversation, to what
         // is kept has nothing written. Only this tool is held; the conversation goes on.
         if (consentManaged() && ctx?.contact?.id && !canQueryCases(ctx?.tier)) {
@@ -83,7 +84,7 @@ export function buildCaseReportTools(store) {
 
         let locationKept = ''
         if (hasLatLon) {
-          const wrote = await writeReportLocation(store, id, { lat, lon, resolvedLocationSource })
+          const wrote = await writeReportLocation(store, id, { lat, lon, resolvedLocationSource, confidence: pinConfidence(resolvedLocationSource, location_confidence) })
           if (wrote.error) return { error: wrote.error }
           // The coordinate was refused, so nothing downstream may claim it was
           // written: not the audit event, not the provenance ledger (which has
@@ -229,7 +230,7 @@ async function mergeIncomingReport(store, id, incoming) {
 // per-conversation lock, same discipline mergeReport/case_update already use)
 // rather than a raw getCase-then-check-then-write -- that stale-read-then-write
 // shape is exactly the TOCTOU race updateCaseChecked was introduced to close.
-async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource }) {
+async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource, confidence }) {
   // AN ESTIMATE NEVER REPLACES A REAL READING. The provenance subsystem already
   // enforces this for its own ledger (core/provenance.js canReplace: inferred
   // can never overwrite measured); the case's own lat/lon columns had no such
@@ -255,7 +256,7 @@ async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource
       return { locationKept: `this report already holds a ${priorSource} position (lat ${prior.lat}, lon ${prior.lon}); what you wrote was not recorded over it. Do not say you changed it. Ask them to confirm or correct that position instead.` }
     }
   }
-  const latLonResult = await store().updateCaseChecked(id, { lat, lon, location_source: resolvedLocationSource }, AGENT_USER)
+  const latLonResult = await store().updateCaseChecked(id, { lat, lon, location_source: resolvedLocationSource, location_confidence: confidence, location_basis: placeText(await store().getCase(id).catch(() => null)) }, AGENT_USER)
   if (latLonResult.error === 'observe') return { error: OBSERVE_BLOCKED.error }
   if (latLonResult.error) return { error: latLonResult.error }
   const c = latLonResult.case

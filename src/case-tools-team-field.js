@@ -40,6 +40,7 @@ import {
 import { UNCLAIMED_ASSIGNEE } from './case-store.js'
 import { APPEND_FIELD_MAX_LEN } from './store/report-merge.js'
 import { signOffCandidates } from './case-tools-team-review.js'
+import { pinConfidence } from './pin-confidence.js'
 import {
   NOT_ASSIGNED, doneStages, findCase, authorityOn, deskAuthorityOn, storeUser, actorData, teamRow, cleanRelayed, reporterExtras,
 } from './case-tools-team-shared.js'
@@ -284,7 +285,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         },
         required: ['case'],
       },
-      async ({ case: ref, lat, lon, location_source, subject, summary, priority, add_tags, note, correct = false, ...fields }, ctx) => {
+      async ({ case: ref, lat, lon, location_source, location_confidence, subject, summary, priority, add_tags, note, correct = false, ...fields }, ctx) => {
         subject = cleanRelayed(subject); summary = cleanRelayed(summary); add_tags = cleanRelayed(add_tags); note = cleanRelayed(note)
         for (const k of Object.keys(fields)) fields[k] = cleanRelayed(fields[k])
         // The diagnosis is recorded by the technician at sign-off, never relayed through the ranger's edit.
@@ -339,7 +340,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           if (source === 'estimated' && (cur?.location_source === 'gps' || cur?.location_source === 'confirmed') && cur?.lat != null) {
             return { error: `This record already holds a ${cur.location_source} position; an estimate does not replace it.`, recorded }
           }
-          columns.lat = lat; columns.lon = lon; columns.location_source = source
+          columns.lat = lat; columns.lon = lon; columns.location_source = source; columns.location_confidence = pinConfidence(source, location_confidence)
           recorded.push('lat', 'lon', 'location_source')
         }
         if (tagsToAdd.length) { columns.tags = tagsToAdd.reduce((t, tag) => mergeTag(t, tag), c.tags || ''); recorded.push('tags') }

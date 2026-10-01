@@ -219,7 +219,7 @@ export async function recordInboundLocation({ store, log, caseId, msg }) {
   }
   const place = [pin.name, pin.address].filter(Boolean).join(', ')
   try {
-    const res = await store.updateCaseChecked(caseId, { lat: pin.lat, lon: pin.lon, location_source: 'gps' })
+    const res = await store.updateCaseChecked(caseId, { lat: pin.lat, lon: pin.lon, location_source: 'gps', location_confidence: 100 })
     if (res?.error && res.error !== 'observe') {
       log.warn?.('[casey] location pin write failed', { caseId, error: res.error })
       return PIN_NOT_STORED('could not be saved just now')
