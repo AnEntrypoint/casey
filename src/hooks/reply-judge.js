@@ -96,50 +96,17 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   genuine response to it, NOT a repeated reply -- do not flag it.`,
     `4. TOOL REFUSAL: the reply talks ABOUT the assistant's own limitations,`,
     `   tools, or access ("I don't have the tools/access to...", "as an AI, I...",`,
-    `   "I cannot assist with that") instead of actually answering the person.`,
+    `   "I cannot assist with that") instead of actually answering the person. Saying kindly that it`,
+    `   is not a vet and cannot give treatment advice, or cannot say when anyone will come, is the`,
+    `   assistant's real, required answer to such a question and is NOT a tool refusal.`,
     `5. META-COMMENTARY / PLANNING NARRATION: the reply describes what the`,
     `   assistant is ABOUT to do or is thinking, instead of actually saying it`,
     `   TO the person (e.g. "I will reply warmly and ask about the location",`,
     `   "Now I'll wait for their reply", "I've asked one gentle question" --`,
     `   narration about the reply, not the reply itself).`,
-    `6. INTERNAL JARGON LEAK: this is a STRICT, LITERAL word-presence rule, not a`,
-    `   judgment call about whether the word sounds natural in context -- the`,
-    `   reply must NEVER contain any of these internal system/process words as`,
-    `   whole words, even when the sentence reads smoothly and sounds like`,
-    `   normal customer-service English: "case" (except inside a literal`,
-    `   reference code like CASE-1234-abcde, which is fine, or the ordinary`,
-    `   conjunction "in case"/"just in case"), "ticket", "triage", "workflow",`,
-    `   "status" (e.g. "your case status", "checking the status" -- ALWAYS a`,
-    `   leak, even though it sounds like something a real support agent would`,
-    `   naturally say), "priority" (e.g. "marked as high priority" -- ALWAYS a`,
-    `   leak for the same reason), "escalate", "transition", "autonomy". A`,
-    `   reply that otherwise reads as a perfectly normal, warm, professional`,
-    `   message is STILL flagged the instant one of these exact words appears --`,
-    `   naturalness of the phrasing is irrelevant to this specific shape; only`,
-    `   whole-word presence matters.`,
-    // The reply-shape rule the system prompt states THREE separate times (the
-    // persona's ONE-QUESTION rule, GATHER's TOP TWO paragraph, and ONE ASK PER
-    // REPLY) had no judge shape at all, so it was the one load-bearing reply rule
-    // with no gate behind it -- and it is the rule a weak model breaks most.
-    // Witnessed live against the configured free-tier chain, with the full domain
-    // prompt in force: a first inbound about sick cattle came back as a
-    // six-item numbered list of questions, twice in a row. The person reading
-    // that is on a phone, in a hurry, in their second or third language; the
-    // prompt's own words for what happens next are "answers two asks by
-    // answering neither". Retryable with the reasons fed back (see
-    // turn-attempts.js's multi-ask branch), and sent anyway once the budget is
-    // spent -- a wall of text is still a real answer, and silence is worse.
-    `7. MULTI-ASK WALL OF TEXT: the reply asks MORE THAN ONE question, or presents what`,
-    `   it wants to know as a numbered or bulleted LIST, or as a form of separate lines`,
-    `   to fill in. This person is reading on a phone, in a hurry, often in their second`,
-    `   or third language, and the assistant is allowed exactly ONE question naming at`,
-    `   most TWO still-missing things, woven into one natural sentence. A statement`,
-    `   (an acknowledgement, what is written down, what is still needed) is not a`,
-    `   question; a second question, however short, is one too many. A warm single`,
-    `   sentence that happens to mention two things is CLEAN; a list, a form, or a`,
-    `   second question is not. Judge the SHAPE only -- never whether the questions`,
-    `   are good ones.`,
-    shape ? `   The system counted ${shape.questions} question mark(s) and ${shape.listLines} list line(s) in the candidate (a system fact -- trust it over your own count).` : null,
+    // Shape 6 (internal jargon words) and shape 7 (more than one question) are decided in CODE
+    // (plain-text.js jargonIn / singleAsk), never asked of this model: a literal word list and a
+    // question-mark count do not need a classifier, and this one misfired on both.
     hadSuccessfulWrite === false ? [
       `8. FALSE CONFIRMATION: NO field/report/detail was actually recorded this`,
       `   turn (a system fact, given to you directly -- trust it over the reply's`,
@@ -252,10 +219,14 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `   alerted, asked, flagged, passed it to, told to act, is on the way, will come,`,
     `   phone, call back, contact, follow up, reply or be in touch, that it will chase or`,
     `   arrange something, or that anything will happen by some time, or OFFERS to have someone`,
-    `   call, contact, ask or fetch for them ("shall I ask a person to call you"). "Your report is`,
+    `   phone, visit or fetch something for them ("shall I ask a person to call you"). "Your report is`,
     `   recorded" and "the animal health team reads reports" are CLEAN, and so is saying`,
-    `   kindly that it cannot say whether or when anyone will come or call. A general statement`,
+    `   kindly that it cannot say whether or when anyone will come or call: a sentence that says`,
+    `   it CANNOT promise or say is the opposite of a promise. A general statement`,
     `   that the team reads the report and can follow up is CLEAN; that it WILL is not.`,
+    `   Offering that a person from the team can help them, or asking whether they would like a`,
+    `   person from the team to help, is CLEAN: the system really does pass that request to the team.`,
+    `   Only a claim or offer about WHEN, HOW or THAT someone will phone, visit or arrive is flagged.`,
     controlNoted ? `   The person asked for a human (or to stop) and the system DID register that this turn (a system fact): saying their request is written down is CLEAN; saying anyone will reply, call or come, or when, is not.` : null,
     `   Write the reason as "promise-made".`,
     safetyNumbers.length && latestInbound ? [
@@ -279,15 +250,8 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   language, and ask who is writing. A reply that only acknowledges, or records, or asks for more facts about the`,
       `   animals, without that question, is flagged. Write the reason as "clarify-not-asked".`,
     ].join('\n') : null,
-    latestInbound ? [
-      `13. WRONG LANGUAGE: compare the language of the reply's own sentences with the language`,
-      `   of the PERSON'S LATEST MESSAGE shown below. If they differ -- English to an`,
-      `   Afrikaans message, isiZulu to an isiXhosa one, isiXhosa to an English one --`,
-      `   flag it. Names, places, a reference code and words the person used themselves`,
-      `   do not count. If the latest message is too short to tell its language (a number,`,
-      `   "ok", thanks, an emoji, a name) this shape does not apply.${recordedLanguage ? ` The report records this person's language as "${String(recordedLanguage).replace(/["\n]/g, ' ').slice(0, 40)}" (a system fact): a reply written in that language is correct, and only a reply in a DIFFERENT language is flagged.` : ''} Write the reason as`,
-      `   "wrong-language".`,
-    ].join('\n') : null,
+    // Shape 13 (wrong language) is its own narrow call below (languageDiffers), not part of this list: it is a
+    // single question and is answered far more reliably alone.
     ``,
     `A reply that is a genuine, warm, on-topic message actually addressed TO the`,
     `person -- even if short, even if it asks a question, even if it is in a`,
@@ -304,59 +268,80 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     `CANDIDATE REPLY TO JUDGE:`,
     String(replyText).slice(0, 2000),
     ``,
-    `Respond with ONLY a single JSON object, no other text: {"clean": true} if none`,
-    `of the shapes above apply, or {"clean": false, "category": "jargon"|"other",`,
-    `"reasons": ["<short reason, e.g. \\"meta-commentary\\" or \\"jargon leak: case\\">",`,
-    `...]} if one or more apply. Use category "jargon" ONLY when failure shape 6`,
-    `(internal jargon leak) is the ONLY thing wrong -- the reply is otherwise a`,
-    `genuine, on-topic message that just needs its jargon word(s) reworded by a`,
-    `human, not discarded. Use category "other" for EVERY other shape listed`,
-    `above, or when jargon is combined with any other shape (the reply has no`,
-    `real content worth saving in that case). Some shapes above are numbered but`,
-    `only listed when they apply -- judge only the shapes actually shown to you,`,
-    `and never treat a gap in the numbering as a shape withheld. Some shapes`,
-    // Named conditionally, and that is load-bearing rather than tidy: naming
-    // "farewell-gap" while shape 9 is not shown invites the token for a shape the
-    // judge was never given, and the caller then composes a retry instruction
-    // around a missing-fact list that is empty -- the literal word "undefined"
-    // in a sentence aimed at a person. Only offer a token whose shape is present.
-    `have a REQUIRED reason word so the caller can route them (see this file's`,
-    `header: the shape heading words are a wire protocol, not prose): shape 7`,
-    `"multi-ask"${missingFacts.length ? `, shape 9 "farewell-gap"` : ''}${(lastOutboundText || knownFacts.length) ? `, shape 10 "repeat-ask"` : ''}, shape 11 "advice-given", shape 12 "promise-made"${consentOwed ? `, shape 15 "consent-not-asked"` : ''}${clarifyOwed ? `, shape 16 "clarify-not-asked"` : ''}${latestInbound ? `, shape 13 "wrong-language"` : ''}${safetyNumbers.length && latestInbound ? `, shape 14 "safety-line-missing"` : ''}.`,
+    `Respond with ONLY a single JSON object, no other text: {"findings": []} if none of the`,
+    `shapes above apply, or {"findings": [{"shape": "<reason word>", "quote": "<the exact words`,
+    `copied from the candidate reply that show it>"}, ...]} with one entry per shape that applies.`,
+    `The quote MUST be copied character for character from the CANDIDATE REPLY (a short run of`,
+    `its own words); a finding whose quote is not in the reply is thrown away. Only the shapes`,
+    `whose fault is something MISSING (${[missingFacts.length ? '"farewell-gap"' : null, consentOwed ? '"consent-not-asked"' : null, clarifyOwed ? '"clarify-not-asked"' : null, safetyNumbers.length && latestInbound ? '"safety-line-missing"' : null].filter(Boolean).join(', ') || 'none here'}) may leave "quote" empty.`,
+    `Judge only the shapes actually shown to you, and never treat a gap in the numbering as a`,
+    `shape withheld. Each shape has a REQUIRED reason word (the heading words are a wire protocol,`,
+    `not prose; see this file's header): ${[
+      missingFacts.length ? 'shape 9 "farewell-gap"' : null,
+      (lastOutboundText || knownFacts.length) ? 'shape 10 "repeat-ask"' : null,
+      'shape 11 "advice-given"', 'shape 12 "promise-made"',
+      consentOwed ? 'shape 15 "consent-not-asked"' : null,
+      clarifyOwed ? 'shape 16 "clarify-not-asked"' : null,
+      safetyNumbers.length && latestInbound ? 'shape 14 "safety-line-missing"' : null,
+    ].filter(Boolean).join(', ')}. Shapes 1-5 and 8 use "prompt-echo", "stock-ack", "repeated", "tool-refusal", "meta-commentary" and "false-confirmation".`,
   ].filter(line => line !== null).join('\n')
 
-  // One more try when the call fails or comes back empty: a judge that fails open passes ADVICE and
-  // promises as well as everything else, and a transient provider miss is the usual cause.
-  let raw = ''
-  for (let tryNo = 0; tryNo < 2 && !raw; tryNo++) {
+  // One judging pass: the quoted findings that survive (see below), or null when the call failed. A failing
+  // call is retried once because a judge that fails open passes advice and promises as well as everything else,
+  // and a transient provider miss is the usual cause. A judge-call failure must never block a real reply from
+  // reaching the person (this is a quality gate, not the reply path), so after that it fails OPEN.
+  const norm = (t) => String(t ?? '').toLowerCase().replace(/[\u2018\u2019\u201c\u201d"'`]/g, '').replace(/\s+/g, ' ').trim()
+  const haystack = norm(replyText)
+  const ABSENCE = /farewell.?gap|consent.?not.?asked|clarify.?not.?asked|safety.?line.?missing/i
+  async function pass() {
+    let raw = ''
+    for (let tryNo = 0; tryNo < 2 && !raw; tryNo++) {
+      try { raw = ((await callLLM({ messages: [{ role: 'user', content: judgePrompt }], tools: [] }))?.content || '').toString().trim() } catch { raw = '' }
+    }
+    if (!raw) return null
     try {
-      const result = await callLLM({ messages: [{ role: 'user', content: judgePrompt }], tools: [] })
-      raw = (result?.content || '').toString().trim()
-    } catch {
-      raw = ''
-    }
+      // The judge returns ONLY JSON, but a real model can still wrap it in prose or a code fence: take the first
+      // {...} block. A finding about something PRESENT in the reply must quote it, and the quote must really be in
+      // the reply: a flag the reply cannot back up (a word "found" that is not there) is dropped here.
+      const match = raw.match(/\{[\s\S]*\}/)
+      const parsed = JSON.parse(match ? match[0] : raw)
+      return (Array.isArray(parsed.findings) ? parsed.findings : [])
+        .map(f => ({ shape: String(f?.shape || '').trim(), quote: norm(f?.quote) }))
+        .filter(f => f.shape && (ABSENCE.test(f.shape) || (f.quote.length >= 4 && haystack.includes(f.quote))))
+        .map(f => f.shape)
+    } catch { return null }
   }
-  // A judge-call failure must never block a real reply from reaching the
-  // person: the judge is a quality gate, not the reply-generation path, so
-  // it fails OPEN (treat as clean) rather than holding every reply hostage
-  // to this second call's own reliability.
-  if (!raw) return { clean: true, reasons: [], category: null }
+  const [first, wrongLanguage] = await Promise.all([pass(), languageDiffers(callLLM, replyText, latestInbound, recordedLanguage)])
+  const langReasons = wrongLanguage ? ['wrong-language'] : []
+  if (!first || !first.length) return langReasons.length ? { clean: false, reasons: langReasons, category: 'other' } : { clean: true, reasons: [], category: null }
+  // A flag is acted on only when a SECOND pass over the same reply raises it too. One pass of a small judge model
+  // misfires on a clean reply about one time in ten, and each misfire used to cost a whole extra agent turn; the
+  // second pass runs only when the first flagged something, so a clean reply (nearly all of them) costs no more.
+  const second = await pass()
+  // Except the two whose miss costs the most and whose flag costs one soft retry: a goodbye that spent the on-site
+  // question, and the helpline line for someone in danger. Those act on the first pass.
+  const FIRST_PASS_ONLY = /farewell.?gap|safety.?line.?missing/i
+  const agreed = [...new Set(first)].filter(w => FIRST_PASS_ONLY.test(w) || (second || []).some(x => x.toLowerCase() === w.toLowerCase()))
+  const reasons = [...agreed, ...langReasons]
+  return reasons.length ? { clean: false, reasons, category: 'other' } : { clean: true, reasons: [], category: null }
+}
 
+// WRONG LANGUAGE, as one narrow question: does the reply use a different language from the person's message?
+// A reply in the language the report records for them also counts as right. Skipped when the message has too few
+// letters to carry a language (a number, "ok", an emoji). Fails open: a failed call flags nothing.
+export async function languageDiffers(callLLM, replyText, latestInbound, recordedLanguage = '') {
+  const msg = String(latestInbound || '').trim()
+  if ((msg.match(/\p{L}/gu) || []).length < 3 || !String(replyText || '').trim()) return false
+  const recorded = String(recordedLanguage || '').replace(/["\n]/g, ' ').slice(0, 40).trim()
+  const prompt = [
+    'Two texts from a chat. Name the language each is written in (ignore names, places, numbers and reference codes), then say whether both are written in the same language.',
+    recorded ? `(The person's language is recorded as "${recorded}": a reply in that language also counts as the same.)` : null,
+    'MESSAGE FROM THE PERSON:', msg.slice(0, 500), '', 'REPLY TO THEM:', String(replyText).slice(0, 1500), '',
+    'Respond with ONLY JSON: {"message_language":"<language>","reply_language":"<language>","same":true|false}',
+  ].filter(l => l !== null).join('\n')
   try {
-    // The judge is instructed to return ONLY JSON, but a real model can still
-    // wrap it in prose or a code fence -- extract the first {...} block rather
-    // than requiring an exact parse of the whole response.
-    const match = raw.match(/\{[\s\S]*\}/)
-    const parsed = JSON.parse(match ? match[0] : raw)
-    if (parsed.clean === true) return { clean: true, reasons: [], category: null }
-    if (parsed.clean === false) {
-      const category = parsed.category === 'jargon' ? 'jargon' : 'other'
-      return { clean: false, reasons: Array.isArray(parsed.reasons) ? parsed.reasons.map(String) : ['judge flagged reply'], category }
-    }
-    return { clean: true, reasons: [], category: null }
-  } catch {
-    // An unparseable judge response is the judge's own failure, not the
-    // reply's -- fail open for the same reason as a call failure above.
-    return { clean: true, reasons: [], category: null }
-  }
+    const raw = String((await callLLM({ messages: [{ role: 'user', content: prompt }], tools: [] }))?.content || '')
+    const m = raw.match(/\{[\s\S]*\}/)
+    return JSON.parse(m ? m[0] : raw).same === false
+  } catch { return false }
 }

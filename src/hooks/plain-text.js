@@ -29,6 +29,37 @@ export function replyShape(input) {
   return { questions, listLines }
 }
 
+// One question per reply, mended in code. A reply that asks two or more questions keeps the LAST
+// one (the closing question is the one the person is meant to answer) and every statement around
+// them; the earlier questions are cut whole. Pure punctuation work, no words are read. This takes
+// the place of a retry: a second full model turn used to be spent on it.
+const Q_END = /[?\uff1f\u061f](?=\s|$|["')\]\u201d\u2019])/g
+const SENTENCE_END = /[.!\u2026?\uff1f\u061f\n]/
+export function singleAsk(input) {
+  let text = String(input ?? '')
+  const ends = [...text.matchAll(Q_END)].map(m => m.index)
+  if (ends.length < 2) return text
+  const cuts = ends.slice(0, -1).map(e => {
+    let from = e
+    while (from > 0 && !SENTENCE_END.test(text[from - 1])) from--
+    let to = e + 1
+    while (to < text.length && /["')\]\u201d\u2019]/.test(text[to])) to++
+    return [from, to]
+  })
+  for (const [from, to] of cuts.reverse()) text = text.slice(0, from) + text.slice(to)
+  return text.replace(/[ \t]{2,}/g, ' ').replace(/ +\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// The internal system words a reply to the public must never carry (the same list prompt-sections.js
+// tells the model). A literal whole-word test, with a reference code (CASE-1234-abcde) and the ordinary
+// "in case" taken out first. Returns the distinct words found, lower-cased.
+const JARGON = /\b(cases?|tickets?|triag(?:e|ed|ing)|workflows?|status(?:es)?|priorit(?:y|ies)|escalat(?:e|es|ed|ing|ion)|transition(?:s|ed|ing)?|autonomy)\b/gi
+export function jargonIn(input) {
+  const s = String(input ?? '').replace(REF_TOKEN_ANY, ' ').replace(/\b(?:in|just in|in that|in which|in this|in any|in either) case\b/gi, ' ')
+  return [...new Set((s.match(JARGON) || []).map(w => w.toLowerCase()))]
+}
+const REF_TOKEN_ANY = /CASE-\d+-[a-z0-9]+/gi
+
 // Fold runs of list lines into the line before them.
 function flattenLists(lines) {
   const out = []

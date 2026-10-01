@@ -12,6 +12,30 @@ const ACPTOAPI_TIMEOUT_MS = Number(process.env.ACPTOAPI_TIMEOUT_MS) || 240000
 export const REACHABILITY_PROBE_TIMEOUT_MS = Number(process.env.ACPTOAPI_REACHABILITY_PROBE_TIMEOUT_MS) || 45000
 const REACHABILITY_PROBE_CHAIN_LINK_CAP = 3
 
+// ONE shared ceiling on in-flight model requests for the whole process (agent hops, the reply judge, notices,
+// label translation: they all go through this module object). The provider answers "429 Too many concurrent
+// requests" above a few simultaneous calls per key and throughput does not rise past about four, so calls above
+// the ceiling WAIT their turn here, in order, instead of being refused and retried (a refused hop became an empty
+// reply, then a whole repeated agent turn). CASEY_LLM_CONCURRENCY=0 turns the ceiling off.
+const LLM_CONCURRENCY = process.env.CASEY_LLM_CONCURRENCY != null ? Math.max(0, Number(process.env.CASEY_LLM_CONCURRENCY) || 0) : 4
+let _inFlight = 0
+const _waiting = []
+async function withSlot(fn) {
+  if (_inFlight >= LLM_CONCURRENCY) await new Promise(resolve => _waiting.push(resolve))
+  _inFlight++
+  try { return await fn() } finally { _inFlight--; _waiting.shift()?.() }
+}
+function limitConcurrency(acptoapi) {
+  if (!LLM_CONCURRENCY || acptoapi.__casey_limited) return
+  for (const name of ['chat', 'chatChain']) {
+    const orig = acptoapi[name]
+    if (typeof orig !== 'function') continue
+    try { acptoapi[name] = (...args) => withSlot(() => orig.apply(acptoapi, args)) } catch { /* a frozen export is left as it was */ }
+  }
+  try { acptoapi.__casey_limited = true } catch { /* none */ }
+}
+export const llmQueueStats = () => ({ inFlight: _inFlight, waiting: _waiting.length, ceiling: LLM_CONCURRENCY })
+
 let _acptoapi = null
 async function getAcptoapi() {
   if (!_acptoapi) {
@@ -28,6 +52,7 @@ async function getAcptoapi() {
     const brandsMod = await import('acptoapi/lib/openai-brands')
     const brands = brandsMod.default || brandsMod
     if (!brands.isBrand('synthetic')) brands.registerBrand('synthetic', { url: 'https://api.synthetic.new/openai/v1/chat/completions', envKey: 'SYNTHETIC_API_KEY' })
+    limitConcurrency(_acptoapi)
   }
   return _acptoapi
 }
