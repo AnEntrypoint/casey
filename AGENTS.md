@@ -4,7 +4,7 @@ Operating notes for agents (and humans) in the casey repo; included by `CLAUDE.m
 
 ## What casey is
 
-A thin, domain-configurable orchestrator for structured intake over WhatsApp/Discord: anyone messaging is a reporter, and casey gathers a structured record warmly. The domain (field vocabulary, persona, thatcher schema, dashboard labels) is config-driven; this repo ships a generic IT-helpdesk demo, and the animal-disease deployment is the separate private package `AnEntrypoint/uhh`. Narrative (flow, commands, environment, layout) is in `README.md`.
+A thin, domain-configurable orchestrator for structured intake over WhatsApp/Discord -- a config-driven domain, with a generic demo here and the animal-disease deployment as the private package `AnEntrypoint/uhh`. Narrative in `README.md`. Narrative (flow, commands, environment, layout) is in `README.md`.
 
 ### Contact access ladder (`src/contact-tiers.js`)
 
@@ -67,9 +67,6 @@ AUTO-UPDATE (default ON; `--no-auto-update`, `CASEY_AUTO_UPDATE=0`, interval 60s
 
 Editing/pushing a composed dependency (`deps/thatcher`; same for acptoapi/design): fix, commit+push inside it, then `git add deps/thatcher && git commit -m "chore(deps): bump thatcher submodule pointer" && npm install`. `deps/freddie` differs: after pushing, `pnpm install` inside `deps/freddie`, then `node scripts/link-deps.mjs`.
 
-## Environment
-
-Full list in `README.md`. Non-obvious behavior: an unset `WHATSAPP_APP_SECRET` is FATAL when `--channels whatsapp` names it, else WhatsApp is dropped with a warning; `WHATSAPP_VERIFY_TOKEN` is fatal whenever WhatsApp is enabled. `CASEY_LLM_DATA_POLICY` default `deny` (no-training on every link; `zdr` adds zero-retention; `allow` disables and doctor warns); links with no checkable guarantee (`:free`, `claude/*` ACP wrappers, unknown brands, `queue/`/`chain/`) are dropped and audited, and an empty chain throws. `/audio/transcriptions` ignores the policy, so transcription uses chat completions.
 ## Timeout coordination (live turn guarantee)
 
 Four independent layers; all four must agree on an outer bound or a slow-but-working provider is marked unhealthy early and live contacts hit fallback even when the backend is merely slow.
@@ -83,7 +80,7 @@ Ordering: hard >= soft; hard >= per-attempt; per-attempt > per-link; per-link >=
 ## Design principles (preserve these)
 
 - No mocks/fallbacks/stubs -- only singular working mechanisms and loud errors. A degraded turn never fabricates case content; the one exception is a live first-attempt turn still degraded after its budget, which sends a truthful status message, while a background re-drive stays silent. The reporter is usually a field worker relaying a farmer's animals: the LLM records the report, casey does no field extraction, and a complete report is not a dead-end.
-- Personal data goes only to processors casey can hold to a no-training policy, and the decision is written down (`CASEY_LLM_DATA_POLICY`). The bot never contacts anybody; everybody contacts the bot (`CASEY_PROACTIVE_SENDS=off`); ONE gate at the sending seams. A case is keyed per contact, not per channel.
+- Personal data goes only to processors casey can hold to a no-training policy, and the decision is written down (`CASEY_LLM_DATA_POLICY`, default `deny`; `allow` warns ). The bot never contacts anybody; everybody contacts the bot (`CASEY_PROACTIVE_SENDS=off`); ONE gate at the sending seams. A case is keyed per contact, not per channel.
 - Areas/hand-over/day: a report in a mapped area goes to the primary ranger (else first valid backup), auto-assign running once per OPEN UNASSIGNED record after a write touching area/location. Resolution is EQUALITY (`resolveArea`; no gazetteer, no fuzzy match; unmatched lands in `unmappedAreas`). The ranger hands over (refused while the minimum is blank); the technician signs off with a diagnosis+resolution. Sign-off desk rule: an open record holding the minimum is on the desk when HANDED OFF or nobody holds it; `case_my_day` returns counts/references/status only.## Security invariants (do not regress)
 
 - WhatsApp inbound is HMAC-SHA256 verified when `WHATSAPP_APP_SECRET` is set; that secret is required when WhatsApp credentials exist. Without it anyone reaching the webhook can forge farmer messages.
@@ -104,6 +101,9 @@ Ordering: hard >= soft; hard >= per-attempt; per-attempt > per-link; per-link >=
 ## thatcher / busybase chain
 
 casey consumes thatcher via `file:deps/thatcher`, calling operator-where directly with no fallback. busybase's `src/*.js` are gitignored bun-build outputs -- fixes go in the `.ts` sources in the busybase repo and are rebuilt there, never patched casey-side.
+
+- Store write guards (`store/guards.js`): `DERIVED_ONLY_FIELDS` (system-only) and `SYSTEM_FORBIDDEN_FIELDS` (the system actor never writes `report`/`summary`/`subject`); `installVersionGuard` wraps `store.t.update` and REFUSES a raw JS number under `expectedVersion` BEFORE the write (the trap: it lands while the caller is told it conflicted, so every downstream step is skipped).
+- Case ref (`store/ref.js`): 8 chars of a 32-symbol unambiguous alphabet (~40 bits), never `Math.random`; the SOLE gate on the public /report form. Freddie stores agent transcripts VERBATIM outside `data/` (`~/.freddie/sessions/.../case:<id>`); erasure and a tier change both delete them. `report-merge.js`: photos/audio/sites APPEND (cap 20000, reject loudly), everything else refines; `fillIfEmptyReport` (mergeCases) never overwrites the target.
 
 busybase opens the file with `journal_mode=delete` and `busy_timeout=0`, so sqlite NEVER waits -- it fails instantly with `SQLITE_BUSY`, and a plain reader blocks a writer. Any concurrent reader (another CLI, a backup, an audit script) can fail casey's writes, and a burst of concurrent inbounds can fail each other's. `src/store/busy-retry.js` is the only defence: a USERLAND full-jitter retry inside a seconds-long budget; it cannot save a write from a reader holding the lock continuously (the real fix is `busy_timeout`/WAL on busybase's own handle in the busybase repo), and a spent intake budget is COUNTED.
 

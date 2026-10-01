@@ -1,17 +1,4 @@
-// store/config-schema.js  --  pure structural validation of thatcher.config.yml
-// and the enum vocabulary derived from it.
-//
-// Nothing here reads a file, boots thatcher, or touches a DB: every function
-// takes the already-parsed config object and returns a value or throws a
-// descriptive Error. That is what lets `casey doctor` run the SAME graph
-// validation `CaseStore.init()` runs without creating ./data or a live store
-// (CaseStore.validateConfig()), and it keeps the whole config vocabulary in one
-// place instead of spread across the store's own lifecycle methods.
 
-// Validate the config and return the parsed workflow stage graph
-// ({ <stage>: { forward, backward, requires_role } }). Throws a descriptive
-// error on any structural problem. `workflowName` is the workflow key to read
-// out of cfg.workflows (CaseStore's opts.workflow, default 'case_lifecycle').
 export function validateCaseConfig(cfg, workflowName) {
   if (!cfg || typeof cfg !== 'object') throw new Error('casey config is empty or not an object')
   for (const ent of ['case', 'event', 'contact']) {
@@ -30,8 +17,6 @@ export function validateCaseConfig(cfg, workflowName) {
     }
     graph[s.name] = { forward: s.forward || [], backward: s.backward || [], requires_role: s.requires_role || [] }
   }
-  // case.status enum should cover every workflow stage, else transitions write
-  // values the column rejects.
   const statusOpts = cfg.entities.case.fields?.status?.options
   if (Array.isArray(statusOpts)) {
     for (const n of names) if (!statusOpts.includes(n)) throw new Error(`casey config: case.status enum is missing stage "${n}"`)
@@ -41,13 +26,6 @@ export function validateCaseConfig(cfg, workflowName) {
   return graph
 }
 
-// Broader structural validation over every declared entity.field beyond the
-// workflow-stage-coverage check above: a field definition must be an object
-// with a recognised `type`, an `enum` field must declare a non-empty
-// `options` array, and the required system columns (id/created_at/
-// created_by/updated_at, matching _system_fields in the config) must be
-// present on every entity -- thatcher's write engine always writes these,
-// so a missing one fails obscurely at first insert rather than at boot.
 export function validateFieldDefs(cfg) {
   const KNOWN_TYPES = new Set(['id', 'text', 'textarea', 'number', 'enum', 'timestamp', 'boolean', 'json'])
   const REQUIRED_SYSTEM_FIELDS = ['id', 'created_at', 'created_by', 'updated_at']
@@ -76,18 +54,7 @@ export function validateFieldDefs(cfg) {
   }
 }
 
-// row_access (when declared) must name a scope this codebase actually
-// understands and a field that is a real column on the entity -- a typo
-// here (e.g. "asignee") would silently no-op the worker enquiry scoping
-// this exists to enforce, handing every worker every case. list.defaultSort
-// (when declared) must be a non-empty array of {field, dir} pairs with dir
-// in ASC/DESC and field a real column, else a sort silently falls back to
-// whatever thatcher/sqlite happens to return.
 export function validateRowAccessAndSort(cfg) {
-  // 'none' explicitly disables row-access scoping for an entity (e.g.
-  // operator_identity/operator_account below -- internal bookkeeping no
-  // worker ever queries) and carries no `field`; every other known scope
-  // keys on a real column.
   const KNOWN_ROW_ACCESS_SCOPES = new Set(['assigned', 'owner', 'none'])
   for (const [entName, ent] of Object.entries(cfg.entities || {})) {
     const fieldNames = new Set(Object.keys(ent?.fields || {}))
@@ -117,13 +84,6 @@ export function validateRowAccessAndSort(cfg) {
   }
 }
 
-// Read every entity.field { type: enum, options: [...] } declaration off the
-// same parsed config, so a deployment that adds/renames a case_type or
-// priority value in thatcher.config.yml is picked up by every consumer
-// (case-tools.js validation guards, case_list/case_update tool-schema enums)
-// with no code change and no second hardcoded copy of the list. Shape:
-// { "<entity>.<field>": string[] }. Non-enum fields and entities with no
-// fields are simply absent -- callers fall back to their own default.
 export function parseFieldEnums(cfg) {
   const out = {}
   for (const [entName, ent] of Object.entries(cfg?.entities || {})) {
