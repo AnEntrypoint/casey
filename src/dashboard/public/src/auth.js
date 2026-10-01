@@ -12,11 +12,13 @@
 
 import { state, schedule, setAuthed, setConnLost, setSessionRestored } from './state.js';
 import * as api from './api.js';
+import { syncPreviewBar } from './preview-bar.js';
 
 export async function checkSession() {
   try {
     const j = await api.whoami();
     setAuthed(!!(j && j.authed), j && j.authed ? j : null);
+    syncPreviewBar(j);
     setSessionRestored(false);
   } catch (e) {
     if (api.isOfflineError(e)) {

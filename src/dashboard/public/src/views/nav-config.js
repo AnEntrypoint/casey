@@ -136,6 +136,7 @@ function rawSideSections({ clustersCount = 0, offlineCount = 0 } = {}) {
       items: [
         { key: 'team', glyph: Icon('members', { size: 15 }), label: 'Team workload', onClick: (e) => navClick(e, () => openPanelRoute('team')), active: state.activePanel === 'team' },
         { key: 'contacts', glyph: Icon('members', { size: 15 }), label: 'People and codes', onClick: (e) => navClick(e, () => openPanelRoute('contacts')), active: state.activePanel === 'contacts' },
+        ...(state.currentUser && state.currentUser.role === 'admin' ? [{ key: 'view_as', glyph: Icon('members', { size: 15 }), label: 'View as...', onClick: (e) => navClick(e, () => openPanelRoute('view_as')), active: state.activePanel === 'view_as' }] : []),
         { key: 'areas', glyph: Icon('globe', { size: 15 }), label: 'Areas', onClick: (e) => navClick(e, () => openPanelRoute('areas')), active: state.activePanel === 'areas' },
         { key: 'nudges', glyph: Icon('activity', { size: 15 }), label: 'Who needs a nudge', onClick: (e) => navClick(e, () => openPanelRoute('nudges')), active: state.activePanel === 'nudges' },
         { key: 'secretary', glyph: Icon('external-link', { size: 15 }), label: 'Follow-up calls', onClick: (e) => navClick(e, () => openPanelRoute('secretary')), active: state.activePanel === 'secretary' },
@@ -180,7 +181,9 @@ function rawActionItems({ refreshAll } = {}) {
 // around it). Absent role (no login yet, or a role this map doesn't name)
 // -- no-op, byte-identical to before this existed.
 const ROLE_HIDE = {
-  secretary: ['sweep', 'settings', 'metrics', 'distribution', 'team'],
+  secretary: ['sweep', 'settings', 'metrics', 'distribution', 'team', 'areas'],
+  // What only an admin may do (dashboard/roles.js ADMIN_ONLY_ROUTES): the sweep and the areas editor.
+  operator: ['sweep', 'areas'],
 };
 // The account controls live in the topbar's AccountMenu, never in a nav group
 // here: an item-less group still renders its header, so both filters below

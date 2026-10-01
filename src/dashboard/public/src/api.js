@@ -82,6 +82,18 @@ export function onConnectionRestored(fn) {
 // neither.
 const FETCH_TIMEOUT_MS = 20000;
 
+// VIEW AS (admin only, read-only): the id of the login being previewed, kept for this tab alone. The server ignores the header
+// for anyone but a real admin session and refuses every write while it is present.
+const VIEW_AS_KEY = 'casey.viewAs';
+export function viewAsId() { try { return sessionStorage.getItem(VIEW_AS_KEY) || ''; } catch { return ''; } }
+export function setViewAs(id) {
+  try { if (id) sessionStorage.setItem(VIEW_AS_KEY, id); else sessionStorage.removeItem(VIEW_AS_KEY); } catch { /* the preview just does not start */ }
+  clearConditionalCache();
+  clearLastKnown('whoami');
+  location.hash = '';
+  location.reload();
+}
+
 export async function api(path, opts = {}) {
   let res;
   const timeoutController = new AbortController();
@@ -107,7 +119,9 @@ export async function api(path, opts = {}) {
       })()
     : timeoutController.signal;
   try {
-    res = await fetch(path, Object.assign({ credentials: 'include' }, opts, { signal }));
+    const viewAs = viewAsId();
+    const headers = viewAs ? Object.assign({}, opts.headers || {}, { 'x-view-as': viewAs }) : opts.headers;
+    res = await fetch(path, Object.assign({ credentials: 'include' }, opts, headers ? { headers } : {}, { signal }));
   } catch (e) {
     setConnLost(true);
     throw e;
