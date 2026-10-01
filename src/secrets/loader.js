@@ -1,17 +1,3 @@
-// secrets/loader.js -- reads the bot's secrets from Google Secret Manager, at PINNED versions, and fails closed.
-//
-// No cryptography here: Secret Manager encrypts at rest, the client library talks TLS, and credentials come from the
-// platform (application default credentials from the VM's metadata server). There are no key files.
-//
-// The manifest names WHERE each secret lives and never holds a value, so it is safe to keep in plain config:
-//   { "project": "my-project", "secrets": { "WHATSAPP_API_TOKEN": { "secret": "uhh-whatsapp-api-token", "version": "3" }, ... } }
-// `version` must be a number: "latest" is refused unless allowLatest is set, because a pinned version is what makes a rotation
-// a deliberate, reversible step (change the number, restart; change it back to roll back).
-//
-// FAIL CLOSED. Any entry that cannot be read, or reads empty, makes loadSecrets throw ONE error that names the environment
-// variables that failed and a numeric status code, never a value and never the provider's message. Nothing is partially
-// applied: the caller gets every secret or none. Values live only in the returned object; secrets-exec.mjs puts them in the
-// child's environment and drops them.
 const SECRET_ID = /^[A-Za-z0-9_-]{1,255}$/
 const PROJECT_ID = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$|^[0-9]{6,20}$/
 const ENV_NAME = /^[A-Z][A-Z0-9_]{1,127}$/
@@ -41,7 +27,6 @@ async function defaultClient() {
   return new mod.SecretManagerServiceClient()
 }
 
-// -> { env: { NAME: value }, names: [NAME, ...] }. `client` is injectable (a fake in the checks).
 export async function loadSecrets(manifest, { client = null, allowLatest = false } = {}) {
   const list = validateManifest(manifest, { allowLatest })
   const c = client || await defaultClient()
