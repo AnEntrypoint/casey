@@ -17,7 +17,7 @@ import { returnState } from '../return-clarify.js'
 import { buildPromptContext } from './prompt-context.js'
 import { fieldLabel } from '../store/report-shape.js'
 import { judgeReply } from './reply-judge.js'
-import { replyShape, strayContactDetails } from './plain-text.js'
+import { replyShape, strayContactDetails, singleAsk, jargonIn } from './plain-text.js'
 import { loadDomainConfig } from '../config-loader.js'
 import { stripThinkingBlock, OPTED_OUT_TAG, detectContactIntent } from './heuristics.js'
 import { tagList, parseReport } from '../timestamp.js'
@@ -393,6 +393,20 @@ export async function reportFactsForJudge(store, fallbackRow, events, caseId = f
 // leak) return before the judge is ever called, and on those attempts the store
 // read behind it is pure waste inside a live turn's hard deadline. Awaited once,
 // immediately before the judge call that is the first thing to need it.
+// The instruction a reply owes before anything else, as a system note, while consent or a return clarification is
+// owed. Same wording the judge's retry route uses, so what is asked on attempt 1 is exactly what attempt 2 used to be.
+function upfrontNote({ consent, ret }) {
+  if (consent === 'none') return "\n\n[System note: this person's number has not agreed yet to the team keeping what they send. In THIS reply say briefly, in your own words and their language, what is kept and who can see it, and ask if that is okay: it is your one question, so ask nothing else this turn and do not ask about the animals yet. If their latest message already answers that question, call case_consent first (agreed true for a yes, false for a no). Keep it short, warm and in plain sentences, and never mention this note.]"
+  if (ret?.owed) return '\n\n[System note: this person came back to a report that is already complete. In THIS reply ask, in one short natural sentence in their language, whether this is more about that existing report or a new problem, and ask who is writing: it is your one question. If their latest message already answers it, call case_clarify first. Keep it short and warm, and never mention this note.]'
+  return null
+}
+
+function jargonFeedback(words, ref) {
+  // The reference is named EXPLICITLY, and before the prohibition, because the prohibited word is the first half of the
+  // reference's own token: told only "never write case", a model drops the reference along with it.
+  return `\n\n[System note: your previous reply was not sent because it used internal system words this person must never read: ${words.join(', ')}. Say the same thing again, just as warmly, in their own plain language. If you were giving them their reference, keep it EXACTLY as ${ref} -- that token is required and is not one of the forbidden words. Otherwise never write "case", "ticket", "triage", "workflow", "status", "priority", "escalate", "transition" or "autonomy" -- speak about "your report", "what you told me", or "the animals" instead.]`
+}
+
 export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, returnOn = false, isStaff = false, isTechnician = false }) {
   // What a refusal offers instead: a reporter is steered back to reporting; a team member to their own work.
   const offerThing = isStaff ? 'offer what is waiting for them (their assigned reports)' : 'offer the one thing you can help with: hearing about an animal that is sick or has died'
@@ -524,17 +538,21 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
   // with the latest message and with this recorded fact, which stops it flagging a correct reply in a less common language.
   let recordedLanguage = ''
   try { recordedLanguage = String(parseReport(await store.getCase(fresh.id))?.language_detected || '') } catch { /* none */ }
+  // ONE QUESTION is mended in code, not retried: a reply with several questions keeps its last one and its statements
+  // (plain-text.js singleAsk), so it costs no second model turn. The team is answered in full and never mended.
+  if (!isStaff && replyShape(candidate).questions >= 2) {
+    const mended = singleAsk(candidate)
+    await note(`ONE-QUESTION: the reply asked ${replyShape(candidate).questions} questions; the earlier ones were cut by the system (no retry)`)
+    candidate = mended
+  }
   const shape = replyShape(candidate)
-  // The reply-shape rule is a COUNT, and on an attempt that has a retry left a count of two or more already decides
-  // the outcome: the judge would be asked about a reply that is going to be rewritten whatever it says, so the
-  // call (a serial several seconds) is skipped. Any other fault is found on the retry, and the last attempt is
-  // always judged in full, so nothing is let through unjudged.
-  // The one-question rule is for the PUBLIC: a team member is answered in full, and the retry wording (acknowledge, then ONE question) would push
-  // them into the reporter script, so it never applies to them.
-  if (!isStaff && softCanRetry && (shape.questions >= 2 || shape.listLines >= 2)) {
-    log.warn?.('[casey] reply asked several things at once (counted by the system); retrying turn with feedback', { caseId: fresh.id, attempt, questions: shape.questions, listLines: shape.listLines })
-    await note(`REPLY-JUDGE-FLAGGED: multi-ask: ${shape.questions} questions and ${shape.listLines} list lines counted by the system; retrying turn with feedback (attempt ${attempt})`)
-    return { done: false, retryFeedback: "\n\n[System note: your previous reply was not sent because it asked too many things at once. Send it again as a short, warm message: acknowledge what they just said, then ONE question naming at most TWO things, with no list, and one question mark in the whole reply.]" }
+  // INTERNAL WORDS are a literal word list, found in code (plain-text.js jargonIn). A real leak is retried straight away
+  // with the words named back; the judge is not asked, it only reads the shapes that need reading.
+  const jargon = isStaff ? [] : jargonIn(candidate)
+  if (jargon.length && canRetry) {
+    log.warn?.('[casey] reply carries internal words; retrying turn with feedback', { caseId: fresh.id, attempt, jargon })
+    await note(`JARGON-LEAK: reply used ${jargon.join(', ')}; retrying turn with feedback (attempt ${attempt})`)
+    return { done: false, retryFeedback: jargonFeedback(jargon, fresh.ref) }
   }
   let verdict = await judgeReply(turnCallLLM, candidate, { lastOutboundText, hadSuccessfulWrite: wroteThisTurn, latestInbound: inboundText, missingFacts, knownFacts, shape, consentOwed, clarifyOwed, recordedLanguage, adviceRefusal: persona.adviceRefusalText || null, controlNoted, safetyNumbers })
   // A team member uses the dashboard's own words (report references, 'case', 'priority'), so a jargon verdict is not a
@@ -555,11 +573,11 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     const rest = verdict.reasons.filter(r => !/repeat.?ask/i.test(r))
     if (rest.length !== verdict.reasons.length) verdict = rest.length ? { ...verdict, reasons: rest } : { clean: true, reasons: [], category: null }
   }
-  // The reply-shape rule is a COUNT: one question, no list. Two question marks or two list lines
-  // is a multi-ask whatever the judge made of the sentences, so a clean verdict is overridden.
-  // Only a clean one: a real fault the judge found keeps its own route.
-  if (!isStaff && verdict.clean && (shape.questions >= 2 || shape.listLines >= 2)) {
-    verdict = { clean: false, category: 'other', reasons: [`multi-ask: ${shape.questions} questions and ${shape.listLines} list lines counted by the system`] }
+  // A leak on the last attempt (no retry left) is routed as before; the judge no longer reports it.
+  if (jargon.length) verdict = { clean: false, category: 'jargon', reasons: [`jargon leak: ${jargon.join(', ')}`] }
+  else if (verdict.category === 'jargon' || verdict.reasons?.some(r => /jargon/i.test(r))) {
+    const rest = (verdict.reasons || []).filter(r => !/jargon/i.test(r))
+    verdict = rest.length ? { ...verdict, reasons: rest, category: 'other' } : { clean: true, reasons: [], category: null }
   }
   if (verdict.clean) return { done: true, text: candidate }
   // INTERNAL JARGON LEAK (reply-judge.js shape 6) is the shape whose fix is the
@@ -586,9 +604,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
       // the reporter loses the one datum they can quote back, which is a worse
       // trade than the leak. Live-witnessed on a first message: a complete report
       // was extracted and acknowledged with no reference anywhere in the reply.
-      return { done: false, retryFeedback: '\n\n[System note: your previous reply was not sent because it used internal system words this person must never read: '
-        + verdict.reasons.join('; ')
-        + `. Say the same thing again, just as warmly, in their own plain language. If you were giving them their reference, keep it EXACTLY as ${fresh.ref} -- that token is required and is not one of the forbidden words. Otherwise never write "case", "ticket", "triage", "workflow", "status", "priority", "escalate", "transition" or "autonomy" -- speak about "your report", "what you told me", or "the animals" instead.]` }
+      return { done: false, retryFeedback: jargonFeedback(jargon, fresh.ref) }
     }
     return { done: true, text: candidate, jargonReasons: verdict.reasons }
   }
@@ -877,7 +893,11 @@ export async function runAgentTurn({
   let turnWroteSomething = false
 
   let result, text = '', errored = false, degradedReason = null
-  let jargonReasons = null, falseConfirmReasons = null, adviceReasons = null, retryFeedback = null
+  // What this reply MUST do is stated on the FIRST attempt, not discovered after it: a model asked only by the
+  // persona to find out what is wrong skipped the consent question on most first messages, was caught by the
+  // judge, and answered correctly on a second turn once the same instruction arrived as a system note. So the note
+  // that retry would have carried goes in up front (the owed state is read from the store, never from the text).
+  let jargonReasons = null, falseConfirmReasons = null, adviceReasons = null, retryFeedback = upfrontNote({ consent, ret })
 
   for (let attempt = 1; attempt <= MAX_TOOL_CHOICE_ATTEMPTS; attempt++) {
     const timeoutMs = attemptTimeout({ isBackgroundRedrive, turnStartedAt })
