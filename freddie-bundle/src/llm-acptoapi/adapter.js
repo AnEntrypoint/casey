@@ -1,11 +1,5 @@
-// Cordis LlmAdapter subclass wrapping acptoapi directly (in-process, no HTTP
-// hop) -- casey's own Service Provider for freddie's LLM seam (Service
-// Definition: deps/freddie's packages/llm/llm's LlmRuntime/LlmAdapter; real
-// reference Provider: packages/llm/llm-deepseek's DeepSeekAdapter, whose
-// shape this mirrors). stream() is the only required method: acptoapi's
-// chat()/chatChain() is non-streaming, so a complete response is synthesized
-// into freddie's chunk protocol (block-start/text-delta/tool-call-delta/
-// block-end/usage/finish) in one shot.
+
+
 import { LlmAdapter } from '@freddie/freddie-llm'
 import { resolveChainLinks } from '../../../src/agent/acptoapi-bridge.js'
 
@@ -13,25 +7,12 @@ let _acptoapi = null
 async function getAcptoapi() {
   if (!_acptoapi) {
     const mod = await import('acptoapi')
-    // acptoapi is a CJS package; Node's CJS-to-ESM interop only statically
-    // detects a SUBSET of module.exports keys as named exports -- read
-    // through `.default` (the full CJS exports object) so every export is
-    // reachable regardless of which subset the interop happened to pick up.
+
     _acptoapi = mod.default && typeof mod.default === 'object' ? mod.default : mod
   }
   return _acptoapi
 }
 
-// resolveChainLinks and isConfiguredChainSyntax live in casey's own agent
-// bridge and are imported, not copied. They were copied, and the copies
-// drifted: this one was fixed to stop swallowing a buildAutoChain throw and
-// the other was not, so one process held two different failure behaviours for
-// the same call. Same import direction as this bundle's platform plugin,
-// which already reaches into src/adapters for the webhook verifier.
-// freddie's message content is an array of typed ContentBlocks
-// ({type:'text'|'tool-call'|'tool-result'|'reasoning'}), not a flat string --
-// flatten to OpenAI-compatible {role, content, tool_calls}/{role, tool_call_id,
-// content} for acptoapi's chat-completions call shape.
 function toOpenAiMessages(messages) {
   const out = []
   for (const m of messages) {
