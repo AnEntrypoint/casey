@@ -4,6 +4,12 @@
 // transcribes it. Both are installed OUTSIDE the repo by scripts/setup-local-stt.sh
 // (default /config/stt; CASEY_LOCAL_STT_DIR).
 //
+// ENGINES. 'omni' is Meta's Omnilingual ASR (CTC 1B, int8, via sherpa-onnx, scripts/omni-asr.py): 1600+ languages including
+// isiZulu, isiXhosa, Setswana, Sepedi, Xitsonga and Afrikaans, which whisper does not cover; on FLEURS clips it measured
+// 27% / 36% / 22% word error (zu / xh / af) where whisper base measured 150% / 141% / 76%, at about the same speed.
+// 'whisper' is whisper.cpp as before. CASEY_LOCAL_STT_ENGINE = auto (default: omni when installed, then whisper if omni
+// fails or hears nothing) | omni | whisper.
+//
 // Fail-open like every media tool: every failure returns {text: ''} with a reason and
 // never throws. The audio and the transcript are never logged here. Child processes run
 // via execFile with an argument array (no shell), a hard deadline, a minimal environment
@@ -22,6 +28,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 const MAX_BYTES = 5 * 1024 * 1024
 const MAX_QUEUE = 4 // waiting jobs beyond the one running
@@ -41,6 +48,10 @@ function cfg() {
     model: path.isAbsolute(model) ? model : path.join(dir, 'models', `ggml-${model}.bin`),
     timeoutMs: Number(process.env.CASEY_LOCAL_STT_TIMEOUT_MS) || 60000,
     threads: String(Math.min(8, Math.max(1, Number(process.env.CASEY_LOCAL_STT_THREADS) || 2))),
+    engine: ['omni', 'whisper'].includes(process.env.CASEY_LOCAL_STT_ENGINE) ? process.env.CASEY_LOCAL_STT_ENGINE : 'auto',
+    python: path.join(dir, 'venv', 'bin', 'python'),
+    omniScript: fileURLToPath(new URL('../../scripts/omni-asr.py', import.meta.url)),
+    omniDir: path.join(dir, 'models', 'omni', process.env.CASEY_LOCAL_STT_OMNI_MODEL || 'sherpa-onnx-omnilingual-asr-1600-languages-1B-ctc-v2-int8-2026-02-05'),
   }
 }
 
@@ -61,9 +72,9 @@ function inputFormat(mimeType) {
 
 function run(file, args, opts) {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { ...opts, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024, windowsHide: true, env: { PATH: '/usr/bin:/bin', LANG: 'C', HOME: opts.cwd } }, (err) => {
+    execFile(file, args, { ...opts, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024, windowsHide: true, env: { PATH: '/usr/bin:/bin', LANG: 'C', HOME: opts.cwd } }, (err, stdout) => {
       if (err) reject(err.killed ? new Error(`timed out after ${opts.timeout}ms`) : new Error(`${path.basename(file)} exited ${err.code ?? err.signal ?? 'abnormally'}`))
-      else resolve()
+      else resolve(String(stdout || ''))
     })
   })
 }
@@ -72,6 +83,9 @@ function run(file, args, opts) {
 function cleanText(raw) {
   return String(raw || '').replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*/g, ' ').replace(/\s+/g, ' ').trim()
 }
+
+const omniReady = (c) => [c.python, c.omniScript, path.join(c.omniDir, 'model.int8.onnx'), path.join(c.omniDir, 'tokens.txt')].every(p => fs.existsSync(p))
+const whisperReady = (c) => [c.whisper, c.model].every(p => fs.existsSync(p))
 
 async function transcribeNow(buffer, mimeType, c, deadline) {
   const left = () => deadline - Date.now()
@@ -85,6 +99,15 @@ async function transcribeNow(buffer, mimeType, c, deadline) {
     if (left() < 1000) return { text: '', error: 'local stt: timed out waiting' }
     await run(c.ffmpeg, ['-nostdin', '-v', 'error', '-y', '-protocol_whitelist', 'file', '-f', fmt, '-i', inFile, '-t', '300', '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav], { cwd: dir, timeout: Math.max(1000, left()) })
     if (left() < 1000) return { text: '', error: 'local stt: timed out' }
+    // Omnilingual first (when installed and allowed); whisper when it is not, or when omni failed or heard nothing and time remains.
+    if (c.engine !== 'whisper' && omniReady(c)) {
+      try {
+        const out = await run(c.python, [c.omniScript, c.omniDir, wav, c.threads], { cwd: dir, timeout: Math.max(1000, left()) })
+        const text = String(JSON.parse(out.trim().split('\n').pop()).text || '').replace(/\s+/g, ' ').trim()
+        if (text) return { text, error: '', provider: 'local-omnilingual', language: null, languageSupported: true }
+      } catch { /* fall through to whisper */ }
+      if (c.engine === 'omni' || !whisperReady(c) || left() < 4000) return { text: '', error: 'local stt: no intelligible speech', provider: 'local-omnilingual' }
+    }
     // Greedy decoding (-bs 1 -bo 1): measured ~20% faster than beam search at the same text on 2 cores.
     await run(c.whisper, ['-m', c.model, '-f', wav, '-l', 'auto', '-t', c.threads, '-nt', '-np', '-bs', '1', '-bo', '1', '-oj', '-of', out], { cwd: dir, timeout: Math.max(1000, left()) })
     const j = JSON.parse(fs.readFileSync(`${out}.json`, 'utf8'))
@@ -113,13 +136,13 @@ function release() {
 export function localSttAvailable() {
   if (!localSttEnabled()) return false
   const c = cfg()
-  try { return [c.ffmpeg, c.whisper, c.model].every(p => fs.existsSync(p)) } catch { return false }
+  try { return fs.existsSync(c.ffmpeg) && ((c.engine !== 'whisper' && omniReady(c)) || (c.engine !== 'omni' && whisperReady(c))) } catch { return false }
 }
 
 // Returns {text, provider: 'local-whisper', ms, error, language?, languageSupported?}.
 export async function transcribeLocal(buffer, mimeType) {
   const t0 = Date.now()
-  const done = (r) => ({ provider: 'local-whisper', ms: Date.now() - t0, ...r })
+  const done = (r) => ({ provider: 'local-whisper', ms: Date.now() - t0, ...r })   // a result names its own engine (local-omnilingual)
   try {
     if (!localSttEnabled()) return done({ text: '', error: 'local stt disabled (CASEY_LOCAL_STT=0)' })
     if (!buffer?.length) return done({ text: '', error: 'no audio bytes' })
