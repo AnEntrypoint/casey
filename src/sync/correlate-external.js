@@ -1,29 +1,9 @@
-// correlate-external.js -- proposes cross-system links between casey's own
-// case/contact rows and normalized external records from another system
-// (see EXTERNAL-SYNC.md). Pure scoring: never writes case/contact data,
-// never confirms a link on its own. writeProposedLinks() is the one function
-// that touches the store, and it only ever creates external_link rows with
-// status='proposed' -- a human confirms via the dashboard (see
-// src/sync/apply-link.js), which is the only path that ever mutates a real
-// case/contact field.
-//
-// Normalized external record shape (what an adapter/manual-import produces):
-//   {
-//     system: 'meat_naturally',
-//     kind: 'field_visit'|'farmer'|'association',
-//     external_id: string,
-//     external_ref: string,        // display-safe label, e.g. "Visit CASE-... 2026-08-12"
-//     name: string|null,           // farmer/reporter name, for name matching
-//     phone: string|null,          // farmer/reporter phone, for contact matching
-//     location: string|null,       // community/association name, for location matching
-//     date: string|null,           // ISO date, for temporal matching (visit_date)
-//   }
 
 const NAME_MATCH_WEIGHT = 0.4;
 const PHONE_MATCH_WEIGHT = 0.4;
 const LOCATION_MATCH_WEIGHT = 0.15;
 const DATE_PROXIMITY_WEIGHT = 0.05;
-const DATE_PROXIMITY_WINDOW_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+const DATE_PROXIMITY_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 const MIN_CONFIDENCE_TO_PROPOSE = 0.35;
 
 function normPhone(p) {
@@ -36,11 +16,6 @@ function normText(s) {
   return String(s).trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-// Cheap token-overlap similarity, deliberately not a full edit-distance
-// library: names/locations here are short (1-4 words), and this project's
-// own conventions favor a smaller dependency-free implementation over a
-// heavier NPM package for a few lines (see AGENTS.md "Kit consumption
-// strategy" cost-tradeoff framing, applied here to a matching heuristic).
 function tokenOverlap(a, b) {
   const ta = new Set(normText(a).split(' ').filter(Boolean));
   const tb = new Set(normText(b).split(' ').filter(Boolean));
@@ -60,9 +35,6 @@ function dateProximityScore(aIso, bIso) {
   return 1 - diff / DATE_PROXIMITY_WINDOW_MS;
 }
 
-// Extracts the fields a local case/contact carries that are usable for
-// matching -- report.owner_name/owner_contact/location for a case,
-// display_name/external_id for a contact.
 function localFingerprint(entityKind, row) {
   if (entityKind === 'case') {
     let report = {};
@@ -74,7 +46,6 @@ function localFingerprint(entityKind, row) {
       date: row.created_at || null,
     };
   }
-  // contact
   return {
     name: row.display_name || null,
     phone: row.channel === 'whatsapp' ? row.external_id : null,
@@ -83,8 +54,6 @@ function localFingerprint(entityKind, row) {
   };
 }
 
-// scoreCandidate: pure function, one local row against one external record.
-// Returns { confidence, match_basis } -- match_basis lists which signals fired.
 export function scoreCandidate(localKind, localRow, externalRecord) {
   const fp = localFingerprint(localKind, localRow);
   const bases = [];
@@ -105,16 +74,6 @@ export function scoreCandidate(localKind, localRow, externalRecord) {
   return { confidence: Math.min(1, Math.round(score * 1000) / 1000), match_basis: bases.join('+') || 'none' };
 }
 
-// normalizeManualImportRecord: bridges bin/casey-sync-import-command.js's
-// loadManualImport() output ({kind, association, farmer_name, farmer_phone,
-// visit_date, purpose, activities, outcome_notes, follow_up_required,
-// province, raw}) into this module's own normalized-external-record shape
-// (name/phone/location/date). The two shapes diverged because the CLI keeps
-// the field-tracker's own column names for display/debugging while this
-// module's scorer only cares about the four matching axes -- this is the one
-// place that reconciles them, so findCandidatesFromManualImport is the
-// correct entry point for CLI-imported data rather than calling
-// findCandidates directly with unmapped rows.
 function normalizeManualImportRecord(row, index) {
   return {
     system: 'meat_naturally',
@@ -128,11 +87,6 @@ function normalizeManualImportRecord(row, index) {
   };
 }
 
-// findCandidatesFromManualImport: loads a manually-imported file (see
-// bin/casey-sync-import-command.js) and runs it through findCandidates
-// against real case/contact rows -- the actual consumer of
-// loadManualImport(), so a sync-import'd file is reachable by the
-// correlation engine end to end, not just parsed and left on disk.
 export async function findCandidatesFromManualImport({ file, kind, cases = [], contacts = [] }) {
   const { loadManualImport } = await import('../../bin/casey-sync-import-command.js');
   const rows = loadManualImport(file, kind);
@@ -140,11 +94,6 @@ export async function findCandidatesFromManualImport({ file, kind, cases = [], c
   return findCandidates({ cases, contacts, externalRecords });
 }
 
-// findCandidates: cross-product local rows x external records, keeping only
-// scores at/above MIN_CONFIDENCE_TO_PROPOSE. O(n*m) -- fine at casey's real
-// scale (hundreds of cases, tens of external records per sync pass); a
-// bigger deployment would need a blocking/indexing pass first, out of scope
-// for this speculative-prep seam.
 export function findCandidates({ cases = [], contacts = [], externalRecords = [] }) {
   const out = [];
   for (const rec of externalRecords) {
@@ -172,11 +121,6 @@ export function findCandidates({ cases = [], contacts = [], externalRecords = []
   return out;
 }
 
-// writeProposedLinks: the ONLY function in this module that touches the
-// store. Writes each candidate as an external_link row with status
-// 'proposed' -- never 'confirmed'. Skips a candidate that already has a
-// non-rejected link for the same (local_entity, local_id, external_entity,
-// external_id) tuple, so re-running a sync pass does not spam duplicate rows.
 export async function writeProposedLinks(store, candidates, actingUser) {
   const written = [];
   for (const cand of candidates) {
