@@ -20,6 +20,21 @@ supposed to look like once the code moves on.
   person behaves as before. See AGENTS.md, "Several people on one phone".
 
 ### Fixed
+- **Two reply-judge shapes for a returning number: a dropped report and a stale consent ask.**
+  Witnessed live on WhatsApp: a person wrote "we have 4 stray dogs that look very ill they're all
+  covulsing, you can contact us at the office at <url>", the model called no tool, and the reply
+  asked who was writing -- so the report stayed blank and every later reply (whose still-needed list
+  is read from the RECORD) asked for the animals and signs they had just given. Worse, the model
+  also re-asked whether the team could keep what they send, months after that number had agreed, and
+  nothing caught it: shape 15 is withheld once consent is settled and no other shape reads the ask as
+  wrong. `reply-judge.js` shape 18 (`not-recorded`) flags a reply that leaves a plainly-reported
+  message unwritten when nothing landed and facts are still blank; shape 17 (`consent-reask`) flags
+  asking for consent that is already recorded. Both carry the structural facts the caller already
+  computes (`hadSuccessfulWrite`, `missingFacts`, `latestInbound`, `consentAgreed`), both are hard
+  faults retried with the whole budget, and `turn-attempts.js` `evaluateCandidate` supplies the two
+  new retry instructions. Neither shape renders when its precondition is absent, so a clean reply
+  costs no extra judge line and no extra turn.
+
 - **A WhatsApp location pin is recorded instead of discarded.**
   `dispatchWhatsappWebhookBody` branched only on `m.image`/`m.audio`/
   `m.document`/`m.video`, so Meta's documented `{type:'location',

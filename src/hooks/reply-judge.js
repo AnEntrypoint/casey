@@ -31,7 +31,8 @@
 // /repeated|echo|stock|meta.?commentary|planning narration/ retries then BLANKS
 // the reply, /multi.?ask|wall of text/ retries then SENDS ANYWAY,
 // /advice.?given/ retries then HOLDS the reply for a human (advice is worse than silence),
-// /promise.?made|wrong.?language|safety.?line.?missing/ retry then SEND ANYWAY, and
+// /promise.?made|wrong.?language|safety.?line.?missing/ retry then SEND ANYWAY,
+// /consent.?reask|not.?recorded/ retry then SEND ANYWAY, and
 // anything matching neither (TOOL REFUSAL) is sent as-is. Renaming a heading
 // here silently reroutes that reply to the send-anyway branch.
 //
@@ -70,7 +71,7 @@
 // fact about tool-call results, not text classification), the judgment of
 // whether the REPLY'S WORDS claim a write happened is the model's job, same
 // as every other shape here.
-export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [], consentOwed = false, clarifyOwed = false, recordedLanguage = '' } = {}) {
+export async function judgeReply(callLLM, replyText, { lastOutboundText = null, hadSuccessfulWrite = null, latestInbound = null, missingFacts = [], knownFacts = [], shape = null, adviceRefusal = null, controlNoted = false, safetyNumbers = [], consentOwed = false, consentAgreed = false, clarifyOwed = false, recordedLanguage = '' } = {}) {
   if (!replyText || !String(replyText).trim()) return { clean: true, reasons: [], category: null }
   if (typeof callLLM !== 'function') return { clean: true, reasons: [], category: null }
 
@@ -250,6 +251,39 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       `   language, and ask who is writing. A reply that only acknowledges, or records, or asks for more facts about the`,
       `   animals, without that question, is flagged. Write the reason as "clarify-not-asked".`,
     ].join('\n') : null,
+    // The mirror of shape 15: consent is settled and the model asks anyway. Live-witnessed on a returning number
+    // whose yes was recorded onto an earlier report -- the prompt carries no consent instruction at all in that
+    // state (prompt-sections.js consentSection returns []), so the ask can only have come from the model itself,
+    // and nothing caught it: shape 15 is withheld and every other shape reads the ask as ordinary English.
+    consentAgreed ? [
+      `17. CONSENT ASKED AGAIN: this person's number ALREADY agreed, earlier, that the team may keep what it sends`,
+      `   (a system fact, given to you directly -- trust it over anything the reply implies). It is settled and must`,
+      `   never be asked again. Flag a reply that asks them, in any words or language, for that agreement: whether it`,
+      `   is okay to keep what they send, whether the team may keep this, a request for permission to write anything`,
+      `   down, or any sentence seeking that yes. A reply that does not raise it at all is CLEAN.`,
+      `   Write the reason as "consent-reask".`,
+    ].join('\n') : null,
+    // Shape 8 catches a reply that CLAIMS a record that never landed; this is the quieter half of the same failure,
+    // and the one no shape covered: the person's message plainly reported animals and the reply neither records them
+    // nor (in the common variant) asks for anything but repeats back the facts they just gave. Live-witnessed on a
+    // first substantive message ("we have 4 stray dogs ... they're all covulsing"): the model asked who was writing
+    // and wrote nothing down, so the report stayed blank and the person was asked to supply it again.  While a
+    // report exists, the system prints the still-missing facts from the RECORD, so one unrecorded turn silently
+    // makes every later reply re-ask for facts already given. Gated exactly like shape 8 on the structural fact.
+    (hadSuccessfulWrite === false && missingFacts.length && latestInbound) ? [
+      `18. NOT RECORDED: read the PERSON'S LATEST MESSAGE below. Apply this shape ONLY if that message plainly`,
+      `   describes animals or an event -- a kind of animal, how many, signs of illness, a place, or what happened`,
+      `   to them. A greeting, thanks, a bare yes/no, a question, or a request for a person is NOT report content`,
+      `   and this shape does not apply to it.`,
+      `   A system fact, given to you directly: NOTHING was recorded this turn, and these facts are still blank on`,
+      `   the report: ${missingFacts.join(', ')}. If the reply does not get what they said written down -- it only`,
+      `   thanks them, only asks who they are, or simply asks them again for facts their own message already gave --`,
+      `   that is NOT RECORDED: their details were dropped and they are being made to repeat themselves.`,
+      `   A reply that asks for a fact their message did NOT contain is CLEAN (that is a real gap), and so is any`,
+      `   reply to a message with no report content. Judge only whether what they reported was taken down, never the`,
+      `   wording of the ask.`,
+      `   Write the reason as "not-recorded".`,
+    ].join('\n') : null,
     // Shape 13 (wrong language) is its own narrow call below (languageDiffers), not part of this list: it is a
     // single question and is answered far more reliably alone.
     ``,
@@ -282,6 +316,8 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
       'shape 11 "advice-given"', 'shape 12 "promise-made"',
       consentOwed ? 'shape 15 "consent-not-asked"' : null,
       clarifyOwed ? 'shape 16 "clarify-not-asked"' : null,
+      consentAgreed ? 'shape 17 "consent-reask"' : null,
+      (hadSuccessfulWrite === false && missingFacts.length && latestInbound) ? 'shape 18 "not-recorded"' : null,
       safetyNumbers.length && latestInbound ? 'shape 14 "safety-line-missing"' : null,
     ].filter(Boolean).join(', ')}. Shapes 1-5 and 8 use "prompt-echo", "stock-ack", "repeated", "tool-refusal", "meta-commentary" and "false-confirmation".`,
   ].filter(line => line !== null).join('\n')
