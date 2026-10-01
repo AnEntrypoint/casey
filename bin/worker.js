@@ -23,6 +23,7 @@
 // The order below is load-bearing: the backend is warmed before the gateway
 // accepts traffic, and READY is announced last, after the dashboard is serving.
 
+import { installLogScrub } from '../src/log-scrub.js'
 import { WORKER_MSG, ipcSend } from '../src/supervisor-ipc.js'
 import { makeSendReply } from './send-reply.js'
 import { resolveServingChannels } from './worker-channels.js'
@@ -70,6 +71,9 @@ function parseFlags(argv) {
   }
   return f
 }
+
+// Everything the worker prints passes through the secret scrubber first (src/log-scrub.js).
+installLogScrub()
 
 async function main() {
   const flags = parseFlags(process.argv.slice(2))

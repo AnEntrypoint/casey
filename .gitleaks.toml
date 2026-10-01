@@ -1,0 +1,43 @@
+# gitleaks configuration for uhh (and mirrored in casey). Extends gitleaks' built-in rules and adds the credentials this
+# project actually uses. Real secrets must never be committed: they live in Google Secret Manager (docs/gcp) and, for local
+# development only, in an untracked .env (mode 600).
+title = "uhh secrets scan"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "meta-access-token"
+description = "Meta / WhatsApp Cloud API access token"
+regex = '''\bEAA[A-Za-z0-9]{40,}\b'''
+tags = ["meta", "whatsapp"]
+
+[[rules]]
+id = "discord-bot-token"
+description = "Discord bot token"
+regex = '''\b[MN][A-Za-z\d_-]{23,27}\.[\w-]{6}\.[\w-]{27,}\b'''
+tags = ["discord"]
+
+[[rules]]
+id = "env-assignment-secret"
+description = "A KEY/TOKEN/SECRET/PASSWORD assigned a real-looking value in a file"
+regex = '''\b[A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD)[ \t]*[:=][ \t]*['"]?([A-Za-z0-9_\-/+=]{24,})['"]?'''
+secretGroup = 1
+entropy = 3.5
+tags = ["generic"]
+[rules.allowlist]
+paths = [
+  '''deploy/gcp/terraform/secrets\.tf$''',        # maps ENV VAR NAMES to Secret Manager secret NAMES (no values)
+  '''scripts/verify-secrets/run\.mjs$''',          # FAKE credentials used by the CI checks
+]
+regexes = ['''(?i)(example|placeholder|changeme|your[_-]?|<[^>]+>|xxxx|\.\.\.|process\.env)''']
+
+[allowlist]
+description = "Known false positives (audited)"
+paths = [
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)\.gm/browser-chrome-profile[^/]*/''',   # a headless browser profile that was committed once: key NAMES only, no logins
+]
+regexes = [
+  '''mem-[0-9a-f]{16}-[0-9]+''',                    # harness memory record ids, e.g. mem-9026e4c5745472bc-868
+]

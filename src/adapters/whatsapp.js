@@ -1,5 +1,6 @@
 // WhatsApp Cloud API webhook adapter. Inbound is HMAC-SHA256 verified -- see
 // AGENTS.md's WhatsApp HMAC verification security invariant.
+import { clientIp, webhookBlocked, recordWebhookFailure } from '../webhook-failure-limit.js'
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMedia, verifyWebhookOr401 } from './webhook-platform-base.js'
@@ -115,9 +116,12 @@ export class WhatsappAdapter extends EventEmitter {
 
   // Verify Meta's HMAC-SHA256 signature over the raw request body.
   _verifySignature(req) {
-    if (!this.appSecret) return true   // verification disabled when no secret
+    // FAIL CLOSED: with no app secret nothing can be verified, so nothing is accepted. Unsigned delivery is allowed only when
+    // CASEY_ALLOW_UNSIGNED_WEBHOOK=1 is set on purpose (a local development bot with no Meta app behind it).
+    if (!this.appSecret) return process.env.CASEY_ALLOW_UNSIGNED_WEBHOOK === '1'
     const sig = req.get('x-hub-signature-256') || ''
     if (!sig.startsWith('sha256=')) return false
+    if (!(req.rawBody?.length > 0)) return false   // Meta never signs an empty body
     const expected = 'sha256=' + crypto.createHmac('sha256', this.appSecret).update(req.rawBody || Buffer.alloc(0)).digest('hex')
     return timingSafeEqualStr(sig, expected)
   }
@@ -144,7 +148,8 @@ export class WhatsappAdapter extends EventEmitter {
   // Meta's GET verification handshake. Returns the challenge string to echo
   // back, or null when the token does not match (the caller answers 403).
   verifyChallenge(verifyToken, challenge) {
-    return timingSafeEqualStr(String(verifyToken || ''), this.verifyToken) ? String(challenge || '') : null
+    if (!this.verifyToken || !verifyToken) return null   // no token configured, or none offered: never a match
+    return timingSafeEqualStr(String(verifyToken), String(this.verifyToken)) ? String(challenge || '') : null
   }
 
   // Upload raw media bytes to the Cloud API and return the resulting media id.
@@ -432,9 +437,12 @@ export function dispatchWhatsappWebhookBody(adapter, body, now = Date.now()) {
 //    would let a two-hop Meta media fetch (~20s) outlast Meta's own patience
 //    and earn a redelivery.
 export function serveWhatsappWebhook(adapter, req, res) {
+  // A client that keeps failing verification is turned away before any HMAC work (webhook-failure-limit.js).
+  const ip = clientIp(req)
+  if (webhookBlocked(ip)) { res.sendStatus(429); return }
   if (req.method === 'GET') {
     const challenge = adapter.verifyChallenge(req.query?.['hub.verify_token'], req.query?.['hub.challenge'])
-    if (challenge === null) { res.sendStatus(403); return }
+    if (challenge === null) { recordWebhookFailure(ip); res.sendStatus(403); return }
     res.sendText(challenge)
     return
   }
@@ -445,7 +453,7 @@ export function serveWhatsappWebhook(adapter, req, res) {
   // a proxy or a human reading its log sees WHY. Both mounts already bound their
   // own reader; this is the one place that bound is stated for the shared handler.
   if ((req.rawBody?.length || 0) > WEBHOOK_MAX_BODY_BYTES) { bump('rejected_oversize'); res.sendStatus(413); return }
-  if (!verifyWebhookOr401(req, res, (r) => adapter._verifySignature(r))) { bump('rejected_signature'); return }
+  if (!verifyWebhookOr401(req, res, (r) => adapter._verifySignature(r))) { bump('rejected_signature'); recordWebhookFailure(ip); return }
   // Draining for shutdown: a 5xx makes Meta redeliver to the restarted worker.
   // After the signature so an unauthenticated caller learns nothing about state.
   if (adapter.draining) { bump('rejected_draining'); res.sendStatus(503); return }
