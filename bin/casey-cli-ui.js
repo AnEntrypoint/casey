@@ -127,7 +127,8 @@ ${bold('channels (set in .env or the environment):')}
 
 ${bold('dashboard login:')} the dashboard now uses per-operator username/password
   login (not a shared token) -- a fresh deployment auto-creates a bootstrap
-  admin account on first ${cyan('casey up')} / ${cyan('casey dashboard')} and prints its password once.
+  admin account on first ${cyan('casey up')} / ${cyan('casey dashboard')} and writes its
+  password to a root-only file in the data directory, printing only the path.
   Use ${cyan('casey operators')} for break-glass recovery if that is lost.
 
 ${dim('new here? run')} ${cyan('casey init')} ${dim('then')} ${cyan('casey doctor')} ${dim('then')} ${cyan('casey up')}`

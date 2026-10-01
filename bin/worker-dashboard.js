@@ -36,13 +36,15 @@ const CASEY_EXTRA_DASHBOARD_ROUTES = (() => {
 })()
 
 // A fresh deployment (zero operator_account rows) gets a single bootstrap
-// admin so there is always a way to log in -- printed once to the log, never
-// persisted in plaintext, never re-created once any account exists.
+// admin so there is always a way to log in -- its generated password is
+// written to a root-only file in the data directory and only the PATH is
+// logged, never persisted in plaintext in the log, never re-created once any
+// account exists.
 async function ensureLoginExists(casey) {
   try {
     const { ensureBootstrapAdmin } = await import('../src/dashboard/auth.js')
     const boot = await ensureBootstrapAdmin(casey.store, console)
-    if (boot) console.log(`[worker] bootstrap admin account created -- username: ${boot.username}  password: ${boot.password}  (log in once and create named accounts for your team)`)
+    if (boot) console.log(`[worker] bootstrap admin account created -- username: ${boot.username}  password written to ${boot.passwordPath}  (read it once, log in, set your own password, then delete that file)`)
   } catch (e) { console.error('[worker] bootstrap admin check failed:', e.message) }
 }
 

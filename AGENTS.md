@@ -1942,7 +1942,9 @@ without restart-on-crash.
   projection that starts emitting one of the three fields or spreads its row.
 - Session epoch revocation (`changePassword` / `revokeAccountSessions`) forces
   re-login across all devices with no session-table storage. A bootstrap admin
-  is created once on first boot with a forced password change.
+  is created once on first boot with a forced password change, and its
+  generated password is delivered only as a root-only file (mode 0600) in the
+  store's data directory -- the log carries the path, never the password.
 - **The untrusted-data boundary is structural, and the prompt-level instruction
   is defence in depth on top of it, never the boundary itself.** Every
   contact-reachable value that reaches the composed prompt goes through
