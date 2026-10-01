@@ -1,27 +1,10 @@
-// correlate.js  --  the intelligence for deciding which cases are the SAME
-// real-world outbreak and which are SEPARATE.
-//
-// Pure functions, no I/O: every input is a plain case row, every output is a
-// number + the human-readable reasons behind it. That makes the judgement fully
-// unit-testable and explainable -- an operator sees WHY two cases were linked,
-// never an opaque score. The store/tools layer feeds rows in and acts on the
-// suggestions; this module never touches the database (P4 minimal core, P8 pure).
-//
-// The model is deliberately conservative: we SUGGEST links for a human or the
-// agent to confirm, and we never auto-merge silently -- a wrong silent merge of
-// two real outbreaks would hide a disease spreading in a second place, which is
-// exactly the failure this whole system exists to prevent (P6, P9 worst-case).
 
-// parseReport (tolerant-of-already-parsed variant) moved to timestamp.js --
-// was independently duplicated here/clusters.js/geo.js.
+
 import { parseReportTolerant as parseReport } from './timestamp.js'
 
 const STOP = new Set(['the', 'a', 'an', 'of', 'at', 'in', 'on', 'near', 'by', 'and',
   'farm', 'plaas', 'area', 'district', 'town', 'next', 'to', 'road', 'r', 'n'])
 
-// Normalize a free-text field into a set of meaningful lowercased tokens.
-// Accent-stripped so "musina" and "Musína" match; stop-words dropped so a shared
-// "farm"/"area" is not mistaken for a shared place.
 export function tokens(s) {
   return new Set(
     String(s || '')
@@ -33,23 +16,12 @@ export function tokens(s) {
   )
 }
 
-// A bare number legitimately overlaps for correlate.js's own similarity
-// matching ("12 cattle" vs "12 goats" sharing a count is weak evidence, but
-// evidence), so tokens() keeps it. A NAME token set -- species, symptom, any
-// field read back as a label rather than matched for overlap -- never wants
-// a headcount digit or its unit word standing in for a name: "cattle (12
-// head)" is one species mention, not three. distribution.js's species/symptom
-// rollup and geo.js's per-place species mix both read species this way; kept
-// here so the noise list has one copy instead of two independently-drifting
-// ones.
 const NAME_TOKEN_NOISE = /^\d+$/;
 const NAME_TOKEN_UNIT_WORDS = new Set(['head', 'heads']);
 export function nameTokens(s) {
   return [...tokens(s)].filter(t => !NAME_TOKEN_NOISE.test(t) && !NAME_TOKEN_UNIT_WORDS.has(t))
 }
 
-// Jaccard overlap of two token sets: |A & B| / |A | B|, in [0,1]. Empty-vs-anything
-// is 0 (no evidence is not evidence of sameness).
 function tokenOverlap(a, b) {
   if (!a.size || !b.size) return 0
   let inter = 0
@@ -57,47 +29,17 @@ function tokenOverlap(a, b) {
   return inter / (a.size + b.size - inter)
 }
 
-// Digits only, last 9 kept, so +27 82 123 4567 and 082 123 4567 (the same SA
-// number written two ways) compare equal. Returns '' when there is nothing
-// phone-like, so two blanks never "match".
 function normPhone(s) {
   const d = String(s || '').replace(/\D/g, '')
   return d.length >= 7 ? d.slice(-9) : ''
 }
 
-// created_at is unix-seconds (thatcher). Returns the absolute gap in days, or
-// null when either side is unknown.
 function onsetGapDays(a, b) {
   const ta = Number(a?.created_at), tb = Number(b?.created_at)
   if (!Number.isFinite(ta) || !Number.isFinite(tb)) return null
   return Math.abs(ta - tb) / 86400
 }
 
-// Score how likely two cases are the SAME outbreak. Returns { score, reasons }.
-// score is in [0,1]; reasons explains every contributing signal in plain words.
-// Signals (each capped, then summed and clamped):
-// - same contact number (channel+external_id) ............ strong
-// - a contact_fallback on one matches the other's number . strong
-// - shared location tokens ............................... strong, scaled
-// - same species ......................................... moderate
-// - shared symptom / suspected-disease tokens ............ moderate
-// - close in time (same week) ............................ weak supporting
-// A case is never "the same" on time alone -- timing only AMPLIFIES a real
-// content match, it cannot manufacture one (guarded below).
-// THE PER-CASE HALF OF THE SCORE, LIFTED OUT OF THE PAIR LOOP.
-//
-// Everything correlationScore reads off ONE case -- the parsed report blob, five
-// token sets, the normalized phone numbers -- depends on that case alone, so a
-// caller comparing n cases pairwise derived the same n values n-1 times each.
-// The whole-pool consumer is clusters.js, whose loop is O(n^2) by construction:
-// at 2000 cases that was 4M JSON.parse calls and 20M token-set builds, measured
-// at 34.2 s for one /api/map/cases response, on a route the map home view polls
-// every 30 s. With the per-case half computed once the same pool scores in
-// 1.2 s, identical clusters out.
-//
-// Scoring reads ONLY a signature, and correlationScore is that same scorer with
-// the signatures built inline -- one implementation, so a future signal added
-// here cannot reach one caller and miss the other.
 export function caseSignature(c) {
   const r = parseReport(c)
   return {
@@ -107,8 +49,7 @@ export function caseSignature(c) {
     loc: tokens(r.location),
     find: tokens(r.how_to_find),
     species: tokens(r.species),
-    // symptoms and suspected_disease are scored as ONE pooled set, so the union
-    // is part of the signature rather than rebuilt per pair.
+
     sym: new Set([...tokens(r.symptoms), ...tokens(r.suspected_disease)]),
   }
 }
@@ -118,31 +59,25 @@ export function correlationScoreFromSignatures(a, b) {
   if (!a || !b || a.id === b.id) return { score: 0, reasons }
   let content = 0
 
-  // Same originating contact -> very likely the same thread/outbreak.
   if (a.channel === b.channel && a.external_id && a.external_id === b.external_id) {
     content += 0.5; reasons.push('same contact')
   }
-  // Cross-number link: a fallback number named on one IS the other's number.
+
   if (a.nums.some(n => b.nums.includes(n)) && !(a.external_id === b.external_id && a.channel === b.channel)) {
     content += 0.45; reasons.push('linked by a fallback contact number')
   }
 
-  // Location: the single strongest disease-grouping signal.
   const locOv = tokenOverlap(a.loc, b.loc)
   if (locOv > 0) { content += 0.45 * locOv; reasons.push(`shared location (${Math.round(locOv * 100)}%)`) }
   const findOv = tokenOverlap(a.find, b.find)
   if (findOv > 0) { content += 0.2 * findOv; reasons.push('shared directions to the place') }
 
-  // Species: same animals affected.
   const spOv = tokenOverlap(a.species, b.species)
   if (spOv > 0) { content += 0.2 * spOv; reasons.push('same species') }
 
-  // Clinical picture: shared symptoms / named disease.
   const symOv = tokenOverlap(a.sym, b.sym)
   if (symOv > 0) { content += 0.15 * symOv; reasons.push('similar symptoms / suspected disease') }
 
-  // Time only amplifies an existing content signal -- never creates one. Without
-  // any content match, two cases in the same week are still NOT the same outbreak.
   let score = content
   const gap = onsetGapDays(a, b)
   if (content > 0 && gap != null && gap <= 7) {
@@ -157,14 +92,8 @@ export function correlationScore(a, b) {
   return correlationScoreFromSignatures(caseSignature(a), caseSignature(b))
 }
 
-// Default threshold: below this, a pair is NOT suggested. Tuned so a single weak
-// signal (species alone, or a faint location overlap) does not surface a noisy
-// suggestion -- it takes either a strong signal or two moderate ones to clear it.
 export const SUGGEST_THRESHOLD = 0.35
 
-// Rank candidate links for `target` against `others`, strongest first, keeping
-// only pairs at or above the threshold. Self and closed/merged cases are skipped
-// by the caller (this stays pure -- it just scores what it is given).
 export function suggestLinks(target, others, threshold = SUGGEST_THRESHOLD) {
   const out = []
   const ts = caseSignature(target)

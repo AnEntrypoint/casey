@@ -1,8 +1,4 @@
-// case-tools-clarify.js -- case_clarify: the answer to "is this more about that report or a new problem, and who is writing?".
-//
-// One call records BOTH answers (return-clarify.js): whether it is the same report, and who is writing (a name, or that it is the
-// person already on file). The model reads the answer in any language; nothing here reads a message. In REPORT_ONLY_TOOLS so every
-// tier has it, though only a public number returning to a complete report is ever asked. Appended after case_consent in case-tools.js.
+
 
 import { defTool, boundCase, str } from './case-tools-shared.js'
 import { returnState, recordClarified } from './return-clarify.js'

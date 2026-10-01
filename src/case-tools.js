@@ -1,40 +1,4 @@
-// case-tools.js  --  the agent's hands on the case system of record.
-//
-// These are freddie tools ({ name, toolset, schema, handler }). They give the
-// agent full autonomous control over a case while keeping every action on the
-// append-only timeline, so a human can observe and override. The handlers close
-// over a CaseStore (resolved lazily from case-runtime so the freddie plugin
-// loader can import this without the store existing yet).
-//
-// This file is still the single source of truth AGENTS.md describes -- which
-// tools exist, in what order, and what wraps them -- but the 18 definitions no
-// longer live inside one 711-line function. They are grouped by the surface
-// they serve, one module each, and composed below in the SAME order they were
-// always emitted (the order is pinned deliberately: it is the order freddie
-// serializes the tool schemas into every request, so it is prompt-visible text
-// like the descriptions themselves):
-//
-//   case-tools-lookup.js    case_get, case_list
-//   case-tools-record.js    case_update, case_report, case_observe, case_transition
-//   case-tools-triage.js    case_transitions_available, case_link_suggestions,
-//                           case_split, case_health
-//   case-tools-worker.js    case_mine, case_today, case_checkin, case_idle
-//   case-tools-binding.js   case_new, case_switch
-//   case-tools-control.js   case_stop, case_handoff
-//   case-tools-team.js      the role tools, appended: field (case_pending .. case_message),
-//                           technician (signoff_queue, case_review, case_reopen,
-//                           case_ask_ranger), operator (team_*) -- see that file
-//   case-tools-feedback.js  case_feedback, team_feedback
-//   case-tools-speaker.js   case_speaker (who is writing on a shared phone; every tier)
-//   case-tools-consent.js   case_consent (the once-per-number yes, asked in conversation; every tier)
-//   case-tools-shared.js    defTool, the enum-hint ladder, ownsCase, the
-//                           PII projections, the small pure helpers
-//   case-tools-gates.js     REPORT_ONLY_TOOLS, gateByTier, dedupeDuplicateCalls
-//
-// Tool names, descriptions and parameter schemas moved verbatim: they are
-// prompt-visible text the model's behaviour depends on, and
-// selfCheckLoadBearingToolDescriptions below is the module-load guard that
-// keeps a future edit from silently dropping a load-bearing phrase from one.
+
 
 import { getCaseStore } from './case-runtime.js'
 import { REPORT_TOOL_NAME, NEVER_INFERRED_FIELDS, MANDATORY_MINIMUM_FIELDS } from './store/report-shape.js'
@@ -55,12 +19,9 @@ import { buildSpeakerTools } from './case-tools-speaker.js'
 import { buildConsentTools } from './case-tools-consent.js'
 import { buildClarifyTools } from './case-tools-clarify.js'
 
-// Build the array of tool objects bound to an explicit store (used by anywhere
-// that wants the tools without the runtime singleton).
 export function buildCaseToolset(storeOrNull) {
   const store = () => storeOrNull || getCaseStore()
 
-  // Resolved once per toolset build, from the live store where one exists.
   const enums = {
     caseTypeValues: fieldEnumHint(store, 'case.case_type', FALLBACK_CASE_TYPE_VALUES),
     priorityValues: fieldEnumHint(store, 'case.priority', FALLBACK_PRIORITY_VALUES),
@@ -74,8 +35,7 @@ export function buildCaseToolset(storeOrNull) {
     ...buildWorkerTools(store),
     ...buildBindingTools(store),
     ...buildControlTools(store),
-    // Appended, never interleaved: the team tools (field / technician / operator
-    // surfaces) sit after the original eighteen so their pinned order is untouched.
+
     ...buildTeamTools(store, enums),
     ...buildFeedbackTools(store),
     ...buildSpeakerTools(store),
@@ -85,15 +45,6 @@ export function buildCaseToolset(storeOrNull) {
   return tools.map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
 }
 
-// Structural regression guard, not a test file -- same discipline and same
-// failure mode as hooks/prompt.js's selfCheckLoadBearingPromptContent(): a
-// tool-description rewrite (a token-budget squeeze, a copy edit) can silently
-// drop a load-bearing "report, don't assert" boundary phrase without ever
-// failing lint or syntax checks, since a tool description is just string
-// content to every other tool in the pipeline. Runs once per process boot,
-// fails loud (throws, uncaught, crashes boot) the moment case_type's or
-// suspected_disease's description silently regresses back to instructing the
-// agent to infer/classify rather than record only what was directly stated.
 function selfCheckLoadBearingToolDescriptions() {
   const tools = buildCaseToolset({})
   const byName = Object.fromEntries(tools.map(t => [t.name, t]))
@@ -101,37 +52,19 @@ function selfCheckLoadBearingToolDescriptions() {
     { tool: 'case_update', field: 'case_type', pattern: /directly and explicitly stated/, name: 'case_type must be agent-stated-only, never inferred' },
     { tool: 'case_speaker', field: null, pattern: /Never guess or invent a name/, name: 'case_speaker must record a name only as a person said it, never a guess' },
     { tool: REPORT_TOOL_NAME, field: 'location_source', pattern: /Never guess "confirmed"/, name: 'location_source "confirmed" must require the contact actually agreeing, never be guessed' },
-    // Config-driven: every report field the active config's report-fields.yml
-    // flags never_inferred:true carries its own never_inferred_guard_pattern
-    // (a literal substring of that field's own description) that must survive
-    // any future tool-description rewrite -- generalizes the single hardcoded
-    // suspected_disease check to whatever the active domain declares.
+
     ...NEVER_INFERRED_FIELDS.map(f => ({
       tool: REPORT_TOOL_NAME, field: f.key,
       pattern: new RegExp(f.never_inferred_guard_pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       name: `${f.key} must be agent-stated-only, never inferred`,
     })),
-    // The mandatory minimum has to be SCHEMA-VISIBLE, not only enforced at call
-    // time: a model that first learns the floor exists by having a transition
-    // refused has already composed a farewell around a record it believed was
-    // finished. So case_transition's own description names the refusal, and this
-    // row is what stops a future description rewrite from dropping it while the
-    // handler keeps refusing -- which would leave the model guessing why. Only
-    // asserted when the active config actually declares a mandatory minimum;
-    // absent one the clause is deliberately empty (see
-    // case-tools-record-timeline.js's mandatoryMinimumDescriptionClause) and
-    // casey's own bundled default config must still boot.
+
     ...(MANDATORY_MINIMUM_FIELDS.length ? [{
       tool: 'case_transition', field: null,
       pattern: /this tool REFUSES a move to/,
       name: 'case_transition must name the mandatory-minimum refusal in its own description',
     }, {
-      // The SECOND condition on the same move, guarded for the same reason and
-      // gated on the same config key: a model that learns only about the field
-      // floor reads an authority refusal as "some fact must still be missing"
-      // and goes back to a person who has already told it everything. Both
-      // clauses are keyed on the declared done-stage list, so a deployment with
-      // no mandatory_minimum block asserts neither and boots unchanged.
+
       tool: 'case_transition', field: null,
       pattern: /restricted to the animal health technician who signs it off/,
       name: 'case_transition must name the sign-off-authority refusal in its own description',
@@ -146,38 +79,10 @@ function selfCheckLoadBearingToolDescriptions() {
   }
 }
 
-// Every tool NOT in REPORT_ONLY_TOOLS is already runtime-gated to field_worker
-// tier by gateByTier (case-tools-gates.js) -- but `enabledToolsets:['cases']`
-// alone names the toolset as a whole, not per-tool, so all 18 tools' full
-// JSON-schema descriptions would be assembled into every single request
-// regardless of tier. For the far-more-common reporter tier (the default per
-// AGENTS.md's contact.tier design), 14 of those 18 schemas are pure dead weight
-// -- they will only ever return the same {unavailable:true,...} rejection at
-// call time.
-//
-// The code that acts on this list is casey's OWN src/agent/run-turn.js (the
-// enabledToolNames derivation, around lines 139-148): it expands
-// enabledToolsets against buildCaseToolset(null)'s real tool names and
-// subtracts `disabledToolsets` by tool NAME, then hands the resulting allowlist
-// to freddie-bundle/src/case-tools/tool-allowlist.js's installToolAllowlist
-// (run-turn.js line 66) whose system-prompt/assemble waterfall is what actually
-// keeps a non-allowlisted tool's schema out of the prompt the model sees. So
-// the exclusion happens before the model ever spends tokens reading these
-// schemas and (for a weak model) sometimes attempting to call them anyway.
-// Derived from the live toolset rather than hand-duplicated, so a newly added
-// query/mutation tool is automatically tier-gated at the request-size layer the
-// same way it already is at the handler layer, with nothing to keep in sync by
-// hand.
 export function reporterTierExcludedToolNames() {
   return hiddenToolNamesForTier('reporter')
 }
 
-// The tool names a contact at `tier` must NOT be handed: every tool whose minimum
-// rung (case-tools-gates.js TOOL_MIN_TIER) sits above it. This is the per-tier
-// generalisation of the reporter list above -- a field worker is hidden the
-// technician and operator tools, a technician the operator tools -- and it feeds
-// the same disabledToolsets seam, so run-turn.js's allowlist (schema hiding AND
-// pre-execute denial) needs no second derivation.
 export function hiddenToolNamesForTier(tier) {
   return buildCaseToolset(null).map(t => t.name).filter(name => !toolVisibleToTier(name, tier))
 }

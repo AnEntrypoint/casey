@@ -1,16 +1,4 @@
-// case-tools-team-review.js  --  the animal health technician's surface over
-// WhatsApp (and everything above it): find what is ready to sign off, review a
-// record properly, reopen a finished one, and ask the person who filed it for a
-// missing fact. Composed, in a pinned order, by case-tools-team.js.
-//
-// SIGN-OFF ITSELF IS NOT HERE. Moving a record to a done stage stays
-// case_transition, with its two distinct refusals (a blank required fact; the
-// sign-off authority being the technician alone, contact-tiers.js canSignOff).
-// signoff_queue only says which records are ready for that call.
-//
-// Visibility: an operator sees every record; a technician sees the records
-// assigned to them plus the unassigned ones -- the same set signoff_queue lists.
-// Writes (reopen, ask) go through team-focus.js's writeGate for a technician.
+
 
 import { defTool, str, slimCase } from './case-tools-shared.js'
 import { parseReport, tagList } from './timestamp.js'
@@ -29,20 +17,14 @@ import { mergeTag } from './hooks/heuristics.js'
 
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
 const REVIEW_EVENT_CAP = 60
-// Numbers the reporter typed for someone else are not repeated in a review; the
-// assigned team member gets the reporter's own number from case_contact instead.
+
 const NUMBER_FIELDS = ['owner_contact', 'contact_fallback']
 
 const done = (c) => doneStages().includes(c.status)
 const isComplete = (c) => missingMandatoryMinimum(parseReport(c)).length === 0
 
-// Who may look at / work on this record from the technician surface.
 export const visibleToSignOffDesk = deskAuthorityOn
 
-// The sign-off queue for this asker: open records holding the mandatory minimum that
-// are either on the desk (handed over by their ranger, or held by nobody -- the one
-// rule in signoff-desk.js) or assigned to the asker themself. A complete record still
-// with its ranger and not handed over is NOT listed: the ranger has not released it.
 export async function signOffCandidates(store, ctx, { limit = 200 } = {}) {
   const open = (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system' && isOpenCase(c) && !done(c))
   return open.filter(c => isComplete(c) && visibleToSignOffDesk(ctx, c) && (inSignOffQueue(c) || authorityOn(ctx, c) === 'assigned')).slice(0, limit)
@@ -75,8 +57,7 @@ export function buildTeamReviewTools(store) {
       async ({ case: ref }, ctx) => {
         const r = await lookup(store, ctx, ref); if (r.fail) return r.fail
         const { c } = r
-        // Reviewing the record their own message names makes it their working record, so the follow-up ("it is foot and mouth, sign it
-        // off") does not have to repeat the reference (team-focus.js writeGate: the message names it exactly).
+
         if (ctx?.contact?.id && (ctx.inboundRefs || []).length === 1 && ctx.inboundRefs[0] === String(c.ref).toUpperCase()) setFocus(ctx.contact.id, c)
         const events = (await store().listEvents(c.id)).filter(e => !(e.kind === 'observation' && evData(e).announced_to))
         const slim = slimCase(c)
@@ -103,8 +84,7 @@ export function buildTeamReviewTools(store) {
         const { c } = r
         if (!done(c)) return { error: 'That record is not finished, so there is nothing to reopen.' }
         const by = staffLabel(ctx.contact)
-        // Agent role, not operator: a reopen must not fire the operator stage-change
-        // note to the reporter (hooks/notifiers.js skips agent transitions).
+
         const user = AGENT_USER
         const steps = c.status === 'closed' ? ['resolved', 'in_progress'] : ['in_progress']
         try { for (const to of steps) await store().transition(c.id, to, { user, reason: `${by}: reopened -- ${String(reason).slice(0, 300)}` }) }
@@ -121,8 +101,7 @@ export function buildTeamReviewTools(store) {
         let reporter = null
         try { reporter = c.contact_id ? await store().getContact(c.contact_id) : null } catch { reporter = null }
         if (!atLeast(reporter?.tier, TIER_FIELD_WORKER)) {
-          // A public reporter is asked by the assistant. A record a ranger handed over
-          // still goes back to that ranger, with the question, and nothing is sent.
+
           if (isHandedOff(c)) {
             const back = await sendBackToRanger(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, text: String(text || '').trim(), data: actorData(ctx) })
             return back.ok ? { ok: true, sent_back_to_the_ranger: true, delivered: false, recorded_on: r.on, taken_off_the_sign_off_desk: true } : { error: back.error }
@@ -138,8 +117,7 @@ export function buildTeamReviewTools(store) {
           staff: { ...(ctx.contact || {}), tier: ctx.tier }, claim: false, answers: false, extra: { asked_missing: true },
         })
         if (!sent.ok) return { ok: false, delivered: false, recorded_on: r.on, error: sent.error }
-        // Asking for more takes the record back off the desk and puts it with its
-        // ranger as "sent back" (the dashboard's send-back does the same).
+
         const back = await withdrawHandoff(store(), c.id, { by: staffLabel(ctx.contact), user: AGENT_USER, reason: 'more information asked for', data: actorData(ctx) })
         if (back.was) { const fresh = await store().getCase(c.id); await store().updateCase(c.id, { tags: mergeTag(fresh.tags || '', 'sent-back') }, AGENT_USER) }
         return { ok: true, delivered: true, recorded_on: r.on, asked_for: missing, ...(back.was ? { taken_off_the_sign_off_desk: true } : {}) }

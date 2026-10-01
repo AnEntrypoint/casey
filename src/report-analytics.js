@@ -1,10 +1,4 @@
-// report-analytics.js -- management analytics that the single-window briefing
-// (report.js) does not yet compute: SLA compliance pass/fail, period-over-period
-// comparison, and per-intake-channel response speed. Pure and deterministic like
-// overview.js: given case rows + their events (+ now / window), each returns an
-// aggregate-only object (no per-contact rows, never external_id) for /api/report.json
-// and the management report. Times in stored events are unix SECONDS; every
-// duration returned is MILLISECONDS so the SAST formatters and ms thresholds agree.
+
 
 import { buildOverview, firstResponseMs, median, evData } from './overview.js'
 import { isOpenCase } from './format.js'
@@ -12,21 +6,16 @@ import { tsMs } from './timestamp.js'
 
 const DAY = 24 * 3600 * 1000
 
-// SLA compliance over the open + recently-closed pool: for every case that has
-// an answerable first inbound, did the first reply land within slaTargetMs? A
-// case never answered counts as breached (the worst miss), so the rate is honest
-// rather than flattering. breached_by_reason splits answered-late vs never-answered
-// so a manager can tell a slow team from an unstaffed one. Aggregate-only.
 export function buildSLAReport(cases, eventsByCaseId, slaTargetMs, now = Date.now()) {
   const target = Number.isFinite(slaTargetMs) && slaTargetMs > 0 ? slaTargetMs : 30 * 60 * 1000
   let met = 0, late = 0, neverAnswered = 0, considered = 0
   for (const c of cases || []) {
     const events = eventsByCaseId.get?.(c.id) || eventsByCaseId[c.id] || []
     const hasInbound = events.some(e => e.kind === 'inbound')
-    if (!hasInbound) continue // no contact message -> nothing was owed
+    if (!hasInbound) continue
     considered++
     const r = firstResponseMs(events)
-    if (r == null) { neverAnswered++; continue } // an unanswered inbound is a breach
+    if (r == null) { neverAnswered++; continue }
     if (r <= target) met++; else late++
   }
   const breached = late + neverAnswered
@@ -41,11 +30,6 @@ export function buildSLAReport(cases, eventsByCaseId, slaTargetMs, now = Date.no
   }
 }
 
-// The same SLA compliance, segmented by case_type, so a director can ask whether
-// outbreak cases meet the handoff bar more (or less) often than routine intake.
-// Partitions the pool on c.case_type (unset when the field is blank) and runs the
-// existing buildSLAReport per slice; `overall` is the unsegmented figure so the
-// by-type rows always reconcile against one total. Aggregate-only, no external_id.
 export function buildSLAReportByType(cases, eventsByCaseId, slaTargetMs, now = Date.now()) {
   const byType = {}
   const groups = new Map()
@@ -63,10 +47,6 @@ export function buildSLAReportByType(cases, eventsByCaseId, slaTargetMs, now = D
   }
 }
 
-// Period-over-period comparison: run the existing overview builder over two
-// adjacent windows ([now-window, now] vs [now-2*window, now-window]) and return
-// both snapshots plus signed deltas a manager reads at a glance. A null median in
-// either window yields a null delta (not a misleading 0). Aggregate-only.
 export function buildReportComparison(cases, eventsByCaseId, now = Date.now(), windowMs = 14 * DAY) {
   const current = buildOverview(cases, eventsByCaseId, now, windowMs)
   const prior = buildOverview(cases, eventsByCaseId, now - windowMs, windowMs)
@@ -86,7 +66,7 @@ export function buildReportComparison(cases, eventsByCaseId, now = Date.now(), w
       opened: priOpened, closed: priClosed,
     },
     deltas: {
-      // negative response_time_delta_pct = faster (improvement)
+
       response_time_delta_pct: pctDelta(curMed, priMed),
       opened_delta: curOpened - priOpened,
       closed_delta: curClosed - priClosed,
@@ -94,9 +74,6 @@ export function buildReportComparison(cases, eventsByCaseId, now = Date.now(), w
   }
 }
 
-// A case is reopened when a transition event moves it OUT of resolved/closed back
-// to an active stage. Counting these per slice tells a manager whether a channel
-// (or case type) is being closed prematurely. Reads transition events only.
 function reopenCount(events) {
   let n = 0
   for (const e of events) {
@@ -109,31 +86,16 @@ function reopenCount(events) {
   return n
 }
 
-// Small-cell suppression floor. The threat model and the tuning knob live in
-// privacy.js, which geo.js's place rollups import too -- this used to be
-// declared here and again there, each with its own copy of the `|| 5` default,
-// so the two only happened to agree and raising one would have silently left
-// the other lower. A per-channel/per-case_type bucket below this count is
-// folded into an explicit 'other/sparse' row rather than rendered by name.
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY } from './privacy.js'
 
-// Per-intake-channel response speed + volume + quality so a manager can see whether
-// (say) WhatsApp intake is slower than the web form, and which channel actually
-// resolves cleanly. Median first-response, opened/closed counts, closure rate, and
-// reopen count per channel. Aggregate-only; channel is a coarse enum, not a PII.
 export function buildChannelMetrics(cases, eventsByCaseId) {
   return rollupByKey(cases, eventsByCaseId, (c) => c.channel || 'other')
 }
 
-// Per-case-type response speed + volume, so the case_type enum becomes a real
-// management lens: do import_alerts spike, do outbreaks answer slower? Identical
-// shape to buildChannelMetrics, keyed on c.case_type (unset when blank).
 export function buildCaseTypeMetrics(cases, eventsByCaseId) {
   return rollupByKey(cases, eventsByCaseId, (c) => c.case_type || 'unset')
 }
 
-// Shared rollup the two metrics above specialise by their key function -- one loop,
-// one shape, so the channel and case_type lenses can never drift apart.
 function rollupByKey(cases, eventsByCaseId, keyOf) {
   const byKey = {}
   for (const c of cases || []) {
@@ -149,12 +111,6 @@ function rollupByKey(cases, eventsByCaseId, keyOf) {
   return suppressSmallCells(byKey)
 }
 
-// Merges any bucket whose opened_count is below MIN_AGGREGATE_CELL into a
-// single SPARSE_BUCKET_KEY row (itself only rendered if it clears the floor
-// after merging, or always shown once non-empty -- a sparse bucket revealing
-// there WERE some rare cases somewhere is fine; a bucket revealing exactly
-// WHICH rare category is the leak). Shared by rollupByKey and geo.js's
-// hotspots rollup so both aggregate exports apply the identical floor.
 function suppressSmallCells(byKey) {
   const out = {}
   let sparse = null
@@ -190,13 +146,6 @@ function suppressSmallCells(byKey) {
   return out
 }
 
-// Closure completeness (Herd Health roadmap Phase 3): of cases that ever
-// reached 'resolved', what percentage reached 'closed' within N days of that
-// resolution? Answers "is follow-through actually happening" (the never_closed
-// breach flags a single stuck case; this is the aggregate trend a manager
-// reads). Reads transition events only, finds the FIRST resolved timestamp and
-// the FIRST closed timestamp after it. A case resolved more than once (see
-// reopenCount) is measured from its first resolution. Aggregate-only.
 export function buildClosureCompleteness(cases, eventsByCaseId, now = Date.now(), windowDays = 7) {
   const windowMs = windowDays * DAY
   let resolvedTotal = 0, closedWithinWindow = 0, closedLate = 0, stillOpen = 0
@@ -207,11 +156,7 @@ export function buildClosureCompleteness(cases, eventsByCaseId, now = Date.now()
       if (e.kind !== 'transition') continue
       const d = evData(e)
       const to = String(d.to || '')
-      // thatcher stamps created_at as unix SECONDS in a digit STRING (live:
-      // "1788821199"); Date.parse returns NaN on that, so the guard below used
-      // to skip EVERY transition event and this whole report was permanently
-      // all-zero. tsMs is the shared digit-string-aware parser every other
-      // consumer already uses (attn.js, case-health.js, degraded-turns.js).
+
       const ts = tsMs(e.created_at)
       if (!Number.isFinite(ts)) continue
       if (to === 'resolved' && resolvedAt == null) resolvedAt = ts
@@ -237,12 +182,6 @@ export function buildClosureCompleteness(cases, eventsByCaseId, now = Date.now()
   }
 }
 
-// Structured, machine-parseable breach payload for an external pager
-// (PagerDuty/Opsgenie/a generic webhook), as opposed to the scraped Discord text
-// line. Carries the case ref, its case_type (so the pager can route an outbreak
-// differently from a follow_up), the breach kind, a severity tier, and the elapsed
-// time -- and NEVER the external_id, so a compliance pager file cannot leak a
-// contact phone. `escalated` marks the supervisor tier. Pure; the notifier POSTs it.
 const ESCALATED_TIER = 'escalated'
 export function buildAlertPayload(c, breach, detail, opts = {}) {
   const sinceMs = Number.isFinite(opts.sinceMs) ? opts.sinceMs : null

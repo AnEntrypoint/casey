@@ -1,15 +1,4 @@
-// role-health.js -- the role-setup rows of `casey doctor`: is the team model this
-// deployment depends on actually in place, and is anything held by somebody who
-// can no longer act on it?
-//
-// READ-ONLY, and it reads the sqlite file directly rather than booting a
-// CaseStore: doctor is a preflight and must not create, migrate or lock anything
-// to answer a question (the same rule its health-sweep row already follows). All
-// questions are plain SELECTs over the four tables the role model lives in.
-//
-// The rows are { id, level: 'ok'|'fail'|'warn'|'info', text, fix? } so the CLI
-// renders them and a driver can assert on them. No row carries a phone number;
-// a person is named only by the display name or login the operator already sees.
+
 
 import fs from 'node:fs'
 import { TIER_ORDER, atLeast, TIER_FIELD_WORKER, resolveTierValue } from './contact-tiers.js'
@@ -21,9 +10,7 @@ export const UNCLAIMED = 'agent'
 
 async function openReadOnly(dbFile) {
   const { createClient } = await import('@libsql/client')
-  // libsql's `mode=ro` query parameter is not supported by this client, so the
-  // guarantee is structural instead: this module issues SELECT and PRAGMA
-  // table_info only.
+
   return createClient({ url: `file:${dbFile}` })
 }
 
@@ -39,7 +26,7 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
   catch (e) { return { rows: [row('roles-db', 'warn', `role checks could not open the database read-only (${e.message})`)] } }
   try {
     const tables = new Set((await q(db, `SELECT name FROM sqlite_master WHERE type='table'`)).map(r => String(r.name)))
-    // ---- logins: at least one enabled admin -------------------------------------
+
     let accounts = []
     let acctCols = new Set()
     if (tables.has('operator_account')) {
@@ -54,7 +41,6 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
     else if (!admins.length) rows.push(row('admin', 'fail', 'there is NO enabled admin login: nobody can create logins, grant the operator rung or unlock accounts', 'Create one from the terminal: casey operators add <name> --role admin (prints a generated password).'))
     else rows.push(row('admin', 'ok', `${admins.length} enabled admin login(s), ${live.length} enabled login(s) in all`))
 
-    // ---- the field team ----------------------------------------------------------
     let contacts = []
     if (tables.has('contact')) {
       const ccols = await tableCols(db, 'contact')
@@ -82,7 +68,6 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
       else rows.push(row('contact-phone', 'ok', 'contact_phone column present; every field login is linked to a number'))
     }
 
-    // ---- the invite log ----------------------------------------------------------
     if (tables.has('case') && tables.has('event')) {
       const inv = (await q(db, `SELECT id FROM "case" WHERE channel='system' AND external_id='settings:role-invites' AND (status IS NULL OR status != 'deleted') LIMIT 1`))[0]
       if (!inv) rows.push(row('invites', 'info', 'no role-invite log yet (created on the first invite)'))
@@ -106,7 +91,6 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
       }
     }
 
-    // ---- who holds what ----------------------------------------------------------
     if (tables.has('case')) {
       const statuses = openStatuses.length ? openStatuses : null
       const where = statuses ? `status IN (${statuses.map(() => '?').join(',')})` : `status NOT IN ('closed','deleted')`
@@ -147,13 +131,12 @@ export async function checkRoleSetup(dbFile, { openStatuses = [], now = Date.now
       } else rows.push(row('stale-assigned', 'ok', `no assigned report has been silent for more than ${STALE_DAYS} days`))
     }
 
-    // ---- undelivered replies awaiting attention ------------------------------------
     if (tables.has('case')) {
       const n = Number((await q(db, `SELECT COUNT(*) n FROM "case" WHERE tags LIKE '%delivery-failed%' AND status NOT IN ('closed','deleted')`))[0]?.n) || 0
       if (n) rows.push(row('undelivered', 'warn', `${n} open report(s) carry the delivery-failed tag: a reply was refused by WhatsApp (usually the 24-hour window)`, 'Open them in the inbox (tag delivery-failed); phone the reporter, or wait for them to message first.'))
     }
   } catch (e) {
     rows.push(row('roles-db', 'warn', `role checks could not finish (${String(e.message).slice(0, 120)})`))
-  } finally { try { db.close?.() } catch { /* ignore */ } }
+  } finally { try { db.close?.() } catch {  } }
   return { rows }
 }

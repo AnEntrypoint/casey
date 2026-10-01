@@ -1,34 +1,4 @@
-// supervisor.js  --  the parent process that keeps casey's serving worker alive,
-// reloads it on source change, and restarts it on crash WITHOUT losing the store.
-//
-// This is the runtime half of the reliability slice. The xstate machine
-// (supervisor-machine.js) is the pure transition-validation authority; THIS file
-// owns the real, irreversible side-effects -- child_process.fork, kill, the
-// drain handshake -- and threads the live machine-state value plus a
-// small context (restart count, crash timestamps, last reload/crash) it keeps
-// itself. The machine answers "is event E legal from state S, and what does it
-// lead to?"; the supervisor performs the effect and advances its own state value.
-//
-// What is left in this file is the ASSEMBLY: it wires one collaborator per
-// lifecycle concern and holds the shared mutable runtime record (`rt`) they all
-// read, because that record is exactly the thing no single one of them owns.
-// Each concern lives beside it, none of them a lifecycle effect on its own:
-//   supervisor-machine.js        legal transitions
-//   supervisor-state.js          the live state value, its context, and the snapshot
-//   supervisor-worker-process.js fork, the IPC message contract, worker ready/exit
-//   supervisor-crash-policy.js   the crash budget, the backoff, exit code 44, the parent's own net
-//   supervisor-restart.js        the sequential drain-then-respawn cycle
-//   supervisor-health.js         reading a HEALTH tick and deciding "degraded"
-//   supervisor-reload-watch.js   "a watched source file changed, once"
-//   supervisor-runtime-events.js "get this bounce durably recorded even though
-//                                 the process that detected it cannot store it"
-//
-// Durable boundary: the worker holds the sqlite store (cwd-bound db.sqlite). A reload
-// or crash respawns the worker, which REOPENS the same file -- so persisted case
-// data survives every restart (WAL-checkpointed by the worker's graceful drain).
-// The handoff is SEQUENTIAL (old worker fully exits before the new one opens the
-// store), so two processes never hold the db at once -- that race is structurally
-// unrepresentable here.
+
 
 import path from 'node:path'
 import { buildSupervisorMachine } from './supervisor-machine.js'
@@ -41,43 +11,32 @@ import { createRestartCycle, RELOAD_DEBOUNCE_MS } from './supervisor-restart.js'
 import { installParentCrashNet } from './supervisor-crash-policy.js'
 import { applyWorkerHealth, detectZombieReceive } from './supervisor-health.js'
 
-// Re-exported from its own module so the single real-services witness (and any
-// other caller that imported it from here) keeps one import path.
 export { detectZombieReceive }
 
 export function createSupervisor(opts = {}) {
   const log = opts.log || console
   installParentCrashNet(log)
-  const workerArgs = opts.workerArgs || []   // passed through to the worker (--channels, --port, ...)
+  const workerArgs = opts.workerArgs || []
   const enableReload = opts.reload !== false && process.env.CASEY_RELOAD !== '0'
 
   const machine = buildSupervisorMachine()
-  // The one piece of state no single collaborator owns: the live child, whether
-  // it has sent READY, and the three flags that coordinate a drain/stop/reload
-  // across them. Held here so each module below reads one record rather than
-  // each keeping a copy that can drift.
+
   const rt = {
     worker: null,
-    booted: false,          // the current worker has sent READY
+    booted: false,
     watchers: [],
     stopping: false,
-    reloadQueued: false,    // a reload requested mid-restart is held, not dropped or stacked
+    reloadQueued: false,
     draining: false,
     resolveDrain: null,
-    keepAlive: null,        // the parent's own event-loop handle -- see armKeepAlive
+    keepAlive: null,
   }
 
-  // Durable runtime-lifecycle events (CRASH / RELOAD / DEGRADED / BUDGET) that must
-  // land in the store as audited observations so the timeline + shift-handover show
-  // the runtime was bounced and why -- buffered until a live, READY worker can
-  // persist them, and mirrored to a JSONL sidecar so a pre-READY crash loop still
-  // leaves a trail. See supervisor-runtime-events.js for the full reasoning; the
-  // only part the supervisor itself knows is whether a worker can take one now.
   const runtimeEvents = createRuntimeEventBuffer({
     log,
     logPath: path.join(process.cwd(), 'data', 'runtime-events.jsonl'),
     deliver: (entry) => {
-      if (!rt.worker || !rt.worker.connected || !rt.booted) return false   // hold until a live, ready worker can persist
+      if (!rt.worker || !rt.worker.connected || !rt.booted) return false
       ipcSend(rt.worker, PARENT_MSG.RUNTIME_EVENT, entry)
       return true
     },
@@ -99,44 +58,18 @@ export function createSupervisor(opts = {}) {
   })
   const restart = createRestartCycle({ log, rt, sup, spawnWorker: (nowMs) => workerProcess.spawn(nowMs) })
 
-  // Arm the live-reload watchers, or say once that reload is off. The watcher
-  // module owns the paths, the change filter, the debounce and the per-path
-  // failure handling; the supervisor supplies the one thing only it can -- what
-  // a debounced change actually means here, which is requestReload.
   function armWatcher() {
     if (!enableReload) { log.info?.('[supervisor] live reload disabled'); return }
     const onChange = () => restart.requestReload(Date.now())
     rt.watchers = armReloadWatchers({ log, debounceMs: RELOAD_DEBOUNCE_MS, onChange })
-    // Second mechanism, not a nicety: a recursive fs.watch that stops delivering
-    // events reports nothing at all, and the runtime then serves stale code
-    // indefinitely while still claiming live reload is on. See
-    // armReloadMtimeBackstop for the witnessed failure. The floor it compares a
-    // source mtime against is the last real reload, or the first worker spawn
-    // before any reload has happened.
+
     rt.watchers.push(armReloadMtimeBackstop({
       log, onChange,
       lastReloadAt: () => sup.ctx.lastReloadAt || sup.ctx.since || 0,
     }))
   }
 
-  // --- public control -------------------------------------------------------
-  // The supervisor owns no socket, no file watch it can rely on, and no timer of
-  // its own: every long-lived handle in a healthy runtime belongs to the WORKER
-  // (dashboard socket, gateway socket, sweep timers). So in every window where
-  // the worker is gone -- between a crash and its respawn, and permanently once
-  // the crash budget has stopped respawning -- the parent can be holding nothing
-  // at all, and Node exits a process holding nothing. That turns two documented
-  // behaviours into silent exits: the crash-restart itself (see the restart timer
-  // in supervisor-worker-process.js) and the budget-exceeded hold, which
-  // supervisor-crash-policy.js describes as "hold the process alive in
-  // 'degraded' (the dashboard pill + /api/runtime show it)" -- a state nobody can
-  // observe on a process that has ended. Live reload happens to mask it, because
-  // its fs.watch watchers hold the loop; `casey up --no-reload` does not.
-  //
-  // One ref'd, never-firing timer from start() to stop() makes the supervisor's
-  // own lifetime independent of what it is currently supervising. Cleared in
-  // stop(), so an intentional shutdown still exits promptly.
-  const KEEPALIVE_TICK_MS = 1 << 30   // ~12.4 days; a handle, not a schedule
+  const KEEPALIVE_TICK_MS = 1 << 30
   function armKeepAlive() {
     if (rt.keepAlive) return
     rt.keepAlive = setInterval(() => {}, KEEPALIVE_TICK_MS)
@@ -161,11 +94,7 @@ export function createSupervisor(opts = {}) {
     sup.fire('STOP', Date.now())
     for (const w of rt.watchers) { try { w.close() } catch {} }
     rt.watchers = []
-    // finally, not a trailing statement: the keep-alive is a REF'D handle, so a
-    // throw or a never-resolving drain above it would leave a 12-day interval
-    // holding the loop open on a process that has been told to stop -- and
-    // casey-serve.js's shutdown swallows a second Ctrl-C, so there is no second
-    // chance to ask. Before this handle existed such a process exited on its own.
+
     try {
       await restart.drainWorker()
       sup.fire('STOPPED', Date.now())
@@ -177,15 +106,13 @@ export function createSupervisor(opts = {}) {
 
   return {
     start, stop,
-    // introspection for tests + doctor + /api/runtime fallback
+
     get state() { return sup.state },
     snapshot: sup.snapshot,
     isTerminal: sup.isTerminal,
-    // test seams (drive lifecycle deterministically without real processes)
+
     _fire: sup.fire, _ctx: sup.ctx, _machine: machine,
-    // requestReload IS the entry the fs.watch callback calls; exposing it lets a
-    // test drive a genuine drain-respawn reload cycle without depending on a
-    // platform-specific fs.watch event firing. Production behaviour is unchanged.
+
     _requestReload: (nowMs) => restart.requestReload(nowMs ?? Date.now()),
   }
 }

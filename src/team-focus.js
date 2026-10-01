@@ -1,31 +1,4 @@
-// team-focus.js  --  which record a field-team member is working on RIGHT NOW,
-// enforced in code so a fact relayed for one farm is never written to another.
-//
-// A ranger or technician (authority 'assigned', case-tools-team-shared.js) may
-// hold several assigned records and talk about them in one chat. Every write
-// tool in the team family names its record explicitly AND passes writeGate()
-// first. The gate refuses, with a plain sentence that names the candidate, when:
-//
-//   1. the staff member's own inbound message names a record reference (an
-//      exact CASE-<digits>-<suffix> token, pulled out by pattern -- extraction
-//      of an identifier, not classification of intent) that is not the record
-//      this write targets, or names more than one;
-//   2. that record is not their CONFIRMED focus: nothing has been confirmed yet,
-//      the focus went idle (CASEY_TEAM_FOCUS_IDLE_MS, default 30 min), or another
-//      record was proposed since.
-//
-// Confirmation is two-step and structural: case_focus PROPOSES a record (or a
-// refused write proposes it), and case_focus with confirm:true accepts it only
-// when the proposal was made in an EARLIER turn -- the staff member's next
-// message, not the same turn the model is composing -- for that same record and
-// while it is still fresh (PROPOSAL_TTL_MS). The model still decides whether the
-// person really said yes (no keyword routing); the code guarantees the answer
-// came in a later message than the question.
-//
-// State is in memory by design: a restart empties it, and empty means "ask
-// again", the fail-closed direction. Reassignment and sign-off call
-// clearFocusForCase so a stale focus can never receive a write (the assignment
-// check in authorityOn would refuse it anyway; this makes the binding go away).
+
 
 import { CASE_REF_RE } from './hooks/heuristics.js'
 import { publicAssignee } from './case-assignment.js'
@@ -35,12 +8,11 @@ import { reporterSummary, firstName } from './phone-persons.js'
 export const FOCUS_IDLE_MS = Number(process.env.CASEY_TEAM_FOCUS_IDLE_MS) || 30 * 60e3
 export const PROPOSAL_TTL_MS = 10 * 60e3
 
-const focus = new Map()      // contactId -> { caseId, ref, lastUsedAt }
-const proposals = new Map()  // contactId -> { caseId, ref, at, turn }
+const focus = new Map()
+const proposals = new Map()
 
 export const refsIn = (text) => [...new Set((String(text || '').match(CASE_REF_RE) || []).map(r => r.toUpperCase()))]
 
-// One identifying line, no phone number: what the animals are and where.
 export function identifyingLine(c) {
   const r = parseReport(c)
   const what = String(r.species || '').trim() || 'animals'
@@ -48,22 +20,20 @@ export function identifyingLine(c) {
   return `${what.slice(0, 60)} at ${where.slice(0, 80)}`
 }
 
-// The shape every team write returns, so the transcript always shows what was touched.
 export async function recordedOn(store, c, ctx) {
   let first = 'the reporter'
   try {
     const contact = c.contact_id ? await store.getContact(c.contact_id) : null
     const name = String(contact?.display_name || '').trim().split(/\s+/)[0]
     if (name && !/^\+?\d[\d\s()-]*$/.test(name)) first = name.slice(0, 40)
-  } catch { /* the first name is a courtesy, never a dependency */ }
-  // On a shared phone the WhatsApp profile name is whoever owns the phone, not who gave this report: prefer the
-  // first name of the person recorded for it, and say the phone is shared (src/phone-persons.js).
+  } catch {  }
+
   let shared = null
   try {
     const who = await reporterSummary(store, c.contact_id, c.id)
     if (who && who.reported_by) first = firstName(who.reported_by.name).slice(0, 40) || first
     if (who && who.people > 1) shared = `shared phone (${who.people} people)`
-  } catch { /* same: a courtesy */ }
+  } catch {  }
   return { ref: c.ref, what: identifyingLine(c), reporter: first, ...(shared ? { shared_phone: shared } : {}), assigned_to: publicAssignee(c.assignee, ctx?.contact) || 'nobody' }
 }
 
@@ -98,7 +68,6 @@ export function clearFocusForCase(caseId) {
   for (const [k, p] of proposals) if (p.caseId === caseId) proposals.delete(k)
 }
 
-// null when the write may proceed, else { error } to hand straight back to the model.
 export function writeGate(ctx, c, now = Date.now()) {
   const me = ctx?.contact?.id
   const named = ctx?.inboundRefs || []
@@ -110,9 +79,7 @@ export function writeGate(ctx, c, now = Date.now()) {
   if (others.length) {
     return { error: `The message names ${others[0]} but this would be recorded on ${c.ref}. Nothing was recorded. Ask which one they mean.` }
   }
-  // The team member's OWN message names exactly this record (the references are pulled out of what THEY typed, never out of a
-  // report's text or the model's words): that is the human identifying the record, so it is confirmed at once. Without this a
-  // technician who types "sign off CASE-1234 as ..." was still made to say yes on a later turn, and the model fumbled that dance.
+
   if (named.length === 1 && named[0] === ours) { if (me) setFocus(me, c, now); return null }
   const f = me ? focusOf(me, now) : null
   if (f && f.caseId === c.id) { f.lastUsedAt = now; return null }

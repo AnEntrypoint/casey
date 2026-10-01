@@ -1,37 +1,4 @@
-// meta-probe.js -- the read-only checks `casey doctor` runs against Meta and the
-// public callback URL, so "no inbound ever arrives" is caught by a command
-// instead of by a reporter.
-//
-// THE INCIDENT THIS EXISTS FOR. Meta had casey's callback URL registered and NO
-// webhook FIELDS subscribed (`messages`), so nothing was ever POSTed. The process
-// was up, the dashboard green, outbound sending fine and every health pill
-// healthy; the only symptom was silence. Every check below is a question whose
-// wrong answer produces exactly that kind of silent, green failure:
-//
-//   token          invalid / expired / missing the messaging scope
-//   subscription   the app has no `whatsapp_business_account` subscription, its
-//                  `messages` field is not subscribed, it is inactive, or its
-//                  callback URL is not the one casey is served on
-//   waba           the app is not subscribed to the WhatsApp Business Account
-//   phone number   restricted / flagged / disconnected, or a RED quality rating
-//   reachability   the public URL does not answer Meta's GET challenge
-//
-// HARD RULES, all structural:
-//   - READ-ONLY. Every Graph call here is a GET. Nothing subscribes, unsubscribes,
-//     re-registers or sends; fixing the configuration is a human's act in the Meta
-//     developer console, and every failing row says where.
-//   - SECRETS NEVER PRINTED. The API token, the app secret and the verify token
-//     travel in Authorization headers (Graph accepts them there) except where the
-//     protocol itself demands a query parameter (`input_token`, and the
-//     verify token on the challenge GET, which is what Meta itself sends). A
-//     failing fetch's own message can embed the URL, so errors are reduced to a
-//     status or a short reason and never echo a URL or query string.
-//   - BEST-EFFORT, BOUNDED. A short timeout on every call; offline or DNS failure
-//     yields ONE quiet 'skip' row rather than a wall of red, because a laptop with
-//     no network is not a misconfigured deployment.
-//
-// Returns rows { id, level: 'ok'|'fail'|'warn'|'info'|'skip', text, fix? } so the
-// CLI renders them and a driver can assert on them.
+
 
 import crypto from 'node:crypto'
 
@@ -40,8 +7,6 @@ const TIMEOUT_MS = 6000
 
 const row = (id, level, text, fix) => ({ id, level, text, ...(fix ? { fix } : {}) })
 
-// A fetch that cannot leak: bounded by a timeout, and on failure it throws an
-// Error whose message names a reason and never the URL.
 async function get(fetchImpl, url, headers, timeoutMs) {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), timeoutMs)
@@ -66,7 +31,6 @@ function reasonOf(e) {
   return 'network error'
 }
 
-// Meta's own error text never contains a token, but bound it anyway.
 const metaError = (body) => {
   const e = body?.error
   if (!e) return null
@@ -83,9 +47,6 @@ function normUrl(u) {
 }
 const showUrl = (u) => normUrl(u)?.href || '(unparseable URL)'
 
-// The expected public callback URL, and how sure we are of it.
-//   explicit  CASEY_PUBLIC_WEBHOOK_URL -- a mismatch is a FAIL
-//   derived   CASEY_PUBLIC_URL origin + WHATSAPP_WEBHOOK_PATH -- a mismatch is a warning
 function expectedCallback(env) {
   if (env.CASEY_PUBLIC_WEBHOOK_URL) return { url: env.CASEY_PUBLIC_WEBHOOK_URL, explicit: true }
   if (env.CASEY_PUBLIC_URL) {
@@ -95,13 +56,6 @@ function expectedCallback(env) {
   return null
 }
 
-/**
- * @param {object} o
- * @param {object} [o.env]        defaults to process.env
- * @param {Function} [o.fetchImpl] defaults to global fetch (injectable for a driver)
- * @param {number} [o.timeoutMs]
- * @param {Function} [o.now]
- */
 export async function probeMeta({ env = process.env, fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS, now = () => Date.now() } = {}) {
   const token = env.WHATSAPP_API_TOKEN
   const phoneId = env.WHATSAPP_PHONE_NUMBER_ID
@@ -110,7 +64,6 @@ export async function probeMeta({ env = process.env, fetchImpl = globalThis.fetc
   const rows = []
   const expected = expectedCallback(env)
 
-  // ---- token: valid / expiry / scopes, and the app id -----------------------
   let appId = env.WHATSAPP_APP_ID || ''
   let wabaIds = []
   let offline = false
@@ -152,7 +105,6 @@ export async function probeMeta({ env = process.env, fetchImpl = globalThis.fetc
   }
   if (offline) return { skipped: 'offline', rows }
 
-  // ---- app webhook subscription (THE incident) -------------------------------
   let registeredCallback = ''
   if (!env.WHATSAPP_APP_SECRET) {
     rows.push(row('subscription', 'skip', 'webhook subscription not checked: WHATSAPP_APP_SECRET is unset', 'Set WHATSAPP_APP_SECRET (Meta app -> Settings -> Basic -> App secret).'))
@@ -181,7 +133,7 @@ export async function probeMeta({ env = process.env, fetchImpl = globalThis.fetc
           } else {
             rows.push(row('subscription', 'ok', `webhook subscription active, fields: ${fields.join(', ')}`))
           }
-          // Where Meta posts, against where casey listens and where it is published.
+
           const reg = normUrl(registeredCallback)
           const listenPath = (env.WHATSAPP_WEBHOOK_PATH || '/webhooks/whatsapp').replace(/\/+$/, '') || '/'
           if (!reg) rows.push(row('callback', 'fail', 'the registered callback URL is missing or unparseable', 'Meta console -> WhatsApp -> Configuration -> Callback URL.'))
@@ -200,7 +152,6 @@ export async function probeMeta({ env = process.env, fetchImpl = globalThis.fetc
     } catch (e) { rows.push(row('subscription', e.network ? 'skip' : 'warn', `webhook subscription not checked (${e.message})`)) }
   }
 
-  // ---- the app is subscribed to the WABA itself ---------------------------------
   if (appId && wabaIds.length) {
     for (const waba of wabaIds.slice(0, 3)) {
       try {
@@ -214,7 +165,6 @@ export async function probeMeta({ env = process.env, fetchImpl = globalThis.fetc
     }
   }
 
-  // ---- the phone number ----------------------------------------------------------
   try {
     const fields = 'display_phone_number,verified_name,quality_rating,status,name_status,code_verification_status,messaging_limit_tier,throughput'
     const r = await get(fetchImpl, `${api}/${encodeURIComponent(phoneId)}?fields=${fields}`, bearer(token), timeoutMs)
@@ -236,7 +186,6 @@ export async function probeMeta({ env = process.env, fetchImpl = globalThis.fetc
     }
   } catch (e) { rows.push(row('phone', e.network ? 'skip' : 'warn', `phone number not checked (${e.message})`)) }
 
-  // ---- reachability of the public callback, with the real challenge ------------------
   const target = expected?.explicit ? expected.url : (registeredCallback || expected?.url || '')
   if (!target) {
     rows.push(row('reachability', 'skip', 'public callback URL not checked: neither CASEY_PUBLIC_WEBHOOK_URL nor a registered callback URL is known'))

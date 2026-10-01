@@ -1,20 +1,4 @@
-// case-tools-team-desk.js  --  the tools for the area / hand-over / day model:
-//
-//   case_handoff_to_technician  (ranger)    the ranger, having confirmed the record
-//                                           is full, hands it to the sign-off desk
-//   case_my_day                 (ranger/AHT) how many in my area today, where they
-//                                           stand, what changed, what each needs
-//   team_ranger_day             (operator)  the same view for one named ranger
-//   team_relocate_case          (operator)  move a mis-filed record to its real area
-//                                           and hand it to that area's ranger
-//
-// Appended AFTER every earlier tool by case-tools-team.js, so the pinned order of
-// the existing schemas does not move. Minimum rungs are in case-tools-gates.js.
-//
-// The ranger is the triage "nurse" (confirms the record is full, hands it over); the
-// technician is the "doctor" (signs off with a diagnosis and a recommended
-// resolution). Rangers support technicians, never the other way round; operators are
-// not regional and are the only ones who can correct the area a record was filed under.
+
 
 import { defTool, str } from './case-tools-shared.js'
 import { staffLabel } from './hooks/staff-outbound.js'

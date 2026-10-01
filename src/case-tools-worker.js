@@ -1,13 +1,4 @@
-// case-tools-worker.js  --  the worker-facing surface: answer FOR the asking
-// worker (ctx.author), scoped and PII-free (enquiryRow). ctx carries
-// {author, principal, activeCaseRef} that casey builds per turn in
-// gateway-hooks; scoping is by the reporter's own author id, never an
-// operator assignee.
-//
-// case_mine/case_today are the worker's itinerary; case_checkin records where
-// the WORKER is standing; case_idle records that they have nothing to do. Split
-// out of case-tools.js verbatim -- names, descriptions, parameter schemas and
-// handler bodies are unchanged.
+
 
 import {
   defTool, str, enquiryRow, mineRows, boundCase, isValidLatLon,
@@ -20,10 +11,7 @@ export function buildWorkerTools(store) {
       "List the asking worker's OWN open cases (their itinerary). PII-free.",
       { type: 'object', properties: { limit: { type: 'number', default: 25 } } },
       async ({ limit = 25 }, ctx) => {
-        // Scope by REPORTER, not assignee: a worker's cases are the ones they reported
-        // (the per-contact external_id 'channel:author' or the bare author), never an
-        // operator assignee -- an assignee scope returned nothing for the asking worker.
-        // enquiryRow strips external_id, so filtering on it never leaks it.
+
         const rows = await mineRows(store(), ctx, limit)
         if (rows?.error) return rows
         return { count: rows.length, cases: rows.map(enquiryRow) }
@@ -32,21 +20,12 @@ export function buildWorkerTools(store) {
       "List cases active today for the asking worker (today's list). PII-free.",
       { type: 'object', properties: { limit: { type: 'number', default: 25 } } },
       async ({ limit = 25 }, ctx) => {
-        // The worker's OWN open cases, most-recently-active first (recency-sorted) --
-        // "today" is the practical itinerary of what is live for them. Reporter-scoped.
+
         const rows = await mineRows(store(), ctx, limit)
         if (rows?.error) return rows
         return { count: rows.length, cases: rows.map(enquiryRow) }
       }),
-    // Casual, self-reported location check-in for a field worker -- DISTINCT from
-    // a CASE's lat/lon (an animal-report location, see case_report). This is the
-    // WORKER's own current position, a live coverage/dispatch signal: it shows
-    // them on the operator map (dashboard-worker-location-map-layer) so a team
-    // can direct/dispatch them, and lets a later "anything near me" enquiry use
-    // it as the near-lookup origin (near-me-lookup-for-field-workers) without
-    // re-describing their location every time. field_worker-tier only (gated by
-    // gateByTier in case-tools-gates.js like every other non-report tool) -- a
-    // casual public reporter has no reason to broadcast standing location.
+
     defTool('case_checkin', 'cases',
       "Record the FIELD WORKER's own current location (not an animal report's location) -- call this when they say where they are now, e.g. 'I'm at the clinic', 'just arrived at the Bela-Bela farm', or share GPS. Shows them on the team's map and lets a later 'anything near me' question use this as the starting point.",
       {
@@ -69,8 +48,7 @@ export function buildWorkerTools(store) {
         if (!isValidLatLon(lat, lon)) {
           return { error: 'lat/lon must be finite numbers in range (lat -90..90, lon -180..180)' }
         }
-        // Same ladder and same default as case_report's own resolvedLocationSource:
-        // a coordinate with no stated provenance is an ESTIMATE, never silently a fix.
+
         const LOCATION_SOURCE_VALUES = new Set(['gps', 'estimated', 'confirmed'])
         if (location_source != null && !LOCATION_SOURCE_VALUES.has(location_source)) {
           return { error: `invalid location_source: ${location_source}`, allowed: [...LOCATION_SOURCE_VALUES] }
@@ -88,16 +66,9 @@ export function buildWorkerTools(store) {
         }), { id: 'casey-agent', role: 'agent' })
         return { ok: true }
       }),
-    // Workers report they have nothing to do -- records an IDLE observation so
-    // other staff can see a worker needs direction and follow up. Distinct from
-    // case_checkin (location-only) in that it carries a work-status payload.
-    // field_worker-tier only (gated by gateByTier in case-tools-gates.js).
+
     defTool('case_idle', 'cases',
-      // The trailing sentence used to be reply-composition instruction in the
-      // third person ("The agent should reply warmly ... suggesting they check
-      // back or ask about nearby cases"), which named two things to put in one
-      // reply and so fought the prompt's own one-ask rule. Reply rules live in
-      // the system prompt; a tool description says what the tool records.
+
       "Record that the worker has nothing to work on right now. Call this when a worker says they have no cases, nothing to do, or asks what they should do next -- this flags them for follow-up by other staff. Recording it is invisible to them, so still reply warmly in your own words.",
       { type: 'object', properties: { note: str('Optional: what the worker said about their availability') } },
       async ({ note }, ctx) => {

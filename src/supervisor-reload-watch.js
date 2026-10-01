@@ -1,11 +1,4 @@
-// supervisor-reload-watch.js  --  "a source file changed, once" as a single
-// unit: which directories to watch, which changes count, the debounce that
-// collapses an editor's save-all into one reload, and the per-path failure
-// handling that must never take the supervisor down with it.
-//
-// Split out of supervisor.js. The supervisor keeps the irreversible
-// side-effects it owns (fork, kill, the drain handshake) and now takes the
-// reload signal as a callback instead of also owning fs.watch bookkeeping.
+
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -13,61 +6,21 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// freddie's framework root, resolved against a FIXED ordered candidate list. The
-// watch list stays an allowlist of paths this file names literally -- never
-// anything derived from contact input -- and this only chooses which of the
-// named paths is the one that exists here: (1) the submodule checkout casey
-// actually resolves freddie from, the same <caseyRoot>/deps/freddie root
-// scripts/link-deps.mjs walks, and the only one that exists when casey is itself
-// vendored (uhh/deps/casey); (2) that same pnpm-workspace layout in a SIBLING
-// checkout, casey's standalone dev layout.
-//
-// framework/, NOT packages/, and that is the whole division of labour with
-// Cordis-level HMR. freddie's ~216 plugin packages under packages/ hot-swap in
-// the running worker (freddie-bundle/boot.js's hmrScopePatch scopes the `hmr`
-// row at them), so a full restart on those same saves would drop every in-flight
-// conversation to redo work the process already did in place. framework/ is the
-// opposite case and cannot be handed to HMR: cordis, the loader, the include and
-// the HMR service itself are the runtime the live tree is built out of, and every
-// mounted plugin holds framework/cordis's Context/Service classes by identity --
-// re-evaluating them under a running tree yields a tree that reports a clean
-// reload and is quietly running two class identities. Restart is the only
-// coherent answer there. Anything HMR turns out not to cover on the packages/
-// side escalates back to this same restart over WORKER_MSG.RELOAD_REQUEST.
 const FREDDIE_SOURCE_CANDIDATES = [
   path.resolve(__dirname, '..', 'deps', 'freddie', 'framework'),
   path.resolve(__dirname, '..', '..', 'freddie', 'framework'),
 ]
 
-// Default the reload watch to casey's own src/ plus freddie's framework root,
-// plus any extra dirs the operator names (CASEY_RELOAD_PATHS, comma-separated).
-// Absent dirs are skipped with a warning, never a crash.
-//
-// casey's own src/ belongs here rather than to HMR for a concrete reason: it sits
-// in bin/worker.js's static import graph, so HMR would clear its module cache and
-// then nothing would re-import it -- every live reference in the booted worker
-// would keep running the old code while the cache looked fresh. A full respawn is
-// what actually replaces it.
 export function reloadWatchPaths() {
-  const paths = [path.join(__dirname)]   // src/
-  // freddie is resolved through node_modules junctions, but a developer editing
-  // the freddie checkout needs those saves to reach the running build. Watched by
-  // DEFAULT, existence-guarded by armReloadWatchers' fs.existsSync. When no
-  // candidate exists the first is still returned, so the missing-path warning
-  // fires and hot reload is never quietly half-armed. (thatcher is an npm dep
-  // with no local source tree to watch; its db.sqlite is the durable boundary,
-  // reopened per worker -- nothing to hot-reload there.)
+  const paths = [path.join(__dirname)]
+
   paths.push(FREDDIE_SOURCE_CANDIDATES.find(p => fs.existsSync(p)) || FREDDIE_SOURCE_CANDIDATES[0])
   const extra = (process.env.CASEY_RELOAD_PATHS || '').split(',').map(s => s.trim()).filter(Boolean)
   for (const p of extra) paths.push(path.resolve(p))
-  // Dedup: an operator naming freddie's source root in CASEY_RELOAD_PATHS must
-  // not arm two watchers on the same dir (double-fire on every freddie save).
+
   return [...new Set(paths)]
 }
 
-// A source file change worth a reload: .js/.mjs only, ignore the spool, dotfiles,
-// node_modules, and the sqlite store itself (the worker writes db.sqlite constantly --
-// watching it would reload-storm forever).
 export function isReloadableChange(file) {
   if (!file) return false
   if (!/\.(mjs|js)$/.test(file)) return false
@@ -77,46 +30,24 @@ export function isReloadableChange(file) {
   return true
 }
 
-/**
- * Arm one recursive watcher per reload path. Returns the live FSWatchers so the
- * caller can close them on stop; an empty array means nothing is watched.
- *
- * @param {object} opts
- * @param {object} opts.log
- * @param {number} opts.debounceMs
- * @param {()=>void} opts.onChange  fired at most once per debounce window
- */
 export function armReloadWatchers({ log, debounceMs, onChange }) {
   const watchers = []
   let timer = null
   for (const dir of reloadWatchPaths()) {
-    // Say what the skip COSTS, not just that it happened. This line is the only
-    // notice a developer ever gets that saves under this dir will not reload the
-    // worker; "reload path missing, skipping" reads as harmless housekeeping and
-    // scrolls past, and then edits appear to do nothing for as long as it takes
-    // someone to suspect the watcher.
+
     if (!fs.existsSync(dir)) { log.warn?.('[supervisor] reload path does not exist - edits under it will NOT reload the worker (nothing else will say so; name a real dir in CASEY_RELOAD_PATHS)', { dir }); continue }
     try {
       const w = fs.watch(dir, { recursive: true }, (_evt, file) => {
         if (!isReloadableChange(file)) return
-        // Debounce: an editor save-all writes N files; coalesce into ONE reload.
+
         if (timer) clearTimeout(timer)
-        // NOT unref'd: this timer IS the pending reload. Unref'd, a save whose
-        // debounce window is the only thing left on the loop is silently dropped
-        // -- the same class of loss as the crash-restart timer in
-        // supervisor-worker-process.js. 300ms of extra shutdown latency at worst.
+
         timer = setTimeout(() => { timer = null; onChange() }, debounceMs)
       })
-      // An FSWatcher can emit 'error' ASYNCHRONOUSLY after a successful fs.watch()
-      // call (dir deleted, permission change mid-run -- common on Windows recursive
-      // watches) -- the try/catch below only guards the synchronous fs.watch() call
-      // itself. An unhandled 'error' event throws inside the SUPERVISOR process, the
-      // one process whose job is to keep the worker alive and restart on crash, with
-      // no restart-with-backoff for this failure -- just total supervisor death.
-      // Disable reload for this one path and keep the supervisor running.
+
       w.on('error', (e) => {
         log.warn?.('[supervisor] watch error, disabling live reload for this path', { dir, error: e.message })
-        try { w.close() } catch { /* already closing */ }
+        try { w.close() } catch {  }
       })
       watchers.push(w)
       log.info?.('[supervisor] watching for live reload', { dir })
@@ -127,13 +58,10 @@ export function armReloadWatchers({ log, debounceMs, onChange }) {
   return watchers
 }
 
-// How often the mtime backstop below looks, and the walk's own bounds.
 export const RELOAD_SWEEP_INTERVAL_MS = Number(process.env.CASEY_RELOAD_SWEEP_MS || 20_000)
 const SWEEP_MAX_FILES = 20_000
 const SWEEP_SKIP_DIR = (name) => name === 'node_modules' || name.startsWith('.')
 
-// Newest reloadable-source mtime under `dirs`, or 0. Bounded and skip-listed so
-// a walk can never wander into a dependency tree or a dot-dir.
 function newestSourceMtime(dirs) {
   let newest = 0
   let seen = 0
@@ -149,50 +77,22 @@ function newestSourceMtime(dirs) {
       try {
         const m = fs.statSync(path.join(dir, e.name)).mtimeMs
         if (m > newest) newest = m
-      } catch { /* vanished mid-walk */ }
+      } catch {  }
     }
   }
   for (const dir of dirs) { if (fs.existsSync(dir)) walk(dir) }
   return newest
 }
 
-/**
- * MTIME BACKSTOP for the watchers above, because a dead recursive watcher is
- * INVISIBLE. fs.watch's 'error' event is the only failure this module could see,
- * and it is not the failure that actually happens: witnessed live on Linux, a
- * supervisor whose watcher armed cleanly at boot and logged no error at all
- * silently stopped delivering events after roughly thirty minutes of heavy
- * editor and `git fetch`/merge churn in the watched tree. The process was
- * healthy, `live reload: on` was still the last thing it had said on the
- * subject, a fresh fs.watch on the same directory in another process delivered
- * the same touch immediately -- and the running worker had been frozen on
- * half-hour-old code the whole time, with every save appearing to do nothing.
- * Nothing in the system could notice, which is what makes it worth a second
- * mechanism rather than a louder log line.
- *
- * So: remember the newest source mtime and compare it on an interval against
- * WHEN THE RUNTIME LAST RELOADED. That second comparison is what keeps this
- * silent while the watchers work: a healthy save reloads within the debounce
- * window, so the reload timestamp is newer than the file and nothing fires. Only
- * a source file that is newer than the last reload -- a save nothing acted on --
- * trips it. It cannot false-positive (it reads real mtimes, never an event) and
- * it cannot storm (one onChange per tick at most, and requestReload already
- * coalesces). Unref'd: the supervisor holds its own keep-alive handle and a
- * backstop must not be what keeps a stopping process up.
- *
- * @param {() => number} opts.lastReloadAt  epoch ms of the most recent reload or
- *   worker spawn; the floor a source mtime has to beat to count as unhandled.
- * @returns {{close: () => void}}
- */
 export function armReloadMtimeBackstop({ log, intervalMs = RELOAD_SWEEP_INTERVAL_MS, lastReloadAt, onChange }) {
   const dirs = reloadWatchPaths()
   let baseline = newestSourceMtime(dirs)
   const timer = setInterval(() => {
     const newest = newestSourceMtime(dirs)
     if (newest <= baseline) return
-    baseline = newest   // advance regardless, so one stale file cannot fire every tick forever
+    baseline = newest
     const handledAt = Number(lastReloadAt?.() || 0)
-    if (newest <= handledAt) return   // the watchers already reloaded this save
+    if (newest <= handledAt) return
     log.warn?.('[supervisor] a source change was found by the mtime backstop, not by the file watcher -- the watcher has stopped delivering events; reloading anyway', {
       newestMtime: new Date(newest).toISOString(), lastReloadAt: handledAt ? new Date(handledAt).toISOString() : null,
     })

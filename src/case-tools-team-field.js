@@ -1,24 +1,4 @@
-// case-tools-team-field.js  --  the field-team surface over WhatsApp: what an
-// Eco Ranger (field_worker) or a technician does with the cases an operator has
-// ASSIGNED to them. Composed, in a pinned order, by case-tools-team.js.
-//
-// The real-world flow these serve: the public reporter talks to the bot, the bot
-// gathers what it can, an operator assigns the case, and then this person
-// finishes the triage -- usually from their OWN phone with the reporter, or by
-// telling the bot on the reporter's behalf. So the tools here are:
-//
-//   case_pending         what is waiting for me (assignments, replies, dispatches)
-//   case_claim/_release  take an unassigned case / hand one back (bot resumes)
-//   case_dispatch_reply  accept or decline a dispatch suggestion
-//   case_gaps            exactly what is still missing + a reminder to copy
-//   case_contact         the reporter's number, ASSIGNED cases only, audited
-//   case_edit            record facts / notes on the reporter's behalf, attributed
-//   case_stage           move an assigned case through the NON-done stages
-//   case_message         message the reporter through the bot (window-limited)
-//
-// Every write is gated by authorityOn (case-tools-team-shared.js): the operator
-// rung, or an assignee on their own assigned case. Everything else gets the one
-// plain NOT_ASSIGNED sentence. None of these can finish a record.
+
 
 import { defTool, str, pick, isValidLatLon } from './case-tools-shared.js'
 import { REPORT_KEYS } from './case-store.js'
@@ -48,17 +28,14 @@ import {
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
 const FINISHED = { error: 'That record is already finished, so it is not changed from here.' }
 const empty = (v) => v == null || String(v).trim() === ''
-// Tags the system owns. A team member records facts; they do not flip the
-// machinery (opt-out, hand-off, draft and health flags are set by their own paths).
+
 const staffOf = (ctx) => ({ ...(ctx?.contact || {}), tier: ctx?.tier })
 const optedOut = (c) => tagList(c).includes(OPTED_OUT_TAG)
-// Resolve a record for a team write. `gate` applies team-focus.js's writeGate to
-// an assignee (an operator names the record explicitly and is not gated); every
-// success carries recorded_on so the transcript shows what was touched.
+
 const lookupTeamCase = async (store, ctx, ref, { gate = true } = {}) => {
   const c = await findCase(store(), ref)
   if (!c) return { fail: NO_SUCH }
-  // deskAuthorityOn is authorityOn plus the technician's sign-off desk (unassigned and handed-over reports), so a technician can read and edit what is on their desk.
+
   const authority = deskAuthorityOn(ctx, c)
   if (!authority) return { fail: NOT_ASSIGNED }
   if (gate && authority === 'assigned') {
@@ -75,7 +52,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
       { type: 'object', properties: {} },
       async (_args, ctx) => {
         const n = await staffNotices(store(), ctx?.contact, { mark: true, tier: ctx?.tier })
-        // On a shared phone each row says who gave the report and that the phone is shared (phone-persons.js).
+
         const { extra: who } = await reporterExtras(store(), [...n.handoffs, ...n.assigned, ...n.dispatches].map(x => x.c))
         return {
           counts: n.counts,
@@ -99,8 +76,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const key = assigneeKeyFor(ctx?.contact)
         if (!key) return { error: 'Could not tell who you are on this conversation, so nothing was assigned.' }
         if (isOwnConversation(c0, ctx.contact)) return { error: 'That is this chat with the assistant, not a record to work on, so it is not assigned to you.' }
-        // Two people taking the same unassigned record at the same moment must not both
-        // be told yes: the read, the check and the write happen under one lock per record.
+
         return store()._withLock(`assign|${c0.id}`, async () => {
           const c = await store().getCase(c0.id)
           if (!c || !isOpenCase(c)) return FINISHED
@@ -109,8 +85,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           if (current && current !== UNCLAIMED_ASSIGNEE) {
             return { error: 'That one is already with someone else. Ask an operator to move it if it should be yours.' }
           }
-          // No self-service from the unassigned pool: a ranger or technician takes a record
-          // only when an operator has offered it to THEM. An operator assigns freely.
+
           if (!isOperator(ctx.tier) && !(await pendingDispatchesFor(store(), ctx.contact, [c])).length) {
             return { error: 'That record has not been offered to you, so it is not yours to take. Ask an operator to assign it to you.' }
           }
@@ -185,7 +160,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const mine = async () => {
           const key = assigneeKeyFor(me)
           const own = key ? (await store().listCases({ assignee: key }, { limit: 200 })).filter(isOpenCase) : []
-          // The sign-off desk also works the unassigned records that are ready.
+
           if (!atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN) || isOperator(ctx?.tier)) return own
           const seen = new Set(own.map(c => c.id))
           return [...own, ...(await signOffCandidates(store(), ctx)).filter(c => !seen.has(c.id))]
@@ -217,7 +192,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           target = hits[0]
         }
         const authority = deskAuthorityOn(ctx, target)
-        // A finished record can be focused only by the sign-off desk, to reopen it.
+
         if (!isOpenCase(target) && !atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN)) return FINISHED
         if (authority === 'operator') { setFocus(me?.id, target); return { ok: true, focused: true, recorded_on: await recordedOn(store(), target, ctx) } }
         if (!confirm) {
@@ -260,8 +235,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         if (optedOut(c)) return { ref: c.ref, withheld: true, reporter_asked_us_to_stop: true, note: 'This person asked us to stop contacting them, so no number is given and they are not to be messaged.' }
         if (c.channel !== 'whatsapp') return { error: 'There is no phone number on this record: the person reached us on another channel.' }
         await store().appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `REPORTER NUMBER SHOWN to ${staffLabel(ctx.contact)}`, data: actorData(ctx, { number_revealed: true }) })
-        // On a shared phone (src/phone-persons.js) say WHO gave the report and that the phone is shared, so the
-        // team member asks for that person by name when they call. Nothing extra while nobody is recorded.
+
         const who = await reporterSummary(store(), c.contact_id, c.id).catch(() => null)
         const person = who && who.reported_by ? { reported_by: { name: who.reported_by.name, ...(who.reported_by.relation ? { relation: who.reported_by.relation } : {}) } } : {}
         const shared = who && who.people > 1 ? { shared_phone: `shared phone (${who.people} people)` } : {}
@@ -288,7 +262,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
       async ({ case: ref, lat, lon, location_source, location_confidence, subject, summary, priority, add_tags, note, correct = false, ...fields }, ctx) => {
         subject = cleanRelayed(subject); summary = cleanRelayed(summary); add_tags = cleanRelayed(add_tags); note = cleanRelayed(note)
         for (const k of Object.keys(fields)) fields[k] = cleanRelayed(fields[k])
-        // The diagnosis is recorded by the technician at sign-off, never relayed through the ranger's edit.
+
         const notDiagnosis = canSignOff(ctx?.tier) ? [] : SIGNOFF_DIAGNOSIS_FIELDS.filter(k => k in fields)
         for (const k of notDiagnosis) delete fields[k]
         const r = await lookupTeamCase(store, ctx, ref); if (r.fail) return r.fail
@@ -328,7 +302,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           if (merged.error) return { error: merged.error }
           recorded.push(...Object.keys(incoming))
           if ('location' in incoming) {
-            try { await store().systemUpdateDerived(c.id, { normalized_location: normalizeLocation(incoming.location) }) } catch { /* derived freshness only */ }
+            try { await store().systemUpdateDerived(c.id, { normalized_location: normalizeLocation(incoming.location) }) } catch {  }
           }
           if (REPORT_KEYS.has("notes") && APPEND_FIELDS.has("notes")) {
             await store().appendReportField(c.id, 'notes', `[relayed by ${by} on the reporter's behalf: recorded ${Object.keys(incoming).map(fieldLabel).join(', ')}]`, user).catch(() => {})
@@ -366,9 +340,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const r = await lookupTeamCase(store, ctx, ref); if (r.fail) return r.fail
         const { c, authority } = r
         if (doneStages().includes(to)) {
-          // The same order case_transition uses: a blank required fact is something the
-          // person on site can still fix, so it is named first; only a complete record
-          // reaches the "not yours to finish" answer.
+
           const blank = missingMandatoryMinimum(parseReport(c))
           if (blank.length) return { error: `Not finished: ${blank.map(fieldLabel).join(', ')} ${blank.length === 1 ? 'is' : 'are'} still not recorded, and every one of those has to be known before anyone can finish it. Ask the reporter for ${blank.length === 1 ? 'it' : 'them'} (case_gaps has a reminder to send), record ${blank.length === 1 ? 'it' : 'them'} with case_edit, and leave the record open.` }
           return { error: canSignOff(ctx?.tier)
@@ -394,8 +366,6 @@ export function buildTeamFieldTools(store, { priorityValues }) {
   ]
 }
 
-// True when two references differ by at most one substitution, insertion or
-// deletion (a mistyped digit): used only to LIST near-misses for a person to pick.
 function withinOneEdit(a, b) {
   if (a === b) return true
   if (Math.abs(a.length - b.length) > 1) return false

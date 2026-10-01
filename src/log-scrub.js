@@ -1,13 +1,5 @@
-// log-scrub.js -- redacts secrets from everything the process writes to stdout and stderr.
-//
-// Two layers, both cheap string work (no cryptography):
-//   1. every environment variable whose NAME ends in KEY / TOKEN / SECRET / PASSWORD (value 8+ characters) is registered
-//      by value, and any occurrence of that exact value is replaced with [REDACTED:NAME] (longest first);
-//   2. token-shaped strings are replaced whatever their source: Meta access tokens (EAA...), "Bearer ..." / "Bot ..."
-//      authorization values, Discord bot tokens, and `sha256=<64 hex>` signatures.
-// installLogScrub() wraps process.stdout.write and process.stderr.write once, so console.log, the structured logger and
-// crash output all pass through it. Limit: a secret split across two separate write() calls is not caught (the loggers write
-// whole lines).
+
+
 const NAME_RE = /(KEY|TOKEN|SECRET|PASSWORD|PASS)$/
 const PATTERNS = [
   [/\bEAA[A-Za-z0-9]{20,}\b/g, '[REDACTED:meta-token]'],
@@ -15,7 +7,7 @@ const PATTERNS = [
   [/\b[MN][A-Za-z\d_-]{23,27}\.[\w-]{6}\.[\w-]{27,}\b/g, '[REDACTED:discord-token]'],
   [/\bsha256=[0-9a-f]{64}\b/gi, 'sha256=[REDACTED]'],
 ]
-const values = new Map()   // value -> NAME
+const values = new Map()
 
 export function registerSecretValue(name, value) {
   const v = String(value ?? '')

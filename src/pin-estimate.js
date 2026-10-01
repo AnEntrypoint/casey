@@ -1,9 +1,5 @@
-// pin-estimate.js -- every case with a place on it gets a pin and a confidence for it.
-//
-// The agent is asked to give lat/lon and location_confidence itself when someone names a place (case_report). When
-// it did not, this does it as ONE narrow model call from the model's own knowledge of the place: nothing is looked
-// up, and the result is always marked 'estimated' with the confidence the model gave. A real reading (gps) or a
-// confirmed pin is never touched, and a case a person has taken over (observe) is left alone.
+
+
 import { isValidLatLon } from './case-tools-shared.js'
 import { pinConfidence, placeText } from './pin-confidence.js'
 export { placeText }
@@ -30,9 +26,6 @@ export async function estimatePin(callLLM, text) {
   return { lat, lon, confidence: pinConfidence('estimated', j.confidence) }
 }
 
-// Gives this case a pin when it has a place and no pin, and REDOES an estimated pin when the place words have changed since it
-// was worked out (the person gave a better description). A real reading (gps) or a confirmed pin is never touched.
-// Returns the pin written, or null. Never throws.
 export async function ensurePin({ store, callLLM, log, caseId }) {
   try {
     const c = await store.getCase(caseId)
@@ -42,7 +35,7 @@ export async function ensurePin({ store, callLLM, log, caseId }) {
     if (c.location_source === 'gps' || c.location_source === 'confirmed') return null
     const hasPin = c.lat != null && c.lon != null
     if (hasPin && c.location_basis === text) return null
-    // A pin that holds no recorded basis was written by the agent with the place words as they stood: keep it, record the basis.
+
     if (hasPin && !c.location_basis) { await store.updateCaseChecked(caseId, { location_basis: text }).catch(() => {}); return null }
     const pin = await estimatePin(callLLM, text)
     if (!pin) return null

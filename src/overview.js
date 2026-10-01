@@ -1,26 +1,11 @@
-// Management KPIs over the case + event history. Pure and deterministic: given
-// the case rows, their events, and `now`, it returns aggregate-only numbers (no
-// per-contact rows leak) for the dashboard Metrics tab and the management report.
-// Lifted into its own module (like src/attn.js, src/format.js) so the same maths
-// is testable in node and identical whether the web tab or a CSV export calls it.
-//
-// Times in stored events are unix SECONDS (integer). All durations returned are
-// MILLISECONDS so the SAST formatters and the threshold config (also ms) agree.
+
 
 const SEC = 1000
 
-// thatcher persists event.data as a JSON string (case-store.appendEvent), and
-// store.listEvents returns it unparsed. evData() reads it as an object either
-// way -- an object passes through, a string is parsed, anything malformed is
-// {} (never throws). Without this, reads like data.from/data.by silently miss
-// (a string has no such key), mis-attributing dwell-per-stage and reply
-// credit. Shared by workload.js. Now defined in src/safe.js (casey's small
-// defensive-parsing module) and re-exported here for backward compatibility.
 export { evData } from './safe.js'
 import { evData } from './safe.js'
 import { isOpenCase } from './format.js'
 
-// created_at is unix seconds; -> ms, or null if missing/corrupt (never throws).
 function evMs(e) {
   const v = e?.created_at
   if (v == null || v === '') return null
@@ -28,8 +13,6 @@ function evMs(e) {
   return Number.isFinite(n) ? n * SEC : null
 }
 
-// Median of a numeric array (ms). null for an empty set so a card can show "--"
-// rather than a misleading 0.
 function median(xs) {
   const a = xs.filter(Number.isFinite).sort((x, y) => x - y)
   if (!a.length) return null
@@ -37,7 +20,6 @@ function median(xs) {
   return a.length % 2 ? a[mid] : Math.round((a[mid - 1] + a[mid]) / 2)
 }
 
-// p90 (nearest-rank). null for empty.
 function p90(xs) {
   const a = xs.filter(Number.isFinite).sort((x, y) => x - y)
   if (!a.length) return null
@@ -45,8 +27,6 @@ function p90(xs) {
   return a[Math.max(0, idx)]
 }
 
-// First inbound -> first following outbound, per case, in ms. Cases with no
-// inbound, or an inbound never answered, contribute nothing (not a 0).
 function firstResponseMs(events) {
   const sorted = [...events].filter(e => evMs(e) != null).sort((a, b) => evMs(a) - evMs(b))
   const firstIn = sorted.find(e => e.kind === 'inbound')
@@ -57,9 +37,6 @@ function firstResponseMs(events) {
   return d >= 0 ? d : null
 }
 
-// Dwell per stage from transition events: time spent IN each `from` stage before
-// moving to `to`. The opening stage's dwell is measured from case creation to the
-// first transition. Returns { stage: [durationsMs...] } accumulated across cases.
 function accumulateDwell(into, caseRow, events) {
   const trans = [...events].filter(e => e.kind === 'transition' && evMs(e) != null).sort((a, b) => evMs(a) - evMs(b))
   let prevMs = evMs({ created_at: caseRow?.created_at })
@@ -75,8 +52,6 @@ function accumulateDwell(into, caseRow, events) {
   }
 }
 
-// Build the overview. `cases` are the rows; `eventsByCaseId` maps id -> events[].
-// `windowMs` scopes the opened/closed-per-day counts (default 14 days).
 export function buildOverview(cases, eventsByCaseId, now = Date.now(), windowMs = 14 * 24 * 3600 * SEC) {
   const since = now - windowMs
   const responseMs = []
@@ -84,7 +59,7 @@ export function buildOverview(cases, eventsByCaseId, now = Date.now(), windowMs 
   const backlog = {}
   const openedByDay = {}
   const closedByDay = {}
-  const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10) // UTC day bucket; labels rendered SAST by caller
+  const dayKey = (ms) => new Date(ms).toISOString().slice(0, 10)
   let open = 0, closed = 0
 
   for (const c of cases || []) {
@@ -99,13 +74,7 @@ export function buildOverview(cases, eventsByCaseId, now = Date.now(), windowMs 
     const createdMs = evMs({ created_at: c.created_at })
     if (createdMs != null && createdMs >= since) openedByDay[dayKey(createdMs)] = (openedByDay[dayKey(createdMs)] || 0) + 1
     if (isClosed) {
-      // closed time approximated by the last transition INTO a terminal stage.
-      // A case whose status was set directly (bulk import, migration bypassing
-      // appendEvent) has no such transition event -- fall back to the case's
-      // own updated_at so it still lands in closed_by_day, keeping this in sync
-      // with `closed` above (which counts from case.status directly regardless
-      // of event history). Without the fallback, report.js's closed_by_day sum
-      // silently undercounts totals.closed with no indication why.
+
       const lastClose = [...events].filter(e => e.kind === 'transition' && (evData(e).to === 'resolved' || evData(e).to === 'closed') && evMs(e) != null).sort((a, b) => evMs(a) - evMs(b)).pop()
       const cm = lastClose ? evMs(lastClose) : evMs({ created_at: c.updated_at })
       if (cm != null && cm >= since) closedByDay[dayKey(cm)] = (closedByDay[dayKey(cm)] || 0) + 1

@@ -1,10 +1,4 @@
-// advice-refusal.js -- what a person gets when the assistant's reply gave advice and the retry budget is spent.
-//
-// The bot connects people and never advises (AGENTS.md "The bot connects, it never advises"). A reply that still
-// gives advice on a spent budget used to be held for a human, which left a farmer who had asked a real question with
-// silence. Holding it is still right; answering is better: one short reply is composed in the person's language by
-// a dedicated call that is told to give no advice at all, and is checked structurally (short, no question, nothing
-// else). If that call fails the old behaviour (hold for a human) stands, so nothing unsafe ever goes out.
+
 
 import { toPlainChat } from './hooks/plain-text.js'
 

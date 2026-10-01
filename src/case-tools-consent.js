@@ -1,9 +1,4 @@
-// case-tools-consent.js -- case_consent: the person's answer to "is that okay?".
-//
-// The MODEL reads the answer in any language and calls this; nothing here reads a message or
-// matches a word. In REPORT_ONLY_TOOLS (case-tools-gates.js) so every tier has it, though only a
-// public contact on a deployment that sets persona.consentText is ever asked (phone-consent.js).
-// Appended after case-tools-speaker.js in case-tools.js, so the earlier tools' pinned order holds.
+
 
 import { defTool } from './case-tools-shared.js'
 import { boundCase } from './case-tools-shared.js'
@@ -27,7 +22,7 @@ export function buildConsentTools(store) {
         const contactId = ctx?.contact?.id
         if (!bound.id || !contactId) return { ok: false, note: 'Nothing could be recorded from here. Carry on with the conversation.' }
         const s = store()
-        // No answer without a question: until a reply has gone out to this number nothing has been asked.
+
         if (!(volunteered === true && agreed === true) && !(await repliedBefore(s, contactId, { caseId: bound.id }))) return { ok: false, note: 'Nothing has been asked yet, so there is no answer to record. In this reply, ask whether it is okay for the team to keep what they send, and record their answer only when they reply to it.' }
         if (await consentState(s, contactId, { caseId: bound.id }) === (agreed ? 'agreed' : 'declined')) return { ok: true, already: true, note: 'That answer is already recorded. Carry on.' }
         await recordConsent(s, bound.id, agreed)

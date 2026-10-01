@@ -1,14 +1,4 @@
-// return-clarify.js -- a person comes back to a report that is already complete.
-//
-// When a public number writes again after a gap (CASEY_RETURN_CLARIFY_MS, default one hour) and the report the turn is bound to
-// already holds the whole mandatory minimum, the assistant must not guess: its reply asks, as its one question, whether this is
-// MORE about that report or a NEW problem, and, because nobody on that number is a registered team member, who is writing.
-// Until they answer, case_report and case_new write nothing (the same gate shape as phone-consent.js). The answer is recorded by
-// case_clarify (case-tools-clarify.js), which also records who is writing, in the one call.
-//
-// State is two observations on the case: `return_pending` (written at ingress when a return is detected, deduplicated by the
-// message id) and `return_clarified` (written by the tool); a return is owed while the newest pending has no clarified after it.
-// A registered team member (field_worker and above) is never asked.
+
 
 import { evData } from './safe.js'
 import { parseReport, tsMs } from './timestamp.js'
@@ -20,7 +10,6 @@ import { speakerState } from './phone-persons.js'
 export const returnGapMs = () => Number(process.env.CASEY_RETURN_CLARIFY_MS) || 3600e3
 export const returnManaged = () => MANDATORY_MINIMUM_FIELDS.length > 0
 
-// A report is "filled" when every mandatory fact is recorded (and the deployment declares a minimum at all).
 export function isFilled(caseRow) {
   if (!returnManaged()) return false
   const r = parseReport(caseRow)
@@ -29,7 +18,6 @@ export function isFilled(caseRow) {
 
 const isTeam = (contact) => atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)
 
-// Called at ingress for every public inbound: writes `return_pending` when this message comes after a gap on a filled, open report.
 export async function noteReturn(store, { caseRow, events, contact, msgId }) {
   try {
     if (!returnManaged() || !caseRow || !contact || isTeam(contact) || isDone(caseRow) || !isFilled(caseRow)) return false
@@ -53,7 +41,6 @@ export async function noteReturn(store, { caseRow, events, contact, msgId }) {
   } catch { return false }
 }
 
-// { owed, species, location, person } for the turn's bound case. `owed` is false for a team member and for a finished report.
 export async function returnState(store, caseRow, contact, { events = null } = {}) {
   const none = { owed: false }
   try {
@@ -78,7 +65,6 @@ export async function recordClarified(store, caseId, sameReport) {
   })
 }
 
-// The refusal a write tool hands back while a return is owed, or null. Public contacts only; `ctx` is the tool context.
 export async function returnGate(store, ctx) {
   try {
     const boundId = ctx?.activeCaseBinding?.id || ctx?.activeCaseId

@@ -1,11 +1,4 @@
-// case-tools-binding.js  --  the two tools that change WHICH case this
-// conversation is bound to.
-//
-// Both end in rebindActiveCase: a case_new/case_switch that leaves the turn
-// bound to the old case makes the very next case_report (naturally aimed at the
-// new one) bounce off case-tools-record.js's active-case guard, silently losing
-// the fresh report's facts. Split out of case-tools.js verbatim -- names,
-// descriptions, parameter schemas and handler bodies are unchanged.
+
 
 import { REPORT_ENTITY_LABEL } from './store/report-shape.js'
 import { parseReport, tagList } from './timestamp.js'
@@ -16,90 +9,45 @@ import { canQueryCases } from './contact-tiers.js'
 import { stampReporter } from './phone-persons.js'
 import { returnGate } from './return-clarify.js'
 
-// A public report belongs to the person recorded as writing (src/phone-persons.js). Best effort, and
-// a no-op for a phone where nobody has been recorded, so a single-person phone is unchanged.
 async function stampSpeaker(store, ctx, caseId) {
   if (!ctx?.contact?.id || canQueryCases(ctx?.tier)) return
-  try { await stampReporter(store(), ctx.contact.id, caseId) } catch { /* bookkeeping never blocks the tool */ }
+  try { await stampReporter(store(), ctx.contact.id, caseId) } catch {  }
 }
 
-// Does this case already hold report content? A case whose report blob is
-// absent/empty/unparseable holds nothing, so it IS the fresh case a case_new
-// would open. Used as case_new's precondition below.
 function hasReportContent(caseRow) {
   if (!caseRow) return false
   const rep = parseReport(caseRow)
   return Object.values(rep || {}).some(v => v != null && String(v).trim() !== '')
 }
 
-// Has the AGENT actually recorded anything into this case yet? Report content
-// alone is not the whole answer: intake writes media bookkeeping (hooks/media.js
-// appends a "farmer sent a photo (saved: ...)" line into the photos field)
-// BEFORE the turn runs, so a case opened by a photo message already looks
-// non-empty while carrying none of the reporter's own facts -- live witnessed,
-// that was enough to let case_new open a duplicate on the first inbound of a
-// photo report. A successful case_report/case_update appends an agent 'action'
-// event, so its absence means nobody has recorded a fact here yet.
 async function hasAgentRecordedAction(store, caseId) {
   try {
     const events = await store().listEvents(caseId, { limit: 200 })
     return (events || []).some(e => e?.kind === 'action' && e?.actor === 'agent')
-  } catch { return true }   // unreadable timeline: fail toward the old behaviour
+  } catch { return true }
 }
 
 export function buildBindingTools(store) {
   return [
-    // case_new is one of only four tools a casual reporter's prompt carries
-    // (case-tools-gates.js REPORT_ONLY_TOOLS), so its description is among the
-    // few tool texts the most common tier actually reads. It used to say "case"
-    // three times and "bind it active" -- the first is on the never-say list the
-    // system prompt hands the same model, the second means nothing to anyone.
-    // The entity word comes from the deployment's own report-fields.yml, so this
-    // reads as "report" under uhh and "ticket" under casey's own demo config
-    // instead of teaching a word the reply is then held for using.
+
     defTool('case_new', 'cases',
       `Start a NEW ${REPORT_ENTITY_LABEL} for this person and record into that one from now on. Use ONLY when they are clearly starting a fresh ${REPORT_ENTITY_LABEL} (different animals, a different place, a different incident), never on your own initiative.`,
       { type: 'object', properties: { subject: str('Optional short subject') } },
       async ({ subject }, ctx) => {
-        // Opening a new report is one of the two answers to the return question; it waits for that answer (return-clarify.js).
+
         if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { const held = await returnGate(store(), ctx); if (held) return held }
         const author = ctx?.author || ctx?.principal?.id
         if (!store().createCase) return { error: 'store does not support explicit case creation' }
-        // Reuse THIS turn's own (channel, external_id) -- the real conversation
-        // key findOrCreateCase actually binds on -- rather than inventing a
-        // synthetic id, so the very next plain inbound message from this
-        // worker correctly lands on the freshly-opened case (findOpenCase's
-        // newest-open-case-wins rule), not the old one it just moved on from.
+
         const currentBound = boundCase(ctx).id
         const current = currentBound ? await store().getCase(currentBound) : null
         const channel = current?.channel || ctx?.channel || 'other'
         const external_id = current?.external_id
         if (!external_id) return { error: 'no conversation identity on this turn -- cannot bind a new case' }
-        // DETERMINISTIC PRECONDITION, not text processing: the case this turn is
-        // already bound to holds no report content at all, so it IS an empty
-        // fresh one and opening a second is structurally meaningless. A weak
-        // model reads "start a NEW report" as the way to BEGIN a report and
-        // calls this on the very first inbound of a conversation -- live
-        // witnessed over Discord: turn 1 opened a second case and wrote the
-        // report there, turn 2 bound to that one (findOpenCase's
-        // newest-open-wins) and opened a THIRD, so every turn fragmented onto a
-        // fresh case and the agent re-asked facts the reporter had already
-        // given. Reuse the empty case instead of stacking duplicates; a genuine
-        // second report (the bound case already carries facts) still opens one.
+
         const currentIsFresh = current
           && (!hasReportContent(current) || !(await hasAgentRecordedAction(store, current.id)))
-        // THE REUSE RESULT SAYS WHAT IS STILL POSSIBLE, not only what happened.
-        // `reused_empty_active_case` alone reads to the model as a refusal -- that
-        // this person gets one record and no more -- and a first message carrying
-        // two genuinely separate situations (different animals at different places,
-        // stated as separate) then loses the second one into prose in the first
-        // one's report, with no record of its own, no reference, no coordinate and
-        // no place in any aggregate. Witnessed over Discord: a report of cattle at
-        // one farm and sheep at another 60km away came back as one record whose
-        // notes field read "Only one case could be opened here". The precondition
-        // above is unchanged and still stops the duplicate-stacking it exists for;
-        // what changes is that the model is told the ordering that gets both
-        // situations recorded -- fill this one first, then ask again.
+
         if (currentIsFresh) {
           rebindActiveCase(ctx, current)
           await stampSpeaker(store, ctx, current.id)
@@ -107,62 +55,20 @@ export function buildBindingTools(store) {
             ok: true,
             activeCase: enquiryRow(current),
             reused_empty_active_case: true,
-            // No literal tool name in this text. It is model-visible, a weak model
-            // recites tool results back at people, and an outbound carrying a
-            // `case_*` name is held for a human by the tool-name-leak gate
-            // (hooks/turn-attempts.js) -- which would cost this person their reply
-            // to fix a record-keeping hint they were never meant to see.
+
             note: `This ${REPORT_ENTITY_LABEL} is still empty, so it is the one to record into now and nothing new was needed. This is not a limit of one: if they have also told you about a SEPARATE situation, record the first one here, then start a new ${REPORT_ENTITY_LABEL} for the other -- that works normally once this one holds facts. Never tell the person any of this.`,
           }
         }
-        // Carry the intake-source tag forward. A case_new is the SAME person on
-        // the SAME channel starting a second report, so its intake route is by
-        // definition the one the conversation already arrived by -- but nothing
-        // was passing it on, so an agent-opened case was born with tags:'' and
-        // every tag-reading consumer read that as "intake source unknown":
-        // case-list/case-row.js's intakeSourceTag renders NO badge at all (the
-        // channel-opened case beside it shows "AI"), the case-detail header and
-        // fields-editor read the same tag, and /api/cases.csv's intakeSrc column
-        // comes out blank. Witnessed in this deployment's own live store: six
-        // consecutive agent-opened cases carrying tags:'' next to
-        // channel-opened ones carrying intake_mode:channel -- and case_new is
-        // the NORMAL path for a reporter's second, genuinely separate report,
-        // so this is the common case, not an edge one.
-        //
-        // Only the intake_mode:* tag is inherited, deliberately. Everything else
-        // a case accumulates (health:*, needs-human, opted-out, draft-pending)
-        // is a fact about THAT case's own history and must not follow the
-        // reporter onto a brand-new one.
+
         const inheritedIntakeTags = tagList(current).filter(t => t.startsWith('intake_mode:')).join(',')
         const c = await store().createCase({ channel, external_id, subject: subject || '', contact_id: current?.contact_id || '', tags: inheritedIntakeTags })
         await store().appendEvent(c.id, { kind: 'note', actor: 'system', text: `case explicitly opened for a fresh report by ${author || 'unknown'}` })
-        // Rebind THIS turn to the new case: the description says "bind it
-        // active", and the natural next call is case_report against the new
-        // case's id -- which the active-case security guard rejected before
-        // this rebind existed, silently losing the fresh report's facts
-        // (live-witnessed). rebindActiveCase updates the shared binding
-        // object (visible to every later call this turn AND the handler's
-        // next retry attempt) plus this call's own flat ctx fields.
+
         rebindActiveCase(ctx, c)
         await stampSpeaker(store, ctx, c.id)
         return { ok: true, activeCase: enquiryRow(c) }
       }),
-    // Ownership-gated re-bind of the conversation's active case by ref -- lets a
-    // worker with multiple open cases explicitly say "go back to CASE-1042" or
-    // "switch to the goat case" and have the agent actually target it, instead
-    // of every subsequent case_report call silently continuing to
-    // hit whatever case findOrCreateCase happened to bind this turn. Ownership
-    // gated the same way case_get/mineRows already are: a worker may only
-    // switch onto a case they themselves reported.
-    // The ref examples below carry the full minted shape (store/ref.js mintRef:
-    // CASE-<sequence>-<8-char suffix>), not the old bare "CASE-1042". A bare
-    // one does not match hooks/heuristics.js's CASE_REF_RE, so a model copying
-    // the example into a reply produced a reference sanitizeOutboundRef could
-    // not rewrite to the real one -- the person was handed a code identifying
-    // nothing, and hooks/reply-judge.js's carve-out (which exempts a literal
-    // CASE-1234-abcde and nothing else) then read the bare word as a jargon leak
-    // and held the reply unsent. A full-shape example is both the correct shape
-    // to teach and one the sanitizer actually catches.
+
     defTool('case_switch', 'cases',
       'Re-bind the conversation to a DIFFERENT one of the worker\'s own open cases by ref (e.g. "CASE-1042-K7M2NPQR"). Use when the worker names a case they want to continue, other than the one currently active. Tell them in your own words that you have moved to it.',
       { type: 'object', properties: { ref: str('The case ref to switch to, e.g. CASE-1042-K7M2NPQR') }, required: ['ref'] },
@@ -176,17 +82,9 @@ export function buildBindingTools(store) {
         if (!ownsCase(target.external_id, author)) {
           return { error: `case ${ref} does not belong to you -- cannot switch to it` }
         }
-        // Same rebind-on-success discipline as case_new: a switch that leaves
-        // the turn bound to the OLD case makes the next case_report (naturally
-        // aimed at the switched-to case) bounce off the active-case guard.
+
         rebindActiveCase(ctx, target)
-        // No canned sentence in the result. `confirm: "Switched to <ref>."` was
-        // a ready-made English reply nothing in casey consumed, sitting in the
-        // model's context for it to copy verbatim -- the exact "no copyable
-        // reply examples" failure AGENTS.md names, and "Switched to" is internal
-        // vocabulary a person on WhatsApp reads as nothing at all. The
-        // structured fact is enough; the description tells it to write the
-        // sentence itself.
+
         return { ok: true, activeCase: enquiryRow(target), switchedToRef: target.ref }
       }),
   ]

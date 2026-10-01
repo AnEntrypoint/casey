@@ -1,58 +1,4 @@
-// backup.js  --  a consistent, restorable copy of everything this deployment
-// holds, and an honest account of anything it could not copy.
-//
-// WHAT "EVERYTHING" IS. data/db.sqlite is not the whole story, and a backup that
-// silently missed one of these would be worse than none:
-//
-//   data/db.sqlite            the thatcher/busybase system of record: cases,
-//                             events, contacts, operator accounts.
-//   data/raw-log/             the provenance tier's append-only JSONL segments
-//                             (src/core/raw-log.js). Its own header calls a
-//                             data-escrow export of this tier "hand over the
-//                             directory", so a backup that skipped it would lose
-//                             the one record of who said what, how, and when.
-//   data/media/               the real photo and voice-note bytes a field worker
-//                             sent (src/store/media.js writes them here; only a
-//                             dataDir-relative PATH is stored in the case row,
-//                             so without these files the report rows point at
-//                             nothing).
-//   data/runtime-events*.jsonl the supervisor's crash/reload audit sidecar
-//                             (src/supervisor-runtime-events.js), including its
-//                             rotated archives.
-//   the freddie session dirs   every conversation casey has ever had, one
-//                             session.jsonl.zstd per case, under ~/.freddie/
-//                             sessions/ -- OUTSIDE data/ entirely (see
-//                             src/store/agent-sessions.js). run-turn.js resumes
-//                             an evicted agent from these, so they are live
-//                             state, not a cache.
-//
-// Rather than enumerate that list and hope it stays current, this walks data/
-// and copies every top-level entry it finds, snapshotting db.sqlite specially.
-// A store added under data/ next year is therefore covered automatically instead
-// of being silently missed -- the failure mode this whole command exists to
-// avoid. Each entry lands in the manifest by name whether it succeeded or not.
-//
-// WHAT IS DELIBERATELY NOT COPIED, stated rather than implied:
-//   .env                     channel tokens, the session-signing key, provider
-//                            credentials. Writing live secrets into a backup
-//                            directory -- which is then copied to a laptop, a
-//                            USB stick, an object store -- is a worse exposure
-//                            than the restore inconvenience it saves. Restore
-//                            the .env by hand from wherever secrets are kept.
-//   the config package       thatcher.config.yml / report-fields.yml /
-//                            persona.cjs live in the deployer's own git repo
-//                            (uhh), which is the copy that matters.
-// Both are named in the manifest's `not_included` list so a restore never
-// discovers them missing.
-//
-// CONSISTENCY. The database is snapshotted with sqlite's own `VACUUM INTO`,
-// which writes a fully-checkpointed single file that is transactionally
-// consistent even against a running writer. When @libsql/client cannot be
-// resolved (it reaches casey as a transitive dependency of thatcher/busybase and
-// is not declared in casey's own package.json), the fallback copies db.sqlite
-// together with its -wal and -shm sidecars and the manifest RECORDS that the
-// copy is only consistent if casey was stopped. The command says which path it
-// took; it never claims the stronger guarantee it did not get.
+
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -61,23 +7,11 @@ import { freddieSessionsRoot } from './store/agent-sessions.js'
 export const BACKUP_MANIFEST = 'manifest.json'
 export const BACKUP_FORMAT = 1
 
-// Named here so the manifest can list them and a restore can say what it is not
-// bringing back. See the header for why each is excluded.
 export const NOT_INCLUDED = [
   { name: '.env', why: 'holds live channel tokens and the dashboard session key; restore it by hand from wherever secrets are kept' },
   { name: 'config package (thatcher.config.yml, report-fields.yml, persona.cjs)', why: 'lives in the deployer package\'s own git repository, which is the authoritative copy' },
 ]
 
-// A hand-rolled recursive copy, deliberately NOT fs.cpSync.
-//
-// fs.cpSync's native implementation aborts the whole PROCESS on an unreadable
-// directory -- a C++ std::filesystem error, SIGABRT, exit 134 -- which no
-// try/catch in JavaScript can intercept. Witnessed against a data/ containing a
-// chmod-000 subdirectory: the backup died with no manifest written and no line
-// naming what it could not read, which is precisely the silent-incomplete-backup
-// failure this command exists to make impossible. readdirSync/copyFileSync throw
-// ordinary catchable JS errors, so walking it by hand is what lets an unreadable
-// entry be RECORDED instead of ending the run.
 function copyTree(src, dest) {
   let bytes = 0
   let files = 0
@@ -102,8 +36,6 @@ function copyTree(src, dest) {
   return { bytes, files, errors }
 }
 
-// A single consistent file copy of the database. Returns the store row for the
-// manifest, including which mechanism actually ran.
 async function snapshotDatabase(dbPath, destPath) {
   const row = { name: 'db.sqlite', kind: 'sqlite', source: dbPath, status: 'missing', method: null, bytes: 0, note: null }
   if (!fs.existsSync(dbPath)) {
@@ -114,8 +46,8 @@ async function snapshotDatabase(dbPath, destPath) {
     const { createClient } = await import('@libsql/client')
     const client = createClient({ url: `file:${dbPath}` })
     try {
-      // VACUUM INTO refuses to overwrite, so the destination must not exist.
-      try { fs.rmSync(destPath, { force: true }) } catch { /* nothing there */ }
+
+      try { fs.rmSync(destPath, { force: true }) } catch {  }
       await client.execute(`VACUUM INTO '${destPath.replace(/'/g, "''")}'`)
     } finally {
       try { await client.close?.() } catch { /* handle release is best-effort */ }

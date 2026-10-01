@@ -1,11 +1,4 @@
-// case-tools-triage.js  --  the tools that reason about a case's SHAPE rather
-// than its content: what can it move to, is it a duplicate of another report,
-// is it actually two reports, and is it going wrong over time.
-//
-// Split out of case-tools.js verbatim -- names, descriptions, parameter schemas
-// and handler bodies are unchanged. correlate.js and case-health.js stay
-// dynamically imported at call time exactly as before, so neither is loaded on
-// a turn that never asks.
+
 
 import { AGENT_USER } from './case-store.js'
 import { tagList } from './timestamp.js'
@@ -35,31 +28,15 @@ export function buildTriageTools(store) {
           return { error: `case ${id} does not belong to you -- cannot find matches for it` }
         }
         const { suggestLinks } = await import('./correlate.js')
-        // Scope the scan to open cases at the query level via an allowlist (never
-        // a $ne denylist -- see case-store.js's own note: busybase only
-        // auto-filters soft-deleted rows when status is absent from the where, so
-        // $ne:'closed' would leak them back in). Pushes the closed-case filter
-        // into the where-clause so this call's cost tracks open-case volume, not
-        // total case history.
+
         const openStatuses = typeof store().getOpenStatuses === 'function' ? store().getOpenStatuses() : undefined
         const pool = (await store().listCases(openStatuses ? { status: { $in: openStatuses } } : {}, { limit: 200 }))
           .filter(o => o.id !== id && o.status !== 'closed' && !tagList(o).includes('merged'))
-        // Score against the raw case rows, not slimCase projections -- slimCase
-        // drops external_id and created_at, which correlationScore needs for
-        // its same-contact/fallback-number/time-proximity signals. suggestLinks
-        // only ever returns {id, ref, score, reasons}, so no extra PII reaches
-        // the caller even though the scoring inputs are the full rows.
+
         const suggestions = suggestLinks(c, pool).slice(0, limit)
         return { count: suggestions.length, suggestions }
       }),
-    // case_merge is deliberately NOT exposed here. Folding two reports together
-    // is a judgment about whether they describe the same real-world situation --
-    // exactly the kind of call this system leaves to a human working from the
-    // full picture, never to the agent acting on one conversation alone. The
-    // dashboard's own merge endpoint (POST /api/cases/:id/merge) calls
-    // store.mergeCases directly as the operator, entirely independent of this
-    // toolset; case_link_suggestions above still lets the agent surface a
-    // possible match for a human to review, it just never acts on it.
+
     defTool('case_split', 'cases',
       'Carve a set of timeline events out of a case into a NEW case, when one thread actually holds TWO separate outbreaks (e.g. a contact reported a second, unrelated sick herd). The named events move to the new case; both are linked. Get event ids from case_get.',
       {
@@ -88,11 +65,7 @@ export function buildTriageTools(store) {
         return { ok: true, movedEvents: res.movedEvents, newCase: slimCase(res.newCase) }
       }),
     defTool('case_health', 'cases',
-      // The breach names below are internal enum labels (case-health.js
-      // ALL_HEALTH_TAGS). A model that reads "stale" and "abandoned intake"
-      // here will tell a farmer their report is stale or abandoned, which is
-      // both incomprehensible and alarming; say so where the words are handed
-      // over.
+
       'Check whether a case is going wrong over time -- stale (no activity), stuck in a stage too long, an unanswered request for a person, an abandoned intake with on-site facts still missing, or resolved-but-never-closed. Returns the current guardrail breaches with how long each has been true. Use it to decide what needs attention. These breach names are internal: never repeat one to the person, and never tell them their report is stale, stuck or abandoned.',
       { type: 'object', properties: { id: str('Case id') }, required: ['id'] },
       async ({ id }, ctx) => {

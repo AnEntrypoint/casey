@@ -1,22 +1,4 @@
-// case-tools-team-operator.js  --  the operator's queue-running surface over
-// WhatsApp. An operator works mainly in the dashboard; these are the same duties
-// with the same guards, for when they are on their phone. Composed, in a pinned
-// order, by case-tools-team.js. Every tool is operator-rung only (case-tools-gates.js
-// TOOL_MIN_TIER); sign-off stays the technician's alone.
-//
-//   team_queue          the work queue: counts and top rows per section
-//   team_handover       shift summary (attention, hand-offs, drafts, touched)
-//   team_assign         assign / reassign / unassign (unassign resumes the bot)
-//   team_draft          approve or discard a held assistant draft
-//   team_remind         the operator-initiated nudge to a silent reporter
-//   team_invite         issue a one-time WhatsApp role code
-//   team_register       put a phone number in a role now
-//   team_roster         who is on the team, by name and role
-//   team_quiet_staff    team members whose assigned records have gone quiet
-//   team_nudge_staff    message such a team member through the bot (in-window)
-//
-// Outbound to a reporter or team member goes through hooks/staff-outbound.js,
-// i.e. the one sendReply seam, with opt-out and the 24h window honoured.
+
 
 import { defTool, str } from './case-tools-shared.js'
 import { tagList, tsMs } from './timestamp.js'
@@ -41,20 +23,17 @@ const opUser = (ctx) => ({ id: staffLabel(ctx?.contact), role: 'operator' })
 const SECTIONS = ['unassigned', 'needs_human', 'unreplied', 'drafts', 'flagged', 'signoff', 'wrong_area', 'attention']
 const QUIET_DEFAULT_HOURS = 12
 
-// One short plain line per record for a phone: reference, the headline facts, who
-// holds it, and why it is listed. No markdown, no pipes, no asterisks.
 const phoneLine = (row) => [row.ref, ...ENQUIRY_HEADLINE_FIELDS.map(k => row[k]).filter(Boolean).map(v => String(v).replace(/\s+/g, ' ').slice(0, 40)), row.assignee && row.assignee !== UNCLAIMED_ASSIGNEE ? `with ${row.assignee}` : 'nobody has it', row.why ? String(row.why).replace(/\s+/g, ' ').slice(0, 60) : '', row.by_person || ''].filter(Boolean).join(', ')
 const PLAIN_NOTE = 'Pass these lines on as plain text, one per line, in this order. No tables, no asterisks, no bullets, no markdown.'
 
 const openCases = async (store) => (await store.listCases({}, { limit: 10000, offset: 0 })).filter(c => c.channel !== 'system' && isOpenCase(c))
 const isUnassigned = (c) => { const a = String(c.assignee || '').trim(); return !a || a === UNCLAIMED_ASSIGNEE }
 
-// The team contacts (field_worker and up), by display name. Names, never numbers.
 export async function teamContacts(store) {
   const all = await store.listContacts({ limit: 500 })
   return all.filter(k => atLeast(k.tier, TIER_FIELD_WORKER))
 }
-// Exactly one contact whose name matches, else { error } listing how many fit.
+
 export async function resolveTeamContact(store, name) {
   const want = String(name || '').trim().toLowerCase()
   if (!want) return { error: 'Which team member? Give a name.' }
@@ -87,13 +66,12 @@ export function buildTeamOperatorTools(store) {
           attention: ranked.items.map(x => x.c),
         }
         const reasons = new Map(ranked.items.map(x => [x.c.id, x.reason]))
-        // A record whose location text points at an area other than the one its holder
-        // covers (areas.js possiblyWrongArea): say where it may belong, on every listing.
+
         for (const [id, w] of wrongArea) reasons.set(id, `${reasons.has(id) ? reasons.get(id) + '; ' : ''}may belong in ${w.location_area?.name || w.association_area?.name || 'another area'}`)
         const n = Math.min(Math.max(Number(limit) || 5, 1), 25)
         const pick = section && SECTIONS.includes(section) ? [section] : SECTIONS
         const counts = Object.fromEntries(SECTIONS.map(s => [s, by[s].length]))
-        // On a shared phone each line also says who gave the report and that the phone is shared (phone-persons.js).
+
         const shown = pick.flatMap(s => by[s].slice(0, n))
         const { text: personTag } = await reporterExtras(store(), shown)
         const rows = Object.fromEntries(pick.filter(s => by[s].length).map(s => [s, by[s].slice(0, n).map(c => phoneLine(teamRow(c, ctx, { ...(reasons.has(c.id) ? { why: reasons.get(c.id) } : {}), ...personTag(c) })))]))
@@ -112,7 +90,7 @@ export function buildTeamOperatorTools(store) {
         const attention = rankAttention(open, Date.now(), { limit: 10 }).items
         const notTaken = open.filter(c => tagList(c).includes('needs-human') && isUnassigned(c)).slice(0, 10)
         const drafts = open.filter(c => tagList(c).includes('draft-pending')).slice(0, 10)
-        // Who gave each report on a shared phone (phone-persons.js), in the same plain lines.
+
         const { text: personTag } = await reporterExtras(store(), [...attention.map(x => x.c), ...notTaken, ...drafts, ...touched.slice(0, 10)])
         return {
           since: since || null, since_by: marker?.by || null,
@@ -190,7 +168,7 @@ export function buildTeamOperatorTools(store) {
       async ({ case: ref, text }, ctx) => {
         const c = await findCase(store(), ref)
         if (!c) return NO_SUCH
-        // Lazy: operator-reminder.js -> notifiers.js -> handler.js -> ... -> this toolset (import cycle).
+
         const { prepareReminder, OPERATOR_REMINDER_FLAG } = await import('./hooks/operator-reminder.js')
         const plan = await prepareReminder({ store: store(), caseRow: c, overrideText: text && String(text).trim() ? String(text) : null })
         if (!plan.ok) return { ok: false, delivered: false, ref: c.ref, error: plan.error }
@@ -233,9 +211,7 @@ export function buildTeamOperatorTools(store) {
         if (!grantableBy(false).includes(role)) return { error: 'That role cannot be granted from here.' }
         const external_id = normalizeMsisdn(phone)
         if (!external_id) return { error: 'That does not look like a phone number. Ask for it again.' }
-        // A role is granted only to a number the operator typed in THIS message. Text
-        // read out of a report (a reporter's words reach the model through the queue and
-        // case tools) cannot choose who becomes team: no digits from the operator, no grant.
+
         const said = String(ctx?.inboundText || '').replace(/\D/g, '')
         if (!said.includes(external_id) && !said.includes('0' + external_id.slice(2))) return { error: 'Nothing was changed. Ask the operator to type the phone number in their message, then try again.' }
         const existing = (await store().listContacts({ limit: 1000 })).find(k => k.external_id === external_id && k.channel === 'whatsapp')

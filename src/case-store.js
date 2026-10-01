@@ -1,19 +1,4 @@
-// case-store.js  --  casey's wrapper over thatcher (the system of record).
-//
-// Single chokepoint for every case mutation, so the timeline stays append-only
-// and each change becomes an audited `event` row.
-//
-// Only the public Thatcher instance methods are used. Importing thatcher's deep
-// internals (getDatabase, workflow-engine) forks the module graph into a second
-// instance with its own DB handle, making the real tables invisible. So the
-// workflow graph is parsed from the config here, and transitions apply via the
-// public update() rather than thatcher's own transition()/getAvailableTransitions():
-// casey owns transition authority (P10) and its config does not carry the fields
-// thatcher's workflow engine assumes -- `order` (its edges collapse to backward),
-// `last_transition_at` (a 5-minute LOCKOUT_SECONDS gate), and the `entry`/`readonly`
-// stage constraints -- and casey's own transition() adds the no-op skip, the
-// append-only audited event, and the onTransition contact-notify that thatcher's
-// bare status write does not.
+
 
 import { createThatcher } from 'thatcher'
 import { eraseCaseSessions } from './store/agent-sessions.js'
@@ -22,10 +7,7 @@ import { DEFAULT_THRESHOLDS } from './case-health.js'
 import { mergeThresholds } from './thresholds.js'
 import fs from 'node:fs'
 import { load as yamlLoadRaw, YAML11_SCHEMA } from 'js-yaml'
-// js-yaml v5 dropped YAML 1.1 merge-key (<<) resolution from its default
-// schema -- thatcher.config.yml's entity fields rely on <<: *system_fields
-// to inject id/created_at/created_by/updated_at, so every config load must
-// opt back into YAML11_SCHEMA or those fields silently vanish.
+
 const yamlLoad = (text) => yamlLoadRaw(text, { schema: YAML11_SCHEMA })
 import { buildCaseMachine, canTransition, nextStates } from './case-machine.js'
 import { tokens } from './correlate.js'
@@ -44,88 +26,48 @@ import { parseJsonArray, foldAreas } from './store/operator-areas.js'
 import { tagList } from './timestamp.js'
 import { evData, rowInt } from './safe.js'
 
-// Principals casey acts as. role:agent satisfies normal requires_role gates.
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
 export const SYSTEM_USER = { id: 'casey-system', role: 'admin' }
 
-// The case.assignee sentinel meaning "nobody has claimed this case yet" --
-// distinct from AGENT_USER.id above (that is the audit-trail actor id for
-// casey's own writes; this is the unclaimed-ownership marker every dashboard
-// "is this case unclaimed" check compares against).
 export const UNCLAIMED_ASSIGNEE = 'agent'
 
-// Re-exported so every existing external import (case-tools.js, dashboard/
-// server.js, etc.) keeps resolving these names from case-store.js unchanged,
-// even though the actual definitions now live in src/store/*.js.
 export { REPORT_KEYS, REPORT_KEY_ORDER }
 export { deriveAuthorKey }
 
 export class CaseStore {
   constructor(opts = {}) {
-    // Explicit opts.config wins; then CASEY_CONFIG_DIR/thatcher.config.yml
-    // (a deployer-set config package, e.g. uhh's bin script) so `createCaseStore()`
-    // with no args resolves correctly regardless of process.cwd() at invocation
-    // time; falls back to cwd/thatcher.config.yml (this repo's own default) last.
+
     this.configPath = opts.config
       || (process.env.CASEY_CONFIG_DIR ? path.resolve(process.env.CASEY_CONFIG_DIR, 'thatcher.config.yml') : null)
       || path.resolve(process.cwd(), 'thatcher.config.yml')
-    // The DB lives at <cwd>/data/db.sqlite and is cwd-bound: thatcher's own
-    // `databasePath` option (index.js normalizeOptions) only ever contributes
-    // its DIRECTORY -- databasePathToDir() strips any filename component --
-    // and busybase (the real libsql-backed store thatcher delegates to,
-    // embedded.js) hardcodes `${dir}/db.sqlite` as the file it actually opens
-    // via createClient(), regardless of what filename thatcher's option
-    // named. Importing thatcher's db accessor ourselves to pre-seed a
-    // different path forks its module graph into a second handle (see file
-    // header), so the ONLY safe relocation is the process cwd.
-    // dataDir is exposed for diagnostics (doctor/up print it).
+
     this.dataDir = path.resolve(process.cwd(), 'data')
     this.workflow = opts.workflow || 'case_lifecycle'
     this.log = opts.log || null
-    // Optional hook fired AFTER a real stage change commits:
-    //   onTransition({ caseRow, from, to, user, reason }) -> Promise|void
-    // Best-effort: failures are caught and logged, never block the transition.
-    // Null in the dashboard-only and test wirings, so transition() must tolerate it.
+
     this.onTransition = opts.onTransition || null
     this.thatcher = null
-    this._wf = null            // parsed workflow stage graph
-    this._fieldEnums = null    // entity.field -> options[] (case_type/priority/etc), from the same config
-    this._machine = null       // xstate machine built from _wf (transition authority)
-    this._locks = new Map()    // per-conversation find-or-create serialization
+    this._wf = null
+    this._fieldEnums = null
+    this._machine = null
+    this._locks = new Map()
   }
 
   async init() {
     if (this.thatcher) return this
     if (!fs.existsSync(this.configPath)) throw new Error(`casey config not found: ${this.configPath}`)
-    // Parse + validate the config before booting thatcher so a malformed config
-    // fails fast with a clear message instead of a cryptic runtime error later.
+
     const cfg = yamlLoad(fs.readFileSync(this.configPath, 'utf8'))
     this._wf = validateCaseConfig(cfg, this.workflow)
     this._fieldEnums = parseFieldEnums(cfg)
-    // The lifecycle is now a real xstate machine built from the same graph: it,
-    // not bespoke array checks, is the authority on whether a transition is legal.
+
     this._machine = buildCaseMachine(this._wf)
 
     fs.mkdirSync(this.dataDir, { recursive: true })
     this.thatcher = createThatcher({
       config: this.configPath,
       server: { hotReload: false },
-      // Columns casey looks rows up BY, that thatcher's own derivation cannot
-      // know about. thatcher already indexes every `id` and every `<entity>_id`
-      // foreign key from the config (so case.id, event.case_id, case.contact_id
-      // are covered); these are casey's own business/routing keys, each named
-      // for the read path that scans on it today:
-      //   case.ref             getCaseByRef, the UNAUTHENTICATED public /report
-      //                        form's only lookup
-      //   case.external_id     findOpenCase / findOrCreateCase, on every inbound
-      //   case.author_key      case_mine's worker-scoped enquiry
-      //   contact.external_id  findOrCreateContact, on every inbound
-      //   operator_account.username        dashboard login
-      //   operator_identity.operator_id    the per-operator activity rollup
-      // Deliberately NOT here: status, channel, last_event_at, created_at.
-      // Those are read through inequality/ordering predicates on paths that
-      // slice an unsorted set in JS, where the only thing an index could change
-      // is the scan order the page is cut from.
+
       indexes: {
         case: ['ref', 'external_id', 'author_key'],
         contact: ['external_id'],
@@ -139,28 +81,6 @@ export class CaseStore {
     return this
   }
 
-  // Nothing in this chain versions or migrates stored rows: thatcher's
-  // migrate() is a documented no-op and busybase creates/extends columns
-  // lazily from whatever row is inserted next (ALTER TABLE ... ADD COLUMN
-  // TEXT), so a config edit and the rows already on disk can disagree with no
-  // one noticing. Renaming or removing a workflow stage in thatcher.config.yml
-  // is the case that costs data: every case already sitting in the old stage is
-  // stranded, SILENTLY -- init() accepts the new config without complaint, the
-  // stored row keeps the old status, findOpenCase's `status: {$in: openStatuses}`
-  // no longer matches it, availableTransitions() goes empty and transition()
-  // throws `invalid current stage`, and the reporter's very next message opens a
-  // DUPLICATE case, orphaning the original report (species, location, symptoms)
-  // with nothing on any surface saying so.
-  //
-  // Loud, never fatal: refusing to boot would take a live disease-surveillance
-  // gateway down over rows an operator can still re-stage by hand, and the
-  // stranded cases are still readable in listCases. Reports rather than fixes
-  // because only a human knows which new stage an old one became.
-  //
-  // 'deleted'/'archived'/'active' are busybase RECORD statuses (its soft-delete
-  // marker, store.js RECORD_STATUS), not workflow stages, and are expected here.
-  // Bounded scan: one pass at process start, capped, so this can never become
-  // the per-request cost it is warning about.
   async reportStrandedStages({ limit = 10000 } = {}) {
     try {
       const known = new Set([...Object.keys(this._wf || {}), 'active', 'deleted', 'archived'])
@@ -185,23 +105,6 @@ export class CaseStore {
     }
   }
 
-  // The same class as reportStrandedStages above, one table over: a stored row
-  // naming an operator that does not exist. The assignee key is the account
-  // USERNAME at every hop -- getRoster maps accounts to { id: username },
-  // routes/cases.js claims with `assignee: op.id`, /api/whoami returns
-  // `username`, and the SPA's three ownership checks compare against it -- so a
-  // case.assignee matching no active username is unreachable rather than
-  // mis-keyed. It costs three things at once, none of them visible: the case can
-  // never be "mine" for anyone, so the My-cases filter cannot show it; workload
-  // seeds a card per rostered account AND a card per assignee found on cases, so
-  // the same person can appear twice, splitting their load and overstating the
-  // team's spare capacity that coverage-gap alerting keys on; and the
-  // suggested-assignee path (routes/cases.js) resolves operator_identity against
-  // the roster, so an orphaned identity suggests a handle nobody can log in as.
-  //
-  // Loud, never fatal, and reports rather than fixes, for the same reason as
-  // stranded stages: only a human knows which account an old handle became.
-  // 'agent' (UNCLAIMED_ASSIGNEE) is the unassigned marker, not an operator.
   async reportOrphanedOperators({ limit = 10000 } = {}) {
     try {
       const accounts = await this.t.list('operator_account', {}, { limit })
@@ -231,32 +134,21 @@ export class CaseStore {
     }
   }
 
-  // Read, parse, and validate the config WITHOUT booting thatcher or touching a
-  // DB. Returns the parsed workflow stage graph; throws a descriptive Error on
-  // any structural problem. Lets `casey doctor` run the same graph validation
-  // `init()` runs, without creating ./data or a live store. Pure read.
   validateConfig() {
     if (!fs.existsSync(this.configPath)) throw new Error(`casey config not found: ${this.configPath}`)
     return validateCaseConfig(yamlLoad(fs.readFileSync(this.configPath, 'utf8')), this.workflow)
   }
 
-  // Config-declared enum options for entity.field (e.g. 'case.case_type',
-  // 'case.priority'), or `fallback` when the config has no such enum (a
-  // pre-init store, or a config that left the field free-text).
   getFieldEnum(entityDotField, fallback = []) {
     return this._fieldEnums?.[entityDotField] || fallback
   }
 
-  // Close the underlying store cleanly (flush WAL, release handles).
   async close() {
     try { await this.thatcher?.stop?.() }
     catch (e) { this.log?.warn?.('[casey] thatcher_stop_failed', { error: e.message }) }
     this.thatcher = null
   }
 
-  // Validate a transition. Delegates to the xstate machine -- the single
-  // authority on legality -- so an illegal move is rejected structurally. Throws
-  // with the machine's reason (same message shape callers already surface).
   _validateTransition(fromState, toState, user) {
     const res = canTransition(this._machine, fromState, toState, user?.role)
     if (!res.ok) throw new Error(res.error)
@@ -265,54 +157,21 @@ export class CaseStore {
   get t() {
     if (!this.thatcher) throw new Error('CaseStore not initialised  --  call init() first')
     if (this._tProxy) return this._tProxy
-    // Every read/write goes through the SQLITE_BUSY retry wrapper (see
-    // store/busy-retry.js for why): a transient lock must contend-and-recover
-    // rather than surfacing as a turn error and sending the degraded fallback.
-    //
-    // installVersionGuard sits OUTSIDE the retry wrapper on purpose. The
-    // number-under-expectedVersion trap is retried by that wrapper only when
-    // thatcher reports BUSY, but the false conflict it produces is one write
-    // landing per attempt at the layers above -- so the refusal has to happen
-    // before any attempt reaches the store at all, not between retries. This
-    // accessor is the single seam every `this.t.*` call in this file and every
-    // external `store.t.*` call (case-tools-record-report.js, case-tools-
-    // worker.js, dashboard/auth.js, hooks/delivery.js) already passes through,
-    // which is what makes the guard structural rather than a convention each
-    // new caller has to be told about.
+
     this._tProxy = installVersionGuard(createBusyRetryProxy(this.thatcher, this.log))
     return this._tProxy
   }
 
-  // thatcher's create() returns the locally-constructed record carrying the
-  // real genId it stored in the TEXT id column (node_modules/thatcher/src/lib/
-  // busybase-store.js create() returns `record` with `id: data.id || genId()`,
-  // never a rowid), so every create below calls this.t.create() directly and
-  // may trust the returned row's id without a re-read.
-
-  // ---- contacts -----------------------------------------------------------
-
   async findOrCreateContact({ channel, external_id, display_name, handle }) {
     const [existing] = await this.t.list('contact', { channel, external_id }, { limit: 1 })
     if (existing) {
-      // Learn a real name onto a row that only ever had the fallback. The
-      // create below names an unnamed contact after their own external_id (a
-      // phone number on WhatsApp), and that row is then returned unchanged
-      // forever -- so a name that arrives later (a contact whose first message
-      // predates the adapter reading it, or who renames themselves on WhatsApp)
-      // never lands, and the operator ringing back about a dying herd keeps
-      // seeing a number. Deliberately narrow: it fires ONLY while the stored
-      // value is still that fallback, so a name already learned, and an
-      // operator's own correction, are never overwritten. Best-effort -- a
-      // failed rename must never block the inbound that carried it.
+
       const stored = existing.display_name
       const learned = display_name || handle
       if (learned && (!stored || stored === external_id)) {
         try {
           await this.t.update('contact', existing.id, { display_name: learned, handle: handle || existing.handle || '' }, SYSTEM_USER)
-          // Re-read rather than patching the in-hand copy: thatcher's update()
-          // return shape is not relied on anywhere else here either (updateCase
-          // re-reads too), and a caller handed a row with a stale _version would
-          // fail its next optimistic-concurrency write.
+
           const [fresh] = await this.t.list('contact', { channel, external_id }, { limit: 1 })
           return fresh || existing
         } catch { return existing }
@@ -326,38 +185,12 @@ export class CaseStore {
     }, SYSTEM_USER)
   }
 
-  // Locked variant for callers OUTSIDE findOrCreateCase's own lock (which already
-  // wraps its own internal findOrCreateContact call, so this must never be used
-  // there or the shared per-key lock would deadlock on itself). Two near-
-  // simultaneous first-ever check-ins/enquiries from a brand-new contact calling
-  // the plain unlocked findOrCreateContact directly could both miss the same
-  // "existing" read and each create a duplicate contact row for the same
-  // (channel, external_id) -- the same duplicate-creation race findOrCreateCase's
-  // own lock exists to prevent, just for the contact row instead of the case row.
   async findOrCreateContactLocked(args) {
     return this._withLock(`contact|${args.channel}|${args.external_id}`, () => this.findOrCreateContact(args))
   }
 
-  // ---- cases --------------------------------------------------------------
-
-  // The conversation key (channel + external_id) is casey's identity for a
-  // case. One open case per conversation; a new message to a closed case opens
-  // a fresh one so history stays clean.
-  //
-  // Worst-case correctness: we must never miss an open case hidden behind a run
-  // of more-recently-closed ones (that would double-create). We match every open
-  // stage with a single `status: {$in: <open stages>}` predicate -- an ALLOWLIST,
-  // deliberately not `{$ne: 'closed'}`: busybase only auto-filters soft-deleted
-  // rows when `status` is absent from the where, so a `$ne` denylist would leak
-  // `status='deleted'` rows, while the open-stage allowlist (which never contains
-  // 'deleted') keeps them out for free. We still pick max created_at in JS because
-  // this list() call sets no sort, so thatcher does not guarantee newest-first.
   async findOpenCase({ channel, external_id }) {
-    // limit 200 (not 2): a worker who starts several fresh reports leaves N>2 open
-    // cases sharing one (channel, external_id), and this query sets no sort, so a
-    // small page could miss the newest -- rebinding to a stale complete case and
-    // re-creating the completeReply dead-end. We page wide and pick the GLOBAL max
-    // created_at across all open statuses in JS (the only ordering authority).
+
     const rows = await this.t.list(
       'case',
       { channel, external_id, status: { $in: this.getOpenStatuses() } },
@@ -368,61 +201,17 @@ export class CaseStore {
     return best
   }
 
-  // The open (non-terminal) workflow stages -- every status except 'closed'. The
-  // same finite open-stage set findOpenCase iterates; exposed so callers (e.g. the
-  // boot resume sweep) can filter to cases that still want a reply without
-  // duplicating the 'closed is the only terminal' knowledge.
   getOpenStatuses() { return Object.keys(this._wf || {}).filter(s => s !== 'closed') }
 
   async getCase(id) { return this.t.get('case', id) }
 
   async getContact(id) { return id ? this.t.get('contact', id) : null }
 
-  // Every contact, most-recently-created first, for the dashboard's
-  // Contacts/Reporters panel. Contacts carry no same-second-tiebreak requirement
-  // (unlike events), so the sort pushes down to thatcher directly. Internal-team-
-  // only surface (operator/admin), never exposed on the public /report form.
-  //
-  // System rows are excluded by default, the same decision listCases makes for
-  // the case side and for the same reason. Each settings singleton
-  // (_systemSingletonCaseId -> findOrCreateCase with channel:'system') creates a
-  // CONTACT row too, so 'settings', 'fleet-health' and 'shift' otherwise render
-  // in the Contacts/Reporters panel as if they were reporters -- promotable to
-  // field_worker, and offered the irreversible POPIA erase. They are the contact
-  // side of an audit-log carrier, never a person. Excluding them here fixes every
-  // consumer at one chokepoint rather than adding the same filter to each:
-  // routes/contacts.js's panel (which shows them today), and routes/map.js's two
-  // worker/last-report projections (which already dropped them downstream for
-  // want of a coordinate, so their output is unchanged). Every internal reader of
-  // settings state goes through _settingsCaseId()/findOrCreateCase + listEvents
-  // directly, never listContacts -- confirmed: no call site filters or relies on
-  // a system contact appearing here. includeSystem:true is the explicit opt-in
-  // escape hatch for a caller that genuinely needs to see them (none exist today).
   async listContacts({ limit = 500, includeSystem = false } = {}) {
     const where = includeSystem ? {} : { channel: { $ne: 'system' } }
     return this.t.list('contact', where, { limit, sort: [{ field: 'created_at', dir: 'DESC' }] })
   }
 
-  // Operator-assigned access-tier change, anywhere on contact-tiers.js's ladder
-  // (reporter / field_worker / animal_health_technician). NEVER
-  // reachable from the agent/tool-call path: case-tools.js registers no tool
-  // that calls this, which is what makes the "never contact-self-service or
-  // LLM-settable" half of the design real.
-  //
-  // Its ONE caller is dashboard/routes/contacts.js's postContactTier (around
-  // line 53), whose gate is `authed(req)` ALONE -- any logged-in operator, NOT
-  // admin-only, deliberately (that route's own header says so: tier assignment
-  // is an everyday triage action, unlike account management or the
-  // admin-gated + isAdmin erase route beside it). There is no CLI caller and no
-  // other break-glass path. So the privilege boundary this method sits behind
-  // is "a valid operator session", nothing narrower; an audit looking for an
-  // admin check will not find one, because there is none to find.
-  // Validated against TIER_ORDER, not a hand-written pair of comparisons: this is
-  // a WRITE boundary, so it must reject an unrecognised value outright rather
-  // than resolve it (resolveTierValue's fail-closed coercion is for READS, where
-  // a corrupt stored value must still produce a safe answer -- coercing here
-  // would silently store 'reporter' for an operator who asked for something
-  // else and report success).
   async setContactTier(contactId, tier, user = SYSTEM_USER) {
     if (!TIER_ORDER.includes(tier)) throw new Error(`invalid tier: ${tier} -- expected one of ${TIER_ORDER.join(', ')}`)
     const before = (await this.getContact(contactId).catch(() => null))?.tier
@@ -432,13 +221,6 @@ export class CaseStore {
     return updated
   }
 
-  // A contact's agent conversation was held while they were a different rung: the
-  // earlier refusals ("that is not something I can look up") sit in that transcript
-  // and the model keeps repeating them after a promotion. So when the EFFECTIVE rung
-  // changes, the stored agent transcripts for the contact's own conversations are
-  // discarded and each open one gets a timeline note. The live in-memory agent is
-  // recreated by run-turn.js, which compares the rung it was built for with the
-  // turn's rung. Best-effort: a failure here must never fail the role change.
   async _afterTierChange(contactId, before, after) {
     const from = resolveTierValue(before)
     const to = resolveTierValue(after)
@@ -457,19 +239,11 @@ export class CaseStore {
     }
   }
 
-  // A person who drops below the field rung can no longer act on the records assigned
-  // to them, and a record left in their name keeps the assistant silent (a human owns
-  // it) with nobody driving. So the moment the rung is taken away, their open records
-  // go back to the queue: unassigned, and the assistant resumes where a person had
-  // taken over. Recorded on each timeline.
   async _releaseHeldCases(contactId, tier, user) {
     if (atLeast(tier, TIER_FIELD_WORKER)) return
     return this.releaseCasesHeldBy(`contact:${contactId}`, 'the team member holding it lost their role', user)
   }
 
-  // Every open record held by `key` (a `contact:<id>` key or a dashboard username)
-  // goes back to the queue: unassigned, the assistant resuming where a person had
-  // taken over. Used when the holder can no longer act on them.
   async releaseCasesHeldBy(key, why, user = SYSTEM_USER) {
     const held = await this.t.list('case', { assignee: key, status: { $in: this.getOpenStatuses() } }, { limit: 500 })
     for (const c of held) {
@@ -483,16 +257,11 @@ export class CaseStore {
     return held.length
   }
 
-  // Register a phone number in a role BEFORE it has ever messaged in -- the
-  // dashboard half of role assignment (the other half is a one-time WhatsApp
-  // code, src/role-invites.js). Creates the contact row if the number is new and
-  // sets the rung. Same trust boundary as setContactTier: reachable only from an
-  // authenticated dashboard route, never from the agent/tool path.
   async registerContact({ channel = 'whatsapp', external_id, display_name = '', tier }, user = SYSTEM_USER) {
     if (!TIER_ORDER.includes(tier)) throw new Error(`invalid tier: ${tier} -- expected one of ${TIER_ORDER.join(', ')}`)
     if (!external_id) throw new Error('a phone number is required')
     const contact = await this.findOrCreateContactLocked({ channel, external_id, display_name })
-    // A name typed by the operator wins over the number-fallback the create used.
+
     const patch = { tier }
     if (display_name && (!contact.display_name || contact.display_name === contact.external_id)) patch.display_name = display_name
     await this.t.update('contact', contact.id, patch, user)
@@ -501,15 +270,6 @@ export class CaseStore {
     return this.getContact(contact.id)
   }
 
-  // Operator-tunable health thresholds, persisted as an append-only audited
-  // observation on a singleton `system` settings case (the same pattern the
-  // runtime-event log uses). The LATEST `thresholds:<json>` observation is the
-  // live value; absent any, callers fall back to DEFAULT_THRESHOLDS. Storing the
-  // change as an event makes every tuning auditable for free -- no schema change,
-  // no new entity, and a full history of who tightened what and when.
-  // Shared by every settings singleton below (thresholds, fleet-health,
-  // shift): one 'system'-channel case per settings key, found-or-created on
-  // demand.
   async _systemSingletonCaseId(key, displayName) {
     const { case: c } = await this.findOrCreateCase({
       channel: 'system', external_id: `settings:${key}`,
@@ -520,13 +280,11 @@ export class CaseStore {
 
   async _settingsCaseId() { return this._systemSingletonCaseId('thresholds', 'settings') }
 
-  // Returns the latest persisted thresholds patch object, or null if none set.
-  // Validation/merge over defaults is the caller's concern (src/thresholds.js).
   async getThresholdsPatch() {
     let id
     try { id = await this._settingsCaseId() } catch { return null }
     const events = await this.listEvents(id).catch(() => [])
-    // Walk newest-first; the first parseable thresholds observation wins.
+
     const hits = taggedObservations(events, 'thresholds')
     for (let i = hits.length - 1; i >= 0; i--) {
       try { return JSON.parse(hits[i].payload) } catch { continue }
@@ -534,9 +292,6 @@ export class CaseStore {
     return null
   }
 
-  // Persist a thresholds patch as a new audited observation. The patch is the
-  // already-validated/merged object; we store it verbatim so a later read replays
-  // exactly what was accepted. Returns the stored patch.
   async setThresholdsPatch(patch, user) {
     const id = await this._settingsCaseId()
     await this.appendEvent(id, {
@@ -547,12 +302,6 @@ export class CaseStore {
     return patch
   }
 
-  // The LIVE thresholds the sweep and /api/attention must both read at call time:
-  // the persisted operator patch (if any) merged over a boot override (if any)
-  // merged over DEFAULT_THRESHOLDS. Reading this per call -- not once at boot --
-  // is what makes a PUT take effect immediately on the next sweep and the next
-  // attention scan, the whole point of the tunable knob. A store read failure
-  // falls back to the boot/default value rather than throwing.
   async resolveThresholds(bootOverride = null) {
     const base = bootOverride ? mergeThresholds(bootOverride).thresholds : DEFAULT_THRESHOLDS
     let patch = null
@@ -561,16 +310,8 @@ export class CaseStore {
     return mergeThresholds(patch, base).thresholds
   }
 
-  // Singleton settings case holding the rolling fleet-health sweep log. Same
-  // append-only-observation pattern as thresholds and the runtime-event log: each
-  // SCHEDULED sweep persists its summary as one audited observation, so the trend
-  // over time is auditable for free -- no schema change, no new entity.
   async _fleetHealthCaseId() { return this._systemSingletonCaseId('fleet-health', 'fleet-health') }
 
-  // Persist a sweep summary as a new audited observation. `summary` is the object
-  // sweepCases returns ({scanned, flagged, cleared, breaches, errors, ...}); we add
-  // a `ts` and a derived `degraded` flag and store it verbatim so a later read
-  // replays exactly what the sweep saw. Returns the stored record.
   async recordSweepSummary(summary, now = Date.now()) {
     const errors = Array.isArray(summary?.errors) ? summary.errors : []
     const rec = {
@@ -591,10 +332,6 @@ export class CaseStore {
     return rec
   }
 
-  // Read the last N sweep summaries, newest-first. Returns {latest, history,
-  // degraded}: `history` is up to N parsed records oldest->newest (for a trend
-  // line), `latest` is the most recent (or null), `degraded` is the latest's flag.
-  // A parse/read failure degrades to an empty history rather than throwing.
   async getFleetHealth(n = 50) {
     let id
     try { id = await this._fleetHealthCaseId() } catch { return { latest: null, history: [], degraded: false } }
@@ -608,14 +345,8 @@ export class CaseStore {
     return { latest, history, degraded: !!latest?.degraded }
   }
 
-  // Singleton settings case holding the shift-handover marker. Same append-only
-  // observation pattern as thresholds: 'Start of shift' stamps one audited
-  // observation, and the handover digest reads the newest to scope "since last
-  // shift". Scoped by timestamp, not operator id, so a rotating field team shares
-  // one shift line regardless of who clicks.
   async _shiftCaseId() { return this._systemSingletonCaseId('shift', 'shift') }
 
-  // Stamp a new shift marker. Returns { ts, by }.
   async startShift(user, now = Date.now()) {
     const by = user?.id || user || 'operator'
     const id = await this._shiftCaseId()
@@ -627,16 +358,11 @@ export class CaseStore {
     return { ts: now, by }
   }
 
-  // The newest shift marker, or null if no shift has been started. A read/parse
-  // failure degrades to null rather than throwing -- a missing marker just means
-  // the digest scopes the full window.
   async getShiftMarker() {
     let id
     try { id = await this._shiftCaseId() } catch { return null }
     const events = await this.listEvents(id).catch(() => [])
-    // Stricter pattern than the JSON-payload readers above: a shift marker is
-    // `shift-start:<unix ms>` and nothing else, so a malformed row is skipped by
-    // the scan itself rather than reaching parseInt.
+
     const hits = taggedObservations(events, 'shift-start', /^shift-start:(\d+)$/)
     for (let i = hits.length - 1; i >= 0; i--) {
       const ts = parseInt(hits[i].payload, 10)
@@ -647,33 +373,15 @@ export class CaseStore {
     return null
   }
 
-  // A ref is unique, so a single-row lookup by ref needs no sort.
   async getCaseByRef(ref) {
     const [row] = await this.t.list('case', { ref }, { limit: 1 })
     return row || null
   }
-  // Explicitly branch a FRESH case for the worker (they asked to start one),
-  // reusing the SAME (channel, external_id) as their existing conversation --
-  // the real conversationKey, not a synthetic id -- so the very NEXT plain
-  // inbound message correctly binds to THIS new case via the normal
-  // findOrCreateCase/findOpenCase newest-wins path. Do NOT mint a synthetic
-  // external_id and record the binding on contact.active_case_id instead:
-  // findOrCreateCase never reads that field, so the next message silently keeps
-  // talking to the OLD case. Locked on the same key so two near-simultaneous
-  // "start a new report" turns cannot duplicate.
-  // `tags` exists so a caller that already knows which intake route this case
-  // arrived by can say so at creation, rather than the row being born untagged
-  // and every tag-reading consumer treating it as "unknown". The store itself
-  // stays ignorant of what any particular tag MEANS -- see case_new
-  // (case-tools-binding.js) for the one caller and its reason.
+
   async createCase({ channel, external_id, subject = '', contact_id = '', tags = '' } = {}) {
     return this._withLock(`${channel}|${external_id}`, async () => {
       const ref = await this._nextRef()
-      // reporter_tier is a creation-time snapshot (see thatcher.config.yml's
-      // field comment) -- case_new is called explicitly mid-conversation by an
-      // already-bound contact, so reuse the CURRENT open case's tier if one
-      // exists (same conversation, same reporter) rather than re-reading the
-      // contact row a second time.
+
       const currentOpen = await this.findOpenCase({ channel, external_id })
       return this.t.create('case', {
         ref, channel, external_id, contact_id: contact_id || '',
@@ -685,23 +393,6 @@ export class CaseStore {
     })
   }
 
-  // List cases with an operator-aware where ({field:{$gte,$lte,$in,...}}, top-level
-  // $or, bare-array IN) and an optional opts.user for row-access scoping. The
-  // worker-enquiry queries (today=created_at range, near=lat/lon box, mine=assignee
-  // + user scope, open=status $in) ride these. thatcher's operator-where + row-access
-  // + list sort all push down to the store directly (see the call below); there is
-  // no runtime feature-detect and no JS-side equality-only fallback.
-  // Three singleton `channel:'system'` cases (settings:thresholds, settings:
-  // fleet-health, settings:shift) are created via findOrCreateCase, default to
-  // status 'new', and never close -- they are audit-log carriers for operator-
-  // tunable settings, never a real farmer report. Every internal reader of
-  // settings state goes through _settingsCaseId()/findOrCreateCase + listEvents
-  // directly, never listCases (confirmed: no call site filters or relies on a
-  // system row appearing here) -- so excluding them by default is safe and
-  // fixes every KPI/report/geo/workload/cluster consumer (which all call
-  // listCases({}, ...) with no channel filter) at one chokepoint instead of
-  // patching each one. includeSystem:true is the explicit opt-in escape hatch
-  // for a caller that genuinely needs to see them (none exist today).
   async listCases(where = {}, opts = {}) {
     const { limit = 50, offset = 0, user = null, sort = null, includeSystem = false } = opts
     if (!includeSystem && where.channel === undefined) where = { ...where, channel: { $ne: 'system' } }
@@ -713,39 +404,15 @@ export class CaseStore {
     return rows.slice(offset, offset + limit)
   }
 
-  // Returns the count of cases, capped at 50,000 for performance. If the true count
-  // exceeds the cap, the returned value is an underestimate. The dashboard uses this
-  // for pagination hints; the cap is sized to real-world casey volumes (dashboard
-  // PAGE_MAX is 200, real case counts are far below the cap).
   async countCases(where = {}) {
     return this._count('case', where)
   }
 
-  // Count via thatcher's count(), which reaches a real `SELECT COUNT(*)` where
-  // it provably can and otherwise falls back to the same full read this used to
-  // do itself. Counting through list().length hauled the whole matching set
-  // into JS to read one integer -- measured on a 100x store (2600 cases, 13600
-  // events), 'case' 68ms -> 0.06ms and 'event' 193ms -> 0.07ms -- and the
-  // dashboard polls this every 5s.
-  //
-  // The CAP is kept, and kept as a MINIMUM of the two, so the returned number
-  // is byte-identical to what the list()-length version produced: that version
-  // read at most CAP rows, so it reported min(true count, CAP), and a count
-  // that suddenly started reporting the true value above the cap would change
-  // an answer the dashboard's pagination hints already depend on.
   async _count(entity, where = {}) {
     const CAP = 50000
     return Math.min(await this.t.count(entity, where), CAP)
   }
 
-  // Run fn() serialized against every other call sharing the same lock key.
-  // Calls chain onto the prior in-flight call for that key; the TAIL of the
-  // chain owns cleanup -- it deletes the slot iff it is still the tail -- so the
-  // map size is bounded by the count of *concurrently in-flight* keys, never by
-  // total conversation history. prev.catch swallows an upstream rejection so one
-  // failed call cannot wedge the chain; fn's own rejection still propagates out
-  // of `await run` so this finally always fires. Do NOT drop the `=== run`
-  // guard: without it a non-tail call would orphan the tail's slot.
   async _withLock(key, fn) {
     const prev = this._locks.get(key) || Promise.resolve()
     const run = prev.catch(() => {}).then(() => fn())
@@ -754,22 +421,10 @@ export class CaseStore {
     finally { if (this._locks.get(key) === run) this._locks.delete(key) }
   }
 
-  // Serialize find-or-create per conversation so two near-simultaneous first
-  // messages cannot both miss the open-case lookup and create duplicate cases.
-  // The lock is per (channel, external_id); other conversations run concurrently.
   async findOrCreateCase(args) {
     return this._withLock(`${args.channel}|${args.external_id}`, () => this._findOrCreateCaseUnsafe(args))
   }
 
-  // Record an inbound message exactly once, even under concurrent redelivery of
-  // the same platform msg_id. Runs on the SAME per-conversation lock chain as
-  // findOrCreateCase, so the dedup check and the append are atomic with respect
-  // to other messages on this conversation -- two identical messages in the same
-  // tick cannot both pass hasInboundMessage before either appends, making the
-  // duplicate structurally unrepresentable. Returns the appended event, or null
-  // if it was a duplicate already recorded. Guarantee holds only when the adapter
-  // supplies a non-empty msg_id -- an empty msg_id (an adapter/raw payload with no
-  // id) skips the dedup check entirely; the caller logs a warning in that case.
   async recordInbound(caseRow, { actor = 'contact', channel, text = '', data = null, msg_id = '' }) {
     return this._withLock(`${caseRow.channel}|${caseRow.external_id}`, async () => {
       if (msg_id && await this.hasInboundMessage(caseRow.id, msg_id)) return null
@@ -777,32 +432,12 @@ export class CaseStore {
     })
   }
 
-  // Atomically merge partial report fields into a case's running report JSON.
-  // Runs under the per-conversation lock so a fresh read-merge-write cannot race
-  // another merge (or an inbound) for the same conversation and lose fields. Only
-  // the fast DB round-trip is inside the lock -- LLM/network latency stays out.
-  // Non-empty incoming values win; a known field is never overwritten with blank.
-  // Returns { report } (the merged object) or { error } on guards.
-  // Store-side wrapper over store/report-merge.js's pure parseReportJson: the
-  // parse rules live there, the case-attributed warning lives here (only the
-  // store knows which case id a corrupt blob belongs to). Returns the same
-  // { value, corrupted } shape every caller in this file already destructures.
   _parseReport(raw, caseId) {
     const { value, corrupted, error } = parseReportJson(raw)
     if (corrupted) this.log?.warn?.('[casey] report_parse_failed', { caseId, error: error?.message })
     return { value, corrupted }
   }
 
-  // `bypassObserve` is for a HUMAN writing through a team tool (case_edit): observe
-  // mode stops the ASSISTANT acting, and it is exactly the mode a person takes a
-  // case into when they take over, so their own edits must not be refused by it.
-  // A write that touched the area field or the location also routes an unassigned
-  // case to its area's ranger (src/areas.js). `autoAssign:false` is for the callers
-  // that make the assignment decision themselves (an operator's relocate).
-  //
-  // `system: true` is for the code that stamps a system-set field (phone-persons.js's reported_by). Every
-  // other caller -- the model, the team tools, the dashboard, the public form, the sync API -- has such a
-  // field dropped here, whatever it sent (report-fields.yml `system_set: true`).
   async mergeReport(caseId, incoming, user = AGENT_USER, { bypassObserve = false, autoAssign = true, system = false } = {}) {
     if (!system && SYSTEM_SET_FIELDS.size) {
       incoming = { ...incoming }
@@ -824,41 +459,18 @@ export class CaseStore {
     const c0 = await this.getCase(caseId)
     if (!c0) return { error: `no case ${caseId}` }
     return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
-      const c = await this.getCase(caseId)             // re-read INSIDE the lock
+      const c = await this.getCase(caseId)
       if (!c) return { error: `no case ${caseId}` }
       if (c.autonomy === 'observe' && !bypassObserve) return { error: 'observe' }
       const { value: currentReport, corrupted: initCorrupted } = this._parseReport(c.report, caseId)
       const { merged, cappedFields: initCapped } = mergeReportFields(currentReport, incoming)
-      // No server-side geocoding: the map's lat/lon comes ONLY from the agent's
-      // own case_report call (its own best-effort estimate from the location the
-      // worker described, using the model's own world knowledge -- see
-      // caseSystemPrompt). A case with no agent-provided lat/lon simply has no
-      // map pin; casey never looks anything up on the model's behalf.
-      //
-      // The per-conversation lock (_withLock, keyed on channel|external_id)
-      // only serializes THIS contact's own sequential agent turns -- it does
-      // NOT cover a dashboard operator's PATCH on the same case id landing
-      // concurrently (a genuinely different lock key, no lock at all today).
-      // c._version (thatcher's optimistic-lock token, read directly with no
-      // feature-detect) lets us detect that race instead of silently losing
-      // whichever side wrote second. On a genuine conflict, re-read and
-      // re-merge against the FRESH row (the operator's edit is preserved,
-      // the agent's newly-learned fields are re-applied on top), retrying
-      // with the same expectedVersion guard each time -- a THIRD writer
-      // landing between re-read and re-write must re-trigger the same
-      // conflict path rather than being silently clobbered by an
-      // unconditional write. Bounded retries; surface (never silently
-      // overwrite) if contention is somehow still live after that.
+
       const MERGE_RETRY_LIMIT = 3
       let attemptCase = c
       let attemptMerged = merged
       let attemptCorrupted = initCorrupted
       let attemptCapped = initCapped
-      // The report this attempt actually merged AGAINST (read inside the
-      // lock), returned to the caller so a correction-diff (old value ->
-      // new value) can be computed from the true prior state at merge time
-      // -- never from a separate, unlocked read taken before this lock was
-      // acquired, which a concurrent write could have already moved past.
+
       let attemptPriorReport = currentReport
       for (let attempt = 0; attempt <= MERGE_RETRY_LIMIT; attempt++) {
         try {
@@ -875,12 +487,7 @@ export class CaseStore {
           }
           const fresh = await this.getCase(caseId)
           if (!fresh) return { error: `no case ${caseId}` }
-          // Re-check autonomy on the retry path too: mergeReport's first
-          // attempt already gates on observe-mode, but a version conflict
-          // means SOMETHING else wrote concurrently -- if that write was the
-          // operator's own dashboard flip to observe, the retry must honour
-          // it rather than silently landing one write later than the
-          // operator intended.
+
           if (fresh.autonomy === 'observe' && !bypassObserve) return { error: 'observe' }
           attemptCase = fresh
           const { value: freshReport, corrupted: retryCorrupted } = this._parseReport(fresh.report, caseId)
@@ -894,23 +501,12 @@ export class CaseStore {
     })
   }
 
-  // Append-only variant for a media field (photos/audio) whose deterministic
-  // ingress note must NEVER be silently dropped just because an earlier note
-  // already occupies the field. A worker routinely sends
-  // MULTIPLE photos/voice notes across one conversation -- fill-if-empty would
-  // silently discard every arrival after the first, with no field update AND no
-  // operator-facing observation event. Joins
-  // with '; ' so every existing single-string reader (dashboard display, the
-  // photo-nudge `!= null` check) keeps working unchanged -- no array, no schema
-  // change downstream. Returns { report, appended:bool } or { error }.
   async appendReportField(caseId, field, note, user = AGENT_USER) {
     if (note == null || String(note).trim() === '') return { error: 'empty note' }
     const c0 = await this.getCase(caseId)
     if (!c0) return { error: `no case ${caseId}` }
     return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
-      // Same optimistic-lock discipline as mergeReport: the per-conversation
-      // lock does not cover a concurrent dashboard PATCH on the same case id,
-      // so an unconditional write here would silently clobber it.
+
       const APPEND_RETRY_LIMIT = 3
       let attemptCase = await this.getCase(caseId)
       if (!attemptCase) return { error: `no case ${caseId}` }
@@ -919,10 +515,7 @@ export class CaseStore {
         const { value: current, corrupted } = this._parseReport(attemptCase.report, caseId)
         const have = current[field] != null && String(current[field]).trim() !== ''
         const appended = have ? `${current[field]}; ${note}` : String(note)
-        // Same bounded-worst-case discipline as mergeReportFields: reject
-        // rather than silently truncate once further growth would exceed the
-        // cap -- the caller surfaces this so the note is known not to have
-        // attached, never silently dropped off the end.
+
         if (appended.length > APPEND_FIELD_MAX_LEN) {
           return { error: `report field '${field}' has reached its maximum length (${APPEND_FIELD_MAX_LEN} chars) -- this note was not attached` }
         }
@@ -945,84 +538,35 @@ export class CaseStore {
     })
   }
 
-  // Persist a downloaded media buffer (photo/voice note) under this store's
-  // dataDir and return its dataDir-relative path (see store/media.js for the
-  // naming/slash rules). Failure to write must never block the reply path --
-  // callers catch and log, same discipline as appendReportField's own callers.
   saveMedia(caseId, buffer, opts = {}) {
     return saveMediaFile(this.dataDir, caseId, buffer, opts)
   }
 
-  // OPERATOR IDENTITY LEARNING -- a durable per-operator record layered on top of
-  // the live operator_account roster. Operators only ever act through the
-  // dashboard (never a direct Discord/WhatsApp reply -- confirmed: every
-  // actor:'operator' event is dashboard-attributed via the authenticated session,
-  // dashboard/auth.js's actingOperator(req)), so this learns from dashboard-
-  // attributed actions only: which case a known operator id acted on, and that
-  // case's report location -- building a working-area history per operator over
-  // time. One row per operator id (upsert), never a growing history table
-  // (row_access: none in thatcher.config.yml -- internal-team data, gated by the
-  // dashboard's own session auth, never exposed on the public /report surface).
   async _operatorIdentityRow(operatorId) {
     const [row] = await this.t.list('operator_identity', { operator_id: operatorId }, { limit: 1 })
     return row || null
   }
 
-  // Record that `operatorId` (an operator_account roster id) acted on `caseRow` --
-  // called from the dashboard on every attributed claim/reply/transition/edit.
-  // Learns the case's channel identity (channel + external_id -- the contact's
-  // channel, which tells us NOTHING about the operator's own channel id, so this
-  // does not claim to learn a Discord/WhatsApp handle for the operator; it learns
-  // WORKING AREA from the case's report location) and bumps case_count/last_seen.
-  // Best-effort: a failure here must never break the dashboard action it rides on.
-  // This is a read-modify-write (read the row, rebuild the areas array, bump
-  // case_count, write it back) and it needs BOTH gates below. thatcher only runs
-  // its conflict check when expectedVersion is supplied (busybase-store.js
-  // update()), so an unguarded write has no detection at all -- last write wins,
-  // no error: five CONCURRENT calls for one operator landed exactly ONE update
-  // (case_count "1" -> "2", _version 1) and silently dropped four, taking four
-  // learned working-area observations with them; the same five calls made
-  // sequentially gave "7". The per-operator lock serializes calls inside THIS
-  // process (the dashboard, gateway and store all share one worker process, so
-  // that covers two operators acting in the same tick), and expectedVersion
-  // catches a writer in a DIFFERENT process (the supervisor's fork-before-drain
-  // reload window, or a CLI run) that no in-process lock can see.
   async learnOperatorActivity(operatorId, caseRow) {
     if (!operatorId || !caseRow) return null
     return this._withLock(`operator_identity|${operatorId}`, async () => {
       try {
         const LEARN_RETRY_LIMIT = 3
         for (let attempt = 0; attempt <= LEARN_RETRY_LIMIT; attempt++) {
-          // Re-read INSIDE the retry loop: areas and case_count are both
-          // DERIVED from the stored row, so a retry that reused the first
-          // read's values would re-apply a count the winner already applied.
+
           const existing = await this._operatorIdentityRow(operatorId)
           const areas = existing ? parseJsonArray(existing.areas) : []
           const { value: report } = this._parseReport(caseRow.report, caseRow.id)
-          // foldAreas (store/operator-areas.js) counts this case's location
-          // tokens into the running profile and returns it capped, most-frequent
-          // first, so the record cannot grow unbounded over an operator's life.
+
           const boundedAreas = foldAreas(areas, [...tokens(report.location)])
           const patch = {
             operator_id: operatorId,
             areas: JSON.stringify(boundedAreas),
             last_seen_at: nowIso(),
-            // busybase reads integer columns back as DIGIT STRINGS (see AGENTS.md,
-            // thatcher/busybase chain), so a bare `+ 1` CONCATENATES rather than adds:
-            // "1" -> "11" -> "111". At 9 actions case_count read "111111111", which
-            // the map's coverage tooltip rendered verbatim as "111111111 case
-            // action(s)". Coerce before arithmetic; a corrupt legacy value is also
-            // re-based here rather than carried forward.
+
             case_count: rowInt(existing?.case_count) + 1,
           }
-          // toStorable, not the bare patch: case_count is the one numeric value
-          // here, and thatcher's optimistic-concurrency check re-reads the row
-          // and compares each patched field against what it asked for. busybase
-          // hands every column back as TEXT, so a JS number fails that compare
-          // ("2" !== 2) on every single call -- a FALSE conflict AFTER the write
-          // already landed, so every retry increments again: five calls took
-          // case_count 1 -> 21 instead of 1 -> 6. This is the write-side trap
-          // AGENTS.md names; toStorable() is its guard.
+
           const storablePatch = toStorable(patch)
           try {
             if (existing) {
@@ -1033,17 +577,15 @@ export class CaseStore {
             }
             return patch
           } catch (e) {
-            // Only a version conflict is retryable; anything else falls to the
-            // best-effort catch below exactly as it did before.
+
             if (e.code !== 'conflict' || attempt === LEARN_RETRY_LIMIT) throw e
           }
         }
         return null
-      } catch { return null }   // learning is best-effort, never blocks the caller's real action
+      } catch { return null }
     })
   }
 
-  // Every learned operator-identity row, for the dashboard's coverage view.
   async listOperatorIdentities() {
     try { return await this.t.list('operator_identity', {}, { limit: 500 }) }
     catch { return [] }
@@ -1068,34 +610,19 @@ export class CaseStore {
       tags: '',
       assignee: UNCLAIMED_ASSIGNEE,
       autonomy: 'auto',
-      status: 'new',                 // workflow start stage (explicit; thatcher create() defaults to ACTIVE otherwise)
+      status: 'new',
       last_event_at: nowIso(),
       author_key: deriveAuthorKey(external_id),
-      // Creation-time snapshot (see thatcher.config.yml's reporter_tier field
-      // comment for why this is a snapshot, not a live join). contactRow is
-      // only populated when the caller passed `contact` -- a settings/system
-      // case with no contact defaults to 'reporter' (the lower-privilege
-      // default, matching the fail-closed discipline used for tier elsewhere),
-      // and so does an unrecognised stored value -- resolveTierValue keeps a
-      // snapshot column holding only real ladder rungs, so a consumer reading it
-      // years later (attn.js's on-site weight) never has to re-validate it.
+
       reporter_tier: resolveTierValue(contactRow?.tier),
     }, AGENT_USER)
     return { case: created, created: true }
   }
 
-  // Friendly, collision-proof case ref -- the sequence/suffix rules live in
-  // store/ref.js; this owns only the capped, deliberately unsorted page of
-  // existing cases mintRef takes the max over.
   async _nextRef() {
     return mintRef(await this.t.list('case', {}, { limit: 200 }))
   }
 
-  // opts.expectedVersion: forwarded straight to thatcher's optimistic-concurrency
-  // guard (thatcher's update() reads opts.expectedVersion natively and adds a
-  // `_version = ?` filter). On a version mismatch thatcher throws
-  // {code:'conflict'}; this rethrows for the caller to handle (mergeReport and
-  // updateCaseChecked both retry against a freshly re-read row).
   async updateCase(id, patch, user = AGENT_USER, opts = {}) {
     const violation = writeGuardViolation(patch, user)
     if (violation) throw new Error(violation)
@@ -1103,26 +630,13 @@ export class CaseStore {
     return this.getCase(id)
   }
 
-  // Same lock-and-re-check discipline as mergeReport: an operator's dashboard
-  // autonomy flip to "observe" landing between a caller's own read and its
-  // subsequent write must actually block that write, not just the read it
-  // already saw. updateCase() itself has no lock at all -- a caller doing
-  // read-then-check-then-write outside a lock can be raced by a concurrent
-  // autonomy change. Returns
-  // {error:'observe'} on the same rejection shape mergeReport already uses.
   async updateCaseChecked(id, patch, user = AGENT_USER) {
     const c0 = await this.getCase(id)
     if (!c0) return { error: `no case ${id}` }
     return this._withLock(`${c0.channel}|${c0.external_id}`, async () => {
-      // Bounded retry with mergeReport's own expectedVersion discipline: the
-      // per-conversation lock only serializes THIS contact's own sequential
-      // agent turns, not a dashboard operator's PATCH on the same case id
-      // landing concurrently (a genuinely different lock, no lock at all).
-      // Without forwarding _version as expectedVersion, this write could
-      // silently clobber a concurrent operator edit with no error -- exactly
-      // the gap mergeReport already closes for report-field writes.
+
       const RETRY_LIMIT = 3
-      let c = await this.getCase(id)               // re-read INSIDE the lock
+      let c = await this.getCase(id)
       if (!c) return { error: `no case ${id}` }
       for (let attempt = 0; attempt <= RETRY_LIMIT; attempt++) {
         if (c.autonomy === 'observe') return { error: 'observe' }
@@ -1141,29 +655,6 @@ export class CaseStore {
     })
   }
 
-  // Data retention / right-to-erasure for a contact's PII (POPIA/GDPR-style).
-  // Never a silent delete -- the append-only event log (P: full observability)
-  // must keep a record that an erasure happened, even though the erasure itself
-  // necessarily scrubs the very fields that log otherwise carries. Scrubs:
-  //  - the contact row itself: external_id, display_name, handle, notes,
-  //    last_location_lat/lon/at (the identifying/contactable fields; channel and
-  //    tier are kept -- they carry no PII and dashboard rollups key on them)
-  //  - every case tied to this contact (case.contact_id) whose report JSON
-  //    carries a REPORT_KEYS PII field (owner_name/owner_contact/present_person/
-  //    present_person_relation/contact_fallback/photos/audio -- the fields that
-  //    can identify a specific person or place a specific person was), scrubbed
-  //    to null in the report blob
-  // A contact has no case row of its own, so the tombstone `action` event rides
-  // on each touched case instead -- one per case, naming the erasure but
-  // never repeating the erased values. Idempotent: re-running against an
-  // already-erased contact is a no-op (already-blank fields do not get a
-  // second scrub event).
-  // Replace a destination address held in an event's `data.to` with the case's
-  // erasure tombstone. The event row itself is never deleted -- the log is
-  // append-only and the fact that a reply was delivered is real history worth
-  // keeping; it is the address inside it that the person asked to have removed.
-  // Best-effort per event: a failure here must never revert an erasure that has
-  // already succeeded on the case row.
   async _scrubEventDestinations(caseId, erasedKey) {
     try {
       const events = await this.t.list('event', { case_id: caseId }, { limit: 1000 })
@@ -1174,25 +665,11 @@ export class CaseStore {
         if (!parsed || typeof parsed !== 'object' || parsed.to == null) continue
         if (parsed.to === erasedKey) continue
         parsed.to = erasedKey
-        try { await this.t.update('event', e.id, { data: JSON.stringify(parsed) }, SYSTEM_USER) } catch { /* per-event best effort */ }
+        try { await this.t.update('event', e.id, { data: JSON.stringify(parsed) }, SYSTEM_USER) } catch {  }
       }
-    } catch { /* the real erasure already landed; this is additive */ }
+    } catch {  }
   }
 
-  // ONE PERSON CAN HOLD SEVERAL CONTACT ROWS. A contact is keyed per
-  // channel+external_id, so the same human reaching casey over WhatsApp and
-  // then through the public web form has two rows -- witnessed in this
-  // deployment's own store as `whatsapp/27821110001` and `web/+27821110001`,
-  // differing only by the leading '+'. Erasing the row an operator happened to
-  // click left the other one holding the number, INCLUDING soft-deleted rows,
-  // which thatcher's list filters out of every read path but which are still
-  // sitting on disk. A right-to-erasure request is about a person, not a row.
-  //
-  // Siblings are matched on the DIGITS of the external_id, which is what makes
-  // '+27...' and '27...' the same number, and only when there are at least
-  // seven of them -- a short or non-numeric key (a Discord snowflake, a
-  // `web-<timestamp>`, an already-erased tombstone) is not a phone number and
-  // must never be fuzzy-matched into somebody else's erasure.
   async _siblingContactIds(contact) {
     const digits = String(contact?.external_id || '').replace(/[^0-9]/g, '')
     if (digits.length < 7) return []
@@ -1208,68 +685,27 @@ export class CaseStore {
     return out
   }
 
-  // The identifying report fields, named once. src/retention.js exports the same
-  // list for its own dry-run display and the two are checked against each other
-  // by no mechanism -- they are the same list because both describe the same
-  // decision about which fields identify a person.
   static PII_REPORT_FIELDS = ['owner_name', 'owner_contact', 'present_person', 'present_person_relation', 'contact_fallback', 'reported_by', 'photos', 'audio']
 
   static PII_CONTACT_FIELDS = { external_id: '[erased]', display_name: '[erased]', handle: '', notes: '', last_location_lat: null, last_location_lon: null, last_location_at: '', last_report_lat: null, last_report_lon: null, last_report_at: '', last_report_case_id: '' }
 
-  // Scrub every identifying field off ONE case: the report blob, the routing key
-  // that carries the number a second and third time, and the delivered-reply
-  // destinations inside its own event log. Extracted from eraseContact's loop so
-  // the retention path (src/retention.js's `erase` action) reaches the SAME
-  // decision about what identifies a person rather than growing a second copy of
-  // it that could drift.
-  //
-  // Returns one of 'scrubbed' | 'nothing-to-do' | 'gone' | 'conflict'. It never
-  // throws on a version conflict: an uncaught throw here would abort an
-  // irreversible, documented "every case scrubbed" action after only some cases
-  // were touched, so the caller records the failure and carries on to the rest.
-  //
-  // `personOnly: true` is the erasure of ONE person on a shared phone (erasePerson): only the identifying
-  // report fields go. The routing key, `author_key` and the delivered-reply destinations stay, because they
-  // are the PHONE's, and the phone contact and the other people on it are not being erased.
   async _erasePiiOnCase(caseRow, { reason = '', operator = SYSTEM_USER, personOnly = false } = {}) {
     const PII_REPORT_FIELDS = CaseStore.PII_REPORT_FIELDS
     const ERASE_RETRY_LIMIT = 3
-    // Locked and re-read (same discipline as mergeReport): a concurrent
-    // case_report write landing between the caller's snapshot and this
-    // erasure write could otherwise be silently clobbered, or complete
-    // AFTER the erasure and reintroduce a just-nulled PII field with no
-    // error and no audit trail.
+
     return this._withLock(`${caseRow.channel}|${caseRow.external_id}`, async () => {
       let c = await this.getCase(caseRow.id)
       if (!c) return 'gone'
       for (let attempt = 0; attempt <= ERASE_RETRY_LIMIT; attempt++) {
           const { value: report } = this._parseReport(c.report, c.id)
           const hadPII = PII_REPORT_FIELDS.some(k => report[k] != null && report[k] !== '')
-          // THE CASE ROW ITSELF CARRIES THE NUMBER, TWICE. `external_id` is the
-          // raw routing key and `author_key` is the same value again, and
-          // neither is inside `report`, so scrubbing the report blob alone left
-          // the phone number on every case of a contact who had exercised their
-          // right to erasure -- and `caseDetailProjection` emits it to any
-          // authed operator as `external_id_formatted`. Witnessed: after a
-          // successful erase the contact row read [erased] while the case row
-          // still read 27821110001, and `casey show <ref>` printed the number.
-          //
-          // The replacement is per-case rather than a bare '[erased]' because
-          // both values are keys: `_withLock` keys on `channel|external_id`, and
-          // findOpenCase matches on channel+external_id, so a shared literal
-          // would collide erased cases onto one lock and could let a NEW
-          // inbound match an erased case. It carries no ':' because
-          // splitExternalId treats that as a Discord container separator.
+
           const erasedKey = `[erased]-${c.id}`
           const hadKeyPII = !personOnly && (c.external_id !== erasedKey || c.author_key !== erasedKey)
           if (!hadPII && !hadKeyPII) return 'nothing-to-do'
           for (const k of PII_REPORT_FIELDS) report[k] = null
           try {
-            // writeGuardViolation forbids the system actor from writing `report`
-            // (it exists to stop the system FABRICATING report content); erasure
-            // only ever NULLs existing PII fields, never invents text, so it goes
-            // straight to thatcher rather than through updateCase/updateCaseQuiet's
-            // guard.
+
             await this.t.update('case', c.id, personOnly ? { report: JSON.stringify(report) } : { report: JSON.stringify(report), external_id: erasedKey, author_key: erasedKey }, SYSTEM_USER,
               c._version != null ? { expectedVersion: c._version } : {})
             await this.appendEvent(c.id, {
@@ -1279,23 +715,12 @@ export class CaseStore {
                 : `PII erasure: contact data, report identifying fields and the case routing key scrubbed${reason ? ` (${reason})` : ''}`,
               data: { erasure: true, by: operator?.id || 'system', fields: personOnly ? [...PII_REPORT_FIELDS] : [...PII_REPORT_FIELDS, 'external_id', 'author_key'] },
             })
-            // The number survives a third time inside the event log: a delivered
-            // reply records its destination as `data.to`. AGENTS.md's
-            // aggregate rule already forbids emitting that field, but forbidding
-            // its EMISSION is not erasing it, and a right-to-erasure request is
-            // about what is held, not only about what is shown.
+
             if (!personOnly) await this._scrubEventDestinations(c.id, erasedKey)
             return 'scrubbed'
           } catch (e) {
             if (e.code !== 'conflict') throw e
-            // Bounded retry against the freshly re-read row, same pattern as
-            // every other optimistic-concurrency writer in this file
-            // (mergeReport, updateCaseChecked, transition). On exhaustion the
-            // case is recorded as failed rather than aborting the whole
-            // erasure: an uncaught conflict here aborts an irreversible,
-            // documented "every case scrubbed" action after only some cases
-            // were touched, surfacing an opaque 400 with touchedCaseIds
-            // discarded, so every OTHER case must still get scrubbed.
+
             if (attempt === ERASE_RETRY_LIMIT) return 'conflict'
             const fresh = await this.getCase(c.id)
             if (!fresh) return 'gone'
@@ -1306,29 +731,14 @@ export class CaseStore {
     })
   }
 
-  // The role model's traces of one person, outside their own contact row and the
-  // cases they REPORTED (which _erasePiiOnCase already scrubs):
-  //   - the rung itself. An erased contact keeping `operator` would still count
-  //     as a team member on every roster and doctor row while identifying nobody,
-  //     so it drops to the lowest rung.
-  //   - the contact id written into timeline events on records they HELD:
-  //     assignment (`assigned_contact_id`), notices (`announced_to`), dispatch
-  //     (`dispatch_worker_id`, `dispatch_response_by`) and the release note's
-  //     `was: contact:<id>`. The id is pseudonymous, but it is the key back to a
-  //     person, and the row it pointed at is now scrubbed.
-  //   - the role-invite log: the claim record names the claimant by contact id,
-  //     and the invite's free-text label is whatever the operator typed to say who
-  //     the code was for. Both are overwritten in place on the events that hold them.
-  // Returns the number of events rewritten. Best effort per event: the contact
-  // scrub has already landed, so a failure here is counted, never thrown.
   async _scrubRoleReferences(contactIds, user = SYSTEM_USER) {
     const ids = [...new Set((contactIds || []).map(String).filter(id => id.length >= 6))]
     let rewritten = 0
     for (const id of ids) {
-      try { await this.t.update('contact', id, { tier: 'reporter' }, user) } catch { /* row may be gone */ }
+      try { await this.t.update('contact', id, { tier: 'reporter' }, user) } catch {  }
     }
     const rewrite = (raw) => { let out = String(raw); for (const id of ids) out = out.split(id).join('[erased]'); return out }
-    // Invites this person claimed: their labels are blanked too.
+
     const claimedInvites = new Set()
     let inviteCaseId = null
     try { inviteCaseId = await this._systemSingletonCaseId('role-invites', 'role-invites') } catch { inviteCaseId = null }
@@ -1349,41 +759,23 @@ export class CaseStore {
         try {
           await this.t.update('event', e.id, { text: `role-invite:${JSON.stringify(r)}`, data: rewrite(e.data || '') }, user)
           rewritten++
-        } catch { /* counted by omission */ }
+        } catch {  }
       }
     }
     for (const id of ids) {
       const evs = await this.t.list('event', { data: { $like: `%${id}%` } }, { limit: 100000 }).catch(() => [])
       for (const e of evs) {
         if (e.case_id === inviteCaseId) continue
-        try { await this.t.update('event', e.id, { data: rewrite(e.data) }, user); rewritten++ } catch { /* counted by omission */ }
+        try { await this.t.update('event', e.id, { data: rewrite(e.data) }, user); rewritten++ } catch {  }
       }
     }
-    // Feedback comments and training-roster rows are theirs too (src/feedback.js).
-    try { rewritten += await (await import('./feedback.js')).scrubPersonalLogs(this, ids, user) } catch { /* additive, like the rest of this scrub */ }
-    // The people who shared this phone: their names and relations go with it (src/phone-persons.js).
-    try { rewritten += await (await import('./phone-persons.js')).scrubPersonsFor(this, ids, user) } catch { /* additive */ }
+
+    try { rewritten += await (await import('./feedback.js')).scrubPersonalLogs(this, ids, user) } catch {  }
+
+    try { rewritten += await (await import('./phone-persons.js')).scrubPersonsFor(this, ids, user) } catch {  }
     return rewritten
   }
 
-  // ---- erasure journal: crash recovery for a multi-step, irreversible action --
-  //
-  // eraseContact is NOT ATOMIC and cannot be made so from here: thatcher exposes
-  // create/update/delete/list/get and no transaction, and two of the steps
-  // (redacting the provenance raw log, removing the freddie session transcripts)
-  // are filesystem writes outside the database entirely. So the honest mechanism
-  // is not a transaction but a durable PLAN written before the first mutation and
-  // a matching DONE marker written after the last one.
-  //
-  // The plan is what makes the crash RECOVERABLE rather than merely detectable,
-  // and one crash window is the reason it has to exist at all: the primary
-  // contact row is scrubbed FIRST, and _siblingContactIds matches other rows for
-  // the same person on the DIGITS of external_id. A crash after that scrub and
-  // before the sibling loop finishes destroys the only key by which the siblings
-  // could ever be found again -- a re-run reads '[erased]', sees fewer than seven
-  // digits, and returns an empty sibling list forever. The plan records the
-  // sibling ids (computed before any write), so a re-run recovers them from the
-  // journal instead of from a key that no longer exists.
   async _erasureJournalCaseId() { return this._systemSingletonCaseId('erasure-journal', 'erasure-journal') }
 
   async _recordErasureJournal(tag, payload) {
@@ -1396,18 +788,12 @@ export class CaseStore {
       })
       return true
     } catch (e) {
-      // Loud, never fatal. A journal that cannot be written means a later crash
-      // would be unrecoverable, which the operator has to know BEFORE the
-      // irreversible part runs -- but refusing the erasure outright would block
-      // a compliance obligation on a bookkeeping failure.
+
       this.log?.error?.('[casey] erasure journal write failed -- a crash during this erasure will not be recoverable', { tag, error: e.message })
       return false
     }
   }
 
-  // Every erasure plan with no matching completion: an erasure that started and
-  // did not finish. Each row names exactly what was in flight, so the recovery is
-  // `casey erase-contact <contact_id> --yes` and nothing has to be guessed.
   async findIncompleteErasures() {
     let id
     try { id = await this._erasureJournalCaseId() } catch { return [] }
@@ -1420,22 +806,13 @@ export class CaseStore {
       try {
         const p = JSON.parse(payload)
         if (p?.runId) plans.delete(p.runId)
-        // A re-run that RECOVERED an earlier interrupted plan closes that plan
-        // too, not only its own. Without this the crashed run's marker would
-        // stand open forever and --check would keep reporting an erasure that
-        // has in fact been completed -- a detector that cries wolf is a
-        // detector an operator learns to ignore.
+
         for (const closed of (p?.closes || [])) plans.delete(closed)
       } catch { continue }
     }
     return [...plans.values()]
   }
 
-  // ERASE ONE PERSON ON A SHARED PHONE (POPIA): their name and relation, the identifying fields of the reports
-  // they gave (`personOnly` in _erasePiiOnCase), the stored conversations of those reports, and their id on the
-  // timeline. The phone contact, its routing key, the other people on it and their reports are left alone. The
-  // bot can still only answer the number, so this never opts the phone out and never touches STOP.
-  // Idempotent, and journalled like eraseContact so an interrupted run is visible (person-erasure-plan/-done).
   async erasePerson(contactId, personId, { reason = '', operator = SYSTEM_USER } = {}) {
     const contact = await this.getContact(contactId)
     if (!contact) throw new Error(`erasePerson: no such contact ${contactId}`)
@@ -1444,7 +821,7 @@ export class CaseStore {
     const cases = await casesOf(this, contactId, personId)
     const runId = `${contactId}-${personId}-${Date.now()}`
     await this._recordErasureJournal('person-erasure-plan', { runId, contactId, personId, caseIds: cases.map(c => c.id), by: operator?.id || 'system', reason, ts: Date.now() })
-    // The person's row in the log is erased LAST: until it is, a re-run still knows which reports were theirs.
+
     const touched = [], failed = []
     for (const ref of cases) {
       const c0 = await this.getCase(ref.id).catch(() => null)
@@ -1455,12 +832,12 @@ export class CaseStore {
     }
     await this._redactProvenanceFor(touched, { operator, reason })
     const sessions = eraseCaseSessions(cases.map(c => c.id), { log: this.log || console })
-    // the person's id, wherever it was written on a timeline (speaker, notice, STOP/HELP attribution)
+
     let idsRewritten = 0
     const evs = await this.t.list('event', { data: { $like: `%${personId}%` } }, { limit: 100000 }).catch(() => [])
     for (const e of evs) {
       if (typeof e.data !== 'string' || !e.data.includes(personId)) continue
-      try { await this.t.update('event', e.id, { data: e.data.split(personId).join('[erased]') }, SYSTEM_USER); idsRewritten++ } catch { /* counted by omission */ }
+      try { await this.t.update('event', e.id, { data: e.data.split(personId).join('[erased]') }, SYSTEM_USER); idsRewritten++ } catch {  }
     }
     if (failed.length) return { ok: true, complete: false, contactId, personId, casesScrubbed: touched, casesFailed: failed, sessionsErased: sessions.removed.length, sessionsFailed: sessions.failed }
     const logged = await eraseInLog(this, contactId, personId, { by: `staff:${operator?.id || 'system'}` })
@@ -1472,12 +849,6 @@ export class CaseStore {
     }
   }
 
-  // The retention path's per-case entry point (src/retention.js's `erase`
-  // action): the same scrub eraseContact applies, on one case, with the same
-  // provenance-ledger redaction appended. It deliberately does NOT touch the
-  // contact row -- retention expires a CASE by age; the person may still have
-  // other, live cases, and scrubbing their contact row would silently perform a
-  // right-to-erasure nobody asked for.
   async retentionEraseCase(caseId, { reason = '', operator = 'system' } = {}) {
     const c = await this.getCase(caseId)
     if (!c) return { ok: false, outcome: 'gone' }
@@ -1486,15 +857,6 @@ export class CaseStore {
     return { ok: outcome === 'scrubbed' || outcome === 'nothing-to-do', outcome }
   }
 
-  // ADDITIVE: also redact the PII-bearing fields (photos/audio) from the
-  // provenance subsystem's Tier 1 raw log (src/core/raw-log.js), which is
-  // structurally append-only and is NOT touched by the thatcher-side scrub
-  // -- see src/core/write-path.js redactSubjectFields for why this is
-  // a correction-append, not a delete. Best-effort per case: a redaction
-  // failure never blocks or reverts the real erasure, which already
-  // succeeded; only photos/audio are provenance-pack-declared fields (see
-  // src/packs/animal-health.js) among PII_REPORT_FIELDS, so those are the
-  // only two ever passed through here.
   async _redactProvenanceFor(caseIds, { operator = SYSTEM_USER, reason = '' } = {}) {
     const PROVENANCE_PII_FIELDS = CaseStore.PII_REPORT_FIELDS.filter(f => f === 'photos' || f === 'audio')
     if (!PROVENANCE_PII_FIELDS.length || !caseIds.length) return
@@ -1508,9 +870,9 @@ export class CaseStore {
             subjectId: caseId, fields: PROVENANCE_PII_FIELDS,
             redactedBy: operator?.id || operator || 'system', reason: reason || 'erasure',
           })
-        } catch { /* best-effort per case -- the real thatcher scrub already succeeded */ }
+        } catch {  }
       }
-    } catch { /* best-effort -- the provenance ledger is additive, never load-bearing for the real erasure */ }
+    } catch {  }
   }
 
   async eraseContact(contactId, { reason = '', operator = SYSTEM_USER } = {}) {
@@ -1519,20 +881,11 @@ export class CaseStore {
     const PII_CONTACT_FIELDS = CaseStore.PII_CONTACT_FIELDS
     const alreadyErased = contact.external_id === '[erased]'
 
-    // EVERYTHING THAT HAS TO BE DERIVED FROM THE LIVE KEY IS DERIVED FIRST, and
-    // written down, BEFORE the first mutation. The primary contact scrub below
-    // destroys the digits _siblingContactIds matches on, so deriving the sibling
-    // list afterwards would work only for a run that never crashes. See
-    // _recordErasureJournal for the full argument.
     let siblingIds = await this._siblingContactIds(contact)
     let cases = await this.listCases({ contact_id: contactId }, { limit: 10000 })
     const recoveredRunIds = []
     if (alreadyErased) {
-      // Re-running against an already-scrubbed contact: the key is gone, so the
-      // sibling scan above can only return []. Recover the real list from the
-      // journal, which is the whole reason it is written. Case ids are unioned
-      // rather than replaced -- a case created since the interrupted run is
-      // still this contact's and still has to be scrubbed.
+
       const plans = await this.findIncompleteErasures().catch(() => [])
       const mine = plans.filter(p => p.contactId === contactId)
       if (mine.length) {
@@ -1559,17 +912,11 @@ export class CaseStore {
     if (!alreadyErased) {
       await this.t.update('contact', contactId, PII_CONTACT_FIELDS, SYSTEM_USER)
     }
-    // Every other row for the same number, erased with the same field set. The
-    // ids are returned so the caller can say how many people-records this
-    // actually touched rather than implying it was one.
+
     for (const sid of siblingIds) {
-      try { await this.t.update('contact', sid, PII_CONTACT_FIELDS, SYSTEM_USER) } catch { /* per-row best effort */ }
+      try { await this.t.update('contact', sid, PII_CONTACT_FIELDS, SYSTEM_USER) } catch {  }
     }
-    // A team member's erasure reaches the two places their number and their hold on
-    // work live outside their own contact row: the dashboard login linked to their
-    // number (operator_account.contact_phone) and every open record assigned to
-    // `contact:<id>`, which would otherwise stay held by nobody and keep the
-    // assistant silent on it. Best effort: the contact scrub above already landed.
+
     try {
       for (const id of [contactId, ...siblingIds]) await this.releaseCasesHeldBy(`contact:${id}`, 'the team member was erased', SYSTEM_USER)
       const digits = String(contact.external_id || '').replace(/\D/g, '')
@@ -1578,9 +925,9 @@ export class CaseStore {
           if (a.contact_phone && String(a.contact_phone).replace(/\D/g, '') === digits) await this.t.update('operator_account', a.id, { contact_phone: '' }, SYSTEM_USER)
         }
       }
-    } catch { /* additive: the erasure itself has landed */ }
+    } catch {  }
     let roleRefsScrubbed = 0
-    try { roleRefsScrubbed = await this._scrubRoleReferences([contactId, ...siblingIds], SYSTEM_USER) } catch { /* additive */ }
+    try { roleRefsScrubbed = await this._scrubRoleReferences([contactId, ...siblingIds], SYSTEM_USER) } catch {  }
     const touchedCaseIds = []
     const failedCaseIds = []
     for (const c0 of cases) {
@@ -1589,18 +936,9 @@ export class CaseStore {
       else if (outcome === 'conflict') failedCaseIds.push(c0.id)
     }
     await this._redactProvenanceFor(touchedCaseIds, { operator, reason })
-    // The stored CONVERSATIONS, which live outside data/ entirely and which no
-    // erasure reached until now -- see store/agent-sessions.js for what they
-    // are and why deleting them is correct here and nowhere else. Synchronous
-    // and best-effort: the thatcher-side erasure above has already succeeded,
-    // so a filesystem failure must be reported, never allowed to undo it.
-    // Driven off the full case list, not only the freshly-scrubbed ones: a case
-    // whose row was already scrubbed by an interrupted earlier run still has its
-    // transcript on disk, and that is precisely the residue a re-run must clear.
+
     const sessions = eraseCaseSessions(cases.map(c => c.id), { log: this.log || console })
-    // The DONE marker closes the plan. Nothing else clears it, so a crash
-    // anywhere above leaves the plan standing and findIncompleteErasures reports
-    // it with the full sibling/case list intact.
+
     await this._recordErasureJournal('erasure-done', {
       runId, contactId, closes: recoveredRunIds,
       casesScrubbed: touchedCaseIds.length, casesFailed: failedCaseIds.length,
@@ -1609,19 +947,13 @@ export class CaseStore {
     return {
       contactId, contactErased: !alreadyErased, alsoErasedContactIds: siblingIds, roleReferencesScrubbed: roleRefsScrubbed,
       casesScrubbed: touchedCaseIds, casesFailed: failedCaseIds,
-      // Named so a caller can tell an operator that a conversation could not be
-      // removed. A compliance action that half-succeeded must say so.
+
       sessionsErased: sessions.removed.length, sessionsFailed: sessions.failed,
-      // False means a crash during this run would NOT have been recoverable --
-      // the caller surfaces it rather than letting the erasure look routine.
+
       journalled,
     }
   }
 
-  // Metadata-only update that does NOT touch last_event_at -- used by the health
-  // sweep to set/clear health:* tags. Stamping recency here would corrupt the very
-  // signal staleness is measured from (a swept stale case would look freshly
-  // active), so the guardrail must never perturb the field it reads (P1).
   async updateCaseQuiet(id, patch, user = SYSTEM_USER, opts = {}) {
     const violation = writeGuardViolation(patch, user)
     if (violation) throw new Error(violation)
@@ -1629,57 +961,31 @@ export class CaseStore {
     return this.getCase(id)
   }
 
-  // Narrow convenience for a caller (case-tools.js's case_report handler) that
-  // wants to refresh a DERIVED_ONLY field as the system actor without reaching
-  // for updateCaseQuiet directly and risking a future caller widening the patch
-  // to a non-derived field. Rejects any key outside DERIVED_ONLY_FIELDS itself,
-  // as a second, narrower layer on top of writeGuardViolation's own check.
   async systemUpdateDerived(id, patch) {
     const bad = Object.keys(patch || {}).filter(k => !DERIVED_ONLY_FIELDS.has(k))
     if (bad.length) throw new Error(`systemUpdateDerived: not a derived-only field: ${bad.join(', ')}`)
     return this.updateCaseQuiet(id, patch, SYSTEM_USER)
   }
 
-  // Re-point / edit a single timeline event. The one primitive merge and split
-  // need: moving an event between cases is a case_id update, never a delete +
-  // recreate (which would lose created_at ordering and the audit id). Used only
-  // by mergeCases / splitCase, both of which run under a lock.
   async updateEvent(id, patch, user = SYSTEM_USER) {
     await this.t.update('event', id, patch, user)
     return this.t.get('event', id)
   }
 
-  // Walk a case to 'closed' through valid transitions (multi-hop), as the admin
-  // SYSTEM_USER so the operator-only 'closed' gate is satisfied. Used when a case
-  // is folded into another by a merge: the source must leave the open-case set so
-  // findOpenCase never reuses an emptied shell. Tolerates an already-closed case.
   async _forceClose(caseId, reason, user = SYSTEM_USER) {
     for (let hop = 0; hop < Object.keys(this._wf).length + 1; hop++) {
       const c = await this.getCase(caseId)
       if (!c || c.status === 'closed') return c
       const avail = this.availableTransitions(c, user)
-      // Prefer a forward step toward resolved/closed; else take any valid step.
+
       const next = avail.find(s => s === 'closed') || avail.find(s => s === 'resolved')
         || avail.find(s => ['in_progress', 'triaging', 'waiting'].includes(s)) || avail[0]
-      if (!next) return c   // dead end: leave it where it is rather than throw
+      if (!next) return c
       await this.transition(caseId, next, { user, reason })
     }
     return this.getCase(caseId)
   }
 
-  // ---- merge / split: post-hoc correction of case grouping ----------------
-  //
-  // Identity by channel|external_id is a first guess, not ground truth: the same
-  // outbreak arrives across two numbers, or one contact reports two unrelated
-  // outbreaks on one thread. So grouping must be CORRECTABLE after the fact.
-  //
-  // mergeCases folds `source` into `target` (target stays canonical). It is:
-  // - LOSSLESS  : every source event is re-pointed to target, never deleted.
-  // - IDEMPOTENT: a source already merged (tagged 'merged', no remaining own
-  //                 events) is a no-op -- safe to retry after a partial failure.
-  // Report merge is fill-if-empty so the canonical target never loses a value it
-  // already held; tags are unioned. The source is left as an audited redirect and
-  // walked out of the open-case set so findOpenCase never reuses it.
   async mergeCases(sourceId, targetId, user = AGENT_USER, { reason = '' } = {}) {
     if (sourceId === targetId) return { error: 'cannot merge a case into itself' }
     const src0 = await this.getCase(sourceId)
@@ -1688,8 +994,7 @@ export class CaseStore {
     if (!tgt0) return { error: `no case ${targetId}` }
     if (tgt0.autonomy === 'observe') return { error: 'observe' }
     if (src0.autonomy === 'observe') return { error: 'observe' }
-    // Lock the TARGET conversation: merge mutates the target's report/tags and
-    // re-homes events onto it, so it must serialize against target-side writes.
+
     const srcKey = `${src0.channel}|${src0.external_id}`
     const tgtKey = `${tgt0.channel}|${tgt0.external_id}`
     const mergeFn = async () => {
@@ -1699,35 +1004,23 @@ export class CaseStore {
       if (tgt.autonomy === 'observe') return { error: 'observe' }
       if (src.autonomy === 'observe') return { error: 'observe' }
       const srcTags = new Set(tagList(src))
-      // Idempotency: a source already folded in is tagged 'merged'. Retrying the
-      // merge (e.g. after a crash between steps) must not move its redirect note
-      // or transition residue onto the target a second time -- the tag is the
-      // durable "already done" marker, independent of how many audit events the
-      // close left behind.
+
       if (srcTags.has('merged')) {
         return { merged: true, alreadyMerged: true, target: tgt, movedEvents: 0 }
       }
-      // Move only the REAL report events, not audit residue a prior step wrote.
+
       const srcEvents = await this.listEvents(sourceId)
-      // 1) Re-point every source event onto the target -- lossless.
+
       for (const ev of srcEvents) await this.updateEvent(ev.id, { case_id: targetId })
-      // 2) Fill-if-empty report merge: the target value wins -- it is canonical
-      // and NEVER overwritten by the source, unlike mergeReport's own
-      // overwrite-on-refinement contract for a single case's own incoming turns
-      // -- except for the append-only photos/audio/sites fields. Both rules, and
-      // why mergeReportFields is deliberately NOT reused here, live in
-      // store/report-merge.js's fillIfEmptyReport.
+
       const { value: srcReport, corrupted: srcCorrupted } = this._parseReport(src.report, sourceId)
       const { value: tgtReport, corrupted: tgtCorrupted } = this._parseReport(tgt.report, targetId)
       const reportWasCorrupted = srcCorrupted || tgtCorrupted
       const mergedReport = fillIfEmptyReport(tgtReport, srcReport)
-      // 3) Union tags onto target (drop the internal 'merged' marker).
+
       const tgtTags = new Set(tagList(tgt))
       for (const tg of srcTags) if (tg !== 'merged') tgtTags.add(tg)
-      // lat/lon are real case columns (the agent's own map coordinate), not
-      // report fields -- fill-if-empty only, same "target value wins" contract
-      // as the report merge above, so a target that already has its own
-      // coordinate is never displaced by the source's.
+
       const latLonPatch = (tgt.lat == null || tgt.lon == null) && src.lat != null && src.lon != null
         ? { lat: src.lat, lon: src.lon }
         : {}
@@ -1741,10 +1034,7 @@ export class CaseStore {
         text: `Merged in ${src.ref} (${srcEvents.length} event(s))${reason ? ` -- ${reason}` : ''}.`,
         data: { merged_from: sourceId, merged_from_ref: src.ref, moved_events: srcEvents.length, reason },
       })
-      // 4) Close the source first, then tag it as merged redirect.
-      // _forceClose must succeed BEFORE writing 'merged' tag -- if we tag first
-      // and then close fails, the source is stuck as 'merged' but still open,
-      // and the idempotency check (srcTags.has('merged')) would skip it on retry.
+
       const closed = await this._forceClose(sourceId, `merged into ${tgt.ref}`, SYSTEM_USER)
       if (!closed || closed.status !== 'closed') {
         return { error: 'merge partial: source could not be closed', status: closed?.status }
@@ -1770,14 +1060,6 @@ export class CaseStore {
     return this._withLock(key1, () => this._withLock(key2, mergeFn))
   }
 
-  // splitCase carves a subset of a case's events into a NEW case -- the inverse
-  // correction, for when one thread turns out to hold two distinct outbreaks.
-  // The named events are re-pointed (the source loses them; the new case gains
-  // them) and both cases get a linking note. Honest by construction (P10): the
-  // new case starts with an EMPTY report -- we do not pretend to perfectly
-  // partition the original's merged report; an operator/agent re-states the new
-  // case's facts. Guards: empty selection, events not on the source, and a split
-  // that would empty the source (that is a no-op, not a split).
   async splitCase(sourceId, eventIds, { subject = '', reason = '' } = {}, user = AGENT_USER) {
     const ids = [...new Set((eventIds || []).filter(Boolean))]
     if (!ids.length) return { error: 'no events selected to split out' }
@@ -1817,12 +1099,8 @@ export class CaseStore {
     })
   }
 
-  // ---- timeline / events --------------------------------------------------
-
   async appendEvent(caseId, { kind, actor = 'system', channel, text = '', data = null, msg_id = '', touch = true }) {
-    // Do not pass created_at: thatcher stamps it as a unix-seconds integer on
-    // create(). Passing an ISO string would just be overwritten, leaving the
-    // column's type ambiguous. The dashboard formats the integer for display.
+
     const ev = await this.t.create('event', {
       case_id: caseId,
       kind, actor, channel: channel || '',
@@ -1830,42 +1108,24 @@ export class CaseStore {
       data: data ? JSON.stringify(data) : '',
       msg_id: msg_id || '',
     }, AGENT_USER)
-    // Touch the case so dashboards sort by recency. A failure here is a real
-    // problem (the timeline and the case row diverge), so surface it rather than
-    // swallowing it. touch=false for system notes that must NOT count as activity
-    // (the health sweep -- its own observation must not reset the staleness clock
-    // it measures from, or a stale case would look freshly active after a sweep).
+
     if (touch) {
       try {
         await this.t.update('case', caseId, { last_event_at: nowIso() }, AGENT_USER)
       } catch (e) {
-        // error, not warn: the timeline and the case row have genuinely diverged
-        // (the event persisted, last_event_at did not), so this must be visible --
-        // but we do NOT throw, or every appendEvent caller would have to handle a
-        // touch failure that does not affect the event it just wrote.
+
         this.log?.error?.('case touch after appendEvent failed -- last_event_at is now stale for this case', { caseId, error: e.message })
       }
     }
     return ev
   }
 
-  // Chronological (oldest-first). We sort in JS rather than via thatcher's list
-  // sort because created_at is coarse unix-SECONDS: a whole turn's events share one
-  // second, and thatcher's comparator has no insertion-order tiebreak, so pushing
-  // the sort down would scramble same-second order. The JS stable sort keeps
-  // insertion order on ties (see sortByCreatedStable) -- load-bearing for replay.
   async listEvents(caseId, opts = {}) {
-    // Default high, not 200: merge/split and conversation-context callers need the
-    // WHOLE timeline -- a silent 200/1000 cap drops events on a long case, losing
-    // history on merge and miscounting the empty-source guard on split (P1/P9).
-    // Explicit-limit callers (case_get's 30) still win.
+
     const rows = await this.t.list('event', { case_id: caseId }, { ...opts, limit: opts.limit ?? 10000 })
     return byCreatedAscList(rows)
   }
 
-  // Paged, newest-first window for the dashboard timeline. We sort the full set
-  // newest-first in JS (same coarse-seconds stable-tiebreak reason as listEvents),
-  // then apply the page window, so paging stays correct on same-second events.
   async listEventsPage(caseId, { limit = 50, offset = 0 } = {}) {
     const rows = byCreatedDescList(await this.t.list('event', { case_id: caseId }, { limit: 1000 }))
     return rows.slice(offset, offset + limit)
@@ -1875,20 +1135,6 @@ export class CaseStore {
     return this._count('event', { case_id: caseId })
   }
 
-  // Cross-case event stream for the activity/audit view. Unscoped by case but
-  // where-filterable by kind/actor (validated by the caller against known enums);
-  // returned newest-first and capped so a huge log cannot blow the response. The
-  // case_id stays on each row so the UI can deep-link back to the case.
-  // `truncated` tells the caller whether more rows existed past `limit` --
-  // fetching one sentinel row beyond the cap (limit+1) makes silent truncation
-  // observable instead of the caller believing they saw the whole log.
-  //
-  // `caseIds` (optional): restricts the scan to a known set of case ids via
-  // thatcher's operator-where $in (same operator-where compiler listCases
-  // already calls directly, no feature-detect -- see listCases' own comment)
-  // instead of the caller looping listEvents() once per case id. This is what
-  // lets a caller like queueStatus() below replace an O(cases) round-trip
-  // fan-out with exactly one query.
   async listAllEvents({ kind = null, actor = null, caseIds = null } = {}, { limit = 200 } = {}) {
     const where = {}
     if (kind) where.kind = kind
@@ -1899,26 +1145,6 @@ export class CaseStore {
     return { rows: rows.slice(0, cappedLimit), truncated: rows.length > cappedLimit }
   }
 
-  // Every event for a SET of cases, in one query, already grouped and already in
-  // each case's own ascending order -- i.e. exactly what a `cases.map(c =>
-  // listEvents(c.id))` fan-out produces, from one round trip instead of one per
-  // case. /api/overview and /api/operators/workload were measured issuing 44 and
-  // 50 queries respectively at 23 cases, every one of them an unindexed full
-  // scan of the event table, and both are polled.
-  //
-  // Grouping in JS reproduces the fan-out exactly rather than approximately:
-  // byCreatedAscList is the same stable coarse-seconds sort listEvents applies,
-  // and it is applied PER CASE after grouping, so same-second ordering within a
-  // case is identical and no case can be reordered by another case's events.
-  //
-  // Cases with no events get an empty array, not a missing key: a caller doing
-  // `map.get(id).length` must not have to know which shape it is getting, and
-  // the fan-out it replaces always produced an entry per case.
-  //
-  // The limit is per-case-average rather than flat for a reason casey.js's
-  // queueStatus documents from experience: one flat budget over a newest-first
-  // cross-case read lets a single busy case consume the whole allowance and
-  // starve every other case's history.
   async listEventsByCase(caseIds, { perCaseLimit = 10000 } = {}) {
     const out = new Map(caseIds.map(id => [id, []]))
     if (!caseIds.length) return out
@@ -1931,43 +1157,25 @@ export class CaseStore {
     return out
   }
 
-  // Has this exact platform message already been recorded? Used to dedup webhook
-  // / gateway redeliveries so a retried message is not answered twice.
   async hasInboundMessage(caseId, msgId) {
     if (!msgId) return false
     const rows = await this.t.list('event', { case_id: caseId, msg_id: msgId }, { limit: 1 })
     return rows.length > 0
   }
 
-  // ---- workflow -----------------------------------------------------------
-
-  // The valid workflow statuses, from the parsed config -- the single source of
-  // truth callers (e.g. the dashboard status filter) validate against, so an
-  // arbitrary ?status= never reaches thatcher.
   getValidStatuses() { return Object.keys(this._wf || {}) }
 
   availableTransitions(caseRow, user = AGENT_USER) {
     return nextStates(this._machine, caseRow.status, user?.role)
   }
 
-  // Transition a case and record it on the timeline in one step.
   async transition(caseId, toState, { user = AGENT_USER, reason = '' } = {}) {
     const before = await this.getCase(caseId)
     if (!before) throw new Error(`no case ${caseId}`)
-    // A no-op move to the current stage is not a real change: skip it so we do
-    // not record a junk event or re-notify the contact.
+
     if (before.status === toState) return before
     this._validateTransition(before.status, toState, user)
-    // Optimistic-concurrency guard, same discipline mergeReport/updateCaseChecked
-    // already use: without it, a concurrent write (a dashboard operator's PATCH
-    // landing between the read above and this write, or a second agent turn
-    // racing the same case) can silently win-then-lose against this stage
-    // change with no error and no re-validation against the fresh row.
-    // `before` was read fresh above, so `before._version` is the exact
-    // optimistic-lock token thatcher expects. Bounded retry: on a real
-    // conflict, re-read and re-validate the transition against the CURRENT
-    // status (which may have moved since `before` was read), not blindly
-    // retry the original from-state check against stale data.
+
     const TRANSITION_RETRY_LIMIT = 3
     let attemptBefore = before
     for (let attempt = 0; attempt <= TRANSITION_RETRY_LIMIT; attempt++) {
@@ -1985,35 +1193,21 @@ export class CaseStore {
         }
         const fresh = await this.getCase(caseId)
         if (!fresh) throw new Error(`no case ${caseId}`)
-        if (fresh.status === toState) return fresh   // someone else already made this exact move
+        if (fresh.status === toState) return fresh
         this._validateTransition(fresh.status, toState, user)
         attemptBefore = fresh
       }
     }
-    // attemptBefore.status is the TRUE prior stage the write actually
-    // overwrote -- on a conflict retry this is the freshly re-read status,
-    // not the original (possibly now-stale) `before` snapshot, so the audit
-    // trail and the notify hook both report the real transition that happened.
+
     await this.appendEvent(caseId, {
       kind: 'transition',
       actor: user.role === 'agent' ? 'agent' : 'operator',
       text: `${attemptBefore.status} -> ${toState}${reason ? ` (${reason})` : ''}`,
       data: { from: attemptBefore.status, to: toState, by: user.id, reason },
     })
-    // Re-read AFTER appendEvent, not before: appendEvent's own touch write
-    // (last_event_at, touch=true by default) is a SECOND mutation of this same
-    // case row, bumping its optimistic-lock version again. A row read before
-    // that touch lands is already one version behind the instant transition()
-    // returns, so a caller that treats this return value as "current" and
-    // reuses its _version as their own next expectedVersion hits a spurious
-    // conflict against a write that was never actually concurrent. Thatcher's
-    // optimistic lock never lets a stale version corrupt data (a mismatched
-    // expectedVersion always throws), but it breaks the idempotent-dispatch-
-    // replay-safe property: the returned row must reflect every mutation
-    // transition() itself performed, not just the first of two.
+
     const result = await this.getCase(caseId)
-    // Proactive contact note. Isolated: a notify failure must not fail the
-    // operator's transition (the stage change already committed).
+
     if (this.onTransition) {
       try { await this.onTransition({ caseRow: result, from: attemptBefore.status, to: toState, user, reason }) }
       catch (e) {
@@ -2027,7 +1221,7 @@ export class CaseStore {
 }
 
 function nowIso() {
-  // CaseStore runs in the casey process (not the workflow sandbox), so Date is fine here.
+
   return new Date().toISOString()
 }
 
