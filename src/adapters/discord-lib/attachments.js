@@ -1,4 +1,3 @@
-// Attachment-fetch internals for DiscordAdapter's inbound MESSAGE_CREATE path.
 import { fetchWithTimeout } from '../webhook-platform-base.js'
 import { MAX_ATTACHMENT_BYTES, ATTACHMENT_FETCH_TIMEOUT_MS, contentTypeCategory } from './constants.js'
 
