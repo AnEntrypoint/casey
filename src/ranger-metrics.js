@@ -1,37 +1,5 @@
-// ranger-metrics.js -- how the field team is actually doing, measured from the
-// timeline events of each report. Pure functions: cases + their events + the
-// team roster in, plain numbers out; nothing here reads a store or the clock.
-//
-// WHY THIS EXISTS. The overview's first_response_ms runs from the reporter's
-// first message to the first outbound, and the bot's own replies count, so it
-// measures the assistant and says nothing about a ranger. These are the human
-// numbers, per ranger / technician and per area:
-//   first_action   an assignment to the holder's first act on the report
-//   signoff        a hand-over to the sign-off desk to the report being finished
-//   nudges         operator reminders sent while a person held the report, and
-//                  the share of holdings that needed one
-//   stuck          reports still open with a holder who has done nothing on them
-//                  for longer than stuckHours
-//
-// A "holding" (episode) is one span during which one person is the assignee: it
-// starts at an assignment event and ends at the next assignment or release. A
-// report given to two people in turn is two holdings, one per person.
-//
-// WHAT COUNTS AS THE HOLDER'S ACT. An event after the assignment that is not the
-// reporter's message, not the assistant's or the system's, not an operator
-// reminder, and that names the holder: their WhatsApp team tools stamp
-// `staff_contact_id`, dashboard logins stamp `by: <username>`, a relayed photo or
-// pin is worded "relayed by <name>", and a WhatsApp transition carries their name
-// in its reason. Anything that cannot be tied to the holder is NOT counted for
-// them, so these figures err toward "no action yet", never toward flattery.
-//
-// KNOWN LIMIT. A nudge sent by opening the operator's own WhatsApp from the
-// Nudges panel (the wa.me link) leaves no event, so it cannot be counted; only
-// reminders sent through casey (which log `operator_reminder`) are.
-//
-// PRIVACY. Person rows are for staff and carry names. Area rows are folded by
-// privacy.js: an area with fewer than MIN_AGGREGATE_CELL holdings joins
-// 'other/sparse', which itself reports no figures while it is still under the floor.
+
+
 import { tsMs } from './timestamp.js'
 import { evData } from './safe.js'
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY, UNSUPPRESSED_BUCKET_KEYS } from './privacy.js'
@@ -56,7 +24,6 @@ export function p90(xs) {
 }
 const dist = (xs) => ({ n: xs.length, median_ms: median(xs), p90_ms: p90(xs) })
 
-// person: { id, name, role, keys: [assignee keys they may be held under], ids: [lowercase identifiers] }
 export function indexPeople(people) {
   const byKey = new Map()
   const idOwners = new Map()
@@ -67,7 +34,7 @@ export function indexPeople(people) {
       idOwners.get(i).add(p.id)
     }
   }
-  // An identifier two people share (two "John"s) names nobody in particular.
+
   const ambiguous = new Set([...idOwners].filter(([, s]) => s.size > 1).map(([i]) => i))
   return { byKey, ambiguous }
 }
@@ -94,7 +61,6 @@ const isHumanActEvent = (e, d) => {
   return true
 }
 
-// One case -> { episodes, signoffs }.
 function walkCase(c, events, byKey, ambiguous, now, unclaimed) {
   const evs = events.map((e) => ({ e, d: evData(e), at: tsMs(e.created_at) })).filter((x) => Number.isFinite(x.at)).sort((a, b) => a.at - b.at)
   const isOpen = !DONE.has(c.status)
@@ -108,7 +74,7 @@ function walkCase(c, events, byKey, ambiguous, now, unclaimed) {
   }
   const cur = lc(c.assignee)
   const heldNow = cur && cur !== unclaimed ? cur : null
-  // A holder set without an assignment event (CLI, import): span from creation.
+
   if (heldNow && !marks.length) marks.push({ at: tsMs(c.created_at), key: heldNow, ev: null, inferred: true })
   const episodes = []
   for (let i = 0; i < marks.length; i++) {
@@ -166,7 +132,6 @@ function aggregate(episodes, signoffs, stuckMs, now) {
 
 const EMPTY_STATS = { first_action: null, waiting_no_action: null, signoff: null, nudges: null, reports_nudged: null, nudge_share: null, stuck: null }
 
-// inputs: { cases, eventsByCase: Map|object, people, groupOf?(case)->string, now, stuckHours, sinceMs, k, unclaimed }
 export function buildTeamMetrics({ cases, eventsByCase, people, groupOf = () => 'unknown', now, stuckHours = DEFAULT_STUCK_HOURS, sinceMs = 0, k = MIN_AGGREGATE_CELL, unclaimed = 'agent' }) {
   const { byKey, ambiguous } = indexPeople(people)
   const stuckMs = Math.max(1, Number(stuckHours) || DEFAULT_STUCK_HOURS) * HOUR

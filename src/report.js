@@ -1,24 +1,10 @@
-// report.js -- the management briefing aggregator. Composes the same pure
-// pieces the dashboard tabs use (buildOverview for response time + backlog,
-// buildGeo for area rollup) plus per-stage and per-period counts, into one
-// flat object the CSV and the print-friendly HTML both render. Pure, no I/O:
-// the store hands in case rows + events, this returns the briefing numbers.
-//
-// "this period" is the same window buildOverview scopes (days), so opened/closed
-// counts agree with the metrics tab. Health breaches are passed in already
-// classified (the caller has the live thresholds) so this stays I/O-free.
+
 
 import { buildOverview } from './overview.js'
 import { buildGeo } from './geo.js'
 import { buildWorkload } from './workload.js'
 import { isOpenCase } from './format.js'
 
-// breachRows: array of {breach} objects (classifyCaseHealth output) flattened
-// across the open pool; counted here into a breach -> count map.
-// roster ([{id,name}], may be empty) + staleMs feed the per-operator workload
-// rollup so a manager's briefing names who is holding what and how responsive
-// each person has been -- the same aggregate-only (no PII) cards the dashboard
-// Team panel shows, composed here instead of fetched separately.
 export function buildReport(cases, eventsByCaseId, breachRows, now = Date.now(), days = 14, roster = [], staleMs = 24 * 3600 * 1000) {
   const overview = buildOverview(cases, eventsByCaseId, now, days * 24 * 3600 * 1000)
   const open = (cases || []).filter(isOpenCase)
@@ -49,8 +35,7 @@ export function buildReport(cases, eventsByCaseId, breachRows, now = Date.now(),
     dwell_ms_median: overview.dwell_ms_median,
     by_area: geo.map(g => ({ place: g.place, count: g.count })),
     breaches,
-    // Aggregate-only worst-first per-operator cards (no external_id, no per-contact
-    // rows): name + how much each holds and how responsive they have been.
+
     by_operator: workload.operators.map(o => ({
       name: o.name,
       open_assigned: o.open_assigned,

@@ -1,16 +1,4 @@
-// case-tools-feedback.js -- comments about the SYSTEM itself, kept apart from any
-// report.
-//
-//   case_feedback  every tier, reporters included (case-tools-gates.js
-//                  REPORT_ONLY_TOOLS): the person is talking about the assistant
-//                  or the service ("too long", "brilliant", "I did not understand
-//                  you"), not about an animal. The model decides when that is
-//                  what was said; nothing here classifies text. It writes to the
-//                  feedback log (src/feedback.js) and NEVER to the report.
-//   team_feedback  operator rung: what testers said, newest first, plain lines.
-//
-// Appended after the team tools in case-tools.js, so the pinned order of the
-// earlier tools is untouched.
+
 
 import { defTool, str, boundCase } from './case-tools-shared.js'
 import { addFeedback, listFeedback, MAX_TEXT } from './feedback.js'

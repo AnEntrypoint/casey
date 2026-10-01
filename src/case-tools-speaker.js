@@ -1,20 +1,4 @@
-// case-tools-speaker.js -- case_speaker: who is writing on this phone.
-//
-// Several people can share one WhatsApp number (a family, neighbours, a herd boy
-// borrowing the phone), so the number names a chat, not a person. The MODEL reads what
-// people write, in any language, and calls this when it learns who is writing: someone
-// introduces themselves, says "this is my wife", "it is Nomsa now", or answers "who am
-// I speaking with?". Nothing here reads a message or matches a word, and the tool
-// never guesses a name: a name is stored exactly as the person said it, and a person
-// nobody named is never invented.
-//
-// In REPORT_ONLY_TOOLS (case-tools-gates.js), so every tier has it. The result carries
-// no phone number and no contact id: the person writing now, the others known on this
-// phone (so the model can ask "is this Sipho or someone else?"), and who gave the open
-// report (so it can start a new one when someone else is writing).
-//
-// Appended after case-tools-feedback.js in case-tools.js, so the pinned order of the
-// earlier tools is untouched.
+
 
 import { defTool, str, boundCase } from './case-tools-shared.js'
 import { evData } from './safe.js'
@@ -26,8 +10,6 @@ import {
 const REENABLE_WINDOW_MS = 15 * 60e3
 const slim = (p) => (p ? { id: p.id, name: p.name, ...(p.relation ? { relation: p.relation } : {}) } : null)
 
-// A HELP that switched a stopped phone back on was written before anyone was asked who wrote it. Once the
-// model has learned who it was, say so on the timeline (the person who re-enabled the phone is recorded).
 async function attributeReenable(store, caseId, person) {
   if (!caseId || !person) return false
   let events = []
@@ -90,9 +72,7 @@ export function buildSpeakerTools(store) {
           attributed = await attributeReenable(s, bound.id, target).catch(() => false)
         }
         state = await speakerState(s, contactId)
-        // Who gave the open report, so the model can start a new one when someone else is writing. Nothing is
-        // stamped here: a report is attributed when it is opened or written (case_new, case_report), so a person
-        // named before any fact is recorded does not claim a report the next person then fills in.
+
         let openReport = null
         if (bound.id) {
           const c = await s.getCase(bound.id).catch(() => null)

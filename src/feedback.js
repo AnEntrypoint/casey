@@ -1,17 +1,4 @@
-// feedback.js -- what testers and team members say ABOUT THE SYSTEM ("too long",
-// "brilliant"), kept apart from any report. Testers are both subjects and
-// researchers, so the comment is data in its own right and must never land on an
-// animal report.
-//
-// Storage is the append-only observation log every settings singleton uses (one
-// 'system' case named `feedback`). A record is PII-light on purpose: the
-// contact id (or `login:<username>` for a dashboard user), their tier, the
-// language, the conversation it came from and the comment text, capped, with
-// long digit runs (phone numbers) masked. No name and no number is stored;
-// the staff reader resolves a name at read time.
-//
-// Erasing a person overwrites their comments (scrubPersonalLogs, called from
-// case-store.js's _scrubRoleReferences): the text goes, the count stays.
+
 
 import crypto from 'node:crypto'
 import { taggedObservations } from './store/settings-log.js'
@@ -31,12 +18,11 @@ const cleanText = (t) => String(t == null ? '' : t)
 function parse(events) {
   const out = []
   for (const { payload } of taggedObservations(events, TAG)) {
-    try { const r = JSON.parse(payload); if (r?.id) out.push(r) } catch { /* skip a torn row */ }
+    try { const r = JSON.parse(payload); if (r?.id) out.push(r) } catch {  }
   }
   return out
 }
 
-// `from`: a contact id or `login:<username>`. Returns {ok, id} or {ok:false, reason}.
 export async function addFeedback(store, { from = '', tier = 'reporter', lang = '', text = '', caseId = '', source = 'whatsapp', now = Date.now() } = {}) {
   const t = cleanText(text)
   if (!t) return { ok: false, reason: 'empty' }
@@ -59,8 +45,6 @@ const weekStart = (ms) => {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - back)).toISOString().slice(0, 10)
 }
 
-// Newest first, with simple counts by ISO week (Monday, UTC) and by tier.
-// `nameOf(fromId)` is optional and resolves a display name for staff.
 export async function listFeedback(store, { limit = 50, nameOf = null } = {}) {
   const caseId = await peekSingletonCaseId(store, KEY)
   const all = caseId ? parse(await store.listEvents(caseId).catch(() => [])) : []
@@ -87,8 +71,6 @@ export async function feedbackCounts(store, now = Date.now()) {
   return { total: all.length, last_7_days: all.filter(r => now - r.at < 7 * DAY).length }
 }
 
-// Erasure hook. Overwrites the comments of these contact ids in place and, in
-// the same pass, their rows on the training roster. Returns the events rewritten.
 export async function scrubPersonalLogs(store, contactIds, user) {
   const ids = new Set((contactIds || []).map(String).filter(Boolean))
   let n = await scrubRosterFor(store, [...ids], user)
@@ -100,7 +82,7 @@ export async function scrubPersonalLogs(store, contactIds, user) {
     let r; try { r = JSON.parse(e.text.slice(TAG.length + 1)) } catch { continue }
     if (!ids.has(String(r.c)) || r.x === '[erased]') continue
     r.c = '[erased]'; r.x = '[erased]'; r.v = ''
-    try { await store.t.update('event', e.id, { text: `${TAG}:${JSON.stringify(r)}` }, user); n++ } catch { /* counted by omission */ }
+    try { await store.t.update('event', e.id, { text: `${TAG}:${JSON.stringify(r)}` }, user); n++ } catch {  }
   }
   return n
 }

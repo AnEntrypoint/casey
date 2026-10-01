@@ -1,17 +1,4 @@
-// team-roster.js -- the training roster: who the deployment plans to bring onto
-// the system, per association/area, and whether each person has a smartphone.
-//
-// Some people on the roster will never get a WhatsApp registration (no
-// smartphone), so this cannot live on the contact table: a contact row exists
-// only for a number that can message the bot. The roster is therefore the same
-// append-only, audited observation log role-invites.js uses -- one 'system'
-// singleton case, one event per registration -- and current state is a replay of
-// the log (the latest record for a person wins). No schema change in any config.
-//
-// The rollout table (`casey roles roster`, GET /api/roles/roster) is derived, not
-// stored: total and smartphones come from the log; registered, first message and
-// first case are read from contacts and cases, so they cannot drift from what the
-// system actually holds.
+
 
 import crypto from 'node:crypto'
 import { taggedObservations } from './store/settings-log.js'
@@ -23,16 +10,12 @@ const KEY = 'team-roster'
 const TAG = 'team-roster'
 export const NO_AREA = '(no area given)'
 
-// The roster key of a person: their number when they have one, else a hash of
-// name + area (a person without a smartphone often has no number on file).
 export function rosterKey({ phone = '', name = '', area = '' } = {}) {
   const p = normalizeMsisdn(phone)
   if (p) return p
   return 'n:' + crypto.createHash('sha1').update(`${String(name).trim().toLowerCase()}|${String(area).trim().toLowerCase()}`).digest('hex').slice(0, 12)
 }
 
-// The singleton's case id WITHOUT creating it: a read-only command must not
-// write. Null when nothing was ever recorded.
 export async function peekSingletonCaseId(store, key) {
   const [row] = await store.t.list('case', { channel: 'system', external_id: `settings:${key}` }, { limit: 1 })
   return row ? row.id : null
@@ -56,7 +39,6 @@ export async function loadRoster(store) {
   return { caseId: id, people: replay(await store.listEvents(id).catch(() => [])) }
 }
 
-// One audit event per registration. `person` = { name, phone, tier, area, smartphone, contactId }.
 export async function recordRoster(store, person, { by = 'operator', note = 'registered', now = Date.now() } = {}) {
   const caseId = await store._systemSingletonCaseId(KEY, KEY)
   const k = rosterKey(person)
@@ -69,8 +51,6 @@ export async function recordRoster(store, person, { by = 'operator', note = 'reg
   return k
 }
 
-// Remove one person from the roster (append a tombstone; the earlier rows of a
-// person stay in the log until an erasure rewrites them).
 export async function forgetRoster(store, phoneOrKey, by = 'operator') {
   const { caseId, people } = await loadRoster(store)
   const k = normalizeMsisdn(phoneOrKey) || String(phoneOrKey)
@@ -79,8 +59,6 @@ export async function forgetRoster(store, phoneOrKey, by = 'operator') {
   return true
 }
 
-// Erasure: blank the name, number and area of every roster row tied to these
-// contact ids, in place. Returns the number of events rewritten.
 export async function scrubRosterFor(store, contactIds, user) {
   const ids = new Set((contactIds || []).map(String))
   const caseId = await peekSingletonCaseId(store, KEY)
@@ -92,13 +70,11 @@ export async function scrubRosterFor(store, contactIds, user) {
     let r; try { r = JSON.parse(e.text.slice(TAG.length + 1)) } catch { continue }
     if (r?.op !== 'row' || !ids.has(String(r.cid))) continue
     r.name = '[erased]'; r.ph = ''; r.area = ''; r.cid = '[erased]'
-    try { await store.t.update('event', e.id, { text: `${TAG}:${JSON.stringify(r)}` }, user); n++ } catch { /* counted by omission */ }
+    try { await store.t.update('event', e.id, { text: `${TAG}:${JSON.stringify(r)}` }, user); n++ } catch {  }
   }
   return n
 }
 
-// The rollout table: per association, how far each person has got. Everything
-// after `smartphones` is read live from contacts and cases.
 export async function rolloutTable(store) {
   const { people } = await loadRoster(store)
   const list = [...people.values()]

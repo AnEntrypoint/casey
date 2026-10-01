@@ -1,19 +1,5 @@
-// casey-adapters.js -- building the per-channel transport adapter objects.
-//
-// Casey assembles and supervises a process; this module decides how a channel
-// is wired. The receive-liveness stamps the wrapper needs (markConnected,
-// markInbound) arrive as callbacks rather than as `this`, so the module cannot
-// reach back into the instance for anything else.
 
-// Channel registry: channel name -> async factory returning a ready adapter
-// instance. Adding a new channel (SMS, Telegram, Signal) means adding ONE
-// entry here -- a makeXAdapter factory plus a registry line -- so this is the
-// single place that answers "what channels does casey support" and "how do I
-// add one".
-// A channel ALSO needs its own thatcher.config.yml enum edit (contact.channel/
-// case.channel/event.channel): the channel name is a stored data value, not
-// just a code branch, so a channel missing from that enum fails on write. The
-// registry covers only the ADAPTER WIRING side.
+
 function channelRegistry(deps) {
   return {
     discord: () => makeDiscordAdapter(deps),
@@ -28,62 +14,25 @@ export async function makeChannelAdapter(ch, deps) {
   return factory()
 }
 
-// This wrapper is purely CONFIGURATION -- filtering which inbound events open
-// a case, and verifying outbound delivery status -- never adapter mechanics.
-// The gateway connect/reconnect/heartbeat/typing mechanics live in the
-// DiscordAdapter class itself (src/adapters/discord.js), per the project's
-// layering mandate: agentic harness -> freddie, casey is setup + configuration
-// only. The wrapper depends on that adapter's `ready` event and `botUserId`
-// getter. Follow this method as the template for a future realtime-socket
-// channel.
 async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbound }) {
   {
     const { DiscordAdapter } = await import('./adapters/discord.js')
     const { DiscordSessionStore } = await import('./adapters/discord-lib/session-store.js')
     const { recordDroppedInbound } = await import('./hooks/dropped-intake.js')
-    // The gateway session survives this process, so a supervisor reload resumes
-    // and Discord replays what it buffered instead of the restart window being
-    // a silent hole. When a resume is refused, that window becomes a counted
-    // drop reason like every other path that turns an inbound away.
+
     const a = new DiscordAdapter({
       log,
       sessionStore: new DiscordSessionStore({ dataDir, log }),
       onUnresumableGap: (note) => recordDroppedInbound('gateway_gap_unresumable', { channel: 'discord', store, log, note }),
     })
-    // Filter guild channel messages to only DMs (guild_id absent), @mentions
-    // of the bot, or plain follow-ups from an author mid-conversation with
-    // the bot in that channel. Without this, every message in any guild
-    // channel creates a case -- surveillance intake should only trigger when
-    // someone deliberately contacts the bot, not from general server
-    // conversation.
-    //
-    // The follow-up window: a real person who @mentions the bot once keeps
-    // talking PLAINLY -- nobody re-mentions on every message, so a
-    // mention-only gate silently eats the rest of their conversation. Keyed
-    // exactly like handler.js's conversationKey -- container:author, container
-    // FIRST and author LAST -- so only the SAME author in the SAME channel
-    // inherits the window, and TTL-bounded so the widening fails closed
-    // shortly after the conversation goes quiet. CASEY_DISCORD_FOLLOWUP_MS
-    // overrides the 2h default.
-    const followUpWindow = new Map()   // `${channel_id}:${author_id}` -> expiry ms
+
+    const followUpWindow = new Map()
     const FOLLOWUP_MS = Number(process.env.CASEY_DISCORD_FOLLOWUP_MS) || 2 * 3600e3
-    // Pre-READY hold queue: a guild message that arrives before gateway.js has
-    // captured a.botUserId cannot be evaluated for @mention (see botMentioned's
-    // fail-closed comment below) -- but READY is imminent by construction, so
-    // rather than discarding a possibly-addressed-to-us message outright, hold
-    // it briefly and re-run it through this same filter once botUserId is
-    // known. Bounded on both axes (count and age) so a gateway that never
-    // reaches READY cannot leak memory or replay something stale minutes
-    // later into a conversation that has moved on.
+
     const pendingIdentityUnknown = []
     const PENDING_IDENTITY_MAX = 50
     const PENDING_IDENTITY_MAX_AGE_MS = 15000
-    // Seed the window from already-open Discord cases: the map is in-memory,
-    // so without this a restart mid-conversation fails closed and silently
-    // eats a known contact's next plain follow-up until they re-mention. An
-    // open (not closed) case IS an active conversation by definition.
-    // Fire-and-forget -- only widens FUTURE acceptance, never blocks adapter
-    // construction; a failed read just starts the window empty (fail closed).
+
     ;(async () => {
       try {
         const rows = await store?.listCases?.({}, { limit: 10000 })
@@ -92,33 +41,20 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
           if (!String(c.external_id || '').includes(':')) continue
           followUpWindow.set(c.external_id, Date.now() + FOLLOWUP_MS)
         }
-      } catch { /* seeding is best-effort; the window simply starts empty */ }
+      } catch {  }
     })()
     const origEmit = a.emit.bind(a)
     a.emit = (event, msg, ...rest) => {
       if (event === 'message') {
         const raw = msg?.raw || {}
-        // DM: no guild_id. Guild: only if bot is @mentioned.
+
         const isDM = !raw.guild_id
         const mentions = Array.isArray(raw.mentions) ? raw.mentions : []
-        // botMentioned MUST fail CLOSED when botUserId is not yet known
-        // (process boot, or a reconnect that lost the cached id), never open:
-        // a `mentions.length > 0` fallback treats ANY guild message mentioning
-        // ANY user as "the bot was mentioned", opening a case from ordinary
-        // guild chatter that never referenced casey at all -- the opposite of
-        // this gate's whole purpose. The OBSERVABILITY log below records
-        // a.botUserId (null or real) on every filtered message, so an operator
-        // can distinguish "filtered because identity isn't known yet" from
-        // "filtered because not a mention".
+
         const botMentioned = !!a.botUserId && mentions.some(u => u.id === a.botUserId)
         const followKey = `${raw.channel_id || ''}:${raw?.author?.id || ''}`
         const inConversation = !isDM && !botMentioned && (followUpWindow.get(followKey) || 0) > Date.now()
-        // Hold rather than drop: identity genuinely unknown yet, and this is
-        // the first pass over this message (msg._identityReplay tells a
-        // replayed-from-queue call apart from a first arrival, so a message
-        // still unresolved on replay -- e.g. READY carried a mention-less
-        // guild chatter message -- falls through to the ordinary fail-closed
-        // branch below instead of re-queuing forever).
+
         if (!isDM && !a.botUserId && !msg._identityReplay) {
           const now = Date.now()
           while (pendingIdentityUnknown.length && now - pendingIdentityUnknown[0].at > PENDING_IDENTITY_MAX_AGE_MS) pendingIdentityUnknown.shift()
@@ -128,22 +64,9 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
           return false
         }
         if (!isDM && !botMentioned && !inConversation) {
-          // The fail-closed branch above is NOT the same thing as ordinary guild
-          // chatter, and only one of the two is a loss. A message casey could
-          // not evaluate because it did not yet know its own user id may well
-          // have been addressed to it; that is a real inbound turned away above
-          // recordInbound, so it is counted like every other such path. Ordinary
-          // non-mention chatter was never for casey and is not counted -- mixing
-          // it into the same total would drown the number that matters in the
-          // volume of a busy server and make dropped_inbound meaningless.
+
           if (!a.botUserId) recordDroppedInbound('gateway_identity_unknown', { channel: 'discord', store, log })
-          // OBSERVABILITY: a drop here is otherwise structurally invisible --
-          // no case created, no receive-health stamp, nothing to grep for --
-          // so a real inbound that failed this check for any reason
-          // (a.botUserId not yet captured from READY, Discord's mentions array
-          // shaped differently than expected, a genuine non-mention message)
-          // leaves no trace at all. Log every filtered-out message loud, and
-          // never PII: author id only, never message content.
+
           log?.warn?.('[discord] message filtered (not a DM, bot not mentioned)', {
             channelId: raw.channel_id || null,
             guildId: raw.guild_id || null,
@@ -153,10 +76,7 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
           })
           return false
         }
-        // Accepted: (re)open/slide this author's follow-up window in this
-        // channel so their next plain messages pass too. Prune expired
-        // entries on write -- bounded by construction (one entry per
-        // recently-active container:author pair, each self-expiring).
+
         if (!isDM) {
           followUpWindow.set(followKey, Date.now() + FOLLOWUP_MS)
           if (followUpWindow.size > 500) {
@@ -164,8 +84,7 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
             for (const [k, exp] of followUpWindow) { if (exp <= now) followUpWindow.delete(k) }
           }
         }
-        // We received a real, addressed-to-us inbound: receive is alive. Stamp
-        // BEFORE delegating so a throw downstream still records that we heard.
+
         markInbound('discord')
         log?.info?.('[discord] message accepted for intake', {
           channelId: raw.channel_id || null,
@@ -178,15 +97,10 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
       }
       return origEmit(event, msg, ...rest)
     }
-    // 'ready' fires on the REAL READY/RESUMED gateway dispatch events inside
-    // the adapter -- stamps connectedAt so GET /api/health reflects true
-    // receive-liveness (a live TCP socket is not the same as a dead gateway
-    // delivering no inbound; see AGENTS.md's receive-liveness principle).
+
     a.on('ready', () => {
       markConnected('discord')
-      // Drain anything held above while botUserId was still unknown, now that
-      // it is. Age-filtered again here (not just on push) since a message can
-      // sit in the queue right up to the staleness bound before READY lands.
+
       const now = Date.now()
       const held = pendingIdentityUnknown.splice(0, pendingIdentityUnknown.length)
       for (const { msg, rest, at } of held) {
@@ -194,23 +108,15 @@ async function makeDiscordAdapter({ log, store, dataDir, markConnected, markInbo
         a.emit('message', { ...msg, _identityReplay: true }, ...rest)
       }
     })
-    // Outbound delivery is verified inside DiscordAdapter.send(), which routes
-    // through verifiedSend() and throws on a non-2xx / errored response body,
-    // so a failed send already rejects here.
+
     return a
   }
 }
 
-// WhatsApp needs no receive-resilience wrapper: WhatsappAdapter is
-// webhook-driven (Meta posts to us), not a persistent socket casey must
-// reconnect. A future webhook-driven channel (e.g. SMS via a carrier webhook)
-// fits this shape rather than Discord's.
 async function makeWhatsappAdapter({ markInbound } = {}) {
   const { WhatsappAdapter } = await import('./adapters/whatsapp.js')
   const a = new WhatsappAdapter()
-  // Stamp the last inbound the moment a real message is parsed (not statuses:
-  // a delivery receipt proves Meta can reach us, never that a person wrote).
-  // casey.js's inbound-silence alarm reads it, and /api/health publishes it.
-  if (typeof markInbound === 'function') a.on('message', () => { try { markInbound('whatsapp') } catch { /* liveness stamping never blocks intake */ } })
+
+  if (typeof markInbound === 'function') a.on('message', () => { try { markInbound('whatsapp') } catch {  } })
   return a
 }

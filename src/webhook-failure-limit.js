@@ -1,15 +1,10 @@
-// webhook-failure-limit.js -- per-client brake on webhook requests that fail verification (bad signature, bad
-// handshake token). A client that has failed MAX times inside the window is answered 429 before any HMAC is computed,
-// until its window clears. In memory and per process on purpose: the host is one VM, a restart clears it, and the
-// limit exists to blunt guessing and CPU burn, not to be an audit record (the counters are on adapter.webhookStats).
-//
-// The client address is the socket peer, except when that peer is this machine's own reverse proxy (loopback): then it
-// is the LAST entry of X-Forwarded-For, which is the one the proxy itself appended (Caddy overwrites untrusted values).
+
+
 const WINDOW_MS = Number(process.env.CASEY_WEBHOOK_FAIL_WINDOW_MS) || 60_000
 const MAX = Number(process.env.CASEY_WEBHOOK_FAIL_MAX) || 30
 const MAX_TRACKED = 5000
 
-const fails = new Map()   // ip -> [timestamps]
+const fails = new Map()
 
 const isLoopback = (a) => /^(::1|127\.|::ffff:127\.)/.test(String(a || ''))
 

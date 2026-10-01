@@ -1,12 +1,4 @@
-// case-tools-record-fields.js  --  the write tool that edits a case's own
-// editable COLUMNS (subject, summary, priority, assignee, autonomy, case_type),
-// as opposed to the report blob (case-tools-record-report.js) or the timeline
-// (case-tools-record-timeline.js).
-//
-// Split out of case-tools-record.js verbatim -- name, description, parameter
-// schema and handler body are unchanged. Composed back in order by
-// case-tools-record.js's buildRecordTools, which is still the only thing
-// case-tools.js knows about.
+
 
 import { AGENT_USER } from './case-store.js'
 import { defTool, str, pick, ownsCase, slimCase } from './case-tools-shared.js'
@@ -33,28 +25,16 @@ export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
         if (bad) return bad
         const clean = pick(patch, ['subject', 'summary', 'priority', 'assignee', 'case_type'])
         if (!Object.keys(clean).length) return { error: 'no editable fields supplied' }
-        // A contact key ('contact:<id>') names a team member and is written only by
-        // the assignment tools (team_assign / case_claim); free text here must not
-        // be able to hand a record to, or take one from, someone.
+
         if (isContactAssignee(clean.assignee)) return { error: 'that assignee cannot be set here' }
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
-        // A field_worker may learn another case's id via case_list/case_mine
-        // (PII-free rows still carry `id`) -- ownership must be checked here too,
-        // same gate case_get/case_switch already apply, or any worker could edit
-        // a stranger's case (priority/assignee/case_type/subject/summary).
+
         const author = ctx?.author || ctx?.principal?.id
         if (!ownsCase(c.external_id, author)) {
           return { error: `case ${id} does not belong to you -- cannot update it` }
         }
-        // Autonomy is operator control: it is set only from the dashboard, never by
-        // the agent -- otherwise the agent could flip observe back to auto and
-        // escape the very mode an operator used to stop it acting. So in observe
-        // mode the agent may only observe; all content edits are blocked. Routed
-        // through updateCaseChecked (re-reads autonomy INSIDE the per-conversation
-        // lock, same discipline as mergeReport) rather than this outer read-then-
-        // write, so an operator's dashboard observe-mode flip landing between this
-        // handler's own read and its write cannot be raced.
+
         const result = await store().updateCaseChecked(id, clean, AGENT_USER)
         if (result.error === 'observe') {
           return { error: 'case autonomy is "observe"; agent edits are disabled. Use case_observe to record notes.' }
@@ -66,16 +46,6 @@ export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
   ]
 }
 
-// Validate case_type/priority BEFORE pick()'s empty-string filtering: an
-// explicit case_type:"" must be rejected the same way a bogus value is, not
-// silently dropped as if the field were never supplied -- pick() would
-// otherwise treat an empty-string write as a no-op, which looks like the
-// update succeeded to a caller who doesn't check fieldsRecorded.
-// Live config-declared enum (falling back to the same hint the model was
-// shown, when the config leaves case_type/priority undeclared), so a
-// deployment's own thatcher.config.yml options are the ones actually enforced,
-// not a second hardcoded copy of the list. Hint and enforcement read the SAME
-// store, so the model can no longer be offered a value this check would reject.
 function validateEnumFields(store, patch, { caseTypeValues, priorityValues }) {
   const caseTypeValueSet = new Set(store().getFieldEnum('case.case_type', caseTypeValues))
   const priorityValueSet = new Set(store().getFieldEnum('case.priority', priorityValues))
@@ -88,10 +58,6 @@ function validateEnumFields(store, patch, { caseTypeValues, priorityValues }) {
   return null
 }
 
-// A case_type change is audited as its own from/to action, matching the
-// dashboard's own reclassification event shape, so /api/report.json's per-type
-// analytics can trace an agent-driven reclassification the same way as an
-// operator one. Every other field lands in one combined "updated ..." event.
 async function auditFieldUpdate(store, id, clean, prior) {
   const caseTypeChanged = 'case_type' in clean && (prior.case_type || 'unset') !== clean.case_type
   if (caseTypeChanged) {

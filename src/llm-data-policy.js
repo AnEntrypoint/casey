@@ -1,26 +1,5 @@
-// llm-data-policy.js -- what may casey send to which outside processor, and the
-// paper trail that says what was decided.
-//
-// CASEY_LLM_DATA_POLICY (default 'zdr'):
-//   deny  OpenRouter requests carry provider.data_collection = 'deny': only
-//         endpoints that do not store or train on prompts are eligible.
-//   zdr   deny, plus provider.zdr = true: only Zero-Data-Retention endpoints.
-//   allow the policy is off (the pre-policy behaviour). Recorded loudly.
-// Any other value is treated as 'zdr' (fail closed).
-//
-// WHAT IS ENFORCED WHERE (measured against OpenRouter 2026-09-29, see
-// docs/data-processors.md in the deployment):
-//   - /chat/completions honours provider.data_collection and provider.zdr. A
-//     free (:free) endpoint answers 404 "No endpoints found matching your data
-//     policy", so such a link can never serve a turn and is dropped up front.
-//   - /audio/transcriptions IGNORES the provider object (a nonexistent
-//     provider.only still answered 200), so no policy can be enforced there;
-//     hooks/media.js therefore transcribes through chat completions instead.
-//   - A direct vendor API (anthropic/, openai/, synthetic/) takes no such field.
-//     Those are admitted on the vendor's published API terms and labelled
-//     'vendor-terms'.
-//   - Everything else (free ACP wrappers, kilo/opencode, groq, nvidia, deepseek
-//     direct, ...) has no no-training guarantee casey can check: dropped.
+
+
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -35,11 +14,6 @@ export function dataPolicyMode(env = process.env) {
   return 'deny'
 }
 
-// The provider object OpenRouter takes, or null when the policy is off.
-// Which host serves the model is OpenRouter's choice; sorting by latency picks the
-// fastest of the hosts that already satisfy the data policy (same model, same
-// weights), which measured 0.5-0.7s a call against 0.6-2.5s unsorted.
-// CASEY_LLM_PROVIDER_SORT=none|latency|throughput|price (default latency).
 function providerSort(env = process.env) {
   const v = String(env.CASEY_LLM_PROVIDER_SORT == null ? 'latency' : env.CASEY_LLM_PROVIDER_SORT).trim().toLowerCase()
   return ['latency', 'throughput', 'price'].includes(v) ? v : null
@@ -53,12 +27,6 @@ export function openrouterProviderField(mode = dataPolicyMode()) {
   return sort ? { sort } : null
 }
 
-// DeepSeek Flash is a thinking model. With thinking on, on average ~220 tokens of every
-// answer go to hidden reasoning, and on 5-6 of 24 short calls the answer budget was
-// consumed by the thinking and the reply came back EMPTY, which our chain then retried
-// (measured 2026-09-29: empty 5-6/24 and 2.2-2.4s with thinking on; 0/24 and 1.2-1.4s off,
-// same host, same policy). Casey's turn is tool-orchestration and short replies, so thinking is
-// off by default. CASEY_LLM_REASONING=on to leave it to the model, or low|medium|high.
 export function reasoningField(env = process.env) {
   const v = String(env.CASEY_LLM_REASONING == null ? 'off' : env.CASEY_LLM_REASONING).trim().toLowerCase()
   if (v === 'on' || v === 'default') return null
@@ -66,11 +34,6 @@ export function reasoningField(env = process.env) {
   return { reasoning: { enabled: false } }
 }
 
-// The same switch for synthetic.new, which takes OpenAI's flat reasoning_effort
-// instead of OpenRouter's reasoning object. The accepted efforts differ per model
-// (GET /openai/v1/models, reasoning_parameters.efforts): DeepSeek V4.1 Flash lists
-// "none"; a model that does not (Kimi K3, Qwen 3.8) needs CASEY_LLM_REASONING=on
-// or one of its own efforts.
 export function syntheticReasoningField(env = process.env) {
   const v = String(env.CASEY_LLM_REASONING == null ? 'off' : env.CASEY_LLM_REASONING).trim().toLowerCase()
   if (v === 'on' || v === 'default') return null
@@ -79,14 +42,9 @@ export function syntheticReasoningField(env = process.env) {
 }
 
 const FREE_ID = /(?::free\b|\/free\b|-free\b)/i
-// Direct vendor APIs admitted on their published API terms (no training on API
-// traffic by default). Not enforceable per request; recorded as such.
-// synthetic: synthetic.new privacy policy (read 2026-09-30) -- prompts and
-// completions are not used for training and are not stored after the API call
-// completes, by Synthetic or its inference partners; processed in the US.
+
 const VENDOR_TERMS = { anthropic: 'Anthropic API', openai: 'OpenAI API', bedrock: 'AWS Bedrock', synthetic: 'Synthetic (synthetic.new) API' }
 
-// { model, processor, enforcement: 'request'|'vendor-terms'|'refused', reason }
 export function classifyLink(model) {
   const id = String(model || '')
   const m = /^([a-z0-9-]+)\/(.+)$/.exec(id)
@@ -111,8 +69,7 @@ export function auditFile(env = process.env) {
 
 const MAX_SEGMENT_BYTES = 2 * 1024 * 1024
 const MAX_ARCHIVES = 5
-// One JSON object per line; NEVER a prompt, reply, contact id or phone number.
-// Rotation is by rename (atomic), oldest archive past MAX_ARCHIVES unlinked.
+
 export function auditWrite(event, env = process.env) {
   const file = auditFile(env)
   if (!file) return false
@@ -123,22 +80,18 @@ export function auditWrite(event, env = process.env) {
         for (let i = MAX_ARCHIVES; i >= 1; i--) {
           const from = i === 1 ? file : `${file}.${i - 1}`
           if (!fs.existsSync(from)) continue
-          if (i === MAX_ARCHIVES) { try { fs.unlinkSync(`${file}.${i}`) } catch { /* absent */ } }
+          if (i === MAX_ARCHIVES) { try { fs.unlinkSync(`${file}.${i}`) } catch {  } }
           fs.renameSync(from, `${file}.${i}`)
         }
       }
-    } catch { /* no file yet */ }
+    } catch {  }
     fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n')
     return true
-  } catch { return false }   // an audit failure never blocks a reply
+  } catch { return false }
 }
 
 const seenChains = new Set()
 
-// links: array of model strings or {model,...}. Returns { links, dropped, mode }.
-// mode 'allow' returns the input untouched. Throws when nothing survives, so a
-// misconfigured chain fails loudly instead of quietly sending data somewhere
-// the policy forbids.
 export function applyDataPolicy(links, { env = process.env, requested = '' } = {}) {
   const mode = dataPolicyMode(env)
   const list = (Array.isArray(links) ? links : [links]).map(l => (typeof l === 'string' ? l : l?.model)).filter(Boolean)
@@ -171,10 +124,6 @@ export function applyDataPolicy(links, { env = process.env, requested = '' } = {
   return { links: kept, dropped, mode }
 }
 
-// After a successful call: which chain link served it and what the request
-// carried. acptoapi's translation drops OpenRouter's own `provider` (the
-// upstream host), so the served link and the policy field sent are the
-// auditable facts; the upstream host is not recorded. Metadata only.
 export function auditServed(raw, requestedModel, env = process.env) {
   const attempted = Array.isArray(raw?.__chainAttempted) ? raw.__chainAttempted : []
   const ok = attempted.filter(a => a && a.ok).pop()
@@ -188,7 +137,6 @@ export function auditServed(raw, requestedModel, env = process.env) {
   }, env)
 }
 
-// Processor register rows for `casey doctor` and docs. Reads the live env.
 export function describeProcessors(env = process.env) {
   const mode = dataPolicyMode(env)
   const field = openrouterProviderField(mode)

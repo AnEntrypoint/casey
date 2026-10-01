@@ -1,20 +1,4 @@
-// phone-consent.js -- has this phone number agreed, in conversation, to what we keep?
-//
-// Asked once per number, in the person's own words and language, by the model (the prompt
-// section in hooks/prompt-sections.js `consentSection`), not appended to a reply as a block.
-// The person's answer is recorded by the case_consent tool (case-tools-consent.js) as one
-// observation on the case the answer arrived on; this module reads it back across every case
-// of the contact, newest answer wins, so a returning number is never asked again and a number
-// that declined and later agrees is honoured.
-//
-// The GATE: while a public number has not agreed, case_report refuses to write
-// (case-tools-record-report.js). Nothing else is held: the conversation, STOP and HUMAN,
-// the safety line and a hand-over to a person all work exactly as before, and a photo or
-// voice note is still filed at ingress (hooks/media-intake.js), which happens before any
-// model turn and cannot wait for an answer.
-//
-// Deployment data: `persona.consentText` (bot.consent in vocabulary.yml) is the plain facts the
-// assistant must cover. Absent, there is no gate and nothing changes.
+
 
 import { loadDomainConfig } from './config-loader.js'
 import { evData } from './safe.js'
@@ -35,8 +19,6 @@ const answerOf = (e) => {
 
 const newest = (rows) => rows.map(answerOf).filter(Boolean).sort((a, b) => b.at - a.at)[0] || null
 
-// 'agreed' | 'declined' | 'none'. `events` (the current case's) is used when given so the turn
-// that just started does not re-read them.
 export async function consentState(store, contactId, { caseId = null, events = null } = {}) {
   if (!contactId) return 'none'
   try {
@@ -62,9 +44,6 @@ export async function recordConsent(store, caseId, agreed) {
   })
 }
 
-// Has the assistant replied to this number before (on this case or any other)? A yes or no can only answer a question
-// that has been put, so case_consent refuses until one reply has gone out; every reply while consent is owed carries
-// the question. Errs toward "yes, it has" when the store cannot be read, so a fault never blocks a real answer.
 export async function repliedBefore(store, contactId, { caseId = null, events = null } = {}) {
   if (!contactId) return true
   try {

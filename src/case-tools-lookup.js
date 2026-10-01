@@ -1,9 +1,4 @@
-// case-tools-lookup.js  --  the two case-lookup tools: fetch one, or search many.
-//
-// case_get is the ownership-scoped single-case read; case_list is the
-// cross-case enquiry surface (status/channel/assignee/place/proximity), always
-// projected PII-free. Split out of case-tools.js verbatim -- names,
-// descriptions, parameter schemas and handler bodies are unchanged.
+
 
 import { normalizeLocation } from './location-normalize.js'
 import { parseReport } from './timestamp.js'
@@ -19,42 +14,21 @@ export function buildLookupTools(store, { stageValues }) {
       'Fetch a case by id or reference, including its recent timeline events. Use to refresh your view before acting.',
       { type: 'object', properties: { id: str('Case id or reference') }, required: ['id'] },
       async ({ id }, ctx) => {
-        // The id OR the reference (CASE-1234-ABCD): people and the model both say the reference. Ownership scoping below is
-        // unchanged, so someone else's report still comes back PII-free; a system singleton is never a report.
+
         const c = await findCase(store(), id)
         if (!c) return { error: `no case ${id}` }
         id = c.id
-        // case_get's `id` param is agent-chosen -- the model can ask about ANY
-        // case, not just the asking worker's own (a status ask like "how is
-        // CASE-1234 going" names a ref the model resolves to some id). Ownership
-        // scoping (same check as mineRows) decides which projection is safe: the
-        // worker's OWN case gets the full slimCase (report incl. owner_name/
-        // owner_contact -- their own case, their own data), a case belonging to
-        // SOMEONE ELSE gets the PII-free enquiryRow, same as case_list/case_mine.
-        // Without this, any worker asking about any case ref (even by typo/
-        // overheard) got another contact's phone number and free-text account.
+
         const author = ctx?.author || ctx?.principal?.id
-        // Fail CLOSED: no author on ctx means we cannot prove ownership, so treat
-        // as not-owned (PII-free) rather than defaulting to full access.
+
         const owns = ownsCase(c.external_id, author)
         const events = owns ? await store().listEvents(id, { limit: 30 }) : []
-        // This view of someone else's report is deliberately short (headline facts only). A team member must not read a short view as
-        // an empty report: say so, and name the tools that show everything recorded.
+
         const short = !owns && canQueryCases(ctx?.tier) ? { note: 'This is a SHORT view: it leaves out most recorded facts, so never tell anyone the report is empty or a stub from it. To read everything recorded use case_review (technician) or case_gaps (other team members).' } : {}
         return { case: owns ? slimCase(c) : enquiryRow(c), events: events.map(slimEvent), ...short }
       }),
     defTool('case_list', 'cases',
-      // The old description carried a quoted sample reply ("the nearest on
-      // record is CASE-xxxx at <place>, about N km away"). Two failures, both
-      // live: a weak model copies a quoted sample word for word (AGENTS.md, "no
-      // copyable reply examples in the prompt"), and the literal it copies,
-      // CASE-xxxx, does not match hooks/heuristics.js's CASE_REF_RE
-      // (CASE-<digits>-<suffix>) -- so sanitizeOutboundRef cannot rewrite it to
-      // the real ref, and the person is handed a reference that identifies
-      // nothing. hooks/reply-judge.js then reads the bare word "case" in it as a
-      // jargon leak and holds the whole reply as an unsent draft, so the person
-      // gets silence instead. Name the fields to answer FROM; never model the
-      // sentence.
+
       'List cases, optionally filtered by status/channel/assignee/location. Use `location` (a town, area, or place a person mentions) to find reports in a place -- this is the place-enquiry tool. Use `near` (your own best-estimate lat/lon for the place the worker said they are at) to find the NEAREST reports -- this is the "closest case" / "cases near me" tool; it returns rows sorted by distance with a distance_km on each. Answer only from the ref, place and distance_km the result actually returns, never from memory, and write the sentence around them yourself. Returns most-recently-active first (or nearest-first when `near` is given), PII-free.',
       {
         type: 'object',
@@ -80,27 +54,18 @@ export function buildLookupTools(store, { stageValues }) {
         if (status) where.status = status
         if (channel) where.channel = channel
         if (assignee) where.assignee = assignee
-        // A place enquiry: location lives in the free-text report JSON, not a queryable
-        // column, so pull a wider window and JS-filter on the report location substring.
+
         const pull = location ? Math.max(limit * 20, 500) : limit
         let rows = await store().listCases(where, { limit: pull })
         if (location) {
-          // Shared normalization (case-fold, trim, collapse whitespace/punctuation
-          // noise) so "eMalahleni," "eMalahleni.", and "emalahleni  " all match the
-          // same needle -- consistent with the normalized_location derived field
-          // (case-store.js), never a gazetteer/alias table.
+
           const needle = normalizeLocation(location)
           rows = rows.filter(c => {
             let loc = parseReport(c).location || ''
             return normalizeLocation(loc).includes(needle)
           }).slice(0, limit)
         }
-        // A proximity enquiry ("closest case" / "cases near me"): rank by great-circle
-        // distance from the worker's stated place (the model's own best estimate). Only
-        // cases that carry an agent-estimated lat/lon can be ranked; cases without a
-        // coordinate are excluded from the near result (they cannot be placed). This is
-        // best-effort because coordinates are model-estimated, not surveyed -- the
-        // prompt frames the answer as "nearest we have on record".
+
         if (near && typeof near.lat === 'number' && typeof near.lon === 'number') {
           if (typeof near.radius_km === 'number' && Number.isFinite(near.radius_km) && near.radius_km < 0) {
             return { error: `radius_km must be >= 0, got ${near.radius_km}` }
@@ -119,9 +84,7 @@ export function buildLookupTools(store, { stageValues }) {
           const top = withDist.slice(0, limit)
           return { count: top.length, cases: top.map(({ c, distance_km }) => enquiryRow(c, distance_km)) }
         }
-        // A LIST spans cases the asker may not own, so project each row PII-FREE
-        // (enquiryRow: ref/status/species/location only) -- NEVER the full slimCase
-        // report, which carries owner_name/contact_fallback/other-worker contact text.
+
         return { count: rows.length, cases: rows.map(enquiryRow) }
       }),
   ]

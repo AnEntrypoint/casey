@@ -1,23 +1,4 @@
-// team-import.js -- bulk registration of a team from a spreadsheet: parse rows,
-// plan what each would do, and (only when asked) apply it.
-//
-// One implementation behind `casey roles import` and POST /api/roles/import, so
-// the terminal and the dashboard cannot disagree about a row. Every row goes
-// through the same authorities a single registration does (normalizeMsisdn,
-// grantableBy, registerContact) and nothing here is reachable from a contact's
-// own message.
-//
-// A row's outcome is exactly one of:
-//   create  a person who was not registered (or a roster-only person) is added
-//   update  someone already known is promoted, or their area changes
-//   skip    nothing to do: duplicate in the file, already registered as this,
-//           or they already hold a higher rung (never demoted)
-//   error   the row cannot be used, with a plain reason
-// A person WITHOUT a smartphone is recorded on the training roster only: no
-// contact row, no WhatsApp registration.
-//
-// Logs carry counts only; a result row shows the last three digits of a number,
-// never the number.
+
 
 import { TIER_ORDER, TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR, ADMIN_ONLY_TIERS, DEFAULT_TIER_LABELS, resolveTierValue, tierRank, tierLabel } from './contact-tiers.js'
 import { normalizeMsisdn } from './role-invites.js'
@@ -31,9 +12,6 @@ const AREA_PREFIX = 'Association: '
 const clean = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
-// Role words a spreadsheet may carry -> the stored rung. The deployment's own
-// labels (uhh: "Eco Ranger") and casey's generic ones are always accepted, on
-// top of the short forms people actually type.
 function roleTable() {
   const m = new Map()
   const add = (word, tier) => m.set(norm(word), tier)
@@ -76,8 +54,6 @@ function headerKey(h) {
   return null
 }
 
-// Minimal RFC-4180-ish CSV: quotes, doubled quotes, embedded newlines; the
-// delimiter (comma, semicolon or tab) is picked from the header line.
 export function parseCsv(text) {
   const src = String(text || '').replace(/^\ufeff/, '')
   const first = src.split(/\r?\n/, 1)[0] || ''
@@ -98,8 +74,6 @@ export function parseCsv(text) {
   return rows
 }
 
-// CSV text or an array of objects -> [{line, name, phone, role, area, smartphone}].
-// Throws a plain Error for a shape or size problem that stops the whole import.
 export function toRows({ csv, rows } = {}) {
   let out
   if (Array.isArray(rows)) {
@@ -134,8 +108,6 @@ const withAreaNote = (notes, area) => {
 }
 const areaOfNotes = (notes) => (String(notes || '').split('\n').find(l => l.startsWith(AREA_PREFIX)) || '').slice(AREA_PREFIX.length)
 
-// Decide every row's outcome without writing anything. Returns
-// [{ ...result, _do }] where _do is what apply would do (absent for skip/error).
 export async function planImport(store, input, { isAdmin = false } = {}) {
   const rows = toRows(input)
   const contacts = await store.listContacts({ limit: 5000 })
@@ -194,8 +166,6 @@ export const summarize = (results) => results.reduce((s, r) => { s[r.action] = (
 
 const publicRow = ({ _do, ...r }) => r
 
-// Plan, and unless dryRun, apply. Rows apply one at a time under one lock; a
-// failure on one row is reported on that row and never stops the rest.
 export async function runImport(store, input, { dryRun = true, isAdmin = false, by = 'operator' } = {}) {
   const run = async () => {
     const plan = await planImport(store, input, { isAdmin })

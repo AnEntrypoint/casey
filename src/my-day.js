@@ -1,15 +1,4 @@
-// my-day.js  --  "how many cases in my area today, and where do they stand".
-//
-// A ranger's day starts with two questions: what is in my area today, and what is
-// the current status. This answers both, and what changed since the day began and
-// what each record still needs, for the cases ASSIGNED to the person and the cases
-// in the AREAS they cover (areas.js). A technician gets the same plus their
-// sign-off desk. PII-free by construction: counts, references, the identifying line
-// (animals and place), status words and still-missing field labels; never a phone
-// number, never a reporter name, never an assignee key.
-//
-// The same function serves the WhatsApp tools (case_my_day, team_ranger_day) and the
-// dashboard route GET /api/my-day.
+
 
 import { isOpenCase, SAST_TZ } from './format.js'
 import { parseReport, tagList, tsMs } from './timestamp.js'
@@ -22,8 +11,6 @@ import { SIGNOFF_DIAGNOSIS_FIELDS, missingMandatoryMinimum, missingSignoffDiagno
 import { loadAreas, areasOfRanger, resolveArea, statedArea } from './areas.js'
 import { isHandedOff, inSignOffQueue } from './signoff-desk.js'
 
-// Every assignee key that means this contact: their `contact:<id>` key plus the
-// dashboard login (if any) linked to their phone, since an area may name either.
 export async function keysForContact(store, contact) {
   const keys = [assigneeKeyFor(contact)]
   const phone = String(contact?.external_id || '')
@@ -31,14 +18,13 @@ export async function keysForContact(store, contact) {
     for (const a of await store.t.list('operator_account', {}, { limit: 500 })) {
       if (a.username && a.contact_phone && normalizeMsisdn(a.contact_phone) === phone) keys.push(a.username)
     }
-  } catch { /* the contact key alone still answers */ }
+  } catch {  }
   return keys.filter(Boolean)
 }
 
 const NEEDS_CAP = 15
 const SCOPE_EVENT_CAP = 150
 
-// Midnight at the start of the local day in `tz`, as epoch ms (the "day boundary").
 export function dayStartMs(now = Date.now(), tz = SAST_TZ) {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date(now)).filter(p => p.type !== 'literal').map(p => [p.type, Number(p.value)]))
   const wallNow = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
@@ -48,9 +34,6 @@ export function dayStartMs(now = Date.now(), tz = SAST_TZ) {
 
 const countBy = (rows, f) => { const o = {}; for (const r of rows) { const k = f(r); o[k] = (o[k] || 0) + 1 } return o }
 
-// keys: every assignee key that means this person (`contact:<id>` and/or a login
-// username). `tier`: the person's contact tier, decides whether the sign-off desk
-// block is included. `since` overrides the day boundary (epoch ms).
 export async function myDay(store, { keys = [], contact = null, tier = '', name = '', now = Date.now(), since = null } = {}) {
   const myKeys = [...new Set([...keys, assigneeKeyFor(contact)].filter(Boolean))]
   const dayStart = since != null && Number.isFinite(Number(since)) ? Number(since) : dayStartMs(now)
@@ -69,8 +52,6 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
   const mine = open.filter(heldByMe)
   const holderWord = (c) => (heldByMe(c) ? 'you' : (String(c.assignee || '').trim() && c.assignee !== 'agent' ? 'someone else' : 'nobody'))
 
-  // What changed since the boundary, read off the timelines of the scope's open
-  // records (bounded) plus anything finished today.
   const finishedToday = scope.filter(c => !isOpenCase(c) && tsMs(c.last_event_at) >= dayStart)
   const changed = { new_cases: scope.filter(createdToday).length, reporter_replies: 0, newly_assigned_to_you: 0, sent_back: 0, handed_to_desk: 0, signed_off: finishedToday.length, moved_stage: 0 }
   const lastInbound = new Map()
@@ -90,7 +71,6 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
     }
   }
 
-  // What each of the person's own open records still needs.
   const needs = mine.map((c) => {
     const rep = parseReport(c)
     const still = missingMandatoryMinimum(rep).map(fieldLabel)

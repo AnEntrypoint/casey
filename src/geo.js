@@ -1,37 +1,11 @@
-// geo.js -- "Hotspots by area". correlate.js already tokenizes and weights the
-// location field for pairwise grouping; this re-aggregates that same stored
-// location BY place so the team sees where reports concentrate, ranked. Pure, no
-// I/O: the store hands in the open case rows, this returns per-place rollups.
-//
-// A case can name more than one place token ("near Musina, Limpopo"); it counts
-// toward each meaningful token it carries, so a hotspot surfaces whether the team
-// wrote the town or the district. No new data is created -- only stored location
-// is re-grouped.
+
 
 import { tokens, nameTokens } from './correlate.js'
-// parseReport (tolerant-of-already-parsed variant) moved to timestamp.js --
-// was independently duplicated here/clusters.js/correlate.js.
+
 import { parseReportTolerant as parseReport } from './timestamp.js'
 
-// The k-anonymity floor is shared with report-analytics.js's rollups and now
-// lives in one place (privacy.js) rather than being declared here and there
-// with two copies of the same default -- "one knob tunes every
-// aggregate-suppression floor" is what this comment already claimed, and the
-// import is what makes it true. A named place below the floor is the sharpest
-// de-anonymization vector of the three rollups, since a rare place name
-// identifies which case is there far more directly than a channel or
-// case_type enum does.
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY as SPARSE_PLACE_KEY, UNSUPPRESSED_BUCKET_KEYS } from './privacy.js'
 
-// Group open cases by location token. Returns places ranked by case count, each
-// with the count, the species mix (token -> count), and the most-recent report
-// time (unix-seconds, SAST-rendered by the caller). Cases with no location token
-// fall into a single 'unknown' bucket so they are never silently dropped.
-// Places below MIN_AGGREGATE_CELL are folded into a single 'other/sparse' row
-// rather than each rendered by name -- a hotspot list revealing there WERE a
-// couple of rare-place reports is fine; revealing exactly WHICH rare place is
-// the leak. 'unknown' (no location token at all) is exempt from suppression:
-// it names nothing specific to fold away.
 export function buildGeo(cases) {
   const places = new Map()
   const bump = (place, c, rep) => {

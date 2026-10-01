@@ -1,17 +1,4 @@
-// case-tools-record-report.js  --  case_report: the one tool that writes the
-// structured report blob (plus the case's own lat/lon columns) for the turn's
-// bound active case.
-//
-// Split out of case-tools-record.js verbatim -- the tool name and description
-// still come straight from the loaded config via store/report-shape.js, the
-// parameter schema is unchanged, and the handler performs the same steps in the
-// same order. What changed is only that each step of that order is now a named
-// function below instead of one long inline body: bind-and-authorise the target,
-// validate the arguments, merge the report under the store's own lock, write the
-// coordinate columns, keep the derived location in step, audit, then wire
-// provenance. Every one of those steps has its own failure discipline (fail
-// closed, reject loudly, best-effort) and the comments that state it travel with
-// the step.
+
 
 import { AGENT_USER, REPORT_KEYS } from './case-store.js'
 import { toStorable } from './store/guards.js'
@@ -50,19 +37,17 @@ export function buildCaseReportTools(store) {
         required: ['id'],
       },
       async ({ id, lat, lon, location_source, location_confidence, ...fields }, ctx) => {
-        // The consent gate (phone-consent.js): a public number that has not agreed, in conversation, to what
-        // is kept has nothing written. Only this tool is held; the conversation goes on.
+
         if (consentManaged() && ctx?.contact?.id && !canQueryCases(ctx?.tier)) {
           const state = await consentState(store(), ctx.contact.id, { caseId: boundCase(ctx).id })
           if (state !== 'agreed') return { held: true, nothing_recorded: true, note: state === 'declined'
             ? 'This person said no to what is kept, so nothing is written down. Do not record this. Be kind, offer a person from the team (case_handoff) if they want help, and only if they change their mind and say yes call case_consent with agreed true.'
             : 'Nothing was recorded, so never say or imply that anything was noted or saved. This phone has not said it is okay for the team to keep what they send. In THIS reply, in your own words, tell them briefly what is kept and ask if that is okay (this is your one question). Do not say you are recording or that you need permission: just talk to them. When they say yes, call case_consent with agreed true and then record everything they have told you in this chat.' }
         }
-        // The diagnosis is the technician's, recorded at sign-off (case_transition) or
-        // by the dashboard: never something a report, from anyone, carries in.
+
         const notDiagnosis = SIGNOFF_DIAGNOSIS_FIELDS.filter(k => k in fields)
         for (const k of notDiagnosis) delete fields[k]
-        // A complete report that was written to again after a gap: ask first (return-clarify.js); nothing is written until they answer.
+
         if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { const held = await returnGate(store(), ctx); if (held) return held }
         const elsewhere = await namesHeldRecord(store, ctx)
         if (elsewhere) return { error: `This message is about ${elsewhere}, a record held by this team member, not about their own report. Nothing was recorded on their own report. Say which record it is (${elsewhere}), ask them to confirm it in their next message, then use case_focus and case_edit for it.` }
@@ -77,18 +62,14 @@ export function buildCaseReportTools(store) {
         const merged = await mergeIncomingReport(store, id, incoming)
         if (merged.error) return { error: merged.error }
         const { res, priorReport } = merged
-        // A public report is stamped with the person recorded as writing (src/phone-persons.js): their name
-        // in `reported_by` while it is empty, and their id on the timeline. Nothing happens on a phone where
-        // nobody has been recorded.
-        if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { try { await stampReporter(store(), ctx.contact.id, id) } catch { /* bookkeeping */ } }
+
+        if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { try { await stampReporter(store(), ctx.contact.id, id) } catch {  } }
 
         let locationKept = ''
         if (hasLatLon) {
           const wrote = await writeReportLocation(store, id, { lat, lon, resolvedLocationSource, confidence: pinConfidence(resolvedLocationSource, location_confidence) })
           if (wrote.error) return { error: wrote.error }
-          // The coordinate was refused, so nothing downstream may claim it was
-          // written: not the audit event, not the provenance ledger (which has
-          // no delete), not the fieldsRecorded list the model reads back.
+
           if (wrote.locationKept) { locationKept = wrote.locationKept; hasLatLon = false }
         }
         await syncDerivedLocation(store, id, incoming)
@@ -99,24 +80,6 @@ export function buildCaseReportTools(store) {
   ]
 }
 
-// Bind server-side to the turn's active case. A model error or prompt-injected
-// inbound text naming another case's ref must never be able to write into a
-// stranger's case.
-// Fail CLOSED: a turn with no bound active case has nothing legitimate to check
-// the argument against, so it is rejected too, not let through -- otherwise any
-// caller path that fails to populate ctx.activeCaseId (a race before binding, a
-// malformed ctx, a degraded turn) would silently regain the pre-fix
-// trust-the-argument-blindly behaviour this exists to close.
-// The model may pass either name of the bound case -- the internal id or the ref
-// (enquiryRow hands it both, and the prompt speaks in refs) -- both name the SAME
-// case, so accepting either preserves the invariant (writes only ever land on the
-// active conversation case). The returned id is normalized to the internal id no
-// matter which name the model passed.
-// A team member's message that names a record they hold (its reference, typed by
-// them) is about THAT record. case_report writes the conversation's own report, so
-// it would file their relayed sighting under their own name. Equality and ownership
-// only: the named reference must resolve to a record they have authority on and must
-// not be the one this conversation is bound to.
 async function namesHeldRecord(store, ctx) {
   const named = ctx?.inboundRefs || []
   if (!named.length || !ctx?.contact) return null
@@ -135,17 +98,13 @@ async function namesARecord(store, id) {
   try {
     if (await store().getCase(key)) return true
     return !!(typeof store().getCaseByRef === 'function' && await store().getCaseByRef(key))
-  } catch { return true }   // unreadable: fail toward the refusal
+  } catch { return true }
 }
 
 async function resolveReportTarget(store, id, ctx) {
   const bound = boundCase(ctx)
   if (bound.id && (id === bound.id || id === bound.ref)) return { id: bound.id }
-  // The write always lands on the active record, so the id is only a guard against
-  // a name that points at SOMEONE ELSE'S record. Two names are not that and are
-  // taken as the active record rather than refused (a refusal here lost the new
-  // sighting's place and pin): the record this turn just left when it opened or
-  // switched to the active one, and a placeholder that names no record at all.
+
   if (bound.id && (ctx?.activeCaseBinding?.left?.has(id) || !(await namesARecord(store, id)))) return { id: bound.id }
   try {
     const logTarget = bound.id || id
@@ -154,7 +113,7 @@ async function resolveReportTarget(store, id, ctx) {
       text: `SECURITY: case_report called with id=${id} but this turn's active case is ${bound.id || '(none)'}; write rejected.`,
       data: { attemptedId: id, activeCaseId: bound.id, tool: 'case_report' },
     })
-  } catch { /* best effort -- never let the audit write block the rejection */ }
+  } catch {  }
   return { error: bound.id
     ? `case_report must target this conversation's active case (${bound.ref || bound.id}), not ${id}`
     : 'case_report has no bound active case on this turn -- cannot target an arbitrary case id' }
@@ -164,20 +123,11 @@ function validateReportArgs({ fields, lat, lon, location_source }) {
   const incoming = pick(fields, [...REPORT_KEYS])
   const latLonSupplied = typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon)
   const hasLatLon = latLonSupplied && isValidLatLon(lat, lon)
-  // A supplied-but-out-of-range coordinate (e.g. swapped lat/lon) must not be
-  // silently dropped indistinguishably from "never supplied" -- surface it so
-  // the caller/agent can correct it instead of the map pin quietly never
-  // appearing with no explanation.
+
   if (latLonSupplied && !hasLatLon) {
     return { error: `lat/lon out of range: lat=${lat}, lon=${lon} (expected |lat|<=90, |lon|<=180)` }
   }
-  // location_source is validated the same strict way as case_type/priority
-  // (case_update): an explicit bad value is rejected loudly, never silently
-  // dropped -- but lat/lon may still arrive with no source named at all (an
-  // older prompt build, a model that forgot the arg), and that must not simply
-  // reject the whole coordinate write. Defaults to 'estimated' -- the SAFER of
-  // the two real provenance states when the model is silent about which one it
-  // means, so a pin never gets mislabeled 'gps'-trustworthy by omission.
+
   if (location_source != null && !LOCATION_SOURCE_VALUES.has(location_source)) {
     return { error: `invalid location_source: ${location_source}`, allowed: [...LOCATION_SOURCE_VALUES] }
   }
@@ -185,17 +135,6 @@ function validateReportArgs({ fields, lat, lon, location_source }) {
   return { incoming, hasLatLon, resolvedLocationSource: hasLatLon ? (location_source || 'estimated') : null }
 }
 
-// Atomic read-merge-write in the store, under the per-conversation lock, so two
-// concurrent agent turns for the same case cannot read the same stale report and
-// clobber each other's fields. Later messages refine earlier ones; a field
-// already given is never lost.
-//
-// The PRIOR value of every field this call touches comes from mergeReport's own
-// return (res.priorReport, read INSIDE its per-conversation lock), not from a
-// separate unlocked read -- an unlocked read taken before the lock is acquired
-// can be stale if a concurrent write (another buffered turn, an operator PATCH)
-// lands in between, producing a correction diff that silently omits the
-// intermediate value.
 async function mergeIncomingReport(store, id, incoming) {
   if (!Object.keys(incoming).length) return { res: { report: null }, priorReport: {} }
   const res = await store().mergeReport(id, incoming, AGENT_USER)
@@ -207,7 +146,7 @@ async function mergeIncomingReport(store, id, incoming) {
         kind: 'observation', actor: 'system',
         text: 'WARNING: this case\'s stored report JSON was corrupted and has been reset before merging in this turn\'s fields -- some previously recorded fields may be lost. Review the case history for what was said before this point.',
       })
-    } catch { /* best-effort -- the report write itself already succeeded */ }
+    } catch {  }
   }
   if (res.cappedFields?.length) {
     try {
@@ -216,39 +155,13 @@ async function mergeIncomingReport(store, id, incoming) {
         text: `WARNING: field(s) ${res.cappedFields.join(', ')} reached their maximum accumulated length -- this turn's new note(s) were NOT attached. A human should review the case for a length reset.`,
         data: { cappedFields: res.cappedFields },
       })
-    } catch { /* best-effort -- the report write itself already succeeded */ }
+    } catch {  }
   }
   return { res, priorReport: res.priorReport || {} }
 }
 
-// lat/lon are real case columns, not report JSON, and the model's own estimate
-// (or the worker's exact GPS) is the ONLY source -- casey does no server-side
-// lookup. A later, more specific case_report call simply overwrites the
-// coordinate with the model's improved estimate.
-//
-// Routed through updateCaseChecked (re-reads autonomy INSIDE the
-// per-conversation lock, same discipline mergeReport/case_update already use)
-// rather than a raw getCase-then-check-then-write -- that stale-read-then-write
-// shape is exactly the TOCTOU race updateCaseChecked was introduced to close.
 async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource, confidence }) {
-  // AN ESTIMATE NEVER REPLACES A REAL READING. The provenance subsystem already
-  // enforces this for its own ledger (core/provenance.js canReplace: inferred
-  // can never overwrite measured); the case's own lat/lon columns had no such
-  // rule, so a real GPS fix -- a WhatsApp location pin recorded at ingress
-  // (hooks/media-intake.js), or an exact reading a worker read out -- was
-  // silently downgraded to the model's own guess the moment any later
-  // case_report mentioned a place name. The stored position and its
-  // location_source both changed, so the map then drew a guess where it had a
-  // fix and nothing anywhere said the fix had been thrown away.
-  //
-  // Only the DOWNGRADE is refused: a 'gps' or 'confirmed' write still replaces
-  // anything, and an 'estimated' write is unaffected while the case holds no
-  // better position (the ordinary first-estimate path). The read is taken
-  // outside updateCaseChecked's own lock, so it is a precedence rule and not an
-  // atomicity guarantee -- the writer it genuinely races is a dashboard operator
-  // editing the same row in the same instant, which won before this existed too.
-  // Anything but a person's own confirmation is refused over a real reading: a model that writes "gps" with coordinates
-  // nobody read out (seen live: a real pin replaced by invented numbers) is an estimate in all but name.
+
   if (resolvedLocationSource !== 'confirmed') {
     const prior = await store().getCase(id).catch(() => null)
     const priorSource = prior?.location_source
@@ -260,45 +173,28 @@ async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource
   if (latLonResult.error === 'observe') return { error: OBSERVE_BLOCKED.error }
   if (latLonResult.error) return { error: latLonResult.error }
   const c = latLonResult.case
-  // Propagate to the CONTACT as their last-reported location, distinct from both
-  // case.lat/lon (this specific report's animal location, just written above) and
-  // contact.last_location_* (a field_worker's own casual position check-in via
-  // case_checkin -- a different axis entirely: where the WORKER is standing, not
-  // where an animal report is). last_report_lat/lon/at is "where did this
-  // contact's most recent report say the animals were", refined forward across
-  // their reports the same way case.lat/lon itself refines on a later, more
-  // specific case_report call. Best-effort: a contact-propagation failure must
-  // never block the real case write above, which already succeeded.
+
   if (c?.contact_id) {
     try {
       await store().t.update('contact', c.contact_id, toStorable({
         last_report_lat: lat, last_report_lon: lon, last_report_at: new Date().toISOString(),
         last_report_case_id: id,
       }), AGENT_USER)
-    } catch { /* best-effort -- the case's own lat/lon write is the source of truth */ }
+    } catch {  }
   }
   return {}
 }
 
-// Keep the derived normalized_location field (case-store.js
-// DERIVED_ONLY_FIELDS) in step with a newly-recorded/changed location, as the
-// SYSTEM actor -- the write guard rejects this same field from AGENT_USER, so it
-// must go through the system principal. Best-effort: a failure here must never
-// block the real report write above.
 async function syncDerivedLocation(store, id, incoming) {
   if (!('location' in incoming) || typeof store().systemUpdateDerived !== 'function') return
   try { await store().systemUpdateDerived(id, { normalized_location: normalizeLocation(incoming.location) }) }
-  catch { /* best effort -- derived-field freshness, not the write itself, is at stake */ }
+  catch {  }
 }
 
 function recordedFields(incoming, hasLatLon) {
   return [...Object.keys(incoming), ...(hasLatLon ? ['lat', 'lon', 'location_source'] : [])]
 }
 
-// photos/audio append rather than overwrite (see mergeReport), so a changed
-// prior-vs-new value there is an ADDITION, not a correction -- exclude them from
-// the correction diff, which is only meaningful for fields that genuinely
-// replace their prior value.
 async function auditReportWrite(store, id, { incoming, priorReport, hasLatLon, lat, lon }) {
   const fieldsRecorded = recordedFields(incoming, hasLatLon)
   const corrections = Object.keys(incoming)
@@ -311,16 +207,6 @@ async function auditReportWrite(store, id, { incoming, priorReport, hasLatLon, l
   await store().appendEvent(id, { kind: 'action', actor: 'agent', text, data: { ...incoming, ...(hasLatLon ? { lat, lon } : {}), ...(corrections.length ? { corrections } : {}) } })
 }
 
-// ADDITIVE ONLY: also produce a provenance-tagged Observation in the ground-truth
-// subsystem (src/core/, src/packs/) alongside the real thatcher write above --
-// never instead of it, never blocking it (the real write already succeeded by
-// this point). Best-effort: a failure here must never surface to the agent/contact.
-//
-// A field mergeReport rejected for exceeding its append-length cap
-// (res.cappedFields, warned above) was never actually written to the real report
-// -- it must not be recorded as 'reported' in the provenance ledger either, since
-// that ledger has no update/delete and would then permanently claim a fact that
-// never landed.
 async function wireProvenance(store, ctx, id, { incoming, res, hasLatLon, lat, lon }) {
   try {
     const dataDir = store().dataDir
@@ -328,5 +214,5 @@ async function wireProvenance(store, ctx, id, { incoming, res, hasLatLon, lat, l
       ? Object.fromEntries(Object.entries(incoming).filter(([k]) => !res.cappedFields.includes(k)))
       : incoming
     if (dataDir) await recordProvenanceObservation({ dataDir, caseId: id, author: ctx?.author, incoming: provenanceIncoming, hasLatLon, lat, lon })
-  } catch { /* best-effort -- the provenance ledger is additive, never load-bearing for the real write */ }
+  } catch {  }
 }
