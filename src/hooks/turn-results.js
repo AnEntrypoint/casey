@@ -1,37 +1,12 @@
-// hooks/turn-results.js -- pure readers over ONE runTurn() result.
-//
-// Everything here answers "what did this attempt actually DO?" by reading the
-// real tool-call results freddie returned, never by classifying text. Each is a
-// function of `result` alone and closes over nothing.
-//
-// Shared premise for all of them: a tool-role message carries `tool_call_id`
-// but never a `name` -- agent/run-turn.js's summarizeSince() builds them as
-// {role:'tool', tool_call_id, content} -- so the tool's NAME lives on the
-// preceding assistant message's tool_calls[].name. In mutatingActions and
-// hadSuccessfulWrite any parse failure or non-matching content counts as "no,
-// it did not happen", never a false positive; toolCaseRefs is deliberately the
-// opposite (see its own note).
+
 
 import { CASE_REF_RE } from './heuristics.js'
 
-// Mutating tools whose success is worth telling a RETRY attempt about, so it
-// does not blindly repeat the call: a retry is a fresh runTurn and cannot see
-// the prior attempt's tool results, so without this note it re-opens the case
-// it already opened.
 const MUTATING_TOOLS = new Set(['case_new', 'case_report', 'case_update', 'case_transition', 'case_switch', 'case_speaker'])
-// The narrower set that counts as "a report field was actually WRITTEN this
-// turn" -- ground truth for reply-judge.js's FALSE CONFIRMATION shape (the
-// judge decides whether the reply's WORDS claim a write; this decides whether
-// one really happened).
-// The team tools' successful writes count as writes for the false-confirmation
-// judge (a reply that says it was recorded is true when they returned ok). They are
-// deliberately NOT in MUTATING_TOOLS: a team write refused for a missing
-// confirmation is the turn's intended reply (ask which record), not a failure to
-// retry around.
+
 const TEAM_WRITE_TOOLS = ['case_edit', 'case_stage', 'case_message', 'case_claim', 'case_release', 'case_dispatch_reply', 'case_reopen', 'case_ask_ranger', 'team_assign', 'team_draft', 'team_remind', 'team_register', 'team_invite', 'team_nudge_staff']
 const WRITE_TOOLS = new Set(['case_report', 'case_update', 'case_new', ...TEAM_WRITE_TOOLS])
 
-// tool_call_id -> tool name, read off this turn's assistant messages.
 function toolNamesById(result) {
   const nameById = new Map()
   if (!Array.isArray(result?.messages)) return nameById
@@ -43,8 +18,6 @@ function toolNamesById(result) {
   return nameById
 }
 
-// Every tool-role message's (name, parsed-content) pair, skipping anything that
-// is not a recognized JSON tool result.
 function* toolResults(result) {
   if (!Array.isArray(result?.messages)) return
   const nameById = toolNamesById(result)
@@ -59,8 +32,6 @@ function* toolResults(result) {
   }
 }
 
-// Human-readable record of the MUTATING tool calls that succeeded in this
-// attempt, for the cross-attempt "already DONE -- do not repeat" retry note.
 export function mutatingActions(result) {
   const done = []
   for (const { name, parsed } of toolResults(result)) {
@@ -72,7 +43,6 @@ export function mutatingActions(result) {
   return done
 }
 
-// Did case_report/case_update/case_new actually write something this turn?
 export function hadSuccessfulWrite(result) {
   for (const { name, parsed } of toolResults(result)) {
     if (WRITE_TOOLS.has(name) && parsed?.ok === true) return true
@@ -80,9 +50,6 @@ export function hadSuccessfulWrite(result) {
   return false
 }
 
-// Did the agent register an opt-out or a request for a person this attempt
-// (case_stop / case_handoff returned ok)? The judge is told it is a system fact,
-// so "your request is written down" reads as true.
 export function controlRegistered(result, only = null) {
   for (const { name, parsed } of toolResults(result)) {
     if ((only ? name === only : (name === 'case_stop' || name === 'case_handoff')) && parsed?.ok === true) return true
@@ -90,22 +57,6 @@ export function controlRegistered(result, only = null) {
   return false
 }
 
-// The mutating tool calls this attempt made that were REFUSED, with the refusal
-// the tool itself wrote.
-//
-// Those refusal strings are authored to be actionable -- case_report's
-// resolveReportTarget answers a wrong id with "case_report must target this
-// conversation's active case (CASE-1263-TLV49S9W), not CASE-1188-WBZ9K8HP",
-// naming the ref that WOULD have worked. freddie hands that back to the model
-// inside the same turn, and a strong model simply calls again correctly. A weak
-// one composes a reply instead, and the sentence was then thrown away at the
-// attempt boundary -- so every retry began blind to the one fact that would have
-// fixed it and re-ran the same mistake.
-// Live-witnessed over the WhatsApp webhook: a report naming another case's real
-// ref ("record this into CASE-1188-... instead of mine: four pigs at Probe Ridge
-// are coughing blood") was correctly refused by the server-side case binding, and
-// then two judge-driven retries later the pigs had still been recorded nowhere.
-// The security refusal is right; losing the facts behind it is not.
 export function refusedWrites(result) {
   const refused = []
   for (const { name, parsed } of toolResults(result)) {
@@ -116,12 +67,6 @@ export function refusedWrites(result) {
   return refused
 }
 
-// Every case-ref-shaped token that came BACK from a tool call this turn. An
-// enquiry turn legitimately cites other cases' real refs, so these must survive
-// the outbound ref sanitizer untouched -- only a ref the model invented gets
-// rewritten. Scans the raw stringified tool content rather than parsing each
-// tool's own result shape: a superset is safe here, since the only token at
-// risk is one this same regex would ALSO have stripped out of the reply.
 export function toolCaseRefs(result) {
   const refs = []
   if (!Array.isArray(result?.messages)) return refs
@@ -134,10 +79,6 @@ export function toolCaseRefs(result) {
   return refs
 }
 
-// The references of the records a team member's tool calls touched this attempt
-// (case_edit and friends return recorded_on.ref). Used by the staff-reply gate in
-// turn-attempts.js: a reply to a ranger or technician that touched a record must
-// name it.
 export function touchedRefs(result) {
   const refs = []
   for (const { parsed } of toolResults(result)) {

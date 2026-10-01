@@ -1,20 +1,4 @@
-// hooks/prompt-roles.js -- the role blocks: what a team member IS, what they can
-// do over WhatsApp, how to phrase things to them, and which tool does which duty.
-//
-// Composed LAST by prompt.js's caseSystemPrompt, one stacked block per rung the
-// contact reaches (a RANK test each, contact-tiers.js): a field worker gets the
-// field block, a technician the field + technician blocks, an operator all
-// three. A reporter gets none, so their prompt is byte-identical to before.
-//
-// Vocabulary is the deployment's own: rung names come from report-shape.js's
-// TIER_LABELS (uhh: "Eco Ranger"), the thing being tracked from
-// persona.entityLabel. The blocks name tools only because the model must call
-// them; the prompt's standing rule -- never name a tool, a stage or an internal
-// word to a person -- still applies to every reply. This file states what each
-// tool is FOR and the code-enforced rules around it; it never routes by keyword
-// (the model decides what a message means).
-//
-// Pure and synchronous like the rest of the prompt composition (prompt.js).
+
 
 import {
   atLeast, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR, resolveTierValue,
@@ -57,9 +41,6 @@ function operatorBlock(persona, label) {
   ]
 }
 
-// Every tier, reporters included: a comment about the assistant or the service
-// itself is saved on its own (case_feedback) and never becomes a report. The model
-// decides when a message is that; nothing here matches words.
 export function feedbackSection() {
   return [
     ``,
@@ -70,8 +51,7 @@ export function feedbackSection() {
 export function roleSection(persona, caseRow, contact) {
   const tier = resolveTierValue(contact?.tier)
   if (!atLeast(tier, TIER_FIELD_WORKER)) return []
-  // The technician is written to as the technician FIRST: with the ranger block ahead of it, a model kept reading the person as someone
-  // relaying a diagnosis ("not assigned to you", "that is the technician's job"), so their own sign-off was refused.
+
   const isTechnician = tier === TIER_ANIMAL_HEALTH_TECHNICIAN
   if (isTechnician) {
     return [

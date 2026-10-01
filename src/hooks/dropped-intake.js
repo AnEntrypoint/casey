@@ -1,53 +1,4 @@
-// hooks/dropped-intake.js -- the record of every inbound message casey turned
-// away BEFORE it reached recordInbound, so a lost report is not merely a log
-// line on a headless box nobody reads.
-//
-// SIX PATHS TURN AN INBOUND AWAY ABOVE THE STORE WRITE. The first four are
-// deliberate admission decisions taken inside casey; the last two are losses at
-// the transport edge, above admission entirely, and were silent until they were
-// added here:
-//
-//   rate_limited_contact  one contact over CASEY_RATE_LIMIT_MSGS in the window
-//   rate_limited_global   everyone together over CASEY_GLOBAL_RATE_LIMIT_MSGS
-//   burst_buffer_full     more than BUFFER_CAP messages held for one contact
-//                         while a turn was in flight; the OLDEST is discarded
-//   store_not_ready       the store is not initialized, so nothing can be written
-//   gateway_gap_unresumable  a reconnect could not RESUME, so whatever Discord
-//                         buffered during the disconnect was never replayed
-//   gateway_identity_unknown  a guild message arrived before the gateway had
-//                         told casey its own user id, so the @mention filter
-//                         could not evaluate it and failed closed
-//
-// THE LAST TWO COUNT WINDOWS AND MESSAGES RESPECTIVELY, AND THE DIFFERENCE IS
-// LOAD-BEARING. `gateway_identity_unknown` is one count per real message, like
-// the four above it. `gateway_gap_unresumable` is one count per DISCONNECT
-// WINDOW: nothing on casey's side can know how many messages Discord held and
-// then discarded, and inventing a message count would be a fabricated number in
-// the one place an operator most needs a true one. Its reason text says window,
-// not messages, for exactly that reason.
-//
-// WHY THIS IS AGGREGATE AND NOT ONE ROW PER MESSAGE. The rate limiters exist
-// precisely to stop a flood driving unbounded store writes (hooks/
-// case-intake.js's checkAdmission says so in its own words), so recording each
-// dropped message as its own row would hand the flood the exact amplification
-// the limiter was put there to deny -- a signature-verified flood would then
-// cost one write per message instead of none. Counting in memory and flushing a
-// SUMMARY at most once per window per reason keeps the write cost bounded by
-// wall-clock time rather than by message volume. The cost of that choice, stated
-// rather than hidden: an operator learns that twelve messages were dropped and
-// why, never which twelve.
-//
-// NO CONTACT KEY IS EVER RECORDED HERE. The same discipline bin/
-// worker-runtime-events.js states for the runtime audit ("reason-only ... so
-// nothing here can leak it") applies for the same reason: this is a system-level
-// aggregate, and AGENTS.md's rule is that aggregate rollups never emit
-// external_id. Channel is recorded because it is not identifying and is the
-// first thing an operator needs in order to act.
-//
-// Module-level state, read back through an exported getter, is the pattern
-// hooks/notifiers.js already uses for webhook delivery status -- the alternative
-// is threading a recorder through four layers that have no other reason to know
-// about it.
+
 
 const DEFAULT_FLUSH_WINDOW_MS = 15 * 60_000
 
@@ -62,7 +13,6 @@ export const DROP_REASONS = {
   gateway_identity_unknown: 'a guild message arrived before the gateway reported casey own user id, so the mention filter could not evaluate it and failed closed',
 }
 
-// reason -> { total, sinceFlush, firstAt, lastAt, channels: Map<channel, count>, lastFlushAt }
 const tallies = new Map()
 
 function tally(reason) {
@@ -71,13 +21,6 @@ function tally(reason) {
   return t
 }
 
-// The singleton system case every summary is appended to. Same shape and same
-// reasoning as bin/worker-runtime-events.js's runtime:supervisor case: a
-// channel:'system' case is excluded from listContacts AND from the case list
-// (case-store.js filters `channel: {$ne:'system'}` in both), so this is a
-// durable audit trail rather than something that clutters an operator's queue.
-// The operator-facing surface is /api/health, which reads snapshotDroppedIntake
-// below.
 let dropCaseIdP = null
 async function dropCaseId(store) {
   if (!dropCaseIdP) {
@@ -94,14 +37,6 @@ async function dropCaseId(store) {
   return dropCaseIdP
 }
 
-// Count one dropped inbound. Synchronous and allocation-cheap on purpose: this
-// runs on the flood path itself, so it must not add an await, a store round
-// trip, or anything that could fail, to the path whose whole job is to be cheap.
-// The store write is fired separately and best-effort by flushIfDue.
-// `note` is an optional short, non-identifying detail for the reasons whose
-// whole value is the detail -- how long a gateway was disconnected, say. It is
-// last-writer-wins within a window rather than accumulated: a summary is one
-// line, and the most recent occurrence is the one an operator is acting on.
 export function recordDroppedInbound(reason, { channel = 'unknown', store = null, log = console, now = Date.now(), flushWindowMs = DEFAULT_FLUSH_WINDOW_MS, note = null } = {}) {
   const t = tally(reason)
   t.total += 1
@@ -113,15 +48,6 @@ export function recordDroppedInbound(reason, { channel = 'unknown', store = null
   if (store) flushIfDue(reason, { store, log, now, flushWindowMs })
 }
 
-// One summary per reason per window, carrying everything accumulated since the
-// last one. Deliberately fire-and-forget: a failed audit write must never turn a
-// dropped message into a thrown error on the inbound path, and the in-memory
-// tally that /api/health reads is unaffected either way.
-//
-// The running total goes in the text as well as the count for this summary,
-// because the two answer different questions and only one of them survives a
-// missed flush: "17 more since the last line" is what changed, "412 since this
-// process started" is what an operator has actually lost.
 function flushIfDue(reason, { store, log, now, flushWindowMs, force = false }) {
   const t = tally(reason)
   if (!t.sinceFlush) return
@@ -139,25 +65,11 @@ function flushIfDue(reason, { store, log, now, flushWindowMs, force = false }) {
     .catch(e => log?.error?.('[casey] dropped-intake audit write failed', { reason, error: e.message }))
 }
 
-// Write out whatever has accumulated since the last summary, window or no
-// window. Called from the periodic guardrail sweep (case-sweep.js), which is the
-// only thing in this process that already runs on a clock and already holds the
-// store -- adding a timer here would make this module own a lifecycle it has no
-// other reason to have.
-//
-// Without this the audit trail loses its last partial window entirely: a flood
-// that stops leaves its remaining count sitting in memory with nothing to
-// trigger the next flush, so the very case that matters most -- the flood that
-// ended -- is the one that would never be written down. Measured before this
-// existed: 81 dropped messages produced three rows each claiming one message.
 export function flushDroppedIntake(store, log = console, now = Date.now()) {
   if (!store) return
   for (const reason of tallies.keys()) flushIfDue(reason, { store, log, now, flushWindowMs: 0, force: true })
 }
 
-// What /api/health reports. Totals are since process start, which is the honest
-// bound: the tallies are in memory, and saying "since this process started"
-// is true where "in the last hour" would not be.
 export function snapshotDroppedIntake() {
   const reasons = {}
   let total = 0
@@ -173,6 +85,4 @@ export function snapshotDroppedIntake() {
   return { total, first_at: firstAt, last_at: lastAt, reasons }
 }
 
-// Test-free reset hook for a live probe against a copy of the store. Not called
-// by any production path.
 export function _resetDroppedIntake() { tallies.clear(); dropCaseIdP = null }

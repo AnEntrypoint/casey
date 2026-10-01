@@ -1,26 +1,4 @@
-// hooks/media-relay.js -- where a team member's photo / voice note / location
-// pin goes when they send it to the bot from a farm.
-//
-// A ranger or technician on site messages the bot on the reporter's behalf, and
-// the photos of the sick animals must never land on the wrong case. So the
-// routing reuses the wrong-case machinery (team-focus.js), it does not invent a
-// second one:
-//
-//   RELAY  only when the sender is at least a field_worker AND the record is
-//          assigned to them (isAssignedTo, not their own chat) AND it is their
-//          CONFIRMED, fresh focus (writeGate: the 30-minute rule, and the message
-//          names no other reference). The artifact is filed on that record,
-//          attributed as relayed by the sender.
-//   ASK    anything else that could plausibly belong to an assigned record: the
-//          artifact stays on the sender's OWN record (bytes are never dropped) and
-//          a timeline observation tells the model to ask which case it belongs
-//          to, naming the candidate. Never guessed, never split.
-//   OWN    a reporter, or a team member with nothing assigned: unchanged.
-//
-// A location pin from a ranger is the RANGER's position, not the animals': it is
-// an observation on the case plus a check-in for the ranger (case_checkin
-// semantics) and never touches the case's own lat/lon. Whether it IS the
-// animals' location is a question for the model (it then uses case_edit).
+
 
 import { observation } from './case-writes.js'
 import { carriesArtifact } from './media-intake.js'
@@ -34,8 +12,7 @@ import { isValidLatLon } from '../case-tools-shared.js'
 import { toStorable } from '../store/guards.js'
 
 const eligible = (c, contact) => !!c && isOpenCase(c) && isAssignedTo(c, contact) && !isOwnConversation(c, contact)
-// The line is the reporter's own words (species, place) and rides into a prompt, so
-// it loses anything that could close a bracket or start a new line there.
+
 const cand = (c) => `${c.ref} (${identifyingLine(c).replace(/[\[\]<>\r\n]+/g, ' ')})`
 
 function whatArrived(msg) {
@@ -48,7 +25,6 @@ function whatArrived(msg) {
   return parts.join(' and ') || 'media'
 }
 
-// Decide the route. Returns null for OWN, else { mode: 'relay'|'ask', ... }.
 export async function routeStaffArtifact({ store, log, caseRow, msg, inboundText, msgId, now = Date.now() }) {
   if (!carriesArtifact(msg)) return null
   try {
@@ -76,7 +52,6 @@ export async function routeStaffArtifact({ store, log, caseRow, msg, inboundText
   }
 }
 
-// A ranger's shared pin, filed on the assigned case as the ranger's position.
 export async function recordRelayedLocationPin({ store, log, route, msg }) {
   const pin = msg.location
   if (!pin) return
@@ -97,8 +72,6 @@ export async function recordRelayedLocationPin({ store, log, route, msg }) {
   } catch (e) { log.warn?.('[casey] ranger location pin failed', { caseId: target.id, error: e.message }) }
 }
 
-// The pointer left on the SENDER's own record (and returned as a prompt note): it
-// carries the record to name and the instruction for this one turn.
 export async function noteRoute({ store, log, caseRow, route, msg }) {
   const what = whatArrived(msg)
   let text
@@ -111,8 +84,6 @@ export async function noteRoute({ store, log, caseRow, route, msg }) {
   }
   try { await store.appendEvent(caseRow.id, observation(text, { media_route: route.mode })) }
   catch (e) { log.warn?.('[casey] media route note failed', { caseId: caseRow.id, error: e.message }) }
-  // The same words ride into THIS turn's prompt, like staff-notices.js's note: the
-  // timeline alone is history the model may skim past, and this turn's reply is
-  // the one that must name the record and say what was saved.
+
   return `\n\n[System note: ${text}]`
 }

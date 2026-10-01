@@ -1,35 +1,4 @@
-// hooks/staff-outbound.js  --  a team member's message to a reporter, sent over
-// the channel from the agent tool surface (case_message, team_remind,
-// team_draft, case_ask_ranger).
-//
-// ONE outbound seam. Every send here goes through the `sendReply(caseRow, text)`
-// the caller hands in -- casey.js's Casey.sendReply, the very function the
-// dashboard's operator reply, reminder and draft-approve routes call -- never an
-// adapter of its own. What this file adds is only what those routes' callers
-// have to be true BEFORE calling it, stated once:
-//
-//   - opt-out: a person who said STOP is never messaged (OPTED_OUT_TAG);
-//   - the 24h session window: measured from the reporter's own last inbound
-//     (hooks/notifiers.js withinSessionWindow). casey has no template messages,
-//     so outside the window a free-form send is rejected by Meta rather than
-//     delivered; this returns an honest refusal BEFORE the attempt instead of a
-//     silent no-op or a delivered-looking timeline row;
-//   - a wired channel: no sendReply / no adapter for the channel is a refusal.
-//
-// RECORDING. A delivered message is an `outbound` event with actor 'operator'
-// (the event.actor enum has no other human value, and workload.js / case-sweep.js
-// already read an operator outbound as "a person answered") and data.by = the
-// sender's display id, data.by_tier = their rung. NEVER actor 'agent': nothing
-// the model decided produced these words. An undelivered send is recorded as a
-// note that says so in its own first words, never as an outbound (an outbound
-// row means the reporter received it).
-//
-// HUMAN TAKES OVER. After a delivered message the sender owns the case when it
-// was unclaimed (the dashboard's claim-on-reply), and when the sender IS the
-// assignee an 'auto' case moves to 'observe' with a recorded autonomy_change --
-// the existing mechanism (hooks/case-intake.js's observe gate) that stops the
-// agent replying over a person. Inbound is still recorded and STOP/HUMAN still
-// fire; releaseCase() below is the way back to 'auto'.
+
 
 import { tagList } from '../timestamp.js'
 import { OPTED_OUT_TAG } from './heuristics.js'
@@ -40,20 +9,15 @@ import { proactiveRefusal } from '../proactive-sends.js'
 
 export const STAFF_TEXT_MAX_LEN = 4000
 
-// The sender's display id. A contact whose name is only their own number (the
-// findOrCreateContact fallback) must not put that number on the timeline.
 export function staffLabel(contact) {
   const name = String(contact?.display_name || '').trim()
   if (name && !/^\+?[\d\s()-]{6,}$/.test(name)) return name.slice(0, 80)
   return 'a team member'
 }
 
-// Refusal-or-null for messaging this case's reporter right now. Returns
-// { error } (honest, plain) or { recent } when sending is allowed.
 export async function outboundRefusal(store, caseRow, { canSend = null, sendReply = null, now = Date.now(), kind = 'message' } = {}) {
   if (!caseRow) return { error: 'no such record' }
-  // Every send through this file starts a conversation (an operator or a tool
-  // decided to write), so CASEY_PROACTIVE_SENDS=off refuses all of them here.
+
   const noStart = proactiveRefusal({ kind })
   if (noStart) return { error: noStart }
   if (!sendReply || (canSend && !canSend(caseRow.channel))) {
@@ -62,9 +26,7 @@ export async function outboundRefusal(store, caseRow, { canSend = null, sendRepl
   if (tagList(caseRow).includes(OPTED_OUT_TAG)) {
     return { error: 'nothing was sent: this person asked us not to message them again' }
   }
-  // Imported lazily: notifiers.js reaches handler.js -> inbound-turn.js ->
-  // turn-attempts.js, which builds the toolset at module load, so a static import
-  // here would close a cycle back onto case-tools.js while it is still evaluating.
+
   const { withinSessionWindow, sessionWindowHours } = await import('./notifiers.js')
   let recent = []
   try { recent = await store.listEventsPage(caseRow.id, { limit: 25, offset: 0 }) }
@@ -75,17 +37,11 @@ export async function outboundRefusal(store, caseRow, { canSend = null, sendRepl
   return { recent }
 }
 
-// Send `text` to the case's reporter and record it. `staff` is the sender's
-// contact row; `extra` lands in the outbound event's data (e.g. operator_reminder).
-// `answers:false` (a reminder) leaves needs-human in place; `claim:false` skips the
-// claim-on-reply.
-// Returns { ok:true, ... } or { ok:false, error } -- never throws on a refusal.
 export async function sendStaffMessage({ store, sendReply, canSend = null, caseRow, text, staff, extra = {}, claim = true, answers = true, dropTags = [], now = Date.now() }) {
   const body = String(text || '').trim()
   if (!body) return { ok: false, error: 'nothing was sent: the message is empty' }
   if (body.length > STAFF_TEXT_MAX_LEN) return { ok: false, error: `nothing was sent: the message is too long (max ${STAFF_TEXT_MAX_LEN})` }
-  // A live role code must never leave through a reporter-bound message: the reporter
-  // would then hold the credential. (A text steered by a report's own words could try.)
+
   if (await withoutIssuedCodes(store, body).catch(() => null) != null) return { ok: false, error: 'nothing was sent: the message contains a registration code' }
   if (isOwnConversation(caseRow, staff)) return { ok: false, error: 'nothing was sent: that is this same chat with the assistant, not a reporter to message' }
   const gate = await outboundRefusal(store, caseRow, { canSend, sendReply, now, kind: extra?.staff_nudge ? 'staff_nudge' : 'message' })
@@ -118,8 +74,7 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
     }
   }
   await store.appendEvent(caseRow.id, { kind: 'outbound', actor: 'operator', channel: caseRow.channel, text: body, data })
-  // A delivered ANSWER satisfies the flags that asked for a person; a reminder
-  // or nudge answers nobody, so it clears only what the caller names.
+
   const cleared = new Set([...(answers ? ['needs-human', 'ai-offline'] : []), ...dropTags])
   const tags = tagList(caseRow)
   const keep = tags.filter(t => !cleared.has(t))
@@ -127,11 +82,6 @@ export async function sendStaffMessage({ store, sendReply, canSend = null, caseR
   return { ok: true, delivered: true, claimed, took_over: tookOver, recorded: 'outbound' }
 }
 
-// The latest pending assisted draft for a case, or null: a draft is "pending"
-// only while draft-pending is on the case (cleared on approve/discard/supersede),
-// so the most recent draft event is read and gated on the tag rather than
-// tracking draft state separately. The dashboard routes and the staff tools share
-// this one implementation.
 export async function pendingDraft(store, caseRow) {
   if (!tagList(caseRow).includes('draft-pending')) return null
   const events = await store.listEvents(caseRow.id)
@@ -139,21 +89,6 @@ export async function pendingDraft(store, caseRow) {
   return drafts.length ? drafts[drafts.length - 1] : null
 }
 
-// THE TIMELINE IS THE AUDIT RECORD, so an `outbound` row on it means the
-// contact received the message -- it is what an operator reads a week later,
-// what /api/activity streams, and the only kind timeline.js offers "flag this
-// reply" on. Recording one unconditionally made that untrue in two real
-// situations: a `casey dashboard` console has no sendReply at all (see
-// casey-serve.js cmdDashboard) so nothing is ever sent, and a wired channel
-// can still refuse the send. Both used to leave a delivered-looking outbound
-// for a message that never reached anybody.
-//
-// An undelivered reply is recorded as an operator NOTE that says so in its own
-// first words, never as an outbound. Nothing is discarded: the operator's text
-// is kept verbatim in `data.text` as well as in the line, because what a human
-// chose to say is part of the record whether or not it left the building.
-// `data.to` is deliberately absent -- there is no recipient of a message that
-// was not sent.
 const UNDELIVERED_REPLY_REASONS = {
   no_channel: 'this console is not attached to the messaging channels',
   send_failed: 'the channel refused it',
@@ -170,8 +105,6 @@ export function appendReplyEvent(store, c, text, op, { delivered, reason, extra 
   })
 }
 
-// Hand a case back: unassign it and, when a person had taken over ('observe'),
-// let the bot resume ('auto'). Recorded on the timeline either way.
 export async function releaseCase({ store, caseRow, by, user }) {
   const patch = { assignee: UNCLAIMED_ASSIGNEE }
   const wasObserve = caseRow.autonomy === 'observe'
