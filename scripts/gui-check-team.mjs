@@ -1,13 +1,10 @@
-// gui-check-team.mjs -- the areas / bulk team add / feedback / My day / hand-over-to-technician checks of
-// scripts/gui-check.mjs, run in the same real headless Chromium against the same scratch store and dashboard.
-// Split out only so the main file stays readable; nothing here runs on its own. It seeds its own account,
-// areas and reports AFTER every count-sensitive check in the main script, so none of those counts move.
-// GUI_CHECK_ONLY=team runs just these.
+
+
 import path from 'node:path'
 
 export async function runTeamChecks(c) {
   const { check, evalJs, asUser, axeBoth, viewport, sleep, clickText, setField, key, store, base, USER, PW, ids, archive, seenConsole, bodyText, createAccount, SRC } = c
-  // The phone touch-target census: every control under 44px in either direction (map excluded).
+
   const SMALL_JS = `JSON.stringify([...document.querySelectorAll('a[href], button, input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, summary, [role=button]')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !e.closest('.leaflet-container') && !e.classList.contains('app-status-toggle') && (r.height < 43.5 || r.width < 43.5) }).map((e) => e.tagName.toLowerCase() + '.' + String(e.className).split(' ')[0] + ' ' + Math.round(e.getBoundingClientRect().width) + 'x' + Math.round(e.getBoundingClientRect().height) + ' ' + (e.getAttribute('aria-label') || e.innerText || e.name || '').replace(/\\n/g, ' ').slice(0, 24)))`
   const { upsertArea } = await import(path.join(SRC, 'areas.js'))
 
@@ -42,7 +39,6 @@ export async function runTeamChecks(c) {
   const hasBtn = (re) => evalJs(`!![...document.querySelectorAll('button')].find((e) => ${re}.test(e.innerText))`)
   const noSideScroll = () => evalJs('document.documentElement.scrollWidth <= window.innerWidth')
 
-  // ---------------------------------------------------------------- Areas panel
   console.log('\noperator: Areas panel (add, unmapped, wrong-area queue)')
   await viewport('d')
   await asUser('', '#panel=areas', 4000)
@@ -78,7 +74,7 @@ export async function runTeamChecks(c) {
   await dialogClick('Move ' + refW1); await sleep(2200)
   const w1 = await asApi('', 'GET', '/api/cases/' + ids.W1)
   check(w1.j.case.assignee === 'contact:' + r3.id && JSON.parse(w1.j.case.report).association === 'Vhembe' && !(w1.j.area && w1.j.area.possibly_wrong_area), 'confirming moves the report to the area and to that area\'s ranger, and the wrong-area flag clears', JSON.stringify([w1.j.case.assignee, JSON.parse(w1.j.case.report).association]))
-  // Case detail: the area line, and the flag when it is raised.
+
   await asUser('', '#home=cases&case=' + ids.W1, 3500)
   check(/Area: Vhembe/.test(await bodyText()), 'the operator case page states the report\'s area')
   const flagged = await mkc('27800100005', 'W3 flagged', { ...fullRep, association: 'Soutpansberg' }, USER + '-rng2')
@@ -93,7 +89,6 @@ export async function runTeamChecks(c) {
   check(smallA.length === 0 && await noSideScroll(), 'phone: every control on the Areas page is at least 44px and nothing scrolls sideways', smallA.slice(0, 3).join(' ; '))
   await viewport('d')
 
-  // ---------------------------------------------------------------- bulk add
   console.log('\noperator: Add many people at once (Reporters panel)')
   await asUser('', '#panel=contacts', 4000)
   const before = await asApi('', 'GET', '/api/roles/roster')
@@ -126,7 +121,6 @@ export async function runTeamChecks(c) {
   check(smallB.length === 0 && await noSideScroll(), 'phone: every control in the bulk-add preview is at least 44px and nothing scrolls sideways', smallB.slice(0, 3).join(' ; '))
   await viewport('d')
 
-  // ---------------------------------------------------------------- feedback
   console.log('\nfeedback: send from a field login, read as staff')
   await asUser('-rng3', '', 4000)
   await clickText('GUI Ranger Three'); await sleep(500)
@@ -155,7 +149,6 @@ export async function runTeamChecks(c) {
   check(smallF.length === 0, 'phone: every control in the feedback dialog is at least 44px', smallF.slice(0, 3).join(' ; '))
   await viewport('d')
 
-  // ---------------------------------------------------------------- my day + hand-over
   console.log('\neco ranger: My day, and Send to technician (reversible)')
   await asUser('-rng3', '', 4500)
   const day = await asApi('-rng3', 'GET', '/api/my-day')

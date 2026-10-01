@@ -1,9 +1,5 @@
-// gui-check-persons.mjs -- the shared-phone checks of scripts/gui-check.mjs: several people behind one WhatsApp number
-// (src/phone-persons.js), in the same real headless Chromium against the same scratch store and dashboard. Split out
-// only so the main file stays readable; nothing here runs on its own. GUI_CHECK_ONLY=persons runs just these.
-//
-// NO MODEL IS EVER CALLED. The people are recorded by calling the case_speaker / case_report / case_new tool handlers
-// directly against the scratch store (the same handlers the model calls); nothing here can reach a provider.
+
+
 import path from 'node:path'
 
 export async function runPersonsChecks(c) {
@@ -19,12 +15,12 @@ export async function runPersonsChecks(c) {
     const r = await fetch(base + p, { method, headers: { cookie, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
     return { s: r.status, j: await r.json().catch(() => null) }
   }
-  // The topmost dialog: a rename / merge / erase prompt opens over the people dialog.
+
   const topDialog = `[...document.querySelectorAll('[role=dialog]')].pop()`
   const dialogText = () => evalJs(`(() => { const d = ${topDialog}; return d ? d.innerText.replace(/\\n+/g, ' / ') : 'none' })()`)
   const dialogClick = (txt) => evalJs(`(() => { const d = ${topDialog}; if (!d) return false; const b = [...d.querySelectorAll('button')].find((x) => x.innerText.trim().startsWith(${JSON.stringify(txt)})); if (!b) return false; b.click(); return true })()`)
   const dialogType = (v) => evalJs(`(() => { const d = ${topDialog}; const i = d && d.querySelector('input'); if (!i) return false; const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(i), 'value').set; set.call(i, ${JSON.stringify(v)}); i.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
-  // "See who" on ONE named phone (the list order of two phones created in the same second is not fixed).
+
   const seeWho = (name) => evalJs(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === ${JSON.stringify('See who uses the phone of ' + '')} + ${JSON.stringify(name)}); if (!b) return false; b.click(); return true })()`)
   const noSideScroll = () => evalJs('document.documentElement.scrollWidth <= window.innerWidth')
 
@@ -57,10 +53,9 @@ export async function runPersonsChecks(c) {
   ids.PL = solo.k.id
   const refOf = async (id) => (await store.getCase(id)).ref
   const sharedContactId = shared.contact.id
-  // a ranger assigned to Nomsa's report, to see what the field screen says
+
   await store.updateCase(ids.PN, { assignee: USER + '-rng2' }, { id: 'casey-system', role: 'admin' })
 
-  // ---------------------------------------------------------------- Reporters panel
   console.log('\noperator: Reporters panel on a shared phone')
   await viewport('d')
   await asUser('', '#panel=contacts', 4000)
@@ -79,7 +74,7 @@ export async function runPersonsChecks(c) {
   check(!dlg.includes(PHONE) && !/\d{7,}/.test(dlg), 'the dialog shows no phone number and no long digit run')
   check(!/\b(persons|speaker|payload|json|person id|reported_by|pp_[a-z]+)\b/i.test(dlg), 'the dialog uses no jargon (person id, speaker, payload)')
   await axeBoth('Reporters: who uses this phone (dialog open)')
-  // rename Nomsa
+
   const nomsaBefore = (await P.listPersons(store, sharedContactId)).find((p) => p.name === 'Nomsa')
   await evalJs(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'Rename Nomsa'); b.click(); return 1 })()`); await sleep(500)
   check(/Rename Nomsa/.test(await dialogText()), 'Rename asks for the new name in a prompt naming who is being renamed')
@@ -88,7 +83,7 @@ export async function runPersonsChecks(c) {
   check(after && after.name === 'Nomsa Dlamini', 'renaming stores the name as typed', after && after.name)
   check(JSON.parse((await store.getCase(ids.PN)).report).reported_by === 'Nomsa Dlamini', 'her report\'s "Reported by" follows the rename')
   check(/Nomsa Dlamini/.test(await dialogText()), 'the dialog shows the new name at once')
-  // merge: Thabo is recorded again as Thabo M (the assistant heard two spellings), then staff say it is one person
+
   await call('case_speaker', { name: 'Thabo M' }, cx)
   await evalJs(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'Close'); b.click(); return 1 })()`); await sleep(400)
   await seeWho('Farm Phone'); await sleep(1500)
@@ -100,14 +95,14 @@ export async function runPersonsChecks(c) {
   check(/Is Thabo M the same person as Thabo\?/.test(await dialogText()), 'joining two records asks first, naming both')
   await dialogClick('Yes, same person'); await sleep(2200)
   check((await P.listPersons(store, sharedContactId)).length === 3 && !(await P.listPersons(store, sharedContactId)).some((p) => p.name === 'Thabo M'), 'after joining there are three people again and the duplicate is gone')
-  // phone: controls and no sideways scroll in the dialog
-  await sleep(6500) // the success toast has gone (the census counts its dismiss control otherwise)
+
+  await sleep(6500)
   await viewport('p'); await sleep(800)
   const smallDlg = JSON.parse(await evalJs(SMALL_JS))
   check(smallDlg.length === 0 && await noSideScroll(), 'phone: every control in the people dialog is at least 44px and nothing scrolls sideways', smallDlg.slice(0, 3).join(' ; '))
   await axeBoth('Reporters: who uses this phone (phone width)')
   await viewport('d')
-  // admin erase one person
+
   await asUser('', '#panel=contacts', 4000); await clickText('Public reporters'); await sleep(1200); await seeWho('Farm Phone'); await sleep(1500)
   await evalJs(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'Erase Thabo'); b.click(); return 1 })()`); await sleep(500)
   const ed = await dialogText()
@@ -122,7 +117,6 @@ export async function runPersonsChecks(c) {
   check((await store.getCase(ids.PT)).external_id === PHONE && (await store.getContact(sharedContactId)).external_id === PHONE, 'the phone itself is left alone')
   check(!/Thabo/.test(await dialogText()), 'the dialog no longer lists him')
 
-  // ---------------------------------------------------------------- case detail
   console.log('\noperator: the report says who gave it')
   await asUser('', '#home=cases&case=' + ids.PN, 4000)
   const cd = await bodyText()
@@ -136,7 +130,6 @@ export async function runPersonsChecks(c) {
   const prt = await pr.text()
   check(/Reported by:<\/strong> Nomsa Dlamini, shared phone: 2 people/.test(prt), 'the printable form says who reported it and that the phone is shared')
 
-  // ---------------------------------------------------------------- field ranger
   console.log('\neco ranger: who to ask for')
   await asUser('-rng2', '#case=' + ids.PN, 4000)
   const fld = await bodyText()

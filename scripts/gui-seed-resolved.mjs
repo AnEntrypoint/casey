@@ -1,8 +1,5 @@
-// gui-seed-resolved.mjs -- seeds a SCRATCH store with a spread of reports for the
-// viewer / resolved-map checks: varied diseases, species, associations, dates and
-// stages, including signed-off cases (resolved with an identified disease). Only
-// ever imported by scripts/gui-check.mjs (and ad-hoc checks) after that script has
-// moved into its own throwaway directory; it never opens the live data/ directory.
+
+
 const DISEASES = [
   ['Foot and mouth disease', 30], ['Anthrax', 8], ['Lumpy skin disease', 26], ['Newcastle disease', 14],
   ['Brucellosis', 9], ['Heartwater', 16], ['Pulpy kidney', 6], ['Rift Valley fever', 3], ['Ticks and tick-borne disease', 12],
@@ -14,7 +11,7 @@ const AREAS = [
 ]
 const SPECIES = ['cattle', 'goats', 'sheep', 'chickens', 'pigs']
 const pick = (list, r) => { let t = r * list.reduce((s, x) => s + x[list[0].length - 1], 0); for (const x of list) { t -= x[x.length - 1]; if (t <= 0) return x } return list[list.length - 1] }
-// A small deterministic generator, so a failing run reproduces.
+
 const rng = (seed) => () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296
 
 export async function seedResolved(store, { n = 300, prefix = '2779', now = Math.floor(Date.now() / 1000) } = {}) {
@@ -34,7 +31,7 @@ export async function seedResolved(store, { n = 300, prefix = '2779', now = Math
     await store.updateCase(c.id, noLoc ? {} : { lat: lat + (R() - 0.5) * 0.15, lon: lon + (R() - 0.5) * 0.15, location_source: 'estimated' }, admin)
     if (noLoc) made.noLocation++
     if (bucket < 0.5) {
-      // Signed off: the technician's diagnosis is recorded, then the case is finished. Days ago: 0..330.
+
       await store.mergeReport(c.id, { identified_disease: disease, recommended_resolution: 'Vaccinate the herd and move no animals for 14 days' }, { id: 'aht', role: 'operator' }, { bypassObserve: true, autoAssign: false })
       await store.transition(c.id, 'triaging', { user: admin, reason: 'seed' })
       await store.transition(c.id, 'in_progress', { user: admin, reason: 'seed' })

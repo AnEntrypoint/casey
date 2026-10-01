@@ -1,41 +1,5 @@
 #!/usr/bin/env node
-// gui-check.mjs -- drives the REAL dashboard in REAL headless Chromium and
-// asserts the layout, workflow and accessibility invariants this repo has
-// already broken once each.
-//
-// This is not a test suite and adds no mocks: it boots the actual Express app
-// against a real sqlite store and reads the actual rendered DOM, which is the
-// verification style AGENTS.md mandates ("Verification is manual/live"). Same
-// shape as deps/design's own scripts/a11y-audit.mjs. Run it by hand or from a
-// preflight; it is not wired into `npm run lint`, which is deliberately
-// dependency-free and must stay green in a bare clone with no browser.
-//
-// THE STORE IS ITS OWN. The store is cwd-bound, so this script moves into a
-// throwaway directory BEFORE opening it and seeds every account, contact and
-// report it asserts on. It never opens the live data/ directory (an earlier
-// version did, created and deleted logins in it while the live bot was running,
-// and asserted on whatever reports the live store happened to hold).
-//
-// Every assertion below is a regression that actually shipped:
-//   - the map home rendered through the legacy stacked panel path
-//   - the mobile "icon grid" resolved to ONE column
-//   - a transformed ancestor broke the map's `position: fixed` geometry
-//   - icon-only controls shipped with no accessible name
-//   - axe: aria-selected on a listitem, a heading inside role=list, opacity-
-//     dimmed pills at 3.15:1, a scroll region a keyboard cannot reach, white
-//     text on the dark theme's light-red danger fill, a "New" pill in --sky
-//   - field team: the browser Back button left the dashboard from a report;
-//     a write after an operator unassigned the report said "not found"; the
-//     checklist said Have/Needed only by colour on a phone; a signed-off report
-//     still offered to be signed off
-//   - a session that ended mid-action failed one request at a time
-//   - past 50 reports the older ones could not be reached, and search only
-//     looked at the 50 loaded
-//   - the map legend said "In Progress" / "Needs A Person" while every other
-//     surface says "Working on it" / "Needs a person"
-//   - the nudge panel was unstyled and read "they last did something on it not recorded"
-//
-// Usage: node scripts/gui-check.mjs [--port 4791] [--keep-open]
+
 import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
@@ -61,12 +25,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const PW = 'g-' + Math.random().toString(36).slice(2, 12)
 const USER = 'guicheck'
 
-// Own the store: a scratch cwd, opened before any casey module is imported.
 const SCRATCH = mkdtempSync(path.join(os.tmpdir(), 'casey-gui-check-store-'))
 process.chdir(SCRATCH)
-// The field-team screens assert on the deployment's own mandatory minimum (species, symptoms, location), so
-// the config is the deployment's: CASEY_CONFIG_DIR, else the uhh config this repo is checked out inside.
-// A checkout on its own falls back to the bundled generic config, and those checks then report.
+
 const UHH_CONFIG = path.join(HERE, '..', '..', '..', 'config')
 if (!process.env.CASEY_CONFIG_DIR && existsSync(path.join(UHH_CONFIG, 'report-fields.yml'))) process.env.CASEY_CONFIG_DIR = UHH_CONFIG
 if (!process.env.CASEY_CONFIG_DIR) copyFileSync(path.join(HERE, '..', 'thatcher.config.yml'), path.join(SCRATCH, 'thatcher.config.yml'))
@@ -119,7 +80,7 @@ async function seed() {
   ids.D = await mkcase('27800000004', 'D technician incomplete', { species: 'sheep' }, 'contact:' + ac.id)
   ids.G = await mkcase('27800000007', 'G technician ready', full, USER + '-aht', { lat: -22.5, lon: 30.2 })
   ids.U = await mkcase('27800000009', '\u0645\u0631\u064a\u0636 \u0628\u0642\u0631\u0629 caf\u00e9 \u725b\u75c5', full, USER + '-rng2')
-  // Past one page (50) so the older reports have to be reachable.
+
   for (let i = 0; i < BULK; i++) await mkcase('2778' + String(100000 + i), 'Bulk case ' + i, { species: 'goats' }, '')
 }
 
@@ -137,7 +98,7 @@ try {
   let ver = null
   for (let i = 0; i < 40 && !ver; i++) {
     await sleep(500)
-    try { ver = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json() } catch { /* not up yet */ }
+    try { ver = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`)).json() } catch {  }
   }
   if (!ver) throw new Error('chromium did not expose a CDP endpoint')
 
@@ -162,9 +123,9 @@ try {
       failedReqs.push(`${m.params.response.status} ${m.params.response.url}`)
     }
   }
-  // A dialog the page raises (beforeunload on unsaved input) would freeze every later call: accept it.
+
   ws.addEventListener('message', (e) => { const m = JSON.parse(e.data); if (m.method === 'Page.javascriptDialogOpening') send('Page.handleJavaScriptDialog', { accept: true }) })
-  // A call that never answers is a failed check, not a hung run.
+
   const send = (method, params = {}, limit = 40000) => new Promise((res, rej) => {
     const i = ++id; pending.set(i, res)
     const t = setTimeout(async () => {
@@ -178,8 +139,7 @@ try {
     pending.set(i, (m) => { clearTimeout(t); res(m) })
     ws.send(JSON.stringify({ id: i, method, params }))
   })
-  // A navigation that never commits is retried once after stopping the load: it is intermittent and
-  // the page, not the assertion, is what stalled.
+
   const navigate = async (url) => {
     try { await send('Page.navigate', { url }, 20000) } catch { await send('Page.stopLoading').catch(() => {}); await send('Page.navigate', { url }, 20000) }
   }
@@ -190,7 +150,7 @@ try {
   }
 
   await send('Runtime.enable'); await send('Log.enable'); await send('Network.enable'); await send('Page.enable')
-  // The service worker answers navigations; one caught mid-install stalls Page.navigate intermittently.
+
   await send('Network.setBypassServiceWorker', { bypass: true })
 
   const base = `http://127.0.0.1:${PORT}`
@@ -198,17 +158,15 @@ try {
   const viewport = async (k) => {
     const [width, height, mobile] = VP[k]
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: mobile ? 2 : 1, mobile })
-    // A phone is a coarse pointer: the kit's 44px touch floor only applies to one.
+
     await send('Emulation.setTouchEmulationEnabled', { enabled: mobile, maxTouchPoints: 5 })
   }
   const theme = async (t) => {
-    // Exactly what account-menu.js's applyTheme does.
+
     await evalJs(`(() => { const t = ${JSON.stringify(t)}; document.documentElement.dataset.caseyTheme = t; document.body.dataset.theme = t; const a = document.getElementById('app'); if (a) a.dataset.theme = t; return 1 })()`)
     await sleep(600)
   }
-  // A real sign-in for a role, then a full navigation (a hash-only change would not reload the SPA).
-  // What each page raised is judged once, at the console check: pages are archived as they are left, and what the
-  // OLD page raises while its own session is being swapped out (a poll answered 401 after the logout) is dropped.
+
   const seenConsole = [], seenFailed = []
   const archive = () => { seenConsole.push(...consoleMsgs); seenFailed.push(...failedReqs); consoleMsgs.length = 0; failedReqs.length = 0 }
   const asUser = async (suffix, hash = '', wait = 3500) => {
@@ -236,22 +194,17 @@ try {
     const r = JSON.parse(await evalJs(`axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] } }).then((r) => JSON.stringify(r.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical').map((v) => v.id + ' x' + v.nodes.length + ' ' + v.nodes[0].target.join(' ') + ' :: ' + String(v.nodes[0].failureSummary || '').split('\\n')[1]))) `))
     check(r.length === 0, `axe: no serious or critical violation -- ${label}`, r.length ? r.slice(0, 2).join(' | ').slice(0, 260) : 'none')
   }
-  // Every view a person can be on, in both themes, against axe.
+
   const axeBoth = async (label) => {
     for (const [t, n] of [['herd', 'light'], ['herd-ink', 'dark']]) { await theme(t); await axe(`${label} (${n})`) }
     await theme('herd')
   }
 
-  // Counts every render the kit's schedule() actually queues (bootstrap.js coalesces
-  // into one microtask per render). A self-rescheduling render loop locks a phone, so
-  // the counter drops past 3000 to keep a regression a FAILED check, not a hung page.
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
     const W = window; W.__renders = 0; const q = W.queueMicrotask.bind(W);
     W.queueMicrotask = (f) => { if (/schedule/.test((new Error().stack || '').split('\\n')[2] || '')) { if (++W.__renders > (W.__renderCap || 3000)) return } return q(f) };
   })()` })
 
-  // The read-only viewer's checks (scripts/gui-check-viewer.mjs) seed 300 more reports, so they run last in a
-  // full run; GUI_CHECK_ONLY=viewer runs just them, against the same scratch store and dashboard.
   const viewerCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, store, PORT, USER, PW, ids, archive, seenConsole, seenFailed, bodyText, send })
   const teamCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, setField, key, store, base, USER, PW, ids, archive, seenConsole, bodyText, createAccount, SRC })
   const personsCtx = () => ({ check, evalJs, asUser, axeBoth, viewport, sleep, clickText, setField, key, store, base, USER, PW, ids, archive, seenConsole, bodyText, SRC })
@@ -280,10 +233,7 @@ try {
   })()`))
   check(d.appChildren > 0, 'SPA mounted', `#app has ${d.appChildren} child(ren)`)
   check(!!d.map, 'map canvas present on the map home view')
-  // DOCKED, not full-bleed (AGENTS.md "Dashboard structure"): the canvas fills its OWN pane -- the
-  // region between the top bar and the status bar, right of the nav -- and the rail sits beside it,
-  // never over it. A canvas at the viewport origin would mean the nav or the rail had been covered.
-  // (The earlier "full-bleed at 0,0" check contradicted the documented design and failed on old code.)
+
   check(d.map && d.main && d.map[0] === d.main[0] && d.map[1] === d.main[1], 'map fills its pane from the pane origin (below the top bar, right of the nav)', d.map && `map ${d.map} pane origin ${d.main && d.main.slice(0, 2)}`)
   check(d.map && d.status && Math.abs(d.map[1] + d.map[3] - d.status[1]) <= 1, 'map runs down to the status bar', d.map && d.status && `map bottom ${d.map[1] + d.map[3]} vs status top ${d.status[1]}`)
   check(d.map && d.rail && d.map[0] + d.map[2] <= d.rail[0] + 1 && d.rail[2] >= 300 && d.rail[2] <= 480, 'rail is docked beside the map (not over it), 300-480px wide', d.rail && `map right ${d.map && d.map[0] + d.map[2]}, rail ${d.rail}`)
@@ -293,8 +243,7 @@ try {
   check(/Ubuntu/.test(d.font), 'Ubuntu font applied to body', d.font.slice(0, 40))
   const legend = JSON.parse(await evalJs(`JSON.stringify([...document.querySelectorAll('.ds-map-legend-item')].map((e) => e.innerText.trim()))`))
   check(legend.includes('Working on it') && legend.includes('Needs a person') && !legend.some((t) => /In Progress|Needs A Person/.test(t)), 'map legend uses the same words as the rest of the screen (Working on it, Needs a person)', legend.join(' | '))
-  // The attention lead's "waiting" state (something needs a person) is a tinted red pill; the fixture may have
-  // nothing waiting, so the state is applied to the real control rather than left to chance.
+
   await evalJs(`document.querySelector('.ds-attn-lead').classList.add('is-waiting'); 1`)
   await axeBoth('map home with the attention lead waiting')
   await evalJs(`document.querySelector('.ds-attn-lead').classList.remove('is-waiting'); 1`)
@@ -319,7 +268,7 @@ try {
     });
   })()`))
   check(m.display === 'grid', 'mobile appbar is a grid', m.display)
-  // The regression: auto-fit collapsed to ONE column and the "grid" was a stack.
+
   check(m.colCount >= 2, 'mobile icon grid has more than one column', `${m.colCount} cols (${m.cols})`)
   check(m.z !== 'auto' && Number(m.z) > 0, 'mobile appbar sits above the map', `z-index ${m.z}`)
   check(m.scrollW <= m.innerW, 'no horizontal overflow on mobile', `${m.scrollW} vs ${m.innerW}`)
@@ -327,8 +276,7 @@ try {
 
   console.log('\nrender budget + case heading (cases view, case detail)')
   const caseId = ids.A
-  // Opening a case makes the best-effort per-run config request, which answers 404 on a
-  // plain deployment by design (fetchRunConfig); it is not a defect of the later checks.
+
   const renders = () => evalJs('window.__renders')
   await viewport('d')
   await evalJs(`localStorage.casey_home_view = 'cases'; 1`)
@@ -339,13 +287,9 @@ try {
   const idle = (await renders()) - cold
   check(cold != null && cold <= 60, 'cases view cold open stays inside the render budget', `${cold} renders (budget 60)`)
   check(idle <= 5, 'cases view is quiet at idle (no render loop)', `${idle} renders in 6 s (budget 5)`)
-  // The known-values filter bar asked for its list on EVERY render while the list was empty, and each
-  // answer scheduled another render: an unbounded loop that only exists when a field has no recorded
-  // value, which the seeded reports above never produce. So make it empty for real: answer the list
-  // request with no values, drop the cache, kick one render, and count renders: fixed code settles in a
-  // handful, the loop re-renders until the probe's cap (200).
+
   const emptyFrom = await renders()
-  // A lower cap for this probe only: a loop then ends in a second or two as a failed check instead of a locked tab.
+
   await evalJs(`(() => { const W = window; W.__fvCalls = 0; W.__renderCap = W.__renders + 200; W.__fvFetch = W.fetch
     W.fetch = (u, ...a) => { if (String(u).includes('/api/field-values?')) { W.__fvCalls++; return Promise.resolve(new Response('{"values":[]}', { headers: { 'content-type': 'application/json' } })) } return W.__fvFetch(u, ...a) }
     return import('/src/known-values.js').then((m) => { m.invalidateKnownValues(); return import('/src/state.js') }).then((st) => { st.schedule(); return 1 }) })()`)
@@ -373,8 +317,7 @@ try {
   await asUser('', '#home=cases&case=' + ids.C, 3500)
   const opts = JSON.parse(await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); return JSON.stringify(s ? { opts: [...s.options].map((o) => o.value), cur: s.value } : null) })()`))
   check(!!opts && opts.cur === '' && !opts.opts.includes('agent'), 'a report held by the assistant reads "Nobody yet" in the Assigned-to picker, not the raw word agent', opts && `current "${opts.cur}"`)
-  // A ranger who is BOTH a WhatsApp contact and a linked dashboard login is one person: the picker
-  // lists them once and assigns with the contact key (which the login resolves through contact_phone).
+
   const rangerOpts = JSON.parse(await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); return JSON.stringify([...s.options].filter((o) => /^GUI Ranger \\(/.test(o.text)).map((o) => o.value)) })()`))
   check(rangerOpts.length === 1 && rangerOpts[0].startsWith('contact:'), 'a ranger who is both a contact and a linked login is listed once, by the contact key', JSON.stringify(rangerOpts))
   await evalJs(`(() => { const s = [...document.querySelectorAll('select')].find((s) => [...s.options].some((o) => /Nobody yet/.test(o.text))); s.value = ${JSON.stringify(rangerOpts[0] || '')}; s.dispatchEvent(new Event('change', { bubbles: true })); return 1 })()`)
@@ -398,7 +341,7 @@ try {
   check(/^All \d+ reports$/.test(pg2 || ''), 'Show more brings in the remaining reports', pg2)
   const domRows = await evalJs(`document.querySelectorAll('.case-row').length`)
   check(domRows > 0 && domRows < 80, 'with every report loaded the list draws only the rows in view (render budget: under 80 rows in the DOM)', domRows + ' rows for ' + pg2)
-  // Bulk case 0 is the oldest: never in the first page, so only a search over every report finds it.
+
   await asUser('', '#home=cases', 4000)
   await setField('input[type=search]', 'Bulk case 0'); await sleep(1800)
   const hit = JSON.parse(await evalJs(`JSON.stringify({ rows: document.querySelectorAll('.case-row').length, text: [...document.querySelectorAll('.case-row')].map((r) => r.innerText).join(' ') })`))
@@ -476,11 +419,6 @@ try {
   })()`))
   check(bad.length === 0, 'every visible control has an accessible name', bad.length ? bad.join(', ') : 'none unlabelled')
 
-  // WCAG AA text contrast. Caught a real 3.27:1 failure on the alert count,
-  // because casey coloured it with --danger (the brand red kept for FILLS)
-  // rather than the --danger-ink companion the kit already expected but no
-  // theme defined. On a surveillance dashboard the alert count is precisely the
-  // text that must be readable outdoors on a phone.
   const CONTRAST_JS = `(() => {
     const lum = (c) => { const [r,g,b] = c.map(v => { v/=255; return v <= 0.03928 ? v/12.92 : Math.pow((v+0.055)/1.055, 2.4) }); return 0.2126*r + 0.7152*g + 0.0722*b };
     const parse = (s) => { const m = s.match(/rgba?\\(([^)]+)\\)/); if (!m) return null; const p = m[1].split(',').map(Number); return { rgb: p.slice(0,3), a: p.length > 3 ? p[3] : 1 } };
@@ -506,26 +444,19 @@ try {
     return JSON.stringify(out);
   })()`
 
-  // BOTH themes. The dark preset had never been audited live and carried ten
-  // failures, including a tier-3 surface that stayed light while its text
-  // followed the theme (1.16:1) and map cluster counts at 2.03:1. Checking only
-  // the theme that happens to be active is how that survived.
   for (const th of ['herd', 'herd-ink']) {
     await theme(th)
     const low = JSON.parse(await evalJs(CONTRAST_JS))
     check(low.length === 0, `all text meets WCAG AA contrast (${th})`, low.length ? `${low.length} failing, e.g. ${low[0]}` : 'no failures')
   }
   await theme('herd')
-  // A 404 is judged below, by URL; a basemap tile the upstream provider would not serve is the internet's, not the app's; the /api/ready probe answers 503 while a write holds the
-  // sqlite file (busy_timeout is 0 by design), which the connection banner already treats as a moment, not an outage.
+
   archive()
   const consoleBad = seenConsole.filter((m) => !/status of 404/.test(m) && !/<\/(api\/)?tiles?\//.test(m) && !/<\/api\/ready>/.test(m))
   check(consoleBad.length === 0, 'browser console clean', consoleBad.length ? consoleBad[0] : 'no errors or warnings')
   const unexpected = seenFailed.filter((r) => !/\/api\/runs\/[^/]+\/(config|notes)$/.test(r) && !/\/api\/cases\/does-not-exist$/.test(r) && !/\/api\/ready$/.test(r))
   check(unexpected.length === 0, 'no failed requests', unexpected.length ? [...new Set(unexpected)][0] : 'none')
 
-  // ---- role-shaped screens: each field-team login gets its own narrow home, and
-  // the server (not the screen) refuses everything outside it.
   for (const [suffix, homeLabel, label, expected] of [['-rng', 'My ', 'eco ranger', 3], ['-aht', 'Ready to sign off', 'animal health technician', 2]]) {
     console.log(`\nrole home: ${label}`)
     await viewport('d')
@@ -577,7 +508,7 @@ try {
   check(back.home && !back.pane && back.hash === '', 'the browser Back button returns from a report to the list (a phone Back button must not leave the dashboard)', JSON.stringify(back))
   await evalJs('history.forward()'); await sleep(1300)
   check(/Reach the reporter/.test(await bodyText()), 'browser Forward reopens the report')
-  // Record a note, double-click the confirm: exactly one note lands.
+
   await evalJs(`(() => { const t = [...document.querySelectorAll('textarea')].find((e) => /reporter told/i.test((e.labels && e.labels[0]) ? e.labels[0].innerText : '')); t.value = 'Farmer says 12 goats limping'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
   await clickText('Save to'); await sleep(700)
   const conf = await evalJs(`(() => { const d = document.querySelector('[role=dialog]'); return d ? d.innerText.replace(/\\n+/g, ' / ').slice(0, 120) : 'none' })()`)
@@ -591,9 +522,9 @@ try {
   check(waAfter, 'the reporter message link is still there after a save (the screen keeps the audited read, not the write response)')
   const focusBack = await evalJs(`(() => { const a = document.activeElement; return a ? (a.innerText || a.getAttribute('aria-label') || a.tagName).slice(0, 30) : 'none' })()`)
   check(/Sav/.test(focusBack), 'after the confirm dialog closes, focus returns to the control that opened it', focusBack)
-  // Stale tab: an operator takes the report away while this one is open.
+
   await asUser('-rng', '#case=' + ids.A, 3500)
-  // The operator takes the report away from a separate session, while this tab still has it open.
+
   const opLogin = await fetch(base + '/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: USER, password: PW }) })
   const opCookie = (opLogin.headers.get('set-cookie') || '').split(';')[0]
   const took = await fetch(base + '/api/cases/' + ids.A, { method: 'PATCH', headers: { cookie: opCookie, 'content-type': 'application/json' }, body: JSON.stringify({ assignee: '' }) })
@@ -606,7 +537,7 @@ try {
   check(!/\bnot found\b/i.test(stale.toast) && /no longer available to you|no longer yours/.test(stale.toast + stale.body), 'a write to a report that was taken away says so in plain words (no "not found")', stale.toast.slice(0, 120))
   check(/This report is no longer yours/.test(stale.body) && /second note after it was taken away/.test(stale.body), 'the screen says the report is no longer theirs and keeps what they typed for copying')
   await fetch(base + '/api/cases/' + ids.A, { method: 'PATCH', headers: { cookie: opCookie, 'content-type': 'application/json' }, body: JSON.stringify({ assignee: USER + '-rng' }) })
-  // Session end mid-action.
+
   await asUser('-rng', '#case=' + ids.L, 3500)
   await evalJs(`(() => { const t = [...document.querySelectorAll('textarea')].find((e) => /reporter told/i.test((e.labels && e.labels[0]) ? e.labels[0].innerText : '')); t.value = 'typed before the session ended'; t.dispatchEvent(new Event('input', { bubbles: true })); return 1 })()`)
   await evalJs(`fetch('/api/logout', { method: 'POST' }).then((r) => r.status)`)
@@ -628,7 +559,7 @@ try {
   await asUser('-aht', '#case=' + ids.G, 3500)
   await clickText('Sign off CASE'); await sleep(600)
   await evalJs(`(() => { const b = [...document.querySelectorAll('[role=dialog] button')].find((x) => /^Sign off/.test(x.innerText)); b.click(); return 1 })()`)
-  // The sign-off then asks for the diagnosis: the disease identified, then the recommendation.
+
   const asked = []
   for (const answer of ['Foot-and-mouth disease suspected', 'Isolate the herd and call the state vet']) {
     await sleep(700)
@@ -677,11 +608,11 @@ try {
     failures.push('harness: ' + e.message)
   }
 } finally {
-  try { ws && ws.close() } catch { /* closing a dead socket is not a failure */ }
-  try { chrome && chrome.kill() } catch { /* already gone */ }
-  try { if (dash?.close) await dash.close() } catch { /* already closed */ }
+  try { ws && ws.close() } catch {  }
+  try { chrome && chrome.kill() } catch {  }
+  try { if (dash?.close) await dash.close() } catch {  }
   process.chdir(os.tmpdir())
-  try { rmSync(SCRATCH, { recursive: true, force: true }) } catch { /* the OS clears tmp */ }
+  try { rmSync(SCRATCH, { recursive: true, force: true }) } catch {  }
 }
 
 console.log(failures.length ? `\n[gui-check] ${failures.length} FAILED: ${failures.join('; ')}` : '\n[gui-check] all checks passed')

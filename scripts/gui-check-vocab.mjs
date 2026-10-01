@@ -1,15 +1,5 @@
-// gui-check-vocab.mjs -- the vocabulary file, the species dropdown, hidden fields and "Show in English"
-// checks of scripts/gui-check.mjs, run in the same real headless Chromium. Split out only so the main file
-// stays readable; nothing here runs on its own. GUI_CHECK_ONLY=vocab runs just these.
-//
-// Config is read once per process, so these checks boot a SECOND real dashboard
-// (scripts/gui-check-vocab-server.mjs) on PORT+20 against a copy of the deployment's config in which:
-//   - vocabulary.yml has one word changed (stages.waiting) and one key removed (legend.other_diseases),
-//   - dashboard_ui.hidden_fields hides fields per screen (and tries to hide two the system stands on).
-// The model is stood in for at the server boundary only (the callLLM handed to createDashboard): it
-// records each request to a file and answers with a fixed JSON reply. The route, the role gate, the cache,
-// the rate limit, the size cap and the timeline are all real. A real call to the real model is proven
-// separately (see the report), never from this check.
+
+
 import { spawn, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
@@ -31,7 +21,6 @@ export async function runVocabChecks(c) {
   writeFileSync(callsFile, '')
   const calls = () => readFileSync(callsFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
 
-  // ---- the config under test: the deployment's own, with two edits --------------------------------
   const UHH = process.env.CASEY_CONFIG_DIR || path.join(ROOT, '..', '..', 'config')
   cpSync(UHH, cfg, { recursive: true })
   let vocab = readFileSync(path.join(cfg, 'vocabulary.yml'), 'utf8')
@@ -59,10 +48,10 @@ export async function runVocabChecks(c) {
     if (child.exitCode != null) break
   }
   check(!!seed, 'setup: the second dashboard (own store, own config) booted and seeded', seed ? 'ok' : childErr.slice(-300))
-  if (!seed) { try { child.kill() } catch { /* gone */ } return }
+  if (!seed) { try { child.kill() } catch {  } return }
 
   try {
-    // ---- plumbing ---------------------------------------------------------------------------------
+
     const cookies = {}
     const apiAs = async (user, method, p, body, headers = {}) => {
       if (user && !cookies[user]) {
@@ -94,7 +83,6 @@ export async function runVocabChecks(c) {
     const report = async (id) => JSON.parse((await apiAs('vadm', 'GET', '/api/cases/' + id)).j.case.report || '{}')
     const t1 = seed.t1
 
-    // ================================================================ 1. the vocabulary file
     console.log('\nvocabulary: one file, served with the shell, applied on screen')
     const html = await (await fetch(base2 + '/')).text()
     const m = /<script type="application\/json" id="casey-vocab">([\s\S]*?)<\/script>/.exec(html)
@@ -122,17 +110,15 @@ export async function runVocabChecks(c) {
     check(/Offline -- no network/.test(off) && !/no signal/i.test(off), 'the offline bar on screen says "no network"', (off.match(/Offline[^\n]*/) || [''])[0])
     await evalJs(`(async () => { const st = await import('/src/state.js'); st.state.connLost = false; st.schedule(); return 1 })()`); await sleep(400)
 
-    // The doctor row: a copy of the config with a key removed, a blank one and a typo.
     const doc = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'casey.js'), 'doctor', '--no-network'], { cwd: store, env: { ...process.env, CASEY_CONFIG_DIR: cfg, CASEY_DOCTOR_OFFLINE: '1' }, encoding: 'utf8', timeout: 90000 })
     const dt = (doc.stdout || '') + (doc.stderr || '')
     check(/Vocabulary/.test(dt) && /1 word\(s\) missing from vocabulary\.yml[^\n]*legend\.other_diseases/.test(dt), '`casey doctor` has a Vocabulary row listing the missing key', (dt.match(/[^\n]*missing from vocabulary[^\n]*/) || ['no row: ' + dt.slice(-200)])[0].slice(0, 150))
     check(/dashboard_ui\.hidden_fields\.staff: "species" is part of the mandatory/.test(dt), '`casey doctor` says a field the system stands on cannot be hidden', (dt.match(/[^\n]*hidden_fields[^\n]*species[^\n]*/) || [''])[0].slice(0, 150))
 
-    // ================================================================ 2. species dropdown
     console.log('\nspecies: a dropdown ending in "Other (write it)", free text still possible')
     const staffCfg = (await apiAs('vadm', 'GET', '/api/config')).j
     check(JSON.stringify(staffCfg.field_options && staffCfg.field_options.species) === JSON.stringify(['goats', 'sheep', 'cattle', 'pigs', 'chickens', 'horses', 'donkeys', 'dogs']), 'the species list is served from report-fields.yml options', JSON.stringify(staffCfg.field_options))
-    // (species is hidden from STAFF in this test config on purpose -- the server must ignore that, it is mandatory.)
+
     check(!staffCfg.hidden_fields.includes('species') && staffCfg.hidden_fields.includes('identifying_traits'), 'a mandatory field named in hidden_fields is ignored; the others are honoured', JSON.stringify(staffCfg.hidden_fields))
     const before = calls().length
     const sp = '[data-field=species] .casey-rep-editable'
@@ -161,11 +147,9 @@ export async function runVocabChecks(c) {
     await clickBtn('Save'); await sleep(1800)
     check((await report(t1.id)).species === 'dogs', 'a listed animal is stored as its list spelling', String((await report(t1.id)).species))
 
-    // The bot's field description carries the list and the "anything else is fine" rule.
     const desc = spawnSync(process.execPath, ['--input-type=module', '-e', `const m = await import(${JSON.stringify(path.join(ROOT, 'src/store/report-shape.js'))}); console.log(m.REPORT_FIELD_DEFS.find(f => f.key === 'species').description)`], { env: { ...process.env, CASEY_CONFIG_DIR: cfg }, encoding: 'utf8' }).stdout
     check(/Usual answers: goats, sheep, cattle/.test(desc) && /ostrich/.test(desc) && /never force it into this list/.test(desc), 'the bot is told the list and that any other animal is recorded as the person said it', desc.slice(-160).trim())
 
-    // The public form.
     const form = await (await fetch(base2 + '/report?ref=' + encodeURIComponent(t1.ref))).text()
     check(/<select id="f-species"/.test(form) && /Other \(write it\)/.test(form) && /name="species__other"/.test(form) && ['Goats', 'Sheep', 'Cattle', 'Pigs', 'Chickens', 'Horses', 'Donkeys', 'Dogs'].every((a) => form.includes('>' + a + '<')), 'the public form offers the animals as a dropdown with a write-it box (works with no script)')
     const post = (fields) => fetch(base2 + '/report', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ ref: t1.ref, ...fields }).toString() })
@@ -178,7 +162,6 @@ export async function runVocabChecks(c) {
     await navigate(base2 + '/report?ref=' + encodeURIComponent(t1.ref)); await sleep(1200)
     await axeBoth('the public form with the species dropdown')
 
-    // The ranger's own record form.
     await viewport('p')
     await login('vrng', '#case=' + t1.id, 4000)
     const rf1 = JSON.parse(await evalJs(`(() => { const s = document.querySelector('select[name=fld-species]'); return JSON.stringify(s ? [...s.options].map((o) => o.text) : null) })()`))
@@ -190,7 +173,6 @@ export async function runVocabChecks(c) {
     check((await report(t1.id)).species === 'guinea fowl', 'a ranger can record an Other animal from the phone form', String((await report(t1.id)).species))
     await axeBoth('ranger record form with the species dropdown')
 
-    // ================================================================ 3. hidden fields
     console.log('\nhidden fields: honoured on the screen and on paper, data untouched')
     const cfgFor = async (u) => (await apiAs(u, 'GET', '/api/config')).j.hidden_fields
     check(JSON.stringify(await cfgFor('vrng')) === JSON.stringify(['identifying_traits']), 'a ranger\'s screen hides identifying_traits only', JSON.stringify(await cfgFor('vrng')))
@@ -218,7 +200,6 @@ export async function runVocabChecks(c) {
     check(!/Who is with the animals|Their link to the owner|Owner name|Owner contact/.test(at) && /Identifying the animals/.test(at) && /Animals/.test(at), 'technician screen: people-on-site fields hidden, identifying_traits (not hidden for them) and Animals shown', 'role-specific')
     await axeBoth('technician report with fields hidden')
 
-    // ================================================================ 4. Show in English
     console.log('\nShow in English: one message, on request, paid once')
     await viewport('d')
     await login('vadm', '#home=cases&case=' + t1.id, 4500)
@@ -226,7 +207,7 @@ export async function runVocabChecks(c) {
     check(ui0.btns.length === 2 && ui0.btns.every((t) => t === 'Show in English') && ui0.rows === 2, 'staff see "Show in English" on each message the reporter sent', JSON.stringify(ui0.btns))
     check(!ui0.outBtn && !ui0.noteBtn, 'no button on the assistant\'s replies or on notes', JSON.stringify([ui0.outBtn, ui0.noteBtn]))
     check(ui0.chip, 'the timeline heading carries the language the assistant recorded ("Written in isiXhosa")')
-    // The ranger who holds t2 translates first (fresh), so the admin's later read of the same message is a cache hit.
+
     const rangerFirst = await apiAs('vrng', 'POST', `/api/cases/${seed.t2.id}/events/${seed.t2.inbound}/translate`, { expected_ref: seed.t2.ref })
     check(rangerFirst.s === 200 && rangerFirst.j.cached === false && /^\[stub\]/.test(rangerFirst.j.english) && rangerFirst.j.language === 'isiZulu' && rangerFirst.j.label === 'machine translation (may be wrong)', 'a ranger translates a message on a report assigned to them (a STOP contact is still fine)', JSON.stringify(rangerFirst.j))
     const n0 = calls().length
@@ -241,7 +222,7 @@ export async function runVocabChecks(c) {
     check(/deepseek[^,]*flash/i.test(made[0].model), 'the call names DeepSeek Flash and nothing else', String(made[0].model))
     check(sent.includes('Iinkomo zam ziyakhohlela') && !sent.includes(t1.ref) && !sent.includes('27800200001') && !sent.includes('Farmer Zola') && !sent.includes('Musina') && !sent.includes('Sipho'), 'only that message went out: no reference, number, name, place or other field', 'message text only')
     await axeBoth('timeline with a translation shown')
-    // Reload: cached, shown without a click, no new call.
+
     await login('vadm', '#home=cases&case=' + t1.id, 4500)
     const ui2 = JSON.parse(await evalJs(`JSON.stringify({ notes: document.querySelectorAll('[data-translation-of]').length, btns: document.querySelectorAll('.casey-translate-btn').length })`))
     check(ui2.notes === 1 && ui2.btns === 1 && calls().length === n0 + 1, 'after a reload the paid translation is shown at once; no second call', JSON.stringify(ui2))
@@ -252,7 +233,7 @@ export async function runVocabChecks(c) {
     check(!!cacheRow && cacheRow.kind === 'observation' && cacheRow.actor === 'system', 'the translation is cached on the case as a system observation translation:<eventId>', cacheRow && `${cacheRow.kind}/${cacheRow.actor}`)
     const asAdmin2 = await apiAs('vadm', 'POST', `/api/cases/${seed.t2.id}/events/${seed.t2.inbound}/translate`, { expected_ref: seed.t2.ref })
     check(asAdmin2.s === 200 && asAdmin2.j.cached === true && calls().length === n0 + 1, 'what a ranger paid for, staff read for free', JSON.stringify(asAdmin2.j))
-    // Refusals.
+
     const call0 = calls().length
     const T = (u, caseId, eventId, b = {}) => apiAs(u, 'POST', `/api/cases/${caseId}/events/${eventId}/translate`, b)
     const r = {
@@ -271,20 +252,19 @@ export async function runVocabChecks(c) {
     check(r.sameRanger.s === 200 && r.tech.s === 200, 'the holder of a report can translate (a ranger, and a technician on theirs)', JSON.stringify([r.sameRanger.s, r.tech.s]))
     check(r.readOnlyTech.s === 403 && r.readOnlyTech.j.code === 'not_assigned', 'a technician who can only LOOK at a sign-off desk report cannot translate on it (403)', JSON.stringify([r.readOnlyTech.s, r.readOnlyTech.j && r.readOnlyTech.j.code]))
     check(calls().length === call0 + 2, 'every refusal happened before any model call (only the two allowed fresh translations were sent)', String(calls().length - call0))
-    // Rate limit: t4's twelve fresh messages in a row by one login.
+
     const codes = []
     let retry = null
     for (const ev of seed.t4.inbound) { const x = await T('vadm', seed.t4.id, ev); codes.push(x.s); if (x.s === 429 && !retry) retry = x.h.get('retry-after') }
     check(codes.includes(429) && codes.filter((s) => s === 200).length <= 10 && Number(retry) > 0, 'one login is limited to 10 fresh translations a minute (429 with Retry-After)', codes.join(',') + ' retry-after=' + retry)
-    // Model policy and data policy, at the seam.
+
     const tr = await import(path.join(ROOT, 'src/dashboard/routes/translate.js'))
     check(tr.translateModel({ CASEY_LLM_MODEL: 'openrouter/anthropic/claude-sonnet-4' }) === null && tr.translateModel({ CASEY_LLM_MODEL: 'x/y,openrouter/deepseek/deepseek-v4.1-flash' }) === 'openrouter/deepseek/deepseek-v4.1-flash' && tr.translateModel({ CASEY_TRANSLATE_MODEL: 'openrouter/qwen/qwen3', CASEY_LLM_MODEL: 'openrouter/deepseek/deepseek-v4.1-flash' }) === null, 'only a DeepSeek Flash model is ever used; anything else is refused, not swapped in')
     const bridge = await import(path.join(ROOT, 'src/agent/acptoapi-bridge.js'))
     const acp = await import('acptoapi'); const acptoapi = acp.default && typeof acp.default === 'object' ? acp.default : acp
     const links = await bridge.resolveChainLinks(acptoapi, made[0].model)
     check(links.length === 1 && links[0].provider && links[0].provider.data_collection === 'deny', 'the request path (resolveChainLinks) puts provider.data_collection = deny on that model', JSON.stringify(links))
-    // Read-only means read-only: a viewer's screens never reach a case, so no button anywhere; the technician's
-    // read-only view shows none.
+
     await login('vaht', '#case=' + seed.t6.id, 4000)
     check(await evalJs(`document.querySelectorAll('.casey-translate-btn').length`) === 0 && /You can look at this one, not change it/.test(await body()), 'a read-only view (technician looking at the sign-off desk) shows no Show in English button')
     await login('vrng', '#case=' + t1.id, 4000)
@@ -296,7 +276,7 @@ export async function runVocabChecks(c) {
     await axeBoth('ranger phone report with a translation')
     check(!/(^|\n)(TypeError|ReferenceError)/.test(childErr), 'the second dashboard raised no server error', childErr.slice(-200))
   } finally {
-    try { child.kill() } catch { /* already gone */ }
-    try { rmSync(work, { recursive: true, force: true }) } catch { /* tmp is cleared by the OS */ }
+    try { child.kill() } catch {  }
+    try { rmSync(work, { recursive: true, force: true }) } catch {  }
   }
 }
