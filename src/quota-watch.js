@@ -4,7 +4,7 @@
 // Synthetic publishes its balance at GET <base>/v2/quotas (with the same API key as the chat calls): the weekly credit
 // ceiling (`weeklyTokenLimit.percentRemaining`, dollars left) and the rolling five-hour request allowance
 // (`rollingFiveHourLimit.remaining / max`). Each is turned into a "percent left" and then into a step (90, 80, ... 0).
-// A message goes out when either one has fallen to a LOWER step than the last one told, naming both. A rise (the
+// Each is tracked and told ON ITS OWN (its own told step, its own message). A message goes out when one has fallen below the last step told. A rise (the
 // allowance regenerating) is recorded silently so the next fall through that step is told again. The first check
 // posts one baseline message. The last told steps live in <cwd>/data/quota-watch.json, so a restart does not repeat
 // itself, and a failed post leaves them unchanged so the next check tries again.
@@ -37,12 +37,13 @@ export function readQuotas(j) {
 }
 
 const fmt = (n) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10}%`
-export function describe(q) {
+// One allowance in words. Each of the two is described, tracked and told about on its own.
+const LABEL = { weekly: 'weekly credits', five: 'five-hour requests' }
+export function describe(q, k) {
   const w = q.raw?.weeklyTokenLimit, f = q.raw?.rollingFiveHourLimit
-  const parts = []
-  if (q.weekly != null) parts.push(`weekly credits ${fmt(q.weekly)} left${w?.remainingCredits ? ` (${w.remainingCredits} of ${w.maxCredits})` : ''}${w?.nextRegenAt ? `, next ${w.nextRegenCredits || 'top-up'} at ${String(w.nextRegenAt).slice(11, 16)} UTC` : ''}`)
-  if (q.five != null) parts.push(`five-hour requests ${fmt(q.five)} left (${f.remaining} of ${f.max})${f.limited ? ', LIMITED now' : ''}`)
-  return parts.join('; ')
+  if (k === 'weekly' && q.weekly != null) return `${fmt(q.weekly)} left${w?.remainingCredits ? ` (${w.remainingCredits} of ${w.maxCredits})` : ''}${w?.nextRegenAt ? `, next ${w.nextRegenCredits || 'top-up'} at ${String(w.nextRegenAt).slice(11, 16)} UTC` : ''}`
+  if (k === 'five' && q.five != null) return `${fmt(q.five)} left (${Math.round(Number(f.remaining))} of ${f.max})${f.limited ? ', LIMITED now' : ''}`
+  return ''
 }
 
 const readState = () => { try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')) || {} } catch { return {} } }
@@ -65,23 +66,27 @@ export async function checkQuota({ log } = {}) {
     const r = await fetch(cfg.url, { headers: { authorization: `Bearer ${cfg.key}` }, signal: AbortSignal.timeout(20000) })
     if (!r.ok) throw new Error(`quotas ${r.status}`)
     const q = readQuotas(await r.json())
-    const now = { weekly: q.weekly == null ? null : bucket(q.weekly), five: q.five == null ? null : bucket(q.five) }
+    // Each allowance has its own told step in the state file and its own message: a fall in one never waits on, bundles with,
+    // or re-tells the other. The step is written only after its own post succeeded, so a failed post is retried next check.
     const prev = readState()
-    if (prev.weekly === undefined && prev.five === undefined) {
-      await post(cfg, `Synthetic balance, now watching every ${Math.round((Number(process.env.CASEY_QUOTA_INTERVAL_MS) || 1800000) / 60000)} minutes and telling you at each ${STEP()}% step: ${describe(q)}.`)
-      writeState(now)
-      return 'baseline'
+    const every = Math.round((Number(process.env.CASEY_QUOTA_INTERVAL_MS) || 1800000) / 60000)
+    const state = { ...prev }
+    let did = 'quiet'
+    for (const k of ['weekly', 'five']) {
+      if (q[k] == null) continue
+      const step = bucket(q[k])
+      try {
+        if (prev[k] === undefined) {
+          await post(cfg, `Synthetic ${LABEL[k]}: now watching every ${every} minutes, telling you at each ${STEP()}% step. ${describe(q, k)}.`)
+          state[k] = step; did = 'baseline'
+        } else if (step < prev[k]) {
+          await post(cfg, `Synthetic ${LABEL[k]} fell below ${prev[k]}%. ${describe(q, k)}.`)
+          state[k] = step; did = 'told'
+        } else if (step !== prev[k]) state[k] = step   // regenerated: remembered silently, so the next fall through it is told again
+      } catch (e) { log?.warn?.('[casey] quota post failed', { which: k, error: e.message }); did = 'failed' }
     }
-    const fell = (k) => now[k] != null && prev[k] != null && now[k] < prev[k]
-    if (fell('weekly') || fell('five')) {
-      const below = [fell('weekly') ? `weekly credits below ${prev.weekly}%` : null, fell('five') ? `five-hour requests below ${prev.five}%` : null].filter(Boolean).join(' and ')
-      await post(cfg, `Synthetic balance: ${below}. Now: ${describe(q)}.`)
-      writeState({ weekly: now.weekly ?? prev.weekly, five: now.five ?? prev.five })
-      return 'told'
-    }
-    // Rose, or unchanged: remember the step so a later fall through it is told again.
-    if (now.weekly !== prev.weekly || now.five !== prev.five) writeState({ weekly: now.weekly ?? prev.weekly, five: now.five ?? prev.five })
-    return 'quiet'
+    writeState(state)
+    return did
   } catch (e) {
     log?.warn?.('[casey] quota check failed', { error: e.message })
     return 'failed'
