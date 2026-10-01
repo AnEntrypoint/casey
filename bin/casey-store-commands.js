@@ -1,14 +1,3 @@
-// casey-store-commands.js  --  every one-shot subcommand that opens the case
-// store, prints an answer, and exits: cases / show / attention / handover /
-// report / health / sweep / transition / erase-contact / operators.
-//
-// Split out of bin/casey-cli.mjs's 698-line main(), where all ten of these
-// shared one scope with each other, with `casey up`'s supervisor wiring, and
-// with doctor's preflight -- so a variable named `store` or `positional` meant
-// something different a hundred lines apart. Each is now its own named unit
-// with its own store handle, and every one of them still ends through
-// closeAndExit (see casey-cli-ui.js for why that matters). Same flags, same
-// output, same exit codes.
 
 import { createCaseStore } from '../src/case-store.js'
 import { fmtTimeSAST, fmtPhone27, isOpenCase } from '../src/format.js'
@@ -18,19 +7,12 @@ import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
-// Every command here opens its own store first; this is that one line, named.
 async function openStore() {
   const store = createCaseStore()
   await store.init()
   return store
 }
 
-// parseFlags yields the boolean `true` for a flag with nothing after it
-// (`--status` at the end of the line, or followed by another --flag). That
-// sentinel is an internal parser detail, and echoing it back as
-// `invalid status: true` told the operator the name of a value they never
-// typed. Both shapes -- no value, and a value this store does not know -- get
-// the real vocabulary printed beside them.
 async function requireOneOf(store, name, raw, allowed) {
   if (raw === true || raw === '') {
     say(bad(`--${name} needs a value.`))
@@ -52,10 +34,6 @@ export async function cmdCases({ flags }) {
     where.status = await requireOneOf(store, 'status', flags.status, store.getValidStatuses())
   }
   if (flags.channel !== undefined) {
-    // The channel vocabulary is whatever this deployment has actually received
-    // on, read from the store -- not a hardcoded discord/whatsapp pair. A store
-    // holding cases from the public web form and the simulator refused
-    // `--channel web` as invalid while listing web cases one line later.
     const seen = [...new Set((await store.listCases({}, { limit: 10000 })).map(c => c.channel).filter(Boolean))].sort()
     where.channel = await requireOneOf(store, 'channel', flags.channel, seen)
   }
@@ -71,8 +49,6 @@ export async function cmdCases({ flags }) {
     const age = dim(fmtTimeSAST(cr.created_at) || '(no date)')
     console.log(`${bold(cr.ref)}\t[${cr.status}]\t${cr.priority}\t${cr.channel}\t${contact}\t${cr.subject || ''}\t${age}`)
   }
-  // listCases pages at 50 by default. A queue truncated with nothing saying so
-  // means case 51 is invisible and no line on screen admits it exists.
   const total = await store.countCases(where).catch(() => cases.length)
   if (total > cases.length) console.log(dim(`  showing ${cases.length} of ${total} -- narrow it with --status or --channel.`))
   await closeAndExit(store, 0)
@@ -108,8 +84,6 @@ export async function cmdShow({ rest }) {
 
 export async function cmdAttention({ flags }) {
   const store = await openStore()
-  // Rank over the OPEN pool with the SAME scorer the dashboard inbox uses
-  // (src/attn.js), so the terminal and the web view agree on what is urgent.
   const open = (await store.listCases()).filter(isOpenCase)
   const limit = Number(flags.limit) > 0 ? Number(flags.limit) : 0
   const offset = Number(flags.offset) > 0 ? Number(flags.offset) : 0
@@ -169,14 +143,6 @@ export async function cmdHandover({ flags, rest }) {
 }
 
 export async function cmdReport({ flags }) {
-  // Management briefing on the command line: the same per-case-type SLA, per-type
-  // and per-channel response metrics the dashboard serves at /api/report.json, for
-  // an operator who lives in the terminal. Reuses the pure builders verbatim (no DB
-  // change, aggregate-only, never an external_id). `--json` emits the machine shape;
-  // `--days N` restricts the population to cases OPENED in the last N days
-  // (default 30). It is applied to `cases` below before any builder sees it:
-  // until it was, --days was parsed, echoed into the header and the JSON, and
-  // then ignored -- `--days 1` and `--days 3650` printed byte-identical bodies.
   const store = await openStore()
   const { buildSLAReportByType, buildCaseTypeMetrics, buildChannelMetrics } = await import('../src/report-analytics.js')
   const days = Number.isFinite(Number(flags.days)) && Number(flags.days) > 0 ? Number(flags.days) : 30
@@ -219,12 +185,6 @@ export async function cmdReport({ flags }) {
   await closeAndExit(store, 0)
 }
 
-// The guardrail tags are the enum case-health.js writes onto a case. On the
-// terminal they were the whole answer -- a column of `abandoned_intake` and
-// `incomplete_critical` with nothing saying what an operator is looking at.
-// The tag stays (it is what `casey cases`/the dashboard filter on); the plain
-// sentence sits beside it. An unmapped tag falls back to its own name rather
-// than disappearing, so a new breach type is never silently unlabelled.
 const BREACH_MEANING = {
   stale: 'no activity for days',
   stuck: 'sitting in the same stage too long',
@@ -269,8 +229,6 @@ export async function cmdHealth({ flags }) {
   await closeAndExit(store, 0)
 }
 
-// The team's headline human-response figures for `casey health`: the same numbers
-// GET /api/metrics/team serves (src/ranger-metrics.js), without names.
 async function teamMetricsSummary(store) {
   const { buildTeamMetrics } = await import('../src/ranger-metrics.js')
   const { teamPeople } = await import('../src/dashboard/routes/team.js')
@@ -311,9 +269,6 @@ export async function cmdTransition({ flags, rest }) {
   const caseRow = await store.getCase(ref) || await store.getCaseByRef(ref)
   if (!caseRow) { say(bad(`no case "${ref}".`)); say(dim(`  list cases with ${cyan('casey cases')}.`)); await closeAndExit(store, 1) }
   const OP = { id: 'cli-operator', role: 'operator' }
-  // Moving a case to the stage it is already in wrote a real transition event
-  // and reported `triaging -> triaging` as a change. Nothing moved, so nothing
-  // is recorded and nothing is claimed.
   if (stage === caseRow.status) {
     console.log(`${caseRow.ref} is already ${bold(stage)}. Nothing changed.`)
     await closeAndExit(store, 0)
@@ -324,10 +279,6 @@ export async function cmdTransition({ flags, rest }) {
     say(dim('  allowed from here: ') + (legal.length ? legal.map(cyan).join(', ') : '(none)'))
     await closeAndExit(store, 1)
   }
-  // The recorded reason is what an auditor reads off the timeline months later.
-  // Defaulting it to "cli operator override" stamped every ordinary, legal,
-  // workflow-approved move as an override; the default now says only where the
-  // move came from, and --reason still carries the operator's own words.
   const reason = typeof flags.reason === 'string' ? flags.reason : 'moved from the command line'
   await store.transition(caseRow.id, stage, { user: OP, reason })
   const after = await store.getCase(caseRow.id)
@@ -335,21 +286,10 @@ export async function cmdTransition({ flags, rest }) {
   await closeAndExit(store, 0)
 }
 
-// Data retention / right-to-erasure CLI trigger (retention-erasure-flow):
-// the same store.eraseContact the dashboard's admin-gated Reporters panel
-// "Erase PII" button calls -- a break-glass path for a deployment with no
-// dashboard access yet, or a scripted compliance run. Irreversible.
-// store.eraseContact takes the internal contact id -- an opaque string like
-// `mta3r2es-mjgea3m7` that NO casey command prints. `casey cases` and
-// `casey show` show the contact's channel identifier and the case ref, so the
-// documented break-glass erasure path could not be driven from anything the
-// CLI itself puts on screen. All three now resolve to the same contact.
 async function resolveContact(store, needle) {
   const contacts = await store.t.list('contact', {}, { limit: 10000 })
   const exact = contacts.find(c => c.id === needle)
   if (exact) return exact
-  // A phone number is written +27 82 111 0001 on screen, 27821110001 in the
-  // row: compare on the digits and letters, not the spacing an operator copied.
   const norm = (s) => String(s || '').replace(/[^0-9a-z]/gi, '').toLowerCase()
   const key = norm(needle)
   const byExternal = key && contacts.find(c => norm(c.external_id) === key)
@@ -359,12 +299,6 @@ async function resolveContact(store, needle) {
   return null
 }
 
-// `casey erase-contact --check` with no contact: the standing detector for an
-// erasure that started and did not finish. eraseContact is a multi-step,
-// partly-filesystem, irreversible action with no transaction available to it
-// (see case-store.js's erasure-journal comment), so what makes a mid-run crash
-// survivable is the durable plan it writes before the first mutation. This is
-// the only thing that reads those plans back to a human.
 async function reportIncompleteErasures(store) {
   const open = await store.findIncompleteErasures()
   if (!open.length) {
@@ -398,9 +332,6 @@ export async function cmdEraseContact({ flags, rest }) {
     say(dim(`  -- list them with ${cyan('casey cases')}.`))
     await closeAndExit(store, 1)
   }
-  // ONE PERSON ON A SHARED PHONE (src/phone-persons.js). --persons lists who is recorded behind the phone (names
-  // and relations, never the number); --person <name|id> erases only that person: their name, the identifying
-  // fields of the reports they gave, and their stored conversations. The phone contact and everyone else on it stay.
   if (flags.persons || flags.person) {
     const { listPersons, normName } = await import('../src/phone-persons.js')
     const people = await listPersons(store, contact.id)
@@ -434,10 +365,6 @@ export async function cmdEraseContact({ flags, rest }) {
       await closeAndExit(store, 0)
     } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
   }
-  // Irreversible, and it ran on a bare argument with no confirmation of any
-  // kind: one mistyped ref scrubbed a live reporter's details with nothing to
-  // undo it. --yes keeps the scripted compliance path working (there is no TTY
-  // in a cron job) while making the destruction something the caller states.
   if (!flags.yes) {
     say(bad(`this would permanently erase the details of ${contact.display_name || contact.external_id || contact.id}.`))
     say(dim('  it cannot be undone. Re-run with --yes if that is what you want:'))
@@ -449,34 +376,17 @@ export async function cmdEraseContact({ flags, rest }) {
     const result = await store.eraseContact(contact.id, { reason, operator: { id: 'cli-operator' } })
     console.log(result.contactErased
       ? green(`erased ${contact.display_name || contact.external_id || contact.id}`)
-      // Once scrubbed, display_name and external_id are both the literal
-      // '[erased]' -- naming the contact id is the only thing left that
-      // identifies which row this was.
       : `contact ${contact.id} was already erased. Nothing changed.`)
-    // casesScrubbed carries internal case ids; an operator works in refs.
     const refs = []
     for (const cid of result.casesScrubbed) refs.push((await store.getCase(cid).catch(() => null))?.ref || cid)
     console.log(`cases scrubbed: ${refs.length}` + (refs.length ? '  ' + dim(refs.join(', ')) : ''))
     if (result.casesFailed?.length) say(bad(`${result.casesFailed.length} case(s) could not be scrubbed -- re-run this command, it is idempotent.`))
     if (result.sessionsFailed?.length) say(bad(`${result.sessionsFailed.length} stored conversation(s) could not be removed -- contact content remains on disk at: ${result.sessionsFailed.join(', ')}`))
-    // The journal is what makes a crash mid-erasure recoverable. If it could not
-    // be written, this run had no safety net and the operator has to know.
     if (result.journalled === false) say(bad('the erasure journal could not be written -- had this run been interrupted, the other contact rows for this person would not have been recoverable. Re-run it once the store is healthy.'))
     await closeAndExit(store, 0)
   } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
 }
 
-// ---- retention -------------------------------------------------------------
-//
-// DRY RUN IS THE VERB. `casey retention` with no flags reports what a configured
-// policy WOULD do and changes nothing; `--yes` is what executes. That split is
-// not politeness -- this deployment's reports dispatch vehicles, so archiving a
-// case an operator still needed costs a field visit that never happens, and the
-// default has to be the harmless one.
-//
-// With no policy configured this command prints how to configure one and exits
-// 0 without opening any write path. See src/retention.js for why "off" is the
-// absence of a policy rather than a flag, and why nothing here is on a timer.
 function retentionPolicyFromFlags(flags) {
   const overrides = {}
   if (flags.days !== undefined && flags.days !== true) overrides.days = flags.days
@@ -492,8 +402,6 @@ export async function cmdRetention({ flags }) {
   catch (e) { say(bad(e.message)); process.exit(1) }
 
   if (!policy) {
-    // Deliberately BEFORE any store is opened: with no policy this command
-    // touches nothing at all.
     if (flags.json) { console.log(JSON.stringify({ policy: null, configured: false, eligible: [], kept: [] }, null, 2)); return }
     console.log(bold('casey retention') + dim('  (no retention policy configured -- nothing expires, nothing was read)'))
     console.log('Retention is off. Cases are kept forever until a policy says otherwise.')
@@ -523,9 +431,6 @@ export async function cmdRetention({ flags }) {
       console.log(bold(`would ${policy.action} (${plan.eligible.length})`))
       for (const c of plan.eligible) console.log(`  ${bold(c.ref)}\t[${c.status}]\t${c.channel}\t${dim(c.detail)}`)
     }
-    // The kept list is grouped by reason rather than listed flat: an operator
-    // reading a dry-run needs "why is nothing expiring" answered in one glance,
-    // and 400 identical lines does not answer it.
     const byReason = new Map()
     for (const c of plan.kept) {
       if (!byReason.has(c.reason)) byReason.set(c.reason, [])
@@ -563,15 +468,10 @@ export async function cmdRetention({ flags }) {
   await closeAndExit(store, result.failed.length ? 1 : 0)
 }
 
-// ---- backup / restore ------------------------------------------------------
-
 export async function cmdBackup({ flags }) {
   const { runBackup } = await import('../src/backup.js')
   const store = await openStore()
   const dataDir = store.dataDir
-  // Close the store before snapshotting. VACUUM INTO is safe against a live
-  // writer, but the fallback file copy is not, and this command holds the only
-  // handle it can do anything about.
   await store.close()
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const out = typeof flags.out === 'string' ? flags.out : `backups/casey-${stamp}`
@@ -582,10 +482,6 @@ export async function cmdBackup({ flags }) {
   console.log(bold('casey backup') + dim(`  ${result.dir}`))
   for (const s of result.stores) {
     const mark = s.status === 'ok' ? green('[ok]') : s.status === 'missing' ? dim('[none]') : red('[x]')
-    // A store that copied fine but held nothing prints "empty" rather than a
-    // blank column: [ok] with nothing beside it reads as "size unknown", and an
-    // operator checking a backup needs to be able to tell an empty store from an
-    // unmeasured one.
     const size = s.bytes ? dim(`${s.bytes} bytes${s.files ? `, ${s.files} file(s)` : ''}`) : dim(s.status === 'ok' ? 'empty' : '')
     console.log(`  ${mark} ${bold(s.name)}\t${size}`)
     if (s.note) console.log(dim(`      ${s.note}`))
@@ -593,9 +489,6 @@ export async function cmdBackup({ flags }) {
   console.log(bold('\nnot included, on purpose:'))
   for (const n of result.manifest.not_included) console.log(dim(`  ${n.name} -- ${n.why}`))
   if (result.failed.length) {
-    // A backup that quietly missed a store is worse than no backup, so a
-    // failure is loud AND non-zero rather than a line in the middle of a
-    // success report.
     say('')
     say(bad(`${result.failed.length} store(s) could NOT be copied -- this backup is INCOMPLETE and must not be relied on.`))
     for (const f of result.failed) say(bad(`  ${f.name}: ${f.note}`))
@@ -609,8 +502,6 @@ export async function cmdRestore({ flags, rest }) {
   const { runRestore } = await import('../src/backup.js')
   const dir = rest.find(a => !a.startsWith('--'))
   if (!dir) { say('usage: casey restore <backup-dir> --yes'); process.exit(1) }
-  // Resolved without opening the store: restore replaces the very directory the
-  // store would open, so it must not be holding a handle on it.
   const dataDir = path.resolve(process.cwd(), 'data')
   if (!flags.yes) {
     say(bad(`this would replace ${dataDir} with the contents of ${dir}.`))
@@ -634,18 +525,11 @@ export async function cmdRestore({ flags, rest }) {
   process.exit(0)
 }
 
-// Break-glass account management: talks to the SAME dashboard/auth.js the
-// dashboard's own login/user-management panel uses, so the CLI is a real
-// recovery path (lost admin password, scripted provisioning) rather than a
-// parallel mechanism that could drift from it.
 export async function cmdOperators({ flags, rest }) {
   const { createAccount, listAccounts, findAccountByUsername, setAccountDisabled } = await import('../src/dashboard/auth.js')
   const store = await openStore()
   const sub = rest[0]
   const positional = rest.slice(1).filter(a => !a.startsWith('--'))
-  // dashboard/auth.js's createAccount accepts the roles below; the legacy 'secretary'
-  // is still accepted but creates an 'operator' (the team's name), and the confirmation
-  // line below prints the role that was really stored. An unknown role is refused.
   const { ACCOUNT_ROLES } = await import('../src/dashboard/roles.js')
   if (sub === 'add') {
     const username = positional[0]
@@ -665,10 +549,6 @@ export async function cmdOperators({ flags, rest }) {
     if (!accounts.length) { console.log('no operator accounts yet.'); console.log(dim('  run ' + cyan('casey operators add <username>') + ' to create one.')); await closeAndExit(store, 0) }
     for (const a of accounts) {
       const status = a.disabled === '1' ? red('[disabled]') : green('[active]')
-      // last_login_at is stored as an ISO-8601 UTC string. Every other date this
-      // CLI prints goes through fmtTimeSAST, so an operator reading two commands
-      // side by side was comparing 2026-09-05T12:30:21.365Z against
-      // "05 Sept 2026, 14:30 SAST" and doing the offset in their head.
       const seen = a.last_login_at ? fmtTimeSAST(Math.floor(Date.parse(a.last_login_at) / 1000)) : null
       console.log(`${bold(a.username)}\t${a.role === 'secretary' ? 'operator (stored as legacy secretary)' : a.role}\t${status}\t${a.display_name || ''}\t${dim(seen || 'never logged in')}`)
     }

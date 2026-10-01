@@ -1,20 +1,3 @@
-// casey-sync-correlate-command.js -- `casey sync-correlate [--kind <kind>]`:
-// the missing wire between `casey sync-import`/POST /api/sync/import and
-// `src/sync/correlate-external.js`'s scoring engine. Before this command
-// existed, a normalized-external-record file written to
-// data/sync-import/<kind>.json (by either the CLI or the sync-api POST
-// route) was never read back by anything -- findCandidatesFromManualImport
-// and writeProposedLinks had exactly one caller each (each other's own
-// module), so the correlation engine could score in isolation but never ran
-// against real, live-imported data. EXTERNAL-SYNC.md's own "Wiring a real
-// adapter later" step 4 ("Run the correlation engine ... against real
-// fetched records") named an action with no command behind it.
-//
-// This command is that action: for each requested kind, load the cached
-// sync-import file, score it against every real open case/contact via
-// findCandidatesFromManualImport, and persist proposed links via
-// writeProposedLinks -- so a human operator can then review them in the
-// dashboard's cross-link panel (routes/external-links.js).
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { createCaseStore } from '../src/case-store.js'

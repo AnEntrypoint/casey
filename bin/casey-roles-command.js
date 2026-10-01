@@ -1,19 +1,3 @@
-// casey-roles-command.js  --  `casey roles`: list, assign, invite and release the
-// team model from a terminal.
-//
-// A THIN WRAPPER, on purpose. Every subcommand calls the same store methods the
-// dashboard's routes call (registerContact / setContactTier / releaseCasesHeldBy,
-// role-invites.js's createInvite / listInvites / revokeInvite,
-// dashboard/auth.js's setAccountContactPhone), so the terminal is a real recovery
-// and scripting path that cannot drift from the GUI. It adds no mechanism of its
-// own and no rule the GUI does not have; the only difference is who is asking:
-// whoever holds a shell on the box already holds the database, so this acts with
-// admin authority (it may grant the operator rung) and records itself as
-// `cli-operator`.
-//
-// Same trust boundary as the routes: it is a person at a terminal, never anything
-// a contact's message can reach.
-
 import { createCaseStore } from '../src/case-store.js'
 import { TIER_ORDER, TIER_REPORTER, resolveTierValue, atLeast, TIER_FIELD_WORKER, tierLabel } from '../src/contact-tiers.js'
 import { createInvite, createInvites, listInvites, revokeInvite, normalizeMsisdn } from '../src/role-invites.js'
@@ -140,8 +124,6 @@ export async function cmdRoles({ flags, rest }) {
         ttlHours: flags['ttl-hours'] === true ? undefined : flags['ttl-hours'], maxUses: flags.uses === true ? undefined : flags.uses,
         by: 'cli-operator', grantableTiers: TEAM_TIERS,
       }
-      // --count N (or --out FILE): a batch of single-use codes, one per person, to hand out. Every option is checked BEFORE a
-      // code is made, and the output file is created first, so a bad path or number never mints codes that are then lost.
       const whole = (name, v, lo, hi) => { const n = Number(v); if (v === true || !Number.isInteger(n) || n < lo || n > hi) throw new Error(`--${name} must be a whole number from ${lo} to ${hi}`); return n }
       if (flags.uses !== undefined) base.maxUses = whole('uses', flags.uses, 1, 25)
       if (flags['ttl-hours'] !== undefined) base.ttlHours = whole('ttl-hours', flags['ttl-hours'], 1, 24 * 30)
