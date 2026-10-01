@@ -1,13 +1,3 @@
-// casey-doctor-checks.js -- the two doctor sections that look OUTSIDE the .env:
-// what Meta and the public URL say about the WhatsApp channel, and whether the
-// role model in the database is set up. Rendering only; the questions live in
-// src/meta-probe.js and src/role-health.js, which return plain rows so they can
-// be driven without a terminal.
-//
-// Both are read-only and both are counted like every other doctor row: a `fail`
-// row is a problem (exit 1), a `warn` is printed and not counted, a `skip` is
-// dim. Offline is a quiet single row, never a wall of red.
-
 import path from 'node:path'
 import fs, { existsSync } from 'node:fs'
 import os from 'node:os'
@@ -26,8 +16,6 @@ function render(rows) {
   return problems
 }
 
-// Meta + public callback. Skipped entirely when WhatsApp is not configured or
-// --no-network / CASEY_DOCTOR_OFFLINE is set.
 export async function runMetaChecks(flags = {}) {
   if (!hasCreds('whatsapp')) return 0
   if (flags['no-network'] || flags.offline || process.env.CASEY_DOCTOR_OFFLINE === '1') {
@@ -41,7 +29,6 @@ export async function runMetaChecks(flags = {}) {
   return render(res.rows)
 }
 
-// Role setup, read straight from the sqlite file with no store booted.
 export async function runRoleChecks() {
   const dbFile = path.join(process.cwd(), 'data', 'db.sqlite')
   if (!existsSync(dbFile)) return 0
@@ -50,16 +37,12 @@ export async function runRoleChecks() {
   try {
     const cfgFile = process.env.CASEY_CONFIG_DIR ? path.join(path.resolve(process.env.CASEY_CONFIG_DIR), 'thatcher.config.yml') : path.join(process.cwd(), 'thatcher.config.yml')
     const s = createCaseStore({ config: cfgFile }); s.validateConfig(); openStatuses = s.getOpenStatuses()
-  } catch { /* the role checks fall back to "not closed" */ }
+  } catch {}
   console.log(bold('\nTeam and roles'))
   const { rows } = await checkRoleSetup(dbFile, { openStatuses })
   return render(rows)
 }
 
-// Vocabulary: the words file (vocabulary.yml in the config dir) and which of its keys are
-// missing, so the team can see what still falls back to the built-in wording. Offline and
-// read-only. A missing key is a warning, never a failure: the fallback word is shown and
-// nothing breaks. See docs/vocabulary-guide.md.
 export async function runVocabularyChecks() {
   const { loadDomainConfig } = await import('../src/config-loader.js')
   const { vocabulary: v, dir } = loadDomainConfig()
@@ -76,10 +59,6 @@ export async function runVocabularyChecks() {
   return render(out)
 }
 
-// "Data processors": every outside party casey sends personal or animal data to,
-// and the policy in force for each. Offline and read-only: it reads the env and
-// the policy module, contacts nobody. A policy of 'allow', or a chain link the
-// policy would refuse, is a warning with the exact fix.
 export async function runDataProcessorChecks() {
   const { describeProcessors, auditFile } = await import('../src/llm-data-policy.js')
   const { mode, rows } = describeProcessors(process.env)
@@ -91,9 +70,6 @@ export async function runDataProcessorChecks() {
     const bad = /REFUSED|NONE/.test(r.policy)
     out.push({ level: bad && mode !== 'allow' && /^chat LLM/.test(r.processor) ? 'warn' : 'skip', text: `${r.processor}: ${r.policy} -- ${r.state}; data: ${r.data}`, ...(bad && /^chat LLM/.test(r.processor) && mode !== 'allow' ? { fix: 'remove this model from CASEY_LLM_MODEL (it is skipped at runtime anyway)' } : {}) })
   }
-  // The chat model is paid per call and OpenRouter refuses requests (HTTP 402) when the ACCOUNT balance
-  // is low, several in flight at once first. A key's own spending limit is a different number and says
-  // nothing about the balance, so read the balance itself (a read-only GET, no personal data).
   try {
     const key = process.env.OPENROUTER_API_KEY || (() => { try { return /^OPENROUTER_API_KEY=(.+)$/m.exec(fs.readFileSync(path.join(os.homedir(), '.acptoapi', '.env'), 'utf8'))?.[1]?.trim() } catch { return '' } })()
     if (key && process.env.CASEY_DOCTOR_OFFLINE !== '1') {
@@ -107,7 +83,7 @@ export async function runDataProcessorChecks() {
           : { level: 'ok', text: `OpenRouter balance $${left.toFixed(2)} left` })
       }
     }
-  } catch { /* offline or unreadable: say nothing rather than guess */ }
+  } catch {}
   const af = auditFile(process.env)
   out.push({ level: 'skip', text: af ? `policy audit trail: ${af}` : 'policy audit trail is OFF (CASEY_LLM_AUDIT_FILE=0)' })
   const proactive = String(process.env.CASEY_PROACTIVE_SENDS || 'off').trim().toLowerCase()

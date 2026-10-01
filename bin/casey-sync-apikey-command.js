@@ -1,11 +1,3 @@
-// casey-sync-apikey-command.js -- `casey sync-apikey create|list|revoke`:
-// provisions machine credentials for the /api/sync/* surface (see
-// src/dashboard/routes/sync-api.js, src/sync/api-key-auth.js,
-// EXTERNAL-SYNC.md). Its own module rather than a case in
-// casey-store-commands.js, same reason as casey-sync-import-command.js: a
-// self-contained credential-lifecycle command, mirroring `casey operators`'s
-// shape one file over rather than growing that file's already-large
-// add/list/disable/enable block with an unrelated credential class.
 import { createCaseStore } from '../src/case-store.js'
 import { createApiKey, listApiKeys, revokeApiKey } from '../src/sync/api-key-auth.js'
 import { fmtTimeSAST } from '../src/format.js'

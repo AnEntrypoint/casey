@@ -1,16 +1,5 @@
-// worker-channels.js  --  which channels this worker is actually allowed to
-// serve, and the credential/secret gates that decide it.
-//
-// Split out of bin/worker.js verbatim. Every refusal here is deliberately loud
-// and terminal rather than a silent drop of the serving surface, so a
-// misconfigured deployment shows up as a supervised crash-budget stop instead of
-// a process that looks alive and answers nobody.
-
 import { WORKER_MSG, ipcSend } from '../src/supervisor-ipc.js'
 
-// hasCreds mirrors bin/casey.js so a channel with no credentials is skipped
-// rather than crashing the worker on boot (which the supervisor would read as a
-// crash-loop). Kept local to avoid importing the whole CLI module.
 export function hasCreds(ch) {
   if (ch === 'discord') return !!process.env.DISCORD_BOT_TOKEN
   if (ch === 'whatsapp') return !!(process.env.WHATSAPP_API_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID)
@@ -23,18 +12,10 @@ function refuse(forked, reason, message) {
   process.exit(1)
 }
 
-// Security invariant (AGENTS.md): WhatsApp must NOT serve without
-// WHATSAPP_APP_SECRET -- without it freddie cannot HMAC-verify inbound webhooks,
-// so anyone reaching the webhook can forge farmer messages. Enforced here in the
-// worker (the process that actually binds the channel), not just in doctor: if
-// whatsapp has creds but no secret, refuse it. If whatsapp was EXPLICITLY
-// requested, that is a fatal misconfiguration (loud, not a silent drop); if it
-// came from the default channel list, drop it with a warning and serve the rest.
 function gateWhatsappAppSecret(requested, flags, forked) {
   if (!hasCreds('whatsapp') || process.env.WHATSAPP_APP_SECRET) return
   const idx = requested.indexOf('whatsapp')
   if (idx !== -1 && flags.channels) {
-    // operator named whatsapp explicitly -> fatal, do not run it unsigned
     refuse(forked,
       'WHATSAPP_APP_SECRET required to serve WhatsApp (verify inbound webhook signatures)',
       '[worker] WHATSAPP_APP_SECRET is required to enable WhatsApp - refusing to serve unsigned inbound')
@@ -43,17 +24,6 @@ function gateWhatsappAppSecret(requested, flags, forked) {
   console.error('[worker] WhatsApp creds present but WHATSAPP_APP_SECRET unset - skipping WhatsApp (set the secret to enable it)')
 }
 
-// WHATSAPP_VERIFY_TOKEN is fatal whenever WhatsApp is actually enabled, but the
-// throw is NOT the adapter's: src/adapters/whatsapp.js has no start() and owns
-// no listening socket (freddie's ctx.webServer holds the only one), so it never
-// gets a chance to refuse. What throws is freddie-bundle/src/platform
-// ('WhatsappAdapter: WHATSAPP_VERIFY_TOKEN required') while mounting the Cordis
-// tree, seconds after this point and as an eleven-frame boot stack trace.
-// Refuse here in the same shape WHATSAPP_APP_SECRET is refused above, and the
-// same shape bin/casey-serve.js refuses on the unsupervised path, so the
-// operator reads one line. The guard is load-bearing -- do not drop it reasoning
-// that the adapter validates its own token, because nothing does until the tree
-// mounts.
 function gateWhatsappVerifyToken(channels, flags, forked) {
   if (!channels.includes('whatsapp') || process.env.WHATSAPP_VERIFY_TOKEN) return
   const idx = channels.indexOf('whatsapp')
@@ -72,9 +42,6 @@ export function resolveServingChannels(flags, forked) {
   const channels = requested.filter(ch => (ch === 'whatsapp' ? (hasCreds(ch) && !!process.env.WHATSAPP_APP_SECRET) : hasCreds(ch)))
   gateWhatsappVerifyToken(channels, flags, forked)
   if (!channels.length) {
-    // No serving surface: fatal, not a silent idle. The supervisor treats a FATAL
-    // boot as a crash for budget purposes, so a permanently-misconfigured worker
-    // trips the crash-loop guard into 'degraded' instead of respawning forever.
     refuse(forked, 'no channels available', '[worker] no channels available - set discord/whatsapp credentials')
   }
   return channels

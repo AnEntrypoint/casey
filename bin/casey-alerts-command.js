@@ -1,36 +1,9 @@
-// casey-alerts-command.js  --  `casey alerts`: what has fired, and what is
-// still standing, read off the local alert log (src/alert-log.js).
-//
-// Its own module rather than a row in casey-store-commands.js, and the reason
-// is load-bearing: every command in that file opens a CaseStore first, and this
-// one deliberately opens nothing. An operator reads alerts precisely when
-// something is wrong -- a wedged store, a locked sqlite file, a worker that
-// will not boot -- and a command that has to open the database to tell you the
-// database is unreachable is no use in the moment it exists for. It reads two
-// plain files under <cwd>/data/alerts and nothing else. That also makes it safe
-// to run beside a live `casey up` (no second sqlite handle, no SQLITE_BUSY).
-//
-// EXIT CODES, because a monitor on the box reads those before it reads text:
-//   0  nothing is standing
-//   1  at least one condition is standing right now
-//   2  the alert log could not be read, or the command was called wrong
-// So a cron line is `casey alerts --quiet || mail -s "casey" ops@...`, with no
-// JSON parsing and no dashboard.
 import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { AlertLog, AlertGate, ALERT_TAG } from '../src/alert-log.js'
 import { fmtTimeSAST } from '../src/format.js'
 import { bold, dim, green, red, cyan, ok, bad, warn, say } from './casey-cli-ui.js'
 
-// What each condition is CALLED for a person reading this table. The machine key
-// still travels in --json and in every log line, which is what a monitor greps
-// on -- this is only the column a human scans. The same split the sweep's own
-// timeline text now uses (case-health.js's BREACH_LABEL): the key is the
-// contract, the phrase is the reading.
-// Short noun phrases, not sentences: the line beneath each of these already
-// carries the full sentence from the alert itself, and a label that restates it
-// costs a line and says nothing. This column is the category you scan; the
-// detail under it is what you read.
 const CONDITION_LABEL = {
   channel_deaf: 'not hearing the field',
   provider_down_backlog: 'AI helper down, messages queuing',
@@ -40,16 +13,10 @@ const CONDITION_LABEL = {
 }
 const conditionLabel = (c) => CONDITION_LABEL[c] || c
 
-// The same directory case-store.js resolves as its own dataDir
-// (path.resolve(process.cwd(), 'data')), computed the same way rather than by
-// booting a store -- see this file's header for why no store is opened.
 function alertDataDir() {
   return path.join(process.cwd(), 'data')
 }
 
-// Which webhook, if any, is carrying alerts instead of this log. The URL itself
-// is a secret and is never printed -- only which variable is set, exactly the
-// discipline routes/operations.js's alertWebhookView already holds.
 function webhookSource() {
   if (process.env.CASEY_ALERT_WEBHOOK) return 'CASEY_ALERT_WEBHOOK'
   if (process.env.CASEY_HANDOFF_WEBHOOK) return 'CASEY_HANDOFF_WEBHOOK'
@@ -59,9 +26,6 @@ function webhookSource() {
 const mins = (ms) => Math.max(0, Math.round(ms / 60000))
 
 export async function cmdAlerts({ flags }) {
-  // parseFlags yields the boolean `true` for a flag with nothing after it, and
-  // echoing that sentinel back as a value the operator never typed is the same
-  // bug casey-store-commands.js's requireOneOf exists to avoid.
   if (flags.limit === true || flags.limit === '') {
     say(bad('--limit needs a number.'))
     say(dim('  e.g. ') + cyan('casey alerts --limit 50'))
@@ -76,10 +40,6 @@ export async function cmdAlerts({ flags }) {
   const dir = path.join(dataDir, 'alerts')
   const hook = webhookSource()
 
-  // Nothing on disk is a real, common and healthy answer: a deployment with a
-  // webhook set never writes this log at all, and one that has simply never
-  // had a system-level failure has nothing to write. Say which of the two it
-  // is rather than printing an empty list.
   if (!existsSync(dir)) {
     if (flags.json) {
       console.log(JSON.stringify({
@@ -119,10 +79,6 @@ export async function cmdAlerts({ flags }) {
       standing: standing.map(s => ({
         condition: s.condition, since: s.since,
         since_sast: s.since ? fmtTimeSAST(s.since) : null,
-        // Floored at zero, the same way the human column is: a `since` ahead of
-        // this clock (a host clock stepped backwards, an NTP correction between
-        // the raise and this read) must read as "just now", never as a negative
-        // duration a monitor would parse as a real number.
         for_ms: s.since ? Math.max(0, now - s.since) : null,
       })),
       entries: items.map(e => ({ ...e, t_sast: fmtTimeSAST(e.at || Date.parse(e.t) || null) })),
@@ -137,9 +93,6 @@ export async function cmdAlerts({ flags }) {
   if (flags.quiet) process.exit(standing.length ? 1 : 0)
 
   console.log(bold('casey alerts') + dim(`  ${log.file}`))
-  // Which channel is actually carrying alerts, said before anything else: a
-  // reader looking at an empty list needs to know whether that means "nothing
-  // wrong" or "this log is not the one being written".
   console.log(hook
     ? warn(`${hook} is set, so alerts go there; this local log is the fallback and is NOT being written while that variable is set`)
     : dim(`  no alert webhook set -- this log is the delivery channel. Watch it with `) + cyan(`tail -f ${log.file}`))

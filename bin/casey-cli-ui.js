@@ -1,10 +1,3 @@
-// casey-cli-ui.js  --  everything the CLI needs before it does any work:
-// terminal colour, argv parsing, credential/port probes, the help text, and the
-// shared clean-exit. Split out of bin/casey-cli.mjs, where main() had grown to
-// 698 lines and every subcommand's parsing, execution and output formatting
-// shared one scope. Behaviour is unchanged -- these are the same functions and
-// the same literal strings, now importable by each command module.
-
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,21 +6,13 @@ import net from 'node:net'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const ROOT = path.resolve(__dirname, '..')
 
-// tiny terminal colorizer (respects NO_COLOR and non-TTY)
 const COLOR = process.stdout.isTTY && !process.env.NO_COLOR
 const c = (code) => (s) => COLOR ? `\x1b[${code}m${s}\x1b[0m` : String(s)
 export const bold = c('1'), dim = c('2'), green = c('32'), red = c('31'), yellow = c('33'), cyan = c('36')
-// Every marker carries its meaning in the literal prefix as well as the colour,
-// so a piped, redirected or NO_COLOR terminal loses nothing: colour is emphasis
-// here, never the only thing distinguishing an error row from a healthy one.
 export const ok = (s) => `${green('[ok]')} ${s}`
 export const bad = (s) => `${red('[x]')} ${s}`
 export const warn = (s) => `${yellow('!')} ${s}`
 
-// A refusal, a usage line and a "not found" are diagnostics, not the answer the
-// command was asked for: they go to stderr so `casey attention --json | jq` and
-// `casey cases > list.txt` receive only real output. Exit codes already carry
-// the failure; stdout must not.
 export const say = (s) => console.error(s)
 
 export function pkgVersion() {
@@ -52,7 +37,6 @@ export function hasCreds(ch) {
   if (ch === 'whatsapp') return !!(process.env.WHATSAPP_API_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID)
   return false
 }
-// partial creds = configured-but-incomplete; doctor must flag this, not show green.
 export function partialCreds(ch) {
   if (ch === 'whatsapp') {
     const a = !!process.env.WHATSAPP_API_TOKEN, b = !!process.env.WHATSAPP_PHONE_NUMBER_ID
@@ -133,12 +117,6 @@ ${bold('dashboard login:')} the dashboard now uses per-operator username/passwor
 
 ${dim('new here? run')} ${cyan('casey init')} ${dim('then')} ${cyan('casey doctor')} ${dim('then')} ${cyan('casey up')}`
 
-// One usage block per dispatchable command, keyed exactly as bin/casey-cli.mjs's
-// COMMANDS table. bin/casey-cli.mjs answers --help/-h out of this table BEFORE
-// dispatching, which is what makes the "--help / -h on any command" line above
-// true: until this existed only up and dashboard checked the flag themselves, so
-// `casey sweep --help` ran the sweep and `casey transition <ref> <stage> --help`
-// moved the case -- a help request that wrote to the store.
 export const USAGE = {
   roles: `casey roles <subcommand>
   The team model from a terminal, calling the same store methods the dashboard does.
@@ -302,16 +280,6 @@ casey sync-apikey revoke <id>
   cached file.`,
 }
 
-// Every one-shot CLI subcommand (cases/show/attention/handover/report/health/
-// sweep/transition/erase-contact/operators) opens its own CaseStore and used to
-// terminate via a bare process.exit() with no store.close() -- process.exit()
-// is synchronous and does not wait for thatcher.stop()'s handle release, so
-// running two of these commands in tight succession (e.g. a script) could hit
-// SQLITE_BUSY on the second one's own store.init(), which -- unlike every
-// per-call thatcher operation after init() succeeds -- has no retry wrapper of
-// its own. `casey up`'s own SIGINT handler already awaits dash.close()/
-// casey.stop() before exiting; this gives every one-shot command the same
-// discipline.
 export async function closeAndExit(store, code) {
   try { await store?.close?.() } catch (e) { console.error('[casey] store close error:', e.message) }
   process.exit(code)

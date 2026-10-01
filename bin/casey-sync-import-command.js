@@ -1,26 +1,8 @@
-// casey-sync-import-command.js -- `casey sync-import <file> --kind <kind>`:
-// reads a manually-exported CSV or JSON file into casey's normalized
-// external-record shape and writes it to a scratch JSON file the
-// correlation engine (src/sync/correlate-external.js) reads from.
-//
-// Its own module rather than a row in casey-store-commands.js, same reason
-// as casey-alerts-command.js: this command opens no store. It exists
-// because there is no live MEAT NATURALLY API today (src/sync/adapters --
-// see AGENTS.md's Configuration architecture entry for the seam), only a
-// manual export a deployer can hand-carry. `loadManualImport` is also
-// exported for direct in-process reuse (the correlation engine imports it
-// rather than shelling back out to this CLI).
 import path from 'node:path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { KINDS } from '../src/sync/adapters/base.js'
 import { bold, dim, green, red, cyan, bad, say } from './casey-cli-ui.js'
 
-// Header names the AHT Field Tracker spec uses, mapped onto one normalized
-// shape. Deliberately narrow: only the columns that plausibly correlate
-// with casey's own case/contact fields (see AGENTS.md's Configuration
-// architecture / external-schema-map.js) are kept -- vehicle logbook,
-// monthly targets and every other field-tracker-only column has no casey
-// counterpart and is dropped here rather than carried through as noise.
 const FIELD_ALIASES = {
   association: ['association', 'community_association', 'community', 'association_name'],
   farmer_name: ['farmer_name', 'farmer', 'name', 'full_name'],
@@ -46,10 +28,6 @@ function normalizeRow(raw, kind) {
   return out
 }
 
-// A tiny dependency-free CSV parser -- one line per record, no embedded
-// newlines/quoted-comma fields. Sufficient for a manual field-tracker
-// export; a real quoted-CSV need is a `prd-add` row when it actually shows
-// up, not solved speculatively here.
 function parseCsv(text) {
   const lines = text.split(/\r?\n/).filter(l => l.trim() !== '')
   if (!lines.length) return []
@@ -71,9 +49,6 @@ function readRecords(file) {
   return parseCsv(text)
 }
 
-// Exported for src/sync/correlate-external.js to call directly in-process,
-// no shelling back out to this CLI. Returns the normalized array; does not
-// touch the scratch cache file (that side effect is this command's alone).
 export function loadManualImport(file, kind) {
   if (!existsSync(file)) throw new Error(`sync-import: file not found: ${file}`)
   if (!KINDS.includes(kind)) throw new Error(`sync-import: --kind must be one of ${KINDS.join(', ')}, got "${kind}"`)
