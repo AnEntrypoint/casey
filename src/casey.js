@@ -28,6 +28,7 @@ import { drainQueuedTurnsBody } from './casey-drain.js'
 import { makeChannelAdapter } from './casey-adapters.js'
 import { sweepCases } from './case-sweep.js'
 import { ensurePin, placeText } from './pin-estimate.js'
+import { startQuotaWatch } from './quota-watch.js'
 import { AlertLog, AlertGate, fileAlertNotifier, SYSTEM_CONDITIONS } from './alert-log.js'
 import { ALL_HEALTH_TAGS } from './case-health.js'
 import { mergeTag } from './hooks/heuristics.js'
@@ -763,6 +764,8 @@ export class Casey {
     await this.gateway.start()
     // Default-on guardrails: enabled unless explicitly disabled (sweepIntervalMs<=0).
     if (this.opts.sweepIntervalMs !== 0) this.startSweep()
+    // Balance watch (quota-watch.js): off unless CASEY_QUOTA_DISCORD_CHANNEL is set.
+    this._stopQuotaWatch = startQuotaWatch({ log: this.log })
     // Default-on: enabled unless explicitly disabled (drainPollIntervalMs<=0).
     if (this.opts.drainPollIntervalMs !== 0) this.startDrainPoll()
     // Default-on: the system-condition watch (deaf channel, provider down with
@@ -981,6 +984,7 @@ export class Casey {
   // (avoids the WAL/libuv teardown race seen on abrupt exit).
   async stop() {
     this.stopSweep()
+    try { this._stopQuotaWatch?.() } catch { /* shutting down */ }
     this.stopDrainPoll()
     this.stopAlertWatch()
     // Webhook channels first: refuse new POSTs (503, so Meta redelivers to the next
