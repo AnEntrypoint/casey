@@ -1,16 +1,3 @@
-// core/pack-schema.js -- the config-pack meta-schema: validates that a pack
-// (declarative data only, no executable content) is well-formed before the
-// engine ever loads it.
-//
-// A pack is a set of declarative documents:
-//   subjectTypes, observationForms, codelists, rules, roles, views, strings
-// Everything else -- capture, sync, provenance, audit, aggregation,
-// escalation, verification -- is identical for every operation, engine-owned,
-// and NOT configurable via a pack.
-//
-// This module owns validation only. It never executes anything a pack
-// contains: a rule is data (condition/severity/route/SLA), never eval'd,
-// never a function, never a string of code.
 
 const KNOWN_FIELD_TYPES = new Set(['text', 'number', 'enum', 'boolean', 'date', 'geo', 'photo', 'audio', 'repeat'])
 const KNOWN_RULE_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'notIn', 'and', 'or'])
@@ -18,8 +5,6 @@ const KNOWN_ROW_ACCESS = new Set(['assigned', 'owner', 'none'])
 
 function fail(errors, msg) { errors.push(msg) }
 
-// Validates subjectTypes: a flat or shallow-nested entity tree with labels.
-// Rejects a circular parent reference.
 function validateSubjectTypes(pack, errors) {
   const types = pack.subjectTypes
   if (!types || typeof types !== 'object' || !Object.keys(types).length) {
@@ -31,7 +16,6 @@ function validateSubjectTypes(pack, errors) {
     if (!def.label || typeof def.label !== 'string') fail(errors, `subjectTypes.${id}: missing string "label"`)
     if (def.parent != null && !types[def.parent]) fail(errors, `subjectTypes.${id}: parent "${def.parent}" is not a declared subject type`)
   }
-  // Cycle detection over the parent graph.
   const WHITE = 0, GRAY = 1, BLACK = 2
   const color = Object.fromEntries(Object.keys(types).map(k => [k, WHITE]))
   function visit(id, chain) {
@@ -45,10 +29,6 @@ function validateSubjectTypes(pack, errors) {
   for (const id of Object.keys(types)) visit(id, [])
 }
 
-// Validates observationForms: field defs incl. per-field unknown-allowed +
-// provenance rules -- the honesty floor's config surface. No pack can
-// express "unknown not allowed" on a field; the unknownAllowed check below
-// is what makes that structural.
 function validateObservationForms(pack, errors) {
   const forms = pack.observationForms
   if (!forms || typeof forms !== 'object' || !Object.keys(forms).length) {
@@ -69,9 +49,6 @@ function validateObservationForms(pack, errors) {
       if (!KNOWN_FIELD_TYPES.has(field.type)) {
         fail(errors, `observationForms.${formId}.${fieldKey}: unrecognised type "${field.type}" (expected one of: ${[...KNOWN_FIELD_TYPES].join(', ')})`)
       }
-      // An enum field draws its options either inline (a plain "options"
-      // array) or by reference to a shared codelist ("codelist" naming a key
-      // in pack.codelists) -- exactly one source is required, never neither.
       if (field.type === 'enum') {
         const hasInlineOptions = Array.isArray(field.options) && field.options.length > 0
         const codelistRef = field.codelist
@@ -85,10 +62,6 @@ function validateObservationForms(pack, errors) {
       if (field.evidenceRequired != null && typeof field.evidenceRequired !== 'boolean') {
         fail(errors, `observationForms.${formId}.${fieldKey}: evidenceRequired must be boolean`)
       }
-      // The honesty floor: unknownAllowed defaults true and CANNOT be set
-      // false by a pack -- there is no branch here that reads a false value
-      // and honors it. A pack author who writes unknownAllowed:false gets a
-      // loud validation error, not silent enforcement of the wrong thing.
       if (field.unknownAllowed === false) {
         fail(errors, `observationForms.${formId}.${fieldKey}: unknownAllowed cannot be set to false -- "unknown" is always reachable on every field, per the honesty floor (item 18); remove this key`)
       }
@@ -97,7 +70,7 @@ function validateObservationForms(pack, errors) {
 }
 
 function validateCodelists(pack, errors) {
-  if (pack.codelists == null) return   // optional
+  if (pack.codelists == null) return
   if (typeof pack.codelists !== 'object') { fail(errors, 'codelists: must be an object when present'); return }
   for (const [name, list] of Object.entries(pack.codelists)) {
     if (!Array.isArray(list) || !list.length) { fail(errors, `codelists.${name}: must be a non-empty array`); continue }
@@ -110,12 +83,6 @@ function validateCodelists(pack, errors) {
   }
 }
 
-// Bounded rule vocabulary: comparisons/sets/counts/thresholds only. No
-// loops, no arbitrary expressions -- a rule condition is a tree of
-// {op, field, value} / {op:'and'|'or', clauses:[...]} nodes, each op drawn
-// from KNOWN_RULE_OPS. Anything else (a function, a string of code, an
-// unrecognised op) fails validation, never silently passes through to be
-// eval'd later.
 function validateRuleCondition(cond, path, errors, declaredFields) {
   if (typeof cond === 'function') { fail(errors, `${path}: a rule condition may never be a function -- declarative data only`); return }
   if (!cond || typeof cond !== 'object') { fail(errors, `${path}: condition must be an object`); return }
@@ -139,7 +106,7 @@ function collectAllFormFields(pack) {
 }
 
 function validateRules(pack, errors) {
-  if (pack.rules == null) return   // optional
+  if (pack.rules == null) return
   if (!Array.isArray(pack.rules)) { fail(errors, 'rules: must be an array when present'); return }
   const declaredFields = collectAllFormFields(pack)
   pack.rules.forEach((rule, i) => {
@@ -153,7 +120,7 @@ function validateRules(pack, errors) {
 }
 
 function validateRoles(pack, errors) {
-  if (pack.roles == null) return   // optional
+  if (pack.roles == null) return
   if (typeof pack.roles !== 'object') { fail(errors, 'roles: must be an object when present'); return }
   for (const [roleId, def] of Object.entries(pack.roles)) {
     if (!def || typeof def !== 'object') { fail(errors, `roles.${roleId}: must be an object`); continue }
@@ -164,7 +131,7 @@ function validateRoles(pack, errors) {
 }
 
 function validateViews(pack, errors) {
-  if (pack.views == null) return   // optional
+  if (pack.views == null) return
   if (typeof pack.views !== 'object') { fail(errors, 'views: must be an object when present'); return }
   const KNOWN_VIEW_TYPES = new Set(['map', 'timeseries', 'table', 'drilldown'])
   for (const [viewId, def] of Object.entries(pack.views)) {
@@ -193,9 +160,6 @@ export function validatePack(pack) {
   return { valid: errors.length === 0, errors }
 }
 
-// Loud, not silent: throws with every collected error joined, so a malformed
-// pack fails at load with a full diagnostic instead of a single confusing
-// downstream crash.
 export function loadPack(packData) {
   const { valid, errors } = validatePack(packData)
   if (!valid) {

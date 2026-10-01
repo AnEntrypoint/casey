@@ -1,39 +1,9 @@
-// core/write-path.js -- THE single physical write-path chokepoint.
-//
-// Every observation write in casey's new provenance subsystem passes through
-// writeObservation() below, once. There is no second entrance: the field
-// worker's agent turn, a dashboard operator's correction, and a future sync
-// reconciler all call this same function. Concurrency is handled here (an
-// async mutex per subject, mirroring case-store.js's own `_withLock`
-// pattern) so two writers racing the same subject never interleave badly --
-// see expansion-concurrent-write-path-race.
-//
-// This module does NOT replace casey's existing thatcher-backed
-// case_report/mergeReport path (src/case-store.js, src/case-tools.js) --
-// those keep writing the case.report JSON blob exactly as they do today.
-// This is an ADDITIVE second write: every call into this chokepoint also
-// produces a durable, provenance-tagged Observation in the raw log,
-// independent of and never overwriting the existing thatcher case row.
 
 import { mkObservation, withSyncedAt } from './observation.js'
 import { canReplace, requireProvenance, mkValue } from './provenance.js'
 
 const _locks = new Map()
 
-// Parse an observation's reportedAt for ORDERING. mkObservation throws on a
-// falsy reportedAt, so "missing" is structurally impossible -- but it only
-// checks truthiness, so an unparseable string ("banana") reaches the
-// latest-per-field loops below and a bare Date.parse gives NaN. Every NaN
-// comparison is false, which silently freezes whichever record was seen first
-// as "latest" forever. Sorting unparseable oldest makes a corrupt row lose to
-// any real one instead of winning by accident.
-//
-// Shared by writeObservation and redactSubjectFields deliberately: both derive
-// the same "latest value per field" and must agree. They did not -- redaction
-// used this guard while writeObservation compared with a bare Date.parse, so a
-// frozen latest made canReplace test the incoming value against the wrong
-// prior, and a lower-provenance value could beat a higher one. That is the one
-// property this module exists to hold.
 const at = (v) => { const t = Date.parse(v); return Number.isNaN(t) ? -Infinity : t }
 
 async function withSubjectLock(subjectId, fn) {
@@ -44,29 +14,12 @@ async function withSubjectLock(subjectId, fn) {
   finally { if (_locks.get(subjectId) === run) _locks.delete(subjectId) }
 }
 
-// The chokepoint. `rawLog` is a core/raw-log.js RawLog instance (injected,
-// not imported as a singleton, so each caller controls which log a write
-// lands in). `nowFn` defaults to Date.now but is injectable for
-// deterministic witnessing.
 export async function writeObservation(rawLog, params, { nowFn = () => Date.now() } = {}) {
   if (!rawLog || typeof rawLog.append !== 'function') throw new Error('writeObservation: rawLog (a RawLog instance) is required')
   const { subjectId } = params
   if (!subjectId) throw new Error('writeObservation: subjectId is required')
 
   return withSubjectLock(subjectId, async () => {
-    // Enforce no-silent-inference at the chokepoint itself: for every
-    // finding whose field already has a prior observation on this subject
-    // with a HIGHER provenance rank, an incoming lower-rank value is
-    // rejected rather than silently accepted and later shadowing the truth
-    // in a dashboard that reads "most recent wins" naively. The caller gets
-    // the rejected fields back so it can decide (e.g. keep asking the
-    // worker, or record the new value as a disputed correction with an
-    // explicit correctsId + reason instead).
-    // latestByField stores { val, reportedAt } wrapper objects -- a
-    // provenanced value carries recordedAt, not reportedAt, so comparing
-    // existing.reportedAt against a bare value would compare against
-    // undefined forever after the first write to a field. Mirrors
-    // redactSubjectFields's own wrapper shape below.
     const prior = rawLog.bySubject(subjectId)
     const latestByField = new Map()
     for (const obs of prior) {
@@ -96,25 +49,6 @@ export async function writeObservation(rawLog, params, { nowFn = () => Date.now(
   })
 }
 
-// Right-to-erasure support for Tier 1: the raw log is structurally
-// append-only (see raw-log.js's own header comment -- no update/delete
-// method exists on that class), so "erase a PII field from the provenance
-// subsystem" cannot mean deleting bytes. It means the documented correction
-// mechanism (mkObservation's correctsId/correctionReason) applied against
-// the field's CURRENT latest value (same latest-by-field derivation
-// writeObservation uses above), never against every historical observation
-// individually -- a field with N prior observations gets ONE redaction
-// correction, not N. The correction replaces the field's value with an
-// explicit marker (provenance:'reported', value:'[erased]' -- 'reported'
-// because the redaction itself IS a real, human-actioned fact about this
-// subject's record, not an unknown/inferred guess) and bypasses the normal
-// canReplace rank check deliberately: an erasure is a legal override of the
-// record, never an ordinary provenance-ranked correction, so a
-// 'measured'-rank photo/audio finding must still be redactable by a
-// 'reported'-rank erasure action. Idempotent: a field whose latest value is
-// already the redaction marker is skipped, so a second call against an
-// already-redacted subject appends nothing. Returns the list of newly-
-// appended redaction Observations (empty if nothing needed redacting).
 export async function redactSubjectFields(rawLog, { subjectId, fields, redactedBy, reason, packId, packVersion, nowFn = () => Date.now() }) {
   if (!rawLog || typeof rawLog.append !== 'function') throw new Error('redactSubjectFields: rawLog (a RawLog instance) is required')
   if (!subjectId) throw new Error('redactSubjectFields: subjectId is required')
@@ -125,12 +59,6 @@ export async function redactSubjectFields(rawLog, { subjectId, fields, redactedB
     const nowIso = new Date(nowFn()).toISOString()
     const prior = rawLog.bySubject(subjectId)
     if (!prior.length) return []
-    // Latest value per field across the WHOLE subject history, same
-    // derivation writeObservation uses -- a redaction must act on the
-    // field's current truth, not on every stale historical observation that
-    // happened to once carry it.
-    // Ordering uses the shared `at` helper at module scope -- see its own note
-    // for why a bare Date.parse freezes the first-seen record as "latest".
     const latestByField = new Map()
     let latestPackId = null, latestPackVersion = null
     for (const obs of prior) {
@@ -150,8 +78,8 @@ export async function redactSubjectFields(rawLog, { subjectId, fields, redactedB
     let anchorObsId = null
     for (const field of fields) {
       const latest = latestByField.get(field)
-      if (!latest) continue   // this subject never had this field -- nothing to redact
-      if (latest.val.value === '[erased]' && latest.val.provenance === 'reported') continue   // already redacted
+      if (!latest) continue
+      if (latest.val.value === '[erased]' && latest.val.provenance === 'reported') continue
       toRedact[field] = mkValue({ value: '[erased]', provenance: 'reported', recordedAt: nowIso, recordedBy: redactedBy, packVersion: latest.val.packVersion })
       anchorObsId = anchorObsId || latest.obsId
     }
