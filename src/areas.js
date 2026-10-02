@@ -216,18 +216,24 @@ export async function pickRanger(store, area, caseRow) {
 }
 
 const isUnheld = (c) => { const a = String(c?.assignee || '').trim(); return !a || a === UNCLAIMED }
+const numCoord = (v) => (v === null || v === undefined || String(v).trim() === '' ? NaN : Number(v))
 
-export function nearestArea(areas, { lat, lon, maxKm = null } = {}) {
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
-  let best = null
+export function rankedAreasByDistance(areas, { lat, lon, maxKm = null } = {}) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return []
+  const out = []
   for (const a of areas) {
-    const alat = Number(a.lat), alon = Number(a.lon)
+    const alat = numCoord(a.lat), alon = numCoord(a.lon)
     if (!Number.isFinite(alat) || !Number.isFinite(alon)) continue
     const km = haversineKm(lat, lon, alat, alon)
     if (maxKm != null && km > maxKm) continue
-    if (!best || km < best.km) best = { area: a, km, matched_by: 'nearest' }
+    out.push({ area: a, km, matched_by: 'nearest' })
   }
-  return best
+  out.sort((x, y) => x.km - y.km)
+  return out
+}
+
+export function nearestArea(areas, opts = {}) {
+  return rankedAreasByDistance(areas, opts)[0] || null
 }
 
 async function nearestCapKm(store) {
@@ -237,7 +243,7 @@ async function nearestCapKm(store) {
   } catch { return NEAREST_CAP_KM }
 }
 
-export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR } = {}) {
+export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR, nearest = true } = {}) {
   if (!AREA_FIELD) return { assigned: false, why: 'no area field configured' }
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
@@ -246,24 +252,34 @@ export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR } = 
     const areas = await loadAreas(store)
     if (!areas.length) return { assigned: false, why: 'no areas mapped' }
     const report = parseReport(c)
-    let target = resolveArea(areas, { association: statedArea(report), location: report.location })
-    let km = null
-    if (!target) {
-      const near = nearestArea(areas, { lat: Number(c.lat), lon: Number(c.lon), maxKm: await nearestCapKm(store) })
-      if (near) { target = { area: near.area, matched_by: 'nearest', matched: near.area.name }; km = near.km }
+    const named = resolveArea(areas, { association: statedArea(report), location: report.location })
+      || resolveAreaFromLocation(areas, report.location)
+    const candidates = []
+    if (named) candidates.push({ area: named.area, matched_by: named.matched_by, km: null })
+    if (nearest) {
+      const cap = await nearestCapKm(store)
+      for (const r of rankedAreasByDistance(areas, { lat: numCoord(c.lat), lon: numCoord(c.lon), maxKm: cap })) {
+        if (!candidates.some(x => x.area.id === r.area.id)) candidates.push(r)
+      }
     }
-    if (!target) return { assigned: false, why: 'area not mapped' }
+    if (!candidates.length) return { assigned: false, why: 'area not mapped' }
 
     const events = await store.listEvents(c.id)
     if (events.some(e => evData(e).area_auto_assigned)) return { assigned: false, why: 'already auto-assigned once' }
-    const pick = await pickRanger(store, target.area, c)
-    if (!pick) return { assigned: false, why: 'no valid ranger for that area', area: target.area.name }
+
+    let target = null
+    let pick = null
+    for (const cand of candidates) {
+      const r = await pickRanger(store, cand.area, c)
+      if (r) { target = cand; pick = r; break }
+    }
+    if (!pick) return { assigned: false, why: 'no valid ranger for the nearest area', area: candidates[0].area.name }
     await store.updateCase(c.id, { assignee: pick.key }, user)
     const data = { assignee: pick.key, by: 'area-router', assigned_name: pick.name, area_id: target.area.id, area_name: target.area.name, matched_by: target.matched_by, area_auto_assigned: true }
-    if (km != null) data.distance_km = Math.round(km * 10) / 10
+    if (target.km != null) data.distance_km = Math.round(target.km * 10) / 10
     if (pick.contact) data.assigned_contact_id = pick.contact.id
     await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: `given automatically to ${pick.name} (area ${target.area.name})`, data })
-    return { assigned: true, to: pick.key, name: pick.name, area: target.area.name, ref: c.ref, matched_by: target.matched_by, ...(km != null ? { distance_km: Math.round(km * 10) / 10 } : {}) }
+    return { assigned: true, to: pick.key, name: pick.name, area: target.area.name, ref: c.ref, matched_by: target.matched_by, ...(target.km != null ? { distance_km: Math.round(target.km * 10) / 10 } : {}) }
   })
 }
 
