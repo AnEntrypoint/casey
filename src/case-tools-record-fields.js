@@ -3,7 +3,7 @@
 import { AGENT_USER } from './case-store.js'
 import { defTool, str, pick, ownsCase, slimCase } from './case-tools-shared.js'
 import { isContactAssignee } from './case-assignment.js'
-import { canQueryCases } from './contact-tiers.js'
+import { canQueryCases, isOperator } from './contact-tiers.js'
 
 export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
   return [
@@ -34,6 +34,9 @@ export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
         const author = ctx?.author || ctx?.principal?.id
         if (!ownsCase(c.external_id, author) && !canQueryCases(ctx?.tier)) {
           return { error: `case ${id} does not belong to you -- cannot update it` }
+        }
+        if (clean.assignee !== undefined && !ownsCase(c.external_id, author) && !isOperator(ctx?.tier)) {
+          return { error: 'Who holds a record is not changed from here -- ask an operator to assign it. Nothing was changed.' }
         }
 
         const result = await store().updateCaseChecked(id, clean, AGENT_USER)
