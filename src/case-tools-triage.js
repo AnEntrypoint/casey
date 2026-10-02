@@ -5,6 +5,7 @@ import { tagList } from './timestamp.js'
 import {
   defTool, str, ownsCase, slimCase, OBSERVE_TEXT_MAX_LEN,
 } from './case-tools-shared.js'
+import { canQueryCases } from './contact-tiers.js'
 
 export function buildTriageTools(store) {
   return [
@@ -24,7 +25,7 @@ export function buildTriageTools(store) {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const author = ctx?.author || ctx?.principal?.id
-        if (!ownsCase(c.external_id, author)) {
+        if (!ownsCase(c.external_id, author) && !canQueryCases(ctx?.tier)) {
           return { error: `case ${id} does not belong to you -- cannot find matches for it` }
         }
         const { suggestLinks } = await import('./correlate.js')
@@ -56,7 +57,7 @@ export function buildTriageTools(store) {
         const target = await store().getCase(id)
         if (!target) return { error: `no case ${id}` }
         const author = ctx?.author || ctx?.principal?.id
-        if (!ownsCase(target.external_id, author)) {
+        if (!ownsCase(target.external_id, author) && !canQueryCases(ctx?.tier)) {
           return { error: `case ${id} does not belong to you -- cannot split it` }
         }
         const res = await store().splitCase(id, event_ids, { subject, reason }, AGENT_USER)
@@ -72,7 +73,7 @@ export function buildTriageTools(store) {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const author = ctx?.author || ctx?.principal?.id
-        if (!ownsCase(c.external_id, author)) {
+        if (!ownsCase(c.external_id, author) && !canQueryCases(ctx?.tier)) {
           return { error: `case ${id} does not belong to you` }
         }
         const { classifyCaseHealth } = await import('./case-health.js')

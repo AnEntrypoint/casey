@@ -10,6 +10,7 @@ import { assigneeKeyFor, isContactAssignee, contactIdOfAssignee, isOwnConversati
 import { staffLabel, releaseCase } from './hooks/staff-outbound.js'
 import { clearFocusForCase } from './team-focus.js'
 import { AREA_FIELD } from './store/report-shape.js'
+import { haversineKm } from './case-tools-shared.js'
 
 const KEY = 'areas'
 const TAG = 'area-map'
@@ -18,6 +19,7 @@ const SYSTEM_ACTOR = { id: 'casey-system', role: 'admin' }
 export const MAX_AREAS = 300
 export const MAX_ALIASES = 40
 const MAX_BACKUPS = 6
+export const NEAREST_CAP_KM = 150
 
 export const norm = (s) => normalizeLocation(s).replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
 
@@ -71,7 +73,7 @@ function replay(events) {
     let r
     try { r = JSON.parse(payload) } catch { continue }
     if (!r?.id) continue
-    if (r.op === 'set') areas.set(r.id, { id: r.id, name: r.name, primary: r.primary, backups: r.backups || [], aliases: r.aliases || [], updated_at: r.at, updated_by: r.by || '' })
+    if (r.op === 'set') areas.set(r.id, { id: r.id, name: r.name, primary: r.primary, backups: r.backups || [], aliases: r.aliases || [], lat: r.lat ?? null, lon: r.lon ?? null, updated_at: r.at, updated_by: r.by || '' })
     else if (r.op === 'remove') areas.delete(r.id)
   }
   return [...areas.values()]
@@ -137,7 +139,18 @@ async function normaliseInput(store, areas, input, existing) {
     const clash = [other.name, ...other.aliases].find(s => mine.has(norm(s)))
     if (clash) throw new Error(`"${clash}" already belongs to the area ${other.name}`)
   }
-  return { name, primary, backups, aliases }
+  const hasLat = input.lat !== undefined ? input.lat !== null && String(input.lat).trim() !== '' : existing?.lat != null
+  const hasLon = input.lon !== undefined ? input.lon !== null && String(input.lon).trim() !== '' : existing?.lon != null
+  if (hasLat !== hasLon) throw new Error('an area place needs both a latitude and a longitude, or neither')
+  let lat = null
+  let lon = null
+  if (hasLat && hasLon) {
+    lat = Number(input.lat ?? existing?.lat)
+    lon = Number(input.lon ?? existing?.lon)
+    if (!Number.isFinite(lat) || Math.abs(lat) > 90) throw new Error('that latitude is not a place on Earth')
+    if (!Number.isFinite(lon) || Math.abs(lon) > 180) throw new Error('that longitude is not a place on Earth')
+  }
+  return { name, primary, backups, aliases, lat, lon }
 }
 
 const findArea = (areas, ref) => {
@@ -204,6 +217,26 @@ export async function pickRanger(store, area, caseRow) {
 
 const isUnheld = (c) => { const a = String(c?.assignee || '').trim(); return !a || a === UNCLAIMED }
 
+export function nearestArea(areas, { lat, lon, maxKm = null } = {}) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+  let best = null
+  for (const a of areas) {
+    const alat = Number(a.lat), alon = Number(a.lon)
+    if (!Number.isFinite(alat) || !Number.isFinite(alon)) continue
+    const km = haversineKm(lat, lon, alat, alon)
+    if (maxKm != null && km > maxKm) continue
+    if (!best || km < best.km) best = { area: a, km, matched_by: 'nearest' }
+  }
+  return best
+}
+
+async function nearestCapKm(store) {
+  try {
+    const th = (store.resolveThresholds ? await store.resolveThresholds() : null) || {}
+    return Number.isFinite(th.areaNearestMaxKm) ? th.areaNearestMaxKm : NEAREST_CAP_KM
+  } catch { return NEAREST_CAP_KM }
+}
+
 export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR } = {}) {
   if (!AREA_FIELD) return { assigned: false, why: 'no area field configured' }
   return store._withLock(`assign|${caseId}`, async () => {
@@ -213,18 +246,24 @@ export async function autoAssignByArea(store, caseId, { user = SYSTEM_ACTOR } = 
     const areas = await loadAreas(store)
     if (!areas.length) return { assigned: false, why: 'no areas mapped' }
     const report = parseReport(c)
-    const hit = resolveArea(areas, { association: statedArea(report), location: report.location })
-    if (!hit) return { assigned: false, why: 'area not mapped' }
+    let target = resolveArea(areas, { association: statedArea(report), location: report.location })
+    let km = null
+    if (!target) {
+      const near = nearestArea(areas, { lat: Number(c.lat), lon: Number(c.lon), maxKm: await nearestCapKm(store) })
+      if (near) { target = { area: near.area, matched_by: 'nearest', matched: near.area.name }; km = near.km }
+    }
+    if (!target) return { assigned: false, why: 'area not mapped' }
 
     const events = await store.listEvents(c.id)
     if (events.some(e => evData(e).area_auto_assigned)) return { assigned: false, why: 'already auto-assigned once' }
-    const pick = await pickRanger(store, hit.area, c)
-    if (!pick) return { assigned: false, why: 'no valid ranger for that area', area: hit.area.name }
+    const pick = await pickRanger(store, target.area, c)
+    if (!pick) return { assigned: false, why: 'no valid ranger for that area', area: target.area.name }
     await store.updateCase(c.id, { assignee: pick.key }, user)
-    const data = { assignee: pick.key, by: 'area-router', assigned_name: pick.name, area_id: hit.area.id, area_name: hit.area.name, matched_by: hit.matched_by, area_auto_assigned: true }
+    const data = { assignee: pick.key, by: 'area-router', assigned_name: pick.name, area_id: target.area.id, area_name: target.area.name, matched_by: target.matched_by, area_auto_assigned: true }
+    if (km != null) data.distance_km = Math.round(km * 10) / 10
     if (pick.contact) data.assigned_contact_id = pick.contact.id
-    await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: `given automatically to ${pick.name} (area ${hit.area.name})`, data })
-    return { assigned: true, to: pick.key, name: pick.name, area: hit.area.name, ref: c.ref, matched_by: hit.matched_by }
+    await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: `given automatically to ${pick.name} (area ${target.area.name})`, data })
+    return { assigned: true, to: pick.key, name: pick.name, area: target.area.name, ref: c.ref, matched_by: target.matched_by, ...(km != null ? { distance_km: Math.round(km * 10) / 10 } : {}) }
   })
 }
 

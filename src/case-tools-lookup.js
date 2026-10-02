@@ -21,11 +21,10 @@ export function buildLookupTools(store, { stageValues }) {
 
         const author = ctx?.author || ctx?.principal?.id
 
-        const owns = ownsCase(c.external_id, author)
-        const events = owns ? await store().listEvents(id, { limit: 30 }) : []
+        const full = ownsCase(c.external_id, author) || canQueryCases(ctx?.tier)
+        const events = full ? await store().listEvents(id, { limit: 30 }) : []
 
-        const short = !owns && canQueryCases(ctx?.tier) ? { note: 'This is a SHORT view: it leaves out most recorded facts, so never tell anyone the report is empty or a stub from it. To read everything recorded use case_review (technician) or case_gaps (other team members).' } : {}
-        return { case: owns ? slimCase(c) : enquiryRow(c), events: events.map(slimEvent), ...short }
+        return { case: full ? slimCase(c) : enquiryRow(c), events: events.map(slimEvent) }
       }),
     defTool('case_list', 'cases',
 

@@ -110,6 +110,7 @@ function areaView(name, a, openCounts) {
   return {
     id: a.id, name: a.name, aliases: a.aliases,
     primary: person(a.primary), backups: a.backups.map(person),
+    lat: a.lat ?? null, lon: a.lon ?? null,
     updated_at: a.updated_at, updated_by: name(a.updated_by), open_cases: openCounts.get(a.id) || 0,
   }
 }
@@ -163,7 +164,7 @@ export function putArea({ store, authed, actingOperator }) {
     const b = req.body || {}
     const op = actingOperator(req)
     try {
-      const area = await upsertArea(store, { id: b.id, name: b.name, primary: b.primary, backups: b.backups, aliases: b.aliases }, op.name || op.id)
+      const area = await upsertArea(store, { id: b.id, name: b.name, primary: b.primary, backups: b.backups, aliases: b.aliases, lat: b.lat, lon: b.lon }, op.name || op.id)
       const name = await namerFor(store, [...keysOfAreas([area]), area.updated_by])
       const out = { area: areaView(name, area, new Map()) }
       if (b.apply_to_unassigned === true) out.applied = await applyAreasToUnassigned(store, { user: op, area })

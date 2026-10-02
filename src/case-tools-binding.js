@@ -70,16 +70,17 @@ export function buildBindingTools(store) {
       }),
 
     defTool('case_switch', 'cases',
-      'Re-bind the conversation to a DIFFERENT one of the worker\'s own open cases by ref (e.g. "CASE-1042-K7M2NPQR"). Use when the worker names a case they want to continue, other than the one currently active. Tell them in your own words that you have moved to it.',
+      'Re-bind the conversation to a DIFFERENT open case by ref (e.g. "CASE-1042-K7M2NPQR"). A registered team member may continue ANY case, including one the public reported; anyone below that may switch only to a case of their own. Use when they name a case they want to continue, other than the one currently active. Tell them in your own words that you have moved to it.',
       { type: 'object', properties: { ref: str('The case ref to switch to, e.g. CASE-1042-K7M2NPQR') }, required: ['ref'] },
       async ({ ref }, ctx) => {
         const author = ctx?.author || ctx?.principal?.id
-        if (!author) return { error: 'no author on this turn -- cannot resolve ownership for a switch' }
+        const team = canQueryCases(ctx?.tier)
+        if (!author && !team) return { error: 'no author on this turn -- cannot resolve ownership for a switch' }
         const target = typeof store().getCaseByRef === 'function'
           ? await store().getCaseByRef(ref)
           : (await store().listCases({}, { limit: 500 })).find(c => c.ref === ref)
         if (!target) return { error: `no case found with ref ${ref}` }
-        if (!ownsCase(target.external_id, author)) {
+        if (!ownsCase(target.external_id, author) && !team) {
           return { error: `case ${ref} does not belong to you -- cannot switch to it` }
         }
 

@@ -3,6 +3,7 @@
 import { AGENT_USER } from './case-store.js'
 import { defTool, str, pick, ownsCase, slimCase } from './case-tools-shared.js'
 import { isContactAssignee } from './case-assignment.js'
+import { canQueryCases } from './contact-tiers.js'
 
 export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
   return [
@@ -31,7 +32,7 @@ export function buildCaseFieldTools(store, { caseTypeValues, priorityValues }) {
         if (!c) return { error: `no case ${id}` }
 
         const author = ctx?.author || ctx?.principal?.id
-        if (!ownsCase(c.external_id, author)) {
+        if (!ownsCase(c.external_id, author) && !canQueryCases(ctx?.tier)) {
           return { error: `case ${id} does not belong to you -- cannot update it` }
         }
 
