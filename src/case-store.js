@@ -447,7 +447,7 @@ export class CaseStore {
     if (autoAssign && !res.error && AREA_FIELD && (AREA_FIELD in incoming || 'location' in incoming)) {
       try {
         const { autoAssignByArea } = await import('./areas.js')
-        await autoAssignByArea(this, caseId)
+        await autoAssignByArea(this, caseId, { nearest: false })
       } catch (e) { this.log?.warn?.('[casey] area auto-assign failed', { caseId, error: e.message }) }
     }
     return res

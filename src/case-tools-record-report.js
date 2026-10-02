@@ -174,7 +174,7 @@ async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource
   if (latLonResult.error) return { error: latLonResult.error }
   const c = latLonResult.case
 
-  try { const { autoAssignByArea } = await import('./areas.js'); await autoAssignByArea(store(), id) } catch {  }
+  try { const { autoAssignByArea } = await import('./areas.js'); await autoAssignByArea(store(), id) } catch (e) { store().log?.warn?.('[casey] area auto-assign failed', { caseId: id, error: e.message }) }
 
   if (c?.contact_id) {
     try {
