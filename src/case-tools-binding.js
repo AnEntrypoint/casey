@@ -80,6 +80,7 @@ export function buildBindingTools(store) {
           ? await store().getCaseByRef(ref)
           : (await store().listCases({}, { limit: 500 })).find(c => c.ref === ref)
         if (!target) return { error: `no case found with ref ${ref}` }
+        if (target.channel === 'system') return { error: `no case found with ref ${ref}` }
         if (!ownsCase(target.external_id, author) && !team) {
           return { error: `case ${ref} does not belong to you -- cannot switch to it` }
         }

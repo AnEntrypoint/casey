@@ -68,7 +68,7 @@ export function clearFocusForCase(caseId) {
   for (const [k, p] of proposals) if (p.caseId === caseId) proposals.delete(k)
 }
 
-export function writeGate(ctx, c, now = Date.now()) {
+export function writeGate(ctx, c, { confirm = true } = {}, now = Date.now()) {
   const me = ctx?.contact?.id
   const named = ctx?.inboundRefs || []
   const ours = String(c.ref).toUpperCase()
@@ -83,6 +83,7 @@ export function writeGate(ctx, c, now = Date.now()) {
   if (named.length === 1 && named[0] === ours) { if (me) setFocus(me, c, now); return null }
   const f = me ? focusOf(me, now) : null
   if (f && f.caseId === c.id) { f.lastUsedAt = now; return null }
+  if (!confirm) return null
   proposeFocus(me, c, ctx?.dedupeCache, now)
   return { error: `Not recorded yet: confirm the record first. Ask them "${c.ref} (${identifyingLine(c)}) -- is this the one?" as the last thing in your reply, and only after they answer yes in their NEXT message call case_focus with that record and confirm set to true, then repeat this.` }
 }

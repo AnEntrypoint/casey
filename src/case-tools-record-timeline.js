@@ -80,12 +80,13 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         const owns = ownsCase(c.external_id, author)
 
         const team = canQueryCases(ctx?.tier)
+        const toDone = doneStages().includes(to)
         const authority = owns ? null : authorityOn(ctx, c)
-        if (!owns && !team && !signOffDesk && !(authority && doneStages().includes(to))) {
+        if (!owns && !signOffDesk && !(authority && toDone) && !(team && !toDone)) {
           return { error: `case ${id} does not belong to you -- cannot transition it` }
         }
-        if (!owns && !team && authority !== 'operator') {
-          const refused = writeGate(ctx, c)
+        if (!owns && authority !== 'operator') {
+          const refused = writeGate(ctx, c, { confirm: !team })
           if (refused) return refused
         }
 
