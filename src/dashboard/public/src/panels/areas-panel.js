@@ -32,7 +32,7 @@ const h = webjsx.createElement;
 const MAX_BACKUPS = 6;
 const ui = {
   editing: null,          // null | 'new' | an area id
-  form: { name: '', primary: '', backups: [], aliases: '', applyNow: false },
+  form: { name: '', primary: '', backups: [], aliases: '', lat: '', lon: '', applyNow: false },
   error: '', busy: false,
   people: null,           // { people, canon, nameOf } once loaded
   pick: {},               // unmapped value -> chosen area id
@@ -57,8 +57,8 @@ function startEdit(a) {
   ui.editing = a ? a.id : 'new';
   ui.error = '';
   ui.form = a
-    ? { name: a.name, primary: canonicalKey(ui.people, a.primary.key), backups: a.backups.map((b) => canonicalKey(ui.people, b.key)), aliases: a.aliases.join(', '), applyNow: false }
-    : { name: '', primary: '', backups: [], aliases: '', applyNow: false };
+    ? { name: a.name, primary: canonicalKey(ui.people, a.primary.key), backups: a.backups.map((b) => canonicalKey(ui.people, b.key)), aliases: a.aliases.join(', '), lat: a.lat == null ? '' : String(a.lat), lon: a.lon == null ? '' : String(a.lon), applyNow: false }
+    : { name: '', primary: '', backups: [], aliases: '', lat: '', lon: '', applyNow: false };
   schedule();
   setTimeout(() => { const el = document.querySelector('[name=area-name]'); if (el) el.focus(); }, 60);
 }
@@ -71,7 +71,7 @@ async function saveArea() {
   if (!f.primary) { ui.error = 'Choose the ranger who gets new reports from this area.'; schedule(); return; }
   ui.busy = true; ui.error = ''; schedule();
   try {
-    const body = { name: f.name.trim(), primary: f.primary, backups: f.backups.filter(Boolean), aliases: splitNames(f.aliases), apply_to_unassigned: !!f.applyNow };
+    const body = { name: f.name.trim(), primary: f.primary, backups: f.backups.filter(Boolean), aliases: splitNames(f.aliases), lat: f.lat.trim(), lon: f.lon.trim(), apply_to_unassigned: !!f.applyNow };
     if (ui.editing && ui.editing !== 'new') body.id = ui.editing;
     const j = await putArea(body);
     const handed = j.applied && j.applied.assigned ? j.applied.assigned.length : 0;
@@ -120,6 +120,9 @@ function AreaForm() {
         ...slots.map((b, i) => PersonSelect({ key: 'sel-backup-' + i, name: 'area-backup-' + i, label: 'Backup ranger ' + (i + 1), value: b, blank: 'No backup', onChange: (v) => setBackup(i, v) })),
         showBlank ? PersonSelect({ key: 'sel-backup-new', name: 'area-backup-new', label: slots.length ? 'Add another backup' : 'Backup ranger (optional)', value: '', blank: 'No backup', onChange: (v) => setBackup(slots.length, v) }) : null),
       TextField({ key: 'tf-aliases', name: 'area-aliases', label: 'Other names for this area', hint: 'Villages, farms and other spellings people use, separated by commas. Reports that mention any of them count as this area.', value: f.aliases, onInput: (v) => { f.aliases = v; } }),
+      h('div', { key: 'geo', class: 'ds-team-row' },
+        TextField({ key: 'tf-lat', name: 'area-lat', label: 'Latitude (optional)', hint: 'The team base, or roughly the middle of the area. A report whose place no name matches is given to the NEAREST team with a coordinate. Set both or neither.', value: f.lat, onInput: (v) => { f.lat = v; ui.error = ''; } }),
+        TextField({ key: 'tf-lon', name: 'area-lon', label: 'Longitude (optional)', value: f.lon, onInput: (v) => { f.lon = v; ui.error = ''; } })),
       Checkbox({ key: 'ck-apply', name: 'area-apply', checked: f.applyNow, label: 'Also give the open reports from this area that nobody holds yet to the first ranger now', onChange: (v) => { f.applyNow = v; schedule(); } }),
       ui.error ? h('p', { key: 'err', class: 'ds-team-error', role: 'alert' }, ui.error) : null,
       h('div', { key: 'actions', class: 'ds-contact-actions' },
@@ -135,6 +138,7 @@ function AreaList() {
     const bits = ['First ranger: ' + personName(ui.people, a.primary.key)];
     if (a.backups.length) bits.push('Backup: ' + a.backups.map((b) => personName(ui.people, b.key)).join(', '));
     if (a.aliases.length) bits.push('Also called: ' + a.aliases.join(', '));
+    if (a.lat != null && a.lon != null) bits.push('Team placed at ' + a.lat + ', ' + a.lon);
     bits.push(countOf(a.open_cases, 'open ' + entityLabel(), 'open ' + entityLabelPlural()));
     return Row({ key: a.id, title: a.name, sub: bits.join('. '), meta: 'Change', onClick: () => startEdit(a) });
   });

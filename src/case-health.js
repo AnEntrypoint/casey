@@ -18,6 +18,8 @@ export const DEFAULT_THRESHOLDS = {
 
   workerLocationStaleMs: 3 * 3600e3,
 
+  areaNearestMaxKm: 150,
+
   stageMaxDwellMs: {
     new: 12 * 3600e3,
     triaging: 24 * 3600e3,

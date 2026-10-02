@@ -14,6 +14,7 @@ const SCALAR_BOUNDS = {
   incompleteCriticalMs: [HOUR, 30 * DAY],
   unsentDraftMs: [ONE_MIN, 7 * DAY],
   workerLocationStaleMs: [ONE_MIN, 7 * DAY],
+  areaNearestMaxKm: [1, 1000],
 }
 
 const STAGE_BOUNDS = [HOUR, 60 * DAY]

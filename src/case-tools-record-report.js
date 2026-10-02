@@ -174,6 +174,8 @@ async function writeReportLocation(store, id, { lat, lon, resolvedLocationSource
   if (latLonResult.error) return { error: latLonResult.error }
   const c = latLonResult.case
 
+  try { const { autoAssignByArea } = await import('./areas.js'); await autoAssignByArea(store(), id) } catch {  }
+
   if (c?.contact_id) {
     try {
       await store().t.update('contact', c.contact_id, toStorable({

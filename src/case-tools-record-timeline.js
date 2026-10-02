@@ -47,7 +47,7 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         const c = await store().getCase(id)
         if (!c) return { error: `no case ${id}` }
         const author = ctx?.author || ctx?.principal?.id
-        if (!ownsCase(c.external_id, author)) {
+        if (!ownsCase(c.external_id, author) && !canQueryCases(ctx?.tier)) {
           return { error: `case ${id} does not belong to you -- cannot add an observation to it` }
         }
         await store().appendEvent(id, { kind: 'observation', actor: 'agent', text })
@@ -79,11 +79,12 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         const signOffDesk = canSignOff(ctx?.tier) && doneStages().includes(to) && (isAssignedTo(c, ctx?.contact) || unassigned || isHandedOff(c))
         const owns = ownsCase(c.external_id, author)
 
+        const team = canQueryCases(ctx?.tier)
         const authority = owns ? null : authorityOn(ctx, c)
-        if (!owns && !signOffDesk && !(authority && doneStages().includes(to))) {
+        if (!owns && !team && !signOffDesk && !(authority && doneStages().includes(to))) {
           return { error: `case ${id} does not belong to you -- cannot transition it` }
         }
-        if (!owns && authority !== 'operator') {
+        if (!owns && !team && authority !== 'operator') {
           const refused = writeGate(ctx, c)
           if (refused) return refused
         }
