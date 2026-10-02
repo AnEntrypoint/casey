@@ -40,4 +40,5 @@ paths = [
 ]
 regexes = [
   '''mem-[0-9a-f]{16}-[0-9]+''',                    # harness memory record ids, e.g. mem-9026e4c5745472bc-868
+  '''critical/mandatory/signoff''',                # prose in AGENTS.md and a gm memory, not a key (generic-api-key FP)
 ]
