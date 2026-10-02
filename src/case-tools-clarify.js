@@ -23,30 +23,32 @@ export function buildClarifyTools(store) {
         const contactId = ctx?.contact?.id
         if (!bound.id || !contactId) return { ok: false, note: 'Nothing could be recorded from here. Carry on with the conversation.' }
         const s = store()
-        const caseRow = await s.getCase(bound.id)
-        const st = await returnState(s, caseRow, ctx.contact)
-        if (!st.owed) return { ok: true, already: true, note: 'Nothing is waiting to be clarified. Carry on.' }
-        const state = await speakerState(s, contactId)
-        let target = null
-        let nameNote = ''
-        if (typeof name === 'string' && name.trim()) {
-          const r = await addPerson(s, contactId, { name, by: 'model' })
-          if (r.ok) target = r.person
-          else nameNote = r.reason === 'too_many'
-            ? ' This phone already has as many people recorded as can be kept; ask who is writing again and use a name already on file, or same_person true when they confirm the person on file.'
-            : ' That was not a name; ask who is writing again, in your own words, and use exactly the name they give.'
-        } else if (same_person === true) {
-          target = state.current || state.previous || state.people[0] || null
-        }
-        if (target) {
-          const set = await setSpeaker(s, contactId, target.id, { by: 'model' })
-          if (!set.ok) return { ok: false, note: 'That could not be recorded. Carry on with the conversation.' }
-        }
-        await recordClarified(s, bound.id, same_report)
-        const whoNote = target ? '' : ' You still do not know who is writing: ask that once, in your own words, as part of your reply.'
-        return same_report
-          ? { ok: true, note: 'Recorded. It is more about the same report: record what they add on it with case_report, then answer them as usual. Do not ask again whether it is the same or new.' + whoNote + nameNote }
-          : { ok: true, note: 'Recorded. It is a NEW problem: call case_new now, then record what they tell you on that new report. Do not ask again whether it is the same or new.' + whoNote + nameNote }
+        return s._withLock(`case_clarify|${bound.id}`, async () => {
+          const caseRow = await s.getCase(bound.id)
+          const st = await returnState(s, caseRow, ctx.contact)
+          if (!st.owed) return { ok: true, already: true, note: 'Nothing is waiting to be clarified. Carry on.' }
+          const state = await speakerState(s, contactId)
+          let target = null
+          let nameNote = ''
+          if (typeof name === 'string' && name.trim()) {
+            const r = await addPerson(s, contactId, { name, by: 'model' })
+            if (r.ok) target = r.person
+            else nameNote = r.reason === 'too_many'
+              ? ' This phone already has as many people recorded as can be kept; ask who is writing again and use a name already on file, or same_person true when they confirm the person on file.'
+              : ' That was not a name; ask who is writing again, in your own words, and use exactly the name they give.'
+          } else if (same_person === true) {
+            target = state.current || state.previous || state.people[0] || null
+          }
+          if (target) {
+            const set = await setSpeaker(s, contactId, target.id, { by: 'model' })
+            if (!set.ok) return { ok: false, note: 'That could not be recorded. Carry on with the conversation.' }
+          }
+          await recordClarified(s, bound.id, same_report)
+          const whoNote = target ? '' : ' You still do not know who is writing: ask that once, in your own words, as part of your reply.'
+          return same_report
+            ? { ok: true, note: 'Recorded. It is more about the same report: record what they add on it with case_report, then answer them as usual. Do not ask again whether it is the same or new.' + whoNote + nameNote }
+            : { ok: true, note: 'Recorded. It is a NEW problem: call case_new now, then record what they tell you on that new report. Do not ask again whether it is the same or new.' + whoNote + nameNote }
+        })
       },
     ),
   ]
