@@ -1,11 +1,3 @@
-// viewer-app.js -- the whole screen for a read-only viewer (UCT, third parties).
-// It replaces the operator console rather than hiding pieces of it: a viewer has
-// no case list, no contact, no team and no export of cases, so there is nothing
-// to hide. Home = the resolved-cases map and the disease reports together, with
-// one shared area / period filter; the side menu jumps to either on its own.
-//
-// This file only shapes what is worth showing; the fence is the server
-// (dashboard/roles.js viewerGate: four aggregate routes and nothing else).
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { AppShell, Topbar, Side, Crumb, Status, Icon } from '/design/src/components/shell.js';
 import { state, schedule } from '../state.js';

@@ -1,14 +1,3 @@
-// RESPONSIBILITY: the map view's live state -- the Leaflet handle, the last
-// load's summary and options, the single collapsed loader, and every count
-// read off them -- shared by the map pane and the rail beside it.
-//
-// It exists because the pane and the rail are two renderings of ONE view, not
-// two views. They must state the same numbers at the same moment, so they read
-// one store rather than each holding their own; the same argument map-model.js
-// makes for the derivations, applied one level up to the state those
-// derivations run over. Nothing here renders anything: it holds state, loads
-// it, and answers questions about it.
-
 import {
     state, schedule, onActiveIdChange, onAttentionChange, onMobilePaneChange,
 } from '../state.js';
@@ -18,24 +7,14 @@ import { loadMap, focusCaseOnMap, refilterMarkers } from './map-leaflet.js';
 import { setSelectedCase } from './map-markers.js';
 import { openDispatchPicker } from './dispatch-picker.js';
 
-// The live Leaflet instance, or {current:null} before the canvas mounts. Passed
-// by reference into loadMap so the driver can create it once and every reader
-// here sees the same object.
 export const mapStateRef = { current: null };
 
 let options = { species: [], types: [], statuses: [] };
 let summary = { unresolvedCount: 0, unresolved: [], truncated: false, cap: 0, totalConsidered: 0 };
 let error = null;
-// Distinguishes "the request failed" from "it succeeded and there is genuinely
-// nothing" -- rendering both as an empty map told the operator nothing about
-// which had happened. False until the first attempt resolves either way.
 let loadedOnce = false;
 let lastUpdatedAt = null;
 
-// How many queue rows the rail shows. A silent slice(0,5) meant the rail head
-// could read "14 need a person" above a list of 5, with nothing on screen
-// explaining the gap -- on a triage queue in a disease-surveillance deployment,
-// report 6 being invisible is a safety problem, not a cosmetic one.
 export const QUEUE_PAGE = 8;
 let queueShown = QUEUE_PAGE;
 
@@ -47,43 +26,9 @@ export const updatedAt = () => lastUpdatedAt;
 export const queueShownCount = () => queueShown;
 export const setQueueShown = (n) => { queueShown = n; schedule(); };
 
-// ---- the one load -------------------------------------------------------
-
-// Collapses overlapping loads into one. Measured live on a real boot: the map
-// payload was fetched THREE times before the page settled, because several
-// renders land in quick succession during boot, each one can hand
-// onMountCanvas a fresh canvas element, and each of those called refresh().
-// On the rural link this deployment targets, paying for the same payload three
-// times before the operator sees anything is not a rounding error.
 let inFlight = false;
-// The collapse-guard's own worst case: api.js now bounds every fetch to
-// FETCH_TIMEOUT_MS (20s), so `loadMap`'s promise always settles and clears
-// this flag on its own -- but this guard has no other route to safety if a
-// future change to loadMap ever adds an await that can hang without going
-// through api() (a direct fetch, a Leaflet tile wait, anything). A collapse
-// guard with no ceiling is a liveness bug waiting for exactly one unbounded
-// await; INFLIGHT_STALE_MS is comfortably above api.js's own bound so it
-// never fires on a request that is merely slow, only on one that never
-// reached api.js's settlement guarantee at all.
 const INFLIGHT_STALE_MS = 30000;
 let inFlightSince = 0;
-// A SECOND, time-based throttle independent of the element-identity guard
-// map-panel.js's onMountCanvas keeps: that guard assumes a distinct DOM
-// element means a distinct genuine remount, which held until a failing load
-// itself started causing one -- when the connection banner appears/disappears
-// around the whole app tree, the remount this causes can hand mapCanvas() a
-// BRAND NEW element on literally every render (webjsx has no stable ancestor
-// to key the subtree against across that shape change), so an element-only
-// dedup sees a "new" canvas every time and never dedups at all. Witnessed
-// live: with only the element guard, the render -> mount -> refresh(fails) ->
-// schedule -> render cycle from the comment above still spun the tab
-// unresponsive. A minimum gap between actual attempts, independent of how
-// many times onMountCanvas is invoked or what element it names, is the one
-// guard that holds regardless of which upstream identity churns -- no attempt
-// this function makes can itself trigger another attempt sooner than
-// RETRY_MIN_GAP_MS after the last one started, so the schedule()-in-onError
-// feedback loop can propagate at most once per gap instead of once per
-// microtask.
 const RETRY_MIN_GAP_MS = 3000;
 let lastAttemptAt = 0;
 export function refresh() {
@@ -93,10 +38,6 @@ export function refresh() {
     inFlight = true;
     inFlightSince = Date.now();
     error = null;
-    // finally, not a callback: loadMap returns early without calling ANY
-    // callback when the canvas element is not in the DOM yet, and clearing the
-    // flag only from onSummary/onError would latch it true forever on that
-    // path -- the map would then never load again for the life of the page.
     loadMap(mapStateRef, document.getElementById('ds-map-canvas'), state.mapFilter, state.mapFilter.days, {
         onOptions: (o) => { options = o; schedule(); },
         onSummary: (s) => { summary = s; loadedOnce = true; lastUpdatedAt = Date.now(); schedule(); },
@@ -104,37 +45,22 @@ export function refresh() {
     }).finally(() => { inFlight = false; });
 }
 
-// The map's own pins were the ONE thing on this dashboard never refreshed.
-// /api/map/cases was fetched once by loadMap() and never again, so on a
-// surveillance map that is now the landing view, the pins were as old as the
-// operator's login -- while a case list the map view does not even read was
-// re-fetched every 5 seconds. A new report could sit unplotted for a whole
-// shift. Exported so main.js can poll it only while the map is actually on
-// screen; the marker-signature guard in map-markers.js is what makes a
-// repeated call cheap, and the inFlight guard above still collapses overlaps.
 export function refreshMapData() {
     refresh();
 }
 
-// Called by the canvas mount when the Leaflet instance is discarded, so the
-// next render rebuilds it from scratch rather than against a dead container.
 export function discardMap() {
     const ms = mapStateRef.current;
     if (!ms) return;
-    try { ms.sizeObserver?.disconnect(); } catch { /* already gone */ }
+    try { ms.sizeObserver?.disconnect(); } catch {  }
     ms.map.remove();
     mapStateRef.current = null;
 }
-
-// ---- what both halves count over ----------------------------------------
 
 export function livePins() {
     return (mapStateRef.current && mapStateRef.current.pins) || [];
 }
 
-// The map's RAW viewport, or null when no map is mounted. Whether it NARROWS
-// anything is map-model.js's decision (only when the operator turned `inView`
-// on); this only reports where the map is looking.
 export function mapBounds() {
     const ms = mapStateRef.current;
     if (!ms || !ms.map) return null;
@@ -144,19 +70,6 @@ export function mapBounds() {
 export function counts() { return mapCounts(livePins(), mapBounds()); }
 export function queueRows() { return queueRowsFor(livePins(), mapBounds()); }
 
-// ---- what the load summary states ---------------------------------------
-
-// The COLLAPSED line is the only thing on screen while the rail's disclosure is
-// shut, so every fact that must not be silent has to be in it. It used to carry
-// the no-location count alone, which meant a capped load with no no-location
-// reports rendered "Reports with no location (0)" -- an operator reads that
-// zero and never opens it, and the cap statement sitting inside was never seen.
-// A cap is stated with its true total beside it or it is not stated, and that
-// is a safety property here, not a cosmetic one.
-//
-// The rail's disclosure and the map's spoken text equivalent both say this, and
-// they say it in the same words because they read this one function -- a second
-// wording of a surveillance blind spot is a second thing to keep in step.
 export function unresolvedSummaryText() {
     const parts = [];
     if (summary.unresolvedCount) parts.push(`Reports with no location (${summary.unresolvedCount})`);
@@ -164,8 +77,6 @@ export function unresolvedSummaryText() {
     return parts.join(' -- ');
 }
 
-// The expanded body says WHY each of those two facts is true. It does not
-// repeat the counts the summary above it already states.
 export function unresolvedNoteText() {
     const parts = [];
     if (summary.unresolvedCount) parts.push('No GPS, and the location text did not match a known area, so these cannot be drawn on the map.');
@@ -173,24 +84,12 @@ export function unresolvedNoteText() {
     return parts.join(' ');
 }
 
-// ---- staleness ----------------------------------------------------------
-
-// How long before "Updated 4m ago" stops being a reassurance and starts being
-// a claim the page cannot support. The map data refreshes on a poll; when that
-// poll dies the timestamp simply keeps ageing, and an operator reading a
-// worst-first triage queue has no way to tell a quiet morning from a page that
-// stopped listening an hour ago. Stale data on screen is labelled stale.
 const STALE_AFTER_MS = 3 * 60e3;
 
 export function isStale() {
     return lastUpdatedAt != null && (Date.now() - lastUpdatedAt) > STALE_AFTER_MS;
 }
 
-// The staleness label is the one thing on this view that has to change while
-// NOTHING else is happening -- if the polls are dead there is no other event
-// left to trigger a render, which is exactly the situation being reported. So
-// it gets its own low-frequency ticker, and that ticker re-renders only on the
-// fresh -> stale EDGE rather than every tick, so a healthy page pays nothing.
 let wasStale = false;
 setInterval(() => {
     const now = isStale();
@@ -199,67 +98,29 @@ setInterval(() => {
     schedule();
 }, 30e3);
 
-// ---- subscriptions ------------------------------------------------------
-
-// The map's own retry is otherwise entirely poll-driven (30s, only while
-// onMapHome()) or remount-driven (a canvas swap), so a failed load's error
-// note can sit on screen for up to a full poll interval after the link
-// genuinely returns -- and on the map home view specifically, where nothing
-// else forces a re-render in between, "up to 30s" is the OBSERVED number,
-// not a worst case with slack in it. Witnessed live: the top connection
-// banner cleared (connLost -> false, a real response reached the origin)
-// while the map pane still read "Could not load the reports. The map could
-// not reach this dashboard's own server" -- the two halves of one screen
-// contradicting each other about whether the link is up, for exactly the
-// operator this deployment serves. api.js already raises this precise EDGE
-// for auth.js's session re-check; the map needed the same subscription so
-// its own error clears on the same edge instead of waiting out its own poll.
 onConnectionRestored(() => { if (error) refresh(); });
 
-// One subscription, registered at module load: every path that opens a case --
-// the queue, a pin, the unresolved list, the case list, keyboard Enter, a hash
-// deep link -- goes through setActiveId, so all of them move the map.
-// Previously only the queue did, and the view stopped answering "where" on
-// every other route into a case.
 onActiveIdChange((id) => {
     if (!mapStateRef.current) return;
     setSelectedCase(mapStateRef.current, id);
     if (id != null) focusCaseOnMap(mapStateRef.current, id);
 });
 
-// The phone's map/list toggle hides the map pane with display:none, and a
-// Leaflet map whose container goes to 0x0 and back does not reliably come back
-// to the same view -- measured live, map -> list -> map returned at a different
-// centre, so an operator lost the district they had navigated to just by
-// glancing at the queue. Capture the view while the container is still real,
-// restore it once layout has settled.
 onMobilePaneChange(() => {
     const ms = mapStateRef.current;
     if (!ms || !ms.map) return;
     let view;
     try { view = { center: ms.map.getCenter(), zoom: ms.map.getZoom() }; } catch { return; }
-    // Two frames: one for webjsx to apply the class, one for the browser to
-    // finish layout, so invalidateSize measures the real box and not the
-    // mid-transition one.
     const restore = () => {
         try {
             ms.map.invalidateSize({ animate: false });
             ms.map.setView(view.center, view.zoom, { animate: false });
-        } catch { /* pane torn down mid-toggle */ }
+        } catch {  }
     };
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(restore));
     else restore();
 });
 
-// The markers are imperative Leaflet objects, so unlike the rail they are not
-// re-rendered by schedule(). They carry the urgency channel, which comes from
-// the attention list, which arrives AFTER the first map load and then refreshes
-// on its own 30s poll -- so without this the pins were built from an empty
-// attention list and stayed at urgency 0 for the life of the page.
-//
-// Rebuild only when the urgency assignment actually changed. Rebuilding on
-// every 30s poll would collapse the marker clusters and close a popup the
-// operator has open, for a result identical to what is already on screen.
 let lastUrgencySig = '';
 onAttentionChange(() => {
     const sig = [...urgencyByCaseId().entries()].sort().map(([k, v]) => k + ':' + v).join(',');
@@ -268,18 +129,6 @@ onAttentionChange(() => {
     if (mapStateRef.current) refilterMarkers(mapStateRef.current, state.mapFilter);
 });
 
-// ---- what the pin popup used to be the only home for ---------------------
-
-// The pin popup is gone (see map-leaflet.js), so the two things it ALONE could
-// reach are surfaced here, bound to the live map instance, for the case detail
-// in the rail to render. A facade on purpose: the case detail asks by case id
-// and never learns that a Leaflet instance, a pin list or a cluster index
-// exist -- so it stays renderable on the case-list side of the app, where no
-// map is mounted at all and both of these correctly resolve to "nothing".
-
-// The cluster linkage (computed server-side by clusters.js buildClusters and
-// shipped in /api/map/cases) answers "what is going on HERE" rather than "what
-// is this one pin" -- Ushahidi's cluster-summary pattern.
 export function clusterNoteFor(caseId) {
     const ms = mapStateRef.current;
     if (!ms) return null;
@@ -289,29 +138,14 @@ export function clusterNoteFor(caseId) {
     if (!info || !(info.count > 1)) return null;
     return {
         others: info.count - 1,
-        // Named reportedDiseaseNames, not `diseases`. clusters.js exposes this
-        // as reported_disease_names precisely so no view can render it as a
-        // diagnosis, and shortening it here to `diseases` is how that
-        // protection gets lost one hop later -- which is exactly what happened
-        // to the case detail's linked-reports note, where the names arrived
-        // bare after a colon and read as fact. The value is a name the worker
-        // relayed from the farmer's own guess, never a lab result.
         reportedDiseaseNames: (info.reported_disease_names || []).filter(Boolean),
     };
 }
 
-// Null when there is no live map: the picker ranks workers by distance from
-// the case and reads its roster from the worker overlay, neither of which
-// exists without one. The caller hides the action rather than offering a
-// control that cannot work.
 export function canDispatchFor(caseId) {
     return !!(mapStateRef.current && (mapStateRef.current.pins || []).some((p) => p.id === caseId));
 }
 
-// Resolves the case's own coordinate so the picker can rank workers by
-// distance, exactly as the popup's link did. A case with no placeable
-// coordinate still dispatches -- it just ranks unsorted rather than refusing,
-// since "no GPS yet" is a routine state here, not an error.
 export function dispatchWorkerFor(caseId) {
     const ms = mapStateRef.current;
     if (!ms) return;
@@ -319,13 +153,6 @@ export function dispatchWorkerFor(caseId) {
     return openDispatchPicker(ms, caseId, p ? p.lat : null, p ? p.lon : null);
 }
 
-// ---- diagnosis ----------------------------------------------------------
-
-// Read-only snapshot for diagnosing the class of bug this whole restructure
-// fixes: the two halves of the view disagreeing about the same cases. Carries
-// counts and view state only -- never a ref, subject, contact id or any other
-// contact-supplied text, matching the PII-free-projection discipline every
-// other operator-facing projection in casey follows.
 export function mapDebugSnapshot() {
     const ms = mapStateRef.current;
     let bounds = null;

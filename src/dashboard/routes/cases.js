@@ -1,26 +1,3 @@
-// Core case CRUD + operator actions: list/create/get/patch/transition/bulk/
-// snooze/undo/note/intake/events, plus reply/draft-approve/draft-discard and
-// merge/split/suggestions/site-history. This is the single largest route
-// group (the case is casey's central entity), matching AGENTS.md's case-store
-// facade -- everything here is a thin HTTP wrapper over CaseStore methods.
-//
-// Shape: module-level named handler factories plus the ROUTES table at the
-// bottom, mounted through routes/register.js's mountRoutes -- the same shape
-// the other five route modules use. It used to be one 854-line registerCases
-// closure holding all 21 handlers inline, the largest remaining function in
-// the dashboard and the only route module inconsistent with its siblings.
-// Note what that change is NOT: the two projections below were ALREADY
-// module-level before the split (register.js's own header comment says the
-// PII projections sat inside the register closure -- true of the five
-// modules it describes, never true of this one), so no security property
-// moved. Registration order is preserved exactly as it was: GET
-// /api/cases/export.csv still registers before GET /api/cases/:id, or express
-// captures 'export.csv' as an id.
-//
-// deps: store, wrap, esc, str, clampLimit, offsetOf, actingOperator, authed,
-//   AUTONOMY, PRIORITY, CASE_TYPE, REPORT_KEY_LIST, REPORT_KEY_SET,
-//   computeFillRate, csvCell, parseJsonArraySafe, parseEventData, isOpenCase,
-//   getRoster, sendReply, UNCLAIMED_ASSIGNEE, printableReport
 import { normalizeMsisdn } from '../../role-invites.js'
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
@@ -42,15 +19,8 @@ import { waLink } from '../wa-link.js'
 import { reporterFirstName, reporterSummary } from '../../phone-persons.js'
 import { prepareReminder, OPERATOR_REMINDER_FLAG } from '../../hooks/operator-reminder.js'
 
-// Body keys POST /api/cases/:id/intake accepts that are NOT report fields.
 const INTAKE_META_KEYS = new Set(['canonicalized', 'expected_ref'])
 
-// Normalize the optional `canonicalized` body block into what the timeline
-// records, dropping anything that does not describe a field actually being
-// written by THIS request. A client is free not to send it at all; a malformed
-// one is ignored rather than 400'd, because it is an annotation on a write, never
-// the write itself -- refusing the whole save over a bad note would make the
-// audit trail the thing that loses the data.
 function canonicalizedNote(raw, incoming) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const out = {}
@@ -64,42 +34,6 @@ function canonicalizedNote(raw, incoming) {
   return Object.keys(out).length ? out : null
 }
 
-// The two projections below are the ONLY way a raw thatcher case row may reach
-// a JSON response. Both are explicit allowlists, never a spread of the row, so
-// a column added to the case table is never auto-exposed -- the raw row also
-// carries author_key (the contact number a SECOND time), lat/lon, _version,
-// created_by and transition_reason, none of which any client asked for.
-//
-// WHAT THE PII RULE ACTUALLY MEANS. AGENTS.md's "Enquiries and status are
-// PII-free -- every WORKER-facing projection excludes external_id/contact_id"
-// is a rule about the reporter-facing surface (in casey, "worker" is the field
-// worker who reports, see AGENTS.md's own "the reporter is usually a field
-// worker"), i.e. the agent's channel replies and the enquiry/aggregate
-// rollups; glossary.js says the same thing in the operator's own words --
-// external_id is "never shown to a field worker for privacy". It was never a
-// rule about the authenticated operator console, and this codebase already
-// says so in three places: map.js's dispatch handler records that "case
-// timelines are operator-facing, not PII-scrubbed", contacts.js's
-// publicContact() hands every authed operator external_id_formatted for every
-// contact, and this file's own /api/cases/:id/report.html renders a `tel:`
-// "Call contact" link. An operator who cannot ring back the person reporting a
-// dying herd cannot do the job, and stripping the case-detail affordance while
-// /api/contacts still serves the same number would reduce no exposure at all.
-//
-// So the line is drawn at SHAPE, not at secrecy: the raw routing key
-// (external_id), the same number again (author_key) and the internal join key
-// (contact_id) are never emitted by either projection. A single case the
-// operator has explicitly opened additionally carries the DISPLAY form of the
-// contact number, through the same formatter contacts.js already uses.
-// The three fields below carry CONTACT-SUPPLIED words (subject is cut straight
-// from the inbound text, summary and report hold what the reporter said), so each
-// passes through markInvisibles: a bidi override or a zero-width character in a
-// reporter's own message is legal text that HTML-escaping does not touch, and left
-// alone it makes a place name or a count READ as something other than what was
-// sent. Marked, never stripped -- see format.js. Every other field here is
-// casey's own (a ref, a stage, a tag) or an operator's (assignee, autonomy).
-// `name` is an assigneeNamer(): a `contact:<id>` key is shown as the person's
-// name, never sent as a key (assignee-names.js).
 export function caseListProjection(c, name = (v) => v) {
   if (!c) return null
   const { id, ref, channel, status, priority, subject, summary, report, tags, assignee, autonomy, last_event_at, fill_rate, created_at, case_type } = c
@@ -110,18 +44,9 @@ export function caseListProjection(c, name = (v) => v) {
   }
 }
 
-// An event's own text and data are the other half of the same surface: the
-// timeline is where an operator actually READS a reporter's words, and
-// store.listEvents hands back the raw rows. Same marking, same reason.
-// Internal bookkeeping the agent writes as observations while it works (reply checks, retries,
-// turn markers). Staff can read it behind a toggle; a field or viewer login never needs it, so
-// the server does not send it to their browser at all.
 const SYSTEM_NOISE_RE = /^\s*(REPLY-JUDGE-FLAGGED|REPEAT-ASK|NOTICE-NOT-COMPOSED|TURN-START|TURN-HANDED-OFF|resume-attempted|RUNTIME)/i
 export const isSystemNoiseEvent = (e) => !!e && e.kind === 'observation' && typeof e.text === 'string' && SYSTEM_NOISE_RE.test(e.text)
 
-// One newest-first page of a case's timeline for this login. Staff get the plain store page; a
-// field or viewer login gets the same page with system bookkeeping removed BEFORE paging, so
-// offsets and the total stay consistent with what that person can actually see.
 export async function timelinePageFor(store, caseId, { limit, offset }, account, parseEventData) {
   if (!isFieldAccount(account)) {
     return { events: parseEventData(await store.listEventsPage(caseId, { limit, offset })), total: await store.countEvents(caseId) }
@@ -135,18 +60,6 @@ export function eventProjection(e) {
   return { ...e, text: markInvisibles(e.text), data: markInvisibles(e.data) }
 }
 
-// Single-case projection: GET /api/cases/:id, PATCH /api/cases/:id and
-// POST /api/cases/:id/transition, which MUST agree. They did not: the two
-// writes returned the raw row while the read projected it away, so the case
-// header's "copy contact" button worked for exactly one render after an edit
-// and was empty on every reload -- a broken affordance AND a leak at the same
-// time. The list stays PII-free deliberately: case-list-view.js's client
-// filter and filters-bar.js's search placeholder both record that /api/cases
-// carries no contact number and that the search must not promise one, and a
-// 50-row poll is no place to move 50 phone numbers.
-// The editor needs the stored assignee value to seed its picker, so the detail
-// keeps it as `assignee` for a dashboard operator; a field login (keepKey:false)
-// gets the name only. `assignee_name` is what every screen displays.
 export function caseDetailProjection(c, name = (v) => v, { keepKey = true } = {}) {
   if (!c) return null
   const out = { ...caseListProjection(c, name), external_id_formatted: fmtPhone27(c.external_id), assignee_name: name(c.assignee || '') }
@@ -157,13 +70,10 @@ export function caseDetailProjection(c, name = (v) => v, { keepKey = true } = {}
 export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate, REPORT_KEY_LIST, UNCLAIMED_ASSIGNEE }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    // A field-team login sees only the cases it may act on or sign off (roles.js).
     const field = isFieldAccount(req.caseyAccount)
     const fieldView = field ? String(req.query.view || '') : ''
     const where = {}
     if (req.query.status) {
-      // Validate against the workflow's real statuses so an arbitrary
-      // ?status=anything 400s here instead of silently reaching thatcher.
       const valid = store.getValidStatuses()
       if (!valid.includes(req.query.status)) {
         return res.status(400).json({ error: `invalid status: ${req.query.status}`, allowed: valid })
@@ -174,7 +84,6 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       if (typeof req.query.channel !== 'string') return res.status(400).json({ error: 'invalid channel' })
       where.channel = req.query.channel
     }
-    // ?ref= is a direct-lookup shortcut (used by shareable ref deep-links)
     if (req.query.ref) {
       const ref = String(req.query.ref).slice(0, 50)
       const found = await store.getCaseByRef(ref)
@@ -202,10 +111,6 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       total = filtered.length
       cases = filtered.slice(offset, offset + limit)
     } else if (q) {
-      // Search across case fields + all report field values. Fetch the full set
-      // (capped at 10000) then filter in Node so report JSON is reachable.
-      // Search uses external_id for operator convenience (matching on contact id),
-      // but external_id is NOT returned in the response (PII gate in caseListProjection).
       const all = await store.listCases(where, { limit: 10000, offset: 0 })
       const filtered = all.filter(c => {
         const hay = [c.ref, c.subject, c.summary, c.external_id, c.channel].join(' ').toLowerCase()
@@ -217,23 +122,14 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       cases = filtered.slice(offset, offset + limit)
     } else {
       cases = await store.listCases(where, { limit, offset })
-      // listCases leaves the system singleton cases (settings, invite log) out; the count must too, or
-      // the list says "Showing N of N+2" forever and offers a rest that does not exist.
       total = await store.countCases(where.channel === undefined ? { ...where, channel: { $ne: 'system' } } : where)
     }
     const casesWithFill = cases.map(c => ({ ...c, fill_rate: computeFillRate(c.report) }))
-    // A field login reads people by name (never a login); staff screens keep the login they compare.
     const named = await assigneeNamer(store, casesWithFill, undefined, { logins: field })
     res.json({ cases: casesWithFill.map(c => caseListProjection(c, named)), total, limit, offset })
   }
 }
 
-// Create a case manually from the dashboard (non-AI intake flow).
-// channel is forced to 'web'; external_id is synthesised from the contact phone
-// (or a timestamp if none given) so it does not collide with channel messages.
-// The case a WRITE returns. A field login gets the name, never the `contact:<id>`
-// key and never the reporter's number: the number reaches a field login only through
-// GET /api/cases/:id, where each reveal is written to the timeline.
 async function writeProjection(store, c, req) {
   const field = isFieldAccount(req.caseyAccount)
   const out = caseDetailProjection(c, await assigneeNamer(store, [c], undefined, { logins: field }), { keepKey: !field })
@@ -246,39 +142,27 @@ export function postCase({ store, authed, str, actingOperator, computeFillRate }
     const subject = str(res, req.body, 'subject', { required: false }); if (subject === undefined) return
     const name = str(res, req.body, 'name', { required: false }); if (name === undefined) return
     const phone = str(res, req.body, 'phone', { required: false }); if (phone === undefined) return
-    // SA phone validation: 0XXXXXXXXX (10 digits) or +27XXXXXXXXX (11 digits after +)
     if (phone) {
       const digits = phone.replace(/[\s\-()]/g, '')
       const valid = /^0[0-9]{9}$/.test(digits) || /^\+27[0-9]{9}$/.test(digits)
       if (!valid) return res.status(400).json({ error: 'Phone must be a South African number: 0821234567 or +27821234567' })
     }
-    // external_id must be stable for dedup; normalise phone digits (keep leading +)
-    // then fall back to web-<ms> if normalisation yields empty (e.g. '+' only).
-    // The international digit form is the key a WhatsApp webhook later delivers for
-    // the same person, so a report opened here and their own chat are one contact,
-    // and the wa.me link can be built.
     const normPhone = phone ? normalizeMsisdn(phone) : ''
     const external_id = normPhone || `web-${Date.now()}`
     const contact = { display_name: name || 'operator', name: name || 'operator', phone: phone || '' }
     const { case: c, created } = await store.findOrCreateCase({ channel: 'web', external_id, contact, subject: subject || 'Field report' })
-    // If a case already exists for this phone, return 409 so the client can offer to open it
     if (!created) {
-      // A field login is told about an existing case only when it may see it; otherwise
-      // the answer must not reveal that this number has a case, or which.
       if (isFieldAccount(req.caseyAccount) && caseAccess(c, req.caseyAccount) === 'none') {
         return res.status(409).json({ error: 'A report already exists for this contact. Ask an operator to assign it to you.' })
       }
       return res.status(409).json({ error: 'A case already exists for this contact', existing_id: c.id, existing_ref: c.ref })
     }
-    // Tag it as operator-initiated manual intake
     const op = actingOperator(req)
     const tags = tagList(c)
     if (!tags.includes('intake_mode:manual')) {
       const newTags = [...tags, 'intake_mode:manual'].join(',')
       await store.updateCase(c.id, { tags: newTags }, op)
     }
-    // A field-team login that opens a case is working it: assign it to them so it
-    // is theirs to edit (operators can still reassign).
     if (isFieldAccount(req.caseyAccount)) await store.updateCase(c.id, { assignee: op.id }, op)
     await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: 'case created via dashboard manual intake', data: { by: op.id } })
     const createdCase = await store.getCase(c.id)
@@ -286,8 +170,6 @@ export function postCase({ store, authed, str, actingOperator, computeFillRate }
   }
 }
 
-// CSV export. Registered BEFORE /api/cases/:id in the table below so express
-// does not capture 'export.csv' as an id.
 export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -317,9 +199,6 @@ export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
   }
 }
 
-// One timeline observation per (case, person) per ten minutes whenever a non-
-// operator is shown a reporter's number. In-memory throttle only: it stops a
-// re-render loop writing a row per poll, and a restart at worst writes one more.
 const REVEAL_SEEN = new Map()
 const REVEAL_WINDOW_MS = 10 * 60e3
 async function noteNumberReveal(store, c, op) {
@@ -335,16 +214,10 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
-    // newest window first by default; UI loads older via /events?offset=
     const limit = clampLimit(req.query.events_limit, 50)
     const { events, total: events_total } = await timelinePageFor(store, c.id, { limit, offset: 0 }, req.caseyAccount, parseEventData)
     const transitions = store.availableTransitions(c, actingOperator(req))
     const report_fill_rate = computeFillRate(c.report)
-    // A suggested (never forced) assignee for an unclaimed case: the learned
-    // operator whose working-area history most overlaps this case's report
-    // location. Purely advisory -- the operator still clicks Claim; casey never
-    // auto-assigns. null when the case is already claimed or no operator's
-    // learned areas overlap.
     let suggested_assignee = null
     const unclaimed = !c.assignee || c.assignee === UNCLAIMED_ASSIGNEE
     if (unclaimed) {
@@ -364,52 +237,26 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
         }
       }
     }
-    // Agent-suggested vs operator-confirmed marker for case_type (the field
-    // casey may only fill from a directly-stated fact, never its own inference
-    // -- see case-tools.js's report-not-assert paradigm). suspected_disease
-    // needs no separate marker here: it is a normal report field, and
-    // report-sections.js's existing fieldSources()/ReportField AI-Manual-Both
-    // chip already derives the identical agent-vs-operator provenance from
-    // this same audit trail for every report field generically -- duplicating
-    // that logic server-side for one field would be two sources of truth for
-    // the same fact. case_type has no such marker today because it is a case
-    // column, not a report field, so ReportField never touches it. Both agent
-    // and operator writes are audited as a from/to action with
-    // field:'case_type' (case-tools.js case_update / this file's own PATCH
-    // handler below); the LAST such action's actor decides the source, since a
-    // later operator correction supersedes an earlier agent guess.
     const caseTypeAction = events.find(e => e.kind === 'action' && e.data?.field === 'case_type')
     const case_type_source = c.case_type && c.case_type !== 'unset'
       ? (caseTypeAction ? caseTypeAction.actor : 'agent')
       : null
-    // A field login working THIS case is shown the reporter's number so it can
-    // reach them on WhatsApp; that reveal is written to the timeline, and a case
-    // that is only being looked at never shows it.
     let fieldExtras = isFieldAccount(req.caseyAccount) ? { access: req.caseyAccess } : {}
     if (isFieldAccount(req.caseyAccount) && req.caseyAccess === 'write') {
       const op = actingOperator(req)
       const missing = missingFor(c)
       const digits = (c.channel === 'whatsapp' || /^\+?\d{9,15}$/.test(String(c.external_id || ''))) ? String(c.external_id || '').replace(/\D/g, '') : ''
-      // On a shared phone the person who gave the report is greeted by the first name they gave (phone-persons.js).
       const personFirst = await reporterFirstName(store, c)
       const text = `Hello${personFirst ? ` ${personFirst}` : ''}, ${op.name} here, following up on your ${REPORT_ENTITY_LABEL} ${c.ref}. Please send a message to our WhatsApp assistant again`
         + (missing.length ? ` and tell it: ${missing.map(fieldLabel).join(', ')}.` : ' so we can finish it.') + ' Thank you.'
-      // First name only: enough to be sure it is the right person on the phone,
-      // never the full name or the number.
       const contact = c.contact_id ? await store.getContact(c.contact_id).catch(() => null) : null
       const given = String(contact?.display_name || '').trim()
-      // The person's own first name wins over the phone's WhatsApp profile name when the report has one.
       const first = personFirst || (given && given !== contact?.external_id && !/^[\d+\s()-]+$/.test(given) && !/^web-/.test(given) ? given.split(/\s+/)[0].slice(0, 30) : null)
       fieldExtras = { ...fieldExtras, reporter_message_link: waLink(digits, text), missing_facts: missing.map(k => ({ key: k, label: fieldLabel(k) })), reporter_first_name: first }
       await noteNumberReveal(store, c, op)
     }
     const named = await assigneeNamer(store, [c], undefined, { logins: isFieldAccount(req.caseyAccount) })
-    // Where the report says the animals are, which mapped area that resolves to, and
-    // whether the location text points somewhere other than its holder's area. Staff
-    // only: it is what the wrong-area correction (POST /api/cases/:id/relocate) reads.
     const area = isFieldAccount(req.caseyAccount) ? null : await areaInfoFor(store, c).catch(() => null)
-    // Who gave this report on a shared phone, by name (never a key or a number): staff, and a field login working
-    // the report. Absent while nobody is recorded for the phone, so a single-person phone shows nothing new.
     const reporterInfo = (!isFieldAccount(req.caseyAccount) || req.caseyAccess === 'write') ? await reporterSummary(store, c.contact_id, c.id).catch(() => null) : null
     const reporter = reporterInfo ? {
       people_on_phone: reporterInfo.people, shared_phone: reporterInfo.people > 1,
@@ -419,8 +266,6 @@ export function getCaseDetail({ store, authed, clampLimit, parseEventData, actin
   }
 }
 
-// Submit structured report fields for a case (non-AI intake or operator correction).
-// Merges into the existing report; blank incoming values never clobber filled ones.
 export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET, actingOperator, computeFillRate }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -432,10 +277,6 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
       const v = str(res, req.body, k, { required: false }); if (v === undefined) return
       incoming[k] = v
     }
-    // Reject unrecognised keys to avoid silent data loss. INTAKE_META_KEYS are
-    // the body keys that are deliberately not report fields -- see
-    // `canonicalized` below; without the exemption a client sending one would be
-    // told its own metadata is an unknown report field.
     const unknown = Object.keys(req.body).filter(k => !REPORT_KEY_SET.has(k) && !INTAKE_META_KEYS.has(k))
     if (unknown.length) return res.status(400).json({ error: `unknown report fields: ${unknown.join(', ')}` })
     if (!Object.keys(incoming).length) return res.status(400).json({ error: 'no report fields provided' })
@@ -443,11 +284,7 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
     const priorReport = parseReport(c)
     const result = await store.mergeReport(c.id, incoming, op)
     if (result.error) return res.status(400).json({ error: result.error })
-    // Fresh facts from the person a report was sent back to answer the send-back.
     if (isFieldAccount(req.caseyAccount) && tagList(c).includes('sent-back')) await store.updateCase(c.id, { tags: tagList(c).filter(t => t !== 'sent-back').join(',') }, op)
-    // Distinguish a correction (prior value non-blank) from a first-time fill
-    // per AGENTS.md's audit-trail invariant -- record the old-to-new diff for
-    // any field that already had a value, not just the new value.
     const corrections = {}
     const firstFills = {}
     for (const [k, v] of Object.entries(incoming)) {
@@ -457,19 +294,9 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
     }
     const data = { by: op.id, ...firstFills }
     if (Object.keys(corrections).length) data.corrections = corrections
-    // WHAT THE OPERATOR TYPED, when it is not what got stored. The known-value
-    // combo box (field-values.js) may store an existing spelling instead of the
-    // one an operator typed -- "cows" filed as "cattle" -- and the audit trail
-    // has to carry both halves or the record claims they typed a word they never
-    // typed. Same reason the corrections diff above exists: a field write that
-    // changed shape on the way in is not self-describing afterwards.
     const canon = canonicalizedNote(req.body.canonicalized, incoming)
     if (canon) data.canonicalized = canon
     await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: isFieldAccount(req.caseyAccount) ? `recorded report fields on the reporter's behalf (relayed by ${op.name || op.id}): ${Object.keys(incoming).join(', ')}` : `recorded report fields via dashboard: ${Object.keys(incoming).join(', ')}`, data: isFieldAccount(req.caseyAccount) ? { ...data, relayed_by: op.id } : data })
-    // A value an operator just recorded is part of this deployment's vocabulary
-    // from now on, so the next case they open must offer it. Dropping the memo
-    // here rather than waiting out its TTL is what makes "add a new one" feel
-    // like it took effect.
     for (const k of Object.keys(incoming)) if (isKnownValueField(k)) invalidateKnownValues(k)
     res.json({ report: result.report, report_fill_rate: computeFillRate(JSON.stringify(result.report)) })
   }
@@ -500,34 +327,12 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
       patch[k] = v
     }
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'no editable fields' })
-    // Optional one-line reason carried alongside the patch (notably for autonomy
-    // changes); not a stored field, so it is read off the body directly.
     const patchReason = str(res, req.body, 'reason', { required: false }); if (patchReason === undefined) return
     let prior = await store.getCase(req.params.id)
-    // OPTIONAL PER-FIELD PRECONDITION. `expected` carries, for each field in
-    // the patch, the value the caller's form was seeded with; a field whose
-    // stored value has moved since then is a genuine collision between two
-    // operators editing the SAME field, and it 409s rather than overwriting.
-    // This is the half the expectedVersion guard below CANNOT provide: that
-    // token is read from the row on this very request (`prior`, two lines up),
-    // so it is always fresh and only ever catches a write racing inside these
-    // few milliseconds. An operator's pane, by contrast, is fetched once when
-    // the case is opened and never polled, so the view a patch is based on can
-    // be minutes or hours old. Both guards are kept: this one compares against
-    // what the operator SAW, the version token protects the write itself.
-    // Absent (any caller that does not send it), behavior is exactly as before.
     if (req.body && req.body.expected != null) {
       if (typeof req.body.expected !== 'object' || Array.isArray(req.body.expected)) {
         return res.status(400).json({ error: 'expected must be an object of field -> prior value' })
       }
-      // Compared as strings because busybase hands every column back as text
-      // and a blank column arrives as null/undefined/'' interchangeably -- an
-      // untouched empty field must not read as a conflict.
-      // Two columns are read through a default by every client that renders
-      // them (an unset autonomy IS 'auto', an unset case_type IS 'unset'), so
-      // the comparison applies the same default to the stored side -- without
-      // this a case whose column was never written 409s against a form that
-      // faithfully showed the default it was told to show.
       const COLUMN_DEFAULT = { autonomy: 'auto', case_type: 'unset' }
       const norm = (v, k) => {
         const s = v == null ? '' : String(v)
@@ -545,13 +350,6 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
       if (prior?.autonomy === 'observe') return res.status(400).json({ error: 'case autonomy is observe; only autonomy and assignee can be changed' })
     }
     const op = actingOperator(req)
-    // ASSIGNEE is handled apart from the generic edit, because handing a case to
-    // someone else (or to nobody) is what ends a team member's takeover: the same
-    // releaseCase() the bot's team_assign/case_release use returns an 'observe'
-    // case to 'auto' and the previous holder's focus is cleared, so nothing they
-    // had confirmed can still receive a write. Assigning a WhatsApp team member
-    // writes their shared `contact:<id>` key and an event carrying
-    // assigned_contact_id -- exactly what staff-notices.js reads as "newly assigned".
     if ('assignee' in patch) {
       if (!prior) return res.status(404).json({ error: 'not found' })
       const want = String(patch.assignee || '').trim()
@@ -564,8 +362,6 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
         if (isContactAssignee(target)) {
           contact = await store.getContact(contactIdOfAssignee(target))
           if (!contact) return res.status(400).json({ error: 'that team member is not registered' })
-          // Only someone on the team can hold a report: a member of the public assigned
-          // one could never act on it, and the assistant would stay silent for good.
           if (!atLeast(contact.tier, TIER_FIELD_WORKER)) return res.status(400).json({ error: 'that person is not on the team (they hold no team role), so a report cannot be assigned to them' })
           if (isOwnConversation(prior, contact)) return res.status(400).json({ error: 'that is this team member\'s own chat with the assistant, not a report to assign to them' })
         } else if (target && !(await findAccountByUsername(store, target))) {
@@ -587,15 +383,6 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
         return res.json(await writeProjection(store, after, req))
       }
     }
-    // Forward the version this operator's edit was actually based on (prior,
-    // already read above for the audit-diff below) as an optimistic-concurrency
-    // guard -- without this, two operators editing DIFFERENT fields on the same
-    // case at the same time could still silently clobber each other (thatcher's
-    // last-write-wins with no version check at all). A genuine conflict 409s
-    // cleanly with a plain "someone else changed this case" message rather than
-    // either an uncaught throw or a silent lost update; the operator re-fetches
-    // and retries with the fresh state, same recovery shape as any other 409 in
-    // this file.
     let updated
     try {
       updated = await store.updateCase(req.params.id, patch, op, prior?._version != null ? { expectedVersion: prior._version } : {})
@@ -604,13 +391,7 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
       throw e
     }
     if (!updated) return res.status(404).json({ error: 'not found' })
-    // Best-effort operator-identity learning: an edit is a real working-area
-    // signal. Not awaited on the response path -- learning must never slow or
-    // fail an operator's actual edit.
     store.learnOperatorActivity(op.id, updated).catch(() => {})
-    // An autonomy change is a first-class audited event carrying {from,to,by,reason}
-    // so the timeline can render it as a distinct chip (like a transition), not a
-    // generic edit that drops the prior value. Other field edits keep the action row.
     const autonomyChanged = 'autonomy' in patch && prior && prior.autonomy !== patch.autonomy
     if (autonomyChanged) {
       await store.appendEvent(req.params.id, {
@@ -619,9 +400,6 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
         data: { from: prior.autonomy, to: patch.autonomy, by: op.id, reason: patchReason || '' },
       })
     }
-    // A case_type reclassification is audited as its own from/to action so every
-    // per-type analytic can trace when (and by whom) a case changed category,
-    // rather than a generic edit row that drops the prior value.
     const caseTypeChanged = 'case_type' in patch && prior && (prior.case_type || 'unset') !== patch.case_type
     if (caseTypeChanged) {
       await store.appendEvent(req.params.id, {
@@ -647,18 +425,10 @@ export function postTransition({ store, authed, str, actingOperator }) {
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
     const op = actingOperator(req)
-    // availableTransitions excludes the current stage; transition() itself
-    // no-ops a same-stage move, so let it through rather than 400 a no-op.
-    // Checked against the real acting operator's role, not a fixed stand-in,
-    // so the pre-check never diverges from what transition() will accept.
     const legal = store.availableTransitions(c, op)
     if (to !== c.status && !legal.includes(to)) {
       return res.status(400).json({ error: `cannot transition to '${to}'`, allowed: legal })
     }
-    // The diagnosis rides with the sign-off: the identified disease and the
-    // recommended resolution, when the caller sends them with a done-stage move. The
-    // technician's login is REQUIRED to have them (roles.js roleGate); a staff login may
-    // send them but is never asked to.
     if (MANDATORY_MINIMUM_BLOCKED_STATUSES.includes(to) && SIGNOFF_DIAGNOSIS_FIELDS.length) {
       const given = {}
       for (const k of SIGNOFF_DIAGNOSIS_FIELDS) if (typeof req.body?.[k] === 'string' && req.body[k].trim()) given[k] = req.body[k].trim()
@@ -675,16 +445,6 @@ export function postTransition({ store, authed, str, actingOperator }) {
   }
 }
 
-// Bulk operator actions over many cases in one request: claim, transition, tag,
-// untag, or note a whole selection. Each case is processed INDEPENDENTLY through
-// the same single-case store ops the per-case endpoints use -- so one case's
-// failure (an illegal transition, a vanished id) is reported in its own result and
-// never aborts the batch. Returns a per-id outcome list plus ok/failed counts so
-// the SPA can show "claimed 7, 1 could not transition". Body:
-//   { ids: string[], action: 'claim'|'transition'|'tag'|'untag'|'note',
-//     to?, tag?, text? }
-// No new store privilege: it is a loop over audited single-case mutations, each
-// attributed to the acting operator exactly as the individual endpoints are.
 export function postBulk({ store, authed, actingOperator, sendReply }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -692,42 +452,20 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
     if (!ids || !ids.length) return res.status(400).json({ error: 'ids must be a non-empty array' })
     if (ids.length > 500) return res.status(413).json({ error: 'too many ids (max 500 per bulk request)' })
     const action = String(req.body?.action || '')
-    // 'remind' is the only action here that reaches a PERSON rather than a row,
-    // which is why it carries no bulk `text` argument: the per-case route accepts
-    // an operator's own words because they are looking at that one report, and a
-    // single hand-typed sentence blasted verbatim at up to 500 different silent
-    // contacts is a form letter by construction. Each case composes its own,
-    // naming its own reference and its own real silence, and each one passes the
-    // same opted-out / session-window / already-reminded guards independently --
-    // so a selection of 40 stale reports may legitimately send 31 messages and
-    // refuse 9, each refusal reported against its own id.
     const ACTIONS = new Set(['claim', 'transition', 'tag', 'untag', 'note', 'draft_approve', 'draft_discard', 'remind'])
     if (!ACTIONS.has(action)) return res.status(400).json({ error: `unknown action '${action}'`, allowed: [...ACTIONS] })
     const op = actingOperator(req)
-    // Validate action-specific args ONCE up front so a malformed request fails fast
-    // rather than half-applying across the selection.
     const to = action === 'transition' ? String(req.body?.to || '') : null
     if (action === 'transition' && !to) return res.status(400).json({ error: 'transition requires a "to" stage' })
-    // Same cap the single-case note route enforces (server.js MAX_LEN, not
-    // exported -- kept in sync by value since it's a product-level cap, not a
-    // storage limit).
     const NOTE_MAX_LEN = 4000
     const tag = (action === 'tag' || action === 'untag') ? String(req.body?.tag || '').trim() : null
     if ((action === 'tag' || action === 'untag') && !tag) return res.status(400).json({ error: `${action} requires a "tag"` })
     if ((action === 'tag' || action === 'untag') && /[,]/.test(tag)) return res.status(400).json({ error: 'tag must not contain a comma' })
-    // Unlike the bulk note action three lines below (which already caps at
-    // NOTE_MAX_LEN for the identical reason), the tag/untag value had no
-    // length bound at all -- an operator (or hijacked session) could push a
-    // body-limit-sized string into the tags CSV column of up to 500 cases in
-    // one request.
     if ((action === 'tag' || action === 'untag') && tag.length > NOTE_MAX_LEN) {
       return res.status(413).json({ error: `tag too long (max ${NOTE_MAX_LEN})` })
     }
     const noteText = action === 'note' ? String(req.body?.text || '').trim() : null
     if (action === 'note' && !noteText) return res.status(400).json({ error: 'note requires non-empty "text"' })
-    // Without this, a bulk note wrote arbitrary-length text verbatim into up
-    // to 500 case timelines with no bound at all, unlike every other
-    // text-writing route in this file.
     if (action === 'note' && noteText.length > NOTE_MAX_LEN) {
       return res.status(413).json({ error: `text too long (max ${NOTE_MAX_LEN})` })
     }
@@ -754,10 +492,6 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
         } else if (action === 'note') {
           await store.appendEvent(id, { kind: 'note', actor: 'operator', text: noteText, data: { by: op.id, bulk: true } })
         } else if (action === 'draft_approve') {
-          // Bulk release sends each draft's ORIGINAL text verbatim -- per-case
-          // editing before send is a single-case-only affordance (the operator
-          // opened that one case to read and adjust it); a bulk release is for
-          // drafts an operator has already judged fine to go out as composed.
           const draft = await pendingDraft(store, c)
           if (!draft) { results.push({ id, ok: false, error: 'no pending draft' }); continue }
           const text = draft.text || ''
@@ -800,15 +534,6 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
   }
 }
 
-// Snooze a case: an operator who has SEEN a case but cannot finish it now drops
-// it out of the attention inbox until a time, without losing it. The scorer in
-// attn.js already honours a 'snoozed-until:<epoch-ms>' tag (and never hides a
-// needs-human case, and un-snoozes on a newer inbound) -- this endpoint is the
-// write side: it sets/replaces that tag and records an audited action so the
-// snooze is observable, never a silent disappearance. Body: { minutes } (from now)
-// or { until } (epoch ms); minutes<=0 or until<=now CLEARS any snooze. The acting
-// operator is attributed. Snoozing is a soft inbox preference, not a workflow
-// transition -- the case status is untouched.
 export function postSnooze({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -824,13 +549,10 @@ export function postSnooze({ store, authed, actingOperator }) {
     } else if (req.body && req.body.minutes != null) {
       const m = Number(req.body.minutes)
       if (!Number.isFinite(m)) return res.status(400).json({ error: '"minutes" must be a number' })
-      // Bound so a fat-fingered value cannot snooze a case effectively forever.
       until = now + Math.min(Math.max(m, 0), 60 * 24 * 14) * 60000
     } else {
       return res.status(400).json({ error: 'snooze requires "minutes" or "until"' })
     }
-    // Strip any existing snooze tag, then add the new one only if it is in the
-    // future -- a past/zero target is a CLEAR.
     const tags = tagList(c).filter(t => !t.startsWith('snoozed-until:'))
     const cleared = !(until > now)
     if (!cleared) tags.push(`snoozed-until:${Math.floor(until)}`)
@@ -844,60 +566,35 @@ export function postSnooze({ store, authed, actingOperator }) {
   }
 }
 
-// Undo the last reversible operator action on a case, within a recency window, by
-// appending a COMPENSATING event -- history is append-only and never mutated. The
-// 15s window is a client UX affordance; the server bounds undo at 120s so a late
-// request cannot silently rewrite an old decision. Iteration 1 covers the clean,
-// self-describing reversible actions whose reverse is fully recorded in the
-// original event's data:
-//   transition  -> reverse transition (to = data.from), reason 'undo'
-//   snooze      -> clear the snooze tag (compensating action event)
-//   claim       -> restore the prior assignee (data.was)
-// A sent reply is NOT reversible (the contact already saw it) -- undo of a reply
-// is the client-side 'disregard my last message' helper, out of scope here. The
-// acting operator is attributed; the compensating event carries undo_of so the
-// pair is observable on the timeline.
 export function postUndo({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
     const op = actingOperator(req)
-    // Shared event.data parser (the same one /audit.csv and overview use) --
-    // one chokepoint for the "data is a JSON string at the read edge" rule,
-    // never a re-inlined copy that can drift.
     const { evData } = await import('../../overview.js')
     const { toDate } = await import('../../format.js')
     const WINDOW_MS = 120000
     const now = Date.now()
     const events = await store.listEvents(c.id)
-    // Find the most recent UNDOABLE operator action that has not already been
-    // undone, newest-first and within the window.
     const undoneIds = new Set()
     for (const e of events) { const d = evData(e); if (d.undo_of) undoneIds.add(String(d.undo_of)) }
     const isRecent = (e) => {
-      // event.created_at is unix-SECONDS, often a numeric string -- bare
-      // Date.parse yields NaN, which made every real event pass the window
-      // (unparseable -> allow), so the 120s undo window was never enforced.
-      // toDate is digit-string-aware (seconds -> ms) and returns null on junk.
       const d = e.created_at ? toDate(e.created_at) : null
-      return d ? (now - d.getTime()) <= WINDOW_MS : true   // truly-unparseable -> allow (tests)
+      return d ? (now - d.getTime()) <= WINDOW_MS : true
     }
     let target = null, kind = null
     for (let i = events.length - 1; i >= 0; i--) {
       const e = events[i]
       if (undoneIds.has(String(e.id))) continue
-      if (!isRecent(e)) break   // older than the window: nothing undoable remains
+      if (!isRecent(e)) break
       if (e.kind === 'transition' && e.actor === 'operator') {
-        // A compensating reverse transition is itself reason 'undo' -- it is not a
-        // fresh operator decision, so undoing it (which would re-apply the original
-        // move) is wrong. Skip it and keep scanning for a real action to reverse.
         if (evData(e).reason === 'undo') continue
         target = e; kind = 'transition'; break
       }
       if (e.kind === 'action' && e.actor === 'operator') {
         const txt = String(e.text || '')
-        if (/^Undo by/.test(txt)) continue   // the compensating action itself is not undoable
+        if (/^Undo by/.test(txt)) continue
         if (/^Claimed by/.test(txt)) { target = e; kind = 'claim'; break }
         if (/^Snoozed by/.test(txt)) { target = e; kind = 'snooze'; break }
       }
@@ -908,11 +605,6 @@ export function postUndo({ store, authed, actingOperator }) {
     if (kind === 'transition') {
       const to = d.from
       if (!to) return res.status(409).json({ error: 'transition has no recorded prior stage' })
-      // Not every forward move has a symmetric backward edge in
-      // thatcher.config.yml (e.g. waiting->resolved exists but resolved's own
-      // backward list is only [in_progress]) -- pre-validate the reverse move
-      // the same way the plain transition route above does, rather than
-      // letting an illegal reverse throw an uncaught 500 out of store.transition.
       const legal = store.availableTransitions(c, op)
       if (to !== c.status && !legal.includes(to)) {
         return res.status(409).json({ error: `cannot undo: '${to}' is not a legal transition from '${c.status}'`, allowed: legal })
@@ -946,20 +638,12 @@ export function postNote({ store, authed, str, REPORT_KEY_SET, actingOperator })
     if (!c) return res.status(404).json({ error: 'not found' })
     const field = req.body.field && REPORT_KEY_SET.has(req.body.field) ? req.body.field : null
     const op = actingOperator(req)
-    // A field login noting what the reporter told them on the phone is passing it
-    // on, not quoting the reporter: say so on the timeline.
     const relayed = isFieldAccount(req.caseyAccount) && req.body.relayed === true
     await store.appendEvent(req.params.id, { kind: 'note', actor: 'operator', text: relayed ? `Relayed by ${op.name || op.id} (told to them by the reporter, not written by the reporter): ${text}` : text, data: { ...(field ? { field } : {}), by: op.id, ...(relayed ? { relayed: true } : {}) } })
     res.json({ ok: true })
   }
 }
 
-// Structured "this reply was bad/off-target" feedback -- pillar 8's live
-// feedback loop for prompt tuning. Same pattern as /note above (an audited
-// event, not a new subsystem): tags the flagged event id and an optional
-// reason so /api/flagged-replies (below) can roll up every flag for an
-// operator/prompt-writer to review, without needing to re-read the whole
-// timeline of every case.
 export function postFlagReply({ store, authed, str, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -977,11 +661,6 @@ export function postFlagReply({ store, authed, str, actingOperator }) {
       text: `FLAGGED REPLY${reason ? `: ${reason}` : ' (no reason given)'}`,
       data: { flagged_reply: true, flagged_event_id: eventId, flagged_text: (target.text || '').slice(0, 500), reason, by: op.id },
     })
-    // Also tag the CASE (not just the event) so /api/flagged-replies (reports.js)
-    // can find it via the same listCases-plus-tag-filter pattern /api/unreplied
-    // already uses -- there is no cross-case event-search route in this codebase,
-    // and adding a case-level tag is far cheaper than scanning every case's full
-    // event history to find flagged ones.
     if (!tagList(c).includes('flagged-reply')) {
       await store.updateCase(req.params.id, { tags: mergeTag(c.tags, 'flagged-reply') })
     }
@@ -989,9 +668,6 @@ export function postFlagReply({ store, authed, str, actingOperator }) {
   }
 }
 
-// Cases that look like the SAME real-world outbreak as this one -- the
-// operator's view of casey's grouping intelligence, with the reasons shown so
-// the suggestion is explainable, never an opaque score.
 export function getSuggestions({ store, authed, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1007,21 +683,6 @@ export function getSuggestions({ store, authed, isOpenCase }) {
   }
 }
 
-// site-durable-entity-visit-history PRD row: a field worker does not OWN a
-// case (a different person may follow up from whoever reported it) -- what
-// an operator actually needs is "who has been to this SITE and when", across
-// every conversation (case) that turns out to be the same real place, not
-// just this one contact's own thread. Rather than a new site/place entity
-// (a schema migration + a second grouping mechanism competing with the
-// existing one), this reuses correlate.js's own location/species/symptom
-// scoring UNCHANGED -- the same signal that already powers "possibly the
-// same case" merge suggestions above -- but over the FULL case pool
-// (open AND closed/resolved: a visit history must include past visits, not
-// only currently-open threads) and returns each match's reporting contact
-// identity + timestamp rather than a merge action. PII discipline: no
-// external_id/contact_id -- "who" is the case ref + reported-by-channel only
-// (the same PII-free shape enquiryRow already uses elsewhere), an operator
-// can open the linked case itself for the real contact detail if needed.
 export function getSiteHistory({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1047,8 +708,6 @@ export function getSiteHistory({ store, authed }) {
   }
 }
 
-// Fold another case (source = req.body.into) INTO this one (target = :id). The
-// target stays canonical; lossless and idempotent in the store.
 export function postMerge({ store, authed, str, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1061,15 +720,11 @@ export function postMerge({ store, authed, str, actingOperator }) {
   }
 }
 
-// Split selected events out of this case into a NEW linked case.
-// Body: { event_ids: string[], subject?: string, reason?: string }
 export function postSplit({ store, authed, str, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { event_ids } = req.body
     if (!Array.isArray(event_ids) || !event_ids.length) return res.status(400).json({ error: 'event_ids must be a non-empty array' })
-    // Same MAX_LEN guardrail every sibling route enforces (str() below); split's
-    // subject/reason used to bypass it entirely via a raw req.body destructure.
     const subject = str(res, req.body, 'subject', { required: false }); if (subject === undefined) return
     const reason = str(res, req.body, 'reason', { required: false }); if (reason === undefined) return
     const result = await store.splitCase(req.params.id, event_ids, { subject: subject || '', reason: reason || 'operator split' }, actingOperator(req))
@@ -1078,9 +733,6 @@ export function postSplit({ store, authed, str, actingOperator }) {
   }
 }
 
-// Operator takes over the conversation: send a message to the contact on
-// their channel and record it as an outbound event -- or, when it did not
-// send, as an undelivered note (see appendReplyEvent in hooks/staff-outbound.js).
 export function postReply({ store, authed, str, actingOperator, sendReply, UNCLAIMED_ASSIGNEE }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1089,11 +741,7 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
     if (!text) return res.status(400).json({ error: 'empty reply' })
     const c = await store.getCase(req.params.id)
     if (!c) return res.status(404).json({ error: 'not found' })
-    // Enforced here, not only by the reply box hiding itself: a person who said STOP is not messaged.
     if (tagList(c).includes('opted-out')) return res.status(409).json({ error: 'This person asked us to stop messaging them, so nothing was sent.' })
-    // Try to deliver before claiming success: if the channel send throws, we
-    // record the failure and do NOT clear needs-human, so a contact who never
-    // got the reply stays pinned in triage rather than silently dropped (P10).
     const op = actingOperator(req)
     let delivered = false
     if (sendReply) {
@@ -1102,12 +750,6 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
         await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send operator reply on channel: ${e.message || 'unknown error'}` })
       }
     }
-    // Claim-on-reply: the operator who personally answered owns the case. Only
-    // auto-claim an unowned case (unset or the default 'agent'); never silently
-    // take a case another human already holds -- that stays a soft nudge, not a
-    // hard steal. The claim is recorded BEFORE the outbound event so the reply
-    // stays the latest event on the timeline, and is its own audited action so
-    // the handover is observable.
     let claimed = false
     if (delivered) {
       const current = String(c.assignee || '').trim()
@@ -1117,23 +759,12 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
         claimed = true
       }
     }
-    // A field team member who answered from the dashboard has taken the conversation
-    // over, exactly as one who answered over WhatsApp: the assistant stops replying
-    // over them (inbound is still recorded; handing the report back resumes it).
     if (delivered && req.caseyRole && (c.autonomy || 'auto') === 'auto') {
       await store.updateCase(c.id, { autonomy: 'observe' }, op)
       await store.appendEvent(c.id, { kind: 'autonomy_change', actor: 'operator', text: 'autonomy auto -> observe', data: { from: 'auto', to: 'observe', by: op.name || op.id, reason: 'a team member took over the conversation' } })
     }
     await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel' })
-    // A personal reply is the strongest working-area signal casey has.
     store.learnOperatorActivity(op.id, c).catch(() => {})
-    // The operator personally answered, so the "wants a human" flag is satisfied
-    // -- but only once the message actually reached the contact. Clear it then,
-    // or the triage inbox keeps this case pinned at the top forever.
-    // Clearing needs-human (a person was asked for) and ai-offline (the agent turn
-    // had failed and a human needed to verify the reply): a delivered operator
-    // answer satisfies both, so drop them together rather than leaving the case
-    // pinned in the triage inbox or the offline queue forever.
     if (delivered) {
       const tags = tagList(c)
       const keep = tags.filter(t => t !== 'needs-human' && t !== 'ai-offline')
@@ -1145,27 +776,6 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
   }
 }
 
-// OPERATOR-INITIATED REMINDER: nudge one silent contact to report back.
-//
-// The third role in casey's role model has an actual action now. casey already
-// NOTICED silence -- case-health.js's stale/unanswered_handoff breaches,
-// case-sweep.js's tags, attn.js's ranking, the coverage-gap pager -- and every
-// one of those tells the TEAM and then waits for a human. Nothing reached back
-// out to the person who went quiet. This does, once, deliberately, on an operator
-// pressing a button on a report they have looked at.
-//
-// Reuses `sendReply` -- the same seam postReply and postDraftApprove send
-// through, resolving the real channel adapter via hooks/delivery.js. Recorded
-// through appendReplyEvent for the same reason those two are: an outbound row on
-// the timeline means the contact RECEIVED it, so an undelivered reminder becomes
-// a note that says so rather than a delivered-looking outbound.
-//
-// `data.operator_reminder` is what makes the audit trail honest. `actor:
-// 'operator'` alone does not distinguish this from an operator's own typed reply
-// -- both are operator outbounds -- and it must never read as `actor: 'agent'`,
-// because nothing the agent decided produced this sentence. Body: `{ text? }`,
-// where an operator's own words replace the composed ones but skip none of the
-// guards (see hooks/operator-reminder.js's prepareReminder).
 export function postRemind({ store, authed, str, actingOperator, sendReply }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1193,20 +803,11 @@ export function postRemind({ store, authed, str, actingOperator, sendReply }) {
         breaches: plan.breaches,
       },
     })
-    // Unlike postReply this does NOT claim the case and does NOT clear
-    // needs-human: a reminder asks the contact for something, it does not answer
-    // them. Clearing needs-human here would drop a case that explicitly asked for
-    // a person out of the triage inbox because somebody nudged the person instead
-    // of talking to them.
     store.learnOperatorActivity(op.id, c).catch(() => {})
     res.json({ ok: delivered, sent: !!sendReply, delivered, text: plan.text, recorded: delivered ? 'outbound' : 'note' })
   }
 }
 
-// Approve a held assisted draft: send the (possibly operator-edited) text to the
-// contact, record it as an operator outbound, and clear draft-pending +
-// needs-human only once it actually delivered -- mirroring the reply path so a
-// failed send leaves the case pinned rather than silently dropped.
 export function postDraftApprove({ store, authed, str, actingOperator, sendReply }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1214,9 +815,6 @@ export function postDraftApprove({ store, authed, str, actingOperator, sendReply
     if (!c) return res.status(404).json({ error: 'not found' })
     const draft = await pendingDraft(store, c)
     if (!draft) return res.status(409).json({ error: 'no pending draft' })
-    // Operator may edit before approving; fall back to the drafted text. Same
-    // MAX_LEN guardrail every sibling route enforces (str() below) -- an
-    // operator-edited draft used to bypass it via a raw req.body read.
     let text = draft.text || ''
     if (req.body && typeof req.body.text === 'string' && req.body.text.trim()) {
       const edited = str(res, req.body, 'text', { required: false }); if (edited === undefined) return
@@ -1229,9 +827,6 @@ export function postDraftApprove({ store, authed, str, actingOperator, sendReply
       catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
     }
     const op = actingOperator(req)
-    // Same rule as postReply: an approved draft that did not actually send is
-    // an undelivered note, not a delivered outbound. draft-pending/needs-human
-    // already only clear on a real delivery, so the case stays pinned too.
     await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel', extra: { from_draft: true } })
     if (delivered) {
       await store.updateCase(c.id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
@@ -1240,9 +835,6 @@ export function postDraftApprove({ store, authed, str, actingOperator, sendReply
   }
 }
 
-// Discard a held assisted draft without sending: clear draft-pending and record
-// the decision. needs-human stays -- a discarded draft still wants a human to
-// decide what (if anything) to say next.
 export function postDraftDiscard({ store, authed, str, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1250,7 +842,6 @@ export function postDraftDiscard({ store, authed, str, actingOperator }) {
     if (!c) return res.status(404).json({ error: 'not found' })
     const draft = await pendingDraft(store, c)
     if (!draft) return res.status(409).json({ error: 'no pending draft' })
-    // Same MAX_LEN guardrail every sibling route enforces (str() below).
     const rawReason = str(res, req.body, 'reason', { required: false }); if (rawReason === undefined) return
     const reason = rawReason.trim() || 'operator discarded'
     const op = actingOperator(req)
@@ -1260,24 +851,6 @@ export function postDraftDiscard({ store, authed, str, actingOperator }) {
   }
 }
 
-// How many ruled writing lines an empty field gets on the printed briefing.
-//
-// The count is DERIVED from the deployment's own field declarations, never a
-// per-key table in here: report-fields.yml already says which answers are
-// paragraphs. `multiline` is the direct statement of it (uhh declares it on
-// six fields -- symptoms, how_to_find, treatment_history, access_notes and
-// friends), and `append` fields carry the same shape for a different reason,
-// since they accumulate several entries rather than holding one value. Every
-// other field is a species, a count or a date: one line is the honest amount
-// of space, and more would just push the next question off the page.
-//
-// WHAT THIS CANNOT DERIVE, stated rather than guessed: casey's own bundled
-// default config declares `multiline` on nothing at all, so under that config
-// every field falls to a single line. That is the correct behaviour for a
-// config that has not said otherwise -- it is not a silent wrong guess, it is
-// the deployment declining to say -- but a deployer whose form has free-text
-// answers should add `multiline: true` to those fields rather than expect this
-// to infer it from the label.
 const FIELD_DEF_BY_KEY = new Map((REPORT_FIELD_DEFS || []).filter(f => f && f.key).map(f => [f.key, f]))
 const MULTILINE_FILL_LINES = 3
 function fillLinesHtml(key) {
@@ -1286,10 +859,6 @@ function fillLinesHtml(key) {
   return `<span class="ds-fill-lines" aria-hidden="true">${'<span class="ds-fill-line"></span>'.repeat(n)}</span>`
 }
 
-// Printable case briefing for field teams. Plain HTML, no JS, print-friendly.
-// Mounted { raw: true }: it owns its own try/catch and answers an HTML error
-// page, so deps.wrap's JSON 500 envelope would change what a failure looks
-// like, and its 401/404 are HTML too.
 export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableReport }) {
   return async (req, res) => {
     try {
@@ -1297,26 +866,9 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
       const c = await store.getCase(req.params.id)
       if (!c) return res.status(404).send('<p>Case not found.</p>')
       let r = parseReport(c)
-      // Row labels come from report-shape.js's fieldLabel, the same
-      // config-driven resolver every other consumer uses. A 16-entry
-      // animal-health LABELS map used to sit here while the loop below already
-      // iterated the config-driven REPORT_KEY_LIST, so under any other
-      // deployment's report-fields.yml every row fell through to the raw
-      // snake_case key -- a briefing headed "device_or_asset".
-      // A saved media path looks like "...(saved: media/<caseId>/<file>)" (see
-      // case-store.js saveMedia / gateway-hooks.js) -- surface it as a real link
-      // to /media/<path> so a field-team briefing can actually open the photo/
-      // voice note, not just read that one arrived.
       const mediaLinkRe = /\(saved: (media\/[^)]+)\)/g
-      // The briefing is a printed page for this login, so it drops the fields this login's screens
-      // hide (dashboard_ui.hidden_fields) -- a display choice; the stored report is untouched.
       const hidden = new Set(hiddenFieldsFor(req.caseyAccount && req.caseyAccount.role))
       const rows = REPORT_KEY_LIST.filter(k => !hidden.has(k)).map(k => {
-        // Unrecorded: the words on screen, the writing space on paper. The
-        // shared print stylesheet hides .ds-print-blank and reveals
-        // .ds-fill-lines, so neither is a decision this route has to make
-        // twice. Overwritten wholesale below when there is a real value, so a
-        // recorded field never carries stray lines.
         let val = `<span class="ds-print-blank"><em>not recorded</em></span>${fillLinesHtml(k)}`
         if (r[k] != null && String(r[k]).trim()) {
           const raw = String(r[k])
@@ -1331,27 +883,9 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
         }
         return `<tr><th>${esc(fieldLabel(k))}</th><td>${val}</td></tr>`
       }).join('')
-      // Maps link when location field is available
       const mapsUrl = r.location ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(r.location))}` : null
-      // tel: link for the external_id if it looks like a phone
       const phone = c.external_id || ''
       const telLink = /^[+0-9]{7,}$/.test(phone.replace(/[\s\-()]/g, '')) ? `tel:${phone.replace(/[\s\-()]/g, '')}` : null
-      // Composed by server.js's printableReport (already handed to this module
-      // through deps) rather than a fourth hand-rolled <head>/<style> block --
-      // the shared helper exists precisely because three print generators each
-      // carried a near-duplicate stylesheet, and this one had quietly become
-      // the fourth, on its own off-brand blue. Only what is genuinely specific
-      // to a briefing goes through extraCss: the on-screen action bar (hidden
-      // when printed) and the fixed label column. Its buttons take the
-      // deployment's own brand ground with the ink readableInkOn computes for
-      // it, so they stay legible on a light or a dark brand.
-      //
-      // The h1 override that used to sit here is GONE on purpose. It said
-      // 1.2em, which resolved to 16.8px, while the management report and the
-      // shift handover -- built by the same printableReport helper, carrying
-      // the same page-title role -- resolved 20.8px. One heading, two sizes,
-      // measured live in a browser. Dropping the override lets the shared
-      // title size (--fs-xl) apply, so all three printables now agree.
       const extraCss = `body{max-width:700px;margin:var(--space-5) auto}`
         + `table{width:100%}th{width:40%;font-weight:600;vertical-align:top}td{vertical-align:top}`
         + `.maplink{font-size:var(--fs-micro)}`
@@ -1359,10 +893,7 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
         + `.act a{background:${BRAND.ground};color:${BRAND.ink};padding:var(--space-2) var(--space-3);border-radius:6px;text-decoration:none;font-size:var(--fs-xs);font-weight:600}`
         + `.act a:hover{background:${BRAND.hover}}`
         + `@media print{.act{display:none}}`
-      // On a shared phone (src/phone-persons.js) the briefing says who gave the report, so whoever rings the number
-      // asks for that person by name. Nothing extra while nobody is recorded for the phone.
       const who = await reporterSummary(store, c.contact_id, c.id).catch(() => null)
-      // (The name itself is also the report's "Reported by" row below.)
       const whoLine = who && who.people > 1
         ? `<p><strong>Reported by:</strong> ${esc(who.reported_by ? who.reported_by.name : 'not recorded')}, shared phone: ${who.people} people</p>` : ''
       const body = `<h1>Field briefing: ${esc(c.ref||c.id)}</h1>
@@ -1379,9 +910,6 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
   }
 }
 
-// Order is load-bearing and matches the pre-split registration order exactly:
-// GET /api/cases/export.csv must precede GET /api/cases/:id, or express
-// captures 'export.csv' as an id.
 const ROUTES = [
   ['get', '/api/cases', getCases],
   ['post', '/api/cases', postCase],
@@ -1409,8 +937,6 @@ const ROUTES = [
   ['get', '/api/cases/:id/report.html', getReportHtml, { raw: true }],
 ]
 
-// Check-in location from the field: the ranger's phone reports where they are
-// standing and the case pin moves there (source 'gps', the exact-position rung).
 export function postLocation({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1425,9 +951,6 @@ export function postLocation({ store, authed, actingOperator }) {
   }
 }
 
-// Technician sends a case back to whoever is working it, saying what is missing.
-// It records a note on the timeline and tags the case `sent-back`; nothing is
-// sent to any channel -- the ranger sees it at the top of their own list.
 export function postSendBack({ store, authed, str, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })

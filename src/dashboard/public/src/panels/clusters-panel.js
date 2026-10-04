@@ -1,8 +1,3 @@
-// Reports that look like the same situation, grouped by /api/clusters.
-// Rendered two ways -- docked in the map rail beside the pins (railed), and as
-// a content-swap page whose title and back control come from app-view.js's
-// PanelSwap head, not from here.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Alert } from '/design/src/components/content/feedback.js';
@@ -16,12 +11,7 @@ import { countOf, entityLabelPlural } from '../vocabulary.js';
 const h = webjsx.createElement;
 
 const loader = createPanelLoader({
-    // Both strings named the same thing two ways -- "related reports" loading
-    // "related-case groups" -- in one call to one loader.
     what: () => 'the related ' + entityLabelPlural(),
-    // Lower case to match the other twelve panel spinner labels, which are all
-    // "loading <thing>". The old one said "related-case groups" while `what`
-    // above said "related reports" -- one loader naming one thing two ways.
     label: () => 'loading related ' + entityLabelPlural(),
     fetch: fetchClusters,
     apply: (j) => { state._clusters = j; },
@@ -47,12 +37,6 @@ function clusterRow(c, i) {
             }))));
 }
 
-// railed=true renders the groups alone, for the map view's rail. Same reason
-// as GeoPanel: a cluster is "these reports are near each other and look
-// alike", which is a spatial claim -- and the map already draws the links
-// between members (map-overlays.js's cluster polylines). Showing the list in
-// the rail lets the two agree on screen instead of living in two unrelated
-// presentations that can drift apart.
 export function ClustersPanel({ railed = false } = {}) {
     loader.ensureLoaded();
     const body = loader.slot(() => {
@@ -62,11 +46,5 @@ export function ClustersPanel({ railed = false } = {}) {
             : Alert({ kind: 'info', children: 'No related-looking groups right now.' });
     });
     if (railed) return body;
-    // Body only, like every other registered panel. This module used to add its
-    // own 'Back to cases' button and its own 'Related reports' title on top of
-    // the ones app-view.js's PanelSwap head already renders, so the page
-    // carried two back controls that disagreed about where back was -- the head
-    // correctly said "Back to the map" from the map home view while this one
-    // said "Back to cases" directly under it -- and two headings.
     return Panel({ children: [body] });
 }

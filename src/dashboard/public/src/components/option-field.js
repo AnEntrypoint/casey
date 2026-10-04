@@ -1,17 +1,3 @@
-// option-field.js -- a report field that has a fixed list of usual answers
-// (report-fields.yml `options`, served as /api/config field_options), edited as a
-// dropdown that always ends in "Other (write it)".
-//
-// The list is a convenience and never a gate: choosing Other reveals a text box, and
-// whatever is typed there is what is stored (a rare animal such as an ostrich must still
-// be possible). A value already on the report that is not on the list opens in Other with
-// its text in the box, so nothing is lost or silently re-mapped. The control is the kit's
-// native Select, so the keyboard and screen readers get the platform behaviour for free.
-//
-// State: which fields are in "Other" mode is held per control name in state._optOther,
-// because it is a fact about the person's choice that the value alone cannot carry (an
-// empty box in Other mode is different from nothing chosen yet).
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Select, TextField } from '/design/src/components/content.js';
 import { state, schedule } from '../state.js';
@@ -20,7 +6,6 @@ const h = webjsx.createElement;
 
 export const OTHER = '__other__';
 
-/** @returns {string[]} the usual answers for a field, [] when it has none. */
 export function fieldOptions(key) {
   const cfg = state.runConfig || state.config || {};
   const o = cfg.field_options && cfg.field_options[key];
@@ -30,7 +15,6 @@ export function fieldOptions(key) {
 const shown = (o) => o.charAt(0).toUpperCase() + o.slice(1);
 const listed = (options, value) => options.find((o) => o.toLowerCase() === String(value == null ? '' : value).trim().toLowerCase()) || null;
 
-/** Forget the person's "Other" choice for one control, or for all of them. */
 export function resetOptionField(name) {
   if (!state._optOther) return;
   if (name == null) state._optOther = {}; else delete state._optOther[name];

@@ -1,19 +1,3 @@
-// field-case.js -- one report as an eco ranger or an animal health technician
-// sees it. Built from the same case-detail pieces the operator console uses
-// (progress rail, timeline, reply box, stage buttons, edit form), but arranged
-// around what this person is here to do, and with two rules the operator view
-// does not need:
-//
-//  1. It is never unclear WHICH report this is. A header stays on screen with
-//     the reference, the species and place, the reporter's first name and who
-//     holds the report; the form that records what the person learned repeats
-//     that identity in its title, asks once per opened report for a click that
-//     names the reference, and every write carries `expected_ref` so the server
-//     refuses (409) a write that is not for the report in the URL.
-//  2. What they see and touch is what the server allows them: the reporter's
-//     number and the write forms appear only on a report assigned to them; a
-//     report they can merely see (their own, or one waiting for sign-off) is
-//     read-only.
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Icon } from '/design/src/components/shell.js';
 import { TextField, Section, Alert, Skeleton, Panel, Row, DetailRow } from '/design/src/components/content.js';
@@ -40,8 +24,6 @@ const has = (r, k) => r[k] != null && String(r[k]).trim() !== '';
 const cfg = () => state.config || {};
 const mandatory = () => (cfg().mandatory_minimum && cfg().mandatory_minimum.fields) || [];
 const doneStages = () => new Set(['resolved', 'closed', ...(((cfg().mandatory_minimum || {}).blocks_transition_to) || [])]);
-// Fields this login's screen hides (dashboard_ui.hidden_fields, resolved per role by the
-// server): a display setting, the stored report keeps them. Never a mandatory field.
 const hiddenKeys = () => new Set(cfg().hidden_fields || []);
 const fieldDefs = () => (cfg().report_sections || []).flatMap((s) => s.keys.map(([k, label, multi]) => ({ key: k, label, multi, section: s.title }))).filter((d) => !hiddenKeys().has(d.key));
 
@@ -55,31 +37,21 @@ async function load(id) {
 async function reload() {
   if (!fc.id) return;
   const keep = { draft: fc.draft, note: fc.note, confirmedFor: fc.confirmedFor };
-  // A 404 here means the report is no longer this person's to open (an operator gave it
-  // to someone else while this screen sat open). That is said on screen; any other failure
-  // keeps what is showing.
   try { fc.data = await fetchFieldCase(fc.id); fc.lost = false; } catch (e) { if (e && e.status === 404) fc.lost = true; }
   Object.assign(fc, keep); schedule();
 }
 
-// The message for a failed write. A refusal that means "this screen is out of date" also
-// re-reads the report so the screen catches up with what the server now says.
 async function failed(e, fallback) {
   if (e && (e.status === 404 || e.status === 403 || e.status === 409)) reload();
   return failMsg(e, fallback);
 }
 
-// "CASE-1042 (cattle in Musina)" -- the words used everywhere the screen names
-// the report it is about.
 function identity(c) {
   const r = parseReport(c.report);
   const bits = [has(r, 'species') ? String(r.species) : '', has(r, 'location') ? 'in ' + String(r.location) : ''].filter(Boolean).join(' ');
   return c.ref + (bits ? ' (' + bits + ')' : '');
 }
 
-// One click per opened report that names the reference. Not per keystroke, not
-// per save: once it is given for this report it stays given until another
-// report is opened.
 async function confirmOnce(c) {
   if (fc.confirmedFor === c.id) return true;
   const ok = await confirmDialog({
@@ -106,19 +78,13 @@ function Header(c, data, write) {
 function Checklist(c, r) {
   const items = mandatory();
   if (!items.length) return null;
-  // The kit hides a Row's `code` column on a phone, so what is recorded and what is still
-  // needed is said in the sub line (visible at every width), never by the rail colour alone.
-  // role=group, not list: the kit Row is a plain div, so a list would own non-listitem children.
   return h('div', { role: 'group', 'aria-label': 'What this ' + entityLabel() + ' needs before it can be signed off' },
     ...items.map((f) => Row({ key: f.key, code: has(r, f.key) ? 'Have' : 'Needed', title: f.label, sub: has(r, f.key) ? 'Recorded: ' + String(r[f.key]).slice(0, 60) : 'Still needed', rail: has(r, f.key) ? 'green' : 'flame' })));
 }
 
-// A report still at "new" cannot jump to done in the workflow, so a sign-off from
-// there first takes the one legal step (working on it) and then the done stage.
 const doneFrom = (transitions) => (transitions || []).find((t) => doneStages().has(t));
 const canReachDone = (transitions) => !!doneFrom(transitions) || (transitions || []).includes('in_progress');
 
-// The two facts a sign-off records (report-fields.yml signoff_diagnosis).
 const SIGNOFF_ASKS = [
   ['identified_disease', 'Disease identified', 'What do you find this to be? Write what you found, in your own words.'],
   ['recommended_resolution', 'Recommended resolution', 'What should be done? This is recorded with the sign-off.'],
@@ -128,8 +94,6 @@ async function signOff(c, data) {
   if (!canReachDone(data.transitions)) { toast('This ' + entityLabel() + ' cannot be signed off from where it is now.', 'warn'); return; }
   const ok = await confirmDialog({ title: 'Sign off ' + c.ref + '?', message: 'This closes ' + identity(c) + ' as finished. Only do this once help has been given.', confirmLabel: 'Sign off ' + c.ref });
   if (ok === null || ok === undefined) return;
-  // The diagnosis rides with the sign-off: the disease identified and what is recommended.
-  // Only what the record does not already hold is asked for (a technician's earlier entry stands).
   const diagnosis = {};
   const report = parseReport(c.report);
   for (const [key, label, hint] of SIGNOFF_ASKS) {
@@ -166,8 +130,6 @@ async function sendBack(c, r) {
 const tagsOf = (c) => String(c.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
 const isHandedOver = (c) => tagsOf(c).includes('handed-off');
 
-// The ranger's hand-over: the record is complete, so the technician is told it is ready for sign-off.
-// The ranger keeps the report and can still add to it; the technician's "send back" reverses it.
 async function sendToTechnician(c) {
   const ok = await confirmDialog({
     title: 'Send ' + c.ref + ' to the technician?',
@@ -186,8 +148,6 @@ function SignOffCard(c, data, r, write) {
   const tech = isTechnician();
   const missing = mandatory().filter((f) => !has(r, f.key));
   const canSign = tech && !missing.length && canReachDone(data.transitions);
-  // Already finished: no sign-off or send-back to offer (the workflow would only let a
-  // second "done" step close it further), just the plain fact.
   if (doneStages().has(c.status)) {
     return Section({
       title: 'Signed off',
@@ -216,8 +176,6 @@ function ContactCard(c, data) {
     title: 'Reach the reporter',
     children: [
       h('p', {}, c.external_id_formatted ? 'Number: ' + c.external_id_formatted : 'No number is on file for this ' + entityLabel() + '.'),
-      // Several people can use one phone: say who gave this report so they ask for that person by name, and
-      // that whoever answers may be someone else (src/phone-persons.js). Nothing for a phone with nobody recorded.
       data.reporter && data.reporter.reported_by ? h('p', { class: 'casey-hint' }, 'Ask for ' + data.reporter.reported_by.name + (data.reporter.reported_by.relation ? ' (' + data.reporter.reported_by.relation + ')' : '') + (data.reporter.shared_phone ? '. Other people use this phone too, so do not discuss the ' + entityLabel() + ' with anyone else who answers.' : '.')) : null,
       wa ? h('a', { class: 'btn btn-primary', href: wa, target: '_blank', rel: 'noopener noreferrer' }, 'Message reporter on WhatsApp') : null,
       h('p', { class: 'casey-hint' }, 'The message asks them to write to the assistant again' + ((data.missing_facts || []).length ? ' and lists what is still needed.' : '.') + ' Showing this number is written to the timeline.'),
@@ -225,8 +183,6 @@ function ContactCard(c, data) {
   });
 }
 
-// The save button is re-created while it says "Saving..."; keyboard focus goes back to it once the
-// save has finished, unless the person has already moved on to something else.
 function refocusSave() {
   setTimeout(() => {
     const b = document.querySelector('.field-save');
@@ -266,7 +222,6 @@ function RecordForm(c, r) {
   const field = (d) => {
     const label = d.label + (has(r, d.key) ? ' (now: ' + String(r[d.key]).slice(0, 40) + ')' : '');
     const opts = fieldOptions(d.key);
-    // A field with a fixed list of usual answers (species) is a dropdown ending in "Other (write it)".
     if (opts.length) return OptionField({ key: d.key, name: 'fld-' + d.key, label, value: fc.draft[d.key] || '', options: opts, onChange: (v) => set(d.key, v) });
     return TextField({ key: d.key, label, multiline: !!d.multi, rows: d.multi ? 2 : undefined, value: fc.draft[d.key] || '', onInput: (v) => set(d.key, v) });
   };
@@ -277,9 +232,6 @@ function RecordForm(c, r) {
       ...first.map(field),
       TextField({ key: 'note', label: 'What the reporter told you (free words)', multiline: true, rows: 3, value: fc.note, onInput: (v) => { fc.note = v; schedule(); } }),
       rest.length ? h('details', { key: 'more' }, h('summary', {}, 'Other details'), ...rest.map(field)) : null,
-      // Not disabled while saving (a disabled button drops keyboard focus to the page top); the busy
-      // guard in saveRecord ignores a second press. The label swap re-creates the node, so
-      // saveRecord puts focus back on it afterwards.
       Btn({ variant: 'primary', class: 'field-save', children: fc.busy ? 'Saving...' : 'Save to ' + c.ref, onClick: () => saveRecord(c) }),
     ].filter(Boolean),
   });
@@ -335,7 +287,7 @@ export function FieldCaseView({ id, onBack }) {
   const { case: c, events, events_total, transitions } = fc.data;
   const data = fc.data;
   const r = parseReport(c.report);
-  const write = data.access === 'write';   // the server says so: the number and the forms exist only on a report assigned to this person
+  const write = data.access === 'write';
   const editable = write;
   const nonDone = (transitions || []).filter((t) => !doneStages().has(t));
   const reload1 = () => reload();

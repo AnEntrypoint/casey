@@ -1,10 +1,3 @@
-// Map view surfaces: case pins (agent-estimated lat/lon, no geocoding),
-// field-worker live-location overlay, learned operator working-area
-// identities, and dispatch-suggestion. All aggregate/PII-free like every
-// other dashboard rollup (see AGENTS.md "The map is a visual rollup").
-//
-// deps: store, wrap, authed, actingOperator, isOpenCase, parseJsonArraySafe,
-//   getRoster
 import { assigneeNamer } from '../assignee-names.js'
 import { createHash } from 'node:crypto'
 import { classifyWorkerCheckins, WORKER_CHECKIN_WINDOW_MS } from '../../case-health.js'
@@ -16,16 +9,8 @@ import { isFieldAccount, caseAccess } from '../roles.js'
 import { canQueryCases, resolveTierValue } from '../../contact-tiers.js'
 import { TIER_LABELS } from '../../store/report-shape.js'
 
-// Capped like every other list endpoint (PAGE_MAX-scale window) so clustering
-// never chokes on an unbounded pull; excluded-count is reported, never silently
-// dropped.
 const MAP_CASE_CAP = 2000
 
-// The allowlist a case row reaches the map through. Aggregate/PII-free: no
-// external_id, author_key or contact_id, and no owner_name/contact_fallback/
-// present_person -- only what a map pin needs. Module-level and named so a
-// column added to the case table is never auto-exposed by a handler that
-// happened to have the row in scope.
 export function mapCaseProjection(c, report, clusterIndex, name = (v) => v) {
   return {
     id: c.id, ref: c.ref, status: c.status, case_type: c.case_type || 'unset',
@@ -36,37 +21,18 @@ export function mapCaseProjection(c, report, clusterIndex, name = (v) => v) {
     assignee: c.assignee ? name(c.assignee) : null, priority: c.priority,
     cluster: clusterIndex,
     last_event_at: c.last_event_at,
-    // When the report came in, so the map view's "new today" filter can be
-    // computed from the pins themselves rather than from a second, separately
-    // paged list that would answer a different question. A timestamp is
-    // aggregate-safe -- it names no contact -- so it does not widen this
-    // endpoint's PII-free projection.
     created_at: c.created_at,
-    // gps = the contact read out exact coordinates; estimated = the
-    // agent's own guess from a place name, not yet confirmed with them;
-    // confirmed = an estimate they agreed to or refined; unset = a case
-    // pre-dating this field. The map pin (client script) renders these
-    // distinctly so an operator never mistakes a still-unconfirmed guess
-    // for a surveyed exact position.
     location_source: c.location_source || 'unset',
-    // 0-100, how sure the pin is (gps 100, an estimate carries its own figure); null on a case that pre-dates it.
     location_confidence: Number.isFinite(Number(c.location_confidence)) && c.location_confidence != null ? Number(c.location_confidence) : null,
   }
 }
 
-// A contact's live check-in position, projected to what the overlay needs.
-// display_name only -- never external_id, matching the enquiryRow discipline.
 export function workerPinProjection(c, { now, staleMs, checkinWindowMs, overdue }) {
-  const at = tsMs(c.last_location_at)   // shared parser; see case-health.js
+  const at = tsMs(c.last_location_at)
   const ageMs = Number.isFinite(at) ? now - at : null
   return {
     id: c.id, display_name: c.display_name || null,
     lat: Number(c.last_location_lat), lon: Number(c.last_location_lon),
-    // HOW that position was arrived at. case_checkin's lat may be the model's
-    // own guess at a place name the worker said, and without this the map drew
-    // a guess and a real GPS fix identically -- an operator dispatching to the
-    // dot could not tell which they were looking at. Same ladder as a case pin's
-    // location_source, so both overlays answer the question the same way.
     location_source: c.last_location_source || 'unset',
     last_location_at: c.last_location_at, age_ms: ageMs,
     stale: ageMs == null || ageMs > staleMs,
@@ -75,11 +41,6 @@ export function workerPinProjection(c, { now, staleMs, checkinWindowMs, overdue 
   }
 }
 
-// Learned operator identities -- the roster enriched with each operator's
-// working-area history (case-store.js learnOperatorActivity), for the map's
-// operator-coverage overlay and a "who covers where" panel. Internal-team data
-// (not contact PII), still gated by login like every other /api route --
-// never exposed on the unauthenticated /report surface.
 export function getOperatorIdentities({ store, authed, parseJsonArraySafe, getRoster }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -91,8 +52,6 @@ export function getOperatorIdentities({ store, authed, parseJsonArraySafe, getRo
         id: o.id, name: o.name,
         areas: r ? parseJsonArraySafe(r.areas) : [],
         last_seen_at: r?.last_seen_at || null,
-        // rowInt(): busybase hands integer columns back as digit strings, and a
-        // row written before case-store.js's concat fix can hold a run of 1s.
         case_count: rowInt(r?.case_count),
       }
     })
@@ -100,31 +59,6 @@ export function getOperatorIdentities({ store, authed, parseJsonArraySafe, getRo
   }
 }
 
-// Map view: every open + recently-closed case with a resolvable point. lat/lon
-// come ONLY from the agent's own case_report call -- its own best-effort
-// estimate from the location the worker described, using the model's own world
-// knowledge (see caseSystemPrompt); casey never looks anything up server-side.
-// THE ONE-ENTRY MEMO BEHIND THIS ROUTE, and why a pure route needs one.
-//
-// The whole response is a pure function of the case pool, and the pool changes
-// when a report comes in -- 0.42 events an hour on this deployment's own event
-// log. The map home view polls this route every 30 s (public/src/main.js's
-// MAP_POLL_MS), so 120 responses an hour are recomputed for a pool that moved
-// at most once. Recomputing is not free at the cap: buildClusters is O(n^2) over
-// the open pool by construction and measures 1.8 s at 2000 cases even with
-// correlate.js's per-case signatures lifted out of the pair loop. Two operators
-// on a single-core host then hold a core between them permanently, to answer
-// with bytes express's own weak ETag was about to turn into a 304 anyway.
-//
-// The key is the pool's own identity, never a clock: the row count plus every
-// row's id/_version/updated_at. A write bumps _version (thatcher's optimistic
-// lock) and updated_at, so any change to any row in the pool misses the memo --
-// there is no staleness window to tune and no invalidation call site to forget.
-// Hashing 2000 of those triples costs ~1 ms against the 1.8 s it guards.
-//
-// One entry, not a map: the only caller is the map view's own poll, always with
-// the same `days`. A second `days` value alternating against the first degrades
-// to today's behaviour (every response computed), never to unbounded memory.
 let mapCasesMemo = null
 
 function mapPoolFingerprint(days, rows) {
@@ -141,9 +75,6 @@ export function getMapCases({ store, authed, isOpenCase, UNCLAIMED_ASSIGNEE }) {
     const where = {}
     if (days > 0) where.created_at = { $gte: Math.floor(Date.now() / 1000) - days * 86400 }
     let all = await store.listCases(where, { limit: MAP_CASE_CAP + 1, offset: 0 })
-    // A field-team login sees only its own cases on the map, and its answer is
-    // never read from or written to the shared memo below (which holds the
-    // whole-fleet payload).
     const scoped = isFieldAccount(req.caseyAccount)
     if (scoped) all = all.filter(c => caseAccess(c, req.caseyAccount, { unclaimedKey: UNCLAIMED_ASSIGNEE }) !== 'none')
     const fingerprint = mapPoolFingerprint(days, all)
@@ -181,15 +112,6 @@ export function getMapCases({ store, authed, isOpenCase, UNCLAIMED_ASSIGNEE }) {
   }
 }
 
-// Field-worker location layer: recent case_checkin self-reports, for the map's
-// dispatch/direction overlay. Distinct from /api/map/cases (case pins) and from
-// /api/operators/identities (a dashboard-operator's LEARNED historical coverage
-// area) -- this is a field_worker CONTACT's own LIVE self-reported position.
-// Staleness-filtered by the tunable workerLocationStaleMs threshold (default 3h)
-// so an hours-old ping does not read as "here right now". Internal-team-only,
-// same gate as every other dashboard route -- never on the public /report form.
-// Also includes check-in baseline status (weekly check-in window) so the
-// dashboard can flag workers who are past the deadline.
 export function getMapWorkers({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -200,10 +122,6 @@ export function getMapWorkers({ store, authed }) {
     const contacts = await store.listContacts({ limit: 1000 })
     const overdueById = new Set(classifyWorkerCheckins(contacts, now, checkinWindowMs).map(w => w.contact_id))
     const workers = contacts
-      // canQueryCases (a RANK test, contact-tiers.js), not a field_worker
-      // equality: an animal health technician checks in and gets dispatched
-      // exactly like an eco ranger does, and an equality test here would have
-      // dropped the highest rung off the dispatch map entirely.
       .filter(c => canQueryCases(c.tier) && c.last_location_lat != null && c.last_location_lon != null && c.last_location_at)
       .map(c => workerPinProjection(c, { now, staleMs, checkinWindowMs, overdue: overdueById.has(c.id) }))
       .filter(w => Number.isFinite(w.lat) && Number.isFinite(w.lon) && Math.abs(w.lat) <= 90 && Math.abs(w.lon) <= 180)
@@ -211,18 +129,6 @@ export function getMapWorkers({ store, authed }) {
   }
 }
 
-// Last-reported-location layer: each CONTACT's most recent ANIMAL-REPORT
-// location (contact.last_report_lat/lon, propagated by case_report --
-// case-tools.js -- every time the agent records/refines a case's own
-// lat/lon). Distinct from BOTH /api/map/cases (one pin per CASE, which can
-// include many closed/historical reports) and /api/map/workers (a
-// field_worker's own casual position check-in, not tied to any report) --
-// this is "where did this PERSON most recently say the animals were",
-// carried forward across their reports the same way a single case's own
-// coordinate refines on a later, more specific case_report call.
-// last_report_case_id is the DRILL-DOWN target: every pin here must be able
-// to open the exact case that produced it, never a bare aggregate dot with
-// no way back to the underlying report.
 export function getMapLastReports({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -244,22 +150,6 @@ export function getMapLastReports({ store, authed }) {
   }
 }
 
-// dispatch-from-map PRD row: an operator, looking at the map's case pins
-// alongside its field-worker location overlay (GET /api/map/workers just
-// above), selects a worker to direct to a case. This does NOT message the
-// worker directly -- casey's WhatsApp cost-policy invariant (this repo's own
-// earlier session work: casey must never autonomously originate a WhatsApp
-// message outside the free 24h session window) applies here exactly the
-// same as any other proactive outreach. A dispatch is recorded as a QUEUED
-// suggestion (an 'action' event on the case, tagged 'dispatch-suggested',
-// never an outbound send) -- the same queue-never-autofire discipline the
-// earlier session's pending-outreach design established for alert/nudge
-// messages. The worker only actually hears about it through casey's normal
-// reply path the next time THEY message in (their own inbound opens a free
-// session window; an LLM composing that turn's reply can surface the
-// pending dispatch then, per the existing "the agent drives the whole
-// conversation" design principle -- no new proactive-send code path is
-// introduced here, only the durable record a future turn can read).
 export function postCaseDispatch({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -269,19 +159,9 @@ export function postCaseDispatch({ store, authed, actingOperator }) {
     if (!workerId) return res.status(400).json({ error: 'worker_id is required' })
     const worker = store.getContact ? await store.getContact(workerId).catch(() => null) : null
     if (!worker) return res.status(404).json({ error: 'worker not found' })
-    // A RANK test (contact-tiers.js): every rung above the casual reporter is
-    // dispatchable, so an animal health technician can be sent to a case. The
-    // refusal names the rung the contact actually holds, via its DISPLAY label,
-    // because this string reaches an operator who never sees the enum value
-    // anywhere else in the console.
     if (!canQueryCases(worker.tier)) return res.status(400).json({ error: `selected contact is a ${TIER_LABELS[resolveTierValue(worker.tier)]} and cannot be dispatched to` })
     const op = actingOperator(req)
     const note = String(req.body?.note || '').trim().slice(0, 500)
-    // PII discipline: the case's own timeline may already carry the contact's
-    // external_id elsewhere (case timelines are operator-facing, not PII-
-    // scrubbed -- see AGENTS.md), but the worker's own PII-free display name
-    // (never external_id) is what identifies them in THIS event, matching
-    // the same enquiryRow discipline used for every worker-facing surface.
     const label = worker.display_name || 'a field worker'
     await store.updateCase(c.id, { tags: mergeTag(c.tags, 'dispatch-suggested') }, op)
     await store.appendEvent(c.id, {

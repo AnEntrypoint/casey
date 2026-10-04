@@ -1,29 +1,3 @@
-// Full-screen form shown while state.authed is false. A
-// not-necessarily-tech-literate operator sees one simple form; on success
-// checkSession() flips state.authed and app-view.js's App() renders the real
-// shell on the next schedule().
-//
-// IT HAS TWO STEPS, not one. An account carrying must_change_password (the
-// bootstrap admin printed once to the server log, and any account an admin
-// creates) authenticates normally -- /api/login returns 200 and sets a real
-// session cookie -- and is then refused by authGate on every route except
-// /api/change-password. Before this gate handled that, such an account was
-// admitted straight into the dashboard, where every fetch came back 403 and
-// the shell rendered the only explanation it had for a failing fetch: "This
-// browser could not reach the server", plus a map that "could not reach this
-// dashboard's own server". The server was reachable and answering; nothing on
-// the page said what was actually wrong, no screen anywhere in the SPA could
-// change a password, and the printed bootstrap credential was therefore a dead
-// end on a fresh deployment. So the second step lives here, before the session
-// is handed to the app.
-//
-// A RELOAD MID-CHANGE IS THE SECOND WAY IN, and it needs the watcher at the
-// bottom of this file rather than the login handler: App() renders this gate
-// only while state.authed is false, and a page loaded with the flagged cookie
-// already on the device resolves whoami through main.js's own boot before
-// anything here runs. state.js publishes no authed-changed hook to subscribe
-// to, so the watcher reads the resolved session once and then stops.
-
 import * as webjsx from 'webjsx';
 import { TextField } from 'ds/components/content.js';
 import { api, ApiError, isOfflineError, fetchBranding } from '../api.js';
@@ -39,32 +13,13 @@ const local = {
   username: '', password: '',
   newPassword: '', confirmPassword: '',
   notice: '',
-  // True on the reload path only: this module holds the password somebody just
-  // typed, but a page loaded fresh with the flagged cookie already set holds
-  // nothing, and /api/change-password re-verifies the current credential (a
-  // session cookie alone must never be enough to rotate the account's own
-  // password). So that path has to ask for it.
   needCurrent: false,
   error: '', busy: false,
 };
 
-// WHAT A FAILED LOGIN IS ALLOWED TO SAY. The route answers a wrong password, an
-// unknown username and an empty body with one identical body, so the screen
-// must not undo that by phrasing them differently -- but "invalid username or
-// password", the raw API string this used to print, is a machine's sentence and
-// tells an operator nothing to do next. The no-signal case is separated because
-// it is a different fact and has a different action: an unreachable server
-// produced the literal word "offline" here, since that is the service worker's
-// own envelope text.
 function loginMessage(e) {
   if (isOfflineError(e)) return word('ui.login_check_failed');
   if (e instanceof ApiError && e.status === 401) return 'That username and password do not match. Check both and try again -- if you cannot get in, ask whoever set up your account.';
-  // The catch-all. It reaches here only when the server answered with something
-  // other than 401 -- a 500, a 503 that was not the offline envelope -- so the
-  // honest statement is that the fault is the dashboard's, not the operator's
-  // typing, which is the one thing they would otherwise start doubting and
-  // retrying. Naming the status gives whoever runs the deployment something to
-  // go on.
   const status = (e instanceof ApiError && e.status) ? ' (error ' + e.status + ')' : '';
   return 'Your details were not checked -- the dashboard itself returned an error' + status + '. This is not your password. Try again in a moment, and tell whoever runs this deployment if it keeps happening.';
 }
@@ -73,16 +28,10 @@ function changeMessage(e) {
   if (isOfflineError(e)) return word('ui.login_password_failed');
   if (e instanceof ApiError && e.status === 401) return 'The password you were given is not right. Check it and try again.';
   if (e instanceof ApiError && e.body && e.body.error) return e.body.error;
-  // Same shape as loginMessage's catch-all, and the same reason: the operator
-  // needs to know their old password still works and they are not locked out.
   const status = (e instanceof ApiError && e.status) ? ' (error ' + e.status + ')' : '';
   return 'The new password was not set' + status + ', so the one you were given still works. Try again in a moment, and tell whoever runs this deployment if it keeps happening.';
 }
 
-// Routed through api() rather than a bare fetch so the connection-lost banner
-// keeps tracking reality, and so an unreachable server throws the same shape
-// every other call in this app throws. There is no api.js wrapper for this
-// route: nothing in the SPA had ever called it.
 async function postJson(path, body) {
   const res = await api(path, {
     method: 'POST',
@@ -90,17 +39,13 @@ async function postJson(path, body) {
     body: JSON.stringify(body),
   });
   let parsed = null;
-  try { parsed = await res.json(); } catch { /* an empty body is not a failure shape */ }
+  try { parsed = await res.json(); } catch {  }
   if (!res.ok) throw new ApiError(res.status, parsed);
   return parsed;
 }
 
 async function enterApp() {
   await checkSession();
-  // Force an immediate refresh so the app-shell's first authed render
-  // shows real data (cases, health pills) instead of whatever the
-  // pre-login boot attempt left behind -- see nav-config.js's
-  // runRefreshAll() comment for why this was silently stale for up to 15s.
   await runRefreshAll();
 }
 
@@ -110,15 +55,6 @@ async function submitLogin(e) {
   local.busy = true; local.error = ''; local.notice = ''; state.sessionNotice = ''; schedule();
   try {
     await postJson('/api/login', { username: local.username, password: local.password });
-    // whoami is read here rather than through checkSession() because
-    // checkSession() would set state.authed and hand this session to the app --
-    // which is exactly what must not happen while the flag is set.
-    //
-    // A whoami that cannot be read is not a failed login: the credential was
-    // already accepted and the cookie is set, so the app is entered and
-    // checkSession() re-asks. Only a POSITIVE must_change_password holds the
-    // session here, so an unreadable answer can never lock somebody out of a
-    // dashboard they have just authenticated to.
     let who = null;
     try { who = await api('/api/whoami').then((r) => r.json()); } catch { who = null; }
     if (who && who.authed && who.must_change_password) {
@@ -137,8 +73,6 @@ async function submitLogin(e) {
 async function submitChange(e) {
   e.preventDefault();
   if (local.busy) return;
-  // Checked here as well as by the server so the mismatch is caught before a
-  // round trip, and so the message names which of the two boxes to look at.
   if (local.newPassword !== local.confirmPassword) {
     local.error = 'The two new passwords are not the same. Type the same one in both boxes.';
     schedule();
@@ -150,15 +84,6 @@ async function submitChange(e) {
       current_password: local.password,
       new_password: local.newPassword,
     });
-    // A PASSWORD CHANGE MAY END THE SESSION THAT MADE IT. changePassword bumps
-    // the account's session_epoch, and /api/change-password sets no replacement
-    // cookie, so the token in this browser stops verifying the moment the write
-    // lands -- witnessed live: the change succeeded, must_change_password went
-    // to 0, and the very next request from the same tab was no longer
-    // authenticated. Asked rather than assumed, so this stays right if the
-    // route ever does re-issue: a session that survived goes straight into the
-    // app, and one that did not returns to the login step saying so instead of
-    // leaving somebody looking at the form they have just completed.
     await checkSession();
     if (state.authed) {
       await runRefreshAll();
@@ -177,11 +102,6 @@ async function submitChange(e) {
   schedule();
 }
 
-// A REAL SUBMIT BUTTON, not the kit's Btn. Btn hardcodes type="button" and
-// accepts no override, so this form had no submit control at all: pressing
-// Enter in the password box, or a phone keyboard's Go key, did nothing at all
-// and the only way in was to hit the button. It carries the kit's own
-// btn-primary class, so it looks exactly like every other primary control.
 function submitButton(label, busyLabel) {
   return h('button', {
     key: 'submit',
@@ -192,18 +112,7 @@ function submitButton(label, busyLabel) {
 }
 
 export function LoginGate() {
-  // dashboard_ui.brand (main.js fetches the ungated /api/branding subset
-  // before this ever renders, see main.js's pre-login branch) so a
-  // rebranded deployment (e.g. "Herd Health") never shows the literal
-  // 'casey' on the very first screen a user sees. Absent -- unchanged.
   const brand = brandName();
-  // ONE ELEMENT TYPE FOR THE MESSAGE SLOT, and a stable key. A change that has
-  // landed is not an error and must not be dressed as one, but rendering the
-  // notice as a <p> where the error is a <div> put two different element types
-  // in the same unkeyed child position across renders -- which webjsx's
-  // applyDiff cannot morph in place (the same trap the kit's own SearchInput
-  // documents), and the notice simply never appeared. Only the class and the
-  // live-region role change.
   const message = local.error || local.notice || state.sessionNotice || '';
   const messageNode = message
     ? h('div', {
@@ -214,10 +123,6 @@ export function LoginGate() {
     : null;
 
   if (local.step === 'change') {
-    // Keyed distinctly from the login form. The two steps hold different
-    // children in different positions, and an unkeyed positional diff between
-    // them merges a password box onto a username box rather than replacing the
-    // subtree.
     return h('div', { class: 'ds-login-gate' },
       h('form', { key: 'change', class: 'ds-login-form', onsubmit: submitChange },
         h('h1', { key: 'brand', class: 'ds-login-brand' }, brand),
@@ -244,21 +149,6 @@ export function LoginGate() {
   );
 }
 
-// THE RELOAD SAFETY NET. main.js resolves the session at boot and sets
-// state.authed before any render, so a browser that already holds the flagged
-// cookie never reaches submitLogin above and lands in a dashboard where every
-// request comes back 403 -- live-witnessed as a shell reporting "This browser
-// could not reach the server" against a server that was answering every one of
-// them. Dropping the session out of the CLIENT's state puts this gate back on
-// screen with the change step open; the cookie itself is untouched and still
-// authenticates /api/change-password, which is the one route the server lets a
-// flagged account reach.
-//
-// It polls because state.js has no authed-changed subscription to attach to
-// (unlike setActiveId/setAttention, which do). It is bounded rather than
-// standing: the first resolved session ends it, and a session that never
-// resolves ends it after the boot window rather than ticking for the life of
-// the tab.
 const FLAG_WATCH_TICK_MS = 250;
 const FLAG_WATCH_LIMIT = 80;
 let flagWatchTicks = 0;
@@ -273,15 +163,9 @@ const flagWatch = setInterval(() => {
   local.error = '';
   setAuthed(false, null);
   schedule();
-  // main.js fetches the ungated branding subset only on its NOT-authed branch,
-  // and this session is authed -- it is /api/config that the flag refuses. So
-  // without this the one screen a new deployment's first operator ever sees
-  // would be headed "casey" on a dashboard called something else. Same call and
-  // same shape main.js makes pre-login; loadCaseyConfig() replaces it in full
-  // once the change clears the flag.
   if (!state.config?.dashboard_ui?.brand) {
     fetchBranding()
       .then((b) => { if (b && (b.brand || b.leaf)) { setConfig({ dashboard_ui: b }); schedule(); } })
-      .catch(() => { /* the fallback brand is still a working screen */ });
+      .catch(() => {  });
   }
 }, FLAG_WATCH_TICK_MS);

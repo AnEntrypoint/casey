@@ -1,11 +1,3 @@
-// "Send feedback" -- a short note about the system itself (something confusing,
-// broken or missing), from any login including the field team. Opened from the
-// account menu (state.activeModal === 'feedback'). The note goes to the team that
-// looks after the system, not to a report and not to a reporter.
-//
-// Rendered by BOTH frames (app-view.js and field-app.js): a frame that does not
-// render it leaves the menu item opening nothing.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { TextField } from '/design/src/components/content/fields.js';
 import { Btn } from '/design/src/components/shell/atoms.js';

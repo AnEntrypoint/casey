@@ -1,10 +1,3 @@
-// Team panel -- workload panel (open/stale-claims/replies-today/first-reply
-// speed per rostered operator, worst-first). Content-swap panel
-// (state.activePanel === 'team').
-//
-// Six figures per operator, and "replies today" is one of them, so the form
-// depends on how much room there is to show all six at once. See WIDE_ENOUGH.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
@@ -18,15 +11,6 @@ import { fmtDur } from '../format.js';
 
 const h = webjsx.createElement;
 
-// Measured, not guessed. This panel's body box is the viewport less the
-// shell's own chrome: 154px of stacked padding with no sidebar (below the
-// shell's 901px breakpoint) and 490px with one. The six-column table's
-// intrinsic width is 651px, so it only has room from 1201px up (711px of
-// body). Narrower than that the table clips instead of shrinking, and
-// .ds-table-wrap's overflow scroll leaves nothing on screen saying the
-// clipped columns exist -- on a 375px phone the body box is 221px and
-// "replies today" was off the edge entirely. Below the threshold each
-// operator renders as a card carrying all six figures.
 const WIDE_ENOUGH = matchMedia('(min-width: 1201px)');
 WIDE_ENOUGH.addEventListener('change', schedule);
 
@@ -39,7 +23,6 @@ const loader = createPanelLoader({
 
 const HEADERS = ['Operator', 'Open', 'Stale', 'Replies today', 'Usual first reply', 'Oldest waiting'];
 
-// One operator, as the same six values the table's six columns carry.
 function operatorValues(o) {
     return [
         o.name || o.id,
@@ -53,11 +36,6 @@ function operatorValues(o) {
 
 function operatorCard(o, key) {
     const vals = operatorValues(o);
-    // headingLevel 2, not 3: the only heading above these cards is the panel
-    // page's own h1 (app-view.js's ViewTitle), so a 3 skipped a level and a
-    // screen reader's heading list read the roster as nested one deep under
-    // nothing. The card branch is the one that carries a heading at all -- the
-    // wide branch is a table with real column headers.
     return h('div', { key }, Panel({
         title: vals[0], headingLevel: 2,
         children: HEADERS.slice(1).map((label, i) => DetailRow({ key: label, label, value: vals[i + 1] })),

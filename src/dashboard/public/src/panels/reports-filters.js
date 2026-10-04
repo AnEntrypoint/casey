@@ -1,5 +1,3 @@
-// reports-filters.js -- the region / period / grain controls shared by the
-// resolved-map and disease-reports panels (kit Select and Btn only).
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Select } from '/design/src/components/content/fields.js';
 import { Btn } from '/design/src/components/shell/atoms.js';

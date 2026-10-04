@@ -1,18 +1,3 @@
-// resolved-map-panel.js -- "which diseases are being found, and where": one dot
-// per report an animal health technician signed off, coloured by the identified
-// disease, with a time slider and a play button, a heat view, and an "all
-// reports" heat view. Used as a staff panel and inside the viewer's home.
-//
-// Everything on it comes from routes/reports-map.js: dots rounded to about 1 km,
-// the week (never the day) of sign-off, no name, number, reference or free text,
-// and heat cells only where at least the small-group floor of reports fall. The
-// slider filters those dots in the browser; the heat views ask the server again
-// for the window so the floor is applied to what is actually shown.
-//
-// Kit primitives: Panel, FilterPills, Slider, Btn, Alert, Skeleton, Select. The
-// only bespoke pieces are the legend swatch classes (rep-sw-*, tokens only) in
-// views/viewer.css: the kit's Chip/Pill carry fixed status colours, not a
-// per-series colour, so no primitive could hold a disease colour.
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Alert, Skeleton, FilterPills } from '/design/src/components/content/feedback.js';
@@ -58,7 +43,7 @@ function togglePlay(weeks) {
   timer = setInterval(() => {
     const canvas = document.getElementById('rm-canvas');
     if (!canvas || !rm.playing) { stop(); return; }
-    if (rm.heatBusy) return;               // never queue ticks behind a slow heat answer
+    if (rm.heatBusy) return;
     if (rm.idx >= weeks.length - 1) { stop(); schedule(); return; }
     rm.idx += 1; schedule();
   }, PLAY_MS);
@@ -108,7 +93,6 @@ export function ResolvedMapPanel() {
   if (rd.error && !rd.points) return Panel({ title: 'Resolved cases map', children: [ReportFilters(), Alert({ kind: 'warn', children: rd.error }), Btn({ children: 'Try again', onClick: reloadReports })] });
   const all = rd.points.points;
   const weeks = weeksOf(all);
-  // A new answer (another area or period) starts the slider at its end again, showing everything.
   if (rm.seen !== rd.points) { rm.seen = rd.points; rm.idx = null; rm.heat = null; stop(); }
   if (rm.idx == null || rm.idx > weeks.length - 1) rm.idx = Math.max(weeks.length - 1, 0);
   const until = weeks[rm.idx] || null;

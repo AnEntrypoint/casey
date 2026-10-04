@@ -1,17 +1,3 @@
-// Areas panel -- which ranger looks after which place. An area is a name (plus the
-// other names people use for it), one first ranger who gets new reports from there,
-// and backups. Three jobs on one page, in the order an operator meets them:
-//   1. the areas that exist, and adding or changing one;
-//   2. places reports mention that no area covers yet ("unmapped"), each one
-//      pointed at an area with a single press;
-//   3. reports that look like they are with the wrong area's ranger, each one
-//      moved (and handed to that area's ranger) after a confirm.
-// Content-swap panel (state.activePanel === 'areas'); the page title and the way
-// back come from app-view.js's PanelSwap, so this renders the body only.
-//
-// Form state is module-level: the panel re-renders on every schedule(), and a value
-// held in a render-local variable would be wiped by the next unrelated repaint.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Row } from '/design/src/components/content/row.js';
@@ -31,13 +17,13 @@ const h = webjsx.createElement;
 
 const MAX_BACKUPS = 6;
 const ui = {
-  editing: null,          // null | 'new' | an area id
+  editing: null,
   form: { name: '', primary: '', backups: [], aliases: '', lat: '', lon: '', applyNow: false },
   error: '', busy: false,
-  people: null,           // { people, canon, nameOf } once loaded
-  pick: {},               // unmapped value -> chosen area id
+  people: null,
+  pick: {},
   wrong: { state: 'idle', rows: [], checked: 0, total: 0 },
-  wrongPick: {},          // case id -> chosen area id
+  wrongPick: {},
   busyKeys: new Set(),
 };
 
@@ -50,8 +36,6 @@ const loader = createPanelLoader({
 
 const areasOf = () => (state._areas && state._areas.areas) || [];
 const splitNames = (s) => String(s || '').split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
-
-// ---------- adding and changing an area ----------
 
 function startEdit(a) {
   ui.editing = a ? a.id : 'new';
@@ -151,8 +135,6 @@ function AreaList() {
   });
 }
 
-// ---------- places nobody has mapped ----------
-
 async function mapPlace(g, areaId) {
   const a = areasOf().find((x) => x.id === areaId);
   if (!a) return;
@@ -195,10 +177,6 @@ function Unmapped() {
   });
 }
 
-// ---------- reports that look like they are in the wrong area ----------
-
-// The server lists the flagged reports (GET /api/areas/wrong-area): one request per
-// page of 25, so nothing is opened one by one. "Show more" asks for the next page.
 const PAGE = 25;
 const wrongRow = (r) => ({ id: r.id, ref: r.ref, report: r.report || {}, holder: r.holder ? r.holder.name : '', flag: r.flag, ranger: r.suggested_ranger ? r.suggested_ranger.name : '' });
 async function checkWrong(more) {

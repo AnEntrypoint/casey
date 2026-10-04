@@ -1,6 +1,3 @@
-// The bar across the top while an admin is previewing another login (api.js setViewAs). It is a plain element outside the
-// app's own render so it shows over the admin, ranger, technician and viewer apps alike, and says what is going on:
-// whose dashboard this is, that it is read-only, and how to leave.
 import { setViewAs, viewAsId } from './api.js';
 
 export function syncPreviewBar(whoami) {

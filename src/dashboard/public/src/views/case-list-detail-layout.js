@@ -1,11 +1,3 @@
-// Two-pane layout composer per architecture spec section 5: CaseListView and
-// CaseDetailView as siblings inside AppShell's main slot -- the list stays
-// put while a case is open (j/k/o/Escape keyboard triage, worst-first inbox
-// workflow). Below the mobile breakpoint CSS (.app-two-pane) stacks the
-// detail pane full-viewport; state.activeId is the single source of truth
-// either layout branch keys off, so no separate mobile-only component is
-// needed.
-
 import * as webjsx from 'webjsx';
 import { state, schedule, setActiveId, setCases } from '../state.js';
 import * as api from '../api.js';
@@ -18,30 +10,22 @@ import { panelTitle } from './nav-config.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 const h = webjsx.createElement;
 
-// Both go through setActiveId rather than assigning state.activeId directly:
-// that mutator is where "a case became active" is published (state.js's
-// onActiveIdChange), and the map subscribes to it. Assigning the field here
-// skipped the notification, which is why opening a case from the case list
-// used to leave the map sitting wherever it happened to be.
 function closeCase() {
   setActiveId(null);
   try {
     const url = new URL(location.href);
     if (url.hash.startsWith('#case=')) history.replaceState(null, '', location.pathname + location.search);
-  } catch { /* hash sync best-effort */ }
+  } catch {  }
   schedule();
 }
 
 function openCase(id) {
   setActiveId(id);
-  try { location.hash = 'case=' + encodeURIComponent(id); } catch { /* hash sync best-effort */ }
+  try { location.hash = 'case=' + encodeURIComponent(id); } catch {  }
   schedule();
 }
 
 async function promptNewCase() {
-  // 'New case' here while help-overlay.js teaches the same control as the
-  // "new report" shortcut and the list it lands in is headed "All reports".
-  // The record has one configured name; every control that names it asks for it.
   const subject = ((await confirmDialog({ title: 'New ' + entityLabel(), inputLabel: 'What is it about? (e.g. "sick cattle near Musina")' })) || '').trim();
   if (!subject) return;
   try {
@@ -52,17 +36,6 @@ async function promptNewCase() {
   } catch (e) { toast(await failMsg(e, 'The ' + entityLabel() + ' was not created. Nothing was saved -- try again.'), 'err'); }
 }
 
-// BulkBar's own onPromptTag/onPromptNote contract: prompt for the text, then
-// invoke the caller's callback with it (the callback runs the actual bulk
-// tag/untag/note dispatch and owns the ids). These two used to take an `id`
-// and dispatch the API call themselves -- a leftover from a single-case
-// shape BulkBar never called them with. BulkBar always calls
-// onPromptTag/onPromptNote with a CALLBACK, never an id, so that old
-// signature ran api.postBulk([callback], ...): the function argument silently
-// serialized to `ids:[null]` over JSON, dispatching a tag/untag/note bulk
-// action against no case at all while still showing a success toast --
-// witnessed live: selecting a case, choosing Tag, confirming, and inspecting
-// the actual POST /api/cases/bulk body sent `{"ids":[null],...}`.
 async function promptTag(onTag) {
   const tag = ((await confirmDialog({ title: 'Add a tag', inputLabel: 'Tag' })) || '').trim();
   if (!tag) return;
@@ -75,38 +48,17 @@ async function promptNote(onNote) {
   onNote(text);
 }
 
-// setCases, not a bare field assignment: /api/cases has always returned the
-// server's own `total` alongside the page it sends, and nothing in the SPA ever
-// stored it, so state.allCasesTotal sat at 0 forever and the case list could
-// not state how much of the deployment it was actually showing. Publishing it
-// here is what lets the list head name the cap honestly.
 async function reloadCases() {
   try {
     const rows = await api.fetchCases();
     const list = Array.isArray(rows) ? rows : (rows && rows.cases) || [];
     setCases(list, rows && typeof rows.total === 'number' ? rows.total : list.length);
-  } catch { /* connection banner already surfaces the failure */ }
+  } catch {  }
 }
 
 export function CaseListDetailLayout() {
   const hasActive = state.activeId != null;
-  // .grow is the design SDK's own opt-in: .app-main > * defaults to
-  // flex:none (content-sized) so a document-flow child (hero, panel) keeps
-  // its natural height; a full-region flex child re-asserts flex:1 1 auto
-  // via .grow's higher specificity (app-shell/topbar.css). Without it this
-  // pane sized to its own content's min-width instead of filling .app-main
-  // -- found live while building the map-first home view (same .app-two-
-  // pane class), confirmed the case list carries the identical gap.
   return h('div', { class: 'app-two-pane grow' + (hasActive ? ' has-active' : '') },
-    // The page's name, above its two panes. Not a brand and not a second copy
-    // of one -- case-list-view.js's own head correctly refuses that; this is
-    // the h1 the outline under it hangs off, and the name <main> carries. It
-    // comes from the nav item that lands here, so a deployer's relabel renames
-    // the page and the control together (same rule as a panel page).
-    // The fallback was the literal 'Cases', directly above a pane whose own
-    // head reads "All reports" -- the page's h1 and the section under it naming
-    // one list two ways. It falls back to the record's configured name now, so
-    // the two agree by construction on any deployment.
     ViewTitle(panelTitle('home_cases') || EntityLabelPlural()),
     h('div', { class: 'case-list-pane', key: 'list' },
       CaseListView({
@@ -115,8 +67,6 @@ export function CaseListDetailLayout() {
         onReloadCases: reloadCases,
       })
     ),
-    // The empty pane scrolls but holds nothing focusable, which a keyboard user could not
-    // scroll (axe scrollable-region-focusable); once a report is open its own controls are focusable.
     h('div', Object.assign({ class: 'case-detail-pane', key: 'detail' }, hasActive ? {} : { tabindex: '0', role: 'region', 'aria-label': EntityLabel() + ' details' }),
       CaseDetailView({ onClose: closeCase, onOpenCase: openCase, key: 'detail-view' })
     )

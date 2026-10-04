@@ -1,25 +1,3 @@
-// The people behind a shared phone (src/phone-persons.js). In rural areas one WhatsApp number is often shared by a
-// family, neighbours or someone borrowing the phone; the assistant records who is writing (case_speaker) and the
-// dashboard lets staff correct what it recorded.
-//
-//   GET  /api/contacts/:id/persons           who is recorded behind this phone, by name, with their report references
-//   POST /api/contacts/:id/persons/rename    { person_id, name?, relation?, expected_name?, expected_ref? }
-//   POST /api/contacts/:id/persons/merge     { keep, from: [person_id], expected_ref? }     two records, one person
-//   POST /api/contacts/:id/persons/erase     { person_id, confirm_name, reason? }           ADMIN: POPIA, one person
-//
-// STAFF ONLY, by omission: roles.js's roleGate lets a field login reach only the rows of its allowlist and a viewer only
-// its own, and none of these is on either. Erasure additionally needs an admin, like the whole-contact erase.
-//
-// PAYLOADS ARE PII-SAFE. Names and relations as the person said them, opaque ids (letters only), report references and
-// ISO dates; never the phone number and never a bare run of digits. The list is by NAME: the ids ride only as the
-// values a screen sends back, the way `contacts.js` uses a contact id.
-//
-// EVERY WRITE IS GUARDED AND AUDITED. `expected_name` (rename) and `expected_ref` (any write, from a report's page) make a
-// stale screen or a wrong click a 409 that changes nothing. Each write is one row in the persons log stamped
-// `staff:<login>` (the same append-only audit the assistant's own writes go in), and a rename or merge keeps every
-// affected report's "Reported by" in step.
-//
-// deps: store, authed, isAdmin, actingOperator
 import { mountRoutes } from './register.js'
 import { listPersons, casesOf, renamePerson, mergePersons, normName, cleanName } from '../../phone-persons.js'
 import { parseReport } from '../../timestamp.js'
@@ -33,7 +11,6 @@ async function contactOr404(store, id, res) {
   return c
 }
 
-// expected_ref is the reference of the report the staff member is looking at. It must be a report of THIS phone.
 async function refMatches(store, contact, want, res) {
   if (want == null) return true
   const c = isText(want) ? await store.getCaseByRef(want.trim()).catch(() => null) : null
@@ -44,7 +21,6 @@ async function refMatches(store, contact, want, res) {
   return true
 }
 
-// The report's "Reported by" follows a rename or merge, on the reports that person gave.
 async function syncReportedBy(store, cases, to, from) {
   let n = 0
   for (const ref of cases) {
@@ -110,7 +86,6 @@ export function postPersonMerge({ store, authed, actingOperator }) {
       if (!keep) return res.status(404).json({ error: 'that person is not recorded behind this phone' })
       const gone = b.from.map(id => people.find(p => p.id === id))
       if (gone.some(p => !p)) return res.status(404).json({ error: 'that person is not recorded behind this phone' })
-      // the reports of the people folded in, read before they stop existing as separate people
       const moved = []
       for (const g of gone) for (const c of await casesOf(store, contact.id, g.id)) moved.push({ ...c, from: g.name })
       const r = await mergePersons(store, contact.id, keep.id, b.from, { by: `staff:${actingOperator(req).id}` })
@@ -123,7 +98,6 @@ export function postPersonMerge({ store, authed, actingOperator }) {
   }
 }
 
-// Irreversible, admin only, and the person's name has to be typed back: a compliance action with no undo.
 export function postPersonErase({ store, authed, isAdmin, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })

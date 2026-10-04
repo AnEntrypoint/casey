@@ -1,13 +1,5 @@
-// Saved-view CRUD (localStorage) + base64url URL-hash encode/decode. A view
-// is filter knobs only -- never external_id. Also owns the recent-search
-// ring buffer (ux-search-hint-and-history).
-
 import { state, setFilt, setInboxMode } from './state.js';
 
-// fv (the per-report-field known-value narrowing, filters-bar.js) is carried as
-// a flat field -> value map, sanitized on both sides: only string values, only
-// non-empty ones, so a saved view can never carry an object or reintroduce a
-// filter key the app no longer has a control for.
 function fvOf(raw) {
   const out = {};
   for (const [k, v] of Object.entries((raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {})) {
@@ -21,10 +13,6 @@ export function currentView() {
   return { q: f.q || '', status: f.status || '', channel: f.channel || '', source: f.source || '', fv: fvOf(f.fv), mine: !!f.mine, focus: !!state.inboxMode };
 }
 
-// Reader only, deliberately: nothing in the SPA produces a #view= link, so
-// there is no encoder here to pair with it. The decoder must stay -- main.js
-// reads the token on boot, so a link that does exist still opens the view it
-// names. Add an encoder only together with the surface that emits the link.
 export function decodeView(s) {
   try {
     const b = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -44,7 +32,7 @@ function loadNamedViews() {
   try { const o = JSON.parse(localStorage.casey_views || '{}'); return (o && typeof o === 'object') ? o : {}; }
   catch { return {}; }
 }
-function saveNamedViews(m) { try { localStorage.casey_views = JSON.stringify(m); } catch { /* storage unavailable */ } }
+function saveNamedViews(m) { try { localStorage.casey_views = JSON.stringify(m); } catch {  } }
 
 export function saveNamedView(name, view) {
   if (!name || name.length > 60) return false;
@@ -57,17 +45,10 @@ export function getNamedView(name) {
   const m = loadNamedViews();
   return m[name] || null;
 }
-// The names to offer in the Saved views menu, read from the SAME localStorage
-// store saveNamedView writes. This module owns both halves for saved views and
-// for the recent-search ring buffer below; a menu that reads a state.js field
-// instead renders nothing, because nothing writes one.
 export function listNamedViews() {
   return Object.keys(loadNamedViews()).sort();
 }
 
-// saveCurrentView/applyNamedView -- thin convenience wrappers over the
-// primitives above, matching the case-list-view.js call shape
-// ({ok,error}-returning save; apply-by-name reading straight from state).
 export function saveCurrentView(name) {
   if (!name || !name.trim()) return { ok: false, error: 'Name is required.' };
   const ok = saveNamedView(name.trim(), currentView());
@@ -78,7 +59,6 @@ export function applyNamedView(name) {
   if (v) applyView(v);
 }
 
-// --- recent search history (last 8), ux-search-hint-and-history ---
 export function loadRecentSearches() {
   try { const a = JSON.parse(localStorage.casey_recent_searches || '[]'); return Array.isArray(a) ? a : []; }
   catch { return []; }
@@ -89,5 +69,5 @@ export function pushRecentSearch(q) {
   let arr = loadRecentSearches().filter(s => s !== q);
   arr.unshift(q);
   arr = arr.slice(0, 8);
-  try { localStorage.casey_recent_searches = JSON.stringify(arr); } catch { /* storage unavailable */ }
+  try { localStorage.casey_recent_searches = JSON.stringify(arr); } catch {  }
 }

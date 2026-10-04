@@ -1,32 +1,3 @@
-// ONE resolution of a deployment's brand, for every server-rendered surface.
-//
-// Every server-rendered surface -- the PWA manifest and generated icon,
-// offline.html, the public /report form, the printable case briefing, the
-// management report -- resolves its palette HERE. A surface that hand-rolls
-// its own is another answer to "what colour is this product", and the one a
-// reporting contact sees is the one that ends up carrying none of the brand.
-//
-// It is deliberately dependency-free and
-// synchronous: /report is reached with NO session and NO design-kit bundle, so
-// it cannot import the SPA design system, and the pages that consume this are
-// plain server-rendered HTML with an inline <style> block.
-//
-// WHY THE DERIVED TONES ARE COMPUTED AND NOT LISTED. A brand ships exactly one
-// colour here (the theme-color tag), but a page needs several: a fill, a
-// hover, a soft panel wash, a hairline, and a text tone. Writing those out as
-// literals would put us straight back where we started -- five constants that
-// drift from the one that is real. Each is mixed from the ground instead, so a
-// deployer changing one meta tag moves the whole page.
-//
-// WHY THE TEXT TONE IS NOT THE BRAND COLOUR ITSELF. Brand colours are chosen
-// to be seen as a FILL. Used as small text on a light page, a bright one fails
-// readability outright: this deployment's #E88427 measures 2.50:1 on the form's
-// #f4f6f9 ground, well under the 4.5:1 text floor, so the old hardcoded blue
-// was accidentally more readable than the real brand would have been. `accent`
-// is therefore the ground darkened, one percent at a time, only until it
-// actually clears 4.5:1 against the lightest surface it is drawn on -- measured
-// each step, never assumed. A ground that already clears it is left untouched
-// (#3b6ea5 stops at zero steps), so this darkens nothing that does not need it.
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -34,29 +5,16 @@ import { DASHBOARD_UI, REPORT_ENTITY_LABEL } from '../store/report-shape.js'
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'public')
 
-// The colour a deployer gets when index.html carries no readable theme-color.
-// Same literal server.js's own readThemeColor() used, kept so an unconfigured
-// deployment resolves exactly what it resolved before this module existed.
 const FALLBACK_GROUND = '#3b6ea5'
 
-// index.html's own <meta name="theme-color"> is the single source for the brand
-// colour (below dashboard_ui.theme_color, see resolveBrand). Read the page's
-// tag rather than restating the value: a hardcoded copy in the manifest or the
-// generated icon makes browser chrome, task-switcher entry and home-screen icon
-// three different colours for one product.
 export function readThemeColor(publicDir = PUBLIC_DIR) {
   try {
     const m = /<meta\s+name="theme-color"\s+content="([^"]+)"/i.exec(readFileSync(path.join(publicDir, 'index.html'), 'utf8'))
     if (m) return m[1]
-  } catch { /* a deployer replacing index.html keeps casey's own colour */ }
+  } catch {  }
   return FALLBACK_GROUND
 }
 
-// A theme-color tag may legally say #abc, or a colour keyword, or an rgb()
-// form. Those are all fine to hand straight back to CSS, and all useless to
-// arithmetic. normalizeHex is the arithmetic edge: 6-digit hex out, or null
-// when there is nothing to compute with, so a caller decides what to do about
-// it instead of getting NaN silently folded into a ratio.
 export function normalizeHex(value) {
   const s = String(value == null ? '' : value).trim()
   const six = /^#?([0-9a-fA-F]{6})$/.exec(s)
@@ -66,8 +24,6 @@ export function normalizeHex(value) {
   return null
 }
 
-// WCAG relative luminance. Returns null rather than NaN for an unparseable
-// colour, so every caller has to face the missing value.
 export function relativeLuminance(hex) {
   const norm = normalizeHex(hex)
   if (!norm) return null
@@ -79,10 +35,6 @@ export function relativeLuminance(hex) {
   return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
 }
 
-// The measured WCAG contrast ratio between two colours, 1..21. This is the
-// number that makes "is this readable" answerable instead of arguable; every
-// tone below is picked by consulting it, and it is exported so a live check can
-// re-measure the shipped palette rather than trust this comment.
 export function contrastRatio(a, b) {
   const la = relativeLuminance(a)
   const lb = relativeLuminance(b)
@@ -92,15 +44,6 @@ export function contrastRatio(a, b) {
   return (hi + 0.05) / (lo + 0.05)
 }
 
-// White-on-brand is the single most common way a palette ships an unreadable
-// mark, and this deployment is a live example: white on #E88427 measures
-// 2.71:1 -- under even the 3:1 UI floor -- while black on the same orange
-// measures 7.76:1. So ink is picked from the fill's own luminance.
-//
-// Behaviour is deliberately byte-identical to the copy this replaced in
-// server.js, three-character return values included: it feeds the generated
-// icon's SVG, and changing '#fff' to '#ffffff' would change that file's bytes
-// (and therefore its cache identity) for no visual difference at all.
 export function readableInkOn(hex) {
   const norm = normalizeHex(hex)
   if (!norm) return '#fff'
@@ -108,10 +51,6 @@ export function readableInkOn(hex) {
   return (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? '#000' : '#fff'
 }
 
-// Linear channel mix, t=0 is `from`, t=1 is `to`. Not a colour-science blend
-// (no gamma correction) on purpose -- these are decorative washes, and the one
-// tone where perceptual accuracy actually matters (`accent`) is not trusted to
-// the mix at all, it is measured afterwards.
 export function mixHex(from, to, t) {
   const a = normalizeHex(from)
   const b = normalizeHex(to)
@@ -125,12 +64,6 @@ export function mixHex(from, to, t) {
   return out
 }
 
-// Darken `hex` against `on` until it MEASURES at least `floor`. Steps of 1%
-// toward black, re-measuring each step; black clears every floor against a
-// light ground, so this always terminates. The loop is the point: it does the
-// least darkening that actually reaches the floor, rather than applying a fixed
-// "make it darker" fudge that would over-darken one brand and under-darken the
-// next.
 export function darkenUntilReadable(hex, on, floor = 4.5) {
   const base = normalizeHex(hex)
   const ground = normalizeHex(on)
@@ -144,32 +77,12 @@ export function darkenUntilReadable(hex, on, floor = 4.5) {
   return '#000000'
 }
 
-// The whole palette a server-rendered page needs, from the one colour a
-// deployer actually declares. Exported as a function so a caller can resolve a
-// different public dir (and so the derivation is inspectable/re-runnable
-// against any ground), with the process-wide answer frozen below.
 export function resolveBrand({ publicDir = PUBLIC_DIR, dashboardUi = DASHBOARD_UI, entityLabel = REPORT_ENTITY_LABEL } = {}) {
-  // Raw, as written: handed to CSS and to manifest.json verbatim, so a
-  // deployer's `#abc` or colour keyword survives untouched.
-  //
-  // dashboard_ui.theme_color comes FIRST because until it existed there was no
-  // config channel for the ground at all -- the name was configurable and the
-  // colour was not, so the only way to brand a deployment's colour was to edit
-  // casey's own tracked public/index.html. That is exactly what had happened:
-  // the shipped file carried one deployer's orange and their product name, and
-  // this function read it as "casey's own default", so every OTHER deployer
-  // silently inherited it. The meta tag stays as the fallback, so a deployment
-  // that branded itself the old way keeps working with no config change.
   const ground = normalizeHex(dashboardUi?.theme_color) ? dashboardUi.theme_color : readThemeColor(publicDir)
-  // Normalised, for arithmetic only. An unparseable tag still paints (CSS gets
-  // the raw value) but the derived tones fall back rather than compute garbage.
   const hex = normalizeHex(ground) || FALLBACK_GROUND
   const soft = mixHex(hex, '#ffffff', 0.90)
   return Object.freeze({
     name: dashboardUi?.brand || 'casey',
-    // dashboard_ui.description is the same optional, deployer-owned string
-    // manifest.json already uses -- absent, a page shows the brand name and
-    // claims nothing about a domain casey does not know it is in.
     description: dashboardUi?.description || null,
     entityLabel,
     ground,
@@ -177,70 +90,12 @@ export function resolveBrand({ publicDir = PUBLIC_DIR, dashboardUi = DASHBOARD_U
     hover: mixHex(hex, '#000000', 0.18),
     soft,
     edge: mixHex(hex, '#ffffff', 0.62),
-    // Measured against `soft`, the darkest of the light surfaces this tone is
-    // drawn on (a soft wash of a warm brand sits slightly below a cool page
-    // grey), so clearing the floor there clears it on the page and on white too.
     accent: darkenUntilReadable(hex, soft, 4.5),
   })
 }
 
 export const BRAND = resolveBrand()
 
-// ---------------------------------------------------------------------------
-// ONE type and spacing scale for every server-rendered surface.
-//
-// WHY THIS IS A COPY OF THE KIT'S NUMBERS AND NOT A LINK TO THE KIT. The SPA
-// resolves its sizes through anentrypoint-design's tokens, served from
-// /design/dist/247420.css. Every server-rendered page here emits a bare
-// <style> block instead and hardcoded its own sizes, which measured -- live,
-// in real Chrome against a running dashboard -- as eight different computed
-// font sizes across four pages (12, 13, 13.33, 14, 16, 16.8, 17, 20.8px),
-// with the SAME page-title role rendering 16.8px on the case briefing and
-// 20.8px on the management report. That is what "some are big, some are
-// small" looks like from the inside.
-//
-// The obvious fix is to link the kit and use var(--fs-*). It does not work,
-// and the reason is not the one you would guess:
-//
-//  - THE KIT'S TOKENS ARE NOT ON :root. dist/247420.css:16 scopes every
-//    declaration to `.ds-247420:not(:where(.ds-247420 .ds-247420))`. Linking
-//    the bundle from one of these pages resolves NOTHING unless an ancestor
-//    also carries that class, so `<link>` alone is not a fix, it is a silent
-//    no-op that leaves every var() invalid.
-//  - The kit's heading tokens are cqi-based clamps that, by its own note at
-//    colors_and_type.css:274-278, need an ancestor carrying
-//    `container-type: inline-size`. These are standalone documents with no
-//    such ancestor, so those clamps would resolve against the viewport --
-//    non-deterministic sizing on a page whose whole job is to be printed.
-//  - The built bundle is 874,759 bytes, against roughly fourteen for the
-//    whole public form. That page crosses a metered rural link to a contact
-//    who may be on a feature phone.
-//  - Three of the four surfaces are print/download artifacts. A briefing a
-//    field team saves and opens offline must not depend on a stylesheet fetch.
-//
-// So the VALUES are the kit's, taken from colors_and_type.css:279-292 and
-// :339-356, and a printed report now agrees with the SPA. Two things are
-// deliberately not copied:
-//
-//  - The kit writes each spacing rung as `calc(<rem> * var(--density))`. There
-//    is no density control on a server-rendered page, and carrying the calc
-//    without also carrying --density would make every one of these invalid.
-//    Each value below is what the kit resolves at its own default --density:1.
-//  - The fluid heading clamps (--fs-h1-app and friends) are absent rather than
-//    pinned to some arbitrary point on their range. A page with nothing to
-//    clamp against should name a real rung instead.
-//
-// THIS IS A CLOSED SET, and that matters more than it looks. A var() naming
-// something not defined here is invalid at computed-value time, which throws
-// away THE WHOLE DECLARATION, not just that one value -- so a single stray
-// `var(--space-6)` inside a `padding` shorthand silently drops the padding to
-// zero with no error anywhere. That exact bug shipped and was caught by
-// measuring the rendered page, not by reading the CSS. scripts/lint.mjs's
-// `server-css-tokens` gate now fails the build on any var() in the
-// server-rendered surfaces that this block does not define; if you add a rung
-// here, add it because a surface needs it, and if you need a rung, add it here
-// first. Only rungs something actually uses are emitted -- dead custom
-// properties are dead bytes on the metered link the argument above is built on.
 export const TYPE_SCALE_CSS = ':root{'
   + '--fs-micro:0.75rem;--fs-tiny:0.8125rem;--fs-xs:0.875rem;'
   + '--fs-body:1rem;--fs-lg:1.125rem;--fs-xl:1.3125rem;'

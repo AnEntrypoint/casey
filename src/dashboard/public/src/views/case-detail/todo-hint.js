@@ -1,15 +1,3 @@
-// todo-hint.js -- single-line priority-ladder "what to do now" hint, ported
-// byte-for-byte in logic from the legacy app.js todoHint() (which itself
-// mirrors src/attn.js caseHints()' priority ladder). Rendered as a Lede.
-//
-// Every literal 'casey' below is config-driven (dashboard_ui.brand, see
-// app-view.js/case-list-view.js/activity-panel.js for the same pattern) --
-// absent (casey's own default, uhh) it stays the literal 'casey'.
-
-// This module is now pure text: the TodoHint COMPONENT that used to live here
-// was exported and rendered by nobody (header.js has always imported only
-// todoHintText and wrapped it in its own Lede), so it went, and with it the
-// last need for webjsx and the design kit in this file.
 import { ageHoursOf } from '../../format.js';
 import { state } from '../../state.js';
 import { brandName } from '../../vocabulary.js';
@@ -19,10 +7,6 @@ function tagList(c) { return String(c.tags || '').split(',').map(t => t.trim()).
 export function todoHintText(c) {
     const brand = brandName();
     const tags = tagList(c);
-    // 'opted-out' is a legal control (the contact said STOP). Its one
-    // definition is src/hooks/heuristics.js's OPTED_OUT_TAG, which a browser
-    // module cannot import -- change this literal in step with it, and with
-    // reply-box.js's own copy, or this hint stops firing silently.
     if (tags.includes('opted-out')) return 'This person asked to stop. Do not message them. Leave this one alone.';
     if (c.status === 'closed') return 'This one is finished. Nothing to do.';
     if (tags.includes('needs-human')) return 'This person asked for a real person. Reply to them below.';
@@ -32,15 +16,8 @@ export function todoHintText(c) {
     if (tags.includes('health:incomplete_critical')) return 'Some critical facts are still missing and this one is still active. Try to reach the reporter now -- once they move on some facts cannot be recovered.';
     if (tags.includes('health:abandoned_intake')) return 'Critical facts are still missing and the reporter may be gone. Check if they are still reachable and ask for the most important detail.';
     if (c.status === 'waiting' && ageHoursOf(c) >= 24) return 'No answer for over a day. A check-in may help -- reply below.';
-    // Every other line in this ladder says "this one"; these two said "the case"
-    // and "this case", which is the record's other name arriving inside a single
-    // list of sentences an operator reads one of.
     if (tags.includes('health:stuck')) return 'This one has been in the same stage for a while. Check if it needs a push or can be closed.';
     if (tags.includes('health:stale')) return 'No activity for a while. Check if anything needs following up.';
-    // "set Who answers to auto" named the stored key. The control is now
-    // labelled "Who answers" (it was "Autonomy", so this line pointed at a
-    // control that did not exist under that name) and its options are worded,
-    // so this points at the wording the operator will actually see.
     if (c.autonomy === 'observe') return `This one is waiting for you. Read it and reply, or set Who answers to "Answer on its own" so ${brand} can handle it.`;
     if (c.autonomy === 'assisted') return `${brand} can draft, but you send. Open it and check the draft.`;
     if (c.status === 'resolved') return 'This one is marked done. Close it if you are finished.';

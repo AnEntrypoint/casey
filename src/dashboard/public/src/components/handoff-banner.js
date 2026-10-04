@@ -1,8 +1,3 @@
-// Needs-human alert banner + sound + title-flash, per-case dismiss
-// remembered in localStorage. Ported byte-for-byte in behavior from the old
-// app.js's handoff machinery, restructured into state.js mutators + a
-// webjsx render fn.
-
 import * as webjsx from 'webjsx';
 import { Alert } from 'ds/components/content.js';
 import { Btn } from 'ds/components/shell.js';
@@ -20,20 +15,11 @@ let handoffSeen = (() => {
 })();
 function rememberHandoff(id) {
   handoffSeen.add(id);
-  try { localStorage.casey_handoff_seen = JSON.stringify([...handoffSeen].slice(-500)); } catch { /* storage unavailable */ }
+  try { localStorage.casey_handoff_seen = JSON.stringify([...handoffSeen].slice(-500)); } catch {  }
 }
 
 const hasHandoff = (c) => String(c.tags || '').split(',').map(s => s.trim()).includes('needs-human');
 
-// Captured once at module-eval time (page load) -- NOT a live read of
-// document.title on every countTitle() call, since setInboxBadge/flashTitle
-// themselves write document.title and would otherwise capture their own
-// prior write as the new "base" on the next tick. setBaseTitle() is the
-// deliberate, single update path: main.js's loadCaseyConfig() calls it once
-// dashboard_ui.brand is known (config isn't available yet at this module's
-// own eval time, only after an async fetch resolves), so a config-driven
-// brand and this module's own inbox-count-badge/flash-title logic can
-// coexist without one stomping the other.
 let baseTitle = (typeof document !== 'undefined') ? document.title : 'casey';
 export function setBaseTitle(title) {
   baseTitle = title;
@@ -44,7 +30,7 @@ function countTitle() { return inboxCount > 0 ? '(' + inboxCount + ') ' + baseTi
 export function setInboxBadge(n) {
   inboxCount = n || 0;
   if (!titleTimer) document.title = countTitle();
-  try { if (navigator.setAppBadge) { inboxCount > 0 ? navigator.setAppBadge(inboxCount) : navigator.clearAppBadge(); } } catch { /* unsupported */ }
+  try { if (navigator.setAppBadge) { inboxCount > 0 ? navigator.setAppBadge(inboxCount) : navigator.clearAppBadge(); } } catch {  }
 }
 function flashTitle(on) {
   if (on) {
@@ -70,8 +56,8 @@ function handoffSound() {
       g.gain.exponentialRampToValueAtTime(0.0001, e);
       o.connect(g); g.connect(ac.destination); o.start(s); o.stop(e + 0.02);
     });
-    setTimeout(() => { try { ac.close(); } catch { /* already closed */ } }, 700);
-  } catch { /* audio blocked until interaction -- silent fail is correct */ }
+    setTimeout(() => { try { ac.close(); } catch {  } }, 700);
+  } catch {  }
 }
 
 let firstLoad = true;

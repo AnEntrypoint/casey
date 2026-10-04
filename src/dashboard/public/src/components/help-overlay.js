@@ -1,23 +1,3 @@
-// HelpOverlay -- full reference / keyboard shortcuts, reopenable via `?`.
-// This is the CANONICAL implementation of the modal dialog the dialog-shaped
-// overlays (help/onboarding/skills/settings/stats) share via dialog-shell.js's
-// Dialog. Beyond the static reference card it also renders the full glossary
-// (ux-onboarding-contextual-help: a static list here backs a user who wants to
-// read every term at once, while Term() elsewhere backs in-place hover/focus
-// lookup) and an explicit i18n-scope note (ux-i18n-clarify-scope).
-//
-// EVERY CONTROL NAMED BELOW EXISTS AND IS SPELLED THE WAY IT RENDERS. That is
-// not a style note, it is the contract: an operator reading this screen goes
-// looking for the word it gave them. This card previously sent them after a
-// yellow dot (the map legend has no yellow), an "Aa" button (there is none),
-// a name box at the top right (identity comes from the session, never an
-// assertion), and four case-page buttons under names none of them carry. If a
-// control is renamed, rename it here in the same commit or delete the line.
-//
-// The product name comes from dashboard_ui.brand, like every other
-// operator-facing surface -- "casey" is the software this is built on, not
-// the name of the deployment somebody is logged into.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Lede } from '/design/src/components/shell/atoms.js';
 import { Dialog } from './dialog-shell.js';
@@ -33,24 +13,16 @@ export function helpSeen() {
 }
 
 export function markHelpSeen() {
-    try { localStorage.setItem(KEY, '1'); } catch { /* never blocks close */ }
+    try { localStorage.setItem(KEY, '1'); } catch {  }
 }
 
 function KeyRow({ k, desc }) {
     return h('li', { key: k }, h('kbd', { class: 'ds-kbd' }, k), ' - ', desc);
 }
 
-// A glossary key as a reader sees it. Only the acronyms need naming; everything
-// else is a real word once the underscores are spaces.
 const TERM_WORD = { sla: 'SLA', external_id: 'external ID' };
 function termWord(term) { return TERM_WORD[term] || term.replace(/_/g, ' '); }
 
-/**
- * @param {Object} props
- * @param {boolean} props.open
- * @param {Function} props.onClose
- * @param {Function} [props.onShowOnboarding] - "Show me the first-shift steps again" callback.
- */
 export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
     const brand = brandName();
     return Dialog({
@@ -103,11 +75,6 @@ export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
 
             h('h3', { key: 'h-gloss' }, 'Words this screen uses'),
             h('dl', { key: 'dl-gloss', class: 'ds-help-glossary' },
-                // The key is a snake_case identifier, so it is de-snaked for
-                // reading -- but a bare replace() rendered the one acronym in
-                // the list as "sla", which is not a word and is not how the
-                // glossary entry itself, or the rest of the dashboard, writes
-                // it.
                 ...Object.entries(glossary()).map(([term, explain]) => [
                     h('dt', { key: 'dt-' + term }, termWord(term)),
                     h('dd', { key: 'dd-' + term }, explain),

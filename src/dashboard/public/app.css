@@ -1,74 +1,13 @@
-/* casey dashboard -- SURVIVING bespoke rules only. Everything with a real
-   design-SDK primitive equivalent (button/panel/input/table/pill/chip/badge,
-   sidebar/topbar chrome, overlay backdrop pattern, theme variables, z-index
-   ladder) was deleted in the webjsx/AppShell rewrite -- those come from
-   /design/colors_and_type.css + /design/app-shell.css + /design/editor-
-   primitives.css. What remains here has no SDK-owned equivalent: the
-   two-pane case-list/case-detail split, the casey-local Dialog shell, case
-   list/inbox/row/bulk-bar/pagination markup, health-chip/draft-banner tone
-   colors, map legend + Leaflet overrides, print CSS, onboarding/help/skills
-   overlay geometry, and the account/notifications/toast/login/handoff
-   chrome. Every color/radius/z-index below resolves through a design token
-   var() -- zero raw hex/rgb, per the lint-tokens CI gate. */
-
-/* The root element carries the ground as well as body. Without it the browser
-   paints its own default white behind the page for the whole time between
-   first paint and the module graph's first render -- a full-brightness flash
-   on a dark device, on a link where that gap is measured in seconds.
-   It keys off data-casey-theme rather than --bg, because the kit's theme.js
-   sets <html data-theme="auto"> on load, and --bg under "auto" resolves to the
-   DEVICE preference: with a stored dark theme on a light device that painted a
-   white root behind a dark app. --paper/--ink are base tokens, defined once
-   under .ds-247420 and not re-bound per theme, so naming them here is a token
-   reference and not a second definition of the ground. */
-
-/* ---- SEAMS ARE GROUND, NOT HAIRLINES ------------------------------------
-   Measured on the running page, the app drew four one-sided borders, and the
-   grounds either side of three of them were IDENTICAL white -- so the line was
-   the only thing separating a region from its neighbour, which is precisely
-   the job a ground tier does without drawing anything. connection-banner.js
-   already states the rule for its own band ("a one-sided border is decoration
-   the ground already does better"); this applies it to the frame.
-
-   The fourth was a real defect rather than a style choice: .case-list-pane
-   drew a border-right and .case-detail-pane a border-left, so the seam BETWEEN
-   the two panes carried two hairlines stacked into one 2px line, darker than
-   either rule intended and darker than every other edge on the screen.
-
-   The tier is the whole mechanism now: chrome bands and docked rails sit on
-   --bg-2, the content they frame sits on --bg. Nothing draws an edge, so no
-   edge can double, and a theme that changes its grounds carries the frame with
-   it instead of leaving a hardcoded rule behind. Scope-prefixed because the
-   kit's own .app-chrome/.app-status rules are prefixed and would otherwise win
-   whatever order this sheet loads in. */
 .ds-247420 header.app-chrome { border-bottom: none; background: var(--bg-2); }
 .ds-247420 footer.app-status { border-top: none; background: var(--bg-2); }
-/* The kit tints .app-status .item:first-of-type with --accent-ink
-   unconditionally -- fine for a highlighted lead item, but the first item
-   here is StatusBar's plain report count ("36 report(s) loaded"), not an
-   alert or a call to action. In the herd theme --accent-ink (#B4600F) on
-   --bg-2 (#F4F5F6) measures 4.16:1, under WCAG AA's 4.5:1 floor for 14px
-   text, and the amber tone itself reads as a warning on a neutral fact --
-   witnessed live via headless contrast audit. Overriding to --fg-2 keeps the
-   report count legible outdoors on a phone and tonally neutral in every
-   theme, without touching the kit's own first-of-type accent for callers
-   that actually want it. */
+
 .ds-247420 .app-status .item:first-of-type { color: var(--fg-2); }
 html.ds-247420[data-casey-theme="herd"] { background: var(--paper); }
 html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
-/* The kit's herd-ink preset lifts --warn to a light red fill (#FF5C6B) but never sets its paired
-   --warn-fg, so destructive buttons kept white text at 3.0:1 (axe color-contrast). --ink on that fill
-   is 6.3:1, the pairing the kit's own github-dark preset already makes. Kit follow-up: set it in the preset. */
+
 .ds-247420[data-theme="herd-ink"] { --warn-fg: var(--ink); }
 .ds-app-root, .ds-app-surface { display: flex; flex-direction: column; min-height: 100vh; }
 
-/* casey mounts the shell as a full standalone page, never inside the SDK's
-   .fd-root windowed-WM embed -- so the AppShell's own topbar.css .app rule
-   (no explicit width outside .fd-root, by design per that file's comment)
-   collapses to 0 width at desktop and the whole shell renders blank. Give it
-   the same 100% stretch .fd-root would have provided. */
-
-/* ---- two-pane case list / case detail split (architecture spec section 5) */
 .app-two-pane { display: flex; width: 100%; height: 100%; min-height: 0; }
 .app-two-pane > .case-list-pane { flex: 0 0 380px; background: var(--bg-2); overflow: auto; min-height: 0; }
 .app-two-pane > .case-detail-pane { flex: 1; overflow: auto; min-height: 0; }
@@ -79,100 +18,44 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .app-two-pane.has-active > .case-detail-pane { position: fixed; inset: 0; z-index: var(--z-raised); background: var(--bg); }
 }
 
-/* ---- map-first home view (BLUF, map-command-center.js) -- the map is the
-   dominant pane, and the second pane is ONE rail that shows the worst-first
-   queue when nothing is open and the case detail when something is (see
-   map-command-center.js's own header for why that is one rail and not two
-   columns). Same class names as the case-list split above so both layouts
-   share its mobile-stack/has-active rules unchanged. */
-/* The map pane must NOT scroll: .app-two-pane's generic `overflow:auto` is
-   what let the canvas sit below the fold under the stat/feed/filter stack.
-   Here the shell fills the pane exactly and the rail beside it does its own
-   scrolling, so the map itself is always the full ground plane. */
 .app-two-pane-map > .case-list-pane { overflow: hidden; display: flex; min-height: 0; flex: 1 1 0; }
-/* The rail is DOCKED -- an in-flow pane with an opaque background and a single
-   hairline, never a floating rounded card over the canvas. A floating card
-   leaves a strip of map you can see but cannot reliably click, reads as
-   dismissible, and (the measurable failure) hides pins behind itself. */
-/* 320px floor, not 300: nothing measured across the shipped situational-
-   awareness consoles docks a rail narrower than that (USGS 320, Watch Duty 375,
-   Liveuamap 395), and below it the worst-first rows start wrapping their
-   reason text into three lines. */
+
 .app-two-pane-map > .case-detail-pane {
   flex: 0 0 clamp(320px, 26vw, 400px); max-width: clamp(320px, 26vw, 400px);
   min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg-2);
 }
-/* The map/list toggle is phone-only chrome: above the breakpoint both panes are
-   on screen. Left displayed, it is a flex child of the map row and takes 175px
-   of the map's width (measured at 1440x900). */
+
 .app-two-pane-map > .ds-pane-toggle { display: none; }
 
-/* Phone: ONE pane at a time, not a split. An earlier version stacked them with
-   the map floored at 55dvh, which gives a 844px-tall phone half a map -- too
-   small to read a rural pin field -- AND a cramped list, rather than a usable
-   one of either. Measuring the canonical operational console at this width
-   (USGS's earthquake map, 390x844) showed the same conclusion in shipped form:
-   it collapses to one pane behind a list/map toggle.
-
-   display:none on the hidden pane does NOT remount Leaflet -- the canvas
-   element persists, so map-panel.js's live-container guard leaves it alone and
-   the ResizeObserver in map-leaflet.js calls invalidateSize when it comes back.
-   Viewport and layers survive the switch. */
 @container (max-width: 900px) {
   .app-two-pane-map > .ds-pane-toggle {
     display: flex; margin: var(--space-2) var(--space-3); align-self: flex-start; flex: 0 0 auto;
   }
   .app-two-pane-map > .case-list-pane,
   .app-two-pane-map > .case-detail-pane { flex: 1 1 auto; min-height: 0; max-width: none; }
-  /* Stacked at this width, so the tint that separates the two columns side by
-     side would read as an unexplained grey block instead. */
+
   .app-two-pane-map > .case-detail-pane { background: var(--bg); }
   .app-two-pane-map.m-map > .case-detail-pane { display: none; }
   .app-two-pane-map.m-list > .case-list-pane { display: none; }
-  /* An open case still takes over the whole screen with its own worded back
-     control (.has-active, above) -- the toggle is never the only way out of a
-     case, and the case never hides behind the map/list choice. */
+
   .app-two-pane-map.has-active > .ds-pane-toggle { display: none; }
   .app-two-pane-map.has-active.m-map > .case-detail-pane { display: flex; }
 }
 
-/* ---- buy the map its width back from the chrome (is-map-home) ----------
-   Measured live at 1440x900 before these two rules: the canvas held 702 of
-   1440px, 49% of the width, against the ~78% the operational consoles this
-   layout follows give their map (USGS's earthquake console docks its map to
-   the whole residual area beside a 320px list). The entire difference was the
-   256px design-SDK sidebar plus the main region's own padding -- roughly 110px
-   of gutter on a view whose one job is to show a map.
-
-   Scoped to the map home view only: on the case list, the standard sidebar
-   width and the main region's padding are exactly right, and this must not
-   quietly restyle the whole app.
-
-   The nav stays visible rather than collapsing to an icon rail: the audience
-   is mixed-literacy field/AHT staff (the reason the rail's back control is a
-   worded button and not a chevron), and a nav of unlabelled glyphs would trade
-   map width for exactly the legibility this deployment cannot spend. */
 .ds-app-root.is-map-home { --sidebar-width: 208px; }
 .ds-app-root.is-map-home .app-main { padding: 0; }
 
-/* ---- map-first shell: the canvas IS the pane -------------------------- */
 .ds-map-shell { position: relative; flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
-/* Beats the generic `.ds-map-canvas { height: min(70vh,640px) }` above: in
-   this layout the canvas is sized by the pane, not by a viewport fraction.
-   Painted with a ground colour so the box exists before tiles land. */
+
 .ds-map-shell > .ds-map-canvas {
   position: absolute; inset: 0; height: auto; width: auto;
   border: none; border-radius: 0; z-index: var(--z-base); background: var(--bg-2);
 }
-/* One pointer-transparent chrome layer. WITHOUT pointer-events:none an inset:0
-   wrapper swallows every drag and the map reads as frozen; children opt back
-   in individually. */
+
 .ds-map-chrome { position: absolute; inset: 0; z-index: var(--z-raised); pointer-events: none; }
 .ds-map-chrome > * { pointer-events: auto; }
-/* The legend is the ONE thing allowed to sit on the canvas besides the error
-   alert -- it is the key to every symbol on screen, so hiding it behind a
-   toggle would mean the map cannot be read without a click. */
+
 .ds-map-chrome > .ds-map-legend {
   position: absolute; left: var(--space-3); bottom: var(--space-3);
   max-width: 260px; max-height: 40%; overflow-y: auto; margin: 0;
@@ -183,130 +66,67 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   left: 50%; transform: translateX(-50%); max-width: calc(100% - 2 * var(--space-4));
 }
 
-/* ---- the rail ---------------------------------------------------------- */
 .ds-map-rail, .ds-rail-stack { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
-/* THE REAL BUG (found stress-testing with a seeded case whose detail body ran
-   thousands of px): .app-two-pane-map > .case-detail-pane is overflow:hidden
-   (deliberately -- the QUEUE view's own .ds-rail-head/.ds-rail-body pair does
-   its own internal scrolling inside that clip). But when a case is OPEN,
-   map-command-center.js renders .ds-rail-stack > [.ds-rail-back,
-   CaseDetailView] directly into that same clipped pane, and neither of those
-   declares its own overflow-y -- so the case detail has NO scroll mechanism
-   at all in the map-first view. Below the first ~800px (a whole case's
-   report/progress/timeline/reply-box/fields-editor, routinely 3000-7000px
-   per case-detail-view.js's own measured comment) was not just hard to
-   reach, it was structurally UNREACHABLE by mouse wheel/touch/keyboard --
-   JS-driven scrollTop still "worked" (which is what made this easy to miss:
-   it moves the scroll position even under overflow:hidden), but no real
-   operator drives the page that way. Giving the stack itself the scrolling
-   role (the same shape .ds-rail-body already uses for the queue) is the fix;
-   .ds-rail-back's sticky rule above only does anything once this exists. */
+
 .ds-rail-stack { overflow-y: auto; overscroll-behavior: contain; scroll-padding-top: var(--space-6); }
-/* In the rail the case header (title, claim, contact, status, several lines) is a third of the
-   pane; left sticky it sat on top of the Back control and hid the first timeline rows. The worded
-   Back row above stays pinned; the header scrolls away with the body. */
+
 .ds-rail-stack .casey-case-header { position: static; }
 .ds-rail-head {
   position: sticky; top: 0; z-index: var(--z-raised); background: var(--bg); padding: var(--space-3);
   display: flex; flex-direction: column; gap: var(--space-2);
 }
-/* The only scrolling region in the rail. overscroll-contain stops a flick at
-   the list's end from scrolling the page behind it on a phone. */
+
 .ds-rail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
-/* Sticky for the same reason .ds-rail-head is: a case detail body routinely
-   runs several screens tall (report + progress + timeline + reply box +
-   fields editor), and .case-detail-pane is the scrolling element, not this
-   row. Without position:sticky, scrolling into that body scrolls the only
-   way out of the pane off the top -- on a phone, where this rail covers the
-   map entirely, that leaves no way back to the list short of a manual
-   scroll-up. Measured live on a seeded stress case: .case-detail-pane
-   scrollHeight 7102px vs clientHeight 820px, and "Back to the list" was
-   fully off-screen by the halfway scroll point. */
+
 .ds-rail-back {
   position: sticky; top: 0; z-index: var(--z-raised); background: var(--bg-2);
   padding: var(--space-2) var(--space-3);
 }
-/* Same fix, same reason, for the plain (non-map) case list's own detail pane:
-   the back control is the first child of .casey-detail-pane, the real scroll
-   container, and would otherwise scroll away like .ds-rail-back above. */
+
 .casey-back-btn { position: sticky; top: 0; z-index: var(--z-raised); }
-/* The kit's Btn link variant is transparent (.ds-247420 .btn-link sets background: none), so a
-   sticky one is measured against whatever scrolls beneath it: over a grey log row or field note
-   the link text fell to 4.16:1. An opaque page ground keeps it at its own contrast. Kit primitive
-   tried: Btn variant 'link' as is; the scope prefix is needed to outrank the kit's own rule. */
+
 .ds-247420 .casey-back-btn { background: var(--bg); }
-/* A real word with a real hit target, never a bare chevron. */
+
 .ds-rail-disclosure > summary {
   cursor: pointer; padding: var(--space-3); font-weight: 600;
   font-size: var(--fs-micro); min-height: 2.75rem; display: flex; align-items: center;
 }
 .ds-rail-disclosure > summary:hover { background: var(--bg-2); }
-.ds-rail-disclosure > summary:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; } /* inset: the summary sits flush in a clipped rail */
+.ds-rail-disclosure > summary:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
 .ds-rail-disclosure-body { padding: var(--space-3); }
 .ds-rail-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
 .ds-app-surface h2.ds-rail-title, .ds-rail-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 700; }
 .ds-rail-head .ds-map-updated { font-size: var(--fs-micro); color: var(--fg-2); margin: 0; }
 
-/* The time window (rail head) and the map/list switch (phone) are the kit's
-   FilterPills; only the rail lets the group take the row's spare width. */
 .ds-rail-controls { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .ds-rail-controls .ds-filter-pills { flex: 1 1 auto; }
 
-/* Filter chips (FilterChip/PillButton): the count IS the control, drawn as the kit's
-   .ds-filter-pill. Only the count's weight and the zero treatment are casey's -- a
-   zero still renders ("nothing needs a person" is information) and only stops
-   inviting a click. */
 .ds-filter-pill .ds-fchip-n { font-weight: 700; margin-right: var(--space-1); }
-.ds-247420 .ds-filter-pill.is-empty { color: var(--fg-3); } /* muted ink, not opacity: opacity .55 measured 3.15:1 (axe color-contrast); --fg-3 is AA by the kit's own token audit */
-/* Kit follow-ups, kept local until the kit takes them: the "New" stage pill and chip draw their text in
-   --sky (3.96:1 / 3.56:1, axe color-contrast), and a danger menu item ("Log out everywhere")
-   draws its label in the --danger FILL red (3.65:1 light, 3.49:1 dark) where --danger-ink exists. */
+.ds-247420 .ds-filter-pill.is-empty { color: var(--fg-3); }
+
 .ds-247420 :is(.ds-filter-pill, .chip).tone-live { color: color-mix(in oklab, var(--sky) 70%, var(--fg)); }
 .ds-247420 .is-danger > .ds-dropdown-label { color: var(--danger-ink); }
-/* The kit sets the "Done" stage pill's text in --green-deep (#133F10) with no dark-theme counterpart, so on the dark
-   theme it is 1.05:1 against the dark pill (axe color-contrast) as soon as one report is done. --green is the
-   dark theme's readable green. Kit primitive tried: FilterPills' `tone` prop, which only picks the class. */
+
 .ds-247420[data-theme="herd-ink"] .ds-filter-pill.tone-success { color: var(--green); }
 
-/* The kit's SearchInput is content-sized (303px), which clipped every placeholder here ("Search a
-   reference or what it is a..."). Let it take the room its container has, up to a readable line. */
 .ds-247420 .ds-search-field { width: 100%; max-width: 36rem; }
 .ds-247420 .ds-search-field .ds-search-input { flex: 1 1 auto; min-width: 0; }
 
-/* Windows High Contrast: the kit gives form fields a tonal fill and no border, and its forced-colors
-   baseline (border on input/textarea/select) loses to the field rules, so every text box vanished. An
-   outline is not touched by those rules; zero specificity so the kit's :focus-visible ring still wins. */
 @media (forced-colors: active) {
   :where(.ds-247420 input:not([type=checkbox]):not([type=radio]), .ds-247420 textarea, .ds-247420 select) { outline: 1px solid ButtonBorder; outline-offset: -1px; }
 }
 
-/* Touch floor. The kit gives .btn/.btn-primary/.btn-ghost a 44px minimum for coarse pointers, but its
-   .btn-sm rule (0,2,0, min-height fixed at 28px) outranks it, and text fields, selects, summaries and
-   link buttons are not in it at all: measured on a phone emulation, 28px buttons and 34px fields. Kit
-   follow-up: the floor should beat .btn-sm. */
 @media (pointer: coarse) {
   .ds-247420 :is(.btn, .btn-primary, .btn-ghost, .btn-sm, .btn-link, summary, select, input:not([type=checkbox]):not([type=radio]):not([type=hidden])),
   .ds-247420 .btn-sm.btn-primary, .ds-247420 .btn-sm.btn-ghost { min-height: 44px; }
-  /* The kit's touch block pads every <button> 12px 20px, which crushed the fixed-size icon-only nav toggle to a dot
-     (its 16px icon was left 2px of room) on a real phone. */
+
   .ds-247420 .app-side-toggle, .ds-247420 .app-status-toggle { padding: 0; }
 }
 
-/* Whole-row tap target on the queue -- the most-used control in the view. */
 .ds-rail-body .ds-map-attention-feed .tcase { min-height: 4rem; padding: var(--space-3); }
-/* The "Show all N" row action is a kit ghost Btn (QueueMore); this is only its
-   spacing inside the rail. */
+
 .ds-queue-more { margin: var(--space-2) var(--space-3); }
 
-/* ---- panel-swap chrome: a content-swap panel is a full PAGE ------------
-   ONE treatment for all seven non-spatial panels (app-view.js's PanelSwap):
-   a head carrying the worded escape and the page's own name, over a body
-   that scrolls under it. The head is STICKY because these are long reading
-   surfaces -- a contacts or activity list runs well past a 390px phone's
-   fold, and the head holds the only way back, so scrolling it off screen
-   would strand the operator exactly the way the untitled placeholder shell
-   used to. Wraps rather than squeezing: on a narrow screen the escape keeps
-   its full label on the first line and the title takes the second. */
 .ds-panel-swap { display: flex; flex-direction: column; min-height: 0; }
 .ds-panel-swap-head {
   position: sticky; top: 0; z-index: var(--z-raised);
@@ -319,33 +139,16 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   overflow-wrap: anywhere;
 }
 .ds-panel-swap-body { min-height: 0; padding: var(--space-4); }
-/* The one gutter in this stack casey owns. Four containers nest here --
-   .app-main, this body, the kit Panel inside it and that panel's own body --
-   and each was adding its own horizontal inset, which on a 375px phone left
-   221px of content inside 154px of gutter. The kit collapses its own three at
-   the same 480px breakpoint (deps/design app-shell/responsive.css); this
-   collapses casey's, so the page keeps exactly one horizontal gutter, the
-   .app-main page inset. The head loses its inset with the body so the sticky
-   title stays on the same left axis as the content under it. Vertical padding
-   is untouched -- it is this surface's own rhythm, not a repeated gutter. */
+
 @media (max-width: 480px) {
   .ds-panel-swap-body { padding-left: 0; padding-right: 0; }
   .ds-panel-swap-head { padding-left: 0; padding-right: 0; }
 }
 
-/* ---- topbar action row (the verbs that used to sit in the nav) --------- */
-/* On a narrow screen the rare verbs give way first -- the map and the queue
-   are what a phone operator came for, and Export/Sweep/Refresh are desk work.
-   They stay reachable on any screen wide enough to do them. */
 @container (max-width: 900px) {
   .ds-action-row .ds-action-rare { display: none; }
 }
 
-/* ---- casey-local Dialog primitive (dialog-shell.js) --------------------
-   Not an SDK component -- the SDK's own VideoLightbox/full-screen backdrop
-   pattern re-implemented once here so every dialog-shaped surface (help,
-   onboarding, skills, settings, stats, case-detail dialogs) shares one
-   accessible modal shell. */
 .ds-dialog-backdrop {
   position: fixed; inset: 0;
   background: color-mix(in oklab, var(--ink) 55%, transparent);
@@ -372,10 +175,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   gap: var(--space-3);
   margin: 0 0 var(--space-2);
 }
-/* The kit gives every h2 under .ds-app-surface the --fs-h2-app rung, at a
-   specificity a lone .ds-dialog-title cannot reach -- so a dialog title read
-   as loud as a page title. Same tag-qualified shape the other headings in this
-   file use, which is what lets them win at all. */
+
 .ds-app-surface h2.ds-dialog-title, .ds-dialog-title { margin: 0; font-size: var(--fs-h3-app); }
 .ds-dialog-x, .ds-dialog-close {
   background: transparent; border: 0; cursor: pointer; padding: var(--space-1);
@@ -397,51 +197,21 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-help-glossary dt { font-weight: 600; margin-top: var(--space-2); text-transform: capitalize; }
 .ds-help-glossary dd { margin: 0 0 0 var(--space-2); color: var(--fg-2); }
 
-/* ---- contextual glossary term (term.js) -------------------------------- */
 .ds-term { border-bottom: 1px dotted var(--fg-3); cursor: help; }
 
-/* ---- onboarding quick-start steps -------------------------------------- */
 .ds-onboard-steps li { margin: var(--space-2) 0; }
 
-/* ---- health notices (health-notices.js) --------------------------------- */
-/* A full-width band in the banner stack, styled exactly like the offline
-   banner (.ds-conn-banner) because it is the same class of statement: the
-   system itself, not the work. No pill, no dot, no disclosure trigger -- those
-   went with the appbar chrome, and health-notices.js's header says why. The
-   tint comes from an inline style so error and warning share one rule here. */
 .ds-health-notice { width: 100%; }
 
-
-/* ---- at-risk-by-case-type line (metrics-panel.js) ------------------------
-   A sentence, not a pill strip: the section heading above it already says
-   these are at risk and against which reply target, so pill chrome round a
-   short "type count" list adds shape without adding a fact. */
 .ds-risk-strip { margin-top: var(--space-2); color: var(--fg); }
 .ds-risk-strip b { font-weight: 700; }
 
-/* ---- settings panel: tunable thresholds (settings-panel.js) ------------- */
 .ds-settings-panel { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-1) 0; }
 .ds-settings-actions { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-2); }
 .ds-settings-state { font-size: var(--fs-micro); color: var(--fg-3); }
 
-/* Four rule blocks were removed from here, all verified to have no emitter
-   anywhere in the client tree: the draft banner (.draft-banner/.ds-draft-*),
-   the health/breach chip (.health-chip/.ds-breach-chip), the step indicator
-   (.ds-step-*) and the visit-critical fill bar (.ds-fill-*).
-   The step indicator is the instructive one: case-detail DOES render a
-   progress indicator, but progress.js emits .casey-progress-* -- so this was
-   a superseded earlier implementation kept alive only by its stylesheet.
-   Each block also carried TWO names for the same element (an unprefixed
-   legacy class and a ds- alias) and neither was ever emitted, which is the
-   tell that they were written defensively rather than against real markup. */
-
-/* ---- case list / inbox / row / bulk-bar -------------------------------- */
 .case-list-view { display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; }
 
-/* Stage quick-filter pill color distinction rides entirely on the SDK's own
-   tone-accent/tone-warn/tone-live/tone-sun/tone-success/tone-dim classes
-   (format.js's stageTone() already emits these real SDK tone names) -- no
-   casey-local override needed here. */
 .ds-case-filters-search { position: relative; flex: 2 1 220px; }
 
 .ds-case-list-scroll { overflow-y: auto; }
@@ -450,29 +220,17 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-case-list-empty { padding: var(--space-5) var(--space-4); color: var(--fg-3); font-size: var(--fs-micro); }
 
 .case-row { display: flex; align-items: flex-start; gap: var(--space-2); padding: var(--space-3); cursor: pointer; min-height: 64px; transition: background var(--dur-snap) var(--ease), box-shadow var(--dur-snap) var(--ease); }
-/* Native checkbox has no square guarantee across browsers/zoom levels and
-   defaults to baseline-ish vertical alignment that sits high relative to
-   the bold case-row-ref text next to it -- lock the box shape and nudge it
-   down to the first text line's optical center. */
+
 .case-row-cbwrap { display: inline-flex; align-items: flex-start; justify-content: center; flex: 0 0 auto; cursor: pointer; }
 .case-row-cb { width: 24px; height: 24px; aspect-ratio: 1; flex: 0 0 auto; margin: var(--space-half) 0 0; accent-color: var(--accent); }
 .case-row:hover { background: var(--bg-2); }
 .case-row.active { background: var(--bg-2); box-shadow: inset 3px 0 0 var(--accent); }
 .case-row.selected { box-shadow: inset 3px 0 0 var(--accent-ink); }
-/* j/k keyboard triage's currently-highlighted row (state._focusRowId) -- an
-   outline distinct from .active's inset accent bar so a keyboard user can
-   tell "the row I'm about to open with Enter" apart from "the row currently
-   open in the detail pane" when they differ. */
+
 .case-row.kbd-focused { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
 .case-row:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
 .case-row-body { flex: 1; min-width: 0; }
-/* One block per element, deliberately. .case-row-top and .case-row-ref were
-   each declared twice, ~80 lines apart: once here from before the case-list
-   BLUF restructure, and again below it where the ref was demoted from the
-   row's lead to its secondary line. The later block won on colour and
-   font-size but could not undo `font-weight: 600` declared up here, so the
-   demoted ref rendered small, muted AND still bold -- half-demoted, which is
-   not a look anyone chose. The intended values now live in one place. */
+
 .case-row-top {
   display: flex; align-items: center; gap: var(--space-2);
   flex-wrap: wrap; row-gap: var(--space-1); min-height: 24px;
@@ -488,7 +246,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-guardrail-toggle-btn { display: block; margin-top: var(--space-1-75); }
 .ds-guardrail-expanded { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 
-
 .triage { background: var(--bg-2); border-radius: var(--r-1); }
 .triage-rows { display: contents; }
 .triage-head { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-1); }
@@ -497,46 +254,13 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .tcase:hover { background: var(--bg-2); }
 .tcase.active { outline: var(--focus-w) solid var(--accent); outline-offset: -2px; }
 .tcase:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
-/* The row's LEAD. map-panel.js puts the case subject here and the ref in
-   .tcase-meta below it, so this is the case content and it takes the content
-   rung -- it rendered a rung under its own ref, which made the subject of the
-   row the smallest text on a phone-first surface. */
+
 .tcase-why { font-size: var(--fs-sm); font-weight: 600; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; overflow-wrap: anywhere; }
 .tcase-meta { font-size: var(--fs-micro); color: var(--fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tcase-breach-detail { font-size: var(--fs-micro); color: var(--fg-3); }
-/* The ranking reason is what is said ABOUT the report, so it sits with the ref
-   rather than above the subject. It carried no rule at all and inherited 16px,
-   which made the quietest line in the row its largest. */
+
 .tcase-reason { font-size: var(--fs-micro); color: var(--fg-3); margin-top: var(--space-1); }
-/* 3px inset stripe matches the same left-edge accent idiom on
-   .case-row.active/.selected elsewhere
-   in this file -- not --bw-chunk (4px), a differently-scoped border-width token
-   used for rails/borders, not this row-accent idiom. (Named by selector rather
-   than by line number: the numbers this comment used to carry, 254-255 and
-   447-450, had drifted about 215 and 440 lines out of date, which is what a
-   line reference in a 1200-line sheet does on its second edit.) */
-/* The stripe is INSET FROM THE ROW'S TOP AND BOTTOM, and that is the whole
-   point of drawing it as a pseudo-element instead of the inset box-shadow it
-   used to be. A full-height stripe on stacked rows with no gap between them
-   merges into one unbroken vertical bar: on this deployment's own rail, 18
-   consecutive "needs a person" rows rendered a single 3px red line down the
-   entire pane, which reads as a pane border rather than as per-row urgency.
-   The signal was destroyed by its own repetition -- the same failure the
-   standing-green health pills had, where a mark that never varies stops being
-   read at all.
-   Inset by --space-2 top and bottom, each row's mark is separate -- but on a
-   real "needs a person" queue almost every row shares the SAME band, and a
-   near-full-height mark repeated down consecutive same-colour rows with only
-   an 8px gap between them still reads, on the rendered screenshot, as one
-   continuous rule rather than discrete per-row accents (measured: 8px gaps
-   against ~80-100px marks read as a hairline border with tick marks, not a
-   row of flags). Pinned to a short, fixed-height flag at the row's top
-   instead of spanning it fixes the same failure this comment already names
-   ("the signal was destroyed by its own repetition") without removing the
-   channel: a short mark repeated down a column reads as a column of tags,
-   never as an edge, at any row height or gap. Urgency still travels in words
-   too (.tcase-why's lead sentence and the row's aria-label), so the colour
-   remains an accelerator rather than the only carrier. */
+
 .tcase { position: relative; }
 .tcase.heat-3::before, .tcase.heat-2::before, .tcase.heat-1::before {
   content: '';
@@ -549,27 +273,12 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .tcase.heat-3::before { background: var(--danger); }
 .tcase.heat-2::before { background: var(--warn); }
 .tcase.heat-1::before { background: var(--border); }
-/* A queue row that someone else holds is not dimmed with opacity (it would take the row's text under 4.5:1);
-   the holder's name is on its owner chip. */
 
 @media (prefers-reduced-motion: reduce) { .case-row, .tcase { transition: none; } }
 
-/* ---- BLUF restructure of the case-list home view ------------------------
-   Added as one block by the case-list BLUF pass. Nothing here touches the map
-   shell, the rail, the legend, the markers or the ds-map-* / casey-linked-*
-   regions of this file; it styles the case-list home view only, and it reuses
-   FilterChip / .ds-filter-pills / QueueMore from the map rail above rather than
-   restating them, because the case list is now applying the
-   same two ideas those classes exist for: a count that IS its own filter, and
-   a cap that names its true total on the control that lifts it. */
-
-/* The queue is the first block in the view now, so it carries the weight the
-   deleted <h1> brand used to take. */
 .case-list-view > .triage { border: 1px solid var(--border); }
 .ds-app-surface .triage-head h2, .triage-head h2 { margin: 0; font-size: var(--fs-h4-app); font-weight: 700; }
 
-/* The list's own section head: what this section is, and how much of it is
-   actually loaded, stated BEFORE the rows instead of under them. */
 .ds-cl-section-head {
   display: flex; align-items: baseline; justify-content: space-between;
   gap: var(--space-3); flex-wrap: wrap;
@@ -577,61 +286,32 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 .ds-app-surface h2.ds-cl-section-title, .ds-cl-section-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 700; }
 .ds-cl-range { font-size: var(--fs-micro); color: var(--fg-2); }
-/* The match count only exists while a filter is on, and it is a different fact
-   from the cap beside it, so it is toned as the live one of the two. */
-.ds-cl-match { font-size: var(--fs-micro); color: var(--fg); /* --accent-ink measured 4.16:1 on this surface (axe) */ font-weight: 600; }
 
-/* Tier-2 filters. Same disclosure idiom as the map rail's "Map options", so
-   the two home views hide their rarely-reached controls the same way. */
+.ds-cl-match { font-size: var(--fs-micro); color: var(--fg);  font-weight: 600; }
+
 .ds-cl-more { border-top: 0; }
 
-/* Recent searches as real, tappable chips. The control they replace was a
-   Dropdown whose whole trigger carried sr-only, i.e. a control that did not
-   exist for anyone working on a touch screen. */
 .ds-recent-label { font-size: var(--fs-micro); color: var(--fg-3); }
-.ds-recent-chip { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* a long past query must not stretch the row */
+.ds-recent-chip { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The row's lead line: what makes this one worth touching, first and largest.
-   The ref, the stage and the timestamp moved to the line under it. */
 .case-row-lead {
   font-size: var(--fs-sm); font-weight: 600; color: var(--fg);
   line-height: 1.35; overflow-wrap: anywhere;
 }
-/* .case-row-top and .case-row-ref are declared once, up with the rest of the
-   row's geometry -- see the note there for why the second copy that used to
-   sit here was a bug rather than a convenience. */
 
-/* Urgency stripe, from map-model.js's urgencyBand -- the same ladder and the
-   same three colours the queue rows above and the map's pins use, so one case
-   cannot read as urgent here and routine there. Written with :not() rather
-   than relying on source order so .active/.selected keep their accent stripe
-   regardless of where this block sits in the file. */
 .case-row:not(.active):not(.selected).band-3 { box-shadow: inset 3px 0 0 var(--danger); }
 .case-row:not(.active):not(.selected).band-2 { box-shadow: inset 3px 0 0 var(--warn); }
 .case-row:not(.active):not(.selected).band-1 { box-shadow: inset 3px 0 0 var(--border); }
 
-/* Phone: the section head stacks rather than pushing the range off the edge,
-   and the chips keep a full-size tap target. */
 @container (max-width: 900px) {
   .ds-cl-section-head { flex-direction: column; align-items: flex-start; gap: var(--space-1); }
-  /* The two count chips are the primary filters on a phone: they share the row. */
+
   .case-list-view .ds-filter-pills > .ds-filter-pill { flex: 1 1 auto; }
 }
 
-/* ---- handoff alert banner: loud, sticky, dismiss-per-case --------------- */
-/* The SDK's Alert(kind:'warn') only tints its icon (--alert-tone: --amber)
-   and leaves the background at the neutral --panel-1 in every theme, so a
-   'needs a person' alert read as gray/beige with no urgency. Override the
-   background locally to a real warm tint, using the same --warn-bg pattern
-   app.css already uses for .draft-banner/.health-chip. */
-/* No pulse: the banner is persistent until dismissed, and a permanent
-   opacity animation is fatigue rather than signal. The warm tint plus the
-   sentence in it carry the urgency. */
 .ds-handoff-banner { display: flex; align-items: center; gap: var(--space-3); cursor: pointer; }
 .ds-handoff-banner .ds-alert-warn { flex: 1; min-width: 0; }
-/* Shared by both banners: .ds-alert paints its own --panel-1 ground, which stacks
-   into a box on a box inside a wrapper that already tints a band, so the alert
-   takes the tint itself. */
+
 .ds-247420 .ds-handoff-banner .ds-alert-warn,
 .ds-247420 .ds-conn-banner .ds-alert-warn {
   background: color-mix(in oklab, var(--warn) 14%, var(--bg));
@@ -640,95 +320,34 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-handoff-banner .ds-alert-warn .ds-alert-icon { color: var(--warn); }
 .ds-handoff-banner-hide { flex-shrink: 0; }
 
-/* ---- connection-lost banner --------------------------------------------- */
 .ds-conn-banner { position: sticky; top: 0; z-index: var(--z-toast); }
-/* On the login screen the gate is a FIXED full-viewport overlay at --z-modal,
-   so a sticky banner behind it is invisible -- and that screen has no topbar,
-   no status bar and no other chrome, which makes the banner the only thing
-   that can tell an operator why the form will not submit.
 
-   Selected off the banner as a SIBLING, not off .is-gated: ConnectionBanner()
-   returns null while the link is healthy, so this only fires when there is
-   actually a banner to make room for and the ordinary login screen keeps its
-   centred form. The gate drops out of fixed positioning here and becomes the
-   flex child under the banner, so the two stack instead of overlapping --
-   .ds-app-root is already a min-height:100vh flex column. */
 .ds-conn-banner + .ds-login-gate {
   position: static;
   flex: 1 1 auto;
   min-height: 0;
 }
 
-/* ---- toast tray ---------------------------------------------------------- */
 .ds-toast-tray { position: fixed; right: var(--space-4); bottom: var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); z-index: var(--z-toast); max-width: 340px; }
 .ds-toast-item { box-shadow: var(--shadow-1); }
 
-/* ---- login gate ----------------------------------------------------------- */
 .ds-login-gate { position: fixed; inset: 0; background: var(--bg); z-index: var(--z-modal); display: flex; align-items: center; justify-content: center; padding: var(--space-4); }
 .ds-login-form { display: flex; flex-direction: column; gap: var(--space-2); background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-2); padding: var(--space-7) var(--space-6); max-width: 340px; width: 100%; box-shadow: none; }
 .ds-247420 .ds-login-brand, .ds-login-brand { margin: 0 0 var(--space-5); font-size: var(--fs-h1-app); }
-/* Error text on the login gate is TYPE, so it takes the ink companion too. */
+
 .ds-login-error { color: var(--danger-ink); font-size: var(--fs-sm); margin-bottom: var(--space-3); }
 
-/* ---- table cell overflow guard -------------------------------------------
-   The SDK's own table CSS has no overflow-wrap/word-break fallback on td
-   text (only specific components opt in). One pathological unbroken string
-   in real data (a malformed contact id concatenation, live-witnessed on the
-   Reporters panel: a single td rendering to 6100px+ wide off a ~780-char
-   colon-joined token run) blows out the whole table's column width and the
-   .ds-table-wrap's overflow-x:auto turns into a wall of blank horizontal
-   scroll instead of a readable, bounded cell. Force any table cell to break
-   at an arbitrary point once it has nowhere else to break -- normal short
-   text is unaffected, only content with zero natural wrap points is caught. */
-/* th excluded: short header words (e.g. "Source") have no pathological
-   unbroken-string risk and were wrapping mid-word (SOURC/E) under the
-   arbitrary-break rule meant only for runaway td content. */
-/* `overflow-wrap: anywhere` was the wrong half of the pair for this: it is
-   the one value that also feeds back into the cell's MIN-CONTENT width, so
-   every td reported a minimum of about one character and the table happily
-   squeezed its columns to nothing rather than admitting it was too wide.
-   `.ds-table-wrap` carries overflow-x:auto and a visible scrollbar for
-   exactly that case, and it could never engage because the table always
-   "fit". `break-word` breaks a runaway token the same way at render time
-   without collapsing the intrinsic minimum, so a table too wide for a phone
-   now scrolls inside its own box instead of shrinking its columns away. The
-   min-width is the floor under a column of short values, which break-word
-   alone does not give: min-content there is one short word, still far below
-   legible. */
 .ds-table-wrap table td { overflow-wrap: break-word; max-width: 32ch; min-width: 7ch; }
 .ds-table-wrap table th { white-space: nowrap; }
 
-/* ---- account menu trigger / notifications bell --------------------------- */
-/* Dropdown's own trigger-rewrap drops any trigger vnode's children (design-
-   SDK bug, see account-menu.js's comment on its trigger for the mechanics),
-   so the account menu trigger routes through Dropdown's other branch and
-   renders as a bare .ds-dropdown-trigger button instead of the custom
-   .ds-account-trigger class this rule used to target -- style the class the
-   SDK actually emits. */
-/* --danger-ink, not --danger: --danger is the brand red kept for FILLS and it
-   measured 3.27:1 here against the pill's tinted ground -- a WCAG AA failure on
-   the alert count, which is the one number on this screen that has to be
-   noticed. The old `var(--danger, var(--warn))` fallback never fired because
-   --danger is always defined; this one does. */
 .ds-notif-count.is-active { color: var(--danger-ink); font-weight: 600; }
 
-/* ---- related-reports cluster row / case-id pill grid --------------------- */
 .ds-cluster-row { padding: var(--space-3) 0; }
 .ds-cluster-row:last-child { border-bottom: none; }
 .ds-cluster-sub { font-size: var(--fs-micro); color: var(--fg-3); margin-top: var(--space-1); }
-/* a real column grid instead of flex-wrap so case-id pills align edge to
-   edge across rows instead of wrapping raggedly at whatever count fits. */
+
 .ds-cluster-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: var(--space-2); margin-top: var(--space-2); }
 
-/* ---- the frame's bottom line: "N need a person" (app-view.js AttentionLead)
-   Replaces the .ds-quick-start-badge rule, whose module (quick-start-badge.js)
-   is deleted: that badge was a bare unlabelled number with no click target.
-   This control is the one the whole frame leads with, so it is the LAST thing
-   to give way on a narrow screen -- it is deliberately absent from the
-   @container rule above that hides the rare verbs, and it carries a 44px
-   minimum height because the audience taps it with a thumb. Two states, told
-   by weight and colour together rather than colour alone: waiting, and clear.
-   ------------------------------------------------------------------------- */
 .ds-attn-lead {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 44px; padding: var(--space-1) var(--space-3);
@@ -740,15 +359,10 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-attn-lead:hover { background: var(--bg-2); color: var(--fg); }
 .ds-attn-lead.is-waiting {
   color: var(--danger-ink); border-color: var(--warn); font-weight: 700;
-  background: color-mix(in oklab, var(--warn) 6%, transparent); /* 12% measured 4.17:1 for --danger-ink text (axe) */
+  background: color-mix(in oklab, var(--warn) 6%, transparent);
 }
 .ds-attn-lead.is-waiting:hover { background: color-mix(in oklab, var(--warn) 12%, transparent); }
 
-/* ---- map legend + Leaflet overrides (no SDK equivalent for a tile-map) ---
-   The canvas is sized by its pane (.ds-map-shell above), never by a viewport
-   fraction. The `height: min(70vh,640px)` that used to live here sized the
-   legacy stacked map page, which is gone; so are the .ds-map-wrap/.map-wrap
-   and .map-legend/.map-filters aliases, which no module emitted any more. */
 .ds-map-canvas { overflow: hidden; }
 .ds-map-legend {
   display: flex; gap: var(--space-3); flex-wrap: wrap;
@@ -758,15 +372,9 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 .ds-map-legend-sw { display: inline-block; width: 9px; height: 9px; border-radius: var(--r-pill); margin-right: var(--space-1); vertical-align: middle; }
 .ds-map-legend-item { display: inline-flex; align-items: center; }
-/* Second legend row entry documenting the marker BORDER channel (location
-   provenance) -- a plain background swatch can't show a dashed border at
-   9px, so this one is unfilled with a visible dashed ring instead. */
+
 .ds-map-legend-sw-dashed { background: transparent; border: 2px dashed var(--fg-3); }
 
-/* ---- attention feed + map controls (map-panel.js) ----------------------- */
-/* No max-height: the feed lives in the rail, which does its own scrolling.
-   A second scroll region nested inside it produced two competing scrollbars
-   and made the "show all" control unreachable on a short viewport. */
 .ds-map-attention-feed { display: flex; flex-direction: column; }
 .ds-map-filters, .ds-map-overlays { margin-bottom: var(--space-2); }
 .ds-map-unresolved-note { font-size: var(--fs-micro); color: var(--fg-3); margin: var(--space-2) 0; }
@@ -778,36 +386,16 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 .ds-map-unresolved-row:hover { background: var(--bg-2); }
 .ds-muted { color: var(--fg-3); }
-/* No .leaflet-popup rules: a pin click selects the case into the rail and no
-   popup is ever opened (map-leaflet.js). Theming an element nothing emits is
-   how a stylesheet accumulates rules nobody dares delete later. */
-/* Leaflet and leaflet.markercluster ship FIXED backgrounds that no theme can
-   reach -- the cluster bubbles are stock pastel fills (#6ECC39 green, #F0C20C
-   amber, #F18017 orange) and the zoom/attribution controls are white -- while
-   their text colour is inherited and therefore DOES follow the theme. In the
-   dark theme that inverted into unreadable pairings, measured live: the cluster
-   COUNT at 2.03:1 on green and 1.69:1 on amber, and the zoom controls and
-   attribution at 2.19:1 (accent orange on white). A cluster count is not
-   decoration on a disease map -- it is how many reports are stacked at that
-   point. --ink is a base token no theme overrides, so pinning to it holds in
-   both directions; this is the same call --accent-fg makes by being black on
-   the brand orange rather than white. */
+
 .ds-247420 .marker-cluster div,
 .ds-247420 .leaflet-bar a,
 .ds-247420 .leaflet-control-attribution,
 .ds-247420 .leaflet-control-attribution a { color: var(--ink); }
-/* "Not refreshing" is a warning, not a caption, so it stops reading like the
-   ordinary timestamp it sits in place of. */
+
 .ds-map-updated.is-stale { color: var(--warn); font-weight: 600; }
 
-/* ---- map marker icons (map-leaflet.js) --------------------------------- */
 .ds-map-marker-icon { display: flex; align-items: center; justify-content: center; }
-/* Leaflet gives a marker tabIndex=0 and role="button" when its `keyboard`
-   option is on (the default, kept deliberately), and map-leaflet.js supplies
-   the `alt` that names it -- so a pin is a real focusable control. It still
-   needs a visible focus ring, or a keyboard operator tabbing the pin field has
-   a focus position they cannot see. Matches the ring the rail's own rows and
-   chip buttons already use. */
+
 .ds-map-marker-icon:focus-visible {
   outline: var(--focus-w) solid var(--focus-color);
   outline-offset: 3px;
@@ -824,24 +412,12 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-map-marker-dot[data-status-token="--purple-2"], .ds-map-legend-sw[data-status-token="--purple-2"] { background: var(--purple-2); }
 .ds-map-marker-dot[data-status-token="--accent"], .ds-map-legend-sw[data-status-token="--accent"] { background: var(--accent); }
 .ds-map-marker-dot[data-status-token="--fg-3"], .ds-map-legend-sw[data-status-token="--fg-3"] { background: var(--fg-3); }
-/* Location provenance -- fill color (above) stays the status signal;
-   border treatment carries whether the pin is a surveyed-exact position or
-   still the agent's own unconfirmed guess. 'unset'/'confirmed'/'gps' keep
-   the default solid border (settled positions read the same); 'estimated'
-   alone gets a dashed, dimmer border so an operator can tell at a glance
-   this pin has not been checked with the worker yet. */
+
 .ds-map-marker-dot[data-location-source="estimated"] {
   border-style: dashed;
   border-color: color-mix(in oklab, var(--paper) 50%, transparent);
 }
 
-/* Urgency -- the third channel, from attn.js's worst-first score. Deliberately
-   SIZE and a RING rather than a fourth fill colour: fill already carries
-   status, and a hue-only severity ramp is invisible to a colourblind operator
-   and fragile across the two themes. Size and ring geometry are neither.
-   The map used to encode status only, so a field of green dots gave no clue
-   which one was breaching -- the rail knew, the map did not, and the two
-   halves of the same screen answered different questions. */
 .ds-map-marker-dot[data-urgency="2"] {
   width: 18px; height: 18px;
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--warn) 75%, transparent),
@@ -851,18 +427,10 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   width: 22px; height: 22px;
   box-shadow: 0 0 0 3px var(--danger),
               0 0 6px color-mix(in oklab, var(--danger) 60%, transparent);
-  /* Bounded, not infinite. WCAG 2.2.2 engages on anything that moves for more
-     than five seconds without a pause control, so the ring runs three 2s cycles
-     (~6s) and stops. At 0.5Hz it is also far under SC 2.3.1's three-flashes-a-
-     second threshold, and a scale+opacity ease is not an opposing luminance
-     pair, so it is not a "flash" at all. The SIZE and the RING are the
-     information; the motion is only the arrival cue, and an arrival cue that
-     never stops is just noise an operator learns to ignore. */
+
   animation: ds-map-urgent-pulse 2s ease-in-out 3;
 }
-/* The pin for the case currently open in the rail. Without this, focusing the
-   map moved the viewport and then nothing said which of the pins in front of
-   you was the one you had just opened. */
+
 .ds-map-marker-dot[data-selected="1"] {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
@@ -871,21 +439,17 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   0%, 100% { box-shadow: 0 0 0 3px var(--danger), 0 0 6px color-mix(in oklab, var(--danger) 60%, transparent); }
   50%      { box-shadow: 0 0 0 5px color-mix(in oklab, var(--danger) 55%, transparent), 0 0 10px color-mix(in oklab, var(--danger) 40%, transparent); }
 }
-/* Reduced motion drops the pulse but KEEPS the ring and the size: the
-   animation is emphasis, the geometry is the information. */
+
 @media (prefers-reduced-motion: reduce) {
   .ds-map-marker-dot[data-urgency="3"] { animation: none; }
 }
-/* Legend swatch for the urgency channel -- same ring idiom at swatch scale. */
+
 .ds-map-legend-sw-urgent {
   background: var(--fg-3);
   box-shadow: 0 0 0 2px var(--danger);
   margin-right: var(--space-2);
 }
-/* The cluster linkage, re-homed from the deleted pin popup into the case
-   detail in the rail (case-detail-view.js). It answers "what is going on
-   here" rather than "what is this pin", so it reads as context under the
-   header rather than as another field of the report. */
+
 .casey-linked-reports {
   font-size: var(--fs-micro); color: var(--fg-2);
   padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2);
@@ -893,13 +457,10 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 }
 
 @container (max-width: 640px) {
-  /* The legend is the only chrome on the canvas, so on a small phone it is the
-     only thing that can cover a pin -- cap it harder here than the 40% the
-     desktop rule allows. */
+
   .ds-map-legend { font-size: var(--fs-micro); gap: var(--space-2); max-width: 60%; max-height: 30%; }
 }
 
-/* ---- case-detail empty state -------------------------------------------- */
 .casey-detail-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: var(--space-2); text-align: center; padding: var(--space-7) var(--space-4);
@@ -909,38 +470,23 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-app-surface h2.casey-detail-empty-title { margin: 0; font-size: var(--fs-h4-app); font-weight: 600; color: var(--fg-2); }
 .casey-detail-empty .casey-hint { margin: 0; font-size: var(--fs-micro); max-width: 32ch; }
 
-/* ---- activity feed panel (activity-panel.js) ---------------------------- */
 .ds-activity-link { cursor: pointer; }
 .ds-activity-link:hover { background: var(--bg-2); }
 .ds-activity-link:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
 
-/* ---- contacts/reporters panel (contacts-panel.js) ------------------------- */
 .ds-contact-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-/* Low emphasis, still unmistakably destructive: the danger token in the text
-   rather than a filled red box repeated down every row. contacts-panel.js's
-   header says why the emphasis must not go back up.
-   SCOPE-PREFIXED deliberately. The kit styles .btn-link through its own
-   .ds-247420-prefixed rule, which outranks a bare class selector however late
-   this sheet loads -- measured, not assumed: without the prefix the control
-   rendered the brand accent (rgb(180,96,15)) rather than the danger token. */
-.ds-247420 .ds-contact-erase { color: var(--danger-ink); } /* -ink: the fill colour fails AA as text */
+
+.ds-247420 .ds-contact-erase { color: var(--danger-ink); }
 .ds-247420 .ds-contact-erase:hover { text-decoration: underline; }
-/* A contact who gave neither a name nor a number: the fact on the first line,
-   how they reached us and when on the second, since time is the only thing
-   distinguishing these rows from each other. */
+
 .ds-contact-anon { display: flex; flex-direction: column; gap: var(--space-hair); }
 .ds-contact-anon-sub { font-size: var(--fs-micro); color: var(--fg-3); }
-/* Several people on one phone (persons-dialog.js, contacts-panel.js withPeople): the count sits under the name as
-   small text with its "See who" control beside it, and the dialog stacks a person's name over how they are related.
-   Layout only; colour, type and controls are the kit's. */
+
 .ds-persons-line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 .ds-persons-name { display: flex; flex-direction: column; gap: var(--space-hair); }
-/* Rename in the people dialog: the kit's link colour (--accent-ink) measured 4.16:1 on the dialog ground (axe), so the
-   text colour carries it, underlined so it still reads as a control. Scope-prefixed because the kit's own
-   .btn-link rule outranks a bare class. */
+
 .ds-247420 .ds-persons-act { color: var(--fg); text-decoration: underline; }
 
-/* ---- shift handover panel (handover-panel.js) ---------------------------- */
 .ds-ho-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 .ds-ho-since { font-size: var(--fs-micro); color: var(--fg-3); margin-bottom: var(--space-3); }
 .ds-ho-row {
@@ -956,47 +502,15 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-ho-assignee { margin-left: auto; }
 .ds-act-when { font-size: var(--fs-micro); color: var(--fg-3); margin-left: auto; }
 
-/* ---- print CSS (printable handover/metrics/report links) ---------------- */
-/* The kit's own @media print already drops the app chrome (.app-topbar,
-   .app-side-shell, .app-status) with no !important -- verified under print media
-   emulation -- so this lists only what casey adds itself: its overlays and banners. */
 @media print {
   .ds-dialog-backdrop, .ds-toast-tray, .ds-handoff-banner,
   .ds-conn-banner { display: none; }
   body { background: var(--paper); color: var(--ink); }
-  /* A printed report is a form somebody completes by hand in the field, so
-     the per-field editing affordances are chrome on paper: the click-to-edit
-     pencil and the "note" button would otherwise print into the very space
-     the writing lines provide. The kit already drops .btn/.btn-primary/
-     .btn-ghost in print, but this note button is a bare <button> of casey's
-     own and the pencil is an inline icon, so neither is covered there.
-     The blank-field placeholder and the ruled lines themselves are the kit's
-     (ds-print-blank / ds-fill-lines in deps/design's row-print.css) -- this
-     rule only removes what casey itself adds on top. */
+
   .casey-rep-note-btn,
   .casey-rep-editable svg { display: none; }
 }
 
-/* ==========================================================================
-   BRAND THEME -- palette, Ubuntu, inline header + mobile icon grid, full-bleed
-   map. Everything below is deployment branding layered OVER the design SDK,
-   deliberately in casey's own sheet rather than in the design submodule: the
-   SDK's own bundle documents a named-preset contract for brand themes, but a
-   preset there would impose this orange on every other consumer of the kit.
-   app.css loads AFTER design/dist/247420.css, so equal specificity wins here.
-   ========================================================================== */
-
-/* ---- Ubuntu, self-hosted ------------------------------------------------
-   Self-hosted rather than linked from fonts.googleapis.com on purpose. This
-   deployment is rural, metered and intermittently connected: a webfont on a
-   third-party origin adds a second DNS + TLS handshake and a render-blocking
-   round trip on a link measured at 2000ms RTT, and it cannot be served by the
-   service worker that already caches this app's own assets. Two weights only
-   (400 body, 700 headings) -- the 500 was fetched and then dropped because
-   "headings bold" needs exactly these two, and it was 30KB for nothing.
-   font-display:swap so text paints immediately in the fallback and reflows,
-   which on a slow link is the difference between a readable screen and a
-   blank one. */
 @font-face {
   font-family: 'Ubuntu';
   font-style: normal;
@@ -1012,46 +526,9 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   src: url('/vendor/ubuntu/ubuntu-700.woff2') format('woff2');
 }
 
-/* ---- palette -------------------------------------------------------------
-   The five brand colours, held once as raw tokens and then mapped onto the
-   SDK's semantic names. The SDK derives --ff-display/--ff-narrow/--ff-body
-   from --ff-sans, so setting the one cascades to all four.
-
-   WHAT IS DELIBERATELY NOT REPAINTED: the map's status hues (--sky,
-   --amber, --purple-2, --green). A pin's fill is a data encoding, not
-   chrome -- map-leaflet.js's STATUS_TOKEN maps six statuses onto six
-   tokens, and collapsing any two into the brand orange would make two
-   different statuses render identically on a disease-surveillance map. The
-   brand takes --accent and --danger; the status ramp keeps its own
-   distinct hues and is verified against the new white ground. */
-/* The brand's COLOURS are not here. They live in the design kit's canonical
-   token layer as the named presets [data-theme="herd"] (light) and
-   [data-theme="herd-ink"] (dark), selected by index.html and the theme
-   toggle -- see deps/design/colors_and_type.css, which carries the measured
-   WCAG ratios that decided each one.
-
-   That is not ceremony: casey's own `npm run lint` runs the kit's
-   lint-tokens gate over this very file and rejects a raw colour literal in a
-   consumer sheet, because a brand pasted into a consumer stylesheet cannot be
-   themed, cannot be dark-paired, and cannot be audited for contrast. The kit
-   documents a named-preset contract for exactly this case and ships
-   [data-theme="thebird"] as the precedent. A preset is opt-in, so adding
-   "herd" changes nothing for any other consumer of the kit.
-
-   What stays here is the deployment's TYPOGRAPHY and the aliases that name
-   the brand's button/link contract in the palette's own vocabulary -- all
-   token references, no literals. */
 .ds-247420 {
   --ff-sans: 'Ubuntu', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
-  /* The kit's own body rule is `.ds-247420 body { font-family: var(--ff-body) }`,
-     which requires body to be a DESCENDANT of the scope class -- but body IS
-     the element carrying it, so that selector has never matched anything here.
-     Measured live: computed body font-family came back "Times New Roman", i.e.
-     the whole dashboard's body copy has been rendering in the browser's
-     default serif, with only headings picking up the kit's face (those match,
-     being real descendants). Setting it on the scope element itself is what
-     makes the brand's Ubuntu actually reach the text an operator reads. */
   font-family: var(--ff-sans);
 
   --btn-primary-bg: var(--accent);
@@ -1059,48 +536,18 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   --btn-accent-bg: var(--danger);
   --btn-accent-hover: var(--flame);
   --btn-outline-border: var(--fg-3);
-  /* The palette named #FFFFFF here. It is var(--accent-fg) instead, which the
-     herd preset resolves to black: white on the brand orange measures 2.71:1
-     and fails even the 3:1 floor for large UI text, while black on the same
-     orange is 7.76:1. The fill is exactly the brand colour; only the label
-     changed. */
+
   --btn-text: var(--accent-fg);
   --link-color: var(--accent-ink);
   --link-hover: var(--flame);
 }
 
-/* Headings bold, per the brand. Weight only -- the SDK owns the sizes, and
-   restating those here would fork the type scale. */
 .ds-247420 h1, .ds-247420 h2, .ds-247420 h3,
 .ds-247420 h4, .ds-247420 h5, .ds-247420 h6 { font-weight: 700; }
 
-/* The brand's own button and link colours, applied to the primitives casey
-   actually renders. Scoped to the app so a deployer's own embedded content
-   is not repainted. */
 .ds-247420 a { color: var(--link-color); }
 .ds-247420 a:hover { color: var(--link-hover); }
 
-/* NO primary-button override here, deliberately. One was written and then
-   removed the same day, and it is worth recording why so it is not written
-   again: it targeted `.ds-btn-primary` and `button[data-variant="primary"]`,
-   and the kit emits NEITHER (Btn renders `.btn-primary` and sets no
-   data-variant attribute), so the rule matched nothing at all. The button
-   was correctly branded the whole time anyway, because the kit's own
-   `.ds-247420 .btn-primary { background: var(--accent); color: var(--accent-fg) }`
-   reads the very tokens the herd preset sets. Restating a token-driven rule
-   in a consumer sheet buys nothing when it works and hides the mistake when
-   it does not -- the live witness showed a correct orange button with a
-   black label and would have looked identical with the rule deleted, which
-   is exactly what made it invisible. */
-
-/* ---- the top header: neat, inline, one row ------------------------------
-   The crumb's right-hand cluster is the app's real toolbar -- the attention
-   lead, the exception pills, the verbs, alerts, help and the account. It had
-   grown into a mixed run of full-width text buttons and bare icons at
-   different heights, wrapping onto a second line at narrow desktop widths.
-   One row, one control height, one gap, aligned to the baseline of the crumb
-   beside it. Nothing here changes WHICH controls are present, only that they
-   line up. */
 .ds-247420 .ds-appbar {
   --appbar-ctrl-h: 2.25rem;
   display: flex;
@@ -1108,42 +555,18 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   gap: var(--space-2);
   flex-wrap: nowrap;
   min-width: 0;
-  /* Scrolls sideways when the verbs outgrow the row, the same way every other
-     overflowing surface in this app scrolls rather than wrapping or squeezing.
-     nowrap without this was a promise the row could not keep: below about
-     1100px the run of ten controls simply overflowed the crumb with no way to
-     reach the last of them, and the ones that stayed got squeezed. Touch and
-     trackpad both drag it; overscroll-behavior stops that drag from turning
-     into a page-level back-swipe once it hits the end. */
+
   overflow-x: auto;
   overflow-y: visible;
   overscroll-behavior-x: contain;
   scrollbar-width: thin;
-  /* A scroll container is only allowed to clip along the axis it scrolls, so
-     the account and alerts dropdowns are safe: they portal to body, so
-     nothing they open is clipped by this container. */
+
   padding-bottom: var(--space-hair);
 }
 .ds-247420 .ds-appbar::-webkit-scrollbar { height: 6px; }
 .ds-247420 .ds-appbar::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--r-pill); }
 .ds-247420 .ds-appbar > * { flex: 0 0 auto; }
-/* One height for every control in the row, whatever primitive drew it.
-   The SDK's Btn emits .btn / .btn-primary / .btn-ghost (unprefixed), not
-   .ds-btn -- naming the wrong one here is a rule that silently matches
-   nothing, so these are the classes atoms.js actually renders.
 
-   The list used to stop at six selectors while the bar held ten controls, so
-   the rule's own claim was false on the screen. Measured live at 1440x900:
-   FOUR different control heights (23, 28, 36 and 44px) sitting on FOUR
-   different top edges (93, 97, 101, 103). Both dropdown triggers -- alerts and
-   the account menu -- were never named here at
-   all, and .ds-attn-lead carries its own min-height:44px, which a plain
-   `height` cannot pull down. That is the whole of the "hodge-podge": a row that
-   declared one height and rendered four.
-
-   Every control the bar can hold is now named, min-height is neutralised
-   inside the bar so the shared height actually applies, and the height itself
-   is one token so it cannot drift apart again. */
 .ds-247420 .ds-appbar .btn,
 .ds-247420 .ds-appbar .btn-primary,
 .ds-247420 .ds-appbar .btn-ghost,
@@ -1157,22 +580,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   align-items: center;
   gap: var(--space-1);
 }
-/* ---- ONE HIERARCHY FOR THE WHOLE BAR ------------------------------------
-   Three treatments, and only three: ONE primary (New report, the kit's own
-   .btn-primary, untouched below), ONE lead (.ds-attn-lead, which differs from
-   the secondary in COLOUR only because it is the frame's bottom line), and
-   ONE secondary that every remaining control wears.
 
-   What this replaces, measured live at 1440x900: six treatments in one row --
-   an orange filled primary, a red-tinted lead, a health pill wearing a
-   transparent border (since removed entirely, see health-notices.js), two
-   ghost buttons whose 1px border was transparent (so a live control
-   read as plain text), a bare underline-on-hover link for Export, and two
-   dropdown triggers the kit filled with a flat grey at 0.08-alpha border,
-   which read as disabled while being fully live.
-
-   The kit's own dropdown-trigger fill outranks a single-class rule, so the
-   scope class is required here to reach it. */
 .ds-247420 .ds-appbar .btn-ghost,
 .ds-247420 .ds-appbar .ds-icon-btn,
 .ds-247420 .ds-appbar .ds-dropdown-trigger {
@@ -1193,49 +601,24 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   color: var(--fg);
   text-decoration: none;
 }
-/* The lead wears the same box as the secondary and differs only in tone, so
-   the row reads as one system with one thing shouting in it. */
+
 .ds-247420 .ds-appbar .ds-attn-lead {
   padding: 0 var(--space-3);
   border-radius: var(--r-1);
   font-size: var(--fs-sm);
   font-weight: 600;
 }
-/* Icon-only controls keep a square box rather than a wide one, so the row's
-   rhythm does not break where a control has no word. */
+
 .ds-247420 .ds-appbar .ds-icon-btn {
   width: var(--appbar-ctrl-h);
   padding: 0;
   justify-content: center;
 }
-/* An action carries its glyph beside its word on desktop; the glyph is what
-   survives into the mobile grid below, so it is emitted always and hidden
-   never -- a control whose icon only exists at one breakpoint is a control
-   that has to be re-learned at the other. */
+
 .ds-247420 .ds-appbar .ds-action-glyph { display: inline-flex; flex: 0 0 auto; }
 
-/* ---- mobile: the header becomes an icon grid ----------------------------
-   Below the phone breakpoint the same controls render as a grid of square
-   icon tiles. Labels are not deleted -- they stay in the accessible name and
-   as a caption under each glyph, because this deployment's operators include
-   low-computer-literacy field and secretarial staff for whom a bare glyph is
-   a guess. Tiles are 44px+ so they are thumb-targets, and the rare verbs
-   (Export, Sweep now, Refresh) come BACK at this size: they were previously
-   display:none on a phone, so three actions simply did not exist there, and
-   a grid has room for them where a single wrapping row did not. */
 @media (max-width: 900px) {
-  /* The appbar sits in the crumb's right-hand slot, which is a flex item that
-     shrinks to its content. Measured at 390px: the grid container came back
-     131.775px wide, so `repeat(auto-fit, minmax(4.25rem, 1fr))` resolved to a
-     SINGLE column and the "icon grid" was really a vertical stack of seven
-     full-width rows. Letting the crumb wrap and giving the bar its own full
-     row is what makes auto-fit actually have room to lay out columns. */
-  /* The bar is wrapped by the crumb's own `span.crumb-right`, which is a
-     `display:block; flex:0 0 auto` item -- so sizing the BAR did nothing; it
-     inherited the 132px its wrapper had collapsed to and auto-fit resolved to
-     a single column, i.e. a vertical stack of seven full-width rows that also
-     squeezed the map below it to 231px tall. The wrapper is the thing that
-     has to claim the row. */
+
   .ds-247420 .app-crumb { flex-wrap: wrap; }
   .ds-247420 .app-crumb > * { min-width: 0; }
   .ds-247420 .app-crumb > .crumb-right {
@@ -1245,42 +628,19 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   }
   .ds-247420 .ds-appbar {
     display: grid;
-    /* 6.5rem, not 4rem. At 375px the crumb's right slot is 299px, so a 4rem
-       floor resolved to four 71.8px columns while the labels they had to hold
-       are 89-96px and set `white-space: nowrap` -- every caption overflowed its
-       own tile and three of them rendered on top of each other as intersecting
-       tap targets. The column has to be able to hold the longest verb this bar
-       carries; wrapping (below) does the rest. 5.75rem is the widest floor
-       that still resolves to THREE columns at 375px -- wider and the bar grows
-       to five rows and eats the map it sits above. */
+
     grid-template-columns: repeat(auto-fit, minmax(5.75rem, 1fr));
     gap: var(--space-1);
     width: 100%;
-    /* The grid lays the tiles out; it is not the thing that scrolls. */
+
     overflow-x: visible;
-    /* Every row the same height, not each row sized to its own tallest tile.
-       Without this the last row -- which holds the two shortest controls --
-       came back 52px against 58px above it, so the grid stepped narrower as it
-       went down for no reason a reader could name. */
+
     grid-auto-rows: 1fr;
   }
-  /* `flex: none` here was measured to change nothing: these are grid items and
-     the SDK's own grid had already sized them. `width: 100%` was likewise
-     redundant. What was NOT redundant, and was missing, is height: a grid item
-     that does not fill its track leaves its control sitting short of its
-     neighbours. Stretching the item itself is what lets the rule below reach
-     the control the operator actually sees. */
-  /* `.ds-action-row` is display:contents, so its children are the grid items
-     while the DOM parent they are selected through is still the row -- a bare
-     `.ds-appbar > *` misses every verb, and app-view.js wraps each one in a
-     .ds-action-common/.ds-action-rare span, so the span is the item and the
-     button inside it is not. Both levels have to be told to fill the track, or
-     the six verbs sit 57px tall and vertically centred inside 70px rows while
-     their neighbours fill them -- three tile heights on three top edges again. */
+
   .ds-247420 .ds-appbar > *,
   .ds-247420 .ds-appbar .ds-action-row > * { height: 100%; }
-  /* The rare verbs are hidden on a narrow DESKTOP row (the @container rule near
-     the top) but belong in the grid, where space is no longer the constraint. */
+
   .ds-247420 .ds-appbar .ds-action-common,
   .ds-247420 .ds-appbar .ds-action-rare { display: flex; }
   .ds-247420 .ds-appbar .btn,
@@ -1289,33 +649,16 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-247420 .ds-appbar .ds-attn-lead,
     .ds-247420 .ds-appbar .ds-icon-btn,
   .ds-247420 .ds-appbar .ds-dropdown-trigger {
-    /* One tile, one size. The six-selector version of this list left the two
-       dropdown triggers at 28px while everything else was 58px, which measured
-       as several tile heights on several different top edges inside a
-       four-column grid -- the phone's version of the same hodge-podge the
-       desktop row had. */
-    /* height:100%, not auto. As grid items these should have stretched to
-       their track on their own, and measured live they did not -- a row held
-       tiles of 52, 54 and 58px sitting on three different top edges, because
-       each primitive's own padding decided its height and the shortest simply
-       sat where it fell. Filling the track is what makes a row of tiles read
-       as one row of tiles. */
+
     height: 100%;
     min-height: 3.25rem;
     width: 100%;
     flex-direction: column;
     justify-content: center;
-    /* A caption that cannot wrap has nowhere to go but over its neighbour.
-       .ds-attn-lead sets nowrap for the desktop row, where it is correct; in
-       the grid every tile wraps instead, and the tile is wide enough (above)
-       that a two-line caption is the worst case rather than a clipped word. */
+
     white-space: normal;
     overflow-wrap: anywhere;
-    /* --space-hair is 0.125rem scaled by --density, i.e. the 2px this used to
-       hardcode at the default density -- but it now tracks the density knob
-       like every other gap instead of staying 2px when the rest of the UI
-       scales. It was also the single raw spacing literal casey contributed to
-       the kit's shared ratchet. */
+
     gap: var(--space-hair);
     padding: var(--space-1);
     text-align: center;
@@ -1323,9 +666,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
     line-height: 1.1;
   }
   .ds-247420 .ds-appbar .ds-action-glyph { display: block; }
-  /* The caption sits under the glyph and must wrap with it -- the label span
-       is where nowrap actually lands, so overriding only the tile leaves the
-       inner span overflowing. */
+
   .ds-247420 .ds-appbar .ds-action-label,
   .ds-247420 .ds-appbar .ds-attn-lead .ds-action-label {
     white-space: normal;
@@ -1334,9 +675,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
     line-height: 1.15;
     max-width: 100%;
   }
-  /* The bar is a grid of tiles here, so the desktop row's single-line box
-       (fixed height, horizontal padding, a border per control) does not apply.
-       Keep the shared border so a tile still reads as a control. */
+
   .ds-247420 .ds-appbar .btn-ghost,
     .ds-247420 .ds-appbar .ds-icon-btn,
   .ds-247420 .ds-appbar .ds-dropdown-trigger,
@@ -1349,31 +688,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   }
 }
 
-/* ---- full-bleed-map-with-floating-chrome was tried and rejected (desktop) -
-   An earlier iteration made the map fixed to the viewport with the topbar,
-   crumb, side-shell (rail) and status banners rendered on top of it at
-   position:relative + z-index, given a translucent (0.88 alpha) blurred
-   background so their text stayed legible over map detail underneath.
-   Measured live at 1280x900: the rail (.app-side-shell, 208px wide) and the
-   case-detail rail both sat directly on top of the fixed map canvas with a
-   partially-transparent background -- map content visibly bled through them.
-   That is exactly the floating-panels-over-data pattern
-   mapuipatterns.com's own rule says a situational-awareness/safety domain
-   (animal-disease surveillance) must never use: it can cover a pin or a
-   cluster with UI chrome. casey's design decision (see AGENTS.md's "Dashboard
-   structure" section) chose the opposite on purpose -- the rail is DOCKED
-   beside the map, never floated over it -- so this pattern does not belong
-   here regardless of how mainstream the full-bleed reference consoles make it
-   look. Desktop map-home now stays on the same contained, docked-pane layout
-   as every other width; there is no width-scoped full-bleed override. */
-
-/* ---- mobile: the map keeps its block, the icon grid sits over it ---------
-   Explicitly NOT full-bleed here. The phone already shows one pane at a time
-   behind the map/list toggle, so the map is effectively fullscreen inside its
-   own block already, and fixing it to the viewport would put it underneath
-   the list pane as well -- paying for a background nobody can see. The header
-   grid is what floats, above the map, at a z-index over the Leaflet panes
-   (Leaflet's own controls sit at 400-1000, hence the value here). */
 @media (max-width: 900px) {
   .ds-app-root.is-map-home .app-crumb,
   .ds-app-root.is-map-home .app-topbar {
@@ -1385,11 +699,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .ds-247420 .ds-appbar { position: relative; z-index: var(--z-raised); }
 }
 
-/* ---- A BORDERED, GROUNDLESS DROPDOWN TRIGGER ----------------------------
-   The kit fills its trigger with the --panel-2 tier; this dashboard's
-   triggers read as chrome affordances on whatever surface they sit on (the
-   appbar, a filter bar), so they carry a border and no ground of their own.
-   Scope-prefixed because the kit's own trigger rule is. */
 .ds-247420 .ds-dropdown-trigger {
   gap: var(--space-2);
   background: transparent;
@@ -1401,19 +710,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   border-color: var(--fg-3);
 }
 
-/* ---- CONTRAST: THE ACCENT AS TEXT ON THE SECOND GROUND TIER -------------
-   --accent-ink is the kit's darkened companion for "the accent has to BE
-   text", and the herd preset measured it against --bg (#FFFFFF), where it
-   passes at 4.60:1. Four controls put it on --bg-2 (#F4F5F6) instead -- the
-   rail's "Show all N" button, a count badge, a filter pill and a source chip
-   -- where the same colour measures 4.16:1 and fails AA for their 12-13px
-   type. The status bar's own first item hit this exact pair and was fixed in
-   place by dropping to --fg-2; these four are accent-coloured affordances, so
-   they keep the accent and darken it instead, which is a mix of two live
-   tokens rather than a second literal orange this sheet is not allowed to
-   hold. In herd-ink --fg is the light end of the ladder, so the same mix
-   LIGHTENS --accent-ink there, which is the correction that theme would need
-   for the same reason. */
 .ds-247420 {
   --casey-accent-ink-on-bg2: color-mix(in oklab, var(--accent-ink) 78%, var(--fg));
 }
@@ -1424,7 +720,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   color: var(--casey-accent-ink-on-bg2);
 }
 
-/* ---- team registration + invite codes (panels/team-registration.js, invite-codes.js) ---- */
 .ds-team-form { display: flex; flex-direction: column; gap: var(--space-3); }
 .ds-team-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--space-3); }
 .ds-team-lede, .ds-team-explain { margin: 0; font-size: var(--fs-sm); color: var(--fg-2); }
@@ -1437,12 +732,6 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .ds-people-page { display: flex; flex-direction: column; gap: var(--space-4); }
 .ds-people { overflow-x: auto; }
 
-/* ---- areas, bulk team add, feedback (panels/areas-panel.js, bulk-team-add.js, feedback-panel.js) ----
-   Layout only, on kit tokens. Kit primitives tried first: Panel/Row/DetailRow/Table carry every
-   surface; these classes only arrange a Select and its button beside a Row (no kit "row with a
-   control" primitive exists: a Row that is a button cannot hold another button), and stack the
-   two Feedback tables. No rule here sets a colour, size or background that a kit rule also sets,
-   so none needs the .ds-247420 scope prefix. */
 .ds-area-item { display: flex; flex-direction: column; gap: var(--space-2); padding-bottom: var(--space-3); }
 .ds-area-actions { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
 .ds-area-actions .ds-field { flex: 1 1 200px; }
@@ -1452,13 +741,8 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .casey-area-note { display: flex; flex-direction: column; gap: var(--space-2); }
 .casey-area-note .casey-hint { margin: 0; }
 
-/* A Panel given a title and nothing on its right (no `right`, no `count`) makes the title the head's
-   :last-child, and the kit's `.panel-head > :last-child:not(.ds-badge)` rule (meant for the right-hand
-   meta) then sets it in the mono face, weight 500, dim ink. Kit primitive tried: Panel's own props have
-   no way to opt out. The (0,5,0) selector beats the kit's (0,4,0). */
 .ds-247420 .panel-head > .panel-title:last-child:not(.ds-badge) { font-family: inherit; font-weight: inherit; color: inherit; }
 
-/* ---- "Add people" disclosure on the People page, and the printable code slips ---- */
 .ds-add-people { border: 1px solid var(--border); border-radius: var(--r-2); background: var(--bg); }
 .ds-add-people-sum { cursor: pointer; padding: var(--space-3); font-weight: 700; min-height: 44px; display: flex; align-items: center; }
 .ds-add-people-sum:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
@@ -1472,7 +756,7 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 @media print {
   body.casey-print-slips > *:not(#casey-print-slips) { display: none; }
   body.casey-print-slips { background: Canvas; }
-  /* Light system colours whatever theme the screen is in: a dark theme's white text would print invisible. */
+
   #casey-print-slips { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0; color-scheme: light; background: Canvas; color: CanvasText; }
   .casey-slip { border: 1px dashed currentColor; padding: var(--space-4); break-inside: avoid; }
   .casey-slip p { margin: 0 0 var(--space-2); }
@@ -1481,19 +765,17 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
   .casey-slip-meta { font-size: var(--fs-sm); }
 }
 
-/* ---- phone targets (<= 768px): every tap target is at least 44px --------------------------------- */
 @media (max-width: 768px) {
   .ds-247420 .case-row-cbwrap { width: 44px; min-width: 44px; min-height: 44px; align-items: center; margin: calc(var(--space-2) * -1) 0 calc(var(--space-2) * -1) calc(var(--space-2) * -1); }
   .case-row-cbwrap .case-row-cb { margin: 0; }
   .ds-247420 .app-status-toggle { width: 44px; height: 44px; }
 }
-/* Phone-width top bar: the two main controls stay, the rest sit behind "More". */
+
 .ds-247420 .ds-appbar .ds-appbar-more { display: none; }
 @media (max-width: 414px) {
   .ds-247420 .ds-appbar .ds-appbar-more { display: flex; }
   .ds-247420 .ds-appbar:not(.is-more-open) .ds-appbar-overflow { display: none; }
 }
 
-/* Admin previewing another login (src/preview-bar.js): one sticky bar, so every role's app gets it. */
 #casey-preview-bar { position: sticky; top: 0; z-index: var(--z-raised); display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); align-items: center; justify-content: center; padding: var(--space-2) var(--space-4); background: var(--ink); color: var(--paper); font-size: var(--fs-sm); }
 #casey-preview-bar button { background: transparent; color: inherit; border: 1px solid currentColor; border-radius: var(--r-2); padding: var(--space-1) var(--space-3); font: inherit; cursor: pointer; }

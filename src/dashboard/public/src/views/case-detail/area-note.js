@@ -1,9 +1,3 @@
-// area-note.js -- where this report sits on the area list, and the warning when it
-// looks like it is with the wrong area's ranger. Staff only: GET /api/cases/:id
-// carries `area` for a staff login and never for a field login, so nothing renders
-// for the field team. The server works the flag out (areas.js possiblyWrongArea);
-// this says it in words and offers the fix (POST /api/cases/:id/relocate).
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';

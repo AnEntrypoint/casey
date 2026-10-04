@@ -1,8 +1,3 @@
-// site-history.js -- visit-history-for-same-place panel: every OTHER case
-// (open or closed) casey thinks describes the same real place. Isolated and
-// best-effort like duplicate-suggestions.js -- a failure here must never
-// break the case view.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Table } from '/design/src/components/content.js';
 import { Btn } from '/design/src/components/shell.js';
@@ -20,11 +15,6 @@ export function SiteHistoryPanel({ onOpenCase, key } = {}) {
     const visits = state.siteHistory;
     if (!visits || !visits.length) return null;
     const brand = brandName();
-    // The middle column was `channel + ' - ' + status`, and status is the raw
-    // thatcher key: this table printed "discord - triaging - reported 14d ago"
-    // beside a case-detail view whose own rail says "Looking into it" for the
-    // same stage. stageLabel() is the one stage vocabulary an operator reads,
-    // and it belongs here too.
     const rows = visits.map(v => [
         Btn({ variant: 'link', size: 'sm', onClick: () => onOpenCase && onOpenCase(v.id), children: v.ref }),
         channelLabel(v.channel) + ' - ' + (v.status ? stageLabel(v.status) : '') + ' - reported ' + rel(v.reported_at),
@@ -32,12 +22,7 @@ export function SiteHistoryPanel({ onOpenCase, key } = {}) {
     ]);
     return h('div', { key, class: 'casey-site-history' },
         h('h3', {}, 'Visit history for this site'),
-        // The literal 'casey' is the software, not the deployment somebody is
-        // logged into -- every other operator-facing surface reads
-        // dashboard_ui.brand, and this line was rendering "casey thinks" on a
-        // screen branded Herd Health.
         h('p', { class: 'casey-hint' }, 'Other ' + entityLabelPlural() + ' ' + brand + ' thinks are the same place, most recent first -- any reporter may have visited, not only whoever opened this one.'),
-        // Lower-case column headers read as field names rather than as words.
         Table({ headers: ['Reference', 'When', 'Why it matched'], rows })
     );
 }

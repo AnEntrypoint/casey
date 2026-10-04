@@ -1,29 +1,8 @@
-// Cross-system correlation panel -- lists proposed links between casey's own
-// cases/contacts and records from another system (see EXTERNAL-SYNC.md), and
-// lets an authed operator Confirm/Reject each one. Confirm is the only path
-// that ever consolidates data (src/sync/apply-link.js's fill-if-empty, never
-// an overwrite); Reject just marks the row so a sync pass does not re-propose
-// the same non-match.
-//
-// PII-safe projection, same discipline as contacts.js's publicContact: never
-// returns local_id/external_id raw (an internal join key + a third-party
-// system's own id, neither is display-safe on its own), only the pre-computed
-// external_ref label plus the scoring metadata an operator needs to judge a
-// proposal.
-//
-// deps: store, wrap, actingOperator, authed
 import { mountRoutes } from './register.js';
 import { fmtPhone27 } from '../../format.js';
 
 export const publicExternalLink = (l) => ({
   id: l.id, system: l.system, local_entity: l.local_entity,
-  // local_ref is the DISPLAY-SAFE resolution of local_entity+local_id (a case
-  // ref like CASE-1005-XXXX, or a contact's given name/formatted number) --
-  // never the raw local_id join key. Without this an operator confirming a
-  // link (the only path that ever merges data into a local record) had no way
-  // to tell WHICH case or contact was about to be touched before pressing
-  // Confirm; they saw only the external system's own label and a confidence
-  // score. null when the local record could not be resolved (deleted/missing).
   local_ref: l.local_ref || null,
   external_entity: l.external_entity, external_ref: l.external_ref,
   match_basis: l.match_basis, confidence: Number(l.confidence) || 0,
@@ -44,7 +23,7 @@ async function resolveLocalRef(store, l) {
       const formatted = fmtPhone27(ct.external_id);
       return formatted !== String(ct.external_id || '') ? formatted : 'unnamed contact';
     }
-  } catch { /* best-effort resolution; the row still renders without it */ }
+  } catch {  }
   return null;
 }
 
@@ -67,10 +46,6 @@ export function postExternalLinkConfirm({ store, authed, actingOperator }) {
       if (!link) return res.status(404).json({ error: 'link not found' });
       if (link.status !== 'proposed') return res.status(400).json({ error: 'link is not in proposed status' });
       const confirmed = await store.t.update('external_link', link.id, { status: 'confirmed' }, user);
-      // No live external record source is wired yet (see EXTERNAL-SYNC.md /
-      // sync-adapter-seam) -- confirming records the human decision now;
-      // applyConfirmedLink runs once a real adapter can hand this route the
-      // external record body, not invented here as a placeholder object.
       res.json({ link: publicExternalLink({ ...link, ...confirmed }) });
     } catch (e) { res.status(400).json({ error: e.message }); }
   };

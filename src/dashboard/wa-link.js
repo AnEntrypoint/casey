@@ -1,8 +1,3 @@
-// dashboard/wa-link.js -- the ONE builder for a click-to-chat WhatsApp link.
-// Built from already-normalised digits and percent-encoded text, so nothing a
-// contact typed can reach an href unescaped: the number must be 9-15 digits or
-// there is no link, and the text is stripped of control characters, capped, and
-// passed through encodeURIComponent.
 const MAX_TEXT = 900
 
 export function waLink(digits, text) {

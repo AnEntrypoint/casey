@@ -1,14 +1,3 @@
-// words.js -- the dashboard's read of the deployment's vocabulary file
-// (config/vocabulary.yml, see src/config-loader.js and docs/vocabulary-guide.md).
-//
-// The server writes the words into the shell it serves (<script type="application/json"
-// id="casey-vocab">), so they are here on the first line of the first render, need no
-// login, and are carried offline by the service worker's cached shell. Nothing in the
-// dashboard spells a sentence a person reads for the team to edit; it asks for the word.
-//
-// Placeholders {brand}, {entity} and {entity_plural} are filled from the same config
-// vocabulary.js reads; any other {name} comes from the caller's `vars`.
-
 import { brandName, entityLabel, entityLabelPlural } from './vocabulary.js';
 
 let table = null;
@@ -18,14 +7,12 @@ function words() {
   try {
     const el = document.getElementById('casey-vocab');
     if (el && el.textContent) table = JSON.parse(el.textContent) || {};
-  } catch { /* an unreadable table leaves every word to degrade to its key's last part */ }
+  } catch {  }
   return table;
 }
 
-/** @returns {boolean} whether the vocabulary holds this key. */
 export function hasWord(key) { return Object.prototype.hasOwnProperty.call(words(), key); }
 
-/** @returns {Object<string,string>} every word under a section, keyed by the rest of the name. */
 export function wordsIn(section) {
   const out = {};
   const p = section + '.';
@@ -43,11 +30,6 @@ function fill(s, vars) {
   });
 }
 
-/**
- * @param {string} key - e.g. 'ui.offline_title'
- * @param {Object} [vars] - values for extra {placeholders}
- * @returns {string} the deployment's wording; an unknown key reads as its own last part, so a typo is visible rather than blank.
- */
 export function word(key, vars) {
   const v = words()[key];
   if (v == null) return key.split('.').pop().replace(/_/g, ' ');

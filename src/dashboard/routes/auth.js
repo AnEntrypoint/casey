@@ -1,27 +1,3 @@
-// Session, login, and the public contact report form. These routes -- plus the
-// session-resolving and auth-gate MIDDLEWARE -- must register before every
-// other route module, since later modules assume req.caseyAccount is already
-// resolved and the auth gate has already run. registerAuth(app, deps) does
-// both: registers the pre-auth session middleware + public routes, then the
-// auth gate middleware + the static mounts (/design, /vendor, /media) that
-// must sit between the gate and the rest of the API.
-//
-// Shape: module-level named middleware and handler factories plus the ROUTES
-// table near the bottom, the same shape the other route modules use. Unlike
-// them this module cannot be a route table ALONE, and the difference is
-// structural rather than stylistic: registerAuth's ORDER is the security
-// property (session resolve -> CSRF guard -> public routes -> auth gate ->
-// static mounts), three of its five registrations are app.use middleware
-// rather than routes, and the two /report routes carry a per-route rate-limit
-// middleware that routes/register.js's mountRoutes has no argument for. So the
-// six plain routes between the CSRF guard and the auth gate go through the
-// table, and everything the table cannot express stays an explicit call in
-// registerAuth, in the original order.
-//
-// deps: store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR,
-//   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
-//   issueSession, verifySession, findAccountByUsername, verifyPassword,
-//   markLogin, getAccount, changePassword, esc, wrap
 import { mergeTag } from '../../hooks/heuristics.js'
 import { DASHBOARD_UI, REPORT_FIELD_DEFS, fieldLabel } from '../../store/report-shape.js'
 import { vocabWord } from '../../config-loader.js'
@@ -31,12 +7,6 @@ import { mountRoutes } from './register.js'
 import { RUNTIME_STATES } from './operations.js'
 import { roleGate, roleOf, expectedRefGuard } from '../roles.js'
 
-// Session gate: a valid casey_session cookie (see dashboard/auth.js) resolves
-// to a real operator_account row. Middleware runs on every request BEFORE
-// route handlers so actingOperator(req) below can stay a SYNCHRONOUS reader
-// of the pre-resolved req.caseyAccount -- every existing call site
-// (actingOperator(req) sprinkled through dozens of route handlers) keeps
-// working unchanged rather than needing an await added at each site.
 export function sessionMiddleware({ store, parseCookies, verifySession, COOKIE_NAME, getAccount }) {
   return async (req, res, next) => {
     req.caseyAccount = null
@@ -45,30 +15,9 @@ export function sessionMiddleware({ store, parseCookies, verifySession, COOKIE_N
       const claim = verifySession(cookies[COOKIE_NAME])
       if (claim) {
         const acct = await getAccount(store, claim.id)
-        // session_epoch revocation: a token's own epoch must match the
-        // account's LIVE current epoch. changePassword()/revokeAccountSessions()
-        // bump the stored epoch, so an outstanding token issued before that
-        // bump carries the OLD epoch and fails here -- "log out everywhere"
-        // with zero session-table storage (see auth.js for the full design
-        // rationale). A pre-epoch token (claim.epoch defaults to 0 when the
-        // field was absent from an old cookie) still matches an account whose
-        // session_epoch has never been bumped (also 0), so upgrading to this
-        // code does not force-logout every already-logged-in operator.
-        // status !== 'deleted' is load-bearing, not defensive noise. thatcher
-        // deletes are SOFT: the row stays with status='deleted'. listAccounts
-        // uses t.list, which filters those out, but getAccount above is t.get,
-        // which does NOT -- so without this clause a deleted operator kept a
-        // fully valid session. Live-witnessed before the fix: after
-        // deleteAccount, /api/login correctly returned 401 while the account's
-        // existing cookie still returned whoami 200 with role admin. Deleting
-        // an operator has to end their access now, not whenever their cookie
-        // happens to expire.
         const liveEpoch = Number(acct?.session_epoch) || 0
         const live = acct && acct.status !== 'deleted' && acct.disabled !== '1'
         if (live && claim.epoch === liveEpoch) req.caseyAccount = acct
-        // VIEW AS: a real admin session may carry `x-view-as: <account id>` to see exactly what that login sees (its screens, its
-        // rows, its limits). The request then runs AS that account but is read-only (roles.js roleGate refuses every write), so a
-        // preview can never act as someone else. Anyone but an admin sending the header is ignored.
         const viewAs = req.get('x-view-as')
         if (req.caseyAccount && viewAs && req.caseyAccount.role === 'admin' && viewAs !== req.caseyAccount.id) {
           const target = await getAccount(store, viewAs)
@@ -78,19 +27,11 @@ export function sessionMiddleware({ store, parseCookies, verifySession, COOKIE_N
           }
         }
       }
-    } catch { /* a broken/tampered cookie just means not-logged-in, never a crash */ }
+    } catch {  }
     next()
   }
 }
 
-// CSRF guard: SameSite=Lax already blocks a cross-site POST/PUT/PATCH/DELETE
-// form submission from carrying the session cookie, but a same-site-lax
-// cookie still rides along on a cross-site GET navigation, and this app
-// accepts state-changing requests over POST with no separate CSRF token.
-// Belt-and-braces: reject a state-changing request from a logged-in session
-// whose Origin (or, lacking that, Referer) does not match this deployment's
-// own host -- cheap, no token to mint/store, and only engages once a real
-// session exists (the public unauthenticated /report form is untouched).
 const STATE_CHANGING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 export function csrfGuard() {
   return (req, res, next) => {
@@ -104,45 +45,12 @@ export function csrfGuard() {
   }
 }
 
-// What this deployment calls the thing a contact is filing: report-fields.yml's
-// entity_label (uhh: "report"; casey's own bundled helpdesk demo: "ticket").
-// BRAND carries it alongside the colours so a page has one import, not two.
 const ENTITY = BRAND.entityLabel || 'report'
 
-// The most characters one answer can hold. Named because four places have to
-// agree on it and one of them is COPY: the confirmation that tells a reporter
-// their long answer was truncated now states the limit, and a number stated in
-// a sentence that drifts from the number actually enforced is worse than no
-// number at all.
 const FIELD_MAXLEN = 4000
 
-// The value the public form's dropdown posts when the person chose "Other (write it)"; the
-// words themselves arrive in `<key>__other`.
 const OTHER_CHOICE = '__other__'
 
-// Fields shown on the public contact form -- the deployment's OWN declared
-// report vocabulary (report-fields.yml, via report-shape.js), never a second
-// hand-written list.
-//
-// Never hardcode a key list here. case-store.js's mergeReport rejects any key
-// outside REPORT_KEYS, so a hand-written list works under exactly one config
-// and silently fails the save ("Something went wrong saving your details") for
-// every other -- on the only surface a reporting contact ever reaches.
-//
-// Two field classes are held back:
-//  - `append` fields (photos/voice notes/extra sites) accumulate agent-written
-//    notes ABOUT media that arrived over the messaging channel. This form has
-//    no upload, so a text box for "Photos" would collect a description of a
-//    photo nobody sent.
-//  - `public: false` is the deployer's own opt-out for a field that is real
-//    but not a question to put to a contact (an agent-recorded meta field
-//    such as which language they wrote in). Absent, a field is shown --
-//    defaulting to hiding would silently empty the form for every config that
-//    has never heard of the flag.
-// `public_label`/`public_hint` likewise let a deployer phrase a field as a
-// question for a contact ("Which animals?") rather than reuse the operator
-// column header ("Animals"); absent, the operator label is shown and no
-// placeholder is rendered, which is honest rather than invented.
 const PUBLIC_FIELDS = (() => {
   const shown = (REPORT_FIELD_DEFS || []).filter(f => f && f.key && !f.append && f.public !== false)
   const row = (f) => ({
@@ -152,43 +60,11 @@ const PUBLIC_FIELDS = (() => {
     multiline: f.multiline === true,
     critical: f.critical_for_visit === true,
     section: String(f.section || '').trim(),
-    // A fixed list of usual answers (report-fields.yml `options`): shown as a dropdown that
-    // ends in "Other (write it)" with a box beside it. A convenience, not a gate -- any text
-    // is still accepted (see OTHER_CHOICE in postReport).
     options: Array.isArray(f.options) ? f.options.map(String) : [],
   })
-  // Critical first, then the rest, each in declaration order. The criticals
-  // have to be contiguous because they form the first contact-facing group,
-  // and config declares fields in operator-section order, which interleaves
-  // them. postReport reads this same flat list to decide which body keys it
-  // will accept, so the ORDER is presentational but the MEMBERSHIP is a
-  // write-side allowlist: keep it one list, not two.
   return [...shown.filter(f => f.critical_for_visit).map(row), ...shown.filter(f => !f.critical_for_visit).map(row)]
 })()
 
-// The form's contact-facing groups, in render order.
-//
-// This page asks 24 questions under uhh's config and measured 2845px of
-// unbroken scroll, which is the shape of a form people abandon: no sense of
-// how much is left, and no way to tell a question that matters from one that
-// does not. It had two text separators, which is not sectioning -- nothing
-// bounded a group, and the second one held eighteen fields.
-//
-// The grouping is NOT invented here. report-fields.yml already declares a
-// `section` per field (report-shape.js passes it straight through, and the
-// dashboard's own ReportSections renders by it), so the deployer has already
-// said how their vocabulary divides up: under uhh, "Animal & symptoms",
-// "People on site", "Notes & media". Reusing that is the same discipline the
-// field list itself follows -- the domain comes from config, never from a
-// second hand-written list in here.
-//
-// The criticals are the one group this file names itself, because their
-// grouping is a PROPERTY (critical_for_visit) rather than a section, and
-// because the deployer's own label for them is written for an operator
-// reading a case ("Visit critical"), not for a farmer answering questions.
-// A section a deployer has not named at all falls back to one plain bucket
-// rather than rendering an empty heading.
-// Both headings are the team's words (config/vocabulary.yml, form.group_critical / form.group_other).
 const CRITICAL_GROUP_TITLE = vocabWord('form.group_critical', 'Needed before a team can visit')
 const UNSECTIONED_GROUP_TITLE = vocabWord('form.group_other', 'More detail')
 const PUBLIC_GROUPS = (() => {
@@ -205,146 +81,42 @@ const PUBLIC_GROUPS = (() => {
   return [...groups, ...byTitle.values()]
 })()
 
-// This page is reached with no session, and its CSS is inline and
-// dependency-free. Not, as this comment used to claim, "by necessity" -- the
-// /design static mount is exempted by authGate below, so the kit bundle is in
-// fact fetchable here without a cookie. It is a choice, made for the reasons
-// set out in brand.js: the kit scopes its tokens to a .ds-247420 ancestor
-// rather than :root, so a bare <link> would resolve nothing anyway, and the
-// bundle is 874,759 bytes against roughly fourteen for this whole page.
-// What this page must not ALSO be is a
-// separate palette: every brand-carrying value in the <style> block below
-// comes from dashboard/brand.js, the same resolution manifest.json, the
-// generated icon and offline.html already read. A literal hex here is a fifth
-// answer to "what colour is this product", on the one surface a reporting
-// contact ever sees.
-//
-// Semantic colours (the ok/error banners, the completed-bar green) stay fixed
-// on purpose: those encode meaning, not identity, and re-tinting them to a
-// brand is how "saved" and "failed" stop being distinguishable at a glance.
-//
-// This rationale is a JS comment rather than an HTML one deliberately. Every
-// byte of this page crosses a rural, metered link to a contact who may be on
-// a feature phone; an explanatory comment about our own colour history is not
-// something they should have to download, and it named internal decisions to
-// the public besides.
-//
-// SIZES COME FROM brand.js's TYPE_SCALE_CSS, which carries the design kit's
-// own ladder verbatim (see that file for why the kit stylesheet is not linked
-// here: it is 874,759 bytes against this page's three). Six rungs do the whole
-// page, each with exactly one job: --fs-xl page title, --fs-lg section title
-// and brand mark, --fs-body the inputs and the send button, --fs-xs the field
-// labels and banners, --fs-tiny the hints, --fs-micro the fine print. A raw
-// px/em value here is a seventh size with no rule about what it means.
-//
-// THE PAGE STAYS LIGHT IN A DARK DEPLOYMENT, and that is a decision, not an
-// oversight. brand.js derives `accent` by darkening the brand ground one
-// percent at a time until it MEASURES 4.5:1 against `soft` -- a light wash.
-// Every colour on this page is picked against a light ground by that
-// derivation, so inverting the page would not be a restyle, it would silently
-// invalidate the one contrast guarantee this surface has. A form filled in
-// outdoors in daylight also reads better light than dark. Consistency with
-// the rest of the product is carried instead by the brand bar at the top, the
-// same ground and ink the app chrome and the generated icon already use, and
-// by the shared type ladder.
-//
-// WHAT COMES BACK ON THE QUERY STRING IS A CODE, NEVER A SENTENCE.
-//
-// The redirect after a failed POST used to carry its own message as free text
-// in `?err=`, which meant anybody could compose a link to this deployment's own
-// branded page saying anything that fitted in 200 characters -- "your report
-// was rejected, ring 08xx to confirm" reads as the organisation speaking,
-// because on that page it is. The message is chosen HERE, from a closed set,
-// and the query string only names which one; an unrecognised code falls back to
-// the generic sentence rather than rendering itself.
-//
-// The one variable part is the reference, which is a separate parameter and is
-// escaped like any other contact-supplied value.
 const ERROR_SENTENCES = {
   need_ref_or_phone: () => 'Please enter your reference number, or your phone number.',
   ref_unknown: (ref, esc) => `We could not find the reference "${esc(ref)}". Please check it against your messages, or enter your phone number instead.`,
   phone_shape: () => 'That does not look like a South African phone number. Please write it as 0821234567 or +27821234567.',
-  // Each of these three used to stop at the failure and leave the reader with
-  // nothing to do but guess. The two things a person filling in this form needs
-  // to know on a failure are whether their typing survived -- it does, the form
-  // re-renders with their answers in the boxes (see publicFormHtml's `values`)
-  // -- and that the messaging channel they first reported on still works when
-  // this page does not. Neither was said. "Something went wrong at our end" said
-  // less than that again: it named no fault, no consequence and no next step.
   frozen: () => `This ${ENTITY} is not taking updates on this page at the moment. Reply on the same app you first reported from and the team will get it.`,
   save_failed: () => 'Your answers were not saved. They are still in the boxes below, so you can press Send details again. If it keeps failing, reply on the app you first reported from instead.',
   unexpected: () => `This page could not finish that. Your answers are still in the boxes below -- press Send details to try again. If it keeps failing, reply on the app you first reported from and your ${ENTITY} will still reach the team.`,
 }
 function errorSentence(code, ref, esc, retryAfter) {
   if (code === 'rate') {
-    // Named as the CONNECTION rather than the reader: SA mobile carriers CGNAT
-    // heavily, so a whole district can share one address and the person reading
-    // this may have sent nothing at all.
     return `This connection has made too many requests in the last minute -- in some areas many phones share one connection. Please wait about ${retryAfter} seconds and try again.`
   }
   const fn = ERROR_SENTENCES[code]
   return fn ? fn(ref, esc) : ERROR_SENTENCES.unexpected()
 }
-// The whole vocabulary a redirect may name. Anything else is dropped rather
-// than echoed, so the query string can never carry copy of its own.
 export function errorCode(value) {
   const s = String(value || '')
   return (s === 'rate' || Object.prototype.hasOwnProperty.call(ERROR_SENTENCES, s)) ? s : ''
 }
 
-// `esc` is a parameter rather than a closure binding because this is now a
-// module-level function: it is the same server.js escapeHtml every route
-// module receives through deps, just passed explicitly.
-//
-// `values` is what the contact just typed, laid over whatever the record
-// already holds. A rejection that happens BEFORE anything is written re-renders
-// this page rather than redirecting, so the answers survive; see postReport.
 export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done = false, err = '', values = null, held = 0, cut = 0, none = false, retryAfter = 0 } = {}) {
   let report = parseReport(caseRow)
   if (values) report = { ...report, ...values }
   const vcTotal = PUBLIC_FIELDS.filter(f => f.critical).length
   const vcFilled = PUBLIC_FIELDS.filter(f => f.critical && report[f.key] != null && String(report[f.key]).trim() !== '').length
   const allFilled = vcTotal === 0 || vcFilled >= vcTotal
-  // A config declaring no critical_for_visit field at all would divide by zero
-  // here, so the bar is simply not drawn -- there is no "essential progress"
-  // to report when the deployment has not named anything essential.
-  // The wrapper carried an aria-label, which a screen reader ignores on a
-  // generic div -- the count reached nobody. The visible label already states
-  // it in words, so that line is the accessible name too, and the bar itself is
-  // hidden from the tree rather than announced as a second, wordless copy.
   const progressBar = (caseRow && vcTotal > 0) ? `<div class="progress-wrap">
       <div class="progress-label">${allFilled ? 'All essential details filled. Thank you.' : `Essential details: ${vcFilled} of ${vcTotal} filled`}</div>
       <div class="progress-track" aria-hidden="true"><div class="progress-bar${allFilled ? ' done' : ''}" style="width:${Math.round(vcFilled/vcTotal*100)}%"></div></div>
     </div>` : ''
-  // One field. The value is esc()'d before it reaches a value attribute or a
-  // textarea body, and the hint before it reaches a placeholder attribute.
-  //
-  // THE LABEL IS ASSOCIATED, and that is the whole point of the id/for pair
-  // here. Measured live before this: every one of the 26 controls on this page
-  // reported labels.length === 0, because the label sat beside the input rather
-  // than wrapping it and carried no `for` -- so a screen reader announced each
-  // one as an unnamed edit box, and tapping the words did not focus the field
-  // they name. The id is derived from the field key, which report-shape.js
-  // already guarantees is unique across the form.
-  //
-  // The hint reaches assistive tech through aria-describedby. It stays a
-  // placeholder on screen -- the layout is unchanged -- but a placeholder is not
-  // an accessible description and vanishes the moment anyone types, so
-  // "Farm name, nearest town, or GPS coordinates" was reaching nobody using a
-  // screen reader and nobody who had started answering.
-  //
-  // The essential marker is a real word for assistive tech and an asterisk for
-  // everyone else. aria-label on a bare <span> is ignored the same way the
-  // progress wrapper's was; a visually-hidden word is not.
   const fieldHtml = ({ key, label, hint, multiline, critical, options = [] }) => {
     const id = 'f-' + esc(key)
     const hintId = hint ? id + '-hint' : ''
     const val = esc(report[key] || '')
     const placeholder = hint ? ` placeholder="${esc(hint)}"` : ''
     const describedBy = hintId ? ` aria-describedby="${hintId}"` : ''
-    // A field with a list of usual answers is a native <select> (works with no script, on any
-    // handset) plus a plain box for the "Other" case. A saved answer that is not on the list
-    // re-opens as Other with its words in the box.
     const listed = options.find(o => o.toLowerCase() === String(report[key] || '').trim().toLowerCase())
     const otherOn = !!String(report[key] || '').trim() && !listed
     const inp = options.length
@@ -357,71 +129,32 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
     const hintHtml = hint ? `<span class="vh" id="${hintId}">${esc(hint)}</span>` : ''
     return `<div class="field${critical ? ' vc' : ''}"><label for="${id}">${esc(label)}${vcMark}</label>${inp}${hintHtml}</div>`
   }
-  // Each declared group becomes a bounded card with a numbered step and its
-  // own question count, so a long form reads as "four things to do" rather
-  // than one undifferentiated column. The count is the honest number, not a
-  // rounded one: someone deciding whether to start deserves to know.
-  // Without a known case the form opens with its own "find your report" card,
-  // which is step 1; the declared groups then start at 2. With a ref in hand
-  // that card collapses to a hidden input and the groups start at 1. The
-  // numbers have to agree with what is actually on the page or they are worse
-  // than no numbers at all.
   const stepOffset = caseRow ? 0 : 1
   const groupCards = PUBLIC_GROUPS.map((g, i) => {
     const n = i + 1 + stepOffset
     const count = `${g.fields.length} question${g.fields.length === 1 ? '' : 's'}`
-    // THE SPACE BEFORE .grp-count IS LOAD-BEARING. A heading's accessible name
-    // is its text content with no separator inserted between adjacent inline
-    // children, so without it the announced heading was "Animal & symptoms13
-    // questions". .grp-head is display:flex, where whitespace between items is
-    // not rendered, so the space costs nothing on screen. Same in refBlock's
-    // own copy of this heading below.
     return `<section class="grp${g.critical ? ' vc' : ''}">
       <h2 class="grp-head"><span class="grp-n" aria-hidden="true">${n}</span><span class="grp-title">${esc(g.title)}</span> <span class="grp-count">${count}</span></h2>
       ${g.fields.map(fieldHtml).join('')}
     </section>`
   }).join('')
-  // A CONFIRMATION THAT NAMES WHAT DID NOT LAND. Two things can quietly not be
-  // saved, and both used to render the same unqualified "your details have been
-  // saved": an answer to a question the record already holds (an update entered
-  // with only a phone number may add facts but never replace one -- see
-  // postReport) and an answer longer than the 4000 characters a field stores.
-  // Telling somebody who has just corrected a death count that it was saved,
-  // when it was not, is worse than refusing them outright.
   const heldNote = held > 0
     ? (held === 1
-      // "please contact the team" named no way of doing it, on the one page
-      // whose reader has no other instruction to fall back on. The person
-      // reading this reached us on a messaging app; that app is the answer.
       ? ' One of your answers was for a question we already have an answer to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so if that answer is wrong, reply on the app you first reported from and say so.'
       : ` ${held} of your answers were for questions we already have answers to. An update sent without a reference number can add what is missing but cannot change what is already recorded, so if any of them are wrong, reply on the app you first reported from and say so.`)
     : ''
-  // Says the limit and what to do with the rest. It used to state only that the
-  // end was cut off, which tells somebody who has just written a long account of
-  // an outbreak that part of it is gone and nothing about how to send the rest.
   const cutNote = cut > 0
     ? ` ${cut} of your answers ${cut === 1 ? 'was' : 'were'} longer than the ${FIELD_MAXLEN} characters a field holds, so the end ${cut === 1 ? 'was' : 'were'} cut off. Send anything that is missing as a message on the app you first reported from.`
     : ''
   const banner = done
     ? (none
       ? `<div class="banner ok" role="status">We found your ${esc(ENTITY)}. You did not fill in any answers this time, so nothing on it has changed.</div>`
-      // "The team will be in touch" was a promise of contact, and this page's
-      // own stated rule (see the .next comment in the stylesheet below) is that
-      // it promises no time, no visit and no named person, because none of the
-      // three can be committed to. A saved answer is the fact; who reads it and
-      // when is not this page's to say. What IS useful and true is that the
-      // reference still works and that more can be added later.
       : `<div class="banner ok" role="status">Your answers are saved on ${esc(ENTITY === 'report' ? 'your report' : `your ${ENTITY}`)}. Keep your reference -- you can come back to this page and add more at any time.${heldNote}${cutNote}</div>`)
     : err ? `<div class="banner err" role="alert">${errorSentence(err, ref, esc, retryAfter)}</div>` : ''
   const caseInfo = caseRow
     ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || `Field ${ENTITY}`)}
          <button type="button" class="copy-link-btn" data-ref="${esc(caseRow.ref)}">Share link</button></div>`
     : ''
-  // autocomplete="tel" on the phone box and nowhere else. It is the one field
-  // on this page that asks for a fact about the PERSON rather than about the
-  // animals in front of them, so it is the one field a handset can honestly
-  // fill in; offering to autofill a species or a death count from a browser
-  // profile would put someone else's last answer into this report.
   const refBlock = caseRow ? `<input type="hidden" name="ref" value="${esc(ref)}">` : `
       <section class="grp vc">
       <h2 class="grp-head"><span class="grp-n" aria-hidden="true">1</span><span class="grp-title">Find your ${esc(ENTITY)}</span> <span class="grp-count">2 questions</span></h2>
@@ -658,41 +391,6 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
 </body></html>`
 }
 
-// The public /report form has no auth (the ref is the shared secret), so it
-// needs its own throttle. What that throttle is actually FOR is worth stating
-// accurately, because the two reasons this comment used to give have both
-// stopped being true and someone reading it could reasonably conclude the
-// limiter no longer earns its keep:
-//  - The ref is not brute-forceable. _nextRef mints CASE-<seq>-<8 chars of a
-//    32-symbol alphabet> from crypto.randomBytes, so the suffix alone is ~40
-//    bits; ten guesses a minute is not a threat to it.
-//  - The SA phone-number space no longer reaches anybody else's case. The
-//    phone branch of postReport below is scoped to channel 'web' and cannot
-//    bind to an agent-gathered conversation at all.
-// The reason it still matters is VOLUME, not guessing: every permitted request
-// can open a real case in a queue that human responders work, and burying the
-// genuine reports is the highest-impact attack on a surveillance system. That
-// bound is per-IP only -- there is no global cap here, unlike the messaging
-// path's CASEY_GLOBAL_RATE_LIMIT_MSGS -- and a tighter one is NOT a free win:
-// SA mobile carriers CGNAT heavily and CASEY_TRUST_PROXY_HOPS defaults unset,
-// so a whole district can share one req.ip and a narrow cap would mute real
-// reporters mid-outbreak. Scoped to these two routes only -- never touches the
-// authed() /api surface. Sweeps stale buckets so the map cannot grow unbounded
-// under sustained traffic.
-//
-// A factory rather than module-level state on purpose: the bucket map and the
-// sweep interval belong to one registerAuth call, exactly as they did when
-// they were closure bindings, so two dashboards in one process do not share a
-// limiter (or leak a second uncleared interval).
-//
-// READS AND WRITES HAVE SEPARATE BUDGETS, because only one of them is what the
-// limiter is for. A GET opens no case and queues no work; a submit is the thing
-// that has to be bounded. Sharing one 10-per-minute allowance meant a reporter
-// on a bad link -- which is the normal case here -- spent it on reloads and
-// redirects and was refused mid-report: a submit already costs two requests
-// (the POST and the redirect's GET), so five attempts exhausted it. The write
-// bound is unchanged at 10 per minute per address; reads get their own,
-// looser one.
 const REPORT_WRITE_LIMIT = 10
 const REPORT_READ_LIMIT = 40
 const REPORT_RATE_WINDOW_MS = 60000
@@ -716,13 +414,8 @@ export function makeReportRateLimiter(esc) {
     if (writing) b.writes++
     else b.reads++
     if (writing ? b.writes > REPORT_WRITE_LIMIT : b.reads > REPORT_READ_LIMIT) {
-      // The wait is the real remainder of the window, not "a moment": somebody
-      // deciding whether to give up needs a number. Retry-After carries the
-      // same figure for anything reading the response rather than the page.
       const retryAfter = Math.max(1, Math.ceil((REPORT_RATE_WINDOW_MS - (now - b.windowStart)) / 1000))
       res.set('Retry-After', String(retryAfter))
-      // The reference the reader was on is kept, so a refusal does not also
-      // cost them the one thing they had to type in from a message.
       const ref = String((req.body && req.body.ref) || req.query.ref || '').slice(0, 50).trim()
       return res.status(429).type('html').send(publicFormHtml(esc, { ref, err: 'rate', retryAfter }))
     }
@@ -730,22 +423,10 @@ export function makeReportRateLimiter(esc) {
   }
 }
 
-// Public contact-facing report form -- no token required.
-// The ref acts as the shared secret: contacts only know their own ref,
-// and report fields are non-sensitive (location, symptoms, contact info).
-// GET /report?ref=REF  -> HTML form for that case (or blank ref input)
-// POST /report         -> a save redirects to ?done=1 (with &held=/&cut=/&none=1
-//                         saying what did not land); a rejection re-renders the
-//                         form in place so the answers survive.
-// Nothing on the query string is ever rendered as written: ?err= names one of
-// ERROR_SENTENCES, and held/cut/none are read as numbers.
 export function getReport({ store, esc }) {
   return async (req, res) => {
     const ref = String(req.query.ref || '').slice(0, 50).trim()
     const done = req.query.done === '1'
-    // A code, never a message -- see ERROR_SENTENCES. `held`/`cut` carry how
-    // much of the last submission did not land, and are read as counts so the
-    // query string cannot put words on the page either.
     const err = errorCode(req.query.err)
     const countParam = (v) => Math.min(99, Math.max(0, parseInt(v, 10) || 0))
     const held = countParam(req.query.held)
@@ -764,98 +445,43 @@ export function postReport({ store, esc }) {
   return async (req, res) => {
     const ref = String(req.body.ref || '').slice(0, 50).trim()
     const phoneRaw = String(req.body.phone || '').replace(/[\s\-()]/g, '').slice(0, 30)
-    // Everything the contact typed, before any cap or guard touches it. It is
-    // what the page is re-rendered with when a submission is refused, so a
-    // wrong reference or a mistyped number no longer costs somebody the
-    // twenty-four answers underneath it.
     const submitted = {}
     for (const { key, options } of PUBLIC_FIELDS) {
       let v = req.body[key]
-      // "Other (write it)" on a dropdown: the answer is what they wrote beside it.
       if (options.length && v === OTHER_CHOICE) v = req.body[key + '__other']
       if (v == null || typeof v !== 'string') continue
       const trimmed = v.trim()
       if (trimmed) submitted[key] = trimmed
     }
-    // A REJECTION RE-RENDERS RATHER THAN REDIRECTING, deliberately breaking the
-    // post/redirect/get shape the success path keeps. All three call sites
-    // reject BEFORE anything is written, so a browser re-posting on refresh
-    // repeats a request that changed nothing; against that, a redirect drops
-    // every answer, and the sessionStorage draft that used to paper over it
-    // exists only in a browser running this page's JavaScript. The form is a
-    // real form POST and has to survive with scripting off, which is the
-    // condition a fair number of the handsets it is written for are in.
-    //
-    // `showRef` is a parameter and defaults to what the contact actually sent,
-    // never to whatever case the lookup happened to land on: the reference is
-    // the whole access control on this surface, so a page rendered after a
-    // phone-number entry that matched a case the submitter did not open must
-    // not print it. The same rule the success redirect follows.
     const rejected = (err, { caseRow = null, showRef = ref, status = 400 } = {}) => res.status(status).type('html')
       .send(publicFormHtml(esc, { ref: showRef, phone: String(req.body.phone || '').slice(0, 30), caseRow, err, values: submitted }))
     if (!ref && !phoneRaw) return rejected('need_ref_or_phone')
     try {
       let found = null
-      // Whether THIS request opened the case it is about to write to. A
-      // submitter who supplied the ref, or who just caused the case to exist,
-      // has a claim on it; a bare phone number is not a claim (see below).
       let openedHere = false
       if (ref) {
         found = await store.getCaseByRef(ref)
         if (!found) return rejected('ref_unknown')
       } else {
-        // Phone-based entry: normalise to +27XXXXXXXXX.
         const validPhone = /^0[0-9]{9}$/.test(phoneRaw) || /^\+27[0-9]{9}$/.test(phoneRaw)
         if (!validPhone) return rejected('phone_shape')
         const normPhone = phoneRaw.startsWith('0') ? '+27' + phoneRaw.slice(1) : phoneRaw
-        // A PHONE NUMBER IS NOT A SECRET, so it may only ever reach a case this
-        // same form opened for that number -- never an agent-gathered
-        // conversation on another channel. This used to scan for any case with
-        // a matching external_id across every channel, which made the header's
-        // "the ref acts as the shared secret" untrue: witnessed live against a
-        // running dashboard, POSTing one seeded contact's number returned that
-        // contact's WhatsApp case ref in the redirect, the next GET rendered
-        // its whole report (a second person's phone number, the owner's name,
-        // directions to the kraal), and a following POST overwrote species,
-        // location and dead_count on a live outbreak record. findOpenCase
-        // (inside findOrCreateCase) is scoped to channel+external_id, so the
-        // reachable set is now exactly "the open web-form case for this
-        // number", and a first-time reporter with no reference still files a
-        // complete report exactly as before.
         const { case: nc, created } = await store.findOrCreateCase({ channel: 'web', external_id: normPhone, contact: { phone: normPhone }, subject: `Field ${ENTITY} via web form` })
         found = nc
         openedHere = created === true
         if (openedHere) {
-          // Tag as public form intake
           try {
             await store.updateCase(nc.id, { tags: mergeTag(nc.tags, 'intake_mode:public_form') }, { id: 'contact', role: 'contact' })
-          } catch { /* best-effort */ }
+          } catch {  }
           await store.appendEvent(nc.id, { kind: 'note', actor: 'system', text: 'Case created via public web form (phone number entry)' })
         }
       }
-      // The per-field cap is counted, not merely applied. An answer longer than
-      // a field stores used to be shortened in silence under a page that then
-      // said everything had been saved.
       let cut = 0
       const incoming = {}
       for (const [key, value] of Object.entries(submitted)) {
         if (value.length > FIELD_MAXLEN) cut++
         incoming[key] = value.slice(0, FIELD_MAXLEN)
       }
-      // Someone who typed only a phone number, into a case they did not open,
-      // may ADD facts that are missing but never REPLACE one already recorded
-      // -- store.mergeReport overwrites non-append fields by design, which on
-      // this unauthenticated path meant a stranger could rewrite a live
-      // report's species or death count. Nothing is refused and nothing is
-      // silently dropped from a genuine reporter's point of view: every field
-      // they fill that the record does not already hold is still saved, and a
-      // reporter holding their reference keeps full correction rights.
-      //
-      // What IS said, and used not to be, is that it happened: the count of
-      // held-back answers rides back to the confirmation page, so someone who
-      // has just retyped a corrected death count is told the record already had
-      // one and that this route cannot change it, instead of reading "your
-      // details have been saved".
       let held = 0
       if (!ref && !openedHere) {
         const already = parseReport(found)
@@ -865,40 +491,17 @@ export function postReport({ store, esc }) {
       }
       if (Object.keys(incoming).length) {
         const mergeResult = await store.mergeReport(found.id, incoming, { id: 'contact', role: 'contact' })
-        // Any error -- including 'observe' (the case is operator-frozen and not
-        // accepting automatic writes) -- must NOT redirect to done=1: a farmer who
-        // submitted the form deserves to know their details were not saved, not a
-        // false success page. 'observe' gets its own plain message rather than the
-        // generic error string, since nothing actually went wrong on casey's side.
-        // Only a submitter who held the reference, or who just opened this case
-        // here, gets the case echoed back to them.
         const ownRef = ref || (openedHere ? (found?.ref || '') : '')
         const ownRow = ownRef ? found : null
         if (mergeResult.error === 'observe') return rejected('frozen', { caseRow: ownRow, showRef: ownRef })
         if (mergeResult.error) return rejected('save_failed', { caseRow: ownRow, showRef: ownRef })
-        // fieldLabel, not the bare keys. This line is read by an OPERATOR on the
-        // case timeline, and it was listing stored column names
-        // ("dead_count, suspected_disease") next to timeline rows that name the
-        // same fields in words. report-shape.js already exports the mapping the
-        // rest of the dashboard renders those fields with; the raw keys stay in
-        // `data` for anything that needs them.
         const changedFields = Object.keys(incoming).map((k) => fieldLabel(k) || k).join(', ')
         await store.appendEvent(found.id, { kind: 'action', actor: 'contact', text: `contact updated ${ENTITY} via web form: ${changedFields}`, data: incoming })
-        // Tag intake source (add public_form if not already present)
         try {
           await store.updateCase(found.id, { tags: mergeTag(found.tags, 'intake_mode:public_form') }, { id: 'contact', role: 'contact' })
-        } catch { /* best-effort; form still submitted even if tag fails */ }
+        } catch {  }
       }
-      // The ref is the whole access control on this surface, so it is only ever
-      // echoed back to someone who already held it or who just opened the case
-      // here. Handing it to a bare phone-number entry that landed on a case
-      // somebody else opened is what turned a non-secret phone number into a
-      // read key for that case's full report on the following GET.
       const showRef = ref || (openedHere ? (found?.ref || '') : '')
-      // held/cut ride the redirect as counts so the confirmation can say what
-      // did not land. The success path stays a redirect (post/redirect/get) --
-      // unlike the rejections above, this one HAS written, so a refresh must not
-      // repeat it.
       const notes = (held ? '&held=' + held : '') + (cut ? '&cut=' + cut : '')
         + (Object.keys(submitted).length ? '' : '&none=1')
       res.redirect((showRef ? '/report?ref=' + encodeURIComponent(showRef) + '&done=1' : '/report?done=1') + notes)
@@ -906,52 +509,9 @@ export function postReport({ store, esc }) {
   }
 }
 
-// Readiness probe for orchestrators/load balancers: is the system of record
-// actually reachable RIGHT NOW (a real store query succeeds), not merely "the
-// HTTP server booted"? This exercises the store with the cheapest real read (a
-// count) and returns 200 {ready:true} or 503 {ready:false,error}. It is UNGATED
-// on purpose -- a k8s/LB probe has no dashboard token. Placed before the auth
-// middleware so the session gate never 401s a readiness check. Mounted
-// { raw: true }: it owns the try/catch that turns a store failure into its own
-// 503 shape, which deps.wrap's 500 envelope would replace.
-//
-// WHY IT REPORTS MORE THAN THE STORE. A sqlite answer is the ONE thing this
-// probe used to check, so an instance whose LLM backend was genuinely
-// unreachable still answered {"ready":true,"store":"ok"} -- alive, looking
-// fine, answering nobody. Every signal that distinguishes "processing" from
-// "answering nobody" (/api/health, /api/health/provider, /api/turns/degraded,
-// /api/runtime) sits behind the operator session and is unreachable to a
-// monitor or a load balancer, so the one endpoint a monitor CAN poll was the
-// one that could not fail for the reasons that matter.
-//
-// WHAT IT MAY SAY. This route stays PII-free (AGENTS.md's "only ungated
-// routes" list is absolute): booleans, counts and a fixed vocabulary of state
-// words, never case content, never a ref, never a contact identifier, and
-// never the provider model/url (a url can carry a key). `degraded_reasons` is
-// a closed set of machine tokens; `checks` is a closed set of state words.
-//
-// WHY DEGRADED IS STILL 200. `ready` answers "may this instance take traffic",
-// and a casey whose provider is down is still the instance that accepts the
-// inbound, queues the turn and re-drives it on recovery -- pulling it from the
-// pool makes the outage worse, and a dashboard-only console has no provider by
-// design. So degradation is reported IN the body, and only an unreachable
-// store is a 503. A monitor alerts on `degraded`; a load balancer reads the
-// status code. `capabilities` says which signals this process can produce at
-// all, so an absent one reads as a MODE rather than as a fault: a
-// `casey dashboard` console with nothing wired is NOT degraded, it is a
-// different shape, and every capability reads false to say so.
-//
-// `degraded` here is the UNION of every signal this process can see, and is a
-// wider word than /api/health's own `degraded` (which is only llm.js's
-// slow-turn rolling window, and deliberately never flips on one failed turn).
-// A provider that is flatly offline shows degraded:false on /api/health's
-// window and degraded:true here, which is the whole point of this route.
 const READY_PROBE_TIMEOUT_MS = 1500
 const READY_CACHE_MS = 2000
 const readyResolve = async (v) => (typeof v === 'function' ? await v() : v)
-// A probe that hangs must never make the readiness probe itself hang: an
-// orchestrator reads a timed-out probe as a dead instance. Undefined is
-// "did not answer", which the callers below report as such.
 function readyProbe(v) {
   if (v == null) return Promise.resolve(undefined)
   return new Promise((resolve) => {
@@ -965,8 +525,6 @@ function readyProbe(v) {
 const readyInt = (n) => (Number.isFinite(Number(n)) ? Math.max(0, Math.trunc(Number(n))) : 0)
 
 export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSweep, sendReply, runtimeStatus }) {
-  // Which signals this process was GIVEN a way to produce. Fixed at
-  // createDashboard time, so it is computed once rather than per request.
   const capabilities = {
     llm: llmStatus != null,
     receive: receiveStatus != null,
@@ -975,11 +533,6 @@ export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSwee
     reply: sendReply != null,
     runtime: runtimeStatus != null,
   }
-  // A liveness probe can be polled every second by several watchers at once.
-  // The store count is the cheap part; the four status probes are not, so one
-  // snapshot is shared for a couple of seconds rather than fanned out per
-  // request. Per-closure (one createDashboard call), the same discipline
-  // makeReportRateLimiter uses for its buckets.
   let cached = null
   async function degradationSnapshot() {
     if (cached && Date.now() - cached.at < READY_CACHE_MS) return cached.value
@@ -1014,8 +567,6 @@ export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSwee
     }
     if (capabilities.runtime) {
       const state = rt && typeof rt.state === 'string' ? rt.state.slice(0, 32) : ''
-      // Same whitelist getRuntime enforces, imported rather than copied so the
-      // two can never drift into disagreeing about what a runtime state is.
       const safe = RUNTIME_STATES.has(state) ? state : ''
       if (!safe) { checks.runtime = 'no_answer' }
       else if (safe === 'healthy' || safe === 'standalone') { checks.runtime = 'ok' }
@@ -1027,9 +578,6 @@ export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSwee
   }
   return async (req, res) => {
     const started = Date.now()
-    // A write holding the sqlite file makes a read fail instantly (busy_timeout 0). That
-    // is a busy store, not an unreachable one: retry once after a short wait, and if it is
-    // still busy answer ready with store:'busy' -- never a false red on a liveness probe.
     const isBusy = (e) => /SQLITE_BUSY|database is locked|database table is locked/i.test(String(e?.message || e))
     let storeState = 'ok'
     try {
@@ -1041,7 +589,6 @@ export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSwee
         catch (e2) { if (!isBusy(e2)) throw e2; storeState = 'busy' }
       }
     } catch (e) {
-      // Bound the error so a hostile/huge store error cannot bloat the probe body.
       return res.status(503).json({
         ready: false, store: 'unreachable', degraded: true, degraded_reasons: ['store_unreachable'],
         error: String(e.message || e).slice(0, 200),
@@ -1049,32 +596,15 @@ export function getReady({ store, llmStatus, receiveStatus, queueStatus, runSwee
     }
     const took_ms = Date.now() - started
     let snapshot
-    // A failure to READ the degradation signals is itself a reportable state,
-    // never a 500 out of a liveness probe: the store answered, so the instance
-    // is ready, and the body says the extra signals could not be gathered.
     try { snapshot = await degradationSnapshot() }
     catch { snapshot = { degraded: true, degraded_reasons: ['checks_unavailable'], checks: { store: 'ok', llm: 'no_answer', gateway: 'no_answer', runtime: 'no_answer', queue: null } } }
     res.json({ ready: true, store: storeState, took_ms, ...snapshot, capabilities })
   }
 }
 
-// Login: username + password against a real operator_account row (see
-// dashboard/auth.js). On success, sets an HttpOnly session cookie and
-// returns the operator's display info -- never the password hash/salt.
-// Rate-limiting/lockout is intentionally NOT added here: this is a
-// low-stakes field-team login (see the AUTH MODEL note at the top of this
-// file), and a lockout mechanism is itself a denial-of-service surface
-// against a teammate's account. scrypt's own cost already makes brute-force
-// impractical at any real request rate.
-// Online password guessing is capped per (username, source address) and per source
-// address, in memory (a restart forgives; the scrypt cost is the standing brake). A
-// success clears the pair. Keyed by source too, so one stranger cannot lock a real
-// person out of their own login from elsewhere.
 const LOGIN_FAILS = new Map()
 const LOGIN_WINDOW_MS = 15 * 60e3
 const loginFails = (k, now) => { const l = (LOGIN_FAILS.get(k) || []).filter(t => now - t < LOGIN_WINDOW_MS); if (l.length) LOGIN_FAILS.set(k, l); else LOGIN_FAILS.delete(k); return l }
-// A login for a name that does not exist still pays the scrypt cost, so response time
-// does not tell a stranger which usernames are real.
 const DECOY = { salt: 'decoy-salt-0000000000000000000000', hash: '00'.repeat(64) }
 
 export function postLogin({ store, findAccountByUsername, verifyPassword, issueSession, sessionCookieHeader, markLogin }) {
@@ -1096,7 +626,7 @@ export function postLogin({ store, findAccountByUsername, verifyPassword, issueS
     LOGIN_FAILS.delete(pairKey)
     const token = issueSession(acct.id, { epoch: Number(acct.session_epoch) || 0 })
     res.set('Set-Cookie', sessionCookieHeader(token))
-    markLogin(store, acct.id).catch(() => {}) // best-effort, never blocks login
+    markLogin(store, acct.id).catch(() => {})
     res.json({ ok: true, username: acct.username, display_name: acct.display_name, role: roleOf(acct) })
   }
 }
@@ -1108,11 +638,6 @@ export function postLogout({ clearCookieHeader }) {
   }
 }
 
-// Who the current session belongs to, for the SPA to render "logged in as
-// X" / redirect to the login screen when there is no valid session. Safe to
-// leave ungated (it just echoes back req.caseyAccount, already resolved
-// from the cookie by the middleware above) -- no lookup happens for an
-// absent/invalid cookie.
 export function getWhoami() {
   return (req, res) => {
     if (!req.caseyAccount) return res.json({ authed: false })
@@ -1121,96 +646,36 @@ export function getWhoami() {
   }
 }
 
-// Deliberately ungated, same reasoning as /api/whoami above: the login
-// screen (login-gate.js) renders before any session exists, so a herd-
-// health/rebranded deployment's "casey" -> "Herd Health" shell branding
-// (DASHBOARD_UI.brand/leaf, see report-shape.js) never reached it before
-// this route existed -- /api/config carries the full shape but is
-// correctly gated (workflow stages/enums), so this exposes ONLY the two
-// non-sensitive display strings a deployer already renders in the page
-// title (server.js's PWA_BRAND) and the post-login topbar. Absent
-// dashboard_ui (casey's own default, uhh) -- both fields are null and
-// login-gate.js's own 'casey' fallback applies, unchanged.
 export function getBranding() {
   return (req, res) => {
     res.json({ brand: DASHBOARD_UI?.brand || null, leaf: DASHBOARD_UI?.leaf || null })
   }
 }
 
-// Forced password change: the ONE route a must_change_password account may
-// reach besides login/logout/whoami/change-password itself (gated below).
-// A printed bootstrap password (or any account an admin creates with the
-// flag set) can never be used as a standing credential past the first login.
-// Mounted { raw: true }: its own catch answers 400 with the thrown message
-// (a rejected weak/short password), not deps.wrap's 500.
 export function postChangePassword({ store, verifyPassword, changePassword, issueSession, sessionCookieHeader }) {
   return async (req, res) => {
     if (!req.caseyAccount) return res.status(401).json({ error: 'unauthorized' })
     try {
       const { current_password, new_password } = req.body || {}
-      // A session cookie alone must never be sufficient to rotate the
-      // account's own credential -- otherwise a stolen/XSS'd/shared-device
-      // session escalates straight to a full, silent account takeover (the
-      // new password is only known to the attacker, and changePassword also
-      // bumps session_epoch, so the legitimate owner's other sessions die in
-      // the same call). Re-verify the CURRENT password first, same
-      // timing-safe check the login route uses.
       if (!verifyPassword(current_password, req.caseyAccount.password_salt, req.caseyAccount.password_hash)) {
         return res.status(401).json({ error: 'current password is incorrect' })
       }
       const { epoch } = await changePassword(store, req.caseyAccount.id, new_password)
-      // Re-issue THIS session's cookie at the new epoch. changePassword bumps
-      // the epoch every outstanding token is validated against, including the
-      // one that carried this very request, so without this line the operator
-      // who just changed their password is logged out by their own successful
-      // change -- witnessed live on the forced-change screen, where it is the
-      // only screen available and there is nothing else to click.
       res.set('Set-Cookie', sessionCookieHeader(issueSession(req.caseyAccount.id, { epoch })))
       res.json({ ok: true })
     } catch (e) { res.status(400).json({ error: e.message }) }
   }
 }
 
-// The auth gate itself. Everything registered AFTER this in registerAuth --
-// and every other route module, since auth.js registers first -- sits behind
-// it. The exemption list is the whole of AGENTS.md's "only ungated routes"
-// invariant; do not add to it without re-reading that section.
 export function authGate() {
   return (req, res, next) => {
     if (req.path.startsWith('/design') || req.path.startsWith('/vendor')) return next()
     if (req.path === '/api/login' || req.path === '/api/logout' || req.path === '/api/whoami') return next()
-    // The SPA shell itself (page markup + its own CSS/JS, moved to static
-    // files under public/ this session) must load with no session, exactly
-    // like the original inline PAGE constant's unconditional `app.get('/', ...)`
-    // handler did -- the page's OWN client-side JS is what shows the login
-    // screen and makes the gated /api/* calls; gating the shell itself would
-    // 401 before a browser ever gets far enough to render a login form. The
-    // PWA routes (icon/manifest/service-worker/offline page) were likewise
-    // always unconditional in the original -- a service worker cannot even
-    // register if fetching its own script requires an existing session.
     if (req.path === '/' || req.path === '/index.html' || req.path === '/app.js' || req.path === '/app.css') return next()
-    // The AppShell rewrite's module tree (main.js + every view/component under
-    // it) replaces the old single app.js file -- same "shell code, no case
-    // data" exemption as app.js above, just spread across real ES module
-    // files under /src/ instead of one bundle. Path-prefix (not exact-match)
-    // since the tree is 50+ files and grows as other builders land views.
     if (req.path.startsWith('/src/')) return next()
     if (req.path === '/icon.svg' || req.path === '/manifest.json' || req.path === '/sw.js' || req.path === '/offline.html') return next()
-    // /api/sync/* is a SEPARATE, narrowly-scoped machine API (routes/sync-api.js,
-    // EXTERNAL-SYNC.md) with its own bearer-token gate -- exempted from THIS
-    // session-cookie gate specifically so that gate can run instead, not because
-    // this route set is unauthenticated. A request with no/bad/revoked/
-    // under-scoped key still 401s/403s there, on its own auth path. Every other
-    // route in this list is exempted because it carries no case data or must load
-    // before a session can exist; this one is exempted because it is gated by a
-    // DIFFERENT mechanism, not because it needs none.
     if (req.path.startsWith('/api/sync/')) return next()
     if (!req.caseyAccount) return res.status(401).json({ error: 'unauthorized' })
-    // A must_change_password account is authed but locked to ONLY the
-    // change-password route until it clears the flag -- every other route
-    // (including reading case data) is refused with a distinct, SPA-
-    // detectable error code so the frontend can route straight to a
-    // change-password screen instead of a generic login redirect.
     if (req.caseyAccount.must_change_password === '1' && req.path !== '/api/change-password') {
       return res.status(403).json({ error: 'must change password before continuing', code: 'must_change_password' })
     }
@@ -1218,10 +683,6 @@ export function authGate() {
   }
 }
 
-// The pre-gate routes that mountRoutes CAN express. GET/POST /report are not
-// here because they take the rate-limit middleware as a second argument, which
-// the table has no slot for -- they are registered by hand in registerAuth,
-// immediately above this block, exactly where they used to be.
 const ROUTES = [
   ['get', '/api/ready', getReady, { raw: true }],
   ['post', '/api/login', postLogin],
@@ -1237,13 +698,6 @@ export function registerAuth(app, deps) {
   app.use(sessionMiddleware(deps))
   app.use(csrfGuard())
 
-  // The public form is served only where it is actually an entrypoint.
-  // CASEY_PUBLIC_URL is what hooks/prompt.js checks before ever offering a
-  // reporter the /report link, so a deployment that leaves it unset never
-  // advertises the form -- serving it anyway is unauthenticated write surface
-  // reachable by anyone who finds the host, earning nothing. Deployments whose
-  // only intake is a messaging channel are the common case, not the exception.
-  // Set CASEY_PUBLIC_URL to serve it; the flow is unchanged when set.
   if (process.env.CASEY_PUBLIC_URL) {
     const reportRateLimited = makeReportRateLimiter(esc)
     app.get('/report', reportRateLimited, getReport(deps))
@@ -1253,38 +707,12 @@ export function registerAuth(app, deps) {
   mountRoutes(app, deps, ROUTES)
 
   app.use(authGate())
-  // Deny-by-default scope for the field-team logins (roles.js). Staff pass through.
   app.use(roleGate(deps))
   app.use(expectedRefGuard(deps))
 
   app.use('/design', express.static(DESIGN_DIR))
   app.use('/vendor/leaflet', express.static(LEAFLET_DIR))
   app.use('/vendor/leaflet.markercluster', express.static(MARKERCLUSTER_DIR))
-  // Downloaded photo/voice-note bytes (case-store.js saveMedia), gated like every
-  // other case-data route -- unlike /design and /vendor (static UI assets with no
-  // case content) this serves real field-worker media, so it stays behind the
-  // token middleware above (mounted after it, no exemption added).
-  //
-  // The bytes AND the filename extension under this mount both originate with a
-  // CONTACT: store/media.js derives the extension from the MIME type the sender's
-  // own upload declared, and express.static then sets Content-Type from that
-  // extension. So without the two headers below, the chain "a contact chooses a
-  // MIME type" -> "casey names the file" -> "the dashboard declares that type"
-  // ends with contact-chosen content being served as an active document from the
-  // operator console's OWN origin, where the operator's session cookie lives.
-  // nosniff stops the browser upgrading octet-stream to something executable on
-  // its own, and Content-Disposition makes a top-level navigation DOWNLOAD the
-  // file instead of rendering it -- while leaving the dashboard's inline <img>
-  // previews working exactly as before, since Content-Disposition governs
-  // navigation, not subresource loading.
-  //
-  // Stated honestly: this is hardening of a class, not the repair of a witnessed
-  // exploit. A live probe uploaded HTML bytes declaring 'image/html' under a
-  // '.png' name and could NOT reach an executable file -- Discord rewrote the
-  // content type from the filename, and store/media.js's own non-alphanumeric
-  // strip turns 'image/svg+xml' into a '.svgxml' nothing executes. Neither of
-  // those is a guarantee casey controls: the WhatsApp webhook hands over whatever
-  // MIME the sender's client declared, with no platform rewrite in front of it.
   app.use('/media', express.static(path.join(store.dataDir, 'media'), {
     setHeaders: (res) => {
       res.setHeader('X-Content-Type-Options', 'nosniff')

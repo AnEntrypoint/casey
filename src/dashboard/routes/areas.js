@@ -1,83 +1,3 @@
-// Areas, the hand-over to the sign-off desk, wrong-area correction and "my day".
-//
-// THE CONTRACT (paths, verbs, JSON) -- the GUI is built against this header.
-//
-// Every route is behind the session gate. STAFF (admin | operator | secretary) may
-// call all of them; a FIELD login (eco_ranger | animal_health_technician) reaches
-// only GET /api/my-day (its OWN day) and POST /api/cases/:id/handoff (on a case
-// assigned to it) -- roles.js roleGate refuses everything else with 403.
-// A "key" is a case.assignee value: `contact:<id>` for a WhatsApp team member or a
-// dashboard username. GET /api/team-members lists the keys that can be chosen.
-//
-//   GET    /api/areas                                   (staff)
-//     -> { area_field: "association" | null,
-//          areas: [{ id, name, aliases: [string], primary: {key, name},
-//                    backups: [{key, name}], updated_at: ms, updated_by: string,
-//                    open_cases: number }],
-//          unmapped: { total: number, truncated: bool,
-//                      groups: [{ value: string, kind: "association"|"location"|"none",
-//                                 count: number, refs: [string] }] } }
-//     `unmapped` = open cases whose stated association (else location) matches no
-//     area, grouped by what was said: the list an operator works down to map areas.
-//
-//   PUT    /api/areas                                   (staff)
-//     body { id?: string, name: string, primary: key, backups?: [key],
-//            aliases?: [string], apply_to_unassigned?: bool }
-//     Adds the area when no area has that id/name/alias, else updates it (fields not
-//     sent keep their value). aliases are the other spellings / villages of the area.
-//     apply_to_unassigned:true then gives the open unassigned cases the area now
-//     resolves to its ranger.
-//     -> 200 { area: {..as above..}, applied?: { assigned: [{ref, area, to}], skipped } }
-//     -> 400 { error } for an unusable ranger, a spelling another area owns, etc.
-//
-//   DELETE /api/areas/:id                               (staff)
-//     -> 200 { ok: true }   404 { error } when no such area. Cases keep whatever
-//     assignee they hold; they fall back into `unmapped`.
-//
-//   POST   /api/cases/:id/relocate                      (staff)
-//     body { area?: string (mapped id/name/alias), association?: string (free words,
-//            when the place is not mapped), assignee?: key, reassign?: bool (default
-//            true), reason?: string, expected_ref?: string }
-//     Records the corrected area on the case (the `association` report field, old ->
-//     new on the timeline) and, unless reassign:false, hands the case to that area's
-//     ranger (or `assignee` when given): the previous holder is released.
-//     -> 200 { ok: true, ref, from_area, to_area, mapped, reassigned,
-//              assigned_to: {key, name} | null }
-//     -> 400 { error }   404 { error } when no such case
-//
-//   POST   /api/cases/:id/handoff                       (staff, or the assigned login)
-//     body { note?: string, expected_ref?: string }
-//     Hands a FULL record (mandatory minimum recorded) to the sign-off desk. It stays
-//     assigned to the ranger; the technician's queue (view=signoff, signoff_queue)
-//     includes it and the technician is told. The technician's send-back
-//     (POST /api/cases/:id/send-back) reverses it.
-//     -> 200 { ok: true, ref, already?: true }
-//     -> 400 { error, code: "missing_minimum", missing: [fieldKey] } when a required
-//        fact is blank;  404 no such case.
-//
-//   GET    /api/my-day[?ranger=<key>&since=<epoch ms>]
-//     A field login gets its OWN day (`ranger` is ignored unless it is itself). Staff
-//     must pass `ranger` (a key) and get that person's day. `since` overrides the day
-//     boundary (default: local midnight, CASEY_TZ).
-//     -> { ranger?: {key, name}, as_of, day_started_at, person: {name, areas: [name]},
-//          in_your_area: null | { new_today, open_now, by_stage: {stage: n}, with_you,
-//                                 with_someone_else, unassigned, handed_to_desk },
-//          yours: { open_now, by_stage, record_full_not_handed_over, with_the_technician,
-//                   finished_today },
-//          since_the_day_began: { new_cases, reporter_replies, newly_assigned_to_you,
-//                                 sent_back, handed_to_desk, signed_off, moved_stage },
-//          needs: [{ ref, what, stage, needs: [string] }], needs_shown, needs_total,
-//          note?: string,
-//          sign_off_desk?: { waiting, handed_over_by_rangers, unassigned_and_full,
-//                            diagnosis_still_to_record, first: [{ref, what, from_a_ranger}] } }
-//     PII-free: no phone number, no reporter name, no assignee key.
-//
-// GET /api/cases/:id (staff) also carries `area: { association, area: {id,name,
-// matched_by}|null, possibly_wrong_area: null | { reasons: ["location_elsewhere"|
-// "association_disagrees"], location_area, association_area, assignee_areas } }`.
-//
-// deps: store, wrap, authed, actingOperator, findAccountByUsername
-
 import { mountRoutes } from './register.js'
 import { isStaffAccount, isTechnician, resolveContact } from '../roles.js'
 import { isContactAssignee, contactIdOfAssignee } from '../../case-assignment.js'
@@ -100,8 +20,6 @@ const staffOnly = (req, res) => {
   return false
 }
 
-// One namer per request (assignee-names.js): a WhatsApp team member and a dashboard
-// login both read by their own name, never as a key or a bare login.
 const keysOfAreas = (areas) => areas.flatMap(a => [a.primary, ...a.backups])
 const namerFor = (store, keys) => assigneeNamer(store, keys, (k) => k, { logins: true })
 
@@ -224,7 +142,6 @@ export function getMyDay({ store, authed, findAccountByUsername }) {
     const since = req.query.since != null && Number.isFinite(Number(req.query.since)) ? Number(req.query.since) : null
     let keys = []; let contact = null; let tier = ''; let name = ''; let ranger
     if (!isStaffAccount(acct)) {
-      // A field login sees its OWN day, whatever `ranger` says.
       const asked = String(req.query.ranger || '').trim()
       if (asked && asked !== acct.username && !(acct._contact && asked === `contact:${acct._contact.id}`)) return res.status(403).json({ error: 'You can see your own day only.', code: 'role_forbidden' })
       contact = acct._contact || await resolveContact(store, acct)

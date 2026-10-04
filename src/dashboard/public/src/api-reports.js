@@ -1,14 +1,9 @@
-// api-reports.js -- the browser's calls for the aggregate, PII-free disease
-// reports (routes/reports-map.js): the resolved map's points, the k-anonymised
-// disease rollups, the heat grid and the export link. Nothing here can name a
-// person, a number or a report; the server refuses to send any. Built on
-// api.js's one exported api() call, like api-roles.js.
 import { api, ApiError } from './api.js';
 
 async function json(path) {
   const r = await api(path);
   let body = null;
-  try { body = await r.json(); } catch { /* no body */ }
+  try { body = await r.json(); } catch {  }
   if (!r.ok) throw new ApiError(r.status, body);
   return body;
 }

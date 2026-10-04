@@ -1,8 +1,3 @@
-// Team-facing operator views: who can be assigned a case, and who needs a nudge.
-// Staff-only by construction -- roleGate (roles.js) denies both to the field
-// logins, since neither is in its allowlist.
-//
-// deps: store, wrap, authed, isOpenCase, UNCLAIMED_ASSIGNEE, listAccounts
 import { mountRoutes } from './register.js'
 import { tsMs } from '../../timestamp.js'
 import { normalizeMsisdn } from '../../role-invites.js'
@@ -20,14 +15,6 @@ const ROLE_LABEL = { eco_ranger: TIER_LABELS[TIER_FIELD_WORKER], animal_health_t
 const NUDGE_CASE_CAP = 300
 const HOUR = 3600e3
 
-// The people a case can be assigned to: registered team members reached over
-// WhatsApp (assigned by their contact key) and dashboard logins for the field
-// roles (assigned by username). A login linked (contact_phone) to a listed
-// WhatsApp team member is that same person: the picker assigns with the contact
-// key (which the login also holds through roles.js's contact_phone resolution), so
-// the login is carried as an ALIAS (`alias_of` = the contact key), not as a second
-// choice. It stays in the payload so a report already held under the username still
-// resolves to a name; the picker skips aliases. An unlinked login is listed as before.
 export function getTeamMembers({ store, authed, listAccounts }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -54,16 +41,12 @@ export function getTeamMembers({ store, authed, listAccounts }) {
 
 const hoursSince = (ms, now) => (Number.isFinite(ms) ? Math.max(0, Math.round(((now - ms) / HOUR) * 10) / 10) : null)
 
-// Open cases held by a field team member, grouped by person, with the clocks an
-// operator nudges on: since assignment, since the person last did anything on the
-// case, since the reporter last wrote, and what is still missing.
 export function getNudges({ store, authed, isOpenCase, UNCLAIMED_ASSIGNEE, listAccounts }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const now = Date.now()
     const all = await store.listCases({}, { limit: 5000, offset: 0 })
     const held = all.filter(c => isOpenCase(c) && String(c.assignee || '').trim() && c.assignee !== UNCLAIMED_ASSIGNEE)
-    // Only field-team holders: an operator holding a case is not nudged by this view.
     const accounts = new Map((await listAccounts(store)).filter(a => FIELD_ROLES.includes(a.role)).map(a => [String(a.username).toLowerCase(), a]))
     const people = new Map()
     let capped = false
@@ -104,8 +87,6 @@ export function getNudges({ store, authed, isOpenCase, UNCLAIMED_ASSIGNEE, listA
         missing: missingFor(c).map(fieldLabel),
       })
     }
-    // One person can appear twice: as a dashboard login and as their WhatsApp
-    // contact (linked by phone number). Fold those into the one person.
     const byPhone = new Map()
     for (const p of [...people.values()]) {
       if (!p.digits) continue
@@ -123,24 +104,16 @@ export function getNudges({ store, authed, isOpenCase, UNCLAIMED_ASSIGNEE, listA
       const { digits, ...rest } = p
       return { ...rest, wa_link: waLink(digits, text) }
     })
-    // Longest quiet first: the person whose oldest silence is longest.
     const quiet = (p) => Math.max(...p.cases.map(c => c.hours_since_activity ?? c.hours_assigned ?? 0))
     out.sort((a, b) => quiet(b) - quiet(a))
     res.json({ people: out, capped })
   }
 }
 
-// Did this event's data name the login that holds the case? (Dashboard logins
-// stamp `by: <username>` on everything they do.)
 function acct_by(d, key, accounts) {
   return accounts.has(key.toLowerCase()) && String(d.by || '').toLowerCase() === key.toLowerCase()
 }
 
-// The field team as ranger-metrics.js wants it: one person per human, with every
-// key they can be held under (WhatsApp contact key and/or dashboard username; a
-// login linked by phone to a listed contact is folded into that contact) and the
-// names and ids their timeline events carry. Names only -- never a phone or login
-// in the payload built from this.
 export async function teamPeople(store, listAccounts) {
   const people = []
   const byPhone = new Map()
@@ -164,9 +137,6 @@ export async function teamPeople(store, listAccounts) {
   return people
 }
 
-// GET /api/metrics/team -- STAFF only (roles.js denies every other family by
-// default; nothing is added to its field or viewer allowlists). See ranger-metrics.js
-// for what each figure means. ?stuck_hours=N (default 48), ?since_days=N (default all).
 export function getTeamMetrics({ store, authed, UNCLAIMED_ASSIGNEE, listAccounts }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })

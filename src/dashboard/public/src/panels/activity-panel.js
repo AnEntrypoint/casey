@@ -1,7 +1,3 @@
-// Activity panel -- event log with kind/actor filters. Content-swap panel
-// (state.activePanel === 'activity'). Icon/tone-coded row list, same visual
-// vocabulary as case-detail's Timeline (icons-map.js eventIcon/eventTone).
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Select } from '/design/src/components/content/fields.js';
@@ -17,10 +13,6 @@ import { entityLabel } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
-// kindLabel and the actor vocabulary used to live here, which meant
-// handover-panel.js -- rendering the same two enums in its "Changed this shift"
-// rows -- could not reach them and printed the raw keys. They are in format.js
-// now, beside stageLabel and healthLabel, and this panel reads them from there.
 const kindLabel = eventKindLabel;
 function actorLabels() {
     return { agent: actorLabel('agent'), operator: 'Operator', contact: 'Contact', system: 'System' };
@@ -28,8 +20,6 @@ function actorLabels() {
 
 let filters = { kind: '', actor: '' };
 
-// Both filters are SERVER-side narrowings, so changing either is a refetch --
-// this fetch reads `filters` at call time rather than closing over one value.
 const loader = createPanelLoader({
     what: 'the activity feed',
     label: 'loading activity',
@@ -37,9 +27,6 @@ const loader = createPanelLoader({
     apply: (j) => { state._activity = j; },
 });
 
-// The kit's LogRow (tone rail + icon + label + text + meta), the same row the case
-// timeline uses, with eventTone()'s four tones being LogRow's four. The wrapper only
-// makes it a control when the event belongs to a case.
 function ActivityRow(e, i) {
     const row = LogRow({
         kind: e.kind, tone: eventTone(e.kind),

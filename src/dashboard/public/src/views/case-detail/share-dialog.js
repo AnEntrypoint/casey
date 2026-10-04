@@ -1,7 +1,3 @@
-// share-dialog.js -- "get a link to share with the contact" dialog, wired
-// from header.js's Share form action. No token in the link (the public
-// /report form is gated by knowledge of the case ref, not auth).
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
 import { Dialog, confirmDialog } from '../../components/dialog-shell.js';

@@ -1,20 +1,6 @@
-// assignee-names.js  --  render a stored assignee for a person to read.
-//
-// `case.assignee` holds either an operator username, the unclaimed marker, or
-// an opaque `contact:<id>` key (case-assignment.js). The key is storage, not
-// display: every dashboard payload that SHOWS an assignee (lists, workload,
-// handover, health, csv) passes the value through a namer built here, once per
-// request, so a WhatsApp team member appears by name and neither the key nor
-// their phone number is sent for display. One store lookup per distinct
-// contact, never one per row.
-
 import { isContactAssignee, contactIdOfAssignee, assigneeKeyFor } from '../case-assignment.js'
 import { staffLabel } from '../hooks/staff-outbound.js'
 
-// rows: any array; pick(row) returns the assignee value to resolve.
-// { logins: true } also renders a dashboard login (a ranger or technician who works in
-// the GUI) by the display name on its account, from ONE account listing per namer;
-// without it a login passes through unchanged, because the staff screens compare it.
 export async function assigneeNamer(store, rows, pick = (r) => r?.assignee, { logins = false } = {}) {
   const ids = new Set()
   const wanted = new Set()
@@ -39,19 +25,12 @@ export async function assigneeNamer(store, rows, pick = (r) => r?.assignee, { lo
     if (!isContactAssignee(v)) return loginNames.get(v) ?? value ?? ''
     return names.get(contactIdOfAssignee(v)) || 'a team member'
   }
-  // Roster entries ({id,name}) for every contact key held in `rows`, so a
-  // rollup keyed by assignee can label them without inventing a card per contact.
   name.rosterEntries = () => [...names].map(([id, n]) => ({ id: assigneeKeyFor({ id }), name: n }))
   return name
 }
 
 const ASSIGNEE_DATA_KEYS = ['assignee', 'claimed_by', 'was']
 
-// Timeline rows carry the key in event.data (edited assignee / claimed by);
-// name it for the client and drop the raw contact id used for staff notices.
-// Internal join keys that have no display use: never sent, for any login. A field
-// login additionally never receives `to` (the reporter's raw routing number on an
-// outbound row): the number is shown only on a case it works, through its audited reveal.
 const CONTACT_KEYS = ['assigned_contact_id', 'staff_contact_id', 'dispatch_worker_id', 'dispatch_response_by', 'announced_to']
 
 export async function nameEventAssignees(store, events, { field = false } = {}) {

@@ -1,9 +1,3 @@
-// "Invite by WhatsApp code" -- mechanism 2 of 2. The operator mints a one-time
-// code; the person sends it to the bot from their own phone and is given the
-// role. The plain code exists ONLY in the create response (the server keeps a
-// one-way hash), so `fresh` below is the only place it can ever be shown; a
-// page reload loses it and the invite has to be revoked and made again.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
@@ -31,10 +25,9 @@ const STATUS = {
 };
 
 const form = { tier: null, label: '', ttl: '72', uses: '1', count: '1', busy: false, error: null };
-// `fresh` is the batch just made: the plain codes exist ONLY in the create response.
 let fresh = null;
-let freshText = '';          // a copy-by-hand textarea, shown when the browser will not copy or download
-let announce = '';           // read out by the role=status line
+let freshText = '';
+let announce = '';
 let groupFilter = '';
 let askCancelGroup = false;
 const busyIds = new Set();
@@ -54,7 +47,6 @@ async function copy(text, what) {
 }
 
 const countWord = (n) => n + (n === 1 ? ' code' : ' codes');
-// A batch is named "<group> 01", "<group> 02"... by the server; the group is what is left.
 const groupOf = (label) => String(label || '').replace(/\s+\d{2,3}$/, '').trim() || 'No group name';
 
 function parseCount() {
@@ -72,7 +64,6 @@ async function create(isAdmin) {
     form.busy = true; form.error = null; schedule();
     try {
         const j = await postRoleInvite({ tier: form.tier, label: form.label.trim(), ttl_hours: Number(form.ttl), max_uses: n > 1 ? 1 : Number(form.uses), count: n });
-        // A single code answers {invite}, a batch {invites: [...]}: one shape from here on.
         fresh = (j && Array.isArray(j.invites)) ? j.invites : (j && j.invite ? [j.invite] : []);
         freshText = '';
         announce = countWord(fresh.length) + ' made';
@@ -103,7 +94,6 @@ async function revoke(inv) {
     busyIds.delete(inv.id); schedule();
 }
 
-// In-page confirm (no window.confirm): cancel every unused code of the chosen group.
 async function cancelGroup() {
     const todo = loaderData.invites.filter((v) => v.status === 'active' && groupOf(v.label) === groupFilter);
     askCancelGroup = false; schedule();
@@ -126,12 +116,11 @@ function sendText(inv, { bare = false } = {}) {
 
 const csvCell = (v) => {
     let t = String(v == null ? '' : v);
-    if (/^[=+\-@]/.test(t)) t = "'" + t;   // a spreadsheet must never read a label as a formula
+    if (/^[=+\-@]/.test(t)) t = "'" + t;
     return '"' + t.replace(/"/g, '""') + '"';
 };
 const csvText = (codes) => ['label,code,expires'].concat(codes.map((c) => [c.label, c.code, fmtTime(c.expires_at)].map(csvCell).join(','))).join('\r\n');
 
-// A download only where the browser supports it; otherwise the same text is shown to copy by hand.
 function downloadCsv(codes) {
     const text = csvText(codes);
     try {
@@ -149,8 +138,6 @@ function downloadCsv(codes) {
     schedule();
 }
 
-// Cut-out slips: built straight onto <body> so the print stylesheet (app.css) can hide the whole
-// dashboard and print only these; removed again once the print dialog closes.
 function printSlips(codes) {
     const host = document.createElement('div');
     host.id = 'casey-print-slips';

@@ -1,6 +1,3 @@
-// Distribution panel -- species/symptom counts across open cases. Content-swap
-// panel (state.activePanel === 'distribution'). Bars are the kit's BarChart.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Alert } from '/design/src/components/content/feedback.js';
@@ -20,8 +17,6 @@ const loader = createPanelLoader({
     apply: (j) => { state._distribution = j; },
 });
 
-// The kit's BarChart scales each bar against the largest value in its own set,
-// which is exactly the per-group max the rows below are already sorted by.
 function barRows(rows) {
     return BarChart({ items: rows.map((r) => ({ label: r.token, value: r.count })) });
 }
