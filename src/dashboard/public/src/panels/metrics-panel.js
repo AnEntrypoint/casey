@@ -1,6 +1,3 @@
-// Metrics panel -- 14-day report + CSV/HTML export links + per-case-type SLA.
-// Content-swap panel (state.activePanel === 'metrics').
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
@@ -19,9 +16,6 @@ const CASE_TYPE_LABEL = { unset: 'Unclassified', outbreak: 'Symptom cluster', fo
 const ctLabel = (t) => CASE_TYPE_LABEL[t] || t;
 const slaMetPct = (s) => (s && s.considered ? Math.round(((s.met_count || 0) / s.considered) * 100) + '%' : '--');
 
-// Three requests, each allowed to fail on its own: this page is still worth
-// showing when only the SLA half answered, so a per-request null is a section
-// the render leaves out rather than a failure for the whole panel.
 const loader = createPanelLoader({
     what: 'the trends',
     label: 'loading metrics -- scans every open case, can take several seconds',
@@ -37,16 +31,12 @@ function summaryCards(j) {
     const fr = j.first_response_ms || {};
     const dwell = j.dwell_ms_median || {}, backlog = j.backlog_by_stage || {};
     const cards = [
-        // Plain words for a reader who is not a statistician: "usual" is the median, "9 in 10" the 90th percentile,
-        // "time in this stage" the dwell, and the stage names are the ones used everywhere else on screen.
         [ 'Usual time to a first reply', fmtDur(fr.median), `9 in 10 within ${fmtDur(fr.p90)} (${fr.n || 0} answered)` ],
         [ 'Open', String(j.cases ? j.cases.open : 0), entityLabelPlural() ],
         [ 'Closed', String(j.cases ? j.cases.closed : 0), entityLabelPlural() ],
         ...Object.keys(dwell).map((s) => [stageLabel(s), fmtDur(dwell[s]), 'usual time in this stage']),
         ...Object.keys(backlog).map((s) => [stageLabel(s), String(backlog[s]), 'open now']),
     ];
-    // The kit's Kpi is number-over-caption; the second line each card used to carry
-    // rides in the caption so nothing that was said is dropped.
     return Kpi({ items: cards.map(([lab, val, sub]) => [val, sub ? lab + ' - ' + sub : lab]) });
 }
 

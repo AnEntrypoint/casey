@@ -1,12 +1,3 @@
-// case-detail-view.js -- right-pane case detail composer: fetches the case
-// on activeId change, wires the header/progress/report-sections/timeline/
-// reply-box/transitions/dedup/site-history/split-dialog/snooze-dialog/
-// share-dialog children, and owns the "pause polling while editing" guard
-// (state.editing) so a background refresh never clobbers an in-progress
-// edit -- ported behavior from the legacy app.js openCase()'s focus/blur
-// pause-polling discipline, generalized to every input/select/textarea via
-// a single delegated focusin/focusout listener on the pane root.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Icon } from '/design/src/components/shell.js';
 import { Skeleton } from '/design/src/components/content.js';
@@ -37,13 +28,6 @@ const h = webjsx.createElement;
 let _loadedFor = null;
 
 export async function loadCaseDetail(id) {
-    // Set BEFORE the await, not just on success: the render loop below re-checks
-    // `_loadedFor !== id && !state.caseDetailLoading` on every schedule() tick,
-    // and setCaseDetailError() clears caseDetailLoading. A case that genuinely
-    // 404s (merged, removed, a stale link) left _loadedFor unset on the error
-    // path, so the very next render saw the loading flag already false and
-    // re-fired this same failing fetch -- an unbounded retry loop against a
-    // dead endpoint, measured live at ~30 requests in 4 seconds.
     _loadedFor = id;
     setCaseDetailLoading(true);
     try {
@@ -51,19 +35,9 @@ export async function loadCaseDetail(id) {
         setCaseDetail(data);
         loadDuplicateSuggestions(id);
         loadSiteHistory(id);
-        // Best-effort per-run config override (see fetchRunConfig) -- resolves
-        // null on a plain casey/uhh deployment (no /api/runs/:id/config route)
-        // or a network failure, in which case report-sections.js falls back to
-        // the global config exactly as before this existed.
         fetchRunConfig(id).then((cfg) => { if (state.activeId === id) setRunConfig(cfg); });
-        // Warm the known-value lists behind the report fields that edit as combo
-        // boxes, so the options are already on screen the moment an operator
-        // clicks one instead of a request firing under their cursor. Cached and
-        // shared across cases, so this is one request per field per minute at
-        // most, and a failure leaves those fields plain text boxes.
         for (const f of knownValueFields()) loadKnownValues(f).then(schedule);
     } catch (e) {
-        // Never the server's own word ("not found"): a 404 means merged, removed or a stale link.
         setCaseDetailError((e && e.status === 404)
             ? 'This ' + entityLabel() + ' is not here any more. It may have been merged or removed -- go back to the list and open it again.'
             : word('ui.load_one_failed'));
@@ -72,24 +46,9 @@ export async function loadCaseDetail(id) {
 
 async function reload(id) { await loadCaseDetail(id || state.activeId); }
 
-// "What is going on HERE", not "what is this one pin". The cluster linkage is
-// computed server-side (clusters.js buildClusters, shipped in /api/map/cases)
-// and used to be visible only inside the map pin's popup; the popup is gone
-// (see map-leaflet.js) and this is its new home, where it sits beside the rest
-// of the case rather than on top of the neighbouring pins. Renders nothing
-// when there is no live map or the case stands alone -- on the case-list side
-// of the app that is always, and silence is the correct output there.
 function LinkedReportsNote({ caseId }) {
     const note = clusterNoteFor(caseId);
     if (!note) return null;
-    // The names came after a bare colon -- "Linked to 3 other report(s)
-    // nearby: foot-and-mouth" -- which reads as a statement of what those
-    // cases ARE. They are not that. suspected_disease is a name the worker
-    // relayed from the farmer's own guess and never a lab result, which is
-    // why clusters.js is careful to expose it as reported_disease_names and
-    // why the clusters panel labels it "as reported:" with a tooltip saying
-    // so. This surface is the one an operator reads before dispatching
-    // somebody, so it needs the same qualification, in the same words.
     const names = note.reportedDiseaseNames.length
         ? ' -- as reported: ' + note.reportedDiseaseNames.join(', ')
         : '';
@@ -108,12 +67,6 @@ function pauseWhileEditing(el) {
     el.addEventListener('focusout', (e) => { if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) setEditing(false); });
 }
 
-// showBack=false when the CONTAINER already renders the way out. The map home
-// view docks this pane in the rail under its own worded "Back to the list"
-// control (map-command-center.js) and this module rendered a second one
-// immediately beneath it -- two back controls stacked on one pane, the lower
-// one reading a bare " cases" while it actually returned to the map rail. One
-// escape per pane, and it says where it goes.
 function backControl(onClose) {
     return Btn({ variant: 'link', size: 'sm', class: 'casey-back-btn', 'aria-label': 'Back to the list', onClick: onClose,
         children: [Icon('chevron-left', { size: 14 }), ' Back to the list'] });
@@ -123,12 +76,6 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
     const id = state.activeId;
     if (!id) return h('div', { key, class: 'casey-detail-empty' },
         Icon('paw', { size: 32 }),
-        // Plain instruction first, keyboard shortcuts second and explicitly
-        // marked optional: this pane is the first thing a new operator reads
-        // on the map-first home view, and "j/k to move through the list" is
-        // meaningless to the field/secretarial staff this dashboard is for.
-        // The shortcuts still earn their place for daily desk users, so they
-        // are demoted rather than removed.
         h('h2', { class: 'casey-detail-empty-title' }, 'No report open yet'),
         h('p', { class: 'casey-hint' }, 'Tap a pin on the map, or a report in the list, to read it and reply.'),
         h('p', { class: 'casey-hint casey-empty-kbd-hint' }, 'Keyboard (optional): ', h('span', { class: 'ds-kbd' }, 'j'), '/', h('span', { class: 'ds-kbd' }, 'k'), ' moves through the list, ', h('span', { class: 'ds-kbd' }, 'Enter'), ' opens it.'));
@@ -152,38 +99,15 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
         LinkedReportsNote({ caseId: id }),
         AreaNote({ c, area: state.caseDetail.area, onReload: () => reload(id) }),
         CaseProgress({ status: c.status }),
-        // ORDER IS THE ARGUMENT HERE: read the evidence, then act, then the
-        // surfaces you rarely touch. Measured before this change, on a real
-        // case: the pane ran 3740px and the two things an operator actually
-        // opens a case to DO -- move it forward, and answer the person who
-        // reported it -- sat at 3091px and 3173px, underneath a 751px field-
-        // editing form. That is roughly three and a half screens of scrolling
-        // past a form you seldom use, on the 390px phone the AHT staff in this
-        // deployment actually carry, to reach the two controls you always use.
-        //
-        // The report itself stays ABOVE the actions deliberately, and that is
-        // not an oversight: replying to an animal-disease report before
-        // reading it is worse than scrolling, so the evidence keeps its place
-        // and only the rarely-used editors move down past the actions.
         ReportSections({ c, events, onSaved: () => reload(id) }),
         Transitions({ c, transitions, onReload: reload }),
         ReplyBox({ c, events, onReload: reload }),
-        // Corrections and supporting context: real, but not why the case was
-        // opened. FieldsEditor is the big one and is now below the fold rather
-        // than in front of it.
         FieldsEditor({ c, caseTypeSource: case_type_source, onSaved: () => reload(id) }),
         ResearchNotesPanel({ case: c }),
         DedupPanel({ caseId: id, onReload: reload }),
         SiteHistoryPanel({ onOpenCase }),
         h('div', { class: 'casey-timeline-actions' },
             SplitDialogTrigger({ caseId: id }),
-            // The pin popup was this action's ONLY entry point in the whole
-            // app, so removing the popup without re-homing it would have
-            // silently deleted a capability. Offered only when a live map
-            // actually has this case plotted -- the picker ranks workers by
-            // distance from the case and reads its roster from the worker
-            // overlay, so without a map there is nothing to rank and nothing
-            // to pick from.
             canDispatchFor(id)
                 ? Btn({
                     size: 'sm', variant: 'ghost', children: 'Dispatch a worker',

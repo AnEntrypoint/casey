@@ -34,6 +34,7 @@ casey composes four git submodules under `deps/`: `freddie` (agent runtime, Cord
 - SECURITY: `installToolAllowlist(agentCtx, allowedNames)` is the real boundary, installed PER-AGENT; keep BOTH gates (`system-prompt/assemble` hides non-allowlisted schemas, `tools/pre-execute` denies dispatch by name). `src/case-tools.js` is the single source of truth for WHICH case tools exist and in what order.
 - `adapter.send` is the ONLY route an agent reply has to a contact; `bin/send-reply.js`'s `makeSendReply` REJECTS when the channel has no adapter.
 - External sync (`src/sync/`, see `EXTERNAL-SYNC.md`): correlation writes only `external_link` 'proposed'; `apply-link.js` fills EMPTY `case.report` from a CONFIRMED link only.
+- Operator console (`src/dashboard/`): its rationale (service-worker/shell caching, auth and route-order rules, printables, console UI traps) lives in `src/dashboard/AGENTS.md`; read it before touching the shell, `auth.js`, `roles.js` or the SPA.
 - Agent runtime (`src/agent/`): one live agent per `case:<id>`; eviction is `CASEY_AGENT_IDLE_TTL_MS` (default 3h), never a count cap, always RESUME-before-CREATE. `CASEY_LLM_CONCURRENCY` (default 4, 0 off); `CASEY_LLM_REQUIRE_MODEL` pins the one allowed model.
 -> recall {query:"freddie integration bootCasey webhook port whatsapp-webhook dashboard port adapter send"}
 -> recall {query:"agent tool allowlist installToolAllowlist case-tools casey security global registry"}

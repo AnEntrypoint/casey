@@ -1,15 +1,3 @@
-// field-app.js -- the whole screen for the field team (eco ranger, animal
-// health technician). It replaces the operator console for those logins rather
-// than hiding pieces of it, because what they need is a different shape:
-//
-//   eco ranger   home = "My reports": their open reports, most urgent first,
-//                each with what is still missing; a small map of just theirs.
-//   technician   home = "Ready to sign off": reports whose required facts are
-//                all recorded, with the rest of their own reports beneath.
-//
-// There is no team, account, metrics, threshold or export anything here, and the
-// server would refuse those calls anyway (dashboard/roles.js). This file only
-// shapes what is worth showing; it is not the fence.
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { AppShell, Topbar, Side, Crumb, Status, Icon, Btn } from '/design/src/components/shell.js';
 import { Skeleton, Alert, Panel, Row as KitRow } from '/design/src/components/content.js';
@@ -62,8 +50,6 @@ const missingOf = (c) => { const r = parseReport(c.report); return mandatory().f
 const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
 const tagsOf = (c) => String(c.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
 
-// Most in need of them first: sent back to them, then urgency, then how much is
-// still missing, then the one nobody has touched longest.
 function worstFirst(list) {
   const key = (c) => [tagsOf(c).includes('sent-back') ? 0 : 1, PRIORITY_RANK[c.priority] ?? 2, -missingOf(c).length, Date.parse(c.last_event_at) || 0];
   return [...list].sort((a, b) => { const x = key(a), y = key(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; });
@@ -73,8 +59,6 @@ function openReport(id) { pushHash({ caseId: id }); setActiveId(id); }
 function openRef(ref) { const hit = [...fs.mine, ...fs.signoff].find((c) => c.ref === ref); if (hit) openReport(hit.id); }
 function closeReport() { pushHash({ caseId: null }); setActiveId(null); resetFieldCase(); refreshFieldLists(); }
 
-// A report a ranger has handed over: the technician is told who sent it; the ranger is told it is
-// with the technician now.
 function handedNote(c) {
   if (!tagsOf(c).includes('handed-off')) return '';
   if (isTechnician()) { const from = holderName(c.assignee); return from ? 'Sent by ' + from : 'Sent by a ranger'; }
@@ -88,10 +72,6 @@ function Row(c, { showMissing = true } = {}) {
   const sentBack = tagsOf(c).includes('sent-back');
   const need = showMissing && mandatory().length ? (missing.length ? 'Still needed: ' + missing.map((f) => f.label).join(', ') : 'Everything needed is recorded') : '';
   return KitRow({
-    // The reference sits in the sub line, not the title: on a phone it wrapped in the middle of
-    // the id ("CASE-" / "1003-..."), which read as two different things.
-    // Stage and age ride in the sub line, not the kit's right-hand meta: on a phone that column took half the
-    // row and squeezed the title into two words a line.
     key: c.id, title: what || headline(c.subject || 'No details yet'),
     sub: [c.ref, stageLabel(c.status) + (c.last_event_at ? ' -- ' + rel(c.last_event_at) : ''), sentBack ? 'Sent back to you -- open it to see what is needed' : '', handedNote(c), need].filter(Boolean).join('. '),
     rail: sentBack ? 'flame' : (mandatory().length && !missing.length ? 'green' : undefined),
@@ -120,7 +100,6 @@ function Home() {
   const open = worstFirst(fs.mine.filter(isOpen));
   const body = [];
   if (fs.error) body.push(Alert({ kind: 'warn', children: fs.error }));
-  // The server sends at most 200 at a time; more than that is said, never silently cut.
   if (fs.mineTotal > fs.mine.length) body.push(Alert({ kind: 'info', children: 'Showing the ' + fs.mine.length + ' most recently active of your ' + fs.mineTotal + ' ' + entityLabelPlural() + '. Ask an operator to hand some on if this is too many.' }));
   if (tech) {
     const ids = new Set();
@@ -134,8 +113,6 @@ function Home() {
     body.push(MyDay({ onOpenRef: openRef }));
     body.push(List('My ' + entityLabelPlural(), open, 'No ' + entityLabel() + ' is assigned to you right now. When an operator gives you one it shows up here.'));
     body.push(MyDay({ onOpenRef: openRef, part: 'after' }));
-    // Nothing assigned means nothing to place: an empty map of the whole country only says "no reports have
-    // come in", which is a claim about the deployment, not about this person.
     if (open.length) body.push(Panel({ title: 'Where mine are', children: h('div', { class: 'field-map-small' }, MapPanel()) }));
   }
   return h('div', { class: 'field-home' }, ...body.filter(Boolean));

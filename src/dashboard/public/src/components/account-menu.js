@@ -1,10 +1,3 @@
-// Topbar-right account Dropdown: theme toggle, help, operator identity
-// display, logout, logout-everywhere. Safe actions come first;
-// logout/logout-everywhere sit below a separator, and logout-everywhere
-// (destructive: revokes every OTHER session) requires an explicit confirm
-// step via Dialog rather than a bare click-to-execute
-// (ux-nav-account-menu-destructive-separation).
-
 import * as webjsx from 'webjsx';
 import { Dropdown } from 'ds/components/overlay-primitives.js';
 import { Btn, Icon } from 'ds/components/shell.js';
@@ -16,18 +9,6 @@ import { openFeedback } from './feedback-dialog.js';
 const h = webjsx.createElement;
 
 export function applyTheme(t) {
-  // The SDK's theme override rules are scoped as .ds-247420[data-theme="X"]
-  // (dist/247420.css) -- data-theme must sit on the SAME element that
-  // carries the .ds-247420 scope class, not on <html>. document.documentElement
-  // never carries that class, so setting it there silently no-ops: the
-  // toggle updated localStorage/state correctly but the page never actually
-  // repainted (live-witnessed: dark theme "selected" in the menu, page still
-  // rendered light). #app and <body> both carry .ds-247420 (see index.html's
-  // comment on why body needs it too, for portaled popover content) so both
-  // need the attribute for in-page content and overlay content alike.
-  // data-casey-theme, not data-theme, on the root: the kit's theme.js owns
-  // data-theme there and resets it to "auto". app.css's root-ground rule reads
-  // ours, so an operator switching theme repaints the root as well as the app.
   document.documentElement.dataset.caseyTheme = t;
   document.body.dataset.theme = t;
   const appEl = document.getElementById('app');
@@ -35,25 +16,11 @@ export function applyTheme(t) {
   setTheme(t);
 }
 
-// The one write to storage, and it happens only when an operator picks a theme
-// from the menu. applyTheme deliberately does not write: it also runs for a
-// theme RESOLVED from the device preference, and storing that resolved value
-// would turn "follow my device" into a permanent choice the operator never made
-// -- after which a device switching to night mode never moves the dashboard
-// again.
 export function chooseTheme(t) {
-  try { localStorage.casey_theme = t; } catch { /* storage unavailable */ }
+  try { localStorage.casey_theme = t; } catch {  }
   applyTheme(t);
 }
 
-// The deployment's themes are the brand presets, not the kit's stock
-// paper/ink. Anyone who used this dashboard before the rebrand has a
-// localStorage value naming a stock theme, and honouring it verbatim means a
-// returning operator never sees the brand at all -- witnessed exactly that:
-// a saved 'ink' won over the brand and the page came back with the kit's
-// stock indigo accent (#BCBEFF) instead of the brand orange. Map the legacy
-// values onto their brand equivalents rather than dropping the preference,
-// so a user who chose dark stays dark.
 const LEGACY_THEME = { paper: 'herd', light: 'herd', ink: 'herd-ink', dark: 'herd-ink' };
 
 export function systemTheme() {
@@ -63,7 +30,7 @@ export function systemTheme() {
 
 export function storedTheme() {
   let saved = null;
-  try { saved = localStorage.casey_theme; } catch { /* storage unavailable */ }
+  try { saved = localStorage.casey_theme; } catch {  }
   if (!saved) return null;
   return LEGACY_THEME[saved] || saved;
 }
@@ -71,15 +38,10 @@ export function storedTheme() {
 export function initTheme() {
   const chosen = storedTheme();
   applyTheme(chosen || systemTheme());
-  // With no stored choice the dashboard keeps FOLLOWING the device rather than
-  // sampling it once: an operator on a phone that flips to night mode at sunset
-  // gets the dark theme then, not on their next login. A stored choice outranks
-  // the device, so the listener re-checks storage on each change instead of
-  // capturing "unset" at boot -- the operator may pick a theme mid-session.
   try {
     matchMedia('(prefers-color-scheme: dark)')
       .addEventListener('change', () => { if (!storedTheme()) applyTheme(systemTheme()); });
-  } catch { /* matchMedia change events unavailable */ }
+  } catch {  }
 }
 
 function openLogoutEverywhereConfirm() { openModal('confirm-logout-everywhere'); }
@@ -90,9 +52,6 @@ async function confirmLogoutEverywhere() {
     await doLogoutEverywhere();
     toast('Logged out everywhere else. This device stays signed in.');
   } catch (e) {
-    // A security action that silently did not happen is the worst kind to
-    // report vaguely: the operator pressed this because they believe a session
-    // somewhere else should not exist, so they have to be told it still does.
     toast(await failMsg(e, 'The other sessions were not signed out and are still active. Try again, and change your password if you need them gone now.'), 'err');
   }
   closeLogoutEverywhereConfirm();
@@ -132,16 +91,6 @@ export function AccountMenu() {
   const label = state.currentUser ? (state.currentUser.display_name || state.currentUser.username) : 'Account';
   return Dropdown({
     ariaLabel: 'Account menu',
-    // NOT a full h('button', ...) element: Dropdown's own trigger-rewrap
-    // (design SDK overlay-primitives/menus.js) reads webjsx child nodes back
-    // via `child.children`, but webjsx.createElement only ever stores
-    // children under `child.props.children` -- so any trigger vnode with
-    // real children (icon + label) silently renders as an empty button
-    // (live-witnessed: the account menu trigger shrank to an invisible
-    // 32x8px empty button). Returning an array here instead routes through
-    // Dropdown's OTHER branch (`child.type` is falsy for an array), which
-    // wraps the returned content directly into its own
-    // `ds-dropdown-trigger` button and never hits the lossy rewrap path.
     trigger: () => [Icon('members', { size: 16 }), h('span', {}, label)],
     items,
     onSelect,

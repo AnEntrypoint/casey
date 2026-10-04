@@ -1,12 +1,3 @@
-// fields-editor.js -- priority / autonomy / assignee / case_type fields plus
-// subject/tags/summary, the case-detail "Save edits" form. Config-declared
-// enums (priority/case_type) come from state.config with the shipped
-// defaults as fallback, matching the legacy CASEY_PRIORITIES/CASEY_CASE_TYPES
-// behavior. Internal system tags (health:*/intake_mode:*/snoozed-until:*
-// /needs-human/draft-pending/etc) are preserved untouched and never exposed
-// in the editable Tags field -- same operatorTagsOnly()/isInternalTag() split
-// as the legacy app.js.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
 import { TextField, Select } from '/design/src/components/content.js';
@@ -22,13 +13,6 @@ const DEFAULT_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
 const DEFAULT_CASE_TYPES = ['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'];
 const AUTONOMY_OPTS = ['auto', 'assisted', 'observe'];
 
-// The dropdowns used to render the stored keys straight onto the screen, so
-// an operator picked between "follow_up", "lab_sample" and "import_alert" --
-// underscores, lower case, a database column read out loud. Select() takes
-// {value,label} pairs, so the key still goes to the server and the person
-// reads English. A value with no entry here falls back to its own key, which
-// is what a deployment-added case type should do: show as itself rather than
-// vanish from the list.
 const OPTION_LABEL = {
     unset: 'Not set yet',
     outbreak: 'Symptom cluster',
@@ -61,18 +45,6 @@ function draftFor(c) {
     };
 }
 
-// Agent-suggested vs operator-confirmed marker: casey may only set case_type
-// from a directly-stated fact, never its own inference (the report-not-assert
-// paradigm -- see case-tools.js), so an agent-set value is still unverified
-// until a human confirms it. Renders nothing once an operator has confirmed
-// (edited/saved) it, since 'operator' becomes the source at that point.
-//
-// It read "unverified: agent-reported" at 10px: a colon taxonomy and two enum
-// words, set smaller than anything else on the form, saying a thing that
-// changes whether you trust the value above it. The words that were hidden in
-// its `title` were the ones worth reading, and a title is a hover affordance
-// -- it does not exist on a phone. Now it is one sentence, at the size the
-// rest of the form's help text uses, with nothing behind a hover.
 function SourceNote({ source }) {
     const brand = brandName();
     if (source !== 'agent') return null;
@@ -80,23 +52,10 @@ function SourceNote({ source }) {
         brand + ' filled this in from what the reporter said. Nobody has checked it yet.');
 }
 
-// limited: the field team's version -- no 'who answers' or assignee control (the
-// server refuses both for them). expectedRef: every write names the report it is
-// for, and beforeSave() is a chance to ask 'is this the right one' first.
-// The assignee is picked from the registered team (WhatsApp team members and
-// field-team logins) once that list has loaded, so the value stored is the same
-// key the assignment check uses; until then (or if the list cannot load) it stays
-// the plain text box it always was, and a value not in the list stays selectable.
 function assigneeControl(d, set) {
     const roster = teamRoster();
-    // Wrapped and keyed per variant: the text box and the picker share the kit's
-    // inner key, and webjsx patched the <input> in place instead of swapping it for
-    // a <select> when the list arrived.
     if (!roster.length) return h('div', { key: 'assignee-text' }, TextField({ label: 'Assignee', value: d.assignee, onInput: (v) => set('assignee', v) }));
-    // A login linked to a WhatsApp team member is that member (alias_of): listed once, by the contact key.
     const opts = [{ value: '', label: 'Nobody yet' }, ...roster.filter((m) => !m.alias_of).map((m) => ({ value: m.key, label: m.name + ' (' + m.role + ', ' + m.via + ')' }))];
-    // 'agent' is the assistant holding a report nobody has taken: that IS "Nobody yet" to a
-    // person, so it selects that option instead of showing the raw word as a third choice.
     const held = d.assignee === 'agent' ? '' : (d.assignee || '');
     const aliasOf = (roster.find((m) => m.key === held) || {}).alias_of;
     const current = aliasOf || held;
@@ -108,9 +67,6 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false,
     if (!limited) loadRoster(schedule);
     if (!state._fieldsDraft || state._fieldsDraftFor !== c.id) {
         state._fieldsDraft = draftFor(c);
-        // The values this form was SEEDED from, kept beside the live draft.
-        // save() diffs against these rather than sending the whole form, so a
-        // field this operator never touched is never written -- see save().
         state._fieldsBase = draftFor(c);
         state._fieldsDraftFor = c.id;
     }
@@ -122,26 +78,6 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false,
     const caseTypes = (cfg.case_type && cfg.case_type.length) ? cfg.case_type : DEFAULT_CASE_TYPES;
     const saving = !!state._fieldsSaving;
 
-    // ONLY THE FIELDS THIS OPERATOR ACTUALLY CHANGED ARE SENT, and each one
-    // carries the value the form was seeded with so the server can refuse a
-    // genuine collision. This form used to POST every field on every save,
-    // built from the case as it looked when the pane was opened -- and the
-    // pane is fetched once on activeId change and never polled, so that
-    // snapshot goes stale as soon as anyone else touches the case. Two
-    // operators on one case, witnessed live: B set priority, assignee and
-    // summary, then A fixed a typo in the subject and saved. A's stale form
-    // silently reverted all three of B's fields, wiped the summary, and
-    // dropped the health:stale guardrail tag the sweep had written -- against
-    // a Tags hint that promises internal tags "cannot be lost by editing
-    // here". The operator saw a green "saved" and no warning. The server's own
-    // expectedVersion guard cannot catch this: it re-reads the row itself
-    // immediately before writing, so it only ever sees a fresh version.
-    //
-    // Diffing against the seeded values fixes the whole class -- an untouched
-    // field is absent from the patch, so it cannot be written at all -- and
-    // `expected` turns the remaining case (both operators edited the SAME
-    // field) into a real 409 the operator is told about instead of a silent
-    // overwrite.
     const save = async () => {
         if (beforeSave && !(await beforeSave())) return;
         state._fieldsSaving = true; schedule();
@@ -154,11 +90,6 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false,
         }
         if (d.case_type !== base.case_type) { patch.case_type = d.case_type; expected.case_type = base.case_type; }
         try {
-            // Tags are sent only when the operator actually edited them, and
-            // the internal tags they must be recombined with are read FRESH at
-            // save time rather than off the pane's stale `c` -- a health:* tag
-            // the sweep wrote while this pane sat open is on the current row,
-            // not on the snapshot this form was built from.
             if (d.tags !== base.tags) {
                 const fresh = await fetchCase(c.id).catch(() => null);
                 const tagSource = (fresh && fresh.case && fresh.case.tags != null) ? fresh.case.tags : c.tags;
@@ -177,31 +108,14 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false,
             else await patchCaseApi(c.id, { ...patch, expected });
             state._fieldsSaving = false;
             toast(expectedRef ? 'Your edits are saved to ' + expectedRef + '.' : 'Your edits are saved.', 'ok');
-            // RELOAD FIRST, THEN DROP THE DRAFT. Clearing it before the reload
-            // lets the very next render re-seed the form from the `c` this
-            // render still closes over -- the pre-save snapshot -- and once
-            // _fieldsDraftFor matches this case id again the fresh row can no
-            // longer re-seed it, so the form sits showing values that are
-            // neither this operator's nor the ones now stored. Clearing after
-            // the reload means the re-seed reads the row that just came back.
             if (onSaved) await onSaved();
             state._fieldsDraft = null;
             state._fieldsBase = null;
             schedule();
         } catch (e) {
             state._fieldsSaving = false;
-            // A 409 is somebody else's edit, not a failure of this one: drop
-            // the stale draft and reload so the operator sees the current
-            // values before deciding again, rather than being left holding a
-            // form that will 409 on every further attempt.
             if (e && e.status === 409) {
                 toast(await failMsg(e, 'Somebody else edited this ' + entityLabel() + ' while you were typing. Your edits were not saved -- their values are on screen now, so check them and edit again if you still need to.'), 'warn');
-                // Same ordering as the success path above, and it matters more
-                // here: the whole point of a 409 is to put the OTHER operator's
-                // values in front of this one before they decide again, so the
-                // draft is dropped only once the fresh row has landed. Cleared
-                // first, the form re-seeded from the pre-save snapshot and the
-                // toast promised values that were not on screen.
                 if (onSaved) await onSaved();
                 state._fieldsDraft = null;
                 state._fieldsBase = null;
@@ -223,14 +137,7 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false,
             }),
             limited ? null : assigneeControl(d, set),
             h('div', {},
-                // The old hint was written for whoever wrote the endpoint:
-                // "Segments every report aggregate. Changing it records a
-                // case_type a -> b audit event." An operator does not have a
-                // report aggregate, and case_type is the column name, not the
-                // field they are looking at.
                 Select({
-                    // The label said "Case type" over a hint that said "this
-                    // report" -- two nouns for one record, one line apart.
                     label: EntityLabel() + ' type', value: d.case_type, options: labelled(caseTypes),
                     onChange: (v) => set('case_type', v),
                     hint: 'Groups this ' + entityLabel() + ' in the totals. Changing it is written to the timeline.'
@@ -239,12 +146,6 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false,
             )
         ),
         TextField({ label: 'Subject', value: d.subject, onInput: (v) => set('subject', v) }),
-        // The hint used to end "...is already shown above as badges", which
-        // described the page's own chrome to the person looking at it -- and
-        // stopped being true the moment those badges became sentences. What an
-        // operator needs from this field is that their tags are kept apart
-        // from the ones the system keeps for itself, and that editing here
-        // cannot wipe those.
         TextField({ label: 'Tags', value: d.tags, onInput: (v) => set('tags', v), hint: 'Your own labels for this ' + entityLabel() + '. The ones the system keeps for itself are held separately and cannot be lost by editing here.' }),
         TextField({ label: 'Summary', multiline: true, rows: 3, value: d.summary, onInput: (v) => set('summary', v) }),
         Btn({ variant: 'primary', disabled: saving, children: saving ? 'Saving...' : 'Save edits', onClick: save })

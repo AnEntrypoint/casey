@@ -1,14 +1,3 @@
-// "Add many people at once" -- the training-day path for registering a whole
-// list of rangers and technicians without typing each one. Three steps the page
-// keeps visibly apart: paste (or choose a file), CHECK (a preview where every
-// line says what would happen and why), then ADD (only after the check, only for
-// the list that was checked). Below it, the rollout table: how far each area has
-// got from "on the list" to "has sent a first report".
-//
-// Sits in the Reporters section beside single registration (team-registration.js)
-// and shares its form-state rule: state is module-level because the panel
-// re-renders on every schedule().
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Row } from '/design/src/components/content/row.js';
@@ -27,9 +16,6 @@ const h = webjsx.createElement;
 
 const b = { text: '', fileName: '', preview: null, previewText: '', applied: false, busy: false, error: '', copied: false, roster: null };
 
-// Wide enough for the six-column rollout table; below it each area is a row that
-// says the same figures in a sentence (a clipped table hides its last columns
-// without saying so).
 const WIDE = matchMedia('(min-width: 1201px)');
 WIDE.addEventListener('change', schedule);
 
@@ -157,9 +143,6 @@ function Entry(onDone) {
     Results(onDone));
 }
 
-// ---------- rollout table ----------
-
-// A function: the brand is config, which has not arrived when this module is evaluated.
 const headers = () => ['Area', 'People', 'With a smartphone', 'Registered on WhatsApp', 'Has messaged ' + brandName(), 'Has sent a first report'];
 const figures = (r) => [r.area, String(r.total), String(r.smartphones), String(r.registered), String(r.first_message), String(r.first_case)];
 

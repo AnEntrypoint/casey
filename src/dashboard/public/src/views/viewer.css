@@ -1,23 +1,12 @@
-/* viewer.css -- the disease-report screens (viewer home and the two staff panels)
-   are composed from kit primitives (Panel, Section, Kpi, BarChart, Table, Select,
-   FilterPills, Slider, Btn, Alert). The bespoke rules are the three the kit has
-   no primitive for, all on kit tokens. `.ds-247420` scope-prefixes each one so it
-   outranks the kit's own scoped rules. */
-
-/* Vertical rhythm inside a report panel: the kit's Section carries a full page's gap. */
 .ds-247420 .rep-stack { display: flex; flex-direction: column; gap: var(--space-4); }
 .ds-247420 .rep-stack .ds-section { margin-block: 0; }
 .ds-247420 .rep-filters { display: flex; justify-content: flex-start; align-items: flex-end; flex-wrap: wrap; gap: var(--space-3); }
 .ds-247420 .rep-filters .ds-field { flex: 1 1 12rem; max-width: 20rem; }
 
-/* The map canvas has no intrinsic size and no kit primitive sizes a Leaflet canvas (field.css says the same
-   of its own maps): a viewport-relative height, with a floor so a short phone in landscape still shows a map. */
 .ds-247420 .rep-map { height: 60vh; min-height: 18rem; background: var(--bg-2); }
 .ds-247420 .viewer-main { display: flex; flex-direction: column; gap: var(--space-4); }
 .ds-247420 .viewer-main .panel { margin-block: 0; }
 
-/* Legend swatches. Kit primitive tried: Chip/Pill (fixed status colours, no per-series colour).
-   The colours are the same tokens resolved-map-leaflet.js reads for the dots. */
 .ds-247420 .rep-legend { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); list-style: none; margin: 0; padding: 0; font-size: var(--fs-sm); }
 .ds-247420 .rep-legend-item { display: inline-flex; align-items: center; gap: var(--space-1); }
 .ds-247420 .rep-sw { display: inline-block; width: var(--space-3); height: var(--space-3); border-radius: var(--r-pill); }
@@ -29,11 +18,9 @@
 .ds-247420 .rep-sw-5 { background: var(--danger); }
 .ds-247420 .rep-sw-o { background: var(--fg-3); }
 
-/* Time slider row: play button beside the kit Slider. */
 .ds-247420 .rep-slider { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-3); }
 .ds-247420 .rep-slider .ds-slider { flex: 1 1 16rem; }
 
-/* Word cloud. Kit primitive tried: Chip/Pill and BarChart (fixed size / bars, not words). Five sizes on --fs-* tokens. */
 .ds-247420 .rep-cloud { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); list-style: none; margin: 0; padding: 0; }
 .ds-247420 .rep-cloud-w { color: var(--fg); line-height: 1.1; }
 .ds-247420 .rep-cloud-1 { font-size: var(--fs-sm); }

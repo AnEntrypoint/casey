@@ -1,22 +1,8 @@
-// Operator account management (admin-only CRUD) + the operator roster +
-// session-revocation self-service. Adding/disabling/deleting a teammate's
-// login is the "administration handles it" lever the AUTH MODEL note in
-// server.js describes for a lost/compromised device.
-//
-// deps: store, wrap, actingOperator, authed, isAdmin, getRoster, listAccounts,
-//   createAccount, setAccountDisabled, deleteAccount, revokeAccountSessions,
-//   getAccount, issueSession, sessionCookieHeader, setAccountContactPhone
 import { mountRoutes } from './register.js'
 import { FIELD_ROLES } from '../roles.js'
 
-// Account rows carry password_hash/password_salt/session_epoch. This is the one
-// allowlist through which one may reach JSON -- module-level and named, so the
-// credential columns stay unemitted by construction rather than by each
-// handler remembering.
 export const publicAccount = (a) => ({ id: a.id, username: a.username, display_name: a.display_name, role: a.role, contact_phone: a.contact_phone || null, disabled: a.disabled === '1', last_login_at: a.last_login_at || null })
 
-// The operator roster + who the server resolved THIS request to (from the
-// logged-in session), so the SPA can label every action with a real name.
 export function getOperators({ authed, actingOperator, getRoster }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -45,7 +31,6 @@ export function postAccount({ store, authed, isAdmin, createAccount }) {
   }
 }
 
-// Link or unlink an account to a WhatsApp number (admin-only, like every account edit).
 export function postAccountContactPhone({ store, authed, isAdmin, setAccountContactPhone }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -55,10 +40,6 @@ export function postAccountContactPhone({ store, authed, isAdmin, setAccountCont
   }
 }
 
-// An admin locking out their OWN only-admin account would be a self-lockout
-// with no CLI recovery expectation set for the operator -- allowed (the CLI
-// `casey operators` command is the documented break-glass path), but never
-// silently -- the client shows a confirm on this action.
 export function postAccountDisabled(disabled) {
   return ({ store, authed, isAdmin, setAccountDisabled }) => async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -68,11 +49,6 @@ export function postAccountDisabled(disabled) {
   }
 }
 
-// Session revocation (session-auth-hardening-revocation PRD row): admin-forced
-// revoke on ANY account (a leaked cookie, a departing team member) -- bumps
-// session_epoch, every outstanding token for that account fails its next
-// request. Same auth gate as disable/enable (admin only, matches "this is an
-// account-management action" not a self-service one).
 export function postRevokeSessions({ store, authed, isAdmin, revokeAccountSessions }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -82,12 +58,6 @@ export function postRevokeSessions({ store, authed, isAdmin, revokeAccountSessio
   }
 }
 
-// Self-service "log out everywhere" -- any authed operator (not admin-only:
-// a leaked cookie or a lost/stolen device is every operator's own risk to
-// clear, not something that should require asking an admin). Revokes the
-// CALLER's own account only (req.caseyAccount.id, never req.params/body),
-// then immediately re-issues a fresh cookie at the new epoch so the request
-// that triggered this does not itself get logged out.
 export function postLogoutEverywhere({ store, authed, revokeAccountSessions, getAccount, issueSession, sessionCookieHeader }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -108,8 +78,6 @@ export function deleteAccountRoute({ store, authed, isAdmin, deleteAccount, getA
     try {
       const target = await getAccount(store, req.params.id)
       await deleteAccount(store, req.params.id)
-      // A field login that is deleted can no longer work the reports it held, and a
-      // report left in its name keeps the assistant quiet with nobody driving.
       if (target && FIELD_ROLES.includes(target.role)) await store.releaseCasesHeldBy(target.username, 'the login holding it was deleted', { id: 'account-removal', role: 'system' })
       res.json({ ok: true })
     }

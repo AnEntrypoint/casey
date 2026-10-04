@@ -1,6 +1,3 @@
-// View-as panel (admin only): see the dashboard exactly as another login sees it -- its screens, its rows, its limits.
-// The preview is READ-ONLY (the server refuses every write while it runs), so an admin can look at what a ranger, a
-// technician, an operator or a viewer is shown without ever acting as them. A banner at the top says so and leaves it.
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { api, setViewAs, viewAsId } from '../api.js';

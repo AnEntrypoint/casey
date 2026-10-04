@@ -1,18 +1,3 @@
-// SkillsOverlay -- per-operator checklist of the shortcuts that make an
-// already-learned shift faster. It is NOT a second onboarding: the working
-// loop (open, claim, answer) is taught once, in prose, by OnboardingOverlay,
-// which is per-browser and has nothing to tick. This one is per-OPERATOR --
-// state is a localStorage map keyed by operator id (or a "default" bucket
-// before anyone is signed in) so a shared machine does not leak one person's
-// progress onto the next -- and every item is a shortcut for something the
-// operator can already do the long way. Dismissed or fully ticked, it does
-// not reappear.
-//
-// The two overlays used to be near-identical three-item first-run cards fired
-// back to back at a new operator, both signing off with "reopen from the ?
-// help". If an item here would also belong on the first-shift card, it is on
-// the wrong screen.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Lede } from '/design/src/components/shell/atoms.js';
 import { Checkbox } from '/design/src/components/form-primitives.js';
@@ -35,20 +20,13 @@ export function loadSkills(operatorId) {
 }
 
 export function saveSkills(operatorId, o) {
-    try { localStorage.setItem(skillsKey(operatorId), JSON.stringify(o)); } catch { /* never blocks the toggle */ }
+    try { localStorage.setItem(skillsKey(operatorId), JSON.stringify(o)); } catch {  }
 }
 
 export function skillsDone(o) { return SKILLS.every((s) => o[s.id]); }
 export function skillsDismissed(operatorId) { return loadSkills(operatorId).__dismissed === true; }
 
 
-/**
- * @param {Object} props
- * @param {boolean} props.open
- * @param {string} props.operatorId
- * @param {Function} props.onClose
- * @param {Function} [props.onAllDone] - called once when every item first becomes ticked, so the caller can toast.
- */
 export function SkillsOverlay({ open, operatorId, onClose, onAllDone } = {}) {
     const state = loadSkills(operatorId);
     const toggle = (id) => {

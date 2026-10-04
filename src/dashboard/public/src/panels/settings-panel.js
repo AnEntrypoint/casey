@@ -1,8 +1,3 @@
-// Settings panel -- tunable health thresholds, plain-language labels. Rendered
-// inside dialog-shell's Dialog as a modal (state.activeModal === 'settings'),
-// per architecture spec section 4 (ux-settings-panel-displaces-queue: this is
-// an overlay now, it can never push the case queue down again).
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { TextField } from '/design/src/components/content/fields.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
@@ -14,49 +9,23 @@ import { toast, failMsg } from '../toasts.js';
 
 const h = webjsx.createElement;
 
-// Every one of these seven knobs is entered and stored in HOURS -- the field
-// converts to and from milliseconds on the way in and out (hoursOf/save), and
-// every label says so, because "48" with no unit beside it is a number nobody
-// can safely change on a live escalation threshold.
-//
-// The unit is HOURS for all seven, checked against case-health.js's
-// DEFAULT_THRESHOLDS rather than assumed: handoffMs 4h, escalateHandoffMs 12h,
-// staleMs 48h, abandonMs 24h, incompleteCriticalMs 8h, neverClosedMs 7 days
-// (168h), unsentDraftMs 1h. thresholds.js clamps each one to its own range on
-// the way in, so a typo is refused rather than stored.
-//
-// Each helper says what that ONE threshold changes. Four of them used to be
-// the same sentence reworded, all ending in flagged/flagging, which told an
-// operator nothing about which of the four to touch.
 const THRESH_META = {
     handoffMs: ['Unanswered request for a person (hours)', 'A contact asked for a real person. This is how long the team has to reply before the case is raised.'],
-    // "Escalated unanswered handoff" was the only label on this form written
-    // in the store's vocabulary rather than the operator's -- the row directly
-    // above it calls the same event "a request for a person", and nothing on
-    // any other screen calls it a handoff.
     escalateHandoffMs: ['Second, later deadline on that request (hours)', 'The louder deadline on the same unanswered request. Set it above the one above, or it fires first.'],
     staleMs: ['Case with no activity (hours)', 'An open case nobody has touched for this long is called going cold. 48 is two days.'],
     abandonMs: ['Half-finished intake left sitting (hours)', 'Intake started and stopped with on-site facts never gathered. Short values chase a reporter who may still be reachable.'],
     incompleteCriticalMs: ['Missing essential visit details (hours)', 'Work has started but the facts a field visit cannot proceed without are still blank.'],
     neverClosedMs: ['Marked done but never closed (hours)', 'How long a resolved case may sit unclosed. 168 is one week.'],
-    // 'assisted' is the stored key for the Who answers setting, whose options
-    // an operator reads as "Draft, then I send" (see fields-editor.js). Naming
-    // the key here sent them looking for a mode that is not on the form.
     unsentDraftMs: ['Unsent AI draft waiting (hours)', 'When Who answers is set to "Draft, then I send", the contact waits on a person to release the draft. This is how long that wait may run.'],
 };
 
-// Milliseconds in, hours on screen: one decimal place, so 90 minutes reads
-// 1.5 rather than rounding away to 2.
 function hoursOf(ms) { return Math.round((ms / 3600000) * 10) / 10; }
 
 let saving = false;
-let draft = {}; // key -> hours string, edited locally before Save
+let draft = {};
 
 const SPINNER_LABEL = 'loading settings';
 
-// This panel is its own shell rather than a body inside a Panel, so it reads
-// the loader's state directly instead of going through slot() -- the skeleton
-// and the failure sentence are the whole modal here, not a slot inside one.
 const loader = createPanelLoader({
     what: 'the settings',
     label: SPINNER_LABEL,
@@ -80,9 +49,6 @@ async function save() {
     try {
         await putThresholds(patch);
         toast('Settings saved', 'ok');
-        // The server clamps and merges what it was sent, so what it now holds
-        // is not necessarily what was typed -- re-read rather than assume the
-        // draft on screen is what was stored.
         loader.reload();
     } catch (e) {
         toast(await failMsg(e, 'The deadlines were not saved, so the sweep is still using the previous values. Try again.'), 'err');

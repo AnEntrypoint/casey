@@ -1,84 +1,29 @@
-/* case-detail.css -- SURVIVING bespoke rules only for the new webjsx
-   case-detail surface (architecture spec section 7): everything with a
-   design-token equivalent rides the SDK's own component CSS instead. Every
-   value here resolves through a --token (colors_and_type.css / app-shell.css),
-   never a raw literal, per design AGENTS.md's zero-tolerance lint gates.
-   Loaded alongside casey's existing app.css during the migration window --
-   scoped entirely under .casey- prefixed classes so it cannot collide with
-   the legacy stylesheet's own rules. */
-
 .casey-detail-pane{padding:var(--space-5);display:flex;flex-direction:column;gap:var(--space-4)}
 .casey-case-header{position:sticky;top:0;z-index:var(--z-sticky);background:var(--bg);padding-bottom:var(--space-2);}
 .casey-detail-empty,.casey-detail-loading,.casey-detail-error{padding:var(--space-5)}
-/* SPECIFICITY NOTE, and it applies to every font-size rule in this sheet.
-   The kit ships as one scope-prefixed bundle (design/dist/247420.css), so its
-   own rules read `.ds-247420 button` (0,1,1) and `.ds-247420 .ds-app-surface
-   h2` (0,2,1) -- both of which outrank a bare `.casey-x` class. A font-size
-   here on a button or a heading therefore has to carry a container class (or
-   its element name) to reach the screen at all; without one it loses silently
-   and the kit's own size is what renders. */
-/* align-self:flex-start, because .casey-detail-pane is a column flex container
-   with no align-items set -- its default is stretch, so without this the
-   button inflated to the pane's full width (measured: 624px) while its own
-   left-hugging content stayed put, leaving "Back to the list" jammed against
-   the left edge of a box six times wider than the text needs. */
+
 .casey-detail-pane .casey-back-btn,.casey-detail-error .casey-back-btn{align-self:flex-start;margin:0 0 var(--space-2)}
 
 .casey-case-header{display:flex;flex-direction:column;gap:var(--space-2)}
 .casey-case-header-top{display:flex;align-items:stretch;gap:var(--space-3);flex-wrap:wrap}
-/* stretch, not center: this row mixes an icon button with small text buttons,
-   which render at different intrinsic heights (measured 28px beside 32px on
-   one screen). Centering leaves them ragged against each other; stretching
-   makes the row's own height the common one. */
+
 .casey-case-header-top .ds-icon-btn + .ds-icon-btn{margin-left:var(--space-2)}
-/* Type ladder for this pane, largest first. Every step is a kit token and no
-   two steps share a size, so the pane reads as a hierarchy rather than as two
-   sizes and a jump:
-     --fs-h1-app  the case subject, the one thing this page is about
-     --fs-h2-app  block heads (report, timeline, duplicates, site history)
-     --fs-h3-app  section titles inside the report block
-     --fs-sm      body controls and prose
-     --fs-nano    hints, notes, legends, the ref handle, the automation aside
-     --fs-pico    stage labels, provenance badges, the per-field note control
-   No --fs-* fallback appears anywhere below: the kit stylesheet
-   (design/dist/247420.css) is linked ahead of this sheet in index.html, so a
-   fallback can only ever fire when the page is already broken, and a set of
-   guessed fallbacks that disagree with each other is worse than none.
-   --fs-md is not a token in the kit at all and is therefore never used here. */
-/* The subject is its own flex ITEM in the header row (header.js renders it as
-   the pane's h2.casey-case-ref-text), so it can be told to shrink. min-width:0 is what a bare text child could never
-   be given: an anonymous flex item keeps min-width:auto and is measured at
-   max-content, and on a long subject with no break opportunity that measure is
-   what froze the renderer. format.js's headline() bounds the string as well --
-   both halves, because either one alone leaves the other shape reachable. */
+
 .casey-case-header-top .casey-case-ref-text{min-width:0;overflow-wrap:anywhere}
 .casey-suggested{font-size:var(--fs-nano);color:var(--fg-3)}
 
-/* The header's four chip families are gone (see header.js for the argument);
-   what is left is prose, so the rules are about line rhythm, not badges.
-   .casey-health-badges / .casey-intake-badge were flex rows holding Chips and
-   nothing in the tree emits either class any more. */
 .casey-health-notes{display:flex;flex-direction:column;gap:var(--space-1)}
 .casey-health-notes p{margin:0}
-/* The claimed-by line sits in the button row where the Claim button was, so
-   it aligns with the controls rather than baselining against the heading. */
+
 .casey-claimed{font-size:var(--fs-nano);color:var(--fg-2);white-space:nowrap;align-self:center}
 
 .casey-case-meta{font-size:var(--fs-nano);color:var(--fg-3)}
 .casey-meta-toggle{display:inline-flex;align-items:center;gap:var(--space-1);background:transparent;border:0;color:var(--fg-3);cursor:pointer;padding:var(--space-1) 0;font-size:inherit;transition:color var(--dur-snap) var(--ease)}
-/* Measured at 17px tall with padding:0 -- a real control with barely any
-   target. Vertical padding only, so it still reads as the inline text
-   toggle it is rather than growing into a button. */
+
 .casey-meta-toggle:hover{color:var(--fg)}
 .casey-meta-body{display:flex;align-items:center;gap:var(--space-2);margin-top:var(--space-1)}
 .casey-meta-id{font-family:var(--ff-mono);font-size:var(--fs-pico);color:var(--fg-3)}
 
-/* The six stages run 514px wide against a 258px pane on a 375px phone. They
-   WRAP rather than scroll: a stepper is a map of where a case can go, so
-   every stage has to be on screen at once -- "resolved" and "closed" sat past
-   the clip edge with nothing on screen saying they existed, and an operator
-   cannot move a case to a stage they cannot see. Labels stay nowrap so a
-   stage name never breaks mid-word. */
 .casey-progress{display:flex;flex-wrap:wrap;align-items:center;gap:0;row-gap:var(--space-1);padding:var(--space-2) 0}
 .casey-progress-step{display:flex;align-items:center;gap:var(--space-1-75);flex:0 0 auto}
 .casey-progress-label{font-size:var(--fs-pico);color:var(--fg-3);white-space:nowrap}
@@ -87,65 +32,22 @@
 .casey-progress-line{flex:0 0 var(--space-3-5);width:var(--space-3-5);min-width:var(--space-3-5);height:2px;background:var(--border);margin:0 var(--space-1-75);transition:background var(--dur-base) var(--ease)}
 .casey-progress-step--done .casey-progress-line,.casey-progress-step--active .casey-progress-line{background:var(--accent)}
 
-/* .casey-autonomy-badge held the "Who answers: auto" Pill. The sentence it
-   was hiding in a tooltip is now the Select's own hint, styled by the kit's
-   .ds-field-hint, so neither the class nor a rule for it survives. */
-
-/* A case whose status is not one of the six pipeline stages gets a sentence
-   where the rail would be (progress.js); it needs the rail's own vertical
-   rhythm so the pane does not jump between the two shapes. */
 .casey-progress-offpipeline{padding:var(--space-2) 0;margin:0}
 
-/* .casey-todo-hint is gone with the component that emitted it. todo-hint.js is
-   pure text now (its own header records the TodoHint component being removed as
-   rendered by nobody); header.js imports todoHintText and wraps it in a Lede,
-   which carries no casey- class. Nothing in the tree writes the name, and it
-   never matched in 34 live views, panels and modals. */
-
-/* Was .casey-source-badge at --fs-pico: the smallest step on the scale, for
-   the line telling you whether to trust the case type above it. It is a
-   sentence now, at the size the rest of the form's help text uses, sitting
-   under the field it is about. */
 .casey-source-note{margin:var(--space-1) 0 0}
 .casey-ev-flagged{display:inline-flex;color:var(--fg-3)}
 
 .casey-report{display:flex;flex-direction:column;gap:var(--space-3);border:1px solid var(--border);border-radius:var(--r-1);padding:var(--space-3)}
-/* Block head, one step above the Section titles it contains. */
+
 .casey-report-head{font-family:var(--ff-body);font-weight:600;font-size:var(--fs-h2-app)}
-/* The kit gives every h2 --fs-h2-app, which put these section titles level
-   with the block head above them. Inside the report they are one level down,
-   so they take the next step of the app scale. */
+
 .casey-detail-pane .casey-report .ds-section > h2{font-size:var(--fs-h3-app)}
 .casey-rep-missing{color:var(--fg-3)}
-/* .casey-rep-src-legend held the "Fields from: [AI collected][Operator
-   entered]" chip row above the report. Removed with it -- the per-row marker
-   says the same thing on the row it is true of. */
 
-/* The report field row, its label column, its value column and the hairline
-   that separates one field from the next are all the kit's DetailRow now
-   (deps/design src/components/content/row.js + app-shell/panel-row.css).
-   They were four rules here that reimplemented it, hairline included, which
-   is exactly the drift the kit primitive exists to stop. */
-/* The kit sizes a DetailRow's label column at 40% of the row, which is right
-   for a wide settings pane and wrong for a case rail: at a 645px rail that is
-   a 258px column holding the word "Animals" while the value it labels gets
-   what is left. Cap it in rem so the column tracks the label text rather than
-   the rail. Stacking the two halves on a narrow column is the kit's job, not
-   this file's -- see app-shell/panel-row.css. */
 .casey-detail-pane .ds-detail-label{flex:0 0 auto;width:min(38%, 10rem)}
-/* Same argument for the kit's LogRow in the timeline: its label column has a
-   110px floor and its text column keeps one line, which on a 258px rail left
-   70px for a 196px entry -- the row ran 343px wide inside a 256px box, and
-   the overflow was scrollable with nothing on screen saying so. Wrapping the
-   entry body and dropping the label floor on a phone holds the row inside
-   the rail; the desktop row is untouched. */
+
 .casey-detail-pane .ds-log-text{overflow-wrap:anywhere}
-/* The stacking half of this moved into the kit (app-shell/panel-row.css): a
-   40% label track collapsing in a narrow column is DetailRow's own geometry
-   failing, not this pane's, and every app rendering record fields into a rail
-   or a phone was going to write the same rule. What stays here is the part
-   that is genuinely casey's -- undoing the rem cap above, which is this
-   pane's own decision about the label column and belongs with it. */
+
 @container (max-width: 700px){
   .casey-detail-pane .ds-detail-label{width:auto}
   .casey-detail-pane .ds-log-row{flex-wrap:wrap}
@@ -153,38 +55,19 @@
 }
 
 .casey-rep-editable{cursor:text;border-radius:var(--r-0);padding:var(--space-hair) var(--space-1);display:inline-flex;flex-wrap:wrap;align-items:center;min-width:0;gap:var(--space-1-75);transition:background var(--dur-snap) var(--ease)}
-/* The value is its own flex item (report-field.js renders it in a span), so it
-   can shrink and break instead of being measured at max-content on one
-   unbreakable line -- the shape that froze the renderer on an oversized field.
-   format.js's reportValue() bounds the string as well; both halves are needed,
-   either alone leaves the other shape reachable. */
+
 .casey-rep-value{min-width:0;overflow-wrap:anywhere}
 .casey-rep-editable:hover,.casey-rep-editable:focus{background:var(--bg-2);outline:none}
 .casey-rep-edit-actions{display:flex;gap:var(--space-1-75)}
-/* Twenty-eight of these render on one report -- one per field -- and at
-   padding:0 each was 23px tall, a height nothing else on the screen used
-   and a poor target for a real control. --ctl-sm is the kit's existing
-   small-control height, so adopting it removes a whole distinct height
-   from the page rather than adding another one, and the coarse-pointer
-   floor matches what the kit now gives its own button vocabulary. Padding
-   stays horizontal-light so it still reads as the quiet inline affordance
-   it is, not a button block repeated twenty-eight times. */
+
 .casey-detail-pane .casey-rep-note-btn{background:transparent;border:0;color:var(--accent-ink);cursor:pointer;padding:0;height:var(--ctl-sm);font-size:var(--fs-pico);align-self:flex-start}
 @media (pointer: coarse){.casey-rep-note-btn{min-height:44px}}
 .casey-rep-note-btn:hover{text-decoration:underline}
-/* The tinted ground is what separates a field note from the value above it.
-   A rule on one edge only adds a second, weaker separator saying the same
-   thing, and reads as an unfinished border everywhere it appears. */
+
 .casey-rep-field-note{font-size:var(--fs-nano);color:var(--fg-3);background:var(--bg-2);border-radius:var(--r-0);padding:var(--space-half) var(--space-2)}
 
-/* A dropdown with an "Other (write it)" box under it: two kit fields (Select, TextField) in a
-   plain div have no space between them. Kit primitive tried: the two fields as is; Form() lays out
-   a submit-able form, not a pair inside an inline editor. */
 .casey-option-field{display:flex;flex-direction:column;gap:var(--space-2)}
-/* A translation sits under the message it translates and is the reason the button was pressed, so it
-   reads at body size, unlike the nano field notes. Kit primitive tried: Alert (role=alert would
-   announce every stored translation when a timeline loads) and the field-note class above (too small
-   to read on a phone). */
+
 .casey-ev-translation{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--space-2);background:var(--bg-2);border-radius:var(--r-0);padding:var(--space-2) var(--space-3);font-size:var(--fs-sm)}
 
 .casey-research-notes{display:flex;flex-direction:column}
@@ -208,28 +91,18 @@
 .casey-canned-wrap{display:flex;flex-direction:column;gap:var(--space-2)}
 .casey-canned-lab{font-size:var(--fs-nano);color:var(--fg-3);margin:0}
 .casey-canned{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:stretch}
-/* A canned reply whose text wraps to two lines stood 63px beside 44px
-   siblings. align-items:stretch gives every button in a wrapped row the
-   height of the tallest, so a longer phrase no longer makes one button
-   tower over its neighbours. */
+
 .casey-detail-pane .casey-canned-btn{margin:0;background:var(--bg-2);color:var(--fg);border:1px solid var(--border);border-radius:var(--r-1);padding:var(--space-1-75) var(--space-2);font-size:var(--fs-sm);min-height:44px;text-align:left;flex:0 1 auto;cursor:pointer}
 .casey-canned-btn:hover{border-color:var(--accent)}
 .casey-reply-send-row{display:flex;justify-content:flex-end}
 
 .casey-timeline-wrap{display:flex;flex-direction:column;gap:var(--space-2)}
-/* Block heads: the timeline, the duplicate suggestions and the site history
-   are peers of the report block, and the kit's h3 default put them a step
-   below it. They take the same step as the report head. */
+
 .casey-detail-pane h3.casey-timeline-head,
 .casey-detail-pane .casey-dedup-panel > h3,
 .casey-detail-pane .casey-site-history > h3{margin:0;font-size:var(--fs-h2-app)}
 .casey-timeline{display:flex;flex-direction:column}
-/* The timeline row, its icon/label/text/time columns, its dashed separator and
-   its four tone rails are all the kit's LogRow now (deps/design
-   src/components/content/row.js + app-shell/panel-row.css). Eight rules here
-   reimplemented it, including the tone rails -- the same drift the kit
-   primitive exists to stop. .casey-ev-flagged stays: the flag-a-bad-reply
-   marker is casey's own, not a property of log rows in general. */
+
 .casey-detail-pane .casey-load-older{align-self:flex-start}
 
 .casey-dedup-panel,.casey-site-history{display:flex;flex-direction:column;gap:var(--space-2);padding-top:var(--space-3)}
@@ -242,45 +115,21 @@
 
 .casey-timeline-actions{display:flex;gap:var(--space-2);justify-content:flex-end}
 
-/* The three elements in this file that declare a transition -- and the only
-   reduced-motion guard any of them needs. .casey-progress-line was named twice
-   in this one selector list, and all three were ALSO restated in app.css's own
-   catch-all guard, so a fourth file's worth of cascade had to be read to answer
-   "is this element guarded". Each sheet now guards the classes it declares. */
 @media (prefers-reduced-motion: reduce){
   .casey-progress-line,.casey-rep-editable,.casey-meta-toggle{transition:none;animation:none}
 }
 
-/* Phone: one horizontal gutter for this surface too. Same compounding the
-   panel stack was just cleared of -- on a 375px phone .app-main gives 16px a
-   side, .casey-detail-pane added 32 and .casey-report another 16, so a case
-   read 225px wide inside 150px of gutter. The pane draws no edge of its own
-   (a bare flex column), so its horizontal padding only repeats the page inset
-   and goes to zero; .casey-report keeps an inset because it has a real border
-   to hold content off, at the smaller step a phone can afford. Vertical
-   padding is untouched on both -- that is rhythm, not gutter.
-   480px is the kit's own phone breakpoint (deps/design app-shell/responsive.css)
-   on purpose: the page collapses its gutters at ONE width, not in three
-   stages. Last in the file because both selectors are (0,1,0) and have to beat
-   their own base rules above on source order. */
 @media (max-width: 480px){
   .casey-detail-pane{padding-left:0;padding-right:0}
   .casey-report{padding-left:var(--space-2);padding-right:var(--space-2)}
 }
-/* Touch floor for the inline edit and note controls (one pair per report field): 44px on a coarse pointer. */
+
 @media (pointer: coarse){
   .casey-detail-pane .casey-rep-editable,.casey-detail-pane .casey-rep-note-btn,.casey-detail-pane .casey-meta-toggle,.casey-detail-pane .casey-research-note-toggle{min-height:44px;min-width:44px}
 }
 
-/* A contact can send one very long unbroken string (a URL, a run of characters). The kit's
-   LogRow text span has no wrap fallback, so the string pushed the row's buttons over it.
-   Kit primitive tried: LogRow itself (no prop for wrapping); the .ds-247420 prefix is needed
-   to outrank the kit's own rule. */
 .ds-247420 .ds-log-row .ds-log-text { min-width: 0; overflow-wrap: anywhere; }
 
-/* Timeline text: the message column must be allowed to shrink and break, or a long reply
-   or an unbroken run forces one word per line in a narrow rail. Line breaks inside a reply
-   (the "Done:" / "Still needed:" blocks, one "- label: value" per line) are kept. */
 .casey-timeline .ds-log-row{flex-wrap:wrap}
 .casey-timeline .ds-log-text{min-width:0;flex:1 1 12rem;overflow-wrap:anywhere;white-space:pre-line}
 .casey-timeline .ds-log-label{min-width:0;flex:0 1 auto}
@@ -290,8 +139,6 @@
 .casey-ev-quote{font-style:italic;color:var(--fg-2);overflow-wrap:anywhere}
 .casey-sysnotes-btn{align-self:flex-start}
 
-/* An open report gets a usable width on the map home: a 26vw rail (about 330px at 1280) broke
-   every timeline line into one word a row. The map keeps the rest. */
 @container (min-width: 901px) {
   .app-two-pane-map.has-active > .case-detail-pane { flex-basis: clamp(420px, 36vw, 560px); max-width: clamp(420px, 36vw, 560px); }
 }

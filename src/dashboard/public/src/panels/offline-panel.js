@@ -1,6 +1,3 @@
-// Offline panel -- missed-while-down queue. Content-swap panel
-// (state.activePanel === 'offline'). Table-based.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
@@ -13,8 +10,6 @@ import { entityLabelPlural } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
-// The count in the nav badge is a second consumer of this same response, so it
-// is published from the success path rather than derived again anywhere else.
 const loader = createPanelLoader({
     what: 'the offline queue',
     label: 'loading offline queue',
@@ -30,12 +25,6 @@ export function OfflinePanel() {
     const body = loader.slot(() => {
         const j = state._offline;
         const rows = (j && j.items) || [];
-        // Empty is a plain statement about the queue, never a green
-        // reassurance about the system: this console reads the store and, in
-        // dashboard-only mode, is not attached to the agent at all, so it
-        // cannot honestly say anything is "answering normally".
-        // "Nothing came in while nobody was watching" was cute and said neither
-        // what this list holds nor what an empty one means.
         if (!rows.length) return Alert({ kind: 'info', children: 'Nothing is waiting for a first reply. This list holds ' + entityLabelPlural() + ' that arrived and have had no answer yet.' });
         const capped = j.total > rows.length;
         return h('div', {},

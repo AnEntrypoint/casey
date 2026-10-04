@@ -1,8 +1,3 @@
-// Cross-system links panel -- proposed correlations against another system
-// (see EXTERNAL-SYNC.md), with Confirm/Reject as the human override every
-// proposal requires before any data ever moves. Content-swap panel
-// (state.activePanel === 'external_links').
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Alert } from '/design/src/components/content/feedback.js';
@@ -50,10 +45,6 @@ function confidenceTone(c) {
     return 'dim';
 }
 
-// 'case'/'contact' are the two stored local_entity values. The first is the
-// record this deployment names through entity_label, so it is asked for rather
-// than spelled -- and the not-found branch interpolated the raw key ("case no
-// longer found") two lines under a branch that maps the very same value.
 function localEntityWord(e) {
     if (e === 'case') return entityLabel();
     if (e === 'contact') return 'contact';
@@ -69,11 +60,6 @@ function linkRow(l) {
     const rowBusy = busyId === l.id;
     return h('div', { key: l.id, class: 'ds-el-row' },
         h('div', { class: 'ds-el-main' },
-            // WHICH local case/contact this proposal would merge into, always
-            // shown before the two buttons that act on it -- Confirm is the
-            // only path that ever merges external data into a local record,
-            // so an operator must see the local side, not just the external
-            // system's own label, before pressing it.
             h('span', { class: 'ds-el-local' }, localRefLabel(l)),
             ' -> ',
             h('span', { class: 'ds-el-ref' }, l.external_ref || l.external_entity),

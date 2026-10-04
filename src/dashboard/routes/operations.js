@@ -1,12 +1,3 @@
-// Operational/health surfaces: AI-helper + gateway + runtime health, live
-// client config bootstrap, the attention inbox + SLA-at-risk breakdown,
-// operator-tunable thresholds, manual sweep trigger, cross-case
-// clusters/geo/distribution/activity views. These are the "is the system
-// working, and what needs attention right now" routes.
-//
-// deps: store, wrap, authed, actingOperator, isOpenCase, rankAttention,
-//   getWebhookDeliveryStatus, SAST_TZ, llmStatus, callLLM, runSweep,
-//   receiveStatus, runtimeStatus, queueStatus, alertWebhookUrl
 import { tagList, parseReport } from '../../timestamp.js'
 import { snapshotDroppedIntake } from '../../hooks/dropped-intake.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
@@ -15,45 +6,15 @@ import { KNOWN_VALUE_FIELDS, isKnownValueField, readKnownValues, canonicalizeFie
 import { mountRoutes } from './register.js'
 import { assigneeNamer } from '../assignee-names.js'
 
-// Same default casey.js's startSweep uses when no CASEY_SWEEP_INTERVAL_MS is
-// set. Reported to the operator so "next run at" is a real time rather than a
-// blank, and named once rather than repeated at three call sites.
 const SWEEP_DEFAULT_INTERVAL_MS = 15 * 60 * 1000
 
-// Plain-words health for the operator: is the AI helper connected? Low-literacy
-// operators must know WHY auto-replies may be paused (acptoapi offline) without
-// reading logs.
 const LLM_HEALTH_VIEWS = {
   acptoapi: { ok: true, label: 'AI helper: online', detail: 'Auto-replies are on. Contacts get an instant answer.' },
   none: { ok: false, label: 'AI helper: offline', detail: 'Auto-replies are paused. No message is sent; messages queue and re-drive once the provider recovers.' },
-  // Two DIFFERENT facts used to share the word 'unknown', and an operator read
-  // both as a diagnosis of the helper:
-  //
-  //   unknown  -- an llmStatus IS wired and it answered with a source this
-  //               table does not recognise, or has not resolved one yet.
-  //   unwired  -- no llmStatus was passed to createDashboard at all, so this
-  //               process has no way to ask. `casey dashboard` (casey-serve.js
-  //               cmdDashboard) passes only {port}; `casey up` and worker.js
-  //               pass sendReply/llmStatus/runSweep/receiveStatus/
-  //               runtimeStatus/queueStatus. In dashboard-only mode the answer
-  //               is not "we do not know how it is", it is "this console
-  //               cannot see it from here", and saying so is the difference
-  //               between a fault and a mode.
   unknown: { ok: false, label: 'AI helper: no answer yet', detail: 'The provider check has not come back, so whether auto-replies are working is not known yet. It usually resolves within a minute of start-up.' },
-  // The detail names the WHOLE set this mode cannot do, once, in the one place
-  // the operator already reads when something is off. It used to end with
-  // "Everything else on this screen is unaffected", which was not true: the
-  // same missing wiring also silently removes sending a reply, receive
-  // liveness, the queue counts, the supervisor runtime state and the manual
-  // sweep. Naming a mode is only honest if it names all of it -- keep this
-  // list in step with what `casey dashboard` (casey-serve.js cmdDashboard)
-  // does not pass to createDashboard, and with the `capabilities` block below.
   unwired: { ok: false, label: 'AI helper: not visible in dashboard-only mode', detail: 'This console was started with `casey dashboard`, which reads and edits the store but is not attached to the running agent. It cannot see the AI helper, the message channels, the queued-message counts or the supervisor state, it cannot run a sweep, and a reply typed here is recorded on the timeline but NOT sent to the contact. All of that keeps working wherever `casey up` is running. Everything on this screen that reads the store is unaffected.' },
 }
 
-// Exported so /api/ready (routes/auth.js) validates a supervisor state against
-// the SAME whitelist getRuntime does. A second local copy is how the ungated
-// probe and the gated route come to disagree about what a runtime state is.
 export const RUNTIME_STATES = new Set(['booting', 'healthy', 'restarting', 'degraded', 'stopping', 'stopped', 'standalone'])
 const RUNTIME_LABELS = {
   booting: 'Runtime: starting', healthy: 'Runtime: healthy', restarting: 'Runtime: restarting',
@@ -66,12 +27,6 @@ const DEFAULT_ACTORS = ['agent', 'operator', 'contact', 'system']
 
 const resolve = async (v) => (typeof v === 'function' ? await v() : v)
 
-// llmStatus is an object or a (sync/async) fn returning one; we normalise to
-// {source, model, url} and translate to a friendly label + tone.
-// Completion-path degradation: source resolved (acptoapi) but recent real turns
-// are slow/failing. Reachability is a false green here -- the brain answers
-// /v1/models but every turn hangs -- so override the online pill to a degraded
-// amber so the operator sees "answering, but slowly" not "fine".
 export function llmHealthView(s) {
   const view = LLM_HEALTH_VIEWS[s.source] || LLM_HEALTH_VIEWS.unknown
   if (!view.ok || !s.degraded) return view
@@ -85,14 +40,6 @@ export function llmHealthView(s) {
   }
 }
 
-// Receive-liveness for real-time channels: a zombie gateway socket leaves casey
-// deaf while the LLM pill stays green. Surfaced as `gateway` so the operator can
-// tell "online" from "online but answering nobody". A channel configured yet
-// never connected since start is the actionable red signal. Best-effort: a
-// receive-status failure never breaks health.
-// The WhatsApp block of /api/health: last inbound, webhook counters, delivery
-// outcomes (failed/undelivered by code), and the silence-alarm setting. Aggregate
-// only. null when no WhatsApp channel is served or no way to ask was wired.
 async function whatsappView(receiveStatus) {
   try {
     const rs = await resolve(receiveStatus)
@@ -117,11 +64,6 @@ async function gatewayView(receiveStatus) {
   } catch { return null }
 }
 
-// Alert-webhook delivery status: distinguishes "no breach has fired since boot"
-// (ds === null, nothing to report) from "the webhook itself is failing"
-// (ds.ok === false) -- previously a failed POST only ever logged a console
-// warning, invisible on a headless deployment. No URL/detail ever leaks the
-// webhook itself (a secret), only pass/fail + timing.
 function alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus) {
   if (!alertWebhookUrl) return { configured: false, ok: null, last_attempt_at: null, last_error: null }
   const ds = getWebhookDeliveryStatus(alertWebhookUrl)
@@ -132,44 +74,26 @@ function alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus) {
 
 export function getHealth({ store, llmStatus, receiveStatus, queueStatus, runSweep, sendReply, runtimeStatus, getWebhookDeliveryStatus, alertWebhookUrl }) {
   return async (req, res) => {
-    // Whether this process was GIVEN a way to ask is a different fact from
-    // what the answer was, and only this side knows it -- see LLM_HEALTH_VIEWS
-    // above. `capabilities` publishes the same distinction as booleans so a
-    // client surface can be honest about a mode rather than about a fault.
     const wired = llmStatus != null
     const s = (wired ? await resolve(llmStatus) : null) || { source: wired ? 'unknown' : 'unwired' }
     const view = llmHealthView(s)
-    // Bound the externally-supplied model/url so a misconfigured or hostile
-    // llmStatus cannot return a multi-megabyte string into the operator's UI.
     const model = s.model ? String(s.model).slice(0, 100) : null
     const url = s.url ? String(s.url).slice(0, 200) : null
     const gateway = await gatewayView(receiveStatus)
     const whatsapp = await whatsappView(receiveStatus)
-    // LLM-down queue depth (pending re-drives + dead-lettered) so an operator
-    // sees not just "AI helper offline" but how much is actually backed up
-    // behind that outage. Best-effort: a scan failure never breaks health.
     let queue = null
     try {
       const qs = typeof queueStatus === 'function' ? await queueStatus() : null
       if (qs) queue = { pending: qs.pending || 0, dead_lettered: qs.deadLettered || 0, truncated: !!qs.truncated }
     } catch { queue = null }
-    // Turn degradation rate (last hour): best-effort calculation of % of turns degraded
     let degradationRate = null
     try {
       degradationRate = await calculateDegradationRate(store, { hours: 1 })
-    } catch { /* best-effort; never break health */ }
+    } catch {  }
     res.json({
       ...view, source: s.source, model, url, degraded: !!s.degraded,
       last_turn_ms: Number.isFinite(s.lastMs) ? s.lastMs : null,
       gateway, whatsapp, queue,
-      // Every capability this process was GIVEN, not just the three that had a
-      // pill. `sweep` is the load-bearing addition: postSweep answers 501
-      // "sweep not available in this mode" when runSweep is absent, and the
-      // nav rendered the "Sweep now" control regardless, so the only way an
-      // operator learned the mode was by pressing a button that could never
-      // work. nav-config.js hides the control on `sweep: false` instead.
-      // `reply` and `runtime` are published on the same footing so a client
-      // surface never has to infer a mode from a missing field.
       capabilities: {
         llm: wired,
         receive: receiveStatus != null,
@@ -180,36 +104,14 @@ export function getHealth({ store, llmStatus, receiveStatus, queueStatus, runSwe
       },
       alert_webhook: alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus),
       degradation_rate: degradationRate,
-      // Inbound messages casey turned away BEFORE recordInbound, so they exist
-      // in no case and on no timeline. Counting them is the only way an
-      // operator can learn a report was lost at all -- see hooks/
-      // dropped-intake.js for why this is an aggregate and never one row per
-      // message. Since process start, aggregate, and carrying no contact key.
       dropped_inbound: snapshotDroppedIntake(),
     })
   }
 }
 
-// Detailed provider health: current status, completion-path latency, queue
-// depth. More granular than /api/health's pill; used by monitoring/debugging.
-// Aggregate-only (no case refs, no contact data), visible to any authed operator.
-//
-// Both fields come from real, live call sites, never a cached/hoped-for
-// shape: `llmStatus` is makeResilientCallLLM().status (llm.js) -- its actual
-// return shape is {source, model, url, degraded, lastMs, recentSlow, ok},
-// not a separate ProviderHealthTracker with lastSuccessAt/queuedTurnCount/
-// currentChainPosition fields; no real backend has ever populated those, so
-// reading them here always fell through to a fallback with the same fields
-// hardcoded to null/0 -- a permanently-dead branch that only looked
-// detailed. `queueStatus` (casey.queueStatus(), wired the same way
-// /api/health's own pill already reads it) is where a genuine live pending/
-// dead-lettered count actually lives.
 export function getHealthProvider({ authed, llmStatus, queueStatus }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    // Same split as getHealth: 'unwired' means this process was never handed
-    // an llmStatus (dashboard-only mode), which is not the same as asking and
-    // getting no answer.
     const wired = llmStatus != null
     let s = null
     if (wired) { try { s = await resolve(llmStatus) } catch { s = null } }
@@ -225,7 +127,7 @@ export function getHealthProvider({ authed, llmStatus, queueStatus }) {
         dead_lettered_count = Number.isFinite(qs.deadLettered) ? qs.deadLettered : 0
         queue_truncated = !!qs.truncated
       }
-    } catch { /* best-effort; never break health */ }
+    } catch {  }
     res.json({
       status,
       source: s.source || 'unknown',
@@ -240,8 +142,6 @@ export function getHealthProvider({ authed, llmStatus, queueStatus }) {
   }
 }
 
-// Sweep status: last run time, interval, and aggregate summary. Best-effort --
-// a missing or corrupt summary never breaks the endpoint it decorates.
 async function sweepStatusView(store) {
   const idle = {
     ok: true, last_run_at: null, interval_ms: SWEEP_DEFAULT_INTERVAL_MS, next_run_at: null,
@@ -264,28 +164,14 @@ async function sweepStatusView(store) {
   } catch { return idle }
 }
 
-// Case-level health signals from the periodic guardrail sweep: which cases are
-// stuck, stale, incomplete, abandoned, or awaiting team action. Exposes the live
-// breach set per open case (stale, stage_stuck, handoff_needed, incomplete_critical,
-// abandoned_intake, never_closed, unsentDraft) and the last sweep summary
-// (scanned, flagged, cleared, errors). PII-free (no external_id or contact_id).
-// The sweep runs periodically (default 15 min); this endpoint returns the live
-// classification, not a cached snapshot.
 export function getHealthCases({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { classifyCaseHealth } = await import('../../case-health.js')
     const now = Date.now()
-    // Read live operator-tuned thresholds, same path /api/attention uses
     const thresholds = await store.resolveThresholds()
-    // Scan all open cases for current health status
     const openCases = (await store.listCases({}, { limit: 10000 }))
       .filter(c => c.status !== 'closed' && c.channel !== 'system')
-    // Compute live breaches per case (not cached tags, which lag the real state).
-    // assignee is the case's owning operator (same field /api/attention already
-    // surfaces) so a breaching case can be attributed to who is on the hook for
-    // it, not just listed flat -- an empty string means unassigned, never PII
-    // (assignee is an operator username, not a contact identifier).
     const named = await assigneeNamer(store, openCases)
     const cases = openCases.map(c => ({
       id: c.id,
@@ -295,11 +181,7 @@ export function getHealthCases({ store, authed }) {
       assignee: named(c.assignee || ''),
       breaches: classifyCaseHealth(c, now, thresholds),
       updated_at: c.updated_at || c.created_at,
-    })).filter(c => c.breaches.length > 0)  // only show cases with active breaches
-    // Per-operator rollup: how many breaching cases each operator (or the
-    // unassigned pool) is currently on the hook for, worst-breach-count first --
-    // the PRD's own "case-level health signals per operator" requirement, not
-    // just a flat list an operator must self-filter by eye.
+    })).filter(c => c.breaches.length > 0)
     const byOperatorMap = new Map()
     for (const c of cases) {
       const key = c.assignee || 'unassigned'
@@ -329,20 +211,11 @@ export function getHealthCases({ store, authed }) {
   }
 }
 
-// Runtime/supervisor state: the lifecycle the SUPERVISOR (parent process) drives
-// -- healthy/restarting/degraded, restart count, last reload/crash. The parent
-// pushes this snapshot down over IPC (PARENT_MSG.STATE) and the worker exposes it
-// here so the operator can tell "the runtime got bounced and why" rather than
-// seeing a silent gap. Token-gated like every other API. Null runtimeStatus (the
-// legacy single-process path with no supervisor) reports a benign 'standalone'
-// so the SPA pill never shows a false 'restarting'.
 export function getRuntime({ authed, runtimeStatus }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const s = await resolve(runtimeStatus)
     if (!s) return res.json({ state: 'standalone', supervised: false, label: 'Runtime: running', ok: true })
-    // Bound and whitelist the fields so a malformed snapshot cannot inject markup
-    // or unbounded strings into the operator UI. No external_id ever appears here.
     const state = String(s.state || 'unknown').slice(0, 32)
     const safeState = RUNTIME_STATES.has(state) ? state : 'unknown'
     const ok = safeState === 'healthy' || safeState === 'standalone'
@@ -356,115 +229,46 @@ export function getRuntime({ authed, runtimeStatus }) {
   }
 }
 
-// Config-driven client bootstrap: the workflow stage list and the case_type/
-// priority enums are declared once in thatcher.config.yml (via CaseStore) --
-// this exposes them so the SPA can build its stage-select options, status
-// labels, and "notified on move" set from the LIVE config instead of a
-// hardcoded literal duplicated in several places in the client script. A
-// deployment that adds/renames a workflow stage or case_type value is
-// reflected in the dashboard with no client code change. PII-free (labels
-// and enum names only).
 export function getConfig({ store, authed, SAST_TZ, resolveWhatsappAdapter, fmtPhone27 }) {
   return (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    // The bot's own WhatsApp number, as the Graph API reports it (adapters/
-    // whatsapp.js caches it; '' until known or when no WhatsApp channel is wired).
     let botNumber = ''
-    try { botNumber = fmtPhone27(resolveWhatsappAdapter?.()?.displayNumber?.() || '') } catch { /* best-effort */ }
+    try { botNumber = fmtPhone27(resolveWhatsappAdapter?.()?.displayNumber?.() || '') } catch {  }
     res.json({
-      // A viewer (read-only, aggregate) is shown no phone number at all, the bot's included.
       whatsapp_number: req.caseyAccount?.role === 'viewer' ? '' : botNumber,
-      // Whether a deployer mounted the optional /api/runs/* routes (CASEY_EXTRA_DASHBOARD_ROUTES);
-      // the SPA does not probe them when this is false.
       run_routes: !!process.env.CASEY_EXTRA_DASHBOARD_ROUTES,
       stages: store.getValidStatuses(),
       open_stages: typeof store.getOpenStatuses === 'function' ? store.getOpenStatuses() : [],
       case_type: typeof store.getFieldEnum === 'function' ? store.getFieldEnum('case.case_type', []) : [],
       priority: typeof store.getFieldEnum === 'function' ? store.getFieldEnum('case.priority', []) : [],
-      // Display-only locale knobs (CASEY_TZ/CASEY_TZ_LABEL/CASEY_COUNTRY_CODE,
-      // see format.js) so the client's inlined fmtTime/fmtPhone track the same
-      // deployment-configured timezone/country code as the CLI/server side,
-      // instead of a hardcoded 'Africa/Johannesburg'/'27' baked into the SPA.
       tz: SAST_TZ,
       tz_label: process.env.CASEY_TZ_LABEL || (process.env.CASEY_TZ ? '' : 'SAST'),
       country_code: (process.env.CASEY_COUNTRY_CODE || '27').replace(/\D/g, '') || '27',
-      // Report-field display metadata (entity label, per-field display_label/
-      // section, section order) so ReportSections in the SPA renders whatever
-      // vocabulary the active config package declares (report-fields.yml)
-      // instead of a hardcoded animal-health field-label table.
       entity_label: REPORT_ENTITY_LABEL,
-      // A system-set field (report-fields.yml `system_set`, uhh's `reported_by`) is written by the system and by
-      // no screen, so the editable sections do not list it (the report page's header states it, and the printed
-      // form and the exports carry it). The keys are served too, for a client that wants to know.
       report_sections: REPORT_SECTIONS.map(sec => ({ ...sec, keys: sec.keys.filter(([k]) => !SYSTEM_SET_FIELDS.has(k)) })).filter(sec => sec.keys.length),
       system_set_fields: [...SYSTEM_SET_FIELDS],
       visit_critical: CRITICAL_FIELDS.map(k => ({ key: k, label: fieldLabel(k) })),
-      // Which report fields nudge a case's attnScore (attn.js) when the
-      // reporter has already given them a non-empty value -- so an operator
-      // can see WHY a case surfaced sooner, same transparency visit_critical
-      // already gives for the on-site-visit guardrail. Empty array when the
-      // active config declares none (casey's own generic default).
       severity_signal_fields: SEVERITY_SIGNAL_FIELDS.map(k => ({ key: k, label: fieldLabel(k) })),
-      // Which report fields the SPA should edit through a known-value combo box
-      // (the live vocabulary from GET /api/field-values) rather than a bare text
-      // box -- see field-values.js for why this set is the config's own
-      // enquiry_headline_fields and not every free-text field. Empty array under
-      // a config that declares none, in which case every field stays a plain
-      // TextField exactly as before this existed.
       known_value_fields: KNOWN_VALUE_FIELDS.map(k => ({ key: k, label: fieldLabel(k) })),
-      // Dashboard shell shape (brand/leaf + which sidebar nav items to
-      // hide/relabel) -- see report-shape.js's DASHBOARD_UI. null when the
-      // active config declares none (casey's own default, uhh), in which
-      // case app-view.js/nav-config.js fall back to their own hardcoded
-      // literals -- byte-identical to before this existed.
-      // The floor a report must reach before it can be signed off (report-fields
-      // mandatory_minimum), so the field-team screens can show what is still missing.
       mandatory_minimum: { fields: MANDATORY_MINIMUM_FIELDS.map(k => ({ key: k, label: fieldLabel(k) })), blocks_transition_to: MANDATORY_MINIMUM_BLOCKED_STATUSES },
       dashboard_ui: DASHBOARD_UI,
-      // Fields with a fixed list of answers (report-fields.yml `options`): the SPA edits them
-      // as a dropdown ending in "Other (write it)". A convenience only -- the server still
-      // accepts any text on these fields.
       field_options: FIELD_OPTIONS,
-      // The report fields THIS login's screens hide (dashboard_ui.hidden_fields). A display
-      // setting: the data is stored, exported and asked for as before.
       hidden_fields: hiddenFieldsFor(req.caseyAccount?.role),
-      // What each contact access tier is CALLED here, one entry per rung of
-      // contact-tiers.js's ladder, ALREADY RESOLVED against the deployment's own
-      // dashboard_ui.tier_labels with casey's generic label as the fallback -- so
-      // the SPA renders a complete label map whether or not this deployment
-      // renamed a rung, and never needs its own copy of the fallbacks. Never null
-      // and never partial, unlike dashboard_ui above.
       tier_labels: TIER_LABELS,
     })
   }
 }
 
-// Cases the time-guardrails flagged as going wrong: stale, stuck, an unanswered
-// request for a person, an abandoned intake, or resolved-but-never-closed. Driven
-// by the health:* tags the sweep maintains, with the live breach detail recomputed
-// so the reason is current, not a stale snapshot.
 export function getAttention({ store, authed, isOpenCase, rankAttention }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { classifyCaseHealth } = await import('../../case-health.js')
     const now = Date.now()
-    // Use the LIVE operator-tuned thresholds, not the hard defaults. Passing no
-    // thresholds here was a latent bug: a team that tightened handoffMs via
-    // /api/thresholds still saw the inbox classify against the shipped default.
     const thresholds = await store.resolveThresholds()
-    // Rank over ALL open cases with the SAME enum-weighted scorer the SPA used
-    // to render (src/attn.js), so a high-urgency case outside the page window
-    // the client fetched still reaches the inbox -- the ranking is no longer
-    // capped by loadCases' 200-row limit.
     const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500)
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
     const { total, items, atRisk, slaTargetMs } = rankAttention(open, now, { limit, offset })
-    // Recompute the live breach detail per ranked case so the reason is current,
-    // not a stale tag snapshot. classifyCaseHealth is the source of detail text.
-    // waitMs is the live SLA clock -- ms the contact has waited on a human reply
-    // (null when nobody owes a reply), so the row can show "waited 18m, target 30m"
-    // without the SPA recomputing it. The header at_risk count is aggregate-only.
     const named = await assigneeNamer(store, items, (x) => x.c.assignee)
     const cases = items.map(({ c, score, reason, waitMs }) => ({
       id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
@@ -472,24 +276,12 @@ export function getAttention({ store, authed, isOpenCase, rankAttention }) {
       assignee: named(c.assignee || ''),
       wait_ms: waitMs == null ? null : waitMs,
       score, reason, breaches: classifyCaseHealth(c, now, thresholds),
-      // Already folded into `score` via attn.js's attnScore (degraded-turn-seen
-      // tag); surfaced as its own boolean too so the inbox UI can optionally
-      // badge it distinctly from every other score contributor.
       had_degraded_turn: tagList(c).includes('degraded-turn-seen'),
     }))
     res.json({ count: cases.length, total, limit, offset, at_risk: atRisk, sla_target_ms: slaTargetMs, cases })
   }
 }
 
-// Secretary follow-up queue (Herd Health roadmap Phase 2/3): the same
-// rankAttention breach list the operator inbox above already computes,
-// grouped by normalized report.location so a secretary sees "N dropped in
-// Bizana, M in Lusikisiki" instead of a flat list, plus filterable to their
-// own assigned cases or the unassigned pool for a lead deciding allocation.
-// Pull-based only (no scheduled push) -- see AGENTS.md/roadmap Phase 2c.
-// never_closed (Phase 3: resolved-but-nothing-happened) already appears
-// here for free since classifyCaseHealth is the same source /api/attention
-// uses -- no new breach type, just this same queue surfacing it.
 export function getSecretaryQueue({ store, authed, isOpenCase, rankAttention }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -527,11 +319,6 @@ export function getSecretaryQueue({ store, authed, isOpenCase, rankAttention }) 
   }
 }
 
-// How many open cases are waiting past the reply SLA, bucketed by case_type, so an
-// operator can attack the worst category first (e.g. "4 outbreaks past SLA vs 1
-// follow_up"). Reuses the live handoff threshold (resolveThresholds) and the same
-// atRiskCount the inbox header shows, run per case_type slice. Aggregate-only --
-// counts only, never a case ref or external_id.
 export function getSlaAtRiskByType({ store, authed, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -553,13 +340,6 @@ export function getSlaAtRiskByType({ store, authed, isOpenCase }) {
   }
 }
 
-// Operator-tunable health thresholds. GET returns the live effective values
-// (persisted patch merged over defaults); PUT validates+clamps a partial patch
-// against the known keys, persists it as an audited observation, and returns the
-// new effective values plus which keys applied/were rejected. The PUT feeds BOTH
-// the live sweep and the /api/attention classifier, since both read
-// store.resolveThresholds() at call time -- a change here takes effect on the
-// next sweep and the next inbox scan.
 export function getThresholds({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -579,8 +359,6 @@ export function putThresholds({ store, authed, actingOperator }) {
     if (!applied.length) {
       return res.status(400).json({ error: 'no valid threshold keys in patch', rejected })
     }
-    // Persist only the accepted, clamped values (not the raw body), so a replay
-    // reproduces exactly what took effect.
     const accepted = {}
     for (const k of applied) {
       if (k.startsWith('stageMaxDwellMs.')) {
@@ -597,8 +375,6 @@ export function putThresholds({ store, authed, actingOperator }) {
   }
 }
 
-// Trigger a health-guardrail sweep now (operator-initiated). Only available
-// when the casey instance passed a runSweep callback; returns 501 otherwise.
 export function postSweep({ authed, runSweep }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -608,11 +384,6 @@ export function postSweep({ authed, runSweep }) {
   }
 }
 
-// Fleet-wide outbreak view: connected components of the open/non-merged pool
-// under the same correlation scorer the per-case suggestions use. Surfaces
-// "these N cases look like one outbreak" so the team sees a spreading disease
-// without opening each case. On-demand (one O(n^2) scan over the bounded pool),
-// never per-poll; merge stays per-pair and human-confirmed.
 export function getClusters({ store, authed, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -624,9 +395,6 @@ export function getClusters({ store, authed, isOpenCase }) {
   }
 }
 
-// Hotspots by area: open cases grouped by their stored location token(s),
-// ranked by count, each with species mix and most-recent report time. Re-groups
-// stored location only (no new data); aggregate-only, on-demand.
 export function getGeo({ store, authed, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -636,13 +404,6 @@ export function getGeo({ store, authed, isOpenCase }) {
   }
 }
 
-// Symptom/species distribution: the pure-aggregation view this system leans
-// on INSTEAD of outbreak/severity inference (see clusters.js's own header
-// comment on why clusterSeverity was removed). Purely a frequency count of
-// what was actually reported -- species x symptom co-occurrence, ranked by
-// count -- so an operator or field worker reads the real pattern themselves
-// rather than being handed a system-guessed diagnosis. `since` (unix
-// seconds) narrows to a recent window; omit for the full open pool.
 export function getDistribution({ store, authed, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -654,10 +415,6 @@ export function getDistribution({ store, authed, isOpenCase }) {
   }
 }
 
-// Cross-case activity/audit stream: every event newest-first, filterable by
-// kind/actor (validated against known enums) and a since-timestamp window, each
-// row deep-linking to its case. Read-only. Reuses the same per-case timeline
-// data, just merged across cases for review.
 export function getActivity({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -671,8 +428,6 @@ export function getActivity({ store, authed }) {
     const since = parseInt(req.query.since, 10) || 0
     let { rows, truncated } = await store.listAllEvents({ kind, actor }, { limit: limit + (since ? 500 : 0) })
     if (since) rows = rows.filter(e => Number(e.created_at) * 1000 >= since)
-    // The invite log, settings and erasure journal live on channel:'system' singleton cases. Their events are
-    // bookkeeping (a raw JSON line carrying an invite's label), not something that happened on a report.
     const system = new Set((await store.listCases({ channel: 'system' }, { limit: 50 })).map(c => c.id))
     if (system.size) rows = rows.filter(e => !system.has(e.case_id))
     const events = rows.slice(0, limit).map(e => ({
@@ -683,20 +438,6 @@ export function getActivity({ store, authed }) {
   }
 }
 
-// Real per-turn reply-path health, distinct from /api/health's aggregated
-// "is the AI helper currently reachable/degraded" pill. The pill's own
-// MIN_SAMPLES_FOR_DEGRADED window (llm.js) deliberately never flips on a
-// single failed turn -- by design, to avoid a lone rate-limited hop flapping
-// the whole dashboard red. That correctness comes at a real observability
-// cost: a genuine one-off turn failure (a real contact getting the
-// guaranteed-response fallback text) can happen while every "is it working"
-// signal (process alive, /api/health, gateway connected) still reads green,
-// because none of them individually witness whether a specific reply
-// actually generated. This route answers the question those cannot: query
-// the durable data.degraded_turn marker (hooks/turn-outcome.js) directly, across
-// every case, so "did any real turn actually fail recently, and why" has a
-// real answer without already knowing which case to look at or grepping the
-// raw log file. `since` (unix ms, default last hour) windows the query.
 export function getDegradedTurns({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -704,10 +445,6 @@ export function getDegradedTurns({ store, authed }) {
     const since = req.query.since ? Number(req.query.since) : (Date.now() - 3600_000)
     if (!Number.isFinite(since)) return res.status(400).json({ error: 'since must be a unix-ms number' })
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 200, 1), 1000)
-    // Over-fetch (data.degraded_turn is not a thatcher-queryable column, only
-    // discoverable after parsing each row's JSON data blob) then filter+window
-    // client-side; listAllEvents' own truncated flag still reports honestly if
-    // even the over-fetch pool itself was capped before filtering ran.
     const { rows, truncated } = await store.listAllEvents({ kind: 'observation', actor: 'system' }, { limit: Math.max(limit * 4, 800) })
     const windowed = rows.filter(e => Number(e.created_at) * 1000 >= since)
     const parsed = windowed.map(e => ({ e, d: evData(e) }))
@@ -718,13 +455,6 @@ export function getDegradedTurns({ store, authed }) {
         case_id: e.case_id, created_at: e.created_at,
         reason: d.reason || 'unknown', error: d.error || null,
       }))
-    // Dead-lettered turns (data.dead_lettered, casey.js resumePendingTurns/
-    // drainQueuedTurns) are a DISTINCT terminal category from a degraded turn:
-    // a degraded turn may still be retried, a dead-lettered one has exhausted
-    // its retry cap and will not be auto-resumed again. Explicit and queryable
-    // here rather than only inferable from a case simply no longer being
-    // re-driven, or from a case tag (resume-exhausted) an operator would have
-    // to already know to look for.
     const deadLettered = parsed
       .filter(({ d }) => d.dead_lettered === true)
       .slice(0, limit)
@@ -736,15 +466,6 @@ export function getDegradedTurns({ store, authed }) {
   }
 }
 
-// The live vocabulary of one report field: every distinct value this
-// deployment's own reports already carry, most-used first. This is what turns a
-// bare text box in the case detail into a picklist -- see field-values.js for
-// the field gate (the config's own enquiry_headline_fields) and for why values
-// equal under the shared surface-form rule are folded into one entry.
-//
-// Aggregate-only and PII-free by construction: it emits values of a field the
-// config has declared safe to show across workers, never a ref, a case id or
-// anything that says which report a value came from.
 export function getFieldValues({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -758,20 +479,6 @@ export function getFieldValues({ store, authed }) {
   }
 }
 
-// "Is what the operator just typed one of those values written differently?"
-//
-// Called by the SPA between the operator's Save and the actual write, and only
-// for a value their own copy of the list does not already contain. The answer is
-// advisory: the client is told which value to store and how that was decided,
-// and it says so on screen rather than substituting silently.
-//
-// Never fails the request. An unreachable/slow/unwired provider answers
-// matched:false with the reason, so the caller's next move is the same as for a
-// genuinely new value -- store what the operator typed. This is the
-// established shape for casey's opt-in LLM-touching paths (AGENTS.md's
-// CASEY_TRANSCRIBE_VOICE_NOTES et al: "any failure degrades silently to the
-// original manual path, never blocking"), not a mock or a canned answer: there
-// is exactly one real mechanism here and it is a real model call.
 export function postFieldValueCanonicalize({ store, authed, str, callLLM }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -787,10 +494,6 @@ export function postFieldValueCanonicalize({ store, authed, str, callLLM }) {
 }
 
 const ROUTES = [
-  // /api/health is deliberately the one route here with no per-handler
-  // authed() check: registerAuth's session gate is installed ahead of every
-  // module (server.js), so it is already gated -- this note exists so the
-  // absence reads as inherited, not forgotten.
   ['get', '/api/health', getHealth],
   ['get', '/api/health/provider', getHealthProvider],
   ['get', '/api/health/cases', getHealthCases],

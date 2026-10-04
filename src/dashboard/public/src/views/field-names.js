@@ -1,8 +1,3 @@
-// field-names.js -- turns the login name on a field list row into the person's own
-// name. A field login may not read the team roster, but it may read the dashboard
-// logins by name (GET /api/operators), which is enough to say "sent by Anna" for a
-// ranger who works from the dashboard. A WhatsApp team member is already named by
-// the server on every list.
 import { fetchOperatorNames } from '../api-team.js';
 import { schedule } from '../state.js';
 
@@ -17,7 +12,6 @@ export function loadOperatorNames() {
     .then(() => { loading = false; schedule(); });
 }
 
-/** @returns {string} the holder's own name, or '' when nobody holds the report. */
 export function holderName(assignee) {
   loadOperatorNames();
   const s = String(assignee || '').trim();

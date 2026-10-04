@@ -1,8 +1,3 @@
-// timeline.js -- event timeline with visual distinction per event kind
-// (ux-case-detail-timeline-visual-distinction: each kind gets a distinct
-// Icon + tone via icons-map.js), client-side search filter, and load-older
-// pagination.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Chip, Icon, IconButton } from '/design/src/components/shell.js';
 import { SearchInput, LogRow } from '/design/src/components/content.js';
@@ -16,43 +11,16 @@ import { confirmDialog } from '../../components/dialog-shell.js';
 import { isFieldRole, isViewerRole } from '../../api-roles.js';
 const h = webjsx.createElement;
 
-// "Flag this reply" is pillar 8's live-feedback loop for prompt tuning: an
-// operator marks a specific outbound reply as bad/off-target, right where
-// they're already reading it, so a prompt writer has real flagged examples
-// to review (GET /api/flagged-replies) instead of no signal at all. Only
-// outbound (casey's own sent replies) can be flagged -- flagging an inbound
-// contact message or an internal action/observation makes no sense here.
 async function flagReply(caseId, e) {
     const reason = await confirmDialog({ title: 'Flag this reply', inputLabel: 'What was wrong with this reply? (optional)' });
-    if (reason === null) return; // cancelled -- do not flag
+    if (reason === null) return;
     try {
         await postFlagReply(caseId, e.id, reason);
         e._flagged = true;
         schedule();
-    } catch { /* best-effort -- a failed flag just leaves the button clickable to retry */ }
+    } catch {  }
 }
 
-// The row itself is the kit's LogRow: a timeline entry is a dense line with a
-// rail colour saying what kind of thing happened, and eight CSS rules here
-// used to reimplement exactly that. What stays casey's is the vocabulary
-// (eventIcon/eventTone) and the flag-a-bad-reply control.
-//
-// The per-kind class this used to emit (casey-ev--<kind>) was never styled by
-// anything; LogRow's data-kind is the same targeting hook without pretending
-// to be a style.
-//
-// THE ROW LABEL WAS `e.kind + '/' + e.actor`, so twenty-one rows of a real
-// case read action/system, note/operator, transition/operator,
-// observation/agent, inbound/contact -- two database columns joined with a
-// slash, at 10px. That is a machine's own index of its event table shown to
-// somebody trying to work out what happened to a farmer's cattle.
-//
-// The label itself is NOT cut, and that is the judgement: this is a dense
-// list of many rows, the label is per-row, and it is what you scan the column
-// by. It is the vocabulary that was wrong, not the position. So every pair
-// gets the words a person would use for it, and an unmapped pair still
-// degrades to kind/actor rather than to nothing -- a new event kind should
-// look unfamiliar, not invisible.
 const ROW_LABEL = {
     'inbound/contact': 'From the reporter',
     'outbound/agent': 'Replied automatically',
@@ -74,26 +42,15 @@ const ROW_LABEL = {
 function rowLabel(e) {
     const pair = e.kind + '/' + e.actor;
     const label = ROW_LABEL[pair] || pair;
-    // An outbound row used to read "Replied automatically" whether or not the
-    // reply reached anyone. When the send fails, hooks/delivery.js marks the
-    // outbound event itself (data.delivered === false) rather than only writing
-    // a separate observation further down the list, because an operator
-    // scanning a conversation reads the reply, not the row below it. Say it on
-    // the reply.
     if (e.kind === 'outbound' && e.data && e.data.delivered === false) {
         return label + ' -- Not delivered';
     }
     return label;
 }
 
-// ---- "Show in English" ---------------------------------------------------------------
-// One message at a time, on request (routes/translate.js). The original stays on screen; the
-// translation sits under it, labelled as a machine's. A translation already paid for arrives
-// with the events as a system observation `translation:<eventId>` and is shown without a click.
 const TRANSLATION_PREFIX = 'translation:';
 const isTranslationRow = (e) => e.kind === 'observation' && typeof e.text === 'string' && e.text.startsWith(TRANSLATION_PREFIX);
 function evData(e) { if (e.data && typeof e.data === 'object') return e.data; try { return e.data ? JSON.parse(e.data) : {}; } catch { return {}; } }
-// eventId -> { english, language } from the observations already loaded.
 function storedTranslations(events) {
     const out = {};
     for (const e of events) {
@@ -104,7 +61,6 @@ function storedTranslations(events) {
     return out;
 }
 const isContactMessage = (e) => e.kind === 'inbound' && e.actor === 'contact';
-/** @returns {string} the language the bot recorded for this report (report.language_detected), '' if none. */
 export function reportLanguage(c) {
     try { const r = c && c.report ? JSON.parse(c.report) : {}; const l = r && r.language_detected; return typeof l === 'string' ? l.trim().slice(0, 40) : ''; } catch { return ''; }
 }
@@ -131,10 +87,6 @@ function TranslationNote({ shown, key } = {}) {
         h('span', { class: 'casey-ev-translated' }, reportValue(shown.english || '')));
 }
 
-// ---- humanize: what a person should read instead of the store's own wording -----------
-// The agent writes its bookkeeping as plain text ("notice_shown: first_contact v3", "AUDIO
-// RECEIVED: ... (saved: /server/path)"). Staff and field logins read this column, so each known
-// shape gets its plain-words version, and the server path never reaches the screen.
 const NOISE_RE = /^\s*(REPLY-JUDGE-FLAGGED|REPEAT-ASK|NOTICE-NOT-COMPOSED|TURN-START|TURN-HANDED-OFF|resume-attempted|RUNTIME)/i;
 const isSystemNote = (e) => e.kind === 'observation' && typeof e.text === 'string' && NOISE_RE.test(e.text);
 const SAVED_PATH_RE = /\s*\(saved:\s*[^)]*\)\.?/gi;
@@ -159,7 +111,6 @@ function humanize(e) {
     return out;
 }
 const ENGLISH_RE = /^(en\b|en[-_]|english)/i;
-/** True when the data says the message is (probably) English, so a translate button would be noise. */
 function looksEnglish(e, reportLang) {
     const l = String(evData(e).language || reportLang || '').trim();
     return !!l && ENGLISH_RE.test(l);
@@ -174,13 +125,6 @@ function TimelineRow({ e, caseId, caseRef, canTranslate, shown, language, key } 
         key, kind: e.kind, tone: eventTone(e.kind),
         leading: Icon(eventIcon(e.kind), { size: 13 }),
         label: rowLabel(e),
-        // Bounded for the same reason a report value is: a timeline row's text
-        // is store free-text of contact-influenced length, LogRow places it in
-        // a flex row, and an oversized unbreakable run there is the shape that
-        // froze the renderer (see format.js's reportValue). The bound is the
-        // server's own 4000-character write cap, so nothing any operator or
-        // reporter could send through casey is ever cut, and the true length is
-        // stated when it is.
         text: hz.chip || hz.quote ? h('span', { class: 'casey-ev-body' },
             hz.chip ? Chip({ size: 'sm', tag: true, children: hz.chip }) : null,
             hz.text ? h('span', { class: 'casey-ev-msg' }, reportValue(hz.text)) : null,
@@ -193,21 +137,13 @@ function TimelineRow({ e, caseId, caseRef, canTranslate, shown, language, key } 
             : e.kind === 'outbound' && !flagged
             ? IconButton({ icon: Icon('warn', { size: 12 }), title: 'Flag this reply as bad/off-target', onClick: () => flagReply(caseId, e) })
             : (e.kind === 'outbound' && flagged ? h('span', { class: 'casey-ev-flagged', title: 'Flagged for review' }, Icon('warn', { size: 12 })) : null),
-        // Wrapped so the exact timestamp stays available on hover -- LogRow
-        // owns the meta slot's placement, not what the caller puts in it.
         meta: h('span', { title: fmtTime(e.created_at) }, rel(e.created_at)),
     });
 }
 
 export function Timeline({ caseId, events, eventsTotal, key, canTranslate = false, caseRef = null, language = '' } = {}) {
     const q = (state.timelineSearch || '').toLowerCase().trim();
-    // Search the words on screen AND the underlying kind/actor keys: an
-    // operator types what they can see ("reporter"), a maintainer types what
-    // the store calls it ("inbound"), and both were true of this box before
-    // the labels were rewritten. Only the first would be after, if the keys
-    // were dropped from the haystack.
     const stored = storedTranslations(events);
-    // The translation observations are bookkeeping: they appear under their message, not as rows.
     const hideNotes = isFieldRole() || isViewerRole();
     const notes = events.filter(e => !isTranslationRow(e) && isSystemNote(e));
     const shownEvents = events.filter(e => !isTranslationRow(e) && (!isSystemNote(e) || (!hideNotes && sysNotesOpen())));
@@ -221,19 +157,12 @@ export function Timeline({ caseId, events, eventsTotal, key, canTranslate = fals
         try {
             const older = await fetchCaseEvents(caseId, { offset: String(off) });
             appendTimelineEvents(older.events || []);
-        } catch { /* best-effort; a stalled pagination leaves the button in place to retry */ }
+        } catch {  }
     };
 
     return h('div', { key, class: 'casey-timeline-wrap' },
-        // "Timeline (21/21)" on a fully loaded case is a fraction whose two
-        // halves are always equal -- a loading statistic left on the screen
-        // after loading finished. The count only says something while there
-        // is more behind the "Load older events" button, so it is only shown
-        // then, and then it is said rather than divided.
         h('h3', { class: 'casey-timeline-head' }, 'Timeline',
             hasMore ? ' -- showing the latest ' + events.length + ' of ' + eventsTotal : '',
-            // What the bot recorded as the language this person writes in. Shown next to the
-            // translate buttons because it tells staff whether pressing one is worth it.
             ...(language ? [' ', Chip({ size: 'sm', tag: true, tone: 'accent', children: word('ui.language_chip', { language }) })] : [])),
         SearchInput({ value: state.timelineSearch || '', placeholder: 'Search timeline...', onInput: setTimelineSearch, resultCount: q ? filtered.length + ' matching' : null }),
         !hideNotes && notes.length

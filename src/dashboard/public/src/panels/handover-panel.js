@@ -1,6 +1,3 @@
-// Handover panel -- shift digest + start-shift + printable link. Content-swap
-// panel (state.activePanel === 'handover'). Panel/Receipt-based.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Alert } from '/design/src/components/content/feedback.js';
@@ -37,17 +34,12 @@ async function startShift() {
     try {
         await postStartShift();
         toast('Shift started -- "changed this shift" counts from now', 'ok');
-        // Every "since" figure on this page is measured from the shift start
-        // that call just moved, so the digest on screen is now wrong.
         loader.reload();
     } catch (e) { toast('Could not start the shift', 'warn'); }
     starting = false; schedule();
 }
 
 function hoSection(title, rows, render) {
-    // The fallback is a sentence for the same reason each named one is: a bare
-    // "None." leaves the reader to work out none of WHAT, under a heading they
-    // may have skimmed past.
     if (!rows || !rows.length) return Section({ title, children: [Alert({ kind: 'info', children: SECTION_EMPTY_TEXT[title] || `Nothing under ${title.toLowerCase()} right now.` })] });
     return Section({ title: `${title} (${rows.length})`, children: rows.map(render) });
 }
@@ -61,8 +53,6 @@ function refLink(ref, id) {
     }, ref || '');
 }
 
-// Who holds it, as a person: 'agent' is the assistant with nobody assigned (no holder to show), and a login is
-// shown by name once the roster has loaded.
 const holder = (a) => assigneeName(a);
 
 function handoverBody(j) {

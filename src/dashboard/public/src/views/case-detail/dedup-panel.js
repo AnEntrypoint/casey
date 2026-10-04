@@ -1,8 +1,3 @@
-// dedup-panel.js -- "possibly the same case" duplicate-suggestion panel
-// inside the case-detail view: casey's grouping suggestions with a one-click
-// merge (folds the other case into the one being viewed). Isolated and
-// best-effort -- a suggestions failure must never break the case view.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
 import { TextField } from '/design/src/components/content.js';
@@ -38,8 +33,6 @@ export function DedupPanel({ caseId, onReload, key } = {}) {
 
     return h('div', { key, class: 'casey-dedup-panel' },
         h('h3', {}, 'Possibly the same ' + entityLabel()),
-        // Same fix as site-history.js: 'casey' is the software this is built
-        // on, not the name on the door of the deployment reading it.
         h('p', { class: 'casey-hint' }, brandName() + ' thinks these ' + entityLabelPlural() + ' may be about the same event. Merging folds the other one into this one; nothing is lost and the whole merge is written to the timeline.'),
         ...suggestions.map(s => h('div', { key: s.id, class: 'casey-dup-row' },
             h('b', {}, s.ref), ' ', s.subject || '',

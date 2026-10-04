@@ -1,10 +1,3 @@
-// report-sections.js -- report field display split into Section()-grouped
-// clusters (ux-case-detail-report-field-sections), section titles/fields
-// declared by the active config package's report-fields.yml and served via
-// /api/config -- replaces the legacy flat REPORT_FIELDS list. Field-source
-// and field-note derivation ported byte-for-byte in logic from the old
-// app.js fieldSources()/fieldNotes().
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Section, Alert } from '/design/src/components/content.js';
 import { ReportField } from './report-field.js';
@@ -13,23 +6,7 @@ import { word } from '../../words.js';
 import { EntityLabel } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
-// [key, plain-language label, section] -- driven by the live /api/config
-// payload (report_sections/visit_critical, see dashboard/routes/operations.js
-// and store/report-shape.js) so this view renders whatever field vocabulary
-// the active config package declares, instead of a hardcoded animal-health
-// field-label table. Empty array (config not yet fetched) renders no
-// sections rather than throwing.
-//
-// state.runConfig (see fetchRunConfig/case-detail-view.js's loadCaseDetail)
-// is a per-case override for a deployment where concurrent cases can carry
-// genuinely different field vocabularies (e.g. serpent's per-run schema) --
-// it takes priority over the global state.config when set, and is null on a
-// plain casey/uhh deployment or before the per-case fetch resolves, in which
-// case this falls back to the global config exactly as before this existed.
 const activeConfig = () => state.runConfig || state.config;
-// The fields THIS login's screens hide (dashboard_ui.hidden_fields, resolved per role by the
-// server). A display setting only: the stored report, the bot and the exports keep every
-// field. A section left with no visible field disappears with them, on screen and on paper.
 const hiddenKeys = () => new Set(activeConfig()?.hidden_fields || []);
 const reportSections = () => {
     const hide = hiddenKeys();
@@ -80,17 +57,6 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
     const any = sections.some(sec => sec.keys.some(([k]) => has(r, k)));
     const missingVC = visitCritical().filter(([k]) => !has(r, k));
 
-    // EXCEPTION-ONLY, like health-notices.js: this banner exists to say a
-    // visit cannot go ahead yet, and when it can, it says nothing at all.
-    //
-    // There used to be a standing green "Has what a field visit needs." on
-    // every complete report. Three arguments against it, and the third is the
-    // one that matters. It is unfalsifiable praise -- the six visit-critical
-    // keys being non-blank is not the same claim as a visit being possible,
-    // and "Where: somewhere near Warden" satisfies the check. It appears on
-    // the ordinary case, which is the definition of noise. And an operator
-    // who sees a green banner on every healthy report stops reading the
-    // banner, which is precisely the reading habit the amber one depends on.
     const readyBanner = (any && missingVC.length)
         ? Alert({ kind: 'warn', title: word('ui.missing_for_visit_title'), children: missingVC.map(([, l]) => l).join(', ') + ' ' + word('ui.missing_for_visit_hint') })
         : null;
@@ -99,15 +65,6 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
     const audioBanner = audioVal && audioVal.toLowerCase() !== 'no'
         ? Alert({ kind: 'warn', title: 'Voice note on record', children: audioVal + ' -- listen and update the fields below from what you hear.' })
         : null;
-
-    // The per-field source marker stays -- see report-field.js for why a
-    // marker earns its shape on a row of a 28-row list where the header of
-    // this same block does not. What went was the LEGEND that used to sit
-    // here: a line reading "Fields from:" followed by one chip per value the
-    // rows below already spell out in full, directly above the rows that
-    // spell them out. Chrome explaining chrome, in the position a reader
-    // gives most weight to, restating nothing they had not already been told
-    // two lines later.
 
     const entityLabel = activeConfig()?.entity_label || 'report';
     return h('div', { key, class: 'casey-report' },
@@ -119,11 +76,6 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
             children: sec.keys.map(([k, label, multiline]) => ReportField({
                 key: k, caseId: c.id, k, label, value: has(r, k) ? String(r[k]) : '',
                 source: src[k], notes: fnotes[k], multiline, onSaved,
-                // The head already says the whole report is blank. Repeating
-                // "not given yet" on all 28 rows two inches below it states
-                // one fact twice in two different phrasings; the ruled
-                // writing space stays either way, so an empty row is still
-                // visibly a row you can fill in.
                 sayMissing: any,
             }))
         })))

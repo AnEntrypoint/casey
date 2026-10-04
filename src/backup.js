@@ -50,7 +50,7 @@ async function snapshotDatabase(dbPath, destPath) {
       try { fs.rmSync(destPath, { force: true }) } catch {  }
       await client.execute(`VACUUM INTO '${destPath.replace(/'/g, "''")}'`)
     } finally {
-      try { await client.close?.() } catch { /* handle release is best-effort */ }
+      try { await client.close?.() } catch {  }
     }
     row.status = 'ok'
     row.method = 'vacuum-into'
@@ -58,9 +58,6 @@ async function snapshotDatabase(dbPath, destPath) {
     row.note = 'transactionally consistent and fully checkpointed, safe to take against a running casey'
     return row
   } catch (e) {
-    // Fall back to a raw copy INCLUDING the sidecars. Copying db.sqlite alone
-    // while a -wal file exists is the classic silently-corrupt backup: the
-    // committed transactions living in the WAL are simply absent from it.
     try {
       fs.copyFileSync(dbPath, destPath)
       const sidecars = []
@@ -81,10 +78,6 @@ async function snapshotDatabase(dbPath, destPath) {
   }
 }
 
-// The freddie session transcripts. Copied whole, keyed by the project segment
-// freddie itself uses, so a restore can put them back where run-turn.js will
-// find them. An absent root is 'missing', not 'failed': a deployment that has
-// never run a turn has no transcripts and that is not an error.
 function backupSessions(sessionsRoot, destRoot) {
   const row = { name: 'freddie-sessions', kind: 'directory', source: sessionsRoot, status: 'missing', bytes: 0, files: 0, note: null }
   if (!fs.existsSync(sessionsRoot)) {
@@ -103,9 +96,6 @@ function backupSessions(sessionsRoot, destRoot) {
   return row
 }
 
-// Take the backup. `outDir` is created; an existing non-empty directory is
-// refused rather than merged, because a half-overwritten backup is the one thing
-// worse than no backup -- it looks complete.
 export async function runBackup({ dataDir, outDir, sessionsRoot = freddieSessionsRoot(), now = Date.now() } = {}) {
   if (!dataDir) throw new Error('backup: dataDir is required')
   if (!outDir) throw new Error('backup: outDir is required')
@@ -120,9 +110,6 @@ export async function runBackup({ dataDir, outDir, sessionsRoot = freddieSession
   const dbPath = path.join(dataDir, 'db.sqlite')
   stores.push(await snapshotDatabase(dbPath, path.join(destData, 'db.sqlite')))
 
-  // Everything else under data/, discovered rather than listed. db.sqlite and
-  // its sidecars are already handled above; copying them again here would
-  // overwrite the consistent snapshot with an inconsistent one.
   const handled = new Set(['db.sqlite', 'db.sqlite-wal', 'db.sqlite-shm'])
   let entries = []
   try { entries = fs.readdirSync(dataDir, { withFileTypes: true }) } catch (e) {
@@ -161,18 +148,12 @@ export async function runBackup({ dataDir, outDir, sessionsRoot = freddieSession
     stores,
     not_included: NOT_INCLUDED,
     complete: failed.length === 0,
-    // Written into the artifact, not only printed: whoever reads this directory
-    // during an incident is not the person who ran the command.
     restore_with: 'casey restore <this directory> --yes, with casey stopped',
   }
   fs.writeFileSync(path.join(dest, BACKUP_MANIFEST), JSON.stringify(manifest, null, 2))
   return { dir: dest, manifest, stores, failed }
 }
 
-// Put a backup back. Destructive by construction, so it refuses to guess:
-// the manifest must be present and readable, and the caller must have taken an
-// explicit confirmation. The live data directory is MOVED aside rather than
-// overwritten, so a restore from the wrong backup is itself recoverable.
 export async function runRestore({ backupDir, dataDir, sessionsRoot = freddieSessionsRoot(), now = Date.now() } = {}) {
   const src = path.resolve(backupDir)
   const manifestPath = path.join(src, BACKUP_MANIFEST)
@@ -201,13 +182,9 @@ export async function runRestore({ backupDir, dataDir, sessionsRoot = freddieSes
   if (dataCopy.errors.length) {
     throw new Error(`restore: ${dataCopy.errors.length} path(s) could not be restored, so the data directory is INCOMPLETE. The previous contents are still at ${asideParts[0] || '(nothing was moved aside)'}. First failure: ${dataCopy.errors[0]}`)
   }
-  // A stale WAL beside a restored database is silent corruption: sqlite would
-  // replay the OLD write-ahead log over the restored file on the next open. The
-  // snapshot path already checkpointed everything into the single file, so any
-  // sidecar sitting here now belongs to the database that was just moved aside.
   for (const suffix of ['-wal', '-shm']) {
     const p = path.join(live, `db.sqlite${suffix}`)
-    try { if (fs.existsSync(p)) fs.rmSync(p, { force: true }) } catch { /* nothing to remove */ }
+    try { if (fs.existsSync(p)) fs.rmSync(p, { force: true }) } catch {  }
   }
 
   const srcSessions = path.join(src, 'freddie-sessions')

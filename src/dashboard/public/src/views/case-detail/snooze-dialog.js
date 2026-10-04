@@ -1,7 +1,3 @@
-// snooze-dialog.js -- minutes-from-now snooze prompt, wired from
-// header.js's Snooze button. A needs-human case is never hidden, even
-// snoozed (server-enforced; this dialog only collects the duration).
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
 import { TextField } from '/design/src/components/content.js';
@@ -32,8 +28,6 @@ export function SnoozeDialog({ onReload, key } = {}) {
     return Dialog({
         key, open, title: 'Snooze this ' + entityLabel(), onClose: close,
         children: !open ? null : [
-            // QUEUE_NAME, not a hand-typed copy of it: map-model.js owns the
-            // list's one name precisely so a dialog cannot drift from it.
             h('p', { key: 'lead' }, 'Hide it from the "' + queueName() + '" list for a while without losing it. A ' + entityLabel() + ' where someone asked for a person is never hidden, even snoozed.'),
             TextField({ key: 'minutes', label: 'Minutes from now (e.g. 60 for 1 hour, 1440 for a day)', type: 'number', value: state._snoozeMinutes || '', placeholder: '240', onInput: (v) => { state._snoozeMinutes = v; schedule(); } }),
             h('div', { key: 'acts', class: 'ds-dialog-actions' },

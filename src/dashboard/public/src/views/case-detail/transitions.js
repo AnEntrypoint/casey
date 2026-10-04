@@ -1,7 +1,3 @@
-// transitions.js -- stage transition buttons + reason dialog (a small
-// Popover-based form, sharing dialog-shell.js's modal pattern for the
-// dialog chrome itself).
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
 import { TextField } from '/design/src/components/content.js';
@@ -36,15 +32,9 @@ export function Transitions({ c, transitions, onReload, key } = {}) {
         h('label', {}, 'Change the stage'),
         transitions && transitions.length
             ? h('div', { class: 'casey-transition-btns' }, ...transitions.map(t => Btn({
-                // title was the raw stage key ('in_progress'), so hovering a
-                // button labelled "-> Working on it" explained it with the
-                // database's word for the same thing.
                 key: t, size: 'sm', variant: 'ghost', children: '-> ' + stageLabel(t), title: 'Move this ' + entityLabel() + ' to ' + stageLabel(t),
                 onClick: () => openFor(t)
             })))
-            // "no transitions available" is the API's word for it. What an
-            // operator is being told is that this one has nowhere left to go,
-            // which is a fact about the case, not about a transitions list.
             : h('span', { class: 'casey-hint' }, 'There is nowhere for this one to move from here.'),
         Dialog({
             open, title: target ? 'Move this to ' + stageLabel(target) : 'Move this ' + entityLabel(), onClose: close,
@@ -52,10 +42,6 @@ export function Transitions({ c, transitions, onReload, key } = {}) {
                 TextField({ key: 'reason', label: 'Reason (optional)', multiline: true, rows: 2, value: reason, placeholder: 'e.g. operator contacted farmer directly', onInput: (v) => { state._transitionReason = v; schedule(); } }),
                 h('div', { key: 'acts', class: 'ds-dialog-actions' },
                     Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: close }),
-                    // Was 'Move case'. The control this dialog belongs to is
-                    // labelled "Change the stage" and the help card teaches it
-                    // by that name, so the button that commits it says what it
-                    // is actually moving the record TO.
                     Btn({ key: 'ok', variant: 'primary', children: target ? 'Move to ' + stageLabel(target) : 'Move', onClick: confirm })
                 )
             ]

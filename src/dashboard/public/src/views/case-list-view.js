@@ -1,36 +1,3 @@
-// The case-list home view, bottom line up front.
-//
-// THE BOTTOM LINE OF THIS VIEW IS THE WORST-FIRST QUEUE. This is a duty
-// roster: the operator's question on opening it is "who needs me, worst
-// first", not "how many reports exist". So the queue is the first thing under
-// the head, and everything that changes the question -- search, stage pills,
-// channel/source/saved views -- sits below it, in that order of how often it
-// is actually reached for.
-//
-// Three things this head must NOT carry, each of which shipped once:
-//
-//   - An <h1> brand. app-view.js already renders `brand` in both Topbar and
-//     Crumb, so a third copy takes the slot the answer should hold.
-//
-//   - A "N total - M need attention" counts line. Any M derived here is a
-//     SECOND derivation: format.js's attn() (autonomy observe/assisted, or a
-//     needs-human tag) is not the shared urgency ladder, so it disagrees with
-//     the status bar's server-ranked state.attention.length on the same
-//     screen. In Focus mode state.allCases is never loaded at all (main.js
-//     suppresses the list poll), so any count over it reads 0 above a queue
-//     holding rows. The counts that survive are chips, and each one IS the
-//     filter it reports.
-//
-//   - A pager. state.page/state.pageSize reach the server from nowhere: both
-//     callers of api.fetchCases() for this list (main.js's loadCases and
-//     reloadCases below) pass no params, so every fetch is an offset-0 page
-//     and main.js re-fetches page one every 5 seconds. A Next button here
-//     re-renders the same rows.
-//
-// A cap statement is a safety property here: two reports the operator cannot
-// see and cannot be told about is how report 36 stops existing. State the cap
-// from the SERVER's own total, at the TOP of the list.
-
 import * as webjsx from 'webjsx';
 import { state, schedule, setMineOnly, setCases } from '../state.js';
 import { tagList, isMine } from '../format.js';
@@ -43,24 +10,13 @@ import { InboxPanel } from './case-list/inbox-panel.js';
 import { BulkBar } from './case-list/bulk-bar.js';
 import { VirtualizedCaseList, PlainCaseList, VIRTUALIZE_THRESHOLD } from './case-list/virtualized-list.js';
 import { confirmDialog } from '../components/dialog-shell.js';
-// One definition of the counted filter chip, shared with the map home view --
-// see components/filter-chip.js for why a second local copy of the control is
-// the same class of defect as a second local copy of the predicate it applies.
 import { FilterChip, ClearChip, QueueMore } from '../components/filter-chip.js';
 const h = webjsx.createElement;
 
-// The report blob as it arrives on a list row: a JSON string on the wire,
-// already absent or unparseable on a row that never got one.
 function parseReportJson(raw) {
   try { return raw ? JSON.parse(raw) : {}; } catch { return {}; }
 }
 
-// How many reports the server says exist, versus how many arrived. The list
-// poll that owns state.allCases lives in main.js and does not ask for the
-// total, so this asks for it directly -- a limit=1 request, which returns one
-// row and the count. Re-asked at the attention poll's own cadence so a total
-// that moves while the operator is reading does not sit frozen; skipped
-// entirely in Focus mode, where the list is deliberately not loaded.
 const TOTAL_PROBE_MS = 30e3;
 let lastProbeAt = 0;
 function probeTotal() {
@@ -74,12 +30,9 @@ function probeTotal() {
       if (!r || typeof r.total !== 'number' || r.total === state.allCasesTotal) return;
       setCases(state.allCases, r.total);
     })
-    .catch(() => { /* the connection banner already surfaces a dead API */ });
+    .catch(() => {  });
 }
 
-// The cap and the true total in one plain sentence, or an honest admission that
-// the total is not known yet. Never the loaded count on its own: "35 reports"
-// over a 37-report deployment is a true number that tells a lie.
 function pageRangeText() {
   const loaded = loadedRows().length;
   const total = state.allCasesTotal;
@@ -93,11 +46,6 @@ function pageRangeText() {
 let expandedGuardrailId = null;
 function toggleGuardrails(id) { expandedGuardrailId = expandedGuardrailId === id ? null : id; schedule(); }
 
-// Narrow the full list to the cases the guardrails are chasing. Module-local
-// rather than a new state.js field, matching expandedGuardrailId above and
-// leaving the shared filter object alone; state.js is not this session's to
-// change. The membership test reads state.attention -- the same server-ranked
-// list the queue is built from, never a second local predicate.
 let attentionOnly = false;
 function attentionIds() {
   const s = new Set();
@@ -105,32 +53,11 @@ function attentionIds() {
   return s;
 }
 
-// EVERY filter is applied here, over the rows that are loaded.
-//
-// This function used to apply two of them (Mine and source) and carried a
-// comment saying the server already applied the other three -- search text,
-// stage and channel -- "see api.js fetchCases params". It does not, and it
-// never could: both call sites that load this list (main.js's loadCases and
-// case-list-detail-layout.js's reloadCases) call api.fetchCases() with NO
-// arguments, so the query string is always empty and every fetch is an
-// unfiltered offset-0 page. The search box, the stage pills and the channel
-// select were therefore inert -- witnessed live at 1440x900: typing "Musina"
-// and pressing Enter left all 35 rows on screen. Three controls that changed
-// nothing, above a list, on a triage screen.
-//
-// Applying them here rather than fixing the fetch is deliberate: main.js owns
-// the poll that overwrites state.allCases every 5 seconds with an unfiltered
-// page, so a server-side narrowing would be undone within one tick. Narrowing
-// what is loaded is immediate, survives the poll, and is honest as long as the
-// head keeps saying how much of the deployment is loaded -- which it now does.
 export function matchesClientFilt(c) {
   if (state.mineOnly && !isMine(c)) return false;
   if (state.filt.status && c.status !== state.filt.status) return false;
   if (state.filt.channel && c.channel !== state.filt.channel) return false;
   if (state.filt.q) {
-    // Only over fields the PII-free /api/cases projection actually returns --
-    // external_id and contact_id are deliberately not in it, so there is no
-    // phone number here to search and the placeholder no longer offers one.
     const hay = [c.ref, c.subject, c.summary, c.channel, c.assignee, c.status, c.tags]
       .filter(Boolean).join(' ').toLowerCase();
     if (!hay.includes(state.filt.q.toLowerCase())) return false;
@@ -141,13 +68,6 @@ export function matchesClientFilt(c) {
     if (state.filt.source === 'channel' && !tags.includes('intake_mode:channel')) return false;
     if (state.filt.source === 'public_form' && !tags.includes('intake_mode:public_form')) return false;
   }
-  // Known-value report-field narrowing (filters-bar.js's knownValueFilters).
-  // The report blob is already in the PII-free /api/cases projection, so this
-  // needs no extra fetch. Compared case-insensitively on the trimmed value and
-  // nothing further: the options offered ARE stored values, so an exact-ish
-  // compare is the honest reading of "reports whose species is this one" -- it
-  // deliberately does not token-match, which would quietly widen "cattle" to
-  // every row that happens to mention cattle somewhere.
   const fv = state.filt.fv;
   if (fv && Object.values(fv).some(Boolean)) {
     const rep = parseReportJson(c.report);
@@ -167,17 +87,7 @@ export function anyFilterActive() {
   return !!(state.mineOnly || attentionOnly || state.filt.q || state.filt.status || state.filt.channel || state.filt.source || anyFieldValueFilter());
 }
 
-// ---- reports beyond the first page ------------------------------------------------------
-// The server sends the newest 50 by default and the list poll only ever asks for that page, so on
-// a deployment with more, the older reports were unreachable: no pager, and search/stage/channel
-// only looked at the 50 loaded. Two remedies live here, both kept out of state.allCases (which
-// the poll rewrites every few seconds and the chip counts read):
-//   - "Show more": further pages, appended after the poll's own page;
-//   - a narrowed search (text, stage or channel) is asked of the server across every report.
 const PAGE = 200;
-// Pages are fetched by offset while the order underneath them can shift (a report that is
-// touched moves to the top), so each fetch starts a little before where the loaded rows end and
-// the overlap is dropped by id: a small shift then costs nothing instead of losing a row.
 const OVERLAP = 10;
 const more = { rows: [], want: 0, busy: false };
 const wide = { key: '', rows: null, total: 0, timer: null, at: 0 };
@@ -205,7 +115,7 @@ async function showMore(refresh) {
       if (page.length === 0) break;
     }
     more.rows = rows;
-  } catch { /* the connection banner already surfaces a dead API */ }
+  } catch {  }
   more.busy = false; schedule();
 }
 
@@ -226,7 +136,7 @@ function ensureWide(now) {
       if (wide.key !== key) return;
       wide.rows = (r && r.cases) || []; wide.total = (r && r.total) || wide.rows.length;
       schedule();
-    } catch { /* keep the loaded rows */ }
+    } catch {  }
   }, sameKey ? 0 : 300);
 }
 
@@ -242,17 +152,11 @@ async function promptSaveView() {
   if (!name) return;
   const r = saveCurrentView(name);
   if (!r.ok) { toast(r.error, 'err'); return; }
-  // Invalidate the menu's cache before the toast claims the save worked. Until
-  // this existed the menu read a state field nothing wrote, so the toast was
-  // the only evidence a view had been saved and the view itself never appeared.
   refreshSavedViews();
   toast('Saved view "' + name + '"', 'ok');
   schedule();
 }
 
-// Each chip states a count AND applies it. The count is taken over exactly the
-// set the chip narrows -- the loaded report list -- so pressing it can never
-// produce a different number than the one on its face.
 function listChips() {
   const loaded = loadedRows();
   const ids = attentionIds();
@@ -273,11 +177,6 @@ function listChips() {
       : null);
 }
 
-// Three different facts, three different sentences. Rendering all of them as an
-// empty list tells the operator none of them -- and the Focus one is the
-// dangerous case, because Focus mode deliberately stops the report list loading
-// (main.js suppresses the poll), so an empty list there is not a statement
-// about the deployment at all.
 function listBody(shown) {
   if (state.inboxMode) {
     return h('div', { class: 'ds-case-list-empty empty' },
@@ -300,27 +199,14 @@ export function CaseListView({ onPromptTag, onPromptNote, onReloadCases }) {
   loadRoster(schedule);
   ensureWide(Date.now());
   const shown = visibleCases();
-  // Out of the render pass, like map-panel.js's own canvas mount: this can call
-  // setCases, and a state mutation inside a render would re-enter schedule().
   queueMicrotask(probeTotal);
 
   return h('div', { class: 'case-list-view' },
-    // 1. THE ANSWER. Worst-first, capped only with its true total stated on the
-    //    control that lifts the cap.
     InboxPanel(),
 
-    // 2. EVERY report, with the size of what is loaded stated before the rows
-    //    rather than under them, and the counts that are also the controls.
-    // Two single-purpose facts rather than one compound sentence: how much of
-    // the deployment is loaded (the cap), and separately how much of that the
-    // filters currently leave. Merging them into one line was how "35 results"
-    // came to sit above a list showing something else entirely.
     h('div', { key: 'lhead', class: 'ds-cl-section-head' },
       h('h2', { class: 'ds-cl-section-title' }, 'All reports'),
       h('span', { class: 'ds-cl-range' }, pageRangeText()),
-      // The next page of reports, beside the count it changes (the list below is its own
-      // scroll region, so a control under it would sit out of sight). Not shown while a search
-      // or stage is narrowing: those already ask the server across every report.
       (!state.inboxMode && !wide.rows && state.allCasesTotal > loadedRows().length && !narrowing())
         ? QueueMore({ key: 'more', onClick: () => showMore(false),
           children: more.busy ? 'Loading...' : 'Show ' + Math.min(PAGE, state.allCasesTotal - loadedRows().length) + ' more' })
@@ -331,9 +217,6 @@ export function CaseListView({ onPromptTag, onPromptNote, onReloadCases }) {
         : null),
     listChips(),
 
-    // 3. THE CONTROLS THAT CHANGE THE QUESTION. Search and stage are the two
-    //    reached for constantly and stay in the open; the rest are one worded
-    //    click away rather than four permanent rows above the answer.
     SearchBar({ resultCount: shown.length }),
     StagePills(),
     h('details', { class: 'ds-rail-disclosure ds-cl-more' },

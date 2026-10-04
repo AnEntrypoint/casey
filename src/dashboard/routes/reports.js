@@ -1,24 +1,6 @@
-// Management reporting/aggregation surfaces: the CSV/JSON/HTML management
-// briefing, the compliance audit trail, shift handover, overview KPIs,
-// per-operator workload, intake-mode stats, and the fleet-health trend.
-// Aggregate-only (no external_id) per AGENTS.md's audited-classification list.
-//
-// deps: store, wrap, esc, actingOperator, authed, isOpenCase, rankAttention,
-//   getRoster, csvCell, fmtTimeSAST, printableReportRow, printableReportTable,
-//   printableReport, computeFillRate
 import { tagList } from '../../timestamp.js'
-// A server-rendered page titles itself after the DEPLOYMENT, never after
-// casey: its stylesheet already draws headings in BRAND.accent, so a
-// framework-named title prints a rebranded deployment's colours under another
-// product's name.
 import { BRAND } from '../brand.js'
 
-// Download filenames carry the brand too -- an operator's Downloads folder is
-// as user-facing as the page. Slugified rather than interpolated raw: a brand
-// name legitimately contains spaces ("Herd Health"), and this value goes into
-// a Content-Disposition header where a space or a quote would be a header
-// injection, not a cosmetic problem. An unconfigured deployment slugs to
-// "casey", so the filename is unchanged from before.
 const brandSlug = () => (BRAND.name || 'casey').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'casey'
 import { evData } from '../../safe.js'
 import { mountRoutes } from './register.js'
@@ -27,36 +9,16 @@ import { assigneeNamer } from '../assignee-names.js'
 const reportDays = (req) => Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
 const msToHrs = (ms) => ms == null ? '' : Math.round(ms / 3600000 * 10) / 10
 
-// Fields case_report's raw `data: {...incoming, ...}` action-event write (case-tools.js)
-// can carry -- owner_contact/present_person/contact_fallback/location and free-form report
-// text -- must never reach the audit export even under a recognized key name. Allowlist
-// rather than the old "unrecognized key falls through to empty" accident: a from/to/old/new
-// value is only ever read when the event's own `field`/`claimed_by` names a transition/claim/
-// case_type change, never for a raw case_report field dump.
 const AUDIT_SAFE_ACTIONS = new Set(['transition', 'claim', 'status', 'assignee', 'case_type', 'autonomy', 'priority'])
 
 const UNREPLIED_ROW_CAP = 100
 const FLAGGED_ROW_CAP = 200
 
-// Management briefing: one aggregate report (counts by stage + area, opened/
-// closed this period, median/p90 first-response, live breach counts) over a
-// ?days window. .csv for spreadsheets, .html for a print-friendly page; both
-// render the same buildReport numbers. Read-only, aggregate-only, SAST.
-// Returns { report, cases, eventsByCaseId, thresholds, now } -- callers that
-// only need the aggregate briefing use `.report`; /api/report.json also
-// reuses `.cases`/`.eventsByCaseId`/`.thresholds`/`.now` instead of
-// re-fetching the identical open-pool + per-case event fan-out a second
-// time in the same request.
 export async function gatherReport({ store, isOpenCase, getRoster }, days) {
   const { classifyCaseHealth } = await import('../../case-health.js')
   const thresholds = await store.resolveThresholds()
   const now = Date.now()
   const cases = await store.listCases({}, { limit: 10000, offset: 0 })
-  // One query, not one per case. This line was a measured N+1: 21 concurrent
-  // unindexed full scans of the event table at 23 cases, on a route that also
-  // backs /api/report.csv, /api/report.json, /api/report.html and /api/audit.csv.
-  // listEventsByCase groups the single result per case in each case's own
-  // ascending order, which is exactly what the fan-out produced.
   const eventsByCaseId = await store.listEventsByCase(cases.map(c => c.id)).catch(() => new Map())
   const breachRows = cases
     .filter(isOpenCase)
@@ -68,32 +30,22 @@ export async function gatherReport({ store, isOpenCase, getRoster }, days) {
   return { report, cases, eventsByCaseId, thresholds, now }
 }
 
-// Shift handover: a printable digest of what the next person needs to pick up.
-// Built entirely from the event log + attention engine, scoped to "since the
-// last Start-of-shift marker" (or the full open pool when no shift was started).
-// No per-operator scoping -- a rotating field team shares one shift line.
 export async function gatherHandover({ store, isOpenCase, rankAttention }) {
   const now = Date.now()
   const marker = await store.getShiftMarker()
   const since = marker?.ts || 0
   const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
-  // Cases still needing attention, ranked by the same scorer the inbox uses.
   const { items } = rankAttention(open, now, { limit: 50, offset: 0 })
   const named = await assigneeNamer(store, open)
   const attention = items.map(({ c, score, reason }) => ({
     id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel,
     status: c.status, assignee: named(c.assignee || ''), score, reason,
   }))
-  // Open handoffs not yet taken: a person was asked for and no operator owns it.
   const handoffs = open.filter(c => tagList(c).includes('needs-human'))
     .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel, assignee: named(c.assignee || '') }))
-  // Unsent assisted drafts waiting for an operator to approve or discard.
   const drafts = open.filter(c => tagList(c).includes('draft-pending'))
     .map(c => ({ id: c.id, ref: c.ref, subject: c.subject || '', channel: c.channel }))
-  // Cases touched since the shift began, with their last action, newest-first.
   const dueSince = open.filter(c => since && (c.last_event_at || c.updated_at || c.created_at || 0) >= since)
-  // Same single-query grouping as the routes above: this loop only ever reads
-  // each case's LAST event, so a query per case bought nothing.
   const touchedEvents = await store.listEventsByCase(dueSince.map(c => c.id)).catch(() => new Map())
   const touched = dueSince.map((c) => {
     const evs = touchedEvents.get(c.id) || []
@@ -107,7 +59,6 @@ export async function gatherHandover({ store, isOpenCase, rankAttention }) {
   return { generated_at: now, since, since_by: marker?.by || null, attention, handoffs, drafts, touched: touched.slice(0, 50) }
 }
 
-// Aggregate stats comparing intake modes. Returns fill-rate breakdown by source.
 export function getStats({ store, authed, computeFillRate }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -141,11 +92,6 @@ export function getStats({ store, authed, computeFillRate }) {
   }
 }
 
-// Fleet-health trend: the rolling log of SCHEDULED guardrail-sweep summaries
-// (persisted by casey.runSweepOnce as audited observations). Returns the latest
-// summary, the last N for a trend line, and a degraded flag (true when the
-// latest sweep hit errors). Read-only, store-backed -- no casey-instance handle
-// needed. ?n clamps the history depth (default 50, 1..500).
 export function getFleetHealth({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -155,39 +101,23 @@ export function getFleetHealth({ store, authed }) {
   }
 }
 
-// Management KPIs over the live case+event history: time-to-first-reply
-// (median/p90), median dwell per stage from transition events, opened-vs-closed
-// per day, open backlog by stage. Aggregate-only -- no per-contact rows or
-// external_id leak. On-demand (one scan), not a background poll. ?days scopes
-// the per-day window (default 14, clamped 1..90). buildOverview is the pure
-// aggregator shared with the CLI/CSV so the maths is identical everywhere.
 export function getOverview({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildOverview } = await import('../../overview.js')
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 14, 1), 90)
     const cases = await store.listCases({}, { limit: 10000, offset: 0 })
-    // One query, not one per case -- see gatherReport above and
-    // case-store.js's listEventsByCase for why the grouping is exact.
     const eventsByCaseId = await store.listEventsByCase(cases.map(c => c.id)).catch(() => new Map())
     const overview = buildOverview(cases, eventsByCaseId, Date.now(), days * 24 * 3600 * 1000)
     res.json({ days, ...overview })
   }
 }
 
-// Per-operator workload + accountability: open cases each person holds, stale
-// claims (held but untouched too long), replies sent in the last 24h, median
-// first-reply on their cases, and their oldest-waiting case. Aggregate-only --
-// no per-contact rows, no external_id. On-demand single scan, never per-poll.
-// buildWorkload is the pure aggregator (like overview/attn) so the maths is one
-// place. The stale window reads the live operator-tuned thresholds when present.
 export function getWorkload({ store, authed, getRoster, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { buildWorkload } = await import('../../workload.js')
     const cases = await store.listCases({}, { limit: 10000, offset: 0 })
-    // One query, not one per case -- see gatherReport above and
-    // case-store.js's listEventsByCase for why the grouping is exact.
     const eventsByCaseId = await store.listEventsByCase(cases.map(c => c.id)).catch(() => new Map())
     const th = (store.resolveThresholds ? await store.resolveThresholds() : null) || {}
     const staleMs = Number.isFinite(th.staleMs) ? th.staleMs : 24 * 3600 * 1000
@@ -215,8 +145,6 @@ export function getReportCsv(deps) {
     for (const [stage, n] of Object.entries(r.by_stage)) lines.push(['by_stage', csvCell(stage), csvCell(n)].join(','))
     for (const a of r.by_area) lines.push(['by_area', csvCell(a.place), csvCell(a.count)].join(','))
     for (const [b, n] of Object.entries(r.breaches)) lines.push(['breach', csvCell(b), csvCell(n)].join(','))
-    // Per-operator workload, one line per metric so the flat section/key/value
-    // shape holds. Aggregate-only: operator name + counts, never a contact id.
     for (const o of r.by_operator) {
       const k = (m) => csvCell(o.name + ' ' + m)
       lines.push(['by_operator', k('open_assigned'), csvCell(o.open_assigned)].join(','))
@@ -231,11 +159,6 @@ export function getReportCsv(deps) {
   }
 }
 
-// Same management briefing as .csv/.html but as structured JSON for BI ingest,
-// plus three analytics the flat briefing does not carry: SLA compliance pass/
-// fail, period-over-period comparison, and per-intake-channel response speed.
-// Aggregate-only (no external_id); read-only. The SLA target is the live handoff
-// threshold (what "should have been answered by"), falling back to 30 minutes.
 export function getReportJson(deps) {
   const { authed } = deps
   return async (req, res) => {
@@ -256,12 +179,6 @@ export function getReportJson(deps) {
   }
 }
 
-// Compliance audit trail: a flat CSV of every mutation over a ?days window,
-// one row per event, joined to its case ref. Built off the same append-only
-// event log the timeline uses, parsed via evData(). NEVER emits external_id or
-// any contact phone/handle -- the actor is the operator/agent/system id, and
-// the to/from fields are scrubbed of the case external_id so a delivered-reply
-// event cannot leak the contact number into a compliance export. Read-only.
 export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -276,7 +193,6 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
     const extById = new Map(cases.map(c => [c.id, String(c.external_id || '')]))
     let { rows, truncated } = await store.listAllEvents(optActor ? { actor: optActor } : {}, { limit: 100000 })
     rows = rows.filter(e => Number(e.created_at) >= sinceSec)
-    // An assignee change is recorded with the stable contact key; name it.
     const held = []
     for (const e of rows) { const d = evData(e); held.push(d.claimed_by, d.was) }
     const named = await assigneeNamer(store, held, (v) => v)
@@ -285,7 +201,6 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
     for (const e of rows) {
       const d = evData(e)
       const ext = extById.get(e.case_id) || ''
-      // scrub: drop any value equal to the case external_id (contact id/number)
       const scrub = (v) => (v != null && ext && String(v) === ext) ? '[contact]' : (v == null ? '' : String(v))
       const field = d.field || (d.from != null || d.to != null ? 'status' : (d.claimed_by != null ? 'assignee' : ''))
       const fieldSafe = field && AUDIT_SAFE_ACTIONS.has(field)
@@ -366,7 +281,6 @@ export function getHandover(deps) {
   }
 }
 
-// Stamp a new shift marker so the next handover digest scopes "since now".
 export function postStartShift({ store, authed, actingOperator }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -375,12 +289,6 @@ export function postStartShift({ store, authed, actingOperator }) {
   }
 }
 
-// AI-offline queue: open cases whose last agent turn FAILED (model error/timeout,
-// store/host fault) so a human could not trust the auto-reply was adequate. The
-// gateway tags such a case 'ai-offline' (cleared by the next operator reply or a
-// later successful agent turn), so this is a cheap tag scan over the open pool --
-// no per-case event read on the hot path. Newest-first by last activity so the
-// freshest outage sits on top of the operator's queue.
 export function getUnreplied({ store, authed, isOpenCase }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -398,11 +306,6 @@ export function getUnreplied({ store, authed, isOpenCase }) {
   }
 }
 
-// Live-feedback rollup for prompt tuning (pillar 8): every case an operator
-// has flagged a reply on (cases.js POST /api/cases/:id/flag-reply), most
-// recently flagged first, with the flagged event's own text/reason pulled
-// from its timeline so a prompt writer can review real bad replies in one
-// place instead of hunting through individual case timelines.
 export function getFlaggedReplies({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })

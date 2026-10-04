@@ -1,11 +1,3 @@
-// "Register a team member" -- mechanism 1 of 2 for giving a WhatsApp number a
-// role: the operator types the number and picks the role. (Mechanism 2, the
-// one-time code the person sends themselves, is panels/invite-codes.js.)
-//
-// Form state lives at module level because the panel re-renders on every
-// schedule(); a value held in a render-local variable would be wiped by the
-// next unrelated repaint mid-typing.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { TextField, Select } from '/design/src/components/content/fields.js';
@@ -20,7 +12,6 @@ const h = webjsx.createElement;
 
 const form = { phone: '', name: '', tier: TIER_ORDER[1], busy: false, error: null };
 
-/** @returns {string[]} the rungs a person can be registered into (never the default rung; only an admin may grant the rungs above the first team rung: sign-off and operator). */
 export function assignableTiers(isAdmin) {
     return isAdmin ? TIER_ORDER.slice(1) : TIER_ORDER.slice(1, 2);
 }

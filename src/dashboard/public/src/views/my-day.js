@@ -1,9 +1,3 @@
-// my-day.js -- "how many are in my area today and where do they stand", on the
-// field team's home. Built from GET /api/my-day (routes/areas.js): counts by stage,
-// what has changed since the day began, and what each report still needs. The
-// server sends no phone number, no reporter name and no assignee key; this only
-// words it. Three kit panels, each answering one question, so the ranger reads down
-// the page in the order they would ask them.
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Row, DetailRow } from '/design/src/components/content/row.js';
@@ -78,9 +72,6 @@ function SignOffDesk(d) {
   });
 }
 
-// part 'top': how many are in the area and where they stand (and, for a technician, the sign-off
-// desk). part 'after': what changed since the day began and what each report still needs, placed after
-// the person's own list so that list stays near the top on a phone.
 export function MyDay({ onOpenRef, part = 'top', tech = false }) {
   if (!md.loaded) { refreshMyDay(); return part === 'top' ? Panel({ title: 'My day', children: Skeleton({ count: 4, height: '1.4em', label: 'loading your day' }) }) : null; }
   if (!md.data) return part === 'top' && md.error ? Alert({ kind: 'warn', children: md.error }) : null;

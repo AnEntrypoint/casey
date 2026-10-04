@@ -1,26 +1,3 @@
-// OnboardingOverlay -- the first thing a new operator sees, shown once per
-// browser (localStorage-gated) and reopenable from the help overlay's "Show
-// me the first-shift steps again" link. Built on dialog-shell.js's Dialog,
-// not Popover/CommandPalette (those are trigger-anchored/global-shortcut
-// patterns; this is an explicit full-viewport modal that must be reachable
-// with no prior trigger element on first paint).
-//
-// WHAT THIS IS AND WHAT SkillsOverlay IS. These two used to be the same
-// overlay twice -- both three-item first-run explainers, both closing with
-// "reopen from the ? help", fired one after the other at somebody's first
-// login. They are now split by WHEN they are true rather than by count:
-//
-//   this one   -- the working loop, on your very first shift: open, claim,
-//                 answer. It is per-BROWSER, it is prose, and there is
-//                 nothing to tick. You read it once and start.
-//   Skills     -- speed, once the loop is second nature. It is per-OPERATOR,
-//                 it is a checklist you tick as you learn each move, and it
-//                 never claims to teach the job.
-//
-// Neither one repeats the other's content and neither one is a summary of the
-// help card. Keep it that way: if a line here would also be true on the other
-// screen, it belongs on exactly one of them.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Lede } from '/design/src/components/shell/atoms.js';
 import { Dialog } from './dialog-shell.js';
@@ -34,14 +11,9 @@ export function onboarded() {
 }
 
 export function markOnboarded() {
-    try { localStorage.setItem(KEY, '1'); } catch { /* private browsing / quota: never blocks close */ }
+    try { localStorage.setItem(KEY, '1'); } catch {  }
 }
 
-/**
- * @param {Object} props
- * @param {boolean} props.open
- * @param {Function} props.onClose - called on dismiss; caller marks onboarded() and re-schedules.
- */
 export function OnboardingOverlay({ open, onClose } = {}) {
     return Dialog({
         open, onClose,

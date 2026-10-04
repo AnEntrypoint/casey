@@ -1,11 +1,3 @@
-// reports-data.js -- the one filter state and the one cached load behind the
-// resolved-map panel and the disease-reports panel, so the two (on a viewer's
-// home, or as two staff panels) can never disagree about the region or the
-// period they are showing. Data only: no DOM, no Leaflet, no webjsx.
-//
-// The filter is a region (an area name the server released) and a period preset.
-// A change refetches; a superseded response is dropped by the generation counter,
-// so a quick second choice is never overwritten by the slower first one.
 import { schedule } from '../state.js';
 import { word } from '../words.js';
 import { fetchResolvedMap, fetchDiseaseReport } from '../api-reports.js';
@@ -48,6 +40,5 @@ export function setRegion(v) { rf.region = v || ''; reloadReports(); schedule();
 export function setPeriod(v) { rf.period = v; reloadReports(); schedule(); }
 export function setGrain(v) { rf.grain = v; reloadReports(); schedule(); }
 
-// The server folds groups under its floor into 'other/sparse'; a reader is told what that is.
 export const SPARSE = 'other/sparse';
 export const nice = (v) => (v === SPARSE ? 'Small groups combined' : (v === 'unknown' ? 'Area not stated' : v));

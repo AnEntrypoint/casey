@@ -1,7 +1,3 @@
-// split-dialog.js -- split-case dialog: pick events to move into a new case,
-// optional subject/reason, POST /api/cases/:id/split. Ported behavior from
-// the legacy showSplitDialog(), rebuilt on dialog-shell.js's Dialog.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
 import { TextField } from '/design/src/components/content.js';
@@ -12,9 +8,6 @@ import { fetchCaseEvents, postSplit } from '../../api.js';
 import { entityLabel } from '../../vocabulary.js';
 const h = webjsx.createElement;
 
-// Only these four kinds are offered (see the filter in openSplitDialog), and
-// each is prefixed the way a transcript prefixes a speaker rather than the
-// way the store keys a row. An unlisted kind still shows its own key.
 const SPLIT_KIND = {
     inbound: 'From the reporter',
     outbound: 'Reply sent',
@@ -69,9 +62,6 @@ export function SplitDialog({ onReload, key } = {}) {
                     !events.length ? h('div', { class: 'casey-hint' }, 'Nothing on this timeline can be moved to another ' + entityLabel() + '.') :
                         events.map(e => h('label', { key: e.id, class: 'casey-split-row' },
                             h('input', { type: 'checkbox', checked: selected.has(e.id), onchange: () => toggle(e.id) }),
-                            // Was '[' + e.kind + '] ' -- the store's own key,
-                            // in brackets, in front of every line an operator
-                            // is being asked to read and choose between.
                             h('span', {}, SPLIT_KIND[e.kind] || e.kind, ': ', (e.text || '').slice(0, 120))
                         ))
             ),

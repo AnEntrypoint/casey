@@ -1,15 +1,3 @@
-// disease-reports-panel.js -- the disease / area / time reports: headline
-// figures, a bar chart per disease, per area and per period, a word cloud of the
-// diseases found, and the CSV export. Used as a staff panel and on the viewer's
-// home. Every figure is a group the server released at or over the small-group
-// floor (routes/reports-map.js); groups under it arrive folded as one line,
-// which this panel words plainly rather than hiding.
-//
-// Kit primitives: Panel, Section, Kpi, BarChart, Table, Alert, Skeleton, Lede.
-// The word cloud is the one bespoke shape (.rep-cloud in views/viewer.css): the
-// kit has no cloud and Chip/Pill are fixed-size, so no primitive could scale a
-// word by its count. Sizes are five classes on the kit's font-size tokens, never
-// an inline style.
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel, Section } from '/design/src/components/content/panel.js';
 import { Alert, Skeleton } from '/design/src/components/content/feedback.js';

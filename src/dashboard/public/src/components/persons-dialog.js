@@ -1,13 +1,3 @@
-// persons-dialog.js -- who is behind a shared phone. In rural areas one WhatsApp number is often used by a family,
-// neighbours or someone borrowing the phone; the assistant records who is writing and this dialog lets staff correct
-// it: rename a person, say that two records are one person (merge), and, for an admin, erase one person's details
-// without touching the phone or anyone else on it (routes/persons.js).
-//
-// Names, never keys: a person is shown by the name they gave and how they are related; the ids only travel back to the
-// server as the values a button sends. No phone number is on this dialog (the server sends none).
-// Rendered through dialog-shell.js's Dialog; the rename / merge / erase prompts are its confirmDialog, so there is
-// one modal code path. Kit primitives first (Table, Select, Btn); the only local style is .ds-persons-* (app.css).
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn } from '/design/src/components/shell.js';
 import { Table } from '/design/src/components/content/table.js';

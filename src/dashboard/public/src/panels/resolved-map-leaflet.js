@@ -1,11 +1,3 @@
-// RESPONSIBILITY: the Leaflet instance behind the resolved map -- create it once
-// per canvas, and draw either the released dots or the released heat cells into
-// it. Imperative and window.L only; no webjsx, no chrome (resolved-map-panel.js).
-//
-// It draws only what routes/reports-map.js released: dots already rounded to ~1 km
-// and heat cells already at or over the small-group floor. Nothing here can place
-// a report more exactly than the server did.
-
 const L = () => window.L;
 
 function tileUrl() {
@@ -13,11 +5,10 @@ function tileUrl() {
         const el = document.querySelector('meta[name="casey-tile-url"]');
         const v = el && el.getAttribute('content');
         if (v) return v;
-    } catch { /* no document */ }
+    } catch {  }
     return '/tiles/{z}/{x}/{y}.png';
 }
 
-// Wild Coast / OR Tambo: the view before any dot arrives.
 const HOME_VIEW = [[-31.6, 29.3], 8];
 
 export function cssColour(el, token) {
@@ -25,7 +16,6 @@ export function cssColour(el, token) {
     return v || '#888888';
 }
 
-// One driver per live canvas element; a swapped canvas gets a fresh map.
 export function mountResolvedMap(canvas, prev) {
     if (!canvas || !L()) return null;
     if (prev && prev.canvas === canvas) return prev;
@@ -38,7 +28,6 @@ export function mountResolvedMap(canvas, prev) {
     return { canvas, map, layer, fitted: '' };
 }
 
-// dots: [{lat, lon, disease, species, resolved_at}]; colourFor(disease) -> colour string.
 export function drawDots(drv, dots, colourFor) {
     drv.layer.clearLayers();
     for (const p of dots) {
@@ -48,7 +37,6 @@ export function drawDots(drv, dots, colourFor) {
     }
 }
 
-// cells: [{lat, lon, count}] at cell_deg; opacity follows the count against the busiest cell.
 export function drawHeat(drv, cells, cellDeg, colour) {
     drv.layer.clearLayers();
     const max = cells.reduce((m, c) => Math.max(m, c.count), 1);
@@ -60,9 +48,8 @@ export function drawHeat(drv, cells, cellDeg, colour) {
     }
 }
 
-// Fit once per "fitKey" (region/period change), never on every slider tick, so the reader's own zoom survives playback.
 export function fitOnce(drv, fitKey, points) {
     if (drv.fitted === fitKey || !points.length) return;
     drv.fitted = fitKey;
-    try { drv.map.fitBounds(L().latLngBounds(points.map((p) => [p.lat, p.lon])), { maxZoom: 11, padding: [24, 24], animate: false }); } catch { /* keep the home view */ }
+    try { drv.map.fitBounds(L().latLngBounds(points.map((p) => [p.lat, p.lon])), { maxZoom: 11, padding: [24, 24], animate: false }); } catch {  }
 }

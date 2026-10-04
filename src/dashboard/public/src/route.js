@@ -1,18 +1,3 @@
-// Deep-link + hash-state sync: #home=<map|cases>, #case=<id>, #ref=<ref>,
-// #inbox, #view=<b64>, #panel=<key>.
-// pushHash(partial) writes back without a full reload, preserving whichever
-// other hash tokens are already present. No secrets ever ride the hash --
-// auth is the session cookie, so a shared link grants nothing on its own: the
-// recipient still has to be a logged-in operator, and sees exactly the cases
-// their own session is entitled to.
-//
-// `home` is here because the home view became the primary axis of the UI when
-// the map became the landing surface. It was persisted to localStorage only,
-// which meant the one thing this dashboard exists to do -- hand a situation to
-// another person, the same job its Shift handover panel does -- could not be
-// done with a link: "look at the map" was not expressible in a URL, and the
-// browser back button could not undo a view switch.
-
 import { state, setActiveId, setInboxMode, setHomeView, openPanel, closePanel } from './state.js';
 
 function parseHash() {
@@ -32,8 +17,6 @@ function parseHash() {
 
 export function currentRoute() { return parseHash(); }
 
-// Writes a partial route back into the hash, preserving other tokens. Pass
-// `null` for a key to remove that token.
 export function pushHash(partial) {
   const cur = parseHash();
   const next = Object.assign({}, cur, partial);
@@ -46,10 +29,6 @@ export function pushHash(partial) {
   if (next.panel) tokens.push('panel=' + encodeURIComponent(next.panel));
   const want = tokens.length ? '#' + tokens.join('&') : location.pathname + location.search;
   if (location.hash !== (tokens.length ? '#' + tokens.join('&') : '')) {
-    // Opening or closing a report, a panel or a home view is navigation, so it gets its own
-    // history entry: the browser's Back (a phone's Back button is a ranger's only way out of
-    // a report) returns to where they were instead of leaving the dashboard. A change of the
-    // filter token alone is not navigation and only rewrites the current entry.
     const navigated = next.caseId !== cur.caseId || next.panel !== cur.panel || next.home !== cur.home || !!next.inbox !== !!cur.inbox;
     history[navigated ? 'pushState' : 'replaceState'](null, '', want);
   }
@@ -57,11 +36,6 @@ export function pushHash(partial) {
 
 export function applyRouteToState() {
   const r = parseHash();
-  // home first: setHomeView clears activePanel/activeModal, so applying it
-  // after the case id would be harmless today but is exactly the ordering trap
-  // that makes a later addition to setHomeView silently clobber a deep link.
-  // panel is applied AFTER home for the same reason -- setHomeView would wipe
-  // a just-applied panel.
   if (r.home) setHomeView(r.home);
   if (r.caseId) setActiveId(r.caseId);
   if (r.inbox) setInboxMode(true);
@@ -80,18 +54,11 @@ export function initRouteSync(onChange) {
 
 export function openCaseRoute(id) { pushHash({ caseId: id }); setActiveId(id); }
 export function closeCaseRoute() { pushHash({ caseId: null }); setActiveId(null); }
-// The routed way to switch home view -- same shape as openCaseRoute above.
-// Every nav/UI caller uses this; setHomeView() alone remains the unrouted
-// primitive the route layer itself calls when APPLYING a hash.
 export function setHomeViewRoute(v) {
   const home = v === 'cases' ? 'cases' : 'map';
   pushHash({ home });
   setHomeView(home);
 }
 
-// The routed way to open/close a content-swap panel -- same shape as
-// openCaseRoute/closeCaseRoute above. Every nav caller uses these; openPanel/
-// closePanel alone remain the unrouted primitives the route layer itself
-// calls when APPLYING a hash (applyRouteToState, initRouteSync).
 export function openPanelRoute(name) { pushHash({ panel: name }); openPanel(name); }
 export function closePanelRoute() { pushHash({ panel: null }); closePanel(); }

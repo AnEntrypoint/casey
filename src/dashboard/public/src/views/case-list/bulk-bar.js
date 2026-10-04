@@ -1,7 +1,3 @@
-// Bulk selection toolbar: claim / move to stage / tag / untag / note / send
-// drafts / discard drafts / remind / clear. Renders only while something is
-// selected.
-
 import * as webjsx from 'webjsx';
 import { Btn } from 'ds/components/shell.js';
 import { Select } from 'ds/components/content.js';
@@ -24,12 +20,6 @@ async function runBulk(action, extra, onDone) {
   }
   try {
     const j = await postBulk(ids, action, extra);
-    // A bulk result has two numbers and the failure half used to be stated as
-    // "moved 7, 2 could not be moved" -- a count with no reason, which leaves
-    // an operator unable to tell a permissions refusal from a stage that does
-    // not exist from a row somebody else had already moved. The server does
-    // not itemise, so this says plainly where to look instead of implying the
-    // two are interchangeable.
     const verb = VERB[action] || action;
     const noun = (j.ok === 1) ? entityLabel() : entityLabelPlural();
     const ok = verb + ' ' + (j.ok || 0) + ' ' + noun + '.';
@@ -51,11 +41,6 @@ export function BulkBar({ stages, onDone, onPromptTag, onPromptNote }) {
     Btn({ key: 'claim', size: 'sm', onClick: () => runBulk('claim', null, onDone), children: 'Claim' }),
     Select({
       key: 'stage', size: 'sm', placeholder: 'Move to...',
-      // label: s rendered the raw thatcher enum, so this dropdown offered
-      // "in_progress" and "triaging" while every other stage surface on the
-      // same screen -- the row, the pill strip, the case header -- said
-      // "Working on it" and "Looking into it" through stageLabel(). One
-      // vocabulary, and this was the one control still speaking the database's.
       options: (stages || []).map((s) => ({ value: s, label: stageLabel(s) })),
       onChange: (v) => { if (v) runBulk('transition', { to: v }, onDone); },
     }),
@@ -64,14 +49,6 @@ export function BulkBar({ stages, onDone, onPromptTag, onPromptNote }) {
     Btn({ key: 'note', size: 'sm', variant: 'ghost', onClick: () => onPromptNote && onPromptNote((text) => runBulk('note', { text }, onDone)), children: 'Note' }),
     Btn({ key: 'draft-approve', size: 'sm', variant: 'ghost', title: 'Send the waiting draft on each selected ' + entityLabel() + ', exactly as written', onClick: () => runBulk('draft_approve', null, onDone), children: 'Send drafts' }),
     Btn({ key: 'draft-discard', size: 'sm', variant: 'ghost', title: 'Discard the waiting draft on each selected ' + entityLabel(), onClick: () => runBulk('draft_discard', null, onDone), children: 'Discard drafts' }),
-    // THE ONLY ACTION ON THIS BAR THAT REACHES A PERSON RATHER THAN A ROW, which
-    // is why it is the only one behind a confirm. Claim, tag, untag, note and
-    // move are all recoverable bookkeeping on records; this sends real messages
-    // to as many real people as are selected, and an accidental press cannot be
-    // taken back. Each one is composed for its own record and each one passes its
-    // own guards, so a selection of 40 may legitimately send 31 and refuse 9 --
-    // which is what runBulk's own failed-count sentence already tells the
-    // operator to go and read.
     Btn({
       key: 'remind', size: 'sm', variant: 'ghost',
       title: 'Ask the person behind each selected ' + entityLabel() + ' to report back',

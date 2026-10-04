@@ -1,21 +1,3 @@
-// The answer this view exists to give: which reports need a person, worst
-// first. It is rendered FIRST, directly under the view's head, because it is
-// the bottom line -- the search box, the stage pills and the full report list
-// are supporting detail and controls, and they sit below it.
-//
-// Rows are server-ranked (/api/attention -> attn.js's score + plain-English
-// reason); the SPA never re-derives urgency. The band a row is painted in
-// comes from map-model.js's urgencyBand, the ONE shared ladder the map's pins
-// read too.
-//
-// This module used to carry its own copy of that ladder (score >= 8 -> heat-3,
-// >= 4 -> heat-2, > 0 -> heat-1). Those thresholds had drifted an order of
-// magnitude below the real score scale -- attn.js's smallest single signal is
-// stale=10 and needs-human alone is 100 -- so in practice every row here
-// painted heat-3 (the loudest band) while the very same case on the map sat in
-// band 1 or 2. Two derivations, two answers, one screen: exactly the failure
-// map-model.js exists to prevent. There is no local copy any more.
-
 import * as webjsx from 'webjsx';
 import { Chip, Badge, Heading } from 'ds/components/shell.js';
 import { state, setActiveId, setInboxMode, schedule } from '../../state.js';
@@ -25,22 +7,9 @@ import { pushHash } from '../../route.js';
 import { QueueMore } from '../../components/filter-chip.js';
 const h = webjsx.createElement;
 
-// How many rows are shown before the list says so. The number itself is not
-// the point -- the point is that the list NEVER truncates without naming the
-// true total next to the control that reveals the rest. A silently capped
-// triage queue in a disease-surveillance deployment means report 9 is
-// invisible and nothing on screen says it exists.
 const INBOX_PAGE = 8;
 let inboxShown = INBOX_PAGE;
 
-// One short fact per breach, with the elapsed time stripped out of every one
-// of them. The server's own detail strings each carry the interval ("no
-// activity for 13 days", "in \"waiting\" for 13 days (max 7 days)", "on-site
-// facts still missing after 13 days", "in waiting for 13 days but
-// visit-critical facts still missing"), so a case tripping four guardrails
-// stated the same 13 days four times in four wordings. The interval is one
-// fact: it is said once, up front, and each breach then adds only what it
-// alone knows.
 const BREACH_FACT = {
   stale: 'no activity',
   stuck: 'stuck in this stage',
@@ -75,25 +44,16 @@ function InboxRow(e) {
   const mine = owner && state.currentUser && owner === state.currentUser.username;
   const otherClaim = owner && !mine;
   const active = e.id === state.activeId;
-  // Every row here scored above zero to be in this list at all, so a row that
-  // somehow arrives without a usable score still belongs in the queue -- it
-  // lands in the lowest band rather than losing its stripe entirely.
   const band = urgencyBand(Number(e.score)) || 1;
   const open = () => { setActiveId(e.id); pushHash({ caseId: e.id }); };
 
   return h('div', {
     key: e.id, class: 'tcase heat-' + band + (otherClaim ? ' claimed-other' : '') + (active ? ' active' : ''),
     'data-id': e.id, role: 'listitem', tabindex: '0',
-    // Says the band in words, not only in a colour stripe -- a stripe is the
-    // one channel a screen reader and a colourblind operator both miss.
     'aria-label': e.ref + ': ' + (URGENCY_BAND_LABEL[band] || 'can wait'),
     onclick: open,
     onkeydown: (ev) => { if (ev.key === 'Enter') open(); },
   },
-    // The report leads. The ranking reason is drawn from a fixed ladder, so on
-    // a quiet morning most rows share one sentence ("A new message came in.")
-    // and leading with it makes the queue unreadable -- the subject is the
-    // only line that tells one report from another.
     h('div', { key: 'why', class: 'tcase-why' },
       h('span', { key: 's' }, e.subject || '(no subject)'),
       waiting ? Badge({ key: 'w', tone: 'warn', children: 'waiting ' + waiting }) : null,
@@ -109,8 +69,6 @@ function InboxRow(e) {
 
 export function InboxPanel() {
   const ranked = state.mineOnly ? (state.attention || []).filter(isMine) : (state.attention || []);
-  // Focus mode (the topbar's own toggle) already means "the queue is the whole
-  // screen", so it shows the queue whole rather than re-capping it.
   const cap = state.inboxMode ? ranked.length : inboxShown;
   const shown = ranked.slice(0, cap);
 
@@ -123,26 +81,17 @@ export function InboxPanel() {
     );
   }
 
-  // The list role sits on the rows' own wrapper: a role=list may own only listitems,
-  // and the heading beside them made the whole block an axe aria-required-children hit.
-  // display:contents (app.css) keeps the wrapper out of the layout.
   return h('div', { class: 'triage', 'aria-label': queueName() },
     h('div', { key: 'head', class: 'triage-head' },
       Heading({ level: 2, children: queueName() }),
       Badge({ tone: 'blue', children: String(ranked.length) })
     ),
     h('div', { key: 'rows', class: 'triage-rows', role: 'list', 'aria-label': queueName() }, ...shown.map(InboxRow)),
-    // The true total sits on the control that reveals the rest, so the count
-    // in the head above can never silently disagree with the rows below it.
     ranked.length > shown.length
       ? QueueMore({ key: 'more', onClick: () => { inboxShown = ranked.length; schedule(); }, children: 'Show all ' + ranked.length + ' that need a person' })
       : (!state.inboxMode && shown.length > INBOX_PAGE
         ? QueueMore({ key: 'less', onClick: () => { inboxShown = INBOX_PAGE; schedule(); }, children: 'Show fewer' })
         : null),
-    // Focus mode is reachable from the topbar, but nothing on this screen said
-    // what it does or that it is on. It stops the full report list loading at
-    // all, which is why the list below it goes empty -- so the control that
-    // causes that sits next to the thing it affects, worded plainly.
     state.inboxMode
       ? QueueMore({ key: 'unfocus', onClick: () => { setInboxMode(false); }, children: 'Also load every other report' })
       : null

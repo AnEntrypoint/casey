@@ -1,13 +1,3 @@
-// Tester feedback about the system itself.
-//
-//   POST /api/feedback   { text, language? }  any signed-in login, INCLUDING the
-//        field roles (roles.js lists this one row for them): testers are both
-//        subjects and researchers. Stored against the login, never against a
-//        report.
-//   GET  /api/feedback?limit=50   STAFF only (a field login is refused by roleGate's
-//        deny-by-default): newest first, plus counts by week and by tier.
-//
-// deps: store, authed, actingOperator
 import { mountRoutes } from './register.js'
 import { addFeedback, listFeedback, MAX_TEXT } from '../../feedback.js'
 import { roleOf } from '../roles.js'
@@ -29,7 +19,7 @@ export function getFeedback({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const names = new Map()
-    let logins = null   // one account listing per request, read only when a login sent feedback
+    let logins = null
     const nameOf = async (from) => {
       if (String(from).startsWith('login:')) {
         const user = String(from).slice(6)

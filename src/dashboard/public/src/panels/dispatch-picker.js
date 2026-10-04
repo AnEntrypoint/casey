@@ -1,15 +1,3 @@
-// Field-worker dispatch picker: a small imperative modal (not webjsx --
-// raised alongside the map's own imperative Leaflet driver, see
-// map-leaflet.js) letting an operator suggest a worker for a case. Split out
-// of map-leaflet.js because a picker dialog is a distinct responsibility from
-// map rendering.
-//
-// The previous version of this line justified the split by "kept map-leaflet.js
-// under the 200-line component cap". There is no 200-line cap anywhere in this
-// repo, and map-leaflet.js was 655 lines when that was written, so the stated
-// reason was false at the time it was written as well as now. The real reason
-// is the one above, and it stands on its own.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Select, TextField } from '/design/src/components/content/fields.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
@@ -17,8 +5,6 @@ import { toast } from '../toasts.js';
 import { postDispatch } from '../api.js';
 import { brandName } from '../vocabulary.js';
 
-// The deployment's own product name (dashboard_ui.brand), never the literal
-// 'casey' -- an operator never meets the name of the software underneath.
 const brand = brandName;
 const h = webjsx.createElement;
 
@@ -31,10 +17,6 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 
 function showWorkerPicker(title, message, workers) {
     return new Promise((resolve) => {
-        // Built once from the kit's own Select / TextField / Btn (each carries a
-        // real <label>, so the select and the note are named for a screen reader)
-        // inside casey's shared .ds-dialog-* shell. Uncontrolled: the picker never
-        // re-renders, so the two values are simply read back on confirm.
         let workerId = workers[0] ? workers[0].id : '', note = '';
         const overlay = document.createElement('div');
         overlay.className = 'ds-dialog-backdrop';
@@ -73,8 +55,5 @@ export async function openDispatchPicker(mapState, caseId, caseLat, caseLon) {
     try {
         await postDispatch(caseId, { worker_id: picked.workerId, note: picked.note });
         toast('Dispatch suggested. ' + ((worker && worker.display_name) || 'The worker') + ' will hear about it on their own next reply-in.', 'ok');
-    // 'Dispatch error: ' + e.message was a bare "error" plus a raw exception.
-    // Nothing was suggested and nobody was told, which is what the operator has
-    // to know before they go and phone the worker themselves.
     } catch (e) { toast('The suggestion was not recorded, so nobody has been told. Try again, or contact the worker directly.', 'err'); }
 }

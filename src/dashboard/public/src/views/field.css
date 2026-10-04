@@ -1,16 +1,8 @@
-/* field.css -- the field team's screens are composed from kit primitives (Panel,
-   Row, DetailRow, Alert, Btn, Section) and this file's existing siblings
-   (.casey-detail-pane, .casey-case-header, .casey-timeline-actions). The only
-   bespoke rule is the map's height: the map shell has no intrinsic size, and no
-   kit primitive sizes a Leaflet canvas. Viewport units, so no spacing literals. */
 .field-map-small,.field-map-full{position:relative}
 .field-map-small{height:40vh}
 .field-map-full{height:70vh}
 .field-map-small .ds-map-shell,.field-map-full .ds-map-shell{height:100%}
-/* Rhythm. The kit's Section carries a full page's gap (96px above and below) and Panel 48px, which
-   stacked into 200px holes inside a case (operator and field alike) and on a phone screen that is
-   already one column. Kit primitives kept as they are; only the space
-   beneath them is set, and the column's own gap does the spacing. */
+
 .field-home { display: flex; flex-direction: column; gap: var(--space-4); }
-.field-day { display: flex; flex-direction: column; gap: var(--space-4); } /* My day: three kit panels in a column, same rhythm as .field-home */
+.field-day { display: flex; flex-direction: column; gap: var(--space-4); }
 .ds-247420 .casey-detail-pane .ds-section, .ds-247420 .field-home .panel { margin-block: 0; }

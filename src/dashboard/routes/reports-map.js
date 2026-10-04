@@ -1,32 +1,3 @@
-// reports-map.js -- the read-only, PII-free "which diseases are we finding, and
-// where" surface: the resolved map, the disease reports, the heat grid and a
-// viewer-safe CSV. These are the ONLY case-derived routes a `viewer` login (UCT,
-// third parties: dashboard/roles.js) may reach, and staff use the same routes
-// from the Overview section, so there is one implementation and one privacy rule.
-//
-// WHAT "RESOLVED" MEANS HERE. A case is on the resolved map only when it is in a
-// finished stage (resolved/closed) AND carries an identified_disease. That field
-// is recorded ONLY at sign-off by an animal health technician (report-fields.yml
-// signoff_diagnosis, never_inferred, refused for a ranger by roleGate), so its
-// presence is the sign-off. A case a staff member closed from the console without
-// a diagnosis is deliberately absent: it was not signed off by a technician.
-//
-// WHAT NEVER LEAVES. Every projection below is an allowlist built field by field
-// (never a spread of the case row): no name, phone, external_id, ref, id, subject,
-// summary, free text, assignee, media or reporter. What is released about a case:
-//   point   lat/lon rounded to 0.01 degree (~1.1 km, so a farm is not pinpointed),
-//           the disease label (letters only, 60 chars; a label fewer than the floor of cases
-//           carry is shown as 'Other (rare)'), the species label, and the
-//           WEEK it was signed off (the Monday), never the day or the time.
-//   counts  disease x region x month rollups, every cell below privacy.js's
-//           MIN_AGGREGATE_CELL folded into 'other/sparse' (and dropped if that
-//           bucket is itself under the floor), so no rollup names a group of 1-4.
-// The technician's disease text is free text, so it is sanitised to letters,
-// spaces, hyphens, apostrophes and brackets: digits (a phone number typed into
-// the box) and punctuation are stripped, and a label that is empty after that is
-// treated as not recorded.
-//
-// deps: store, wrap, authed, csvCell
 import { parseReport } from '../../timestamp.js'
 import { statedArea } from '../../areas.js'
 import { isDone } from '../../signoff-desk.js'
@@ -37,13 +8,9 @@ import { mountRoutes } from './register.js'
 const POOL_CAP = 10000
 const DISEASE_KEY = SIGNOFF_DIAGNOSIS_FIELDS[0] || 'identified_disease'
 const SAST_OFFSET_MS = 2 * 3600e3
-const HEAT_CELL_DEG = 0.1          // ~11 km, a grid cell of the "all reports" heat layer
-const POINT_ROUND = 100            // 0.01 degree ~ 1.1 km
+const HEAT_CELL_DEG = 0.1
+const POINT_ROUND = 100
 
-// ---------- cleaning: everything free-text is reduced before it is ever counted ----------
-
-// Letters (any script), spaces, hyphen, apostrophe, brackets. No digits, no @, no
-// slashes: nothing that can carry a number, an id or a link.
 export function cleanLabel(raw, max = 60) {
   return String(raw == null ? '' : raw)
     .replace(/[^\p{L}\s'()\-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim()
@@ -51,7 +18,6 @@ export function cleanLabel(raw, max = 60) {
 
 const labelKey = (label) => label.toLowerCase()
 
-// A time bound: unix seconds, or an ISO date (2026-03-31). null when absent.
 export function parseBound(v, endOfDay = false) {
   if (v == null || v === '') return null
   const s = String(v).trim()
@@ -65,15 +31,12 @@ export function parseBound(v, endOfDay = false) {
 
 const isoDate = (sec) => new Date(sec * 1000 + SAST_OFFSET_MS).toISOString().slice(0, 10)
 export const monthOf = (sec) => isoDate(sec).slice(0, 7)
-// The time grain of a rollup: month (default), quarter or year. A coarser grain is how a
-// small deployment gets cells large enough to be released at all.
 export function periodOf(sec, grain = 'month') {
   const m = monthOf(sec)
   if (grain === 'year') return m.slice(0, 4)
   if (grain === 'quarter') return m.slice(0, 4) + '-Q' + (Math.floor((Number(m.slice(5)) - 1) / 3) + 1)
   return m
 }
-// The Monday of the week (SAST), as a date: the coarsest useful "when".
 export function weekStartOf(sec) {
   const d = new Date(sec * 1000 + SAST_OFFSET_MS)
   const back = (d.getUTCDay() + 6) % 7
@@ -87,8 +50,6 @@ function coords(c) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return null
   return { lat, lon }
 }
-
-// ---------- the pool: signed-off cases, projected once ----------
 
 async function resolvedSeconds(store, cases) {
   const at = new Map()
@@ -106,7 +67,6 @@ async function resolvedSeconds(store, cases) {
   return at
 }
 
-// The ONE projection. Every released datum about a case is named here.
 export function resolvedRow(c, report, resolvedSec) {
   const disease = cleanLabel(report[DISEASE_KEY])
   if (!disease) return null
@@ -119,9 +79,6 @@ export function resolvedRow(c, report, resolvedSec) {
   }
 }
 
-// Species is free text too and gets the same treatment. A label held by fewer than the floor of signed-off cases (all time, so the answer does not
-// shift with the window asked for) is shown as this instead: it is free text a technician typed,
-// and a label only one case carries is the likeliest place for a name to have been typed.
 export const RARE_LABEL = 'Other (rare)'
 
 export async function loadResolved(store, { from = null, to = null } = {}) {
@@ -130,8 +87,6 @@ export async function loadResolved(store, { from = null, to = null } = {}) {
   const withDx = done.filter(c => cleanLabel(parseReport(c)[DISEASE_KEY]))
   const at = await resolvedSeconds(store, withDx)
   const raw = withDx.map(c => resolvedRow(c, parseReport(c), at.get(c.id))).filter(Boolean)
-  // Writers spell one thing several ways ("upper lambasi", "Upper Lambasi"): group on the lower-cased
-  // text and show the spelling most often written.
   for (const field of ['disease', 'species', 'region']) {
     const spellings = new Map()
     for (const r of raw) {
@@ -154,12 +109,6 @@ export async function loadResolved(store, { from = null, to = null } = {}) {
   return rows
 }
 
-// ---------- k-anonymous rollups ----------
-
-// Group rows by `dims` (functions of a row -> string). A group under the floor is
-// folded into ONE bucket whose every dim reads 'other/sparse'; that bucket is
-// released only when it reaches the floor itself. A single-dimension group named
-// 'unknown' is exempt (privacy.js: it names nothing).
 export function rollup(rows, dims, k = MIN_AGGREGATE_CELL) {
   const groups = new Map()
   for (const r of rows) {
@@ -187,8 +136,6 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
   const total = cells.reduce((s, g) => s + g.count, 0)
   return {
     k: MIN_AGGREGATE_CELL, grain,
-    // Every figure below is a released (>= k) group; `total` is the sum of the
-    // released cells only, so nothing can be got by subtracting shown from total.
     total,
     by_disease: rollup(inRegion, [dis]).map(named(['disease'])),
     by_region: rollup(rows, [reg]).map(named(['region'])),
@@ -196,11 +143,9 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
     by_disease_month: rollup(inRegion, [dis, mon]).map(named(['disease', 'month'])),
     by_disease_region: rollup(rows, [dis, reg]).map(named(['disease', 'region'])),
     by_species: rollup(inRegion, [(r) => r.species]).map(named(['species'])),
-    cells: cells.map(named(['disease', 'region', 'month'])),   // `month` holds the period of `grain`
+    cells: cells.map(named(['disease', 'region', 'month'])),
   }
 }
-
-// ---------- handlers ----------
 
 function windowOf(req, res) {
   const from = parseBound(req.query.from), to = parseBound(req.query.to, true)
@@ -233,8 +178,6 @@ export function getDiseases({ store, authed }) {
   }
 }
 
-// Aggregate grid cells. scope=resolved (default): signed-off cases; scope=all: every
-// report's location, disease not involved. A cell under the floor is not released at all.
 export function getHeat({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -273,7 +216,6 @@ export function getHeat({ store, authed }) {
   }
 }
 
-// The viewer-safe export: the released disease x region x month cells and nothing else.
 export function getReportsCsv({ store, authed, csvCell }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })

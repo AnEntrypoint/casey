@@ -1,7 +1,3 @@
-// Stats panel -- fill-rate by intake source. Rendered inside dialog-shell's
-// Dialog as a modal (state.activeModal === 'stats'), per architecture spec
-// section 4. Fetches on open only.
-
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Table } from '/design/src/components/content/table.js';
@@ -21,9 +17,6 @@ const loader = createPanelLoader({
     apply: (j) => { state._stats = j; },
 });
 
-// All three completion metrics use the same "N/total (P%)" shape so
-// adjacent columns read as one consistent notation instead of three
-// (average / bare fraction / fraction-with-percent).
 function statRow(mode, s) {
     const fieldsPct = s.total_fields ? Math.round(((s.avg_filled ?? 0) / s.total_fields) * 100) : 0;
     const vcPct = s.vc_total ? Math.round((s.vc_complete / s.count) * 100) : 0;
