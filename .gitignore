@@ -114,7 +114,7 @@ scratch-*.log
 .flatspace-clone/
 .scratch_tmp/
 bbwork/
-**/.gm/
+*/**/.gm/
 
 # Lockfile situation, stated accurately because the previous comment here
 # ("this repo has no lockfile committed yet") was false -- bun.lock IS
