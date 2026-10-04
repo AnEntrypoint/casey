@@ -1,62 +1,21 @@
 <!doctype html>
-<!-- <html> carries the .ds-247420 scope class so the theme presets, which the
-     built bundle scopes as .ds-247420[data-theme="X"], resolve on the root
-     element too. That is what lets app.css paint the ground before the module
-     graph has loaded anything. data-theme is NOT hardcoded here: the inline
-     script below resolves it. -->
 <html lang="en" class="ds-247420"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<!-- casey's own default identity, never a deployer's. brand.js reads this
-     theme-color tag, and prefers dashboard_ui (brand, description,
-     theme_color) from a deployment's own report-fields.yml over it. The SPA
-     rewrites the title from /api/branding once a session resolves, so this is
-     only the pre-session paint. -->
 <meta name="apple-mobile-web-app-title" content="casey">
 <meta name="theme-color" content="#3b6ea5">
-<!-- Where the map's basemap tiles come from. Same-origin by default: the
-     browser asks this dashboard, which serves the square off its own bounded
-     disk cache and only reaches openstreetmap.org for one it has never seen.
-     A tile request states which map square is being looked at and when, which
-     on this deployment is the location of an outbreak under investigation, so
-     it is not something to hand to a third party by default.
-     dashboard/server.js rewrites this content= in the SERVED bytes when
-     CASEY_TILE_PROXY=0 points the browser straight at an upstream template
-     instead. It is a meta tag rather than an /api/config field because the map
-     is the landing view and must not wait on a session or on the module
-     descent to know its own tile URL. panels/map-leaflet.js reads it. -->
 <meta name="casey-tile-url" content="/tiles/{z}/{x}/{y}.png">
 <link rel="manifest" href="/manifest.json">
-<!-- Self-hosted Ubuntu (app.css's @font-face block says why this is not a
-     fonts.googleapis.com link). Both weights are used above the fold, and on
-     this deployment's ~2s-RTT link, discovering them only when app.css parses
-     costs an extra serial round trip. crossorigin is required on a font
-     preload even same-origin, or the browser fetches the file twice. -->
 <link rel="preload" href="/vendor/ubuntu/ubuntu-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/vendor/ubuntu/ubuntu-700.woff2" as="font" type="font/woff2" crossorigin>
-<!-- Resolve the theme BEFORE the first paint, and before any stylesheet below
-     has loaded. It has to be inline and it has to be here: a module import
-     resolves at the end of a multi-second module descent on this deployment's
-     link, and everything painted before it would be the wrong theme. The logic
-     is deliberately the same three lines account-menu.js's storedTheme /
-     systemTheme run later -- a stored choice, mapped off the pre-rebrand names,
-     else the device preference -- and account-menu.js re-applies the same
-     answer to body and #app once it loads, so a divergence self-corrects
-     rather than persisting. -->
 <script>
 (function () {
   var legacy = { paper: 'herd', light: 'herd', ink: 'herd-ink', dark: 'herd-ink' };
   var saved = null;
-  try { saved = localStorage.casey_theme; } catch (e) { /* storage unavailable */ }
+  try { saved = localStorage.casey_theme; } catch (e) {  }
   var dark = false;
-  try { dark = matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { /* no matchMedia */ }
-  // Stamped as data-casey-theme, NOT data-theme. The design kit's own theme.js
-  // owns data-theme on <html> and sets it to "auto" once its module loads --
-  // live-witnessed clobbering this value, after which the root ground followed
-  // the DEVICE while body followed the operator's CHOICE, and a stored dark
-  // theme on a light device painted a white band behind a dark app. This
-  // attribute is casey's, nothing else writes it.
+  try { dark = matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {  }
   document.documentElement.dataset.caseyTheme =
     (saved && (legacy[saved] || saved)) || (dark ? 'herd-ink' : 'herd');
 })();
@@ -64,12 +23,6 @@
 <link rel="icon" type="image/svg+xml" href="/icon.svg">
 <link rel="apple-touch-icon" href="/icon.svg">
 <title>casey</title>
-<!-- Link 247420.css, the single scope-prefixed bundle (colors_and_type.css +
-     app-shell.css + every overlay-primitives sheet, concatenated at build time
-     under the .ds-247420 scope #app already carries). Never link the two
-     unprefixed source files instead: that leaves every overlay-primitives rule
-     unloaded, and .ds-popover then has no position:absolute to apply its own
-     inline left/top against. -->
 <link rel="stylesheet" href="/design/dist/247420.css">
 <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/vendor/leaflet.markercluster/MarkerCluster.css">
@@ -78,14 +31,6 @@
 <link rel="stylesheet" href="/src/views/case-detail.css">
 <link rel="stylesheet" href="/src/views/field.css">
 <link rel="stylesheet" href="/src/views/viewer.css">
-<!-- "ds/" resolves every component import to the SDK's unbundled sources, and
-     is the only way this page reaches the design kit's JavaScript. Do NOT add
-     a '/design/dist/247420.js' entry: loading the prebuilt bundle alongside
-     these sources downloads both graphs on every load, including the logged-out
-     login gate, and measured 355,065 of 948,256 same-origin bytes -- 37 percent
-     of the page, a strict superset of what ds/ already serves. Import each
-     component from its own ds/ module instead. The CSS bundle above is the
-     opposite case, for the reason given there. -->
 <script type="importmap">
 { "imports": {
   "webjsx": "/design/vendor/webjsx/index.js",
@@ -93,45 +38,9 @@
   "ds/": "/design/src/"
 } }
 </script>
-<!-- A <link rel="modulepreload"> for every module in the graph below is
-     INJECTED HERE by dashboard/server.js at boot, so view-source shows tags
-     this file does not contain. They are generated because a hand-written
-     list drifts the first time anyone adds an import; the map above is what
-     the generator resolves through, so editing it moves the preloads too.
-     Without them the browser discovers the graph one level per round trip
-     and the page stays white for the whole descent. -->
 </head>
-<!-- data-accent must stay ABSENT. The SDK scopes its accent presets as
-     .ds-247420[data-theme="X"][data-accent="Y"] -- specificity 0,3,0 -- which
-     outranks the brand palette's own .ds-247420[data-theme="X"] block in
-     app.css (0,2,0) however late app.css loads, so any data-accent value
-     silently repaints --accent back to the SDK's. With no attribute, no preset
-     matches and the brand token stands. data-theme is NOT hardcoded here
-     either: a literal value would paint the light theme on a dark device for
-     the whole module descent. The script below stamps body and #app with the
-     value the head script already resolved onto <html>. -->
 <body class="ds-247420">
-<!-- The scope class must be on body, not only on #app: overlay-primitives
-     (Dropdown/MenuButton/Tooltip/Popover) portal their popover element straight
-     onto document.body, so the SDK's own .ds-247420 .ds-popover
-     { position:absolute } never matches without it and the popover renders
-     full-width at the viewport bottom instead of near its trigger. #app keeps
-     its own copy for the non-portaled component CSS that keys off a nearer
-     ancestor. -->
 <div id="app" class="ds-247420 ds-app-surface"></div>
-<!-- FIRST PAINT ON A SLOW LINK. #app is empty until the module tree has
-     descended, and app.css is 97KB, so on the metered rural link this
-     deployment targets there was nothing at all on screen for the first ten to
-     twelve seconds -- a white page, no branding, no indicator, measured at
-     ~120kbps/400ms on a 360x640 viewport. An operator cannot tell that from a
-     broken deployment or a dead link, and the honest thing to show while the
-     shell is still arriving is that it is still arriving.
-     Hidden by a sibling selector the moment #app has any content of its own, so
-     it needs no JavaScript to clear and cannot be left behind by a render that
-     never happens. It sits AFTER #app for that selector to reach it, and it is
-     the only thing on screen while #app is empty. Its styles are inline
-     because the stylesheet that would style it is the slow download in
-     question. -->
 <style>
 #ds-boot{display:flex;flex-direction:column;align-items:center;justify-content:center;
   min-height:60vh;gap:10px;font:500 15px/1.4 system-ui,sans-serif;text-align:center;padding:24px}
@@ -143,18 +52,8 @@
   <b id="ds-boot-brand">casey</b>
   <span>Still loading. On a slow connection this first load can take a while -- it is quicker next time.</span>
 </div>
-<!-- Leaflet is two classic parser-blocking scripts totalling ~150KB, and they
-     used to sit ABOVE #app, so the blank screen lasted until both had arrived
-     even though no map is needed to show a login form. Moved below the boot
-     notice so the first paint no longer waits on them; they stay ahead of
-     /src/main.js in document order, which is what guarantees window.L exists
-     before any module that reads it runs. -->
 <script src="/vendor/leaflet/leaflet.js"></script>
 <script src="/vendor/leaflet.markercluster/leaflet.markercluster.js"></script>
-<!-- Copy the already-resolved root theme down onto the two elements that
-     could not carry it at parse time. Placed after #app rather than in the
-     head so both elements exist, and synchronous so it runs during parse,
-     before either has painted. -->
 <script>
 (function () {
   var t = document.documentElement.dataset.caseyTheme;
@@ -163,32 +62,14 @@
 })();
 </script>
 <script type="module" src="/src/main.js"></script>
-<!-- The reload puts a page running an OLD build under the new worker, so it is
-     gated on there having BEEN an old build. navigator.serviceWorker.controller
-     is null on a first-ever visit: nothing has been superseded, the bytes on
-     screen are the ones the new worker just cached, and reloading re-parsed and
-     re-executed the whole 125-module graph and re-ran every boot API call for no
-     change in what the operator sees -- on the one load this deployment's boot
-     notice exists for, on the modest handset it targets. Captured before
-     register() resolves, because clients.claim() can land between the two. -->
 <script>if('serviceWorker' in navigator) (function(){
   var hadController = !!navigator.serviceWorker.controller;
-  // A new build is picked up without the operator doing anything. The browser
-  // re-checks /sw.js only on a real navigation, and this app is a single page
-  // an operator may leave open for days, so ask again whenever the tab comes
-  // back to the front and on a slow timer. The worker's cache name carries the
-  // server's build id (server.js SHELL_BUILD_ID), so a changed build is a new
-  // worker; when it takes over, the page reloads onto it -- quietly, and never
-  // while someone is typing (the reload waits until they leave the field or hide
-  // the tab), so a half-written note is not lost.
   function typing() {
     var a = document.activeElement;
     return !!a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'button' && a.type !== 'submit' && !!(a.value || a.isContentEditable);
   }
   function reloadWhenSafe() {
     if (document.hidden || !typing()) { location.reload(); return; }
-    // Re-check every couple of seconds and when the tab is hidden: focus events
-    // are not reliable on every handset, a short poll always is.
     var timer = setInterval(function(){ if (document.hidden || !typing()) { clearInterval(timer); location.reload(); } }, 2000);
     document.addEventListener('visibilitychange', function(){ if (document.hidden) { clearInterval(timer); location.reload(); } });
   }
