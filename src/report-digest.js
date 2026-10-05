@@ -29,6 +29,7 @@ export function digestCsv(rep) {
   add('disease_by_region', rep.by_disease_region, ['disease', 'region', 'month'])
   add('disease_by_period', rep.by_disease_month, ['disease', 'region', 'month'])
   add('disease_region_period', rep.cells, ['disease', 'region', 'month'])
+  lines.push(...rep.by_district.map(c => ['district', 'all', csvCell(c.district), 'all', csvCell(c.count)].join(',')))
   lines.push(...rep.by_conclusion.map(c => ['conclusion', 'all', 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
   lines.push(...rep.by_disease_conclusion.map(c => ['disease_conclusion', csvCell(c.disease), 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
   const note = (text) => lines.push(['note', 'all', 'all', csvCell(text), ''].join(','))
@@ -59,6 +60,7 @@ export function digestText(rep, month) {
     if (suspected) lines.push(`Of which suspected, not confirmed: ${suspected.count}`)
     if (rep.ruled_out) lines.push(`Ruled out, not counted: ${rep.ruled_out}`)
     lines.push('Top diseases: ' + rep.by_disease.slice(0, TOP_DISEASES).map(d => `${d.disease} ${d.count}`).join(', '))
+    lines.push('By district: ' + (rep.by_district.length ? rep.by_district.map(d => `${d.district} ${d.count}`).join(', ') : 'no district is large enough to show'))
     lines.push(trendLine(rep, month))
     lines.push('Advice given: ' + (rep.by_conclusion.length ? rep.by_conclusion.map(c => `${c.conclusion} ${c.count}`).join(', ') : 'no group is large enough to show'))
   }

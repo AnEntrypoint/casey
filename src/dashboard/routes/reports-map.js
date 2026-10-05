@@ -1,5 +1,5 @@
 import { parseReport } from '../../timestamp.js'
-import { statedArea } from '../../areas.js'
+import { statedArea, loadAreas, resolveArea } from '../../areas.js'
 import { isDone } from '../../signoff-desk.js'
 import { SIGNOFF_DIAGNOSIS_FIELDS, DIAGNOSIS_STATUS_KEY, normalizeDiagnosisStatus } from '../../store/report-shape.js'
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY, UNSUPPRESSED_BUCKET_KEYS } from '../../privacy.js'
@@ -99,14 +99,21 @@ async function resolvedSeconds(store, cases) {
   return at
 }
 
-export function resolvedRow(c, report, resolvedSec) {
+export const UNKNOWN_DISTRICT = 'unknown'
+
+const districtOf = (areas, report) => {
+  const hit = resolveArea(areas, { association: statedArea(report) })
+  return cleanLabel(hit?.area.district, 60) || UNKNOWN_DISTRICT
+}
+
+export function resolvedRow(c, report, resolvedSec, areas = []) {
   const disease = cleanLabel(report[DISEASE_KEY])
   if (!disease) return null
   const species = cleanLabel(report.species, 40) || 'Not stated'
   const area = cleanLabel(statedArea(report), 60)
   const p = coords(c)
   return {
-    disease, species, region: area || 'unknown', sec: resolvedSec, status: statusOf(report),
+    disease, species, region: area || 'unknown', district: districtOf(areas, report), sec: resolvedSec, status: statusOf(report),
     conclusions: conclusionKinds(report[RESOLUTION_KEY]),
     ll: p ? { lat: round2(p.lat), lon: round2(p.lon) } : null,
   }
@@ -129,6 +136,7 @@ function loadBase(store) {
 
 async function buildBase(store) {
   const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
+  const areas = await loadAreas(store)
   const signedOff = all.filter(c => isDone(c) && c.channel !== 'system')
   const at = await resolvedSeconds(store, signedOff)
   const excluded = signedOff.filter(c => statusOf(parseReport(c)) === RULED_OUT)
@@ -136,8 +144,8 @@ async function buildBase(store) {
   const done = signedOff.filter(c => !excluded.includes(c))
   const withDx = done.filter(c => cleanLabel(parseReport(c)[DISEASE_KEY]))
   const undiagnosed = done.filter(c => !cleanLabel(parseReport(c)[DISEASE_KEY])).map(c => at.get(c.id))
-  const raw = withDx.map(c => resolvedRow(c, parseReport(c), at.get(c.id))).filter(Boolean)
-  for (const field of ['disease', 'species', 'region']) {
+  const raw = withDx.map(c => resolvedRow(c, parseReport(c), at.get(c.id), areas)).filter(Boolean)
+  for (const field of ['disease', 'species', 'region', 'district']) {
     const spellings = new Map()
     for (const r of raw) {
       const m = spellings.get(labelKey(r[field])) || new Map()
@@ -198,6 +206,7 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
     by_status: rollup(inRegion, [(r) => r.status]).map(named(['status'])),
     ruled_out: ruledOut >= MIN_AGGREGATE_CELL ? ruledOut : null,
     by_region: rollup(rows, [reg]).map(named(['region'])),
+    by_district: rollup(inRegion, [(r) => r.district]).map(named(['district'])),
     by_month: rollup(inRegion, [mon]).map(named(['month'])),
     by_disease_month: rollup(inRegion, [dis, mon]).map(named(['disease', 'month'])),
     by_disease_region: rollup(rows, [dis, reg]).map(named(['disease', 'region'])),
@@ -295,6 +304,45 @@ export function getDiseases({ store, authed }) {
   }
 }
 
+const PRINT_NAMES = { [SPARSE_BUCKET_KEY]: 'Small groups combined', unknown: 'Not stated' }
+const printName = (v) => PRINT_NAMES[v] || String(v)
+
+export function diseaseReportBody(rep, { period, region, generated }, { esc, row, tbl }) {
+  const list = (head, items, key) => tbl([head, 'Cases'], items.map(x => row([printName(x[key]), x.count])))
+  const trend = rep.trend && rep.trend.diseases.length
+    ? tbl(['Disease', rep.trend.period, rep.trend.previous_period, 'Change'], rep.trend.diseases.map(d => row([
+      d.disease, d.count, d.previous == null ? `fewer than ${rep.k}` : d.previous, d.change == null ? '-' : (d.change > 0 ? '+' : '') + d.change,
+    ])))
+    : `<p>Not enough cases to compare with the period before.</p>`
+  const byMonth = rep.by_month.slice().sort((a, b) => String(a.month).localeCompare(String(b.month)))
+  const confirmedOrSuspected = rep.by_status.map(x => row([x.status, x.count])).join('') + (rep.ruled_out ? row(['ruled out, not counted above', rep.ruled_out]) : '')
+  return `<h1>Disease report</h1>`
+    + `<p class="meta">Generated ${esc(generated)}. Period: ${esc(period)}. Area: ${esc(region || 'all areas')}. Grouped by ${esc(rep.grain)}.</p>`
+    + `<h2>Totals</h2><table>${row(['signed-off cases', rep.total || `fewer than ${rep.k}`])}${row(['with advice recorded', rep.with_conclusion])}${row(['closed without a diagnosis', rep.closed_without_diagnosis ?? `fewer than ${rep.k}`])}</table>`
+    + `<h2>Confirmed and suspected</h2>` + (confirmedOrSuspected ? `<table>${confirmedOrSuspected}</table>` : `<p>none</p>`)
+    + `<h2>By disease</h2>` + list('Disease', rep.by_disease, 'disease')
+    + `<h2>By area</h2>` + list('Area', rep.by_region, 'region')
+    + `<h2>By district</h2>` + list('District', rep.by_district, 'district')
+    + `<h2>Compared with the period before</h2>` + trend
+    + `<h2>Advice given at sign-off</h2>` + list('Advice', rep.by_conclusion, 'conclusion')
+    + `<h2>By ${esc(rep.grain)}</h2>` + list('Period', byMonth, 'month')
+    + `<p class="meta">Groups of fewer than ${rep.k} cases are combined under "Small groups combined" so no single report can be picked out. No case-level or personal data is included.${rep.truncated ? ' There are more reports than could be loaded, so the figures leave some out.' : ''}</p>`
+}
+
+export function getDiseasesPrint(deps) {
+  const { store, authed, esc, fmtTimeSAST, printableReportRow, printableReportTable, printableReport } = deps
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const w = windowOf(req, res); if (!w) return
+    const region = asked(req.query.region)
+    const rep = buildDiseaseReport(await loadResolved(store, w), { region, grain: grainOf(req) })
+    const period = w.from == null && w.to == null ? 'all time' : `${asked(req.query.from) || 'start'} to ${asked(req.query.to) || 'now'}`
+    const body = diseaseReportBody(rep, { period, region, generated: fmtTimeSAST(Math.floor(Date.now() / 1000)) }, { esc, row: printableReportRow, tbl: printableReportTable })
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.send(printableReport('Disease report', body))
+  }
+}
+
 export function getHeat({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -384,6 +432,7 @@ export function getReportsCsv({ store, authed, csvCell }) {
     if (rep.trend) lines.push(...rep.trend.diseases.map(d => ['trend', csvCell(d.disease), 'all', csvCell(rep.trend.period), csvCell(d.count)].join(',')))
     lines.push(...rep.by_status.map(c => ['status', 'all', 'all', csvCell(c.status), csvCell(c.count)].join(',')))
     if (rep.ruled_out) lines.push(['status', 'all', 'all', csvCell(RULED_OUT), csvCell(rep.ruled_out)].join(','))
+    lines.push(...rep.by_district.map(c => ['district', 'all', csvCell(c.district), 'all', csvCell(c.count)].join(',')))
     lines.push(...rep.by_conclusion.map(c => ['conclusion', 'all', 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
     lines.push(...rep.by_disease_conclusion.map(c => ['disease_conclusion', csvCell(c.disease), 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
     const note = (text) => lines.push(['note', 'all', 'all', csvCell(text), ''].join(','))
@@ -398,6 +447,7 @@ export function getReportsCsv({ store, authed, csvCell }) {
 const ROUTES = [
   ['get', '/api/reports/resolved-map', getResolvedMap],
   ['get', '/api/reports/diseases', getDiseases],
+  ['get', '/api/reports/diseases/print', getDiseasesPrint],
   ['get', '/api/reports/heat', getHeat],
   ['get', '/api/reports/areas', getAreas],
   ['get', '/api/reports/export.csv', getReportsCsv],
