@@ -22,7 +22,7 @@ const PAL = ['--sky', '--flame', '--purple-2', '--green', '--amber', '--danger']
 const OTHER = '--fg-3';
 const PLAY_MS = 500;
 
-const rm = { mode: 'dots', disease: '', idx: null, playing: false, drv: null, heat: null, heatBusy: false, seen: null, advice: '' };
+const rm = { mode: 'dots', disease: '', idx: null, playing: false, drv: null, heat: null, heatBusy: false, seen: null, advice: '', wantKey: '' };
 let timer = null;
 
 const weeksOf = (pts) => [...new Set(pts.map((p) => p.resolved_at))].sort();
@@ -53,17 +53,20 @@ function togglePlay(weeks) {
 
 function ensureHeat(untilIso) {
   const key = [rm.mode, untilIso, rf.region, rf.period, rm.disease, rm.advice].join('|');
+  rm.wantKey = key;
   if (rm.heat && rm.heat.key === key) return;
   if (rm.heatBusy) return;
   rm.heatBusy = true;
   const w = windowParams();
-  const p = { from: w.from, to: untilIso };
+  const p = { from: w.from, to: untilIso, region: rf.region };
   if (rm.mode === 'all') p.scope = 'all'; else { p.scope = 'resolved'; if (rm.disease) p.disease = rm.disease; if (rm.advice) p.advice = rm.advice; }
-  (rm.mode === 'areas' ? fetchAreas({ from: w.from, to: untilIso }) : fetchHeat(p))
+  (rm.mode === 'areas' ? fetchAreas({ from: w.from, to: untilIso, region: rf.region }) : fetchHeat(p))
     .then((data) => { rm.heat = { key, data, error: '' }; })
     .catch(() => { rm.heat = { key, data: null, error: 'Could not load the heat map.' }; })
     .finally(() => { rm.heatBusy = false; schedule(); });
 }
+
+const liveHeat = () => (rm.heat && rm.heat.key === rm.wantKey ? rm.heat : null);
 
 function paint(canvas, dots, weeks) {
   rm.drv = mountResolvedMap(canvas, rm.drv);
@@ -74,12 +77,12 @@ function paint(canvas, dots, weeks) {
   if (rm.mode === 'dots') {
     drawDots(rm.drv, dots, colourFor);
     fitOnce(rm.drv, fitKey, rd.points.points);
-  } else if (rm.mode === 'areas' && rm.heat && rm.heat.data) {
-    drawBubbles(rm.drv, rm.heat.data.areas, cssColour(canvas, '--sky'));
-    fitOnce(rm.drv, fitKey, rm.heat.data.areas);
-  } else if (rm.heat && rm.heat.data) {
-    drawHeat(rm.drv, rm.heat.data.cells, rm.heat.data.cell_deg, cssColour(canvas, '--flame'));
-    fitOnce(rm.drv, fitKey, rm.heat.data.cells);
+  } else if (rm.mode === 'areas' && liveHeat() && liveHeat().data) {
+    drawBubbles(rm.drv, liveHeat().data.areas, cssColour(canvas, '--sky'));
+    fitOnce(rm.drv, fitKey, liveHeat().data.areas);
+  } else if (liveHeat() && liveHeat().data) {
+    drawHeat(rm.drv, liveHeat().data.cells, liveHeat().data.cell_deg, cssColour(canvas, '--flame'));
+    fitOnce(rm.drv, fitKey, liveHeat().data.cells);
   } else rm.drv.layer.clearLayers();
 }
 
@@ -98,6 +101,9 @@ export function ResolvedMapPanel() {
   const all = rd.points.points;
   const weeks = weeksOf(all);
   if (rm.seen !== rd.points) { rm.seen = rd.points; rm.idx = null; rm.heat = null; stop(); }
+  const knownDiseases = diseaseRank(rd.points.points).slice(0, 8);
+  if (rm.disease && !knownDiseases.includes(rm.disease)) rm.disease = '';
+  if (rm.advice && !rd.points.points.some((p) => (p.advice || []).includes(rm.advice))) rm.advice = '';
   if (rm.idx == null || rm.idx > weeks.length - 1) rm.idx = Math.max(weeks.length - 1, 0);
   const until = weeks[rm.idx] || null;
   const untilEnd = until ? addDays(until, 6) : null;
@@ -110,12 +116,12 @@ export function ResolvedMapPanel() {
   const canvas = h('div', { id: 'rm-canvas', key: 'rm-canvas', class: 'ds-map-canvas rep-map', role: 'region', 'aria-label': 'Map of signed-off cases', 'aria-describedby': 'rm-summary' });
   queueMicrotask(() => { const c = document.getElementById('rm-canvas'); if (c) paint(c, dots, weeks); });
 
-  const heatNote = rm.mode !== 'dots' && rm.heat && rm.heat.error ? Alert({ kind: 'warn', children: rm.heat.error }) : null;
-  const total = rm.mode === 'dots' ? dots.length : (rm.heat && rm.heat.data ? rm.heat.data.total : 0);
+  const heatNote = rm.mode !== 'dots' && liveHeat() && liveHeat().error ? Alert({ kind: 'warn', children: liveHeat().error }) : null;
+  const total = rm.mode === 'dots' ? dots.length : (liveHeat() && liveHeat().data ? liveHeat().data.total : 0);
   const summary = rm.mode === 'dots'
     ? `${dots.length} signed-off ${dots.length === 1 ? 'case' : 'cases'} shown${until ? ', up to the week of ' + say(until) : ''}. Each dot is placed only to about 1 km.`
     : rm.mode === 'areas'
-      ? `${total} signed-off cases in ${rm.heat && rm.heat.data ? rm.heat.data.areas.length : 0} named areas with at least 5, up to ${untilEnd ? say(untilEnd) : 'now'}. A bubble sits near the middle of an area's cases, rounded to about 10 km, and its size shows how many.`
+      ? `${total} signed-off cases in ${liveHeat() && liveHeat().data ? liveHeat().data.areas.length : 0} named areas with at least 5, up to ${untilEnd ? say(untilEnd) : 'now'}. A bubble sits near the middle of an area's cases, rounded to about 10 km, and its size shows how many.`
       : `Heat map: ${total} ${rm.mode === 'all' ? 'reports' : 'signed-off cases'} in areas with at least 5, up to ${untilEnd ? say(untilEnd) : 'now'}. Areas with fewer than 5 are not shown.`;
   const noDots = !all.length ? Alert({ kind: 'info', children: 'No signed-off case with a place on the map yet in this period. A case appears here once an animal health technician has signed it off with the disease they identified.' }) : null;
 
