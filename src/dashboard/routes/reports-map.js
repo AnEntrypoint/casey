@@ -184,7 +184,35 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
     by_disease_conclusion: rollup(inRegion.flatMap(r => r.conclusions.map(k => ({ d: r.disease, k }))), [(r) => r.d, (r) => r.k]).map(named(['disease', 'conclusion'])),
     with_conclusion: total ? inRegion.filter(r => r.conclusions[0] !== NO_CONCLUSION).length : 0,
     cells: cells.map(named(['disease', 'region', 'month'])),
+    trend: buildTrend(inRegion, grain),
   }
+}
+
+export function previousPeriod(label, grain = 'month') {
+  if (grain === 'year') return String(Number(label) - 1)
+  if (grain === 'quarter') {
+    const y = Number(label.slice(0, 4)), q = Number(label.slice(6))
+    return q > 1 ? y + '-Q' + (q - 1) : (y - 1) + '-Q4'
+  }
+  const y = Number(label.slice(0, 4)), m = Number(label.slice(5))
+  return m > 1 ? y + '-' + String(m - 1).padStart(2, '0') : (y - 1) + '-12'
+}
+
+export function buildTrend(rows, grain = 'month', k = MIN_AGGREGATE_CELL) {
+  if (!rows.length) return null
+  const latest = rows.reduce((m, r) => (r.sec > m ? r.sec : m), 0)
+  const period = periodOf(latest, grain), before = previousPeriod(period, grain)
+  const count = (label) => {
+    const n = new Map()
+    for (const r of rows) if (periodOf(r.sec, grain) === label) n.set(r.disease, (n.get(r.disease) || 0) + 1)
+    return n
+  }
+  const now = count(period), prior = count(before)
+  const diseases = [...now].filter(([, n]) => n >= k).map(([disease, n]) => {
+    const was = prior.get(disease) || 0
+    return { disease, count: n, previous: was >= k ? was : null, change: was >= k ? n - was : null }
+  }).sort((a, b) => b.count - a.count)
+  return { period, previous_period: before, diseases }
 }
 
 export function monthEndOf(sec) {
@@ -318,6 +346,7 @@ export function getReportsCsv({ store, authed, csvCell }) {
     add('disease_by_region', rep.by_disease_region, ['disease', 'region', 'month'])
     add('disease_by_period', rep.by_disease_month, ['disease', 'region', 'month'])
     add('disease_region_period', rep.cells, ['disease', 'region', 'month'])
+    if (rep.trend) lines.push(...rep.trend.diseases.map(d => ['trend', csvCell(d.disease), 'all', csvCell(rep.trend.period), csvCell(d.count)].join(',')))
     lines.push(...rep.by_conclusion.map(c => ['conclusion', 'all', 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
     lines.push(...rep.by_disease_conclusion.map(c => ['disease_conclusion', csvCell(c.disease), 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
     lines.push(`# Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under ${SPARSE_BUCKET_KEY}. No case-level or personal data is included.`)
