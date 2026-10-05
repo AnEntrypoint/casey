@@ -156,6 +156,9 @@ export async function runViewerChecks(c) {
   check(map.points.every((p) => Math.abs(p.lat * 100 - Math.round(p.lat * 100)) < 1e-6 && Math.abs(p.lon * 100 - Math.round(p.lon * 100)) < 1e-6), 'every point is rounded to 0.01 degree (about 1 km)')
   check(map.points.every((p) => new Date(p.resolved_at + 'T00:00:00Z').getUTCDay() === 1), 'every point carries only the Monday of the week signed off, never the day')
   check(!map.points.some((p) => /Dlamini|0821/.test(p.disease)) && map.points.some((p) => p.disease === 'Other (rare)'), 'a disease label with a name and number typed into it is stripped of the number and shown as "Other (rare)"', [...new Set(map.points.map((p) => p.disease))].join(', ').slice(0, 200))
+  const cellsOf = new Map()
+  for (const p of map.points) { const key = Math.floor(p.lat / 0.1) + ':' + Math.floor(p.lon / 0.1); cellsOf.set(key, (cellsOf.get(key) || 0) + 1) }
+  check([...cellsOf.values()].every((n) => n >= map.k), 'no dot is released from a 0.1 degree cell holding fewer than the floor of cases', `${cellsOf.size} cells, ${map.withheld} withheld`)
   const dis = JSON.parse(payloads.find(([p]) => p === '/api/reports/diseases')[1])
   const cells = dis.cells.concat(dis.by_disease, dis.by_region, dis.by_month, dis.by_disease_month, dis.by_disease_region, dis.by_species, dis.by_conclusion, dis.by_disease_conclusion)
 
@@ -171,7 +174,7 @@ export async function runViewerChecks(c) {
   check(/^view,disease,region,period,cases\n/.test(csv) && csv.split('\n').length > 10, 'the viewer export is the released rollups only', csv.split('\n').slice(0, 3).join(' / '))
   const signed = Number((await store.listCases({}, { limit: 10000 })).filter((x) => ['resolved', 'closed'].includes(x.status) && /identified_disease/.test(x.report || '')).length)
   const closedNoDx = (await store.listCases({}, { limit: 10000 })).filter((x) => x.status === 'closed' && !/identified_disease/.test(x.report || '')).length
-  check(map.count + map.without_location === signed && closedNoDx > 0, 'the resolved map holds exactly the signed-off cases (closed-without-diagnosis and open ones are absent)', `${map.count} + ${map.without_location} no-location = ${signed} signed off; ${closedNoDx} closed without a diagnosis left off`)
+  check(map.count + map.withheld + map.without_location === signed && closedNoDx > 0, 'the resolved map holds exactly the signed-off cases (closed-without-diagnosis and open ones are absent)', `${map.count} + ${map.without_location} no-location = ${signed} signed off; ${closedNoDx} closed without a diagnosis left off`)
 
   console.log('\nviewer: performance at ' + (await store.listCases({}, { limit: 10000 })).length + ' reports')
   for (const p of ['/api/reports/resolved-map', '/api/reports/diseases', '/api/reports/heat', '/api/reports/heat?scope=all', '/api/reports/export.csv']) {

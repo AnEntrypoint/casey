@@ -30,9 +30,11 @@ export function mountResolvedMap(canvas, prev) {
 
 export function drawDots(drv, dots, colourFor) {
     drv.layer.clearLayers();
+    const memo = new Map();
+    const colourOf = (d) => { if (!memo.has(d)) memo.set(d, colourFor(d)); return memo.get(d); };
     for (const p of dots) {
         L().circleMarker([p.lat, p.lon], {
-            radius: 6, weight: 1, color: colourFor(p.disease), fillColor: colourFor(p.disease), fillOpacity: 0.75,
+            radius: 6, weight: 1, color: colourOf(p.disease), fillColor: colourOf(p.disease), fillOpacity: 0.75,
         }).bindTooltip(`${p.disease} - ${p.species}${p.advice && p.advice[0] !== 'Not stated' ? ' - advice: ' + p.advice.join(', ') : ''} - week of ${p.resolved_at}`).addTo(drv.layer);
     }
 }

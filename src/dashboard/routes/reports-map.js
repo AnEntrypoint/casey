@@ -27,6 +27,8 @@ export function conclusionKinds(text) {
 }
 const SAST_OFFSET_MS = 2 * 3600e3
 const HEAT_CELL_DEG = 0.1
+const cellOfDeg = (n) => Math.floor(n / HEAT_CELL_DEG)
+const cellKey = (p) => cellOfDeg(p.lat) + ':' + cellOfDeg(p.lon)
 const POINT_ROUND = 100
 
 export function cleanLabel(raw, max = 60) {
@@ -41,7 +43,7 @@ export function parseBound(v, endOfDay = false) {
   const s = String(v).trim()
   if (/^\d{9,11}$/.test(s)) return Number(s)
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    const ms = Date.parse(s + 'T00:00:00Z')
+    const ms = Date.parse(s + 'T00:00:00+02:00')
     return Number.isFinite(ms) ? Math.floor(ms / 1000) + (endOfDay ? 86399 : 0) : NaN
   }
   return NaN
@@ -125,6 +127,7 @@ export async function loadResolved(store, { from = null, to = null } = {}) {
     if ((kinds.get(labelKey(r.species)) || 0) < MIN_AGGREGATE_CELL) r.species = RARE_LABEL
     rows.push(r)
   }
+  rows.truncated = all.length >= POOL_CAP
   return rows
 }
 
@@ -154,7 +157,7 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
   const cells = rollup(inRegion, [dis, reg, mon])
   const total = inRegion.length >= MIN_AGGREGATE_CELL ? inRegion.length : 0
   return {
-    k: MIN_AGGREGATE_CELL, grain,
+    k: MIN_AGGREGATE_CELL, grain, truncated: rows.truncated === true,
     total,
     by_disease: rollup(inRegion, [dis]).map(named(['disease'])),
     by_region: rollup(rows, [reg]).map(named(['region'])),
@@ -167,6 +170,17 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
     with_conclusion: total ? inRegion.filter(r => r.conclusions[0] !== NO_CONCLUSION).length : 0,
     cells: cells.map(named(['disease', 'region', 'month'])),
   }
+}
+
+export function monthEndOf(sec) {
+  const d = new Date(sec * 1000 + SAST_OFFSET_MS)
+  return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - SAST_OFFSET_MS) / 1000) - 1
+}
+
+function frameWindow(req, res) {
+  const w = windowOf(req, res)
+  if (w && w.to != null) w.to = monthEndOf(w.to)
+  return w
 }
 
 function windowOf(req, res) {
@@ -184,10 +198,13 @@ export function getResolvedMap({ store, authed }) {
     const region = asked(req.query.region)
     let rows = await loadResolved(store, w)
     if (region) rows = rows.filter(r => labelKey(r.region) === labelKey(region))
-    const points = rows.filter(r => r.ll).map(r => ({
+    const placed = rows.filter(r => r.ll)
+    const cellCount = new Map()
+    for (const r of placed) { const key = cellKey(r.ll); cellCount.set(key, (cellCount.get(key) || 0) + 1) }
+    const points = placed.filter(r => cellCount.get(cellKey(r.ll)) >= MIN_AGGREGATE_CELL).map(r => ({
       lat: r.ll.lat, lon: r.ll.lon, disease: r.disease, species: r.species, advice: r.conclusions, resolved_at: weekStartOf(r.sec),
     })).sort((a, b) => a.resolved_at < b.resolved_at ? -1 : a.resolved_at > b.resolved_at ? 1 : 0)
-    res.json({ count: points.length, without_location: rows.length - points.length, precision_km: 1, points })
+    res.json({ k: MIN_AGGREGATE_CELL, count: points.length, withheld: placed.length - points.length, without_location: rows.length - placed.length, precision_km: 1, truncated: rows.truncated === true, points })
   }
 }
 
@@ -203,18 +220,22 @@ export function getDiseases({ store, authed }) {
 export function getHeat({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const w = windowOf(req, res); if (!w) return
+    const w = frameWindow(req, res); if (!w) return
     const scope = req.query.scope === 'all' ? 'all' : 'resolved'
     const disease = asked(req.query.disease) ? cleanLabel(req.query.disease) : null
     const advice = asked(req.query.advice)
     const region = asked(req.query.region)
     const pts = []
+    let truncated = false
     if (scope === 'resolved') {
-      for (const r of await loadResolved(store, w)) {
+      const resolved = await loadResolved(store, w)
+      truncated = resolved.truncated === true
+      for (const r of resolved) {
         if (r.ll && (!region || labelKey(r.region) === labelKey(region)) && (!disease || labelKey(r.disease) === labelKey(disease)) && (!advice || r.conclusions.some(k => labelKey(k) === labelKey(advice)))) pts.push(r.ll)
       }
     } else {
       const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
+      truncated = all.length >= POOL_CAP
       for (const c of all) {
         if (c.channel === 'system') continue
         const t = Number(c.created_at)
@@ -236,7 +257,7 @@ export function getHeat({ store, authed }) {
       lon: Math.round((g.j + 0.5) * HEAT_CELL_DEG * 1000) / 1000,
       count: g.count,
     })).sort((a, b) => b.count - a.count)
-    res.json({ k: MIN_AGGREGATE_CELL, scope, cell_deg: HEAT_CELL_DEG, total: released.reduce((s, c) => s + c.count, 0), cells: released })
+    res.json({ k: MIN_AGGREGATE_CELL, scope, truncated, cell_deg: HEAT_CELL_DEG, total: released.reduce((s, c) => s + c.count, 0), cells: released })
   }
 }
 
@@ -259,11 +280,11 @@ export function areaBubbles(rows, k = MIN_AGGREGATE_CELL) {
 export function getAreas({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
-    const w = windowOf(req, res); if (!w) return
+    const w = frameWindow(req, res); if (!w) return
     const region = asked(req.query.region)
     const rows = await loadResolved(store, w)
     const areas = areaBubbles(region ? rows.filter(r => labelKey(r.region) === labelKey(region)) : rows)
-    res.json({ k: MIN_AGGREGATE_CELL, precision_km: 10, total: areas.reduce((s, a) => s + a.count, 0), areas })
+    res.json({ k: MIN_AGGREGATE_CELL, precision_km: 10, truncated: rows.truncated === true, total: areas.reduce((s, a) => s + a.count, 0), areas })
   }
 }
 
