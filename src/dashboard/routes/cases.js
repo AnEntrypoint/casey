@@ -3,7 +3,9 @@ import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27, markInvisibles } from '../../format.js'
 import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, hiddenFieldsFor } from '../../store/report-shape.js'
-import { sendBackToRanger } from '../../signoff-desk.js'
+import { sendBackToRanger, isDone } from '../../signoff-desk.js'
+import { APPEND_FIELD_MAX_LEN } from '../../store/report-merge.js'
+import { cleanRelayed } from '../../case-tools-team-shared.js'
 import { areaInfoFor } from '../../areas.js'
 import { isKnownValueField, invalidateKnownValues } from '../../field-values.js'
 import { BRAND } from '../brand.js'
@@ -280,6 +282,7 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
     const unknown = Object.keys(req.body).filter(k => !REPORT_KEY_SET.has(k) && !INTAKE_META_KEYS.has(k))
     if (unknown.length) return res.status(400).json({ error: `unknown report fields: ${unknown.join(', ')}` })
     if (!Object.keys(incoming).length) return res.status(400).json({ error: 'no report fields provided' })
+    if (isDone(c) && SIGNOFF_DIAGNOSIS_FIELDS.some(k => k in incoming)) return res.status(409).json({ error: `${SIGNOFF_DIAGNOSIS_FIELDS.map(fieldLabel).join(' and ')} cannot be changed on a finished ${REPORT_ENTITY_LABEL}; reopen it first` })
     const op = actingOperator(req)
     const priorReport = parseReport(c)
     const result = await store.mergeReport(c.id, incoming, op)
@@ -429,16 +432,25 @@ export function postTransition({ store, authed, str, actingOperator }) {
     if (to !== c.status && !legal.includes(to)) {
       return res.status(400).json({ error: `cannot transition to '${to}'`, allowed: legal })
     }
-    if (MANDATORY_MINIMUM_BLOCKED_STATUSES.includes(to) && SIGNOFF_DIAGNOSIS_FIELDS.length) {
-      const given = {}
-      for (const k of SIGNOFF_DIAGNOSIS_FIELDS) if (typeof req.body?.[k] === 'string' && req.body[k].trim()) given[k] = req.body[k].trim()
-      if (Object.keys(given).length) {
-        const merged = await store.mergeReport(c.id, given, op, { bypassObserve: true, autoAssign: false })
-        if (merged.error) return res.status(400).json({ error: merged.error })
-        await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `diagnosis recorded at sign-off: ${Object.keys(given).map(fieldLabel).join(', ')}`, data: { by: op.id, signoff: true, ...given } })
+    const given = {}
+    if (MANDATORY_MINIMUM_BLOCKED_STATUSES.includes(to) && SIGNOFF_DIAGNOSIS_FIELDS.length && !isDone(c)) {
+      for (const k of SIGNOFF_DIAGNOSIS_FIELDS) {
+        const v = cleanRelayed(req.body?.[k])
+        if (typeof v === 'string' && v.trim()) given[k] = v.trim()
       }
+      const tooLong = Object.keys(given).filter(k => given[k].length > APPEND_FIELD_MAX_LEN)
+      if (tooLong.length) return res.status(400).json({ error: `${tooLong.map(fieldLabel).join(', ')} is too long to record (over ${APPEND_FIELD_MAX_LEN} characters). Nothing was changed.` })
     }
-    await store.transition(req.params.id, to, { user: op, reason: reason || 'operator override' })
+    try {
+      await store.transition(req.params.id, to, { user: op, reason: reason || 'operator override' })
+    } catch (e) {
+      return res.status(400).json({ error: e.message })
+    }
+    if (Object.keys(given).length) {
+      const merged = await store.mergeReport(c.id, given, op, { bypassObserve: true, autoAssign: false })
+      if (merged.error) return res.status(400).json({ error: `moved to '${to}' but the diagnosis was not recorded: ${merged.error}` })
+      await store.appendEvent(c.id, { kind: 'action', actor: 'operator', text: `diagnosis recorded at sign-off: ${Object.keys(given).map(fieldLabel).join(', ')}`, data: { by: op.id, signoff: true, ...given } })
+    }
     const after = await store.getCase(req.params.id)
     store.learnOperatorActivity(op.id, after).catch(() => {})
     res.json(await writeProjection(store, after, req))
