@@ -9,6 +9,7 @@ const AREAS = [
   ['Libode', -31.55, 29.04, 12], ['Port St Johns', -31.63, 29.54, 14], ['Lusikisiki', -31.36, 29.58, 10],
   ['Bizana', -30.85, 29.86, 7], ['Flagstaff', -31.08, 29.49, 2],
 ]
+const ADVICE = ['Vaccinate the herd and move no animals for 14 days', 'Treat the sick animals and watch the rest', 'Send a sample to the state vet', 'Cull the affected animals and bury them', 'Dip all animals weekly']
 const SPECIES = ['cattle', 'goats', 'sheep', 'chickens', 'pigs']
 const pick = (list, r) => { let t = r * list.reduce((s, x) => s + x[list[0].length - 1], 0); for (const x of list) { t -= x[x.length - 1]; if (t <= 0) return x } return list[list.length - 1] }
 
@@ -32,7 +33,7 @@ export async function seedResolved(store, { n = 300, prefix = '2779', now = Math
     if (noLoc) made.noLocation++
     if (bucket < 0.5) {
 
-      await store.mergeReport(c.id, { identified_disease: disease, recommended_resolution: 'Vaccinate the herd and move no animals for 14 days' }, { id: 'aht', role: 'operator' }, { bypassObserve: true, autoAssign: false })
+      await store.mergeReport(c.id, { identified_disease: disease, recommended_resolution: ADVICE[i % ADVICE.length] }, { id: 'aht', role: 'operator' }, { bypassObserve: true, autoAssign: false })
       await store.transition(c.id, 'triaging', { user: admin, reason: 'seed' })
       await store.transition(c.id, 'in_progress', { user: admin, reason: 'seed' })
       await store.transition(c.id, 'resolved', { user: admin, reason: 'signed off' })

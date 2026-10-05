@@ -93,6 +93,7 @@ export function resolvedRow(c, report, resolvedSec) {
   const p = coords(c)
   return {
     disease, species, region: area || 'unknown', sec: resolvedSec,
+    conclusions: conclusionKinds(report[RESOLUTION_KEY]),
     ll: p ? { lat: round2(p.lat), lon: round2(p.lon) } : null,
   }
 }
@@ -184,7 +185,7 @@ export function getResolvedMap({ store, authed }) {
     let rows = await loadResolved(store, w)
     if (region) rows = rows.filter(r => labelKey(r.region) === labelKey(region))
     const points = rows.filter(r => r.ll).map(r => ({
-      lat: r.ll.lat, lon: r.ll.lon, disease: r.disease, species: r.species, resolved_at: weekStartOf(r.sec),
+      lat: r.ll.lat, lon: r.ll.lon, disease: r.disease, species: r.species, advice: r.conclusions, resolved_at: weekStartOf(r.sec),
     })).sort((a, b) => a.resolved_at < b.resolved_at ? -1 : a.resolved_at > b.resolved_at ? 1 : 0)
     res.json({ count: points.length, without_location: rows.length - points.length, precision_km: 1, points })
   }
@@ -205,10 +206,11 @@ export function getHeat({ store, authed }) {
     const w = windowOf(req, res); if (!w) return
     const scope = req.query.scope === 'all' ? 'all' : 'resolved'
     const disease = asked(req.query.disease) ? cleanLabel(req.query.disease) : null
+    const advice = asked(req.query.advice)
     const pts = []
     if (scope === 'resolved') {
       for (const r of await loadResolved(store, w)) {
-        if (r.ll && (!disease || labelKey(r.disease) === labelKey(disease))) pts.push(r.ll)
+        if (r.ll && (!disease || labelKey(r.disease) === labelKey(disease)) && (!advice || r.conclusions.some(k => labelKey(k) === labelKey(advice)))) pts.push(r.ll)
       }
     } else {
       const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })

@@ -150,17 +150,19 @@ export async function runViewerChecks(c) {
   }
   check(bad.length === 0, `no reference, id, name, subject, number, login or free-text marker in ${variants.length} viewer payloads (${forbidden.length} store values searched)`, bad.slice(0, 3).join(' ; ') || `${(sizes.reduce((a, b) => a + b, 0) / 1024).toFixed(0)} KB scanned, clean`)
   const map = JSON.parse(payloads.find(([p]) => p === '/api/reports/resolved-map')[1])
-  const allowedKeys = new Set(['lat', 'lon', 'disease', 'species', 'resolved_at'])
+  const allowedKeys = new Set(['lat', 'lon', 'disease', 'species', 'advice', 'resolved_at'])
   const badKeys = map.points.filter((p) => Object.keys(p).some((k) => !allowedKeys.has(k)))
-  check(map.points.length > 100 && badKeys.length === 0, 'each map point carries only lat, lon, disease, species and week', `${map.points.length} points; first ${JSON.stringify(map.points[0])}`)
+  check(map.points.length > 100 && badKeys.length === 0, 'each map point carries only lat, lon, disease, species, advice kind and week', `${map.points.length} points; first ${JSON.stringify(map.points[0])}`)
   check(map.points.every((p) => Math.abs(p.lat * 100 - Math.round(p.lat * 100)) < 1e-6 && Math.abs(p.lon * 100 - Math.round(p.lon * 100)) < 1e-6), 'every point is rounded to 0.01 degree (about 1 km)')
   check(map.points.every((p) => new Date(p.resolved_at + 'T00:00:00Z').getUTCDay() === 1), 'every point carries only the Monday of the week signed off, never the day')
   check(!map.points.some((p) => /Dlamini|0821/.test(p.disease)) && map.points.some((p) => p.disease === 'Other (rare)'), 'a disease label with a name and number typed into it is stripped of the number and shown as "Other (rare)"', [...new Set(map.points.map((p) => p.disease))].join(', ').slice(0, 200))
   const dis = JSON.parse(payloads.find(([p]) => p === '/api/reports/diseases')[1])
-  const cells = dis.cells.concat(dis.by_disease, dis.by_region, dis.by_month, dis.by_disease_month, dis.by_disease_region, dis.by_species)
+  const cells = dis.cells.concat(dis.by_disease, dis.by_region, dis.by_month, dis.by_disease_month, dis.by_disease_region, dis.by_species, dis.by_conclusion, dis.by_disease_conclusion)
 
   const under = cells.filter((x) => x.count < dis.k)
   check(cells.length > 10 && under.every((x) => x.region === 'unknown' && Object.keys(x).length === 2), `every released group has at least ${dis.k} cases (only the by-area "area not stated" line may be smaller)`, `${cells.length} groups; under the floor: ${JSON.stringify(under)}`)
+  const kinds = new Set(['Vaccination', 'Quarantine or movement control', 'Culling or disposal', 'Treatment', 'Referred to a vet or lab', 'Monitoring', 'Other advice', 'Not stated'])
+  check(dis.by_conclusion.length > 2 && map.points.every((p) => p.advice.every((k) => kinds.has(k))) && dis.by_conclusion.every((x) => kinds.has(x.conclusion) || x.conclusion === 'other/sparse'), 'technician advice is released only as a fixed set of kinds, never the typed words', dis.by_conclusion.map((x) => x.conclusion + ':' + x.count).join(', '))
   const heat = JSON.parse(payloads.find(([p]) => p === '/api/reports/heat')[1])
   check(heat.cells.length > 3 && heat.cells.every((x) => x.count >= heat.k), 'every heat cell holds at least the floor of cases', `${heat.cells.length} cells`)
   const csv = payloads.find(([p]) => p === '/api/reports/export.csv')[1]
