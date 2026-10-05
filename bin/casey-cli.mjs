@@ -4,7 +4,7 @@ import { cmdUp, cmdDashboard } from './casey-serve.js'
 import {
   cmdCases, cmdShow, cmdAttention, cmdHandover, cmdReport, cmdHealth,
   cmdSweep, cmdTransition, cmdEraseContact, cmdOperators,
-  cmdRetention, cmdBackup, cmdRestore,
+  cmdRetention, cmdBackup, cmdRestore, cmdReportDigest,
 } from './casey-store-commands.js'
 import { cmdAlerts } from './casey-alerts-command.js'
 import { cmdRoles } from './casey-roles-command.js'
@@ -43,6 +43,7 @@ const COMMANDS = {
   retention: cmdRetention,
   backup: cmdBackup,
   restore: cmdRestore,
+  'report-digest': cmdReportDigest,
   operators: cmdOperators,
   roles: cmdRoles,
   'sync-import': cmdSyncImport,

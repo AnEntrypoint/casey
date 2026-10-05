@@ -77,6 +77,7 @@ ${bold('usage:')}
   casey erase-contact <contact> --person <name|id> --yes   erase ONE person on a shared phone; the phone and the others stay
   casey retention [--days N] [--yes] [--json]   age-based retention. OFF unless configured; DRY RUN unless --yes
   casey backup [--out <dir>] [--json]           consistent copy of every store, including the ones outside data/
+  casey report-digest [--month YYYY-MM] [--out file.csv] [--post]  monthly aggregate disease CSV and text summary (k-floored)
   casey restore <backup-dir> --yes              put a backup back (stop casey first; the live data dir is moved aside)
   casey operators add <username> [--password ...] [--name ...] [--role admin|operator|eco_ranger|animal_health_technician|viewer]
                                                  create a dashboard login account (break-glass/scripted provisioning)
@@ -250,6 +251,15 @@ casey erase-contact <contact> --person <name|id> --yes [--reason "..."]
   quietly missed one is worse than no backup. The .env and the config package are
   never copied, on purpose, and the manifest says so.
   Defaults to backups/casey-<timestamp>.`,
+  'report-digest': `casey report-digest [--month YYYY-MM] [--out file.csv] [--post]
+  The monthly official digest: the aggregate disease CSV plus a short text summary
+  (period, resolved total, top diseases, trend against the prior month, advice given,
+  closed without a diagnosis). Only already-aggregated figures are used, every group
+  below the k-anonymity floor is combined, and no case or personal data is included.
+  Defaults to the last completed month (SAST) and to casey-digest-<month>.csv, with
+  the summary beside it as .txt. --post sends the summary text to CASEY_ALERT_WEBHOOK,
+  an operator-configured endpoint; it is never a message to a contact and fails if the
+  variable is unset. Read-only on the store.`,
   restore: `casey restore <backup-dir> --yes
   Put a backup back. Stop casey first. The live data directory is MOVED aside as
   data.pre-restore-<timestamp> rather than overwritten, so restoring the wrong
