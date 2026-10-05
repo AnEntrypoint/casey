@@ -34,6 +34,8 @@ export function DiseaseReportsPanel() {
   const sparse = [r.by_disease, r.by_region, r.by_month].some((l) => l.some((x) => Object.values(x).includes(SPARSE)));
   const grainName = (GRAINS.find((g) => g.id === rf.grain) || GRAINS[0]).label.toLowerCase();
   const empty = !r.total && !diseases.length;
+  const conclusions = named(r.by_conclusion || [], 'conclusion');
+  const byDiseaseConclusion = named(r.by_disease_conclusion || [], 'disease').filter((x) => x.conclusion !== 'Not stated');
 
   return Panel({
     title: 'Disease reports',
@@ -48,9 +50,11 @@ export function DiseaseReportsPanel() {
         [String(areas.length), 'Areas with enough cases to name'],
       ] }),
       diseases.length ? Section({ title: 'Diseases found', children: h('div', { class: 'rep-stack' }, WordCloud(diseases), BarChart({ items: bars(diseases.slice(0, 12), 'disease') })) }) : null,
+      conclusions.length ? Section({ title: 'What technicians advised at sign-off', children: [BarChart({ items: bars(conclusions, 'conclusion') }), h('p', { class: 'casey-hint' }, r.with_conclusion + ' of ' + r.total + ' signed-off cases recorded advice. Advice is grouped by the words the technician used, so one case can count under more than one heading.')] }) : null,
       areas.length ? Section({ title: 'Where they were found', children: [BarChart({ items: bars(areas.slice(0, 12), 'region') })] }) : null,
       r.by_month.length ? Section({ title: 'When they were signed off ' + '(' + grainName + ')', children: [BarChart({ items: r.by_month.slice().sort((a, b) => String(a.month).localeCompare(String(b.month))).map((x) => ({ label: nice(x.month), value: x.count })) })] }) : null,
       r.by_disease_region.length ? Section({ title: 'Disease by area', children: [Table({ headers: ['Disease', 'Area', 'Cases'], rows: r.by_disease_region.slice(0, 25).map((x) => [nice(x.disease), nice(x.region), String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet' })] }) : null,
+      byDiseaseConclusion.length ? Section({ title: 'Advice by disease', children: [Table({ headers: ['Disease', 'Advice', 'Cases'], rows: byDiseaseConclusion.slice(0, 25).map((x) => [nice(x.disease), x.conclusion, String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet' })] }) : null,
       sparse ? h('p', { class: 'casey-hint' }, '"Small groups combined" gathers every group of fewer than ' + r.k + ' cases into one line.') : null),
   });
 }

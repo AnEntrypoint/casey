@@ -7,6 +7,24 @@ import { mountRoutes } from './register.js'
 
 const POOL_CAP = 10000
 const DISEASE_KEY = SIGNOFF_DIAGNOSIS_FIELDS[0] || 'identified_disease'
+const RESOLUTION_KEY = SIGNOFF_DIAGNOSIS_FIELDS[1] || 'recommended_resolution'
+export const NO_CONCLUSION = 'Not stated'
+const RESOLUTION_KINDS = [
+  ['Vaccination', /vaccin|inent|entstof|immuni[sz]/i],
+  ['Quarantine or movement control', /quarantin|isolat|separat|movement|restrict|kwarantyn|isoleer/i],
+  ['Culling or disposal', /\bcull|slaughter|destroy|dispos|bury|burn|doodmaak|slag/i],
+  ['Treatment', /treat|medic|antibiotic|drug|dose|inject|\bdip(?:ping)?\b|dren[ck]|behandel/i],
+  ['Referred to a vet or lab', /vet(?:erinar)?|refer|laborator|\blab\b|sample|state vet|verwys|monster/i],
+  ['Monitoring', /monitor|watch|follow.?up|observ|review|revisit|volg|dophou/i],
+]
+export const OTHER_CONCLUSION = 'Other advice'
+
+export function conclusionKinds(text) {
+  const t = String(text == null ? '' : text)
+  if (!t.trim()) return [NO_CONCLUSION]
+  const hit = RESOLUTION_KINDS.filter(([, re]) => re.test(t)).map(([k]) => k)
+  return hit.length ? hit : [OTHER_CONCLUSION]
+}
 const SAST_OFFSET_MS = 2 * 3600e3
 const HEAT_CELL_DEG = 0.1
 const POINT_ROUND = 100
@@ -143,6 +161,9 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
     by_disease_month: rollup(inRegion, [dis, mon]).map(named(['disease', 'month'])),
     by_disease_region: rollup(rows, [dis, reg]).map(named(['disease', 'region'])),
     by_species: rollup(inRegion, [(r) => r.species]).map(named(['species'])),
+    by_conclusion: rollup(inRegion.flatMap(r => r.conclusions.map(k => ({ k }))), [(r) => r.k]).map(named(['conclusion'])),
+    by_disease_conclusion: rollup(inRegion.flatMap(r => r.conclusions.map(k => ({ d: r.disease, k }))), [(r) => r.d, (r) => r.k]).map(named(['disease', 'conclusion'])),
+    with_conclusion: inRegion.filter(r => r.conclusions[0] !== NO_CONCLUSION).length,
     cells: cells.map(named(['disease', 'region', 'month'])),
   }
 }
@@ -227,6 +248,8 @@ export function getReportsCsv({ store, authed, csvCell }) {
     add('disease_by_region', rep.by_disease_region, ['disease', 'region', 'month'])
     add('disease_by_period', rep.by_disease_month, ['disease', 'region', 'month'])
     add('disease_region_period', rep.cells, ['disease', 'region', 'month'])
+    lines.push(...rep.by_conclusion.map(c => ['conclusion', 'all', 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
+    lines.push(...rep.by_disease_conclusion.map(c => ['disease_conclusion', csvCell(c.disease), 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
     lines.push(`# Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under ${SPARSE_BUCKET_KEY}. No case-level or personal data is included.`)
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')
     res.setHeader('Content-Disposition', 'attachment; filename="resolved-cases-by-disease.csv"')
