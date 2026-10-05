@@ -13,6 +13,7 @@ import {
   MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES,
   missingMandatoryMinimum, fieldLabel, REPORT_TOOL_NAME, REPORT_ENTITY_LABEL,
   SIGNOFF_DIAGNOSIS_FIELDS, missingSignoffDiagnosis, REPORT_FIELD_DEFS,
+  DIAGNOSIS_STATUS_KEY, DIAGNOSIS_STATUS_OPTIONS, normalizeDiagnosisStatus,
 } from './store/report-shape.js'
 import { APPEND_FIELD_MAX_LEN } from './store/report-merge.js'
 
@@ -28,7 +29,7 @@ function signOffAuthorityDescriptionClause() {
 
 function diagnosisDescriptionClause() {
   if (!SIGNOFF_DIAGNOSIS_FIELDS.length) return ''
-  return ` A sign-off also records ${SIGNOFF_DIAGNOSIS_FIELDS.map(fieldLabel).join(' and ')}: pass ${SIGNOFF_DIAGNOSIS_FIELDS.join(' and ')} here, exactly as the technician stated them, and this tool REFUSES the move while either is blank. Never suggest or work out either one yourself.`
+  return ` A sign-off also records ${SIGNOFF_DIAGNOSIS_FIELDS.map(fieldLabel).join(', ')}: pass ${SIGNOFF_DIAGNOSIS_FIELDS.join(' and ')} here, exactly as the technician stated them, and this tool REFUSES the move while any is blank. Never suggest or work out any of them yourself.`
 }
 
 export function buildCaseTimelineTools(store, { stageValues }) {
@@ -66,7 +67,7 @@ export function buildCaseTimelineTools(store, { stageValues }) {
           id: str('Case id'),
           to: str('Target stage', { enum: stageValues }),
           reason: str('Why you are transitioning (recorded on the timeline)'),
-          ...Object.fromEntries(SIGNOFF_DIAGNOSIS_FIELDS.map(k => [k, str(REPORT_FIELD_DEFS.find(f => f.key === k)?.description || k)])),
+          ...Object.fromEntries(SIGNOFF_DIAGNOSIS_FIELDS.map(k => [k, str(REPORT_FIELD_DEFS.find(f => f.key === k)?.description || k, k === DIAGNOSIS_STATUS_KEY ? { enum: DIAGNOSIS_STATUS_OPTIONS } : {})])),
         },
         required: ['id', 'to'],
       },
@@ -112,6 +113,11 @@ export function buildCaseTimelineTools(store, { stageValues }) {
           for (const k of SIGNOFF_DIAGNOSIS_FIELDS) {
             const v = cleanRelayed(diagnosisArgs[k])
             if (typeof v === 'string' && v.trim()) given[k] = v.trim()
+          }
+          if (DIAGNOSIS_STATUS_KEY in given) {
+            const status = normalizeDiagnosisStatus(given[DIAGNOSIS_STATUS_KEY])
+            if (!status) return { error: `${fieldLabel(DIAGNOSIS_STATUS_KEY)} must be one of: ${DIAGNOSIS_STATUS_OPTIONS.join(', ')}. Ask the technician which one it is; do not choose for them.` }
+            given[DIAGNOSIS_STATUS_KEY] = status
           }
           const still = missingSignoffDiagnosis({ ...parseReport(c), ...given })
           if (still.length) return { error: `every required fact is recorded and it is the technician's to finish, but the sign-off also needs ${still.map(fieldLabel).join(' and ')}, and ${still.length === 1 ? 'that is' : 'those are'} not recorded. Ask them for ${still.length === 1 ? 'it' : 'them'} in one plain sentence, then call this again with ${still.join(' and ')} set to exactly what they said. Do not suggest ${still.length === 1 ? 'one' : 'either'} yourself and do not use stage names.` }

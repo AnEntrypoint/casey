@@ -76,7 +76,7 @@ export function Dialog({ open, title, onClose, children, wide = false, id, foote
 }
 
 let _confirmSeq = 0;
-export function confirmDialog({ title, message, inputLabel, inputPlaceholder, inputDefault, confirmLabel = 'Confirm', danger = false }) {
+export function confirmDialog({ title, message, inputLabel, inputPlaceholder, inputDefault, choices, confirmLabel = 'Confirm', danger = false }) {
   return new Promise((resolve) => {
     rememberOpener();
     const backdrop = document.createElement('div');
@@ -107,9 +107,18 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
       span.className = 'ds-field-label';
       span.textContent = inputLabel;
       lbl.appendChild(span);
-      input = document.createElement('input');
-      input.type = 'text';
-      input.placeholder = inputPlaceholder || '';
+      input = choices ? document.createElement('select') : document.createElement('input');
+      if (choices) {
+        for (const [value, text] of choices) {
+          const opt = document.createElement('option');
+          opt.value = value;
+          opt.textContent = text;
+          input.appendChild(opt);
+        }
+      } else {
+        input.type = 'text';
+        input.placeholder = inputPlaceholder || '';
+      }
       if (inputDefault !== undefined) input.value = inputDefault;
       input.className = 'ds-dialog-input';
       lbl.appendChild(input);
@@ -137,6 +146,6 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(null); return; }
       trapTab(panel, e);
     });
-    setTimeout(() => { (input || okBtn).focus(); if (input && inputDefault !== undefined) input.select(); }, 60);
+    setTimeout(() => { (input || okBtn).focus(); if (input && !choices && inputDefault !== undefined) input.select(); }, 60);
   });
 }

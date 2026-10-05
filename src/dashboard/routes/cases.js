@@ -2,7 +2,7 @@ import { normalizeMsisdn } from '../../role-invites.js'
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag } from '../../hooks/heuristics.js'
 import { fmtPhone27, markInvisibles } from '../../format.js'
-import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, hiddenFieldsFor } from '../../store/report-shape.js'
+import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, hiddenFieldsFor, DIAGNOSIS_STATUS_KEY, DIAGNOSIS_STATUS_OPTIONS, normalizeDiagnosisStatus } from '../../store/report-shape.js'
 import { sendBackToRanger, isDone } from '../../signoff-desk.js'
 import { APPEND_FIELD_MAX_LEN } from '../../store/report-merge.js'
 import { cleanRelayed } from '../../case-tools-team-shared.js'
@@ -437,6 +437,11 @@ export function postTransition({ store, authed, str, actingOperator }) {
       for (const k of SIGNOFF_DIAGNOSIS_FIELDS) {
         const v = cleanRelayed(req.body?.[k])
         if (typeof v === 'string' && v.trim()) given[k] = v.trim()
+      }
+      if (DIAGNOSIS_STATUS_KEY in given) {
+        const status = normalizeDiagnosisStatus(given[DIAGNOSIS_STATUS_KEY])
+        if (!status) return res.status(400).json({ error: `${fieldLabel(DIAGNOSIS_STATUS_KEY)} must be one of: ${DIAGNOSIS_STATUS_OPTIONS.join(', ')}. Nothing was changed.` })
+        given[DIAGNOSIS_STATUS_KEY] = status
       }
       const tooLong = Object.keys(given).filter(k => given[k].length > APPEND_FIELD_MAX_LEN)
       if (tooLong.length) return res.status(400).json({ error: `${tooLong.map(fieldLabel).join(', ')} is too long to record (over ${APPEND_FIELD_MAX_LEN} characters). Nothing was changed.` })

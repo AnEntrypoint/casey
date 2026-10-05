@@ -2,6 +2,11 @@
 import { loadDomainConfig } from '../config-loader.js'
 import { TIER_ORDER, tierLabel } from '../contact-tiers.js'
 
+export const DIAGNOSIS_STATUS_KEY = 'diagnosis_status'
+
+export const DIAGNOSIS_STATUSES = ['confirmed', 'suspected', 'ruled_out']
+
+
 export function deriveReportShape(reportFields) {
   if (!reportFields || !Array.isArray(reportFields.fields)) throw new Error('deriveReportShape: reportFields.fields[] required')
 
@@ -49,7 +54,7 @@ export function deriveReportShape(reportFields) {
   }
   const missingSignoffDiagnosis = (reportObj) => {
     const rep = reportObj || {}
-    return SIGNOFF_DIAGNOSIS_FIELDS.filter(k => rep[k] == null || String(rep[k]).trim() === '')
+    return SIGNOFF_DIAGNOSIS_FIELDS.filter(k => rep[k] == null || String(rep[k]).trim() === '' || (k === DIAGNOSIS_STATUS_KEY && !normalizeDiagnosisStatus(rep[k])))
   }
 
   const AREA_FIELD = reportFields.area_field || null
@@ -89,6 +94,14 @@ export function deriveReportShape(reportFields) {
   const FIELD_OPTIONS = Object.fromEntries(reportFields.fields
     .filter(f => Array.isArray(f.options) && f.options.map(o => String(o).trim()).filter(Boolean).length)
     .map(f => [f.key, [...new Set(f.options.map(o => String(o).trim()).filter(Boolean))]]))
+  const DIAGNOSIS_STATUS_OPTIONS = SIGNOFF_DIAGNOSIS_FIELDS.includes(DIAGNOSIS_STATUS_KEY) ? (FIELD_OPTIONS[DIAGNOSIS_STATUS_KEY] || []) : null
+  if (DIAGNOSIS_STATUS_OPTIONS && (!DIAGNOSIS_STATUS_OPTIONS.length || DIAGNOSIS_STATUS_OPTIONS.some(o => !DIAGNOSIS_STATUSES.includes(o)))) {
+    throw new Error(`deriveReportShape: ${DIAGNOSIS_STATUS_KEY} is a sign-off field, so it needs options drawn from ${DIAGNOSIS_STATUSES.join(', ')}`)
+  }
+  const normalizeDiagnosisStatus = (v) => {
+    const s = String(v == null ? '' : v).trim().toLowerCase().replace(/[\s-]+/g, '_')
+    return DIAGNOSIS_STATUS_OPTIONS && DIAGNOSIS_STATUS_OPTIONS.includes(s) ? s : null
+  }
   const withOptionsNote = (f) => FIELD_OPTIONS[f.key]
     ? { ...f, description: `${f.description || ''} Usual answers: ${FIELD_OPTIONS[f.key].join(', ')}. If they clearly mean one of these, record it with exactly that spelling; if it is anything else (an ostrich, a camel), record their own word as they said it -- never force it into this list.`.trim() }
     : f
@@ -123,6 +136,7 @@ export function deriveReportShape(reportFields) {
     SEVERITY_SIGNAL_FIELDS,
     MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum,
     SIGNOFF_DIAGNOSIS_FIELDS, missingSignoffDiagnosis, AREA_FIELD,
+    DIAGNOSIS_STATUS_OPTIONS, normalizeDiagnosisStatus,
     ENQUIRY_HEADLINE_FIELDS, FIELD_LABELS, fieldLabel, REPORT_SECTIONS,
     REPORT_ENTITY_LABEL: reportFields.entity_label || 'report',
     REPORT_TOOL_NAME: reportFields.tool_name || 'case_report',
@@ -148,6 +162,10 @@ export const MANDATORY_MINIMUM_BLOCKED_STATUSES = _default.MANDATORY_MINIMUM_BLO
 export const missingMandatoryMinimum = _default.missingMandatoryMinimum
 export const SIGNOFF_DIAGNOSIS_FIELDS = _default.SIGNOFF_DIAGNOSIS_FIELDS
 export const missingSignoffDiagnosis = _default.missingSignoffDiagnosis
+
+export const DIAGNOSIS_STATUS_OPTIONS = _default.DIAGNOSIS_STATUS_OPTIONS
+
+export const normalizeDiagnosisStatus = _default.normalizeDiagnosisStatus
 export const AREA_FIELD = _default.AREA_FIELD
 export const ENQUIRY_HEADLINE_FIELDS = _default.ENQUIRY_HEADLINE_FIELDS
 export const FIELD_LABELS = _default.FIELD_LABELS

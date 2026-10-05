@@ -85,8 +85,11 @@ function Checklist(c, r) {
 const doneFrom = (transitions) => (transitions || []).find((t) => doneStages().has(t));
 const canReachDone = (transitions) => !!doneFrom(transitions) || (transitions || []).includes('in_progress');
 
-const SIGNOFF_ASKS = [
+const STATUS_LABELS = { confirmed: 'Confirmed', suspected: 'Suspected', ruled_out: 'Ruled out' };
+
+const signoffAsks = () => [
   ['identified_disease', 'Disease identified', 'What do you find this to be? Write what you found, in your own words.'],
+  ...(fieldOptions('diagnosis_status').length ? [['diagnosis_status', 'Diagnosis status', 'How certain are you? Confirmed means proven, suspected is your working diagnosis, ruled out means the disease was excluded.', [['', 'Choose one'], ...fieldOptions('diagnosis_status').map((o) => [o, STATUS_LABELS[o] || o])]]] : []),
   ['recommended_resolution', 'Recommended resolution', 'What should be done? This is recorded with the sign-off.'],
 ];
 
@@ -96,10 +99,11 @@ async function signOff(c, data) {
   if (ok === null || ok === undefined) return;
   const diagnosis = {};
   const report = parseReport(c.report);
-  for (const [key, label, hint] of SIGNOFF_ASKS) {
+  for (const [key, label, hint, choices] of signoffAsks()) {
     if (has(report, key)) continue;
-    const text = await confirmDialog({ title: label + ' -- ' + c.ref, message: hint, inputLabel: label, confirmLabel: 'Continue' });
+    const text = await confirmDialog({ title: label + ' -- ' + c.ref, message: hint, inputLabel: label, choices, confirmLabel: 'Continue' });
     if (text === null || text === undefined) return;
+    if (choices && !String(text).trim()) { toast(label + ' is needed to sign off.', 'warn'); return; }
     if (String(text).trim()) diagnosis[key] = String(text).trim();
   }
   try {

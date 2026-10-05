@@ -55,6 +55,9 @@ export function digestText(rep, month) {
     lines.push(`Fewer than ${MIN_AGGREGATE_CELL} resolved cases this month, so no figures are published.`)
   } else {
     lines.push(`Resolved cases: ${rep.total}`)
+    const suspected = rep.by_status.find(x => x.status === 'suspected')
+    if (suspected) lines.push(`Of which suspected, not confirmed: ${suspected.count}`)
+    if (rep.ruled_out) lines.push(`Ruled out, not counted: ${rep.ruled_out}`)
     lines.push('Top diseases: ' + rep.by_disease.slice(0, TOP_DISEASES).map(d => `${d.disease} ${d.count}`).join(', '))
     lines.push(trendLine(rep, month))
     lines.push('Advice given: ' + (rep.by_conclusion.length ? rep.by_conclusion.map(c => `${c.conclusion} ${c.count}`).join(', ') : 'no group is large enough to show'))
@@ -70,7 +73,9 @@ export async function buildDigest(store, month = lastCompletedMonth()) {
   const wide = await loadResolved(store, { from: monthStartOf(from - 1), to })
   const inMonth = wide.filter(r => r.sec >= from)
   inMonth.truncated = wide.truncated
-  inMonth.undiagnosed = (await loadResolved(store, { from, to })).undiagnosed
+  const monthRows = await loadResolved(store, { from, to })
+  inMonth.undiagnosed = monthRows.undiagnosed
+  inMonth.ruledOut = monthRows.ruledOut
   const rep = buildDiseaseReport(inMonth)
   rep.trend = buildDiseaseReport(wide).trend
   return { month, rep, csv: digestCsv(rep), text: digestText(rep, month) }

@@ -1,7 +1,7 @@
 
 
 import { tagList, parseReport } from './timestamp.js'
-import { MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum, fieldLabel } from './store/report-shape.js'
+import { MANDATORY_MINIMUM_BLOCKED_STATUSES, missingMandatoryMinimum, fieldLabel, SIGNOFF_DIAGNOSIS_FIELDS } from './store/report-shape.js'
 import { mergeTag, dropTag } from './hooks/heuristics.js'
 
 export const HANDED_OFF_TAG = 'handed-off'
@@ -9,6 +9,18 @@ const UNCLAIMED = 'agent'
 const DONE = new Set(['resolved', 'closed', ...MANDATORY_MINIMUM_BLOCKED_STATUSES])
 
 export const isDone = (c) => DONE.has(String(c?.status || ''))
+export function reopenedWithoutDiagnosis(c, toState) {
+  if (!isDone(c) || isDone({ status: toState })) return null
+  const report = parseReport(c)
+  const previous = {}
+  for (const k of SIGNOFF_DIAGNOSIS_FIELDS) {
+    if (report[k] == null || String(report[k]).trim() === '') continue
+    previous[k] = report[k]
+    delete report[k]
+  }
+  return Object.keys(previous).length ? { report, previous } : null
+}
+
 export const isHandedOff = (c) => tagList(c).includes(HANDED_OFF_TAG)
 export const isUnheld = (c) => { const a = String(c?.assignee || '').trim(); return !a || a === UNCLAIMED }
 

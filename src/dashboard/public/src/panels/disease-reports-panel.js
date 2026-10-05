@@ -9,6 +9,8 @@ import { rd, ensureReports, reloadReports, nice, SPARSE, GRAINS, rf } from './re
 import { ReportFilters } from './reports-filters.js';
 const h = webjsx.createElement;
 
+const STATUS_LABELS = { confirmed: 'Confirmed', suspected: 'Suspected' };
+
 const bars = (rows, labelKey) => rows.map((r) => ({ label: nice(r[labelKey]), value: r.count }));
 
 export function WordCloud(rows) {
@@ -35,6 +37,8 @@ export function DiseaseReportsPanel() {
   const grainName = (GRAINS.find((g) => g.id === rf.grain) || GRAINS[0]).label.toLowerCase();
   const empty = !r.total && !diseases.length;
   const conclusions = named(r.by_conclusion || [], 'conclusion');
+  const statuses = named(r.by_status || [], 'status');
+  const suspected = statuses.find((x) => x.status === 'suspected');
   const byDiseaseConclusion = named(r.by_disease_conclusion || [], 'disease').filter((x) => x.conclusion !== 'Not stated');
 
   return Panel({
@@ -48,10 +52,13 @@ export function DiseaseReportsPanel() {
       r.closed_without_diagnosis ? h('p', { class: 'casey-hint' }, r.closed_without_diagnosis + ' more cases were closed without a disease being recorded, so they are not counted in these figures.') : null,
       Kpi({ items: [
         [String(r.total), 'Signed-off cases'],
+        ...(suspected ? [[String(r.total - suspected.count), 'Confirmed or not stated'], [String(suspected.count), 'Suspected only']] : []),
         [String(diseases.length), 'Diseases found'],
         [top ? top.disease : '--', 'Most common'],
         [String(areas.length), 'Areas with enough cases to name'],
       ] }),
+      r.ruled_out ? h('p', { class: 'casey-hint' }, r.ruled_out + ' signed-off cases had the disease ruled out, so they are not counted in these figures.') : null,
+      suspected ? Section({ title: 'How certain the diagnoses are', children: [BarChart({ items: statuses.map((x) => ({ label: STATUS_LABELS[x.status] || nice(x.status), value: x.count })) }), h('p', { class: 'casey-hint' }, 'Suspected means the technician signed off on a working diagnosis that is not yet proven. A signed-off case with no certainty recorded counts as confirmed.')] }) : null,
       diseases.length ? Section({ title: 'Diseases found', children: h('div', { class: 'rep-stack' }, WordCloud(diseases), BarChart({ items: bars(diseases.slice(0, 12), 'disease') })) }) : null,
       conclusions.length ? Section({ title: 'What technicians advised at sign-off', children: [BarChart({ items: bars(conclusions, 'conclusion') }), h('p', { class: 'casey-hint' }, r.with_conclusion + ' of ' + r.total + ' signed-off cases recorded advice. Advice is grouped by the words the technician used, so one case can count under more than one heading.')] }) : null,
       areas.length ? Section({ title: 'Where they were found', children: [BarChart({ items: bars(areas.slice(0, 12), 'region') })] }) : null,
