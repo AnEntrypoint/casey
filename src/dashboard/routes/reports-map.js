@@ -10,12 +10,12 @@ const DISEASE_KEY = SIGNOFF_DIAGNOSIS_FIELDS[0] || 'identified_disease'
 const RESOLUTION_KEY = SIGNOFF_DIAGNOSIS_FIELDS[1] || 'recommended_resolution'
 export const NO_CONCLUSION = 'Not stated'
 const RESOLUTION_KINDS = [
-  ['Vaccination', /vaccin|inent|entstof|immuni[sz]/i],
-  ['Quarantine or movement control', /quarantin|isolat|separat|movement|restrict|kwarantyn|isoleer/i],
-  ['Culling or disposal', /\bcull|slaughter|destroy|dispos|bury|burn|doodmaak|slag/i],
+  ['Vaccination', /vaccin|\binent|entstof|immuni[sz]/i],
+  ['Quarantine or movement control', /quarantin|\bisolat(?:e\b|ion|ing)(?! sample)|\bseparat(?:e|ing) (?:the |sick |affected )?(?:animals|herd|sick)|movement|restrict|kwarantyn|isoleer/i],
+  ['Culling or disposal', /\bcull|slaughter|destroy|dispos|\bbury|\bburn|doodmaak|\bslagting\b|\bslag (?:die|al die|dit)\b/i],
   ['Treatment', /treat|medic|antibiotic|drug|dose|inject|\bdip(?:ping)?\b|dren[ck]|behandel/i],
-  ['Referred to a vet or lab', /vet(?:erinar)?|refer|laborator|\blab\b|sample|state vet|verwys|monster/i],
-  ['Monitoring', /monitor|watch|follow.?up|observ|review|revisit|volg|dophou/i],
+  ['Referred to a vet or lab', /\bvet(?:erinar)?|\brefer|laborator|\blab\b|sample|verwys/i],
+  ['Monitoring', /monitor|watch|follow.?up|observ|\breview|revisit|\bvolg|dophou/i],
 ]
 export const OTHER_CONCLUSION = 'Other advice'
 
@@ -152,7 +152,7 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
   const inRegion = region ? rows.filter(r => labelKey(r.region) === labelKey(region)) : rows
   const dis = (r) => r.disease, reg = (r) => r.region, mon = (r) => periodOf(r.sec, grain)
   const cells = rollup(inRegion, [dis, reg, mon])
-  const total = cells.reduce((s, g) => s + g.count, 0)
+  const total = inRegion.length >= MIN_AGGREGATE_CELL ? inRegion.length : 0
   return {
     k: MIN_AGGREGATE_CELL, grain,
     total,
@@ -164,7 +164,7 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
     by_species: rollup(inRegion, [(r) => r.species]).map(named(['species'])),
     by_conclusion: rollup(inRegion.flatMap(r => r.conclusions.map(k => ({ k }))), [(r) => r.k]).map(named(['conclusion'])),
     by_disease_conclusion: rollup(inRegion.flatMap(r => r.conclusions.map(k => ({ d: r.disease, k }))), [(r) => r.d, (r) => r.k]).map(named(['disease', 'conclusion'])),
-    with_conclusion: inRegion.filter(r => r.conclusions[0] !== NO_CONCLUSION).length,
+    with_conclusion: total ? inRegion.filter(r => r.conclusions[0] !== NO_CONCLUSION).length : 0,
     cells: cells.map(named(['disease', 'region', 'month'])),
   }
 }
@@ -207,10 +207,11 @@ export function getHeat({ store, authed }) {
     const scope = req.query.scope === 'all' ? 'all' : 'resolved'
     const disease = asked(req.query.disease) ? cleanLabel(req.query.disease) : null
     const advice = asked(req.query.advice)
+    const region = asked(req.query.region)
     const pts = []
     if (scope === 'resolved') {
       for (const r of await loadResolved(store, w)) {
-        if (r.ll && (!disease || labelKey(r.disease) === labelKey(disease)) && (!advice || r.conclusions.some(k => labelKey(k) === labelKey(advice)))) pts.push(r.ll)
+        if (r.ll && (!region || labelKey(r.region) === labelKey(region)) && (!disease || labelKey(r.disease) === labelKey(disease)) && (!advice || r.conclusions.some(k => labelKey(k) === labelKey(advice)))) pts.push(r.ll)
       }
     } else {
       const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
@@ -220,7 +221,7 @@ export function getHeat({ store, authed }) {
         if (w.from != null && t < w.from) continue
         if (w.to != null && t > w.to) continue
         const p = coords(c)
-        if (p) pts.push(p)
+        if (p && (!region || labelKey(cleanLabel(statedArea(parseReport(c)), 60) || 'unknown') === labelKey(region))) pts.push(p)
       }
     }
     const cellOf = (n) => Math.floor(n / HEAT_CELL_DEG)
@@ -259,7 +260,9 @@ export function getAreas({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const w = windowOf(req, res); if (!w) return
-    const areas = areaBubbles(await loadResolved(store, w))
+    const region = asked(req.query.region)
+    const rows = await loadResolved(store, w)
+    const areas = areaBubbles(region ? rows.filter(r => labelKey(r.region) === labelKey(region)) : rows)
     res.json({ k: MIN_AGGREGATE_CELL, precision_km: 10, total: areas.reduce((s, a) => s + a.count, 0), areas })
   }
 }
