@@ -23,7 +23,7 @@ const PAL = ['--sky', '--flame', '--purple-2', '--green', '--amber', '--danger']
 const OTHER = '--fg-3';
 const PLAY_MS = 500;
 
-const rm = { mode: 'dots', disease: '', idx: null, playing: false, drv: null, heat: null, heatBusy: false, seen: null, advice: '', wantKey: '' };
+const rm = { mode: 'dots', disease: '', idx: null, playing: false, drv: null, heat: null, heatBusy: false, seen: null, advice: '', species: '', wantKey: '' };
 let timer = null;
 
 const weeksOf = (pts) => [...new Set(pts.map((p) => p.resolved_at))].sort();
@@ -53,15 +53,15 @@ function togglePlay(weeks) {
 }
 
 function ensureHeat(untilIso) {
-  const key = [rm.mode, untilIso, rf.region, rf.period, rm.disease, rm.advice].join('|');
+  const key = [rm.mode, untilIso, rf.region, rf.period, rm.disease, rm.advice, rm.species].join('|');
   rm.wantKey = key;
   if (rm.heat && rm.heat.key === key) return;
   if (rm.heatBusy) return;
   rm.heatBusy = true;
   const w = windowParams();
-  const p = { from: w.from, to: untilIso, region: rf.region };
+  const p = { from: w.from, to: untilIso, region: rf.region, species: rm.species };
   if (rm.mode === 'all') p.scope = 'all'; else { p.scope = 'resolved'; if (rm.disease) p.disease = rm.disease; if (rm.advice) p.advice = rm.advice; }
-  (rm.mode === 'areas' ? fetchAreas({ from: w.from, to: untilIso, region: rf.region }) : fetchHeat(p))
+  (rm.mode === 'areas' ? fetchAreas({ from: w.from, to: untilIso, region: rf.region, species: rm.species }) : fetchHeat(p))
     .then((data) => { rm.heat = { key, data, error: '' }; })
     .catch(() => { rm.heat = { key, data: null, error: 'Could not load the heat map.' }; })
     .finally(() => { rm.heatBusy = false; schedule(); });
@@ -129,8 +129,10 @@ export function ResolvedMapPanel() {
   if (rm.idx == null || rm.idx > weeks.length - 1) rm.idx = Math.max(weeks.length - 1, 0);
   const until = weeks[rm.idx] || null;
   const untilEnd = until ? addDays(until, 6) : null;
+  const speciesKinds = [...new Set(all.map((p) => p.species))].sort();
+  if (rm.species && !speciesKinds.includes(rm.species)) rm.species = '';
   const adviceKinds = [...new Set(all.flatMap((p) => p.advice || []))].filter((k) => k !== 'Not stated').sort();
-  const pool = all.filter((p) => (!rm.disease || p.disease === rm.disease) && (!rm.advice || (p.advice || []).includes(rm.advice)));
+  const pool = all.filter((p) => (!rm.disease || p.disease === rm.disease) && (!rm.species || p.species === rm.species) && (!rm.advice || (p.advice || []).includes(rm.advice)));
   const dots = until ? pool.filter((p) => p.resolved_at <= until) : [];
   const ranked = diseaseRank(all);
   if (rm.mode !== 'dots' && untilEnd) ensureHeat(untilEnd);
@@ -153,6 +155,7 @@ export function ResolvedMapPanel() {
     children: h('div', { class: 'rep-stack' },
       ReportFilters(),
       FilterPills({ label: 'What the map shows', options: MODES, selected: rm.mode, onSelect: (v) => { rm.mode = v; rm.heat = null; schedule(); } }),
+      rm.mode !== 'all' && speciesKinds.length > 1 ? FilterPills({ label: 'Animal', options: [{ id: '', label: 'Every animal' }, ...speciesKinds.map((k) => ({ id: k, label: k }))], selected: rm.species, onSelect: (v) => { rm.species = v; rm.heat = null; schedule(); } }) : null,
       rm.mode === 'heat' || rm.mode === 'dots' ? FilterPills({ label: 'Disease', options: [{ id: '', label: 'Every disease' }, ...ranked.slice(0, 8).map((d) => ({ id: d, label: d }))], selected: rm.disease, onSelect: (v) => { rm.disease = v; rm.heat = null; schedule(); } }) : null,
       (rm.mode === 'dots' || rm.mode === 'heat') && adviceKinds.length ? FilterPills({ label: 'Technician advice', options: [{ id: '', label: 'Any advice' }, ...adviceKinds.map((k) => ({ id: k, label: k }))], selected: rm.advice, onSelect: (v) => { rm.advice = v; rm.heat = null; schedule(); } }) : null,
       noDots,

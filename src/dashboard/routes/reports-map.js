@@ -211,8 +211,10 @@ export function getResolvedMap({ store, authed }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const w = windowOf(req, res); if (!w) return
     const region = asked(req.query.region)
+    const species = asked(req.query.species)
     let rows = await loadResolved(store, w)
     if (region) rows = rows.filter(r => labelKey(r.region) === labelKey(region))
+    if (species) rows = rows.filter(r => labelKey(r.species) === labelKey(species))
     const placed = rows.filter(r => r.ll)
     const cellCount = new Map()
     for (const r of placed) { const key = cellKey(r.ll); cellCount.set(key, (cellCount.get(key) || 0) + 1) }
@@ -240,13 +242,14 @@ export function getHeat({ store, authed }) {
     const disease = asked(req.query.disease) ? cleanLabel(req.query.disease) : null
     const advice = asked(req.query.advice)
     const region = asked(req.query.region)
+    const species = asked(req.query.species)
     const pts = []
     let truncated = false
     if (scope === 'resolved') {
       const resolved = await loadResolved(store, w)
       truncated = resolved.truncated === true
       for (const r of resolved) {
-        if (r.ll && (!region || labelKey(r.region) === labelKey(region)) && (!disease || labelKey(r.disease) === labelKey(disease)) && (!advice || r.conclusions.some(k => labelKey(k) === labelKey(advice)))) pts.push(r.ll)
+        if (r.ll && (!region || labelKey(r.region) === labelKey(region)) && (!disease || labelKey(r.disease) === labelKey(disease)) && (!species || labelKey(r.species) === labelKey(species)) && (!advice || r.conclusions.some(k => labelKey(k) === labelKey(advice)))) pts.push(r.ll)
       }
     } else {
       const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
@@ -297,7 +300,8 @@ export function getAreas({ store, authed }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const w = frameWindow(req, res); if (!w) return
     const region = asked(req.query.region)
-    const rows = await loadResolved(store, w)
+    const species = asked(req.query.species)
+    const rows = (await loadResolved(store, w)).filter(r => !species || labelKey(r.species) === labelKey(species))
     const areas = areaBubbles(region ? rows.filter(r => labelKey(r.region) === labelKey(region)) : rows)
     res.json({ k: MIN_AGGREGATE_CELL, precision_km: 10, truncated: rows.truncated === true, total: areas.reduce((s, a) => s + a.count, 0), areas })
   }
