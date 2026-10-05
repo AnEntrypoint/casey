@@ -203,6 +203,8 @@ export async function runViewerChecks(c) {
   check(v.nav.length === 3 && v.nav.join('|').includes('Resolved cases map'), 'viewer nav is only Overview, Resolved cases map and Disease reports', v.nav.join(' | '))
   check(!v.console && v.canvas, 'the viewer sees its own screen, not the operator console, and it has the map')
   check(v.mapBox[1] >= 280 && v.mapBox[0] >= 300, 'the map has a real size on the page (not a collapsed box with dots inside)', v.mapBox.join(' x '))
+  const alt = JSON.parse(await evalJs(`JSON.stringify({ rows: document.querySelectorAll('.rep-table-alt tbody tr').length })`))
+  check(alt.rows > 0, 'the map has a table of the same figures for anyone who cannot use colour or a pointer', alt.rows + ' rows')
   check(v.dots === map.count, 'the map draws one dot per signed-off case with a place', `${v.dots} dots for ${map.count} points`)
   check(v.cloud >= 3 && v.slider && v.play && /export\.csv/.test(v.csv), 'word cloud, time slider, play button and export link are on the screen', `cloud ${v.cloud}, csv ${v.csv.replace(/^https?:\/\/[^/]+/, '')}`)
   check(!/CASE-\d|Seed Farmer|GUI Ranger|0\d{9}|Dlamini/.test(v.text), 'no reference, name or number appears anywhere on the viewer screen')

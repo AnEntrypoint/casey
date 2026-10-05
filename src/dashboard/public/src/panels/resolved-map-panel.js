@@ -1,6 +1,7 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Panel } from '/design/src/components/content/panel.js';
 import { Alert, Skeleton, FilterPills } from '/design/src/components/content/feedback.js';
+import { Table } from '/design/src/components/content/table.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { Slider } from '/design/src/components/slider.js';
 import { Icon } from '/design/src/components/shell.js';
@@ -86,6 +87,27 @@ function paint(canvas, dots, weeks) {
   } else rm.drv.layer.clearLayers();
 }
 
+function tableAlternative(dots) {
+  const heat = liveHeat() && liveHeat().data;
+  let headers, rows;
+  if (rm.mode === 'dots') {
+    const n = new Map();
+    for (const p of dots) n.set(p.disease + '\u0000' + p.species, (n.get(p.disease + '\u0000' + p.species) || 0) + 1);
+    headers = ['Disease', 'Animal', 'Cases shown'];
+    rows = [...n.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, c]) => [...k.split('\u0000'), String(c)]);
+  } else if (rm.mode === 'areas' && heat) {
+    headers = ['Area', 'Cases', 'Most common disease'];
+    rows = heat.areas.map((a) => [a.region, String(a.count), a.top_disease || '--']);
+  } else if (heat) {
+    headers = ['Near (latitude, longitude)', 'Reports'];
+    rows = heat.cells.slice(0, 40).map((c) => [c.lat.toFixed(2) + ', ' + c.lon.toFixed(2), String(c.count)]);
+  } else return null;
+  return h('details', { class: 'rep-table-alt' },
+    h('summary', null, 'Show these figures as a table'),
+    Table({ headers, rows, striped: true, compact: true, emptyText: 'Nothing to show yet' }));
+}
+
+
 function Legend(ranked) {
   if (rm.mode !== 'dots') return null;
   const shown = ranked.slice(0, PAL.length);
@@ -137,6 +159,7 @@ export function ResolvedMapPanel() {
       heatNote,
       canvas,
       Legend(ranked),
+      tableAlternative(dots),
       weeks.length > 1 ? h('div', { class: 'rep-slider' },
         Btn({ key: 'play', variant: rm.playing ? 'primary' : 'default', children: [Icon(rm.playing ? 'pause' : 'play', { size: 15 }), rm.playing ? ' Pause' : ' Play time-lapse'], onClick: () => togglePlay(weeks), 'aria-label': rm.playing ? 'Pause the time-lapse' : 'Play the time-lapse from the first week' }),
         Slider({ key: 'sl', label: 'Show cases signed off up to ' + (until ? say(until) : 'now'), min: 0, max: weeks.length - 1, step: 1, value: rm.idx, onChange: (v) => { stop(); rm.idx = Math.round(v); schedule(); } })) : null,
