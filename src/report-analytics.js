@@ -133,7 +133,7 @@ function suppressSmallCells(byKey) {
     }
     out[k] = row
   }
-  if (sparse) {
+  if (sparse && sparse.opened >= MIN_AGGREGATE_CELL) {
     out[SPARSE_BUCKET_KEY] = {
       first_response_ms_median: median(sparse.responses),
       opened_count: sparse.opened,

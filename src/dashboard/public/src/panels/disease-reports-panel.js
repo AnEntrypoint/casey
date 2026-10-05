@@ -43,7 +43,9 @@ export function DiseaseReportsPanel() {
       ReportFilters({ grain: true }),
       Lede({ children: 'Every figure counts reports that an animal health technician has looked at and signed off with the disease they identified. Groups of fewer than ' + r.k + ' are combined so that no single report can be picked out.' }),
       r.truncated ? Alert({ kind: 'warn', children: 'There are more reports than this page can load, so the figures leave some out.' }) : null,
+      rd.loading ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, 'Updating the figures...') : null,
       empty ? Alert({ kind: 'info', children: 'No signed-off cases in this period yet. Figures appear here as technicians sign reports off.' }) : null,
+      r.closed_without_diagnosis ? h('p', { class: 'casey-hint' }, r.closed_without_diagnosis + ' more cases were closed without a disease being recorded, so they are not counted in these figures.') : null,
       Kpi({ items: [
         [String(r.total), 'Signed-off cases'],
         [String(diseases.length), 'Diseases found'],

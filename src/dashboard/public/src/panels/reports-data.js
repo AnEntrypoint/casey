@@ -25,14 +25,14 @@ export function windowParams() {
 
 export function reloadReports() {
   const gen = ++generation;
-  rd.loading = true;
+  rd.loading = true; rd.error = '';
   const w = windowParams();
   Promise.all([fetchDiseaseReport({ ...w, grain: rf.grain }), fetchResolvedMap(w)])
     .then(([report, map]) => {
       if (gen !== generation) return;
       rd.report = report; rd.points = map; rd.error = '';
     })
-    .catch(() => { if (gen === generation) rd.error = word('ui.load_disease_reports_failed'); })
+    .catch(() => { if (gen === generation) { rd.error = word('ui.load_disease_reports_failed'); rd.report = null; rd.points = null; } })
     .finally(() => { if (gen === generation) { rd.loading = false; rd.loaded = true; schedule(); } });
 }
 export function ensureReports() { if (!rd.loaded && !rd.loading) reloadReports(); }
