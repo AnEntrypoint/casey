@@ -1,13 +1,21 @@
 import { parseReport } from '../../timestamp.js'
 import { statedArea } from '../../areas.js'
 import { isDone } from '../../signoff-desk.js'
-import { SIGNOFF_DIAGNOSIS_FIELDS } from '../../store/report-shape.js'
+import { SIGNOFF_DIAGNOSIS_FIELDS, DIAGNOSIS_STATUS_KEY, normalizeDiagnosisStatus } from '../../store/report-shape.js'
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY, UNSUPPRESSED_BUCKET_KEYS } from '../../privacy.js'
 import { mountRoutes } from './register.js'
 
 const POOL_CAP = 10000
 const DISEASE_KEY = SIGNOFF_DIAGNOSIS_FIELDS[0] || 'identified_disease'
-const RESOLUTION_KEY = SIGNOFF_DIAGNOSIS_FIELDS[1] || 'recommended_resolution'
+const RESOLUTION_KEY = SIGNOFF_DIAGNOSIS_FIELDS.find(k => k !== DISEASE_KEY && k !== DIAGNOSIS_STATUS_KEY) || 'recommended_resolution'
+
+export const CONFIRMED = 'confirmed'
+
+export const SUSPECTED = 'suspected'
+
+export const RULED_OUT = 'ruled_out'
+
+export const statusOf = (report) => normalizeDiagnosisStatus(report[DIAGNOSIS_STATUS_KEY]) || CONFIRMED
 export const NO_CONCLUSION = 'Not stated'
 const RESOLUTION_KINDS = [
   ['Vaccination', /vaccin|\binent|\binspuit|entstof|immuni[sz]/i],
@@ -98,7 +106,7 @@ export function resolvedRow(c, report, resolvedSec) {
   const area = cleanLabel(statedArea(report), 60)
   const p = coords(c)
   return {
-    disease, species, region: area || 'unknown', sec: resolvedSec,
+    disease, species, region: area || 'unknown', sec: resolvedSec, status: statusOf(report),
     conclusions: conclusionKinds(report[RESOLUTION_KEY]),
     ll: p ? { lat: round2(p.lat), lon: round2(p.lon) } : null,
   }
@@ -121,9 +129,12 @@ function loadBase(store) {
 
 async function buildBase(store) {
   const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
-  const done = all.filter(c => isDone(c) && c.channel !== 'system')
+  const signedOff = all.filter(c => isDone(c) && c.channel !== 'system')
+  const at = await resolvedSeconds(store, signedOff)
+  const excluded = signedOff.filter(c => statusOf(parseReport(c)) === RULED_OUT)
+  const ruledOut = excluded.map(c => ({ sec: at.get(c.id), region: cleanLabel(statedArea(parseReport(c)), 60) || 'unknown' }))
+  const done = signedOff.filter(c => !excluded.includes(c))
   const withDx = done.filter(c => cleanLabel(parseReport(c)[DISEASE_KEY]))
-  const at = await resolvedSeconds(store, done)
   const undiagnosed = done.filter(c => !cleanLabel(parseReport(c)[DISEASE_KEY])).map(c => at.get(c.id))
   const raw = withDx.map(c => resolvedRow(c, parseReport(c), at.get(c.id))).filter(Boolean)
   for (const field of ['disease', 'species', 'region']) {
@@ -142,7 +153,7 @@ async function buildBase(store) {
     disease: (held.get(labelKey(r.disease)) || 0) < MIN_AGGREGATE_CELL ? RARE_LABEL : r.disease,
     species: (kinds.get(labelKey(r.species)) || 0) < MIN_AGGREGATE_CELL ? RARE_LABEL : r.species,
   }))
-  return { rows, undiagnosed, truncated: all.length >= POOL_CAP }
+  return { rows, undiagnosed, ruledOut, truncated: all.length >= POOL_CAP }
 }
 
 export async function loadResolved(store, { from = null, to = null } = {}) {
@@ -150,6 +161,7 @@ export async function loadResolved(store, { from = null, to = null } = {}) {
   const rows = base.rows.filter(r => (from == null || r.sec >= from) && (to == null || r.sec <= to))
   rows.truncated = base.truncated
   rows.undiagnosed = base.undiagnosed.filter(t => (from == null || t >= from) && (to == null || t <= to)).length
+  rows.ruledOut = base.ruledOut.filter(r => (from == null || r.sec >= from) && (to == null || r.sec <= to))
   return rows
 }
 
@@ -178,10 +190,13 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
   const dis = (r) => r.disease, reg = (r) => r.region, mon = (r) => periodOf(r.sec, grain)
   const cells = rollup(inRegion, [dis, reg, mon])
   const total = inRegion.length >= MIN_AGGREGATE_CELL ? inRegion.length : 0
+  const ruledOut = (rows.ruledOut || []).filter(r => !region || labelKey(r.region) === labelKey(region)).length
   return {
     k: MIN_AGGREGATE_CELL, grain, truncated: rows.truncated === true,
     total,
     by_disease: rollup(inRegion, [dis]).map(named(['disease'])),
+    by_status: rollup(inRegion, [(r) => r.status]).map(named(['status'])),
+    ruled_out: ruledOut >= MIN_AGGREGATE_CELL ? ruledOut : null,
     by_region: rollup(rows, [reg]).map(named(['region'])),
     by_month: rollup(inRegion, [mon]).map(named(['month'])),
     by_disease_month: rollup(inRegion, [dis, mon]).map(named(['disease', 'month'])),
@@ -246,6 +261,8 @@ function windowOf(req, res) {
   return { from, to }
 }
 const grainOf = (req) => (['month', 'quarter', 'year'].includes(req.query.grain) ? req.query.grain : 'month')
+const statusAsked = (req) => normalizeDiagnosisStatus(req.query.status)
+
 const asked = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 80) : null)
 
 export function getResolvedMap({ store, authed }) {
@@ -254,14 +271,16 @@ export function getResolvedMap({ store, authed }) {
     const w = windowOf(req, res); if (!w) return
     const region = asked(req.query.region)
     const species = asked(req.query.species)
+    const status = statusAsked(req)
     let rows = await loadResolved(store, w)
+    if (status) rows = rows.filter(r => r.status === status)
     if (region) rows = rows.filter(r => labelKey(r.region) === labelKey(region))
     if (species) rows = rows.filter(r => labelKey(r.species) === labelKey(species))
     const placed = rows.filter(r => r.ll)
     const cellCount = new Map()
     for (const r of placed) { const key = cellKey(r.ll); cellCount.set(key, (cellCount.get(key) || 0) + 1) }
     const points = placed.filter(r => cellCount.get(cellKey(r.ll)) >= MIN_AGGREGATE_CELL).map(r => ({
-      lat: r.ll.lat, lon: r.ll.lon, disease: r.disease, species: r.species, advice: r.conclusions, resolved_at: weekStartOf(r.sec),
+      lat: r.ll.lat, lon: r.ll.lon, disease: r.disease, species: r.species, status: r.status, advice: r.conclusions, resolved_at: weekStartOf(r.sec),
     })).sort((a, b) => a.resolved_at < b.resolved_at ? -1 : a.resolved_at > b.resolved_at ? 1 : 0)
     res.json({ k: MIN_AGGREGATE_CELL, count: points.length, withheld: placed.length - points.length, without_location: rows.length - placed.length, precision_km: 1, truncated: rows.truncated === true, points })
   }
@@ -285,13 +304,14 @@ export function getHeat({ store, authed }) {
     const advice = asked(req.query.advice)
     const region = asked(req.query.region)
     const species = asked(req.query.species)
+    const status = statusAsked(req)
     const pts = []
     let truncated = false
     if (scope === 'resolved') {
       const resolved = await loadResolved(store, w)
       truncated = resolved.truncated === true
       for (const r of resolved) {
-        if (r.ll && (!region || labelKey(r.region) === labelKey(region)) && (!disease || labelKey(r.disease) === labelKey(disease)) && (!species || labelKey(r.species) === labelKey(species)) && (!advice || r.conclusions.some(k => labelKey(k) === labelKey(advice)))) pts.push(r.ll)
+        if (r.ll && (!region || labelKey(r.region) === labelKey(region)) && (!disease || labelKey(r.disease) === labelKey(disease)) && (!species || labelKey(r.species) === labelKey(species)) && (!status || r.status === status) && (!advice || r.conclusions.some(k => labelKey(k) === labelKey(advice)))) pts.push(r.ll)
       }
     } else {
       const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
@@ -343,7 +363,8 @@ export function getAreas({ store, authed }) {
     const w = frameWindow(req, res); if (!w) return
     const region = asked(req.query.region)
     const species = asked(req.query.species)
-    const rows = (await loadResolved(store, w)).filter(r => !species || labelKey(r.species) === labelKey(species))
+    const status = statusAsked(req)
+    const rows = (await loadResolved(store, w)).filter(r => (!species || labelKey(r.species) === labelKey(species)) && (!status || r.status === status))
     const areas = areaBubbles(region ? rows.filter(r => labelKey(r.region) === labelKey(region)) : rows)
     res.json({ k: MIN_AGGREGATE_CELL, precision_km: 10, truncated: rows.truncated === true, total: areas.reduce((s, a) => s + a.count, 0), areas })
   }
@@ -361,6 +382,8 @@ export function getReportsCsv({ store, authed, csvCell }) {
     add('disease_by_period', rep.by_disease_month, ['disease', 'region', 'month'])
     add('disease_region_period', rep.cells, ['disease', 'region', 'month'])
     if (rep.trend) lines.push(...rep.trend.diseases.map(d => ['trend', csvCell(d.disease), 'all', csvCell(rep.trend.period), csvCell(d.count)].join(',')))
+    lines.push(...rep.by_status.map(c => ['status', 'all', 'all', csvCell(c.status), csvCell(c.count)].join(',')))
+    if (rep.ruled_out) lines.push(['status', 'all', 'all', csvCell(RULED_OUT), csvCell(rep.ruled_out)].join(','))
     lines.push(...rep.by_conclusion.map(c => ['conclusion', 'all', 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
     lines.push(...rep.by_disease_conclusion.map(c => ['disease_conclusion', csvCell(c.disease), 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
     const note = (text) => lines.push(['note', 'all', 'all', csvCell(text), ''].join(','))

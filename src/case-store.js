@@ -24,6 +24,8 @@ import { APPEND_FIELD_MAX_LEN, parseReportJson, mergeReportFields, fillIfEmptyRe
 import { taggedObservations } from './store/settings-log.js'
 import { parseJsonArray, foldAreas } from './store/operator-areas.js'
 import { tagList } from './timestamp.js'
+
+import { reopenedWithoutDiagnosis } from './signoff-desk.js'
 import { evData, rowInt } from './safe.js'
 
 export const AGENT_USER = { id: 'casey-agent', role: 'agent' }
@@ -1178,12 +1180,15 @@ export class CaseStore {
 
     const TRANSITION_RETRY_LIMIT = 3
     let attemptBefore = before
+    let reopened = null
     for (let attempt = 0; attempt <= TRANSITION_RETRY_LIMIT; attempt++) {
       try {
+        reopened = reopenedWithoutDiagnosis(attemptBefore, toState)
         await this.t.update('case', caseId, {
           status: toState,
           transition_reason: reason || '',
           last_event_at: nowIso(),
+          ...(reopened ? { report: JSON.stringify(reopened.report) } : {}),
         }, user, attemptBefore._version != null ? { expectedVersion: attemptBefore._version } : {})
         break
       } catch (e) {
@@ -1203,7 +1208,7 @@ export class CaseStore {
       kind: 'transition',
       actor: user.role === 'agent' ? 'agent' : 'operator',
       text: `${attemptBefore.status} -> ${toState}${reason ? ` (${reason})` : ''}`,
-      data: { from: attemptBefore.status, to: toState, by: user.id, reason },
+      data: { from: attemptBefore.status, to: toState, by: user.id, reason, ...(reopened ? { previous_diagnosis: reopened.previous } : {}) },
     })
 
     const result = await this.getCase(caseId)
