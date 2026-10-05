@@ -10,18 +10,21 @@ const DISEASE_KEY = SIGNOFF_DIAGNOSIS_FIELDS[0] || 'identified_disease'
 const RESOLUTION_KEY = SIGNOFF_DIAGNOSIS_FIELDS[1] || 'recommended_resolution'
 export const NO_CONCLUSION = 'Not stated'
 const RESOLUTION_KINDS = [
-  ['Vaccination', /vaccin|\binent|entstof|immuni[sz]/i],
-  ['Quarantine or movement control', /quarantin|\bisolat(?:e\b|ion|ing)(?! sample)|\bseparat(?:e|ing) (?:the |sick |affected )?(?:animals|herd|sick)|movement|restrict|kwarantyn|isoleer/i],
-  ['Culling or disposal', /\bcull|slaughter|destroy|dispos|\bbury|\bburn|doodmaak|\bslagting\b|\bslag (?:die|al die|dit)\b/i],
+  ['Vaccination', /vaccin|\binent|\binspuit|entstof|immuni[sz]/i],
+  ['Quarantine or movement control', /quarantin|\bisolat(?:e\b|ion|ing)(?! sample)|\bseparat(?:e|ing) (?:the |sick |affected )?(?:animals|herd|sick)|movement|restrict|beweging|kwarantyn|isoleer/i],
+  ['Culling or disposal', /\bcull|slaughter|destroy|dispos|\bbury|\bburn|doodmaak|\bbegrawe|\bverbrand|\bslagting\b|\bslag (?:die|al die|dit)\b/i],
   ['Treatment', /treat|medic|antibiotic|drug|dose|inject|\bdip(?:ping)?\b|dren[ck]|behandel/i],
-  ['Referred to a vet or lab', /\bvet(?:erinar)?|\brefer|laborator|\blab\b|sample|verwys/i],
-  ['Monitoring', /monitor|watch|follow.?up|observ|\breview|revisit|\bvolg|dophou/i],
+  ['Referred to a vet or lab', /\bvet(?:erinar)?\b|veearts|monster|\brefer|laborator|\blab\b|sample|verwys/i],
+  ['Monitoring', /monitor|watch|follow.?up|observ|\breview|revisit|\bvolg|\bopvolg|dophou/i],
 ]
 export const OTHER_CONCLUSION = 'Other advice'
 
+const NEGATED = /\b(?:no|not|without|never|don'?t|do not|geen|nie)\s+(?:\w+\s+){0,2}\w+/gi
+
 export function conclusionKinds(text) {
-  const t = String(text == null ? '' : text)
-  if (!t.trim()) return [NO_CONCLUSION]
+  const raw = String(text == null ? '' : text)
+  if (!raw.trim()) return [NO_CONCLUSION]
+  const t = raw.replace(NEGATED, ' ')
   const hit = RESOLUTION_KINDS.filter(([, re]) => re.test(t)).map(([k]) => k)
   return hit.length ? hit : [OTHER_CONCLUSION]
 }
@@ -36,7 +39,8 @@ export function cleanLabel(raw, max = 60) {
     .replace(/[^\p{L}\s'()\-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim()
 }
 
-const labelKey = (label) => label.toLowerCase()
+const labelKey = (label) => label.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
+  .replace(/[-&]/g, ' ').replace(/\band\b|\ben\b/g, ' ').replace(/\s+/g, ' ').trim()
 
 export function parseBound(v, endOfDay = false) {
   if (v == null || v === '') return null
@@ -102,7 +106,8 @@ export function resolvedRow(c, report, resolvedSec) {
 
 export const RARE_LABEL = 'Other (rare)'
 
-const BASE_TTL_MS = Number(process.env.CASEY_REPORT_CACHE_MS ?? 20000)
+const cacheMs = Number(process.env.CASEY_REPORT_CACHE_MS || 20000)
+const BASE_TTL_MS = Number.isFinite(cacheMs) && cacheMs >= 0 ? cacheMs : 20000
 const baseCache = new WeakMap()
 
 function loadBase(store) {
@@ -110,7 +115,7 @@ function loadBase(store) {
   if (hit && Date.now() - hit.at < BASE_TTL_MS) return hit.promise
   const promise = buildBase(store)
   baseCache.set(store, { at: Date.now(), promise })
-  promise.catch(() => baseCache.delete(store))
+  promise.catch(() => { if (baseCache.get(store)?.promise === promise) baseCache.delete(store) })
   return promise
 }
 
@@ -118,7 +123,8 @@ async function buildBase(store) {
   const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
   const done = all.filter(c => isDone(c) && c.channel !== 'system')
   const withDx = done.filter(c => cleanLabel(parseReport(c)[DISEASE_KEY]))
-  const at = await resolvedSeconds(store, withDx)
+  const at = await resolvedSeconds(store, done)
+  const undiagnosed = done.filter(c => !cleanLabel(parseReport(c)[DISEASE_KEY])).map(c => at.get(c.id))
   const raw = withDx.map(c => resolvedRow(c, parseReport(c), at.get(c.id))).filter(Boolean)
   for (const field of ['disease', 'species', 'region']) {
     const spellings = new Map()
@@ -136,13 +142,14 @@ async function buildBase(store) {
     disease: (held.get(labelKey(r.disease)) || 0) < MIN_AGGREGATE_CELL ? RARE_LABEL : r.disease,
     species: (kinds.get(labelKey(r.species)) || 0) < MIN_AGGREGATE_CELL ? RARE_LABEL : r.species,
   }))
-  return { rows, truncated: all.length >= POOL_CAP }
+  return { rows, undiagnosed, truncated: all.length >= POOL_CAP }
 }
 
 export async function loadResolved(store, { from = null, to = null } = {}) {
   const base = await loadBase(store)
   const rows = base.rows.filter(r => (from == null || r.sec >= from) && (to == null || r.sec <= to))
   rows.truncated = base.truncated
+  rows.undiagnosed = base.undiagnosed.filter(t => (from == null || t >= from) && (to == null || t <= to)).length
   return rows
 }
 
@@ -184,6 +191,7 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
     by_disease_conclusion: rollup(inRegion.flatMap(r => r.conclusions.map(k => ({ d: r.disease, k }))), [(r) => r.d, (r) => r.k]).map(named(['disease', 'conclusion'])),
     with_conclusion: total ? inRegion.filter(r => r.conclusions[0] !== NO_CONCLUSION).length : 0,
     cells: cells.map(named(['disease', 'region', 'month'])),
+    closed_without_diagnosis: !region && rows.undiagnosed >= MIN_AGGREGATE_CELL ? rows.undiagnosed : null,
     trend: buildTrend(inRegion, grain),
   }
 }
@@ -220,9 +228,15 @@ export function monthEndOf(sec) {
   return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - SAST_OFFSET_MS) / 1000) - 1
 }
 
+export function monthStartOf(sec) {
+  const d = new Date(sec * 1000 + SAST_OFFSET_MS)
+  return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) - SAST_OFFSET_MS) / 1000)
+}
+
 function frameWindow(req, res) {
   const w = windowOf(req, res)
   if (w && w.to != null) w.to = monthEndOf(w.to)
+  if (w && w.from != null) w.from = monthStartOf(w.from)
   return w
 }
 
@@ -349,7 +363,9 @@ export function getReportsCsv({ store, authed, csvCell }) {
     if (rep.trend) lines.push(...rep.trend.diseases.map(d => ['trend', csvCell(d.disease), 'all', csvCell(rep.trend.period), csvCell(d.count)].join(',')))
     lines.push(...rep.by_conclusion.map(c => ['conclusion', 'all', 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
     lines.push(...rep.by_disease_conclusion.map(c => ['disease_conclusion', csvCell(c.disease), 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
-    lines.push(`# Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under ${SPARSE_BUCKET_KEY}. No case-level or personal data is included.`)
+    const note = (text) => lines.push(['note', 'all', 'all', csvCell(text), ''].join(','))
+    note(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under ${SPARSE_BUCKET_KEY}. No case-level or personal data is included.`)
+    if (rep.truncated) { note('There are more reports than this export can load, so the figures leave some out.'); res.setHeader('X-Report-Truncated', '1') }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')
     res.setHeader('Content-Disposition', 'attachment; filename="resolved-cases-by-disease.csv"')
     res.send(lines.join('\n'))

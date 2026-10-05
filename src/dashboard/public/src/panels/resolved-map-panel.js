@@ -109,6 +109,15 @@ function tableAlternative(dots) {
 
 
 function Legend(ranked) {
+  const data = liveHeat() && liveHeat().data;
+  if (rm.mode === 'heat' || rm.mode === 'all') {
+    const max = data && data.cells.length ? Math.max(...data.cells.map((c) => c.count)) : 0;
+    return max ? h('p', { class: 'casey-hint' }, `Darker squares have more ${rm.mode === 'all' ? 'reports' : 'signed-off cases'}: from ${data.cells.reduce((m, c) => Math.min(m, c.count), max)} in the lightest to ${max} in the darkest. Each square is about 11 km across.`) : null;
+  }
+  if (rm.mode === 'areas') {
+    const max = data && data.areas.length ? Math.max(...data.areas.map((a) => a.count)) : 0;
+    return max ? h('p', { class: 'casey-hint' }, `Bigger bubbles have more signed-off cases: the largest area has ${max}.`) : null;
+  }
   if (rm.mode !== 'dots') return null;
   const shown = ranked.slice(0, PAL.length);
   return h('ul', { class: 'rep-legend', 'aria-label': word('legend.disease_colours') },
@@ -140,7 +149,7 @@ export function ResolvedMapPanel() {
   const canvas = h('div', { id: 'rm-canvas', key: 'rm-canvas', class: 'ds-map-canvas rep-map', role: 'region', 'aria-label': 'Map of signed-off cases', 'aria-describedby': 'rm-summary' });
   queueMicrotask(() => { const c = document.getElementById('rm-canvas'); if (c) paint(c, dots, weeks); });
 
-  const heatNote = rm.mode !== 'dots' && liveHeat() && liveHeat().error ? Alert({ kind: 'warn', children: liveHeat().error }) : null;
+  const heatNote = rm.mode !== 'dots' && liveHeat() && liveHeat().error ? Alert({ kind: 'warn', children: [liveHeat().error, ' ', Btn({ children: 'Try again', onClick: () => { rm.heat = null; schedule(); } })] }) : null;
   const total = rm.mode === 'dots' ? dots.length : (liveHeat() && liveHeat().data ? liveHeat().data.total : 0);
   const summary = rm.mode === 'dots'
     ? `${dots.length} signed-off ${dots.length === 1 ? 'case' : 'cases'} shown${until ? ', up to the week of ' + say(until) : ''}. Each dot is placed only to about 1 km, and only where at least 5 signed-off cases share the area.`
@@ -154,6 +163,7 @@ export function ResolvedMapPanel() {
     title: 'Resolved cases map',
     children: h('div', { class: 'rep-stack' },
       ReportFilters(),
+      rd.loading ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, 'Updating the map...') : null,
       FilterPills({ label: 'What the map shows', options: MODES, selected: rm.mode, onSelect: (v) => { rm.mode = v; rm.heat = null; schedule(); } }),
       rm.mode !== 'all' && speciesKinds.length > 1 ? FilterPills({ label: 'Animal', options: [{ id: '', label: 'Every animal' }, ...speciesKinds.map((k) => ({ id: k, label: k }))], selected: rm.species, onSelect: (v) => { rm.species = v; rm.heat = null; schedule(); } }) : null,
       rm.mode === 'heat' || rm.mode === 'dots' ? FilterPills({ label: 'Disease', options: [{ id: '', label: 'Every disease' }, ...ranked.slice(0, 8).map((d) => ({ id: d, label: d }))], selected: rm.disease, onSelect: (v) => { rm.disease = v; rm.heat = null; schedule(); } }) : null,
@@ -167,6 +177,6 @@ export function ResolvedMapPanel() {
         Btn({ key: 'play', variant: rm.playing ? 'primary' : 'default', children: [Icon(rm.playing ? 'pause' : 'play', { size: 15 }), rm.playing ? ' Pause' : ' Play time-lapse'], onClick: () => togglePlay(weeks), 'aria-label': rm.playing ? 'Pause the time-lapse' : 'Play the time-lapse from the first week' }),
         Slider({ key: 'sl', label: 'Show cases signed off up to ' + (until ? say(until) : 'now'), min: 0, max: weeks.length - 1, step: 1, value: rm.idx, onChange: (v) => { stop(); rm.idx = Math.round(v); schedule(); } })) : null,
       truncatedNote,
-          h('p', { id: 'rm-summary', class: 'casey-hint', 'aria-live': 'polite' }, summary + (rd.points.withheld ? ` ${rd.points.withheld} more are held back because fewer than ${rd.points.k} signed-off cases share their area.` : ''))),
+          h('p', { id: 'rm-summary', class: 'casey-hint', 'aria-live': rm.playing ? 'off' : 'polite' }, summary + (rd.points.withheld ? ` ${rd.points.withheld} more are held back because fewer than ${rd.points.k} signed-off cases share their area.` : ''))),
   });
 }
