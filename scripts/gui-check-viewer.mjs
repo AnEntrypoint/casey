@@ -9,7 +9,7 @@ import { seedResolved } from './gui-seed-resolved.mjs'
 
 const ALLOWED = [
   '/api/config', '/api/overview', '/api/whoami',
-  '/api/reports/resolved-map', '/api/reports/diseases', '/api/reports/heat', '/api/reports/export.csv',
+  '/api/reports/resolved-map', '/api/reports/diseases', '/api/reports/heat', '/api/reports/areas', '/api/reports/heat?advice=Vaccination', '/api/reports/export.csv',
   '/api/reports/resolved-map?region=Upper%20Lambasi', '/api/reports/diseases?grain=quarter', '/api/reports/heat?scope=all',
   '/api/reports/diseases?from=2026-01-01&to=2026-06-30',
 ]
