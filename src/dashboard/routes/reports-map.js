@@ -102,7 +102,19 @@ export function resolvedRow(c, report, resolvedSec) {
 
 export const RARE_LABEL = 'Other (rare)'
 
-export async function loadResolved(store, { from = null, to = null } = {}) {
+const BASE_TTL_MS = Number(process.env.CASEY_REPORT_CACHE_MS ?? 20000)
+const baseCache = new WeakMap()
+
+function loadBase(store) {
+  const hit = baseCache.get(store)
+  if (hit && Date.now() - hit.at < BASE_TTL_MS) return hit.promise
+  const promise = buildBase(store)
+  baseCache.set(store, { at: Date.now(), promise })
+  promise.catch(() => baseCache.delete(store))
+  return promise
+}
+
+async function buildBase(store) {
   const all = await store.listCases({}, { limit: POOL_CAP, offset: 0 })
   const done = all.filter(c => isDone(c) && c.channel !== 'system')
   const withDx = done.filter(c => cleanLabel(parseReport(c)[DISEASE_KEY]))
@@ -119,15 +131,18 @@ export async function loadResolved(store, { from = null, to = null } = {}) {
   }
   const held = new Map(), kinds = new Map()
   for (const r of raw) { held.set(labelKey(r.disease), (held.get(labelKey(r.disease)) || 0) + 1); kinds.set(labelKey(r.species), (kinds.get(labelKey(r.species)) || 0) + 1) }
-  const rows = []
-  for (const r of raw) {
-    if (from != null && r.sec < from) continue
-    if (to != null && r.sec > to) continue
-    if ((held.get(labelKey(r.disease)) || 0) < MIN_AGGREGATE_CELL) r.disease = RARE_LABEL
-    if ((kinds.get(labelKey(r.species)) || 0) < MIN_AGGREGATE_CELL) r.species = RARE_LABEL
-    rows.push(r)
-  }
-  rows.truncated = all.length >= POOL_CAP
+  const rows = raw.map(r => ({
+    ...r,
+    disease: (held.get(labelKey(r.disease)) || 0) < MIN_AGGREGATE_CELL ? RARE_LABEL : r.disease,
+    species: (kinds.get(labelKey(r.species)) || 0) < MIN_AGGREGATE_CELL ? RARE_LABEL : r.species,
+  }))
+  return { rows, truncated: all.length >= POOL_CAP }
+}
+
+export async function loadResolved(store, { from = null, to = null } = {}) {
+  const base = await loadBase(store)
+  const rows = base.rows.filter(r => (from == null || r.sec >= from) && (to == null || r.sec <= to))
+  rows.truncated = base.truncated
   return rows
 }
 
