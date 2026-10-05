@@ -18,7 +18,7 @@ const h = webjsx.createElement;
 const MAX_BACKUPS = 6;
 const ui = {
   editing: null,
-  form: { name: '', primary: '', backups: [], aliases: '', lat: '', lon: '', applyNow: false },
+  form: { name: '', primary: '', backups: [], aliases: '', lat: '', lon: '', district: '', applyNow: false },
   error: '', busy: false,
   people: null,
   pick: {},
@@ -41,8 +41,8 @@ function startEdit(a) {
   ui.editing = a ? a.id : 'new';
   ui.error = '';
   ui.form = a
-    ? { name: a.name, primary: canonicalKey(ui.people, a.primary.key), backups: a.backups.map((b) => canonicalKey(ui.people, b.key)), aliases: a.aliases.join(', '), lat: a.lat == null ? '' : String(a.lat), lon: a.lon == null ? '' : String(a.lon), applyNow: false }
-    : { name: '', primary: '', backups: [], aliases: '', lat: '', lon: '', applyNow: false };
+    ? { name: a.name, primary: canonicalKey(ui.people, a.primary.key), backups: a.backups.map((b) => canonicalKey(ui.people, b.key)), aliases: a.aliases.join(', '), lat: a.lat == null ? '' : String(a.lat), lon: a.lon == null ? '' : String(a.lon), district: a.district || '', applyNow: false }
+    : { name: '', primary: '', backups: [], aliases: '', lat: '', lon: '', district: '', applyNow: false };
   schedule();
   setTimeout(() => { const el = document.querySelector('[name=area-name]'); if (el) el.focus(); }, 60);
 }
@@ -55,7 +55,7 @@ async function saveArea() {
   if (!f.primary) { ui.error = 'Choose the ranger who gets new reports from this area.'; schedule(); return; }
   ui.busy = true; ui.error = ''; schedule();
   try {
-    const body = { name: f.name.trim(), primary: f.primary, backups: f.backups.filter(Boolean), aliases: splitNames(f.aliases), lat: f.lat.trim(), lon: f.lon.trim(), apply_to_unassigned: !!f.applyNow };
+    const body = { name: f.name.trim(), primary: f.primary, backups: f.backups.filter(Boolean), aliases: splitNames(f.aliases), lat: f.lat.trim(), lon: f.lon.trim(), district: f.district.trim(), apply_to_unassigned: !!f.applyNow };
     if (ui.editing && ui.editing !== 'new') body.id = ui.editing;
     const j = await putArea(body);
     const handed = j.applied && j.applied.assigned ? j.applied.assigned.length : 0;

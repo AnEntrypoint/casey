@@ -73,7 +73,7 @@ function replay(events) {
     let r
     try { r = JSON.parse(payload) } catch { continue }
     if (!r?.id) continue
-    if (r.op === 'set') areas.set(r.id, { id: r.id, name: r.name, primary: r.primary, backups: r.backups || [], aliases: r.aliases || [], lat: r.lat ?? null, lon: r.lon ?? null, updated_at: r.at, updated_by: r.by || '' })
+    if (r.op === 'set') areas.set(r.id, { id: r.id, name: r.name, primary: r.primary, backups: r.backups || [], aliases: r.aliases || [], lat: r.lat ?? null, lon: r.lon ?? null, district: r.district || '', updated_at: r.at, updated_by: r.by || '' })
     else if (r.op === 'remove') areas.delete(r.id)
   }
   return [...areas.values()]
@@ -150,7 +150,7 @@ async function normaliseInput(store, areas, input, existing) {
     if (!Number.isFinite(lat) || Math.abs(lat) > 90) throw new Error('that latitude is not a place on Earth')
     if (!Number.isFinite(lon) || Math.abs(lon) > 180) throw new Error('that longitude is not a place on Earth')
   }
-  return { name, primary, backups, aliases, lat, lon }
+  return { name, primary, backups, aliases, lat, lon, district }
 }
 
 const findArea = (areas, ref) => {

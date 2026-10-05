@@ -16,3 +16,5 @@ export const fetchDiseaseReport = (params) => json('/api/reports/diseases' + qs(
 export const fetchHeat = (params) => json('/api/reports/heat' + qs(params));
 export const fetchAreas = (params) => json('/api/reports/areas' + qs(params));
 export const exportCsvUrl = (params) => '/api/reports/export.csv' + qs(params);
+
+export const printDiseaseUrl = (params) => '/api/reports/diseases/print' + qs(params);

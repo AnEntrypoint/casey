@@ -5,7 +5,8 @@ import { Kpi, BarChart } from '/design/src/components/content/charts.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { Lede } from '/design/src/components/shell/atoms.js';
-import { rd, ensureReports, reloadReports, nice, SPARSE, GRAINS, rf } from './reports-data.js';
+import { printDiseaseUrl } from '../api-reports.js';
+import { rd, ensureReports, reloadReports, nice, SPARSE, GRAINS, rf, windowParams } from './reports-data.js';
 import { ReportFilters } from './reports-filters.js';
 const h = webjsx.createElement;
 
@@ -33,7 +34,8 @@ export function DiseaseReportsPanel() {
   const diseases = named(r.by_disease, 'disease');
   const areas = named(r.by_region, 'region').filter((x) => x.region !== 'unknown');
   const top = diseases[0];
-  const sparse = [r.by_disease, r.by_region, r.by_month].some((l) => l.some((x) => Object.values(x).includes(SPARSE)));
+  const districts = named(r.by_district || [], 'district').filter((x) => x.district !== 'unknown');
+  const sparse = [r.by_disease, r.by_region, r.by_district || [], r.by_month].some((l) => l.some((x) => Object.values(x).includes(SPARSE)));
   const grainName = (GRAINS.find((g) => g.id === rf.grain) || GRAINS[0]).label.toLowerCase();
   const empty = !r.total && !diseases.length;
   const conclusions = named(r.by_conclusion || [], 'conclusion');
@@ -45,6 +47,7 @@ export function DiseaseReportsPanel() {
     title: 'Disease reports',
     children: h('div', { class: 'rep-stack' },
       ReportFilters({ grain: true }),
+      h('p', { class: 'casey-hint' }, h('a', { href: printDiseaseUrl({ ...windowParams(), grain: rf.grain }), class: 'ds-link', target: '_blank', rel: 'noopener', 'aria-label': 'Print this report with the current filters (opens in a new tab)' }, 'Print this report')),
       Lede({ children: 'Every figure counts reports that an animal health technician has looked at and signed off with the disease they identified. Groups of fewer than ' + r.k + ' are combined so that no single report can be picked out.' }),
       r.truncated ? Alert({ kind: 'warn', children: 'There are more reports than this page can load, so the figures leave some out.' }) : null,
       rd.loading ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, 'Updating the figures...') : null,
@@ -62,6 +65,7 @@ export function DiseaseReportsPanel() {
       diseases.length ? Section({ title: 'Diseases found', children: h('div', { class: 'rep-stack' }, WordCloud(diseases), BarChart({ items: bars(diseases.slice(0, 12), 'disease') })) }) : null,
       conclusions.length ? Section({ title: 'What technicians advised at sign-off', children: [BarChart({ items: bars(conclusions, 'conclusion') }), h('p', { class: 'casey-hint' }, r.with_conclusion + ' of ' + r.total + ' signed-off cases recorded advice. Advice is grouped by the words the technician used, so one case can count under more than one heading.')] }) : null,
       areas.length ? Section({ title: 'Where they were found', children: [BarChart({ items: bars(areas.slice(0, 12), 'region') })] }) : null,
+      districts.length ? Section({ title: 'By district', children: [BarChart({ items: bars(districts.slice(0, 12), 'district') }), h('p', { class: 'casey-hint' }, 'Each district adds up the areas the team has placed in it.')] }) : null,
       r.trend && r.trend.diseases.length ? Section({ title: 'Compared with the period before (' + nice(r.trend.previous_period) + ' to ' + nice(r.trend.period) + ')', children: [Table({ headers: ['Disease', nice(r.trend.period), nice(r.trend.previous_period), 'Change'], rows: r.trend.diseases.map((x) => [nice(x.disease), String(x.count), x.previous == null ? 'fewer than ' + r.k : String(x.previous), x.change == null ? '--' : (x.change > 0 ? 'up ' : x.change < 0 ? 'down ' : 'no change ') + (x.change ? Math.abs(x.change) : '')]), striped: true, compact: true, emptyText: 'Nothing to show yet' }), h('p', { class: 'casey-hint' }, 'Only diseases with at least ' + r.k + ' cases in the latest period are listed. The earlier period is hidden when it had fewer than ' + r.k + '.')] }) : null,
       r.by_month.length ? Section({ title: 'When they were signed off ' + '(' + grainName + ')', children: [BarChart({ items: r.by_month.slice().sort((a, b) => String(a.month).localeCompare(String(b.month))).map((x) => ({ label: nice(x.month), value: x.count })) })] }) : null,
       r.by_disease_region.length ? Section({ title: 'Disease by area', children: [Table({ headers: ['Disease', 'Area', 'Cases'], rows: r.by_disease_region.slice(0, 25).map((x) => [nice(x.disease), nice(x.region), String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet' })] }) : null,
