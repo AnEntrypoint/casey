@@ -6,16 +6,17 @@ import { Slider } from '/design/src/components/slider.js';
 import { Icon } from '/design/src/components/shell.js';
 import { schedule } from '../state.js';
 import { word } from '../words.js';
-import { fetchHeat } from '../api-reports.js';
+import { fetchHeat, fetchAreas } from '../api-reports.js';
 import { rd, rf, ensureReports, reloadReports, windowParams } from './reports-data.js';
 import { ReportFilters } from './reports-filters.js';
-import { mountResolvedMap, drawDots, drawHeat, fitOnce, cssColour } from './resolved-map-leaflet.js';
+import { mountResolvedMap, drawDots, drawHeat, drawBubbles, fitOnce, cssColour } from './resolved-map-leaflet.js';
 const h = webjsx.createElement;
 
 const MODES = [
   { id: 'dots', label: 'Each signed-off case' },
   { id: 'heat', label: 'Heat map of signed-off cases' },
   { id: 'all', label: 'Heat map of all reports' },
+  { id: 'areas', label: 'Cases by area' },
 ];
 const PAL = ['--sky', '--flame', '--purple-2', '--green', '--amber', '--danger'];
 const OTHER = '--fg-3';
@@ -58,7 +59,7 @@ function ensureHeat(untilIso) {
   const w = windowParams();
   const p = { from: w.from, to: untilIso };
   if (rm.mode === 'all') p.scope = 'all'; else { p.scope = 'resolved'; if (rm.disease) p.disease = rm.disease; if (rm.advice) p.advice = rm.advice; }
-  fetchHeat(p)
+  (rm.mode === 'areas' ? fetchAreas({ from: w.from, to: untilIso }) : fetchHeat(p))
     .then((data) => { rm.heat = { key, data, error: '' }; })
     .catch(() => { rm.heat = { key, data: null, error: 'Could not load the heat map.' }; })
     .finally(() => { rm.heatBusy = false; schedule(); });
@@ -73,6 +74,9 @@ function paint(canvas, dots, weeks) {
   if (rm.mode === 'dots') {
     drawDots(rm.drv, dots, colourFor);
     fitOnce(rm.drv, fitKey, rd.points.points);
+  } else if (rm.mode === 'areas' && rm.heat && rm.heat.data) {
+    drawBubbles(rm.drv, rm.heat.data.areas, cssColour(canvas, '--sky'));
+    fitOnce(rm.drv, fitKey, rm.heat.data.areas);
   } else if (rm.heat && rm.heat.data) {
     drawHeat(rm.drv, rm.heat.data.cells, rm.heat.data.cell_deg, cssColour(canvas, '--flame'));
     fitOnce(rm.drv, fitKey, rm.heat.data.cells);
@@ -110,7 +114,9 @@ export function ResolvedMapPanel() {
   const total = rm.mode === 'dots' ? dots.length : (rm.heat && rm.heat.data ? rm.heat.data.total : 0);
   const summary = rm.mode === 'dots'
     ? `${dots.length} signed-off ${dots.length === 1 ? 'case' : 'cases'} shown${until ? ', up to the week of ' + say(until) : ''}. Each dot is placed only to about 1 km.`
-    : `Heat map: ${total} ${rm.mode === 'all' ? 'reports' : 'signed-off cases'} in areas with at least 5, up to ${untilEnd ? say(untilEnd) : 'now'}. Areas with fewer than 5 are not shown.`;
+    : rm.mode === 'areas'
+      ? `${total} signed-off cases in ${rm.heat && rm.heat.data ? rm.heat.data.areas.length : 0} named areas with at least 5, up to ${untilEnd ? say(untilEnd) : 'now'}. A bubble sits near the middle of an area's cases, rounded to about 10 km, and its size shows how many.`
+      : `Heat map: ${total} ${rm.mode === 'all' ? 'reports' : 'signed-off cases'} in areas with at least 5, up to ${untilEnd ? say(untilEnd) : 'now'}. Areas with fewer than 5 are not shown.`;
   const noDots = !all.length ? Alert({ kind: 'info', children: 'No signed-off case with a place on the map yet in this period. A case appears here once an animal health technician has signed it off with the disease they identified.' }) : null;
 
   return Panel({
@@ -119,7 +125,7 @@ export function ResolvedMapPanel() {
       ReportFilters(),
       FilterPills({ label: 'What the map shows', options: MODES, selected: rm.mode, onSelect: (v) => { rm.mode = v; rm.heat = null; schedule(); } }),
       rm.mode === 'heat' || rm.mode === 'dots' ? FilterPills({ label: 'Disease', options: [{ id: '', label: 'Every disease' }, ...ranked.slice(0, 8).map((d) => ({ id: d, label: d }))], selected: rm.disease, onSelect: (v) => { rm.disease = v; rm.heat = null; schedule(); } }) : null,
-      rm.mode !== 'all' && adviceKinds.length ? FilterPills({ label: 'Technician advice', options: [{ id: '', label: 'Any advice' }, ...adviceKinds.map((k) => ({ id: k, label: k }))], selected: rm.advice, onSelect: (v) => { rm.advice = v; rm.heat = null; schedule(); } }) : null,
+      (rm.mode === 'dots' || rm.mode === 'heat') && adviceKinds.length ? FilterPills({ label: 'Technician advice', options: [{ id: '', label: 'Any advice' }, ...adviceKinds.map((k) => ({ id: k, label: k }))], selected: rm.advice, onSelect: (v) => { rm.advice = v; rm.heat = null; schedule(); } }) : null,
       noDots,
       heatNote,
       canvas,

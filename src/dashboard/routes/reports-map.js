@@ -239,6 +239,31 @@ export function getHeat({ store, authed }) {
   }
 }
 
+export function areaBubbles(rows, k = MIN_AGGREGATE_CELL) {
+  const groups = new Map()
+  for (const r of rows) {
+    if (!r.ll || r.region === 'unknown') continue
+    const g = groups.get(labelKey(r.region)) || { region: r.region, count: 0, lat: 0, lon: 0, diseases: new Map() }
+    g.count++; g.lat += r.ll.lat; g.lon += r.ll.lon
+    g.diseases.set(r.disease, (g.diseases.get(r.disease) || 0) + 1)
+    groups.set(labelKey(r.region), g)
+  }
+  return [...groups.values()].filter(g => g.count >= k).map(g => ({
+    region: g.region, count: g.count,
+    lat: Math.round(g.lat / g.count * 10) / 10, lon: Math.round(g.lon / g.count * 10) / 10,
+    top_disease: [...g.diseases.entries()].filter(([, n]) => n >= k).sort((a, b) => b[1] - a[1])[0]?.[0] || null,
+  })).sort((a, b) => b.count - a.count)
+}
+
+export function getAreas({ store, authed }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const w = windowOf(req, res); if (!w) return
+    const areas = areaBubbles(await loadResolved(store, w))
+    res.json({ k: MIN_AGGREGATE_CELL, precision_km: 10, total: areas.reduce((s, a) => s + a.count, 0), areas })
+  }
+}
+
 export function getReportsCsv({ store, authed, csvCell }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -263,6 +288,7 @@ const ROUTES = [
   ['get', '/api/reports/resolved-map', getResolvedMap],
   ['get', '/api/reports/diseases', getDiseases],
   ['get', '/api/reports/heat', getHeat],
+  ['get', '/api/reports/areas', getAreas],
   ['get', '/api/reports/export.csv', getReportsCsv],
 ]
 

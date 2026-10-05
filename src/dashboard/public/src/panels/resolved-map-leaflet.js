@@ -48,6 +48,17 @@ export function drawHeat(drv, cells, cellDeg, colour) {
     }
 }
 
+export function drawBubbles(drv, areas, colour) {
+    drv.layer.clearLayers();
+    const max = areas.reduce((m, a) => Math.max(m, a.count), 1);
+    for (const a of areas) {
+        L().circleMarker([a.lat, a.lon], {
+            radius: 8 + 28 * Math.sqrt(a.count / max), weight: 2, color: colour, fillColor: colour, fillOpacity: 0.35,
+        }).bindTooltip(`${a.region}: ${a.count} signed-off ${a.count === 1 ? 'case' : 'cases'}${a.top_disease ? ', mostly ' + a.top_disease : ''}`).addTo(drv.layer);
+    }
+}
+
+
 export function fitOnce(drv, fitKey, points) {
     if (drv.fitted === fitKey || !points.length) return;
     drv.fitted = fitKey;
