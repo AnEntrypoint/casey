@@ -33,7 +33,7 @@ export function drawDots(drv, dots, colourFor) {
     for (const p of dots) {
         L().circleMarker([p.lat, p.lon], {
             radius: 6, weight: 1, color: colourFor(p.disease), fillColor: colourFor(p.disease), fillOpacity: 0.75,
-        }).bindTooltip(`${p.disease} - ${p.species} - week of ${p.resolved_at}`).addTo(drv.layer);
+        }).bindTooltip(`${p.disease} - ${p.species}${p.advice && p.advice[0] !== 'Not stated' ? ' - advice: ' + p.advice.join(', ') : ''} - week of ${p.resolved_at}`).addTo(drv.layer);
     }
 }
 
