@@ -14,4 +14,5 @@ function qs(params) {
 export const fetchResolvedMap = (params) => json('/api/reports/resolved-map' + qs(params));
 export const fetchDiseaseReport = (params) => json('/api/reports/diseases' + qs(params));
 export const fetchHeat = (params) => json('/api/reports/heat' + qs(params));
+export const fetchAreas = (params) => json('/api/reports/areas' + qs(params));
 export const exportCsvUrl = (params) => '/api/reports/export.csv' + qs(params);

@@ -163,6 +163,8 @@ export async function runViewerChecks(c) {
   check(cells.length > 10 && under.every((x) => x.region === 'unknown' && Object.keys(x).length === 2), `every released group has at least ${dis.k} cases (only the by-area "area not stated" line may be smaller)`, `${cells.length} groups; under the floor: ${JSON.stringify(under)}`)
   const kinds = new Set(['Vaccination', 'Quarantine or movement control', 'Culling or disposal', 'Treatment', 'Referred to a vet or lab', 'Monitoring', 'Other advice', 'Not stated'])
   check(dis.by_conclusion.length > 2 && map.points.every((p) => p.advice.every((k) => kinds.has(k))) && dis.by_conclusion.every((x) => kinds.has(x.conclusion) || x.conclusion === 'other/sparse'), 'technician advice is released only as a fixed set of kinds, never the typed words', dis.by_conclusion.map((x) => x.conclusion + ':' + x.count).join(', '))
+  const areasRes = JSON.parse(await (await fetch(`http://127.0.0.1:${PORT}/api/reports/areas`, { headers: { cookie } })).text())
+  check(areasRes.areas.length > 2 && areasRes.areas.every((a) => a.count >= areasRes.k && Math.abs(a.lat * 10 - Math.round(a.lat * 10)) < 1e-6 && !/\d{5,}/.test(a.region)), 'the by-area map releases only named areas with enough cases, placed to about 10 km', areasRes.areas.map((a) => a.region + ':' + a.count).join(', '))
   const heat = JSON.parse(payloads.find(([p]) => p === '/api/reports/heat')[1])
   check(heat.cells.length > 3 && heat.cells.every((x) => x.count >= heat.k), 'every heat cell holds at least the floor of cases', `${heat.cells.length} cells`)
   const csv = payloads.find(([p]) => p === '/api/reports/export.csv')[1]
