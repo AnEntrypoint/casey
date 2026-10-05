@@ -5,6 +5,7 @@ import { rankAttention } from '../src/attn.js'
 import { parseReport, tsMs } from '../src/timestamp.js'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
+import { writeFileSync, mkdirSync } from 'node:fs'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
 async function openStore() {
@@ -569,4 +570,27 @@ export async function cmdOperators({ flags, rest }) {
   if (sub) say(bad(`casey operators has no "${sub}" subcommand.`))
   say('usage: casey operators <add|list|disable|enable> ...')
   await closeAndExit(store, 1)
+}
+
+
+export async function cmdReportDigest({ flags }) {
+  const { buildDigest, lastCompletedMonth, postDigest } = await import('../src/report-digest.js')
+  const month = flags.month === undefined ? lastCompletedMonth() : flags.month
+  const webhook = process.env.CASEY_ALERT_WEBHOOK
+  if (flags.post && !webhook) { say(bad('--post needs CASEY_ALERT_WEBHOOK to be set.')); process.exit(1) }
+  const store = await openStore()
+  let digest
+  try { digest = await buildDigest(store, month) } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
+  const csvPath = typeof flags.out === 'string' ? flags.out : `casey-digest-${digest.month}.csv`
+  const textPath = csvPath.replace(/\.csv$/i, '') + '.txt'
+  mkdirSync(path.dirname(csvPath), { recursive: true })
+  writeFileSync(csvPath, digest.csv)
+  writeFileSync(textPath, digest.text + '\n')
+  console.log(digest.text)
+  say(dim(`wrote ${csvPath} and ${textPath}`))
+  if (flags.post) {
+    try { await postDigest(webhook, digest.text); say(green('posted to CASEY_ALERT_WEBHOOK.')) }
+    catch (e) { say(bad(`post failed: ${e.message}`)); await closeAndExit(store, 1) }
+  }
+  await closeAndExit(store, 0)
 }

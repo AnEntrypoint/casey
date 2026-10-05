@@ -93,6 +93,7 @@ Four independent layers; all four must agree on an outer bound. Every live turn 
 - `case-store.js` is the single chokepoint over thatcher; open-case lookup uses a `status:{$in:openStages}` ALLOWLIST, never `$ne:'closed'`. `retention.js` is OFF unless `CASEY_RETENTION_DAYS` is set, defaults ARCHIVE, frees no sqlite bytes (soft-delete).
 - Resume vs drain (`casey-resume*.js`, `casey-drain.js`): a crash's half-done turn vs an outage's unstarted one -- DO NOT merge.
 - `case-machine.js`/`supervisor-machine.js` are PURE xstate TRANSITION-VALIDATION authorities (no actors). `CASEY_CRASH_LIMIT` has no "off" (non-positive -> 5).
+- `report-digest.js` (`casey report-digest`) builds the monthly aggregate CSV and text from `reports-map.js` exports only (k-floored); `--post` goes solely to `CASEY_ALERT_WEBHOOK` (operator endpoint, never a contact).
 - `privacy.js` is the ONE k-anonymity floor; `format.js` MARKS (never strips) bidi/invisible chars; `log-scrub.js` redacts secrets from stdout/stderr; `llm-data-policy.js` (default `zdr`) drops providers without a no-training guarantee.
 -> recall {query:"casey top-level modules case-store eraseContact retention resume drain xstate privacy busy-retry"}
 
