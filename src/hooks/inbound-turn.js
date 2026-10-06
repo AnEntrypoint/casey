@@ -20,7 +20,7 @@ import { caseDeliveryTarget } from './handler.js'
 import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
 import { tryRegisterByCode } from './role-registration.js'
 import { parseReport, tagList } from '../timestamp.js'
-import { controlRegistered } from './turn-results.js'
+import { controlRegistered, offeredChoices } from './turn-results.js'
 import { speakerState, noteAsked } from '../phone-persons.js'
 import { consentManaged, consentState } from '../phone-consent.js'
 import { noteReturn } from '../return-clarify.js'
@@ -40,7 +40,7 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
   const opened = await openCaseForInbound({ store, log, msg, channel, external_id, replyTo, platform })
   if (opened.done) return opened.done
   const { caseRow, created, inboundText, media, msgId } = opened
-  const { promptNote = '', ingressRecorded = false } = (await applyInboundSideEffects({ store, log, caseRow, created, msg, channel, inboundText, media })) || {}
+  const { promptNote = '', ingressRecorded = false, inboundChoices = null } = (await applyInboundSideEffects({ store, log, caseRow, created, msg, channel, inboundText, media })) || {}
   if (!autoRespond) return { to: replyTo, text: '', platform, caseId: caseRow.id }
 
   let fresh
@@ -75,17 +75,19 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
       canSend: (ch) => !!resolveAdapter(receiver, ch)?.send,
       sendImage: (caseRow, image) => resolveAdapter(receiver, caseRow.channel).sendImage({ to: caseDeliveryTarget(caseRow), ...image }),
       canSendImage: (ch) => typeof resolveAdapter(receiver, ch)?.sendImage === 'function',
+      sendLocation: (caseRow, location) => resolveAdapter(receiver, caseRow.channel).sendLocation({ to: caseDeliveryTarget(caseRow), ...location }),
+      canSendLocation: (ch) => typeof resolveAdapter(receiver, ch)?.sendLocation === 'function',
     }
     : null
   return await driveAgentTurn(deps, {
     adapter, fresh, contact, events, prompt, inboundText, media,
-    msg, msgId, channel, external_id, replyTo, platform, staffSend, ingressRecorded,
+    msg, msgId, channel, external_id, replyTo, platform, staffSend, ingressRecorded, inboundChoices,
   })
 }
 
 async function driveAgentTurn(deps, {
   adapter, fresh, contact, events, prompt, inboundText, media,
-  msg, msgId, channel, external_id, replyTo, platform, staffSend = null, ingressRecorded = false,
+  msg, msgId, channel, external_id, replyTo, platform, staffSend = null, ingressRecorded = false, inboundChoices = null,
 }) {
   const { store, log, callLLM, notifyHandoff } = deps
 
@@ -221,7 +223,9 @@ async function driveAgentTurn(deps, {
       else { notice = null; await store.appendEvent(fresh.id, observation('NOTICE-NOT-COMPOSED: the first-contact notice could not be composed; it is still owed')).catch(() => {}) }
     }
   }
-  const { reply, delivered } = await sendAgentReply({ store, log, adapter, fresh, channel, replyTo, platform, text, isFallback, degraded })
+  const staffTier = atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)
+  const offered = staffTier ? (offeredChoices(result) || turn.preChoices || inboundChoices) : null
+  const { reply, delivered } = await sendAgentReply({ store, log, adapter, fresh, channel, replyTo, platform, text, isFallback, degraded, offered })
 
   if (delivered && notice) {
     try { await recordNoticeShown(store, fresh.id, notice) }

@@ -15,6 +15,7 @@ export function describeMedia(msg) {
   if (Array.isArray(r.attachments) && r.attachments.length) return `${r.attachments.length} attachment(s)`
 
   if (msg.location) return 'a location pin'
+  if (r.type === 'interactive') return ''
   if (r.type && r.type !== 'text') return `${/^[aeiou]/i.test(r.type) ? 'an' : 'a'} ${r.type} message`
   if (r.image) return 'an image'
   if (r.audio) return 'an audio message'

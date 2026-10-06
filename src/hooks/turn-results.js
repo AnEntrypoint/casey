@@ -1,6 +1,7 @@
 
 
 import { CASE_REF_RE } from './heuristics.js'
+import { offeredFromResult } from '../choices.js'
 
 const MUTATING_TOOLS = new Set(['case_new', 'case_report', 'case_update', 'case_transition', 'case_switch', 'case_speaker'])
 
@@ -86,4 +87,11 @@ export function touchedRefs(result) {
     if (typeof ref === 'string' && !refs.includes(ref)) refs.push(ref)
   }
   return refs
+}
+
+
+export function offeredChoices(result) {
+  let last = null
+  for (const entry of toolResults(result)) last = entry
+  return last ? offeredFromResult(last.name, last.parsed) : null
 }

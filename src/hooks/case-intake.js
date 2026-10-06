@@ -6,13 +6,15 @@ import { describeMedia, recordInboundMedia, recordInboundLocation, transcribeInb
 import { voiceNote, voiceFailureNote } from '../stt/readback.js'
 import { googleSttConfig } from '../stt/config.js'
 import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
-import { routeStaffArtifact, recordRelayedLocationPin, noteRoute } from './media-relay.js'
+import { routeStaffArtifact, recordRelayedLocationPin, noteRoute, routeChoices } from './media-relay.js'
 import { staffLabel } from './staff-outbound.js'
 import { truncate, stripChannelMarkup, mergeTag, dropTag } from './heuristics.js'
 import { isContactAssignee } from '../case-assignment.js'
 import { recordDroppedInbound } from './dropped-intake.js'
 import { tagList } from '../timestamp.js'
 import { stampReporter } from '../phone-persons.js'
+import { tapNote } from '../choices.js'
+import { isBarePin, answerBarePin } from '../pin-query.js'
 import { resolveTierValue, TIER_REPORTER } from '../contact-tiers.js'
 
 export function messageId(msg) {
@@ -99,8 +101,12 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
     } catch (e) { log.warn?.('[casey] draft supersede failed', { caseId: caseRow.id, error: e.message }) }
   }
 
-  const route = await routeStaffArtifact({ store, log, caseRow, msg, inboundText, msgId: messageId(msg) })
-  let promptNote = route ? await noteRoute({ store, log, caseRow, route, msg }) : ''
+  const barePin = isBarePin(msg, inboundText)
+  let route = await routeStaffArtifact({ store, log, caseRow, msg, inboundText, msgId: messageId(msg) })
+  if (barePin && route?.mode !== 'relay') route = null
+  let promptNote = route ? await noteRoute({ store, log, caseRow, route, msg, barePin }) : ''
+  promptNote += await tapNote(store, caseRow.contact_id, msg)
+  let inboundChoices = routeChoices(route)
   const tr = msg._transcript
   if (tr?.text) {
     const staff = await isTeamSender(store, caseRow)
@@ -116,7 +122,11 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   }
 
   if (route?.mode !== 'relay') promptNote += (await recordInboundLocation({ store, log, caseId: caseRow.id, msg })) || ''
-  if (!created) return { promptNote, ingressRecorded }
+  if (barePin) {
+    const answered = await answerBarePin({ store, log, caseRow, msg })
+    if (answered) { promptNote += answered.promptNote; inboundChoices = answered.choices }
+  }
+  if (!created) return { promptNote, ingressRecorded, inboundChoices }
   if (!caseRow.subject) {
     const subj = truncate(inboundText || media || 'New conversation', 80)
     try { await store.updateCase(caseRow.id, { subject: subj }) } catch (e) { log.warn?.('[casey] seed subject failed', { error: e.message }) }
@@ -134,7 +144,7 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
     try { await stampReporter(store, caseRow.contact_id, caseRow.id) }
     catch (e) { log.warn?.('[casey] reporter stamp failed', { caseId: caseRow.id, error: e.message }) }
   }
-  return { promptNote, ingressRecorded }
+  return { promptNote, ingressRecorded, inboundChoices }
 }
 
 export async function applyPreTurnControls({ store, log, llmStatus, notifyHandoff, fresh, inboundText, channel, msg, replyTo, platform }) {

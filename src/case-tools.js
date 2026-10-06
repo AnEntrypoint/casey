@@ -21,6 +21,7 @@ import { buildClarifyTools } from './case-tools-clarify.js'
 import { buildVisitTools, withReadback } from './case-tools-visit.js'
 import { buildRelayTools } from './case-tools-relay.js'
 import { buildLanguageTools } from './case-tools-language.js'
+import { buildNavigateTools } from './case-tools-navigate.js'
 import { shownCase } from './stale-write-guard.js'
 
 const SHOWS_A_CASE = new Set(['case_get', 'case_search'])
@@ -49,6 +50,7 @@ export function buildCaseToolset(storeOrNull) {
     ...buildClarifyTools(store),
     ...buildRelayTools(store),
     ...buildLanguageTools(store),
+    ...buildNavigateTools(store),
   ]
   const edit = withReadback(tools.find(t => t.name === 'case_edit'))
   const withEdit = tools.map(t => (t.name === 'case_edit' ? edit : t))

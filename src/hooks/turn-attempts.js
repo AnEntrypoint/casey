@@ -17,6 +17,7 @@ import { deskAuthorityOn } from '../case-tools-team-shared.js'
 import { composeAdviceRefusal } from '../advice-refusal.js'
 import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs, controlRegistered } from './turn-results.js'
 import { staffNoticeNote } from '../staff-notices.js'
+import { confirmRecordChoices } from '../choices.js'
 import { refsIn, setFocus, focusOf, proposeFocus, confusableHeldRefs, identifyingLine } from '../team-focus.js'
 import { messageId } from './case-intake.js'
 import { buildCaseToolset, hiddenToolNamesForTier } from '../case-tools.js'
@@ -108,6 +109,8 @@ export function buildTurnRequest({
       canSend: staffSend?.canSend || null,
       sendImage: staffSend?.sendImage || null,
       canSendImage: staffSend?.canSendImage || null,
+      sendLocation: staffSend?.sendLocation || null,
+      canSendLocation: staffSend?.canSendLocation || null,
 
       inboundRefs,
       turnId,
@@ -421,6 +424,7 @@ export async function runAgentTurn({
   const inboundRefs = refsIn(inboundText)
   const turnId = String(messageId(msg) || '')
   const confirmRefs = []
+  let preChoices = null
 
   if (canQueryCases(resolvedTier) && contact?.id && inboundRefs.length === 1) {
     try {
@@ -431,6 +435,7 @@ export async function runAgentTurn({
         if (lookalikes.length) {
           confirmRefs.push(String(named.ref).toUpperCase())
           await proposeFocus(store, contact.id, named, turnId)
+          preChoices = confirmRecordChoices(named.ref)
           prompt += `\n\n[System note: they typed ${named.ref} (${identifyingLine(named)}), which differs by one character from ${lookalikes.join(', ')} that they also hold. Nothing is recorded on it yet: say that record and what it is, ask "Is this the one?" as the last thing in your reply, and only after their yes in their NEXT message call case_focus with it and confirm true.]`
         } else await setFocus(store, contact.id, named)
       }
@@ -534,5 +539,5 @@ export async function runAgentTurn({
     break
   }
 
-  return { result, text, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason, activeCase: turnBinding, speakerAtStart }
+  return { result, text, errored, jargonReasons, falseConfirmReasons, adviceReasons, degradedReason, activeCase: turnBinding, speakerAtStart, preChoices }
 }

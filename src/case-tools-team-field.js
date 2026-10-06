@@ -19,6 +19,7 @@ import {
   missingMandatoryMinimum, fieldLabel, SIGNOFF_DIAGNOSIS_FIELDS,
 } from './store/report-shape.js'
 import { UNCLAIMED_ASSIGNEE } from './case-store.js'
+import { candidateChoices } from './choices.js'
 import { APPEND_FIELD_MAX_LEN } from './store/report-merge.js'
 import { signOffCandidates } from './case-tools-team-review.js'
 import { pinConfidence } from './pin-confidence.js'
@@ -172,7 +173,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           const f = me?.id ? await focusOf(store(), me.id) : null
           const cur = f ? await store().getCase(f.caseId) : null
           const list = await mine()
-          return { current: cur && isAssignedTo(cur, me) ? await recordedOn(store(), cur, ctx) : null, assigned: list.slice(0, 15).map(line) }
+          return { current: cur && isAssignedTo(cur, me) ? await recordedOn(store(), cur, ctx) : null, assigned: list.slice(0, 15).map(line), ...(list.length > 1 ? candidateChoices(list.map(line)) : {}) }
         }
         const q = String(query).trim()
         const exact = refsIn(q)[0]
@@ -181,7 +182,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           const c = await findCase(store(), exact)
           if (!c || !deskAuthorityOn(ctx, c)) {
             const near = (await mine()).filter(c2 => withinOneEdit(c2.ref.toUpperCase(), exact)).map(line)
-            return near.length ? { error: `No assigned record has exactly that reference. Did they mean one of these? Ask, do not guess.`, candidates: near } : NOT_ASSIGNED
+            return near.length ? { error: `No assigned record has exactly that reference. Did they mean one of these? Ask, do not guess.`, candidates: near, ...candidateChoices(near) } : NOT_ASSIGNED
           }
           target = c
         } else {
@@ -189,7 +190,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           const hits = (await mine()).filter(c => { const hay = `${identifyingLine(c)} ${c.subject || ''}`.toLowerCase(); return words.length && words.every(w => hay.includes(w)) })
           if (hits.length !== 1) {
             const list = hits.length ? hits : (await mine())
-            return { error: hits.length ? 'More than one assigned record fits. Ask which one, listing them by reference and what they are.' : 'No assigned record fits that. Ask them for the reference, or which of these they mean.', candidates: list.slice(0, 15).map(line) }
+            return { error: hits.length ? 'More than one assigned record fits. Ask which one, listing them by reference and what they are.' : 'No assigned record fits that. Ask them for the reference, or which of these they mean.', candidates: list.slice(0, 15).map(line), ...(list.length > 1 ? candidateChoices(list.map(line)) : {}) }
           }
           target = hits[0]
         }

@@ -123,3 +123,17 @@ form:
   group_critical: "Needed before a team can visit"
   group_other: "More detail"
   other_write_label: "If Other, write it here"
+
+choice:
+  answer_yes: "Yes"
+  answer_no: "No"
+  more: "More"
+  accept: "Accept"
+  decline: "Decline"
+  navigate: "Navigate"
+  confirmed: "Confirmed"
+  suspected: "Suspected"
+  ruled_out: "Ruled out"
+  same: "Same one"
+  not_same: "Not the same"
+  choose: "Choose"

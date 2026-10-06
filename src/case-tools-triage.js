@@ -6,6 +6,7 @@ import {
   defTool, str, ownsCase, slimCase, OBSERVE_TEXT_MAX_LEN,
 } from './case-tools-shared.js'
 import { canQueryCases } from './contact-tiers.js'
+import { sameSituationChoices } from './choices.js'
 
 export function buildTriageTools(store) {
   return [
@@ -35,7 +36,7 @@ export function buildTriageTools(store) {
           .filter(o => o.id !== id && o.status !== 'closed' && !tagList(o).includes('merged'))
 
         const suggestions = suggestLinks(c, pool).slice(0, limit)
-        return { count: suggestions.length, suggestions }
+        return { count: suggestions.length, suggestions, ...(suggestions[0]?.ref && canQueryCases(ctx?.tier) ? sameSituationChoices(c.ref, suggestions[0].ref) : {}) }
       }),
 
     defTool('case_split', 'cases',

@@ -10,6 +10,7 @@ import { refsIn, writeGate, focusOf, proposeFocus, identifyingLine } from '../te
 import { isOpenCase } from '../format.js'
 import { isValidLatLon } from '../case-tools-shared.js'
 import { toStorable } from '../store/guards.js'
+import { confirmRecordChoices, candidateChoices } from '../choices.js'
 
 const eligible = (c, contact) => !!c && isOpenCase(c) && isAssignedTo(c, contact) && !isOwnConversation(c, contact)
 
@@ -72,12 +73,19 @@ export async function recordRelayedLocationPin({ store, log, route, msg }) {
   } catch (e) { log.warn?.('[casey] ranger location pin failed', { caseId: target.id, error: e.message }) }
 }
 
-export async function noteRoute({ store, log, caseRow, route, msg }) {
+export function routeChoices(route) {
+  if (route?.mode !== 'ask' || !route.candidates?.length) return null
+  if (route.candidates.length === 1) return confirmRecordChoices(route.candidates[0].ref)
+  return candidateChoices(route.candidates.map(c => ({ ref: c.ref, what: identifyingLine(c) })))
+}
+
+
+export async function noteRoute({ store, log, caseRow, route, msg, barePin = false }) {
   const what = whatArrived(msg)
   let text
   if (route.mode === 'relay') {
     text = `MEDIA FILED ON ${cand(route.target)}: ${what} they just sent was recorded on that record on the reporter's behalf, not on this chat. In your reply name that reference and what it is, and confirm what was saved.`
-    if (msg.location) text += ` The pin was recorded as THEIR OWN position (the record's own position is unchanged). Ask if that pin is also where the animals are; only if they say yes, record it with case_edit using EXACTLY lat ${msg.location.lat}, lon ${msg.location.lon} and location_source gps (never a position guessed from a place name).`
+    if (msg.location && !barePin) text += ` The pin was recorded as THEIR OWN position (the record's own position is unchanged). Ask if that pin is also where the animals are; only if they say yes, record it with case_edit using EXACTLY lat ${msg.location.lat}, lon ${msg.location.lon} and location_source gps (never a position guessed from a place name).`
   } else {
     const list = route.candidates.map(cand).join('; ')
     text = `MEDIA NOT FILED ON A TEAM RECORD: ${what} they just sent stayed on this chat only. ${route.reason} Candidate${route.candidates.length > 1 ? 's' : ''}: ${list}${route.more > 0 ? ` (and ${route.more} more)` : ''}. Never say it was saved, filed or received on a record: say plainly that it is NOT on the record yet. Ask which record it belongs to, naming the candidate, as the last thing in your reply; do not guess. Only after they answer yes in their NEXT message call case_focus with that record and confirm set to true; nothing already sent is moved automatically, so it must be sent again after they confirm (an operator can also move it).`

@@ -1,6 +1,7 @@
 import { clientIp, webhookBlocked, recordWebhookFailure } from '../webhook-failure-limit.js'
 import crypto from 'node:crypto'
 import { splitForWhatsapp } from './whatsapp-chunks.js'
+import { KIND_BUTTONS, MODE_TEXT, INTERACTIVE_BODY_MAX, LIST_BUTTON_MAX, choiceLabel } from '../choices.js'
 import { EventEmitter } from 'node:events'
 import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMedia, verifyWebhookOr401 } from './webhook-platform-base.js'
 
@@ -136,7 +137,7 @@ export class WhatsappAdapter extends EventEmitter {
       'WhatsappAdapter',
     )
     const id = body.messages[0].id
-    this.recentSends.set(id, { to, text: payload.text?.body || '', at: Date.now() })
+    this.recentSends.set(id, { to, text: payload.text?.body || payload.interactive?.body?.text || '', at: Date.now() })
     if (this.recentSends.size > 500) this.recentSends.delete(this.recentSends.keys().next().value)
     return id
   }
@@ -156,11 +157,16 @@ export class WhatsappAdapter extends EventEmitter {
     if (!this.token) throw new Error('WhatsappAdapter: token required')
     const a = reply.audio
     const hasAudio = !!(a && (a.link || a.data_base64))
-    const parts = (!hasAudio || reply.text ? splitForWhatsapp(reply.text).map(t => async () => ({ text: { body: t } })) : [])
+    const interactive = reply.choices && reply.choices.mode !== MODE_TEXT ? reply.choices : null
+    const oneMessage = !!interactive && !hasAudio && reply.text.length <= INTERACTIVE_BODY_MAX
+    const spokenText = interactive && !oneMessage && !hasAudio ? reply.text.slice(0, reply.text.length - interactive.fallback.length).trim() : reply.text
+    const parts = oneMessage ? [] : (!hasAudio || spokenText ? splitForWhatsapp(spokenText).map(t => async () => ({ text: { body: t } })) : [])
+    if (oneMessage) parts.push(async () => interactivePayload(reply.text, interactive))
+    else if (interactive && !hasAudio) parts.push(async () => interactivePayload(interactive.fallback, interactive))
     if (hasAudio) {
       parts.push(async () => ({ type: 'audio', audio: a.link ? { link: a.link } : { id: await this._uploadMedia(Buffer.from(a.data_base64, 'base64'), a.mime || 'audio/ogg') } }))
     }
-    const key = crypto.createHash('sha1').update(`${reply.to}\0${reply.text || ''}\0${hasAudio ? 'audio' : ''}`).digest('hex')
+    const key = crypto.createHash('sha1').update(`${reply.to}\0${reply.text || ''}\0${hasAudio ? 'audio' : ''}\0${interactive ? interactive.items.map(i => i.id).join(',') : ''}`).digest('hex')
     const state = this._partialFor(key, Date.now())
     for (let i = state.delivered; i < parts.length; i++) {
       try {
@@ -177,6 +183,13 @@ export class WhatsappAdapter extends EventEmitter {
     return { messages: [{ id: state.wamids[0] }], wamids: state.wamids, parts: parts.length }
   }
 
+  async sendLocation({ to, lat, lon, name = '', address = '' }) {
+    if (!this.token) throw new Error('WhatsappAdapter: token required')
+    const location = { latitude: lat, longitude: lon, ...(name ? { name: String(name).slice(0, 100) } : {}), ...(address ? { address: String(address).slice(0, 200) } : {}) }
+    const wamid = await this._post(to, { type: 'location', location })
+    return { messages: [{ id: wamid }], wamids: [wamid] }
+  }
+
   async sendImage({ to, buffer, mime, caption = '' }) {
     if (!this.token) throw new Error('WhatsappAdapter: token required')
     const id = await this._uploadMedia(buffer, mime)
@@ -185,8 +198,25 @@ export class WhatsappAdapter extends EventEmitter {
   }
 }
 
+function interactiveReplyTitle(m) {
+  const reply = m.interactive?.button_reply || m.interactive?.list_reply
+  return typeof reply?.title === 'string' ? reply.title : ''
+}
+
+
+function interactivePayload(body, choices) {
+  const items = choices.items
+  if (choices.mode === KIND_BUTTONS) {
+    return { type: 'interactive', interactive: { type: 'button', body: { text: body.slice(0, INTERACTIVE_BODY_MAX) }, action: { buttons: items.map(i => ({ type: 'reply', reply: { id: i.id, title: i.title } })) } } }
+  }
+  const rows = items.map(i => ({ id: i.id, title: i.title, ...(i.description ? { description: i.description } : {}) }))
+  return { type: 'interactive', interactive: { type: 'list', body: { text: body.slice(0, INTERACTIVE_BODY_MAX) }, action: { button: choiceLabel('choose').slice(0, LIST_BUTTON_MAX), sections: [{ rows }] } } }
+}
+
+
 function inboundMessageText(m) {
   return m.text?.body
+    || interactiveReplyTitle(m)
     || m.image?.caption || m.video?.caption || m.document?.caption
     || m.reaction?.emoji
     || ''
