@@ -65,6 +65,8 @@ Imperatives for the operator console. Root `AGENTS.md` covers the access ladder,
 - Urgency is size, ring and a short flag, never hue alone; pulse bounded to about 6 s with a reduced-motion rule; 44px touch floor outranks `.btn-sm`; `td` uses `overflow-wrap:break-word`, never `anywhere`.
 -> recall {query:"casey dashboard stylesheet rules theme contrast rail urgency touch"}
 
+- `GET /api/reports/files[/:name]` serves only `casey-digest-YYYY-MM.(csv|txt)` from `<store.dataDir>/digests` (checked after decoding; attachment, nosniff) and is on the viewer allowlist because the digests are k-floored aggregates; field logins stay refused by the `roleGate` fence.
+
 ## Backup (src/backup.js)
 
 - Raw-copy fallback includes `-wal`/`-shm`; restore removes stale sidecars, refuses a non-empty target, and moves the live data dir aside.

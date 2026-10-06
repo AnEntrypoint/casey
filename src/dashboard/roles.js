@@ -122,7 +122,8 @@ const VIEWER_ROUTES = [
   ['GET', /^\/api\/config$/],
   ['GET', /^\/api\/overview$/],
   ['POST', /^\/api\/logout-everywhere$/],
-  ['GET', /^\/api\/reports\/(resolved-map|diseases|diseases\/print|heat|areas|export\.csv)$/],
+  ['GET', /^\/api\/reports\/(resolved-map|diseases|diseases\/print|heat|areas|export\.csv|files)$/],
+  ['GET', /^\/api\/reports\/files\/[^/]+$/],
 ]
 
 function viewerGate(req, res, next) {

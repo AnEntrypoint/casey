@@ -30,6 +30,7 @@ import { registerSyncApi } from './routes/sync-api.js'
 import { registerMap } from './routes/map.js'
 import { registerReports } from './routes/reports.js'
 import { registerReportsMap } from './routes/reports-map.js'
+import { registerReportFiles } from './routes/report-files.js'
 import { registerOperations } from './routes/operations.js'
 import { registerTranslate } from './routes/translate.js'
 import { registerTiles, CLIENT_TILE_URL } from './routes/tiles.js'
@@ -387,6 +388,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   registerMap(app, deps)
   registerReports(app, deps)
   registerReportsMap(app, deps)
+  registerReportFiles(app, deps)
   registerOperations(app, deps)
   registerTranslate(app, deps)
   registerTeam(app, deps)
