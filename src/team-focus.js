@@ -6,6 +6,7 @@ import { isOpenCase } from './format.js'
 import { missingMandatoryMinimum, fieldLabel } from './store/report-shape.js'
 import { parseReport } from './timestamp.js'
 import { reporterSummary, firstName } from './phone-persons.js'
+import { confirmRecordChoices } from './choices.js'
 
 export const FOCUS_IDLE_MS = Number(process.env.CASEY_TEAM_FOCUS_IDLE_MS) || 30 * 60e3
 export const PROPOSAL_TTL_MS = 10 * 60e3
@@ -122,7 +123,7 @@ export async function writeGate(store, ctx, c, { confirm = true } = {}, now = Da
   if (f && f.caseId === c.id) { await touchFocus(store, me, now); return null }
   if (!confirm) return null
   await proposeFocus(store, me, c, ctx?.turnId, now)
-  return { error: `Not recorded yet: confirm the record first. Ask them "${c.ref} (${identifyingLine(c)}) -- is this the one?" as the last thing in your reply, and only after they answer yes in their NEXT message call case_focus with that record and confirm set to true, then repeat this.` }
+  return { error: `Not recorded yet: confirm the record first. Ask them "${c.ref} (${identifyingLine(c)}) -- is this the one?" as the last thing in your reply, and only after they answer yes in their NEXT message call case_focus with that record and confirm set to true, then repeat this. The system shows them Yes and No buttons, so ask only the question and never list the options.`, ...confirmRecordChoices(c.ref) }
 }
 
 export async function staffProgressLine(store, contact, now = Date.now()) {

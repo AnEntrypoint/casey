@@ -3,6 +3,7 @@
 import { observation } from './case-writes.js'
 import { attachWamids } from '../delivery-status.js'
 import { synthesizeVoice } from './media.js'
+import { fitChoices, appendFallback, stampChoices, rememberChoices } from '../choices.js'
 import { TURN_SOFT_DEADLINE_MS, STILL_WORKING_TEXT, TURN_TIMEOUT_TEXT } from './turn-deadlines.js'
 
 export function resolveAdapter(receiver, platform) {
@@ -49,17 +50,34 @@ async function markOutboundUndelivered(store, ev, replyTo, isFallback, error, lo
   } catch (e) { log?.warn?.('[casey] could not mark outbound as undelivered', { error: e.message }) }
 }
 
+async function presentChoices({ store, log, fresh, text, offered }) {
+  if (!offered) return { text }
+  try {
+    const fit = fitChoices(offered)
+    if (!fit) return { text }
+    const stamped = stampChoices(fit)
+    const { text: withFallback, fallback } = appendFallback(text, stamped)
+    await rememberChoices(store, fresh.contact_id, stamped)
+    return { text: withFallback, choices: { mode: stamped.mode, items: stamped.items, fallback } }
+  } catch (e) {
+    log.error?.('[casey] choices could not be presented; the reply goes out as plain text', { caseId: fresh.id, error: e.message })
+    return { text }
+  }
+}
+
+
 export async function sendAgentReply({
-  store, log, adapter, fresh, channel, replyTo, platform, text, isFallback, degraded,
+  store, log, adapter, fresh, channel, replyTo, platform, text: plainText, isFallback, degraded, offered = null,
 }) {
+  const { text, choices } = await presentChoices({ store, log, fresh, text: plainText, offered })
 
   const outboundEvent = await store.appendEvent(fresh.id, {
     kind: 'outbound', actor: 'agent', channel,
     text, data: { to: replyTo, fallback: isFallback },
   })
-  const reply = { to: replyTo, text, platform, caseId: fresh.id, ...(degraded ? { degraded: true } : {}) }
+  const reply = { to: replyTo, text, platform, caseId: fresh.id, ...(degraded ? { degraded: true } : {}), ...(choices ? { choices } : {}) }
 
-  const audio = await synthesizeVoice(text, { caseRow: fresh, log })
+  const audio = await synthesizeVoice(plainText, { caseRow: fresh, log })
   if (audio) reply.audio = audio
 
   let delivered = false

@@ -1,6 +1,7 @@
 
 
 import { AGENT_USER } from './case-store.js'
+import { diagnosisStatusChoices } from './choices.js'
 import { defTool, str, ownsCase, OBSERVE_TEXT_MAX_LEN } from './case-tools-shared.js'
 import { parseReport } from './timestamp.js'
 import { canSignOff, canQueryCases } from './contact-tiers.js'
@@ -121,11 +122,11 @@ export function buildCaseTimelineTools(store, { stageValues }) {
           }
           if (DIAGNOSIS_STATUS_KEY in given) {
             const status = normalizeDiagnosisStatus(given[DIAGNOSIS_STATUS_KEY])
-            if (!status) return { error: `${fieldLabel(DIAGNOSIS_STATUS_KEY)} must be one of: ${DIAGNOSIS_STATUS_OPTIONS.join(', ')}. Ask the technician which one it is; do not choose for them.` }
+            if (!status) return { error: `${fieldLabel(DIAGNOSIS_STATUS_KEY)} must be one of: ${DIAGNOSIS_STATUS_OPTIONS.join(', ')}. Ask the technician which one it is; do not choose for them. The system shows them buttons, so ask only the question.`, ...diagnosisStatusChoices(DIAGNOSIS_STATUS_OPTIONS) }
             given[DIAGNOSIS_STATUS_KEY] = status
           }
           const still = missingSignoffDiagnosis({ ...parseReport(c), ...given })
-          if (still.length) return { error: `every required fact is recorded and it is the technician's to finish, but the sign-off also needs ${still.map(fieldLabel).join(' and ')}, and ${still.length === 1 ? 'that is' : 'those are'} not recorded. Ask them for ${still.length === 1 ? 'it' : 'them'} in one plain sentence, then call this again with ${still.join(' and ')} set to exactly what they said. Do not suggest ${still.length === 1 ? 'one' : 'either'} yourself and do not use stage names.` }
+          if (still.length) return { error: `every required fact is recorded and it is the technician's to finish, but the sign-off also needs ${still.map(fieldLabel).join(' and ')}, and ${still.length === 1 ? 'that is' : 'those are'} not recorded. Ask them for ${still.length === 1 ? 'it' : 'them'} in one plain sentence, then call this again with ${still.join(' and ')} set to exactly what they said. Do not suggest ${still.length === 1 ? 'one' : 'either'} yourself and do not use stage names.`, ...(still.length === 1 && still[0] === DIAGNOSIS_STATUS_KEY && DIAGNOSIS_STATUS_OPTIONS ? diagnosisStatusChoices(DIAGNOSIS_STATUS_OPTIONS) : {}) }
           const tooLong = Object.keys(given).filter(k => given[k].length > APPEND_FIELD_MAX_LEN)
           if (tooLong.length) return { error: `${tooLong.map(fieldLabel).join(', ')} is too long to record (over ${APPEND_FIELD_MAX_LEN} characters). Nothing was changed. Ask for a shorter version.` }
 
