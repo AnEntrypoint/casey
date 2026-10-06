@@ -6,7 +6,7 @@ export const OPTED_OUT_TAG = 'opted-out'
 
 export const STOP_PENDING_PREFIX = 'stop-pending:'
 
-export const RESERVED_TAG = /^(opted-out|stop-pending:|needs-human|draft-pending|ai-offline|flagged-reply|dispatch-suggested|handed-off|health:|intake_mode:)/i
+export const RESERVED_TAG = /^(opted-out|stop-pending:|needs-human|draft-pending|ai-offline|flagged-reply|dispatch-suggested|handed-off|handover-offer|health:|intake_mode:)/i
 
 export function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '...' : s }
 

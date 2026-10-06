@@ -64,6 +64,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
             ...who(c),
           })),
           dispatches: n.dispatches.map(({ c, note }) => teamRow(c, ctx, { note, ...who(c) })),
+          ...(n.offers.length ? { handover_offers: n.offers.map(({ c, offer, line }) => ({ ref: c.ref, from: offer.by, tell_them: line })) } : {}),
         }
       }),
     defTool('case_claim', 'cases',

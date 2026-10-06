@@ -10,6 +10,7 @@ import { identifyingLine } from './team-focus.js'
 import { SIGNOFF_DIAGNOSIS_FIELDS, missingMandatoryMinimum, missingSignoffDiagnosis, fieldLabel } from './store/report-shape.js'
 import { loadAreas, areasOfRanger, resolveArea, statedArea } from './areas.js'
 import { isHandedOff, inSignOffQueue } from './signoff-desk.js'
+import { TECHNICIAN_NOTE, notesTagged } from './relay.js'
 
 export async function keysForContact(store, contact) {
   const keys = [assigneeKeyFor(contact)]
@@ -53,13 +54,16 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
   const holderWord = (c) => (heldByMe(c) ? 'you' : (String(c.assignee || '').trim() && c.assignee !== 'agent' ? 'someone else' : 'nobody'))
 
   const finishedToday = scope.filter(c => !isOpenCase(c) && tsMs(c.last_event_at) >= dayStart)
-  const changed = { new_cases: scope.filter(createdToday).length, reporter_replies: 0, newly_assigned_to_you: 0, sent_back: 0, handed_to_desk: 0, signed_off: finishedToday.length, moved_stage: 0 }
+  const changed = { new_cases: scope.filter(createdToday).length, reporter_replies: 0, newly_assigned_to_you: 0, sent_back: 0, handed_to_desk: 0, signed_off: finishedToday.length, moved_stage: 0, technician_notes: 0 }
   const lastInbound = new Map()
+  const techNote = new Map()
   for (const c of [...open].sort((a, b) => (tsMs(b.last_event_at) || 0) - (tsMs(a.last_event_at) || 0)).slice(0, SCOPE_EVENT_CAP)) {
     const events = await store.listEvents(c.id)
     let iIn = -1; let iOut = -1
     events.forEach((e, i) => { if (e.kind === 'inbound') iIn = i; if (e.kind === 'outbound' && e.actor === 'operator') iOut = i })
     lastInbound.set(c.id, iIn > iOut)
+    const notes = notesTagged(events, TECHNICIAN_NOTE)
+    if (notes.length && tsMs(notes[0].at) >= dayStart) techNote.set(c.id, notes[0].text)
     for (const e of events) {
       if (!(tsMs(e.created_at) >= dayStart)) continue
       const d = evData(e)
@@ -67,6 +71,7 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
       else if (e.kind === 'transition') changed.moved_stage += 1
       if (d.assigned_contact_id && myKeys.includes(`contact:${d.assigned_contact_id}`)) changed.newly_assigned_to_you += 1
       if (d.sent_back) changed.sent_back += 1
+      if (d.tag === TECHNICIAN_NOTE) changed.technician_notes += 1
       if (d.handed_off) changed.handed_to_desk += 1
     }
   }
@@ -81,6 +86,7 @@ export async function myDay(store, { keys = [], contact = null, tier = '', name 
     else if (!isHandedOff(c)) items.push('the report is complete: hand it to the technician')
     else items.push('with the technician for sign-off')
     if (lastInbound.get(c.id)) items.push('the reporter has written and is waiting for an answer')
+    if (techNote.has(c.id)) items.push(`the technician left you a note: ${techNote.get(c.id)}`)
     const rank = (tags.includes('sent-back') ? 0 : 1) + (lastInbound.get(c.id) ? 0 : 1) * 0.5 + (still.length ? 0 : 0.25)
     return { ref: c.ref, what: identifyingLine(c), stage: c.status, needs: items, _rank: rank - still.length * 0.01 }
   }).sort((a, b) => a._rank - b._rank).slice(0, NEEDS_CAP).map(({ _rank, ...r }) => r)
