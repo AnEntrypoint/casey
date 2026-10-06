@@ -6,7 +6,7 @@ import { REPORT_FIELD_DEFS, REPORT_GEO_FIELD_DEFS, REPORT_TOOL_NAME, REPORT_TOOL
 import { normalizeLocation } from './location-normalize.js'
 import { recordProvenanceObservation } from './provenance-wire.js'
 import { defTool, str, pick, boundCase, isValidLatLon } from './case-tools-shared.js'
-import { findCase, deskAuthorityOn } from './case-tools-team-shared.js'
+import { findCase, deskAuthorityOn, claimSelfFiledReport } from './case-tools-team-shared.js'
 import { canQueryCases } from './contact-tiers.js'
 import { stampReporter } from './phone-persons.js'
 import { consentManaged, consentState } from './phone-consent.js'
@@ -64,6 +64,7 @@ export function buildCaseReportTools(store) {
         const { res, priorReport } = merged
 
         if (ctx?.contact?.id && !canQueryCases(ctx?.tier)) { try { await stampReporter(store(), ctx.contact.id, id) } catch {  } }
+        await claimSelfFiledReport(store(), ctx, id)
 
         let locationKept = ''
         if (hasLatLon) {

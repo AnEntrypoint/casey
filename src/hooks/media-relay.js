@@ -30,11 +30,11 @@ export async function routeStaffArtifact({ store, log, caseRow, msg, inboundText
   try {
     const contact = caseRow.contact_id ? await store.getContact(caseRow.contact_id) : null
     if (!contact || !atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)) return null
-    const ctx = { contact, inboundRefs: refsIn(inboundText), dedupeCache: msgId }
-    const f = focusOf(contact.id, now)
+    const ctx = { contact, inboundRefs: refsIn(inboundText), turnId: String(msgId || '') }
+    const f = await focusOf(store, contact.id, now)
     const target = f ? await store.getCase(f.caseId) : null
     if (eligible(target, contact)) {
-      const refused = writeGate(ctx, target, now)
+      const refused = await writeGate(store, ctx, target, {}, now)
       if (!refused) return { mode: 'relay', target, contact }
       return { mode: 'ask', contact, candidates: [target], reason: refused.error }
     }
@@ -44,7 +44,7 @@ export async function routeStaffArtifact({ store, log, caseRow, msg, inboundText
     if (!mine.length) return null
     const named = ctx.inboundRefs.map(r => mine.find(c => String(c.ref).toUpperCase() === r)).filter(Boolean)
     const candidates = named.length === 1 ? named : mine.slice(0, 3)
-    if (candidates.length === 1) proposeFocus(contact.id, candidates[0], msgId, now)
+    if (candidates.length === 1) await proposeFocus(store, contact.id, candidates[0], msgId, now)
     return { mode: 'ask', contact, candidates, more: mine.length - candidates.length, reason: 'No assigned record is confirmed as the one they are working on right now.' }
   } catch (e) {
     log.warn?.('[casey] staff media routing failed; keeping media on the sender\'s own record', { caseId: caseRow.id, error: e.message })

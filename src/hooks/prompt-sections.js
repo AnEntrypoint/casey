@@ -203,7 +203,9 @@ export function replySection(persona, caseRow, contact, { firstMessage, missingC
         ? [`THE ONE QUESTION FOR THIS REPLY: the place is only roughly known, so the pin on the map is a guess (${caseRow.lat != null ? `${Math.round(Number(caseRow.location_confidence) || 0)}% sure` : 'none yet'}). Ask for ONE better detail in a short natural sentence: the nearest town or village, a landmark, the road, or the farm or dip tank name, or suggest sharing a WhatsApp location pin from where the animals are. When they answer, call case_report with the place written out in full (what they said before AND the new detail) as location, so the pin is worked out again from all of it. One question mark in the whole reply.`, ``]
         : [`THE ONE QUESTION FOR THIS REPLY: nothing is still needed, so ask no question; acknowledge them warmly and, if it fits, invite a report about other animals or another place.`, ``]),
 
-    `PROGRESS IN EVERY REPLY is printed by the system ABOVE your reply, from the record, as a separate short note, so your reply is read after it: do NOT restate what is written down or list what is missing. Acknowledge their latest message in a few words in their language, then ask your ONE question.`,
+    canQueryCases(contact?.tier)
+      ? `PROGRESS IN EVERY REPLY is printed by the system ABOVE your reply as one "Working on" line for the record they are on: never write or restate it. Answer what they asked in your own words.`
+      : `PROGRESS IN EVERY REPLY is printed by the system ABOVE your reply, from the record, as a separate short note, so your reply is read after it: do NOT restate what is written down or list what is missing. Acknowledge their latest message in a few words in their language, then ask your ONE question.`,
     ``,
 
     firstMessage

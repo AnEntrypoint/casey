@@ -112,7 +112,7 @@ export function buildTeamOperatorTools(store) {
         const target = String(to).trim().toLowerCase()
         if (target === 'unassigned' || target === 'nobody') {
           const out = await releaseCase({ store: store(), caseRow: c, by, user })
-          clearFocusForCase(c.id)
+          await clearFocusForCase(store(), c.id)
           return { ok: true, ref: c.ref, assigned_to: 'nobody', assistant_resumed: out.resumed }
         }
         if (doneStages().includes(c.status)) return { error: 'That record is finished. Reopen it first if it should be worked on again.' }
@@ -125,7 +125,7 @@ export function buildTeamOperatorTools(store) {
         if (String(c.assignee || '').trim() === key) return { ok: true, ref: c.ref, assigned_to: staffLabel(assignee), note: 'Already with them.' }
         if (isOwnConversation(c, assignee)) return { error: 'That record is their own chat with the assistant, so it cannot be assigned to them.' }
         await store().updateCase(c.id, { assignee: key }, user)
-        clearFocusForCase(c.id)
+        await clearFocusForCase(store(), c.id)
         await store().appendEvent(c.id, {
           kind: 'action', actor: 'operator', text: `edited assignee`,
           data: actorData(ctx, { assignee: key, assigned_contact_id: assignee.id, assigned_name: staffLabel(assignee) }),

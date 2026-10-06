@@ -20,6 +20,8 @@ export const TOOL_MIN_TIER = {
   team_ranger_day: TIER_OPERATOR, team_relocate_case: TIER_OPERATOR,
   case_visit: TIER_FIELD_WORKER, case_visit_log: TIER_FIELD_WORKER,
   case_note_to_ranger: TIER_ANIMAL_HEALTH_TECHNICIAN,
+  case_withdraw_handoff: TIER_FIELD_WORKER,
+  case_photos: TIER_FIELD_WORKER,
 }
 
 export function minTierOf(name) {

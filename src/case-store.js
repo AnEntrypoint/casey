@@ -209,6 +209,25 @@ export class CaseStore {
 
   async getContact(id) { return id ? this.t.get('contact', id) : null }
 
+  async mutateStaffState(contactId, mutate) {
+    if (!contactId) throw new Error('mutateStaffState: contact id required')
+    return this._withLock(`staff-state|${contactId}`, async () => {
+      const contact = await this.getContact(contactId)
+      if (!contact) throw new Error(`mutateStaffState: no contact ${contactId}`)
+      const before = String(contact.staff_state || '')
+      const state = before ? JSON.parse(before) : {}
+      const out = await mutate(state)
+      const after = JSON.stringify(state)
+      if (after !== before) await this.t.update('contact', contactId, { staff_state: after }, AGENT_USER)
+      return out
+    })
+  }
+
+  async readStaffState(contactId) {
+    const contact = await this.getContact(contactId)
+    return contact?.staff_state ? JSON.parse(contact.staff_state) : {}
+  }
+
   async listContacts({ limit = 500, includeSystem = false } = {}) {
     const where = includeSystem ? {} : { channel: { $ne: 'system' } }
     return this.t.list('contact', where, { limit, sort: [{ field: 'created_at', dir: 'DESC' }] })

@@ -94,6 +94,7 @@ entities:
                                                        # on a later, more specific case_report call).
       last_report_at:      { type: text }             # ISO timestamp of the propagating case_report call
       last_report_case_id: { type: text }              # the case id that produced last_report_lat/lon -- drill-down target
+      staff_state: { type: textarea }
 
   case:
     label: Ticket

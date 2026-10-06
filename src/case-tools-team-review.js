@@ -12,6 +12,7 @@ import { MANDATORY_MINIMUM_FIELDS, REPORT_ENTITY_LABEL, missingMandatoryMinimum,
 import { evData } from './safe.js'
 import { writeGate, recordedOn, setFocus } from './team-focus.js'
 import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn, reporterExtras } from './case-tools-team-shared.js'
+import { recordSeen } from './stale-write-guard.js'
 import { inSignOffQueue, withdrawHandoff, isHandedOff, sendBackToRanger } from './signoff-desk.js'
 import { mergeTag } from './hooks/heuristics.js'
 import { RANGER_NOTE, notesTagged } from './relay.js'
@@ -36,7 +37,7 @@ async function lookup(store, ctx, ref, { gate = false } = {}) {
   if (!c) return { fail: NO_SUCH }
   const authority = visibleToSignOffDesk(ctx, c)
   if (!authority) return { fail: NOT_ASSIGNED }
-  if (gate && authority === 'assigned') { const refused = writeGate(ctx, c); if (refused) return { fail: refused } }
+  if (gate && authority === 'assigned') { const refused = await writeGate(store(), ctx, c); if (refused) return { fail: refused } }
   return { c, authority, on: await recordedOn(store(), c, ctx) }
 }
 
@@ -56,13 +57,14 @@ export function buildTeamReviewTools(store) {
         return { total: rows.length, shown: Math.min(rows.length, n), cases: rows.slice(0, n).map(c => teamRow(c, ctx, { reporter_asked_us_to_stop: tagList(c).includes(OPTED_OUT_TAG), ...who(c), ...noteOf(c) })) }
       }),
     defTool('case_review', 'cases',
-      'Review ONE record in full before acting on it: every recorded fact, which required ones are missing, the timeline, and the photo and voice-note entries (with the voice-note transcripts). Photo files themselves cannot be shown over chat, only their notes. For records assigned to this person or unassigned.',
+      'Review ONE record in full before acting on it: every recorded fact, which required ones are missing, the timeline, and the photo and voice-note entries (with the voice-note transcripts). The photo entries here are notes only; to show the actual photos use case_photos. For records assigned to this person or unassigned.',
       { type: 'object', properties: { case: str('Record reference or id') }, required: ['case'] },
       async ({ case: ref }, ctx) => {
         const r = await lookup(store, ctx, ref); if (r.fail) return r.fail
         const { c } = r
 
-        if (ctx?.contact?.id && (ctx.inboundRefs || []).length === 1 && ctx.inboundRefs[0] === String(c.ref).toUpperCase()) setFocus(ctx.contact.id, c)
+        if (ctx?.contact?.id && (ctx.inboundRefs || []).length === 1 && ctx.inboundRefs[0] === String(c.ref).toUpperCase()) await setFocus(store(), ctx.contact.id, c)
+        await recordSeen(store(), ctx?.contact?.id, c)
         const events = (await store().listEvents(c.id)).filter(e => !(e.kind === 'observation' && evData(e).announced_to))
         const slim = slimCase(c)
         if (slim.report) {

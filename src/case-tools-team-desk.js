@@ -6,10 +6,10 @@ import { writeGate, recordedOn } from './team-focus.js'
 import { REPORT_ENTITY_LABEL } from './store/report-shape.js'
 import { TIER_LABELS } from './store/report-shape.js'
 import { resolveTierValue } from './contact-tiers.js'
-import { handoffToTechnician } from './signoff-desk.js'
+import { handoffToTechnician, withdrawHandoff } from './signoff-desk.js'
 import { myDay, keysForContact } from './my-day.js'
 import { relocateCase } from './areas.js'
-import { findCase, authorityOn, storeUser, actorData, NOT_ASSIGNED } from './case-tools-team-shared.js'
+import { findCase, authorityOn, ownFiledAuthority, storeUser, actorData, NOT_ASSIGNED } from './case-tools-team-shared.js'
 import { resolveTeamContact } from './case-tools-team-operator.js'
 import { assigneeKeyFor } from './case-assignment.js'
 
@@ -23,12 +23,25 @@ export function buildTeamDeskTools(store) {
       async ({ case: ref, note = '' }, ctx) => {
         const c = await findCase(store(), ref)
         if (!c) return NO_SUCH
-        const authority = authorityOn(ctx, c)
+        const authority = authorityOn(ctx, c) || ownFiledAuthority(ctx, c)
         if (!authority) return NOT_ASSIGNED
-        if (authority === 'assigned') { const refused = writeGate(ctx, c); if (refused) return refused }
+        if (authority === 'assigned') { const refused = await writeGate(store(), ctx, c); if (refused) return refused }
         const r = await handoffToTechnician(store(), c.id, { by: staffLabel(ctx.contact), user: storeUser(ctx, authority), data: actorData(ctx), note })
         if (!r.ok) return { error: r.error, ...(r.missing ? { still_missing: r.missing } : {}) }
         return { ok: true, ref: c.ref, recorded_on: await recordedOn(store(), c, ctx), handed_to_sign_off_desk: true, ...(r.already ? { note: 'It was already with the sign-off desk.' } : {}) }
+      }),
+    defTool('case_withdraw_handoff', 'cases',
+      `Take ONE ${REPORT_ENTITY_LABEL} back from the sign-off desk when the team member realises it is not ready, so it leaves the technician's queue and stays with them. Only for a ${REPORT_ENTITY_LABEL} assigned to this person; say the reference and the animals and place first and act only after they have confirmed it. Safe to repeat: if it is not on the desk nothing changes.`,
+      { type: 'object', properties: { case: str('Record reference or id'), reason: str('Optional short reason for the technician') }, required: ['case'] },
+      async ({ case: ref, reason = '' }, ctx) => {
+        const c = await findCase(store(), ref)
+        if (!c) return NO_SUCH
+        const authority = authorityOn(ctx, c) || ownFiledAuthority(ctx, c)
+        if (!authority) return NOT_ASSIGNED
+        if (authority === 'assigned') { const refused = await writeGate(store(), ctx, c); if (refused) return refused }
+        const r = await withdrawHandoff(store(), c.id, { by: staffLabel(ctx.contact), user: storeUser(ctx, authority), data: actorData(ctx), reason, byRanger: true })
+        if (!r.ok) return { error: r.error }
+        return { ok: true, ref: c.ref, recorded_on: await recordedOn(store(), c, ctx), withdrawn: r.was, ...(r.was ? {} : { note: 'It was not with the sign-off desk, so nothing changed.' }) }
       }),
     defTool('case_my_day', 'cases',
       `THIS team member's day: how many ${REPORT_ENTITY_LABEL}s are in the area(s) they cover today and where they stand by stage, how many are with them, what changed since the day began (new, reporter replies, newly assigned, sent back, handed over), and for each of their own what it still needs. A technician also gets the sign-off desk. Call it when they ask how many there are today, what the status is, what is waiting, or what to do next. Counts and short lines only, no phone numbers.`,

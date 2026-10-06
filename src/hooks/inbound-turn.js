@@ -15,6 +15,8 @@ import { makeTypingIndicator } from './typing.js'
 import { normaliseReply } from './plain-text.js'
 import { decideNotice, composeNotice, recordNoticeShown } from '../first-contact-notice.js'
 import { renderFormProgress, formLabelsFor } from '../progress-line.js'
+import { staffProgressLine } from '../team-focus.js'
+import { caseDeliveryTarget } from './handler.js'
 import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
 import { tryRegisterByCode } from './role-registration.js'
 import { parseReport, tagList } from '../timestamp.js'
@@ -68,7 +70,12 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
   }
 
   const staffSend = typeof receiver?.sendReply === 'function'
-    ? { sendReply: (caseRow, text) => receiver.sendReply(caseRow, text), canSend: (ch) => !!resolveAdapter(receiver, ch)?.send }
+    ? {
+      sendReply: (caseRow, text) => receiver.sendReply(caseRow, text),
+      canSend: (ch) => !!resolveAdapter(receiver, ch)?.send,
+      sendImage: (caseRow, image) => resolveAdapter(receiver, caseRow.channel).sendImage({ to: caseDeliveryTarget(caseRow), ...image }),
+      canSendImage: (ch) => typeof resolveAdapter(receiver, ch)?.sendImage === 'function',
+    }
     : null
   return await driveAgentTurn(deps, {
     adapter, fresh, contact, events, prompt, inboundText, media,
@@ -201,6 +208,12 @@ async function driveAgentTurn(deps, {
       merged = renderFormProgress(fresh, labels)
 
       if (merged) text = `${merged}\n\n${text}`
+    }
+    if (atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) && contact?.id) {
+      try {
+        const working = await staffProgressLine(store, contact)
+        if (working) text = `${working}\n\n${text}`
+      } catch (e) { log.warn?.('[casey] staff progress line failed; reply sent without it', { caseId: fresh.id, error: e.message }) }
     }
     if (notice) {
       const body = early.body

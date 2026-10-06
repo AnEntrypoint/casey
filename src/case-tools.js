@@ -21,6 +21,9 @@ import { buildClarifyTools } from './case-tools-clarify.js'
 import { buildVisitTools, withReadback } from './case-tools-visit.js'
 import { buildRelayTools } from './case-tools-relay.js'
 import { buildLanguageTools } from './case-tools-language.js'
+import { shownCase } from './stale-write-guard.js'
+
+const SHOWS_A_CASE = new Set(['case_get', 'case_search'])
 
 export function buildCaseToolset(storeOrNull) {
   const store = () => storeOrNull || getCaseStore()
@@ -50,7 +53,7 @@ export function buildCaseToolset(storeOrNull) {
   const edit = withReadback(tools.find(t => t.name === 'case_edit'))
   const withEdit = tools.map(t => (t.name === 'case_edit' ? edit : t))
   withEdit.push(...buildVisitTools(store, edit))
-  return withEdit.map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
+  return withEdit.map(t => (SHOWS_A_CASE.has(t.name) ? shownCase(t) : t)).map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
 }
 
 function selfCheckLoadBearingToolDescriptions() {

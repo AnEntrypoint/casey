@@ -12,7 +12,8 @@ import { sendStaffMessage, releaseCase, staffLabel } from './hooks/staff-outboun
 import { staffNotices, pendingDispatchesFor } from './staff-notices.js'
 import { evData } from './safe.js'
 import { reporterSummary } from './phone-persons.js'
-import { refsIn, writeGate, recordedOn, identifyingLine, proposeFocus, confirmFocus, setFocus, focusOf, clearFocusForCase } from './team-focus.js'
+import { refsIn, writeGate, recordedOn, identifyingLine, proposeFocus, confirmFocus, setFocus, focusOf, clearFocusForCase, withinOneEdit } from './team-focus.js'
+import { recordSeen, recordWrote, checkStale, reportKeysOf } from './stale-write-guard.js'
 import {
   APPEND_FIELDS, CRITICAL_FIELDS, REPORT_FIELD_DEFS, SYSTEM_SET_FIELDS, REPORT_GEO_FIELD_DEFS, REPORT_ENTITY_LABEL,
   missingMandatoryMinimum, fieldLabel, SIGNOFF_DIAGNOSIS_FIELDS,
@@ -39,7 +40,7 @@ const lookupTeamCase = async (store, ctx, ref, { gate = true } = {}) => {
   const authority = deskAuthorityOn(ctx, c)
   if (!authority) return { fail: NOT_ASSIGNED }
   if (gate && authority === 'assigned') {
-    const refused = writeGate(ctx, c)
+    const refused = await writeGate(store(), ctx, c)
     if (refused) return { fail: refused }
   }
   return { c, authority, on: await recordedOn(store(), c, ctx) }
@@ -105,7 +106,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const by = staffLabel(ctx.contact)
         const out = await releaseCase({ store: store(), caseRow: c, by, user: storeUser(ctx, authority) })
         if (reason) await store().appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `HANDED BACK by ${by}: ${String(reason).slice(0, 500)}`, data: actorData(ctx) })
-        clearFocusForCase(c.id)
+        await clearFocusForCase(store(), c.id)
         return { ok: true, recorded_on: r.on, ref: c.ref, assistant_resumed: out.resumed }
       }),
     defTool('case_dispatch_reply', 'cases',
@@ -160,7 +161,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const me = ctx?.contact
         const mine = async () => {
           const key = assigneeKeyFor(me)
-          const own = key ? (await store().listCases({ assignee: key }, { limit: 200 })).filter(isOpenCase) : []
+          const own = key ? (await store().listCases({ assignee: key }, { limit: 200 })).filter(c => isOpenCase(c) && !isOwnConversation(c, me)) : []
 
           if (!atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN) || isOperator(ctx?.tier)) return own
           const seen = new Set(own.map(c => c.id))
@@ -168,7 +169,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         }
         const line = (c) => ({ ref: c.ref, what: identifyingLine(c) })
         if (!String(query || '').trim()) {
-          const f = me?.id ? focusOf(me.id) : null
+          const f = me?.id ? await focusOf(store(), me.id) : null
           const cur = f ? await store().getCase(f.caseId) : null
           const list = await mine()
           return { current: cur && isAssignedTo(cur, me) ? await recordedOn(store(), cur, ctx) : null, assigned: list.slice(0, 15).map(line) }
@@ -195,13 +196,15 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const authority = deskAuthorityOn(ctx, target)
 
         if (!isOpenCase(target) && !atLeast(ctx?.tier, TIER_ANIMAL_HEALTH_TECHNICIAN)) return FINISHED
-        if (authority === 'operator') { setFocus(me?.id, target); return { ok: true, focused: true, recorded_on: await recordedOn(store(), target, ctx) } }
+        if (authority === 'operator') { await setFocus(store(), me?.id, target); await recordSeen(store(), me?.id, target); return { ok: true, focused: true, recorded_on: await recordedOn(store(), target, ctx) } }
         if (!confirm) {
-          proposeFocus(me?.id, target, ctx?.dedupeCache)
+          await proposeFocus(store(), me?.id, target, ctx?.turnId)
           return { proposed: true, recorded_on: await recordedOn(store(), target, ctx), note: 'Nothing is changed yet. Name this record to them and ask if it is the right one, as the last thing you say. Confirm only after their yes in their NEXT message.' }
         }
-        const done = confirmFocus(me?.id, target, ctx?.dedupeCache)
-        return done.ok ? { ok: true, focused: true, recorded_on: await recordedOn(store(), target, ctx) } : done
+        const done = await confirmFocus(store(), me?.id, target, ctx?.turnId)
+        if (!done.ok) return done
+        await recordSeen(store(), me?.id, target)
+        return { ok: true, focused: true, recorded_on: await recordedOn(store(), target, ctx) }
       }),
     defTool('case_gaps', 'cases',
       'For ONE assigned record: exactly which required facts are still missing, which further facts would help on site, and a short reminder text the team member can paste into their own WhatsApp chat with the reporter. Use before they contact the reporter or when they ask what is left.',
@@ -209,6 +212,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
       async ({ case: ref }, ctx) => {
         const r = await lookupTeamCase(store, ctx, ref, { gate: false }); if (r.fail) return r.fail
         const { c } = r
+        await recordSeen(store(), ctx?.contact?.id, c)
         const report = parseReport(c)
         const missing = missingMandatoryMinimum(report)
         const helpful = CRITICAL_FIELDS.filter(k => empty(report[k]) && !missing.includes(k))
@@ -274,6 +278,9 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const incoming = pick(fields, [...REPORT_KEYS].filter(k => k !== 'photos' && k !== 'audio'))
         const tooLong = Object.keys(incoming).filter(k => String(incoming[k]).length > APPEND_FIELD_MAX_LEN)
         if (tooLong.length) return { error: `${tooLong.map(fieldLabel).join(', ')} is too long to record (over ${APPEND_FIELD_MAX_LEN} characters). Nothing was changed. Ask for a shorter version.` }
+        const touched = [...reportKeysOf(Object.keys(incoming)), ...(subject ? ['col.subject'] : []), ...(summary ? ['col.summary'] : []), ...(priority ? ['col.priority'] : []), ...(lat != null || lon != null ? ['col.position'] : [])]
+        const stale = await checkStale(store(), ctx, c, touched)
+        if (stale) return stale
         const prior = parseReport(c)
         const held = Object.keys(incoming).filter(k => !APPEND_FIELDS.has(k) && !empty(prior[k]) && String(prior[k]).trim() !== String(incoming[k]).trim())
         if (held.length && !correct) {
@@ -332,6 +339,7 @@ export function buildTeamFieldTools(store, { priorityValues }) {
           })
         }
         if (note) await store().appendEvent(c.id, { kind: 'observation', actor: 'operator', text: `NOTE from ${by}: ${String(note).slice(0, 4000)}`, data: actorData(ctx) })
+        await recordWrote(store(), ctx?.contact?.id, await store().getCase(c.id), [...touched, 'report.notes'])
         return { ok: true, recorded_on: r.on, ref: c.ref, recorded: [...new Set(recorded)], ...(note ? { noted: true } : {}), ...(notDiagnosis.length ? { not_recorded: `${notDiagnosis.join(', ')}: the technician records these when signing off` } : {}) }
       }),
     defTool('case_stage', 'cases',
@@ -352,7 +360,10 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         const user = storeUser(ctx, authority)
         const legal = store().availableTransitions(c, user)
         if (to !== c.status && !legal.includes(to)) return { error: `That move is not possible from the current stage.`, allowed: legal.filter(s => !doneStages().includes(s)) }
+        const stale = await checkStale(store(), ctx, c, ['col.status'])
+        if (stale) return stale
         await store().transition(c.id, to, { user, reason: `${staffLabel(ctx.contact)}: ${reason || 'team update'}` })
+        await recordWrote(store(), ctx?.contact?.id, await store().getCase(c.id), ['col.status'])
         return { ok: true, recorded_on: r.on, ref: c.ref, from: c.status, to }
       }),
     defTool('case_message', 'cases',
@@ -365,13 +376,4 @@ export function buildTeamFieldTools(store, { priorityValues }) {
         return sent.ok ? { ok: true, delivered: true, recorded_on: r.on, ref: c.ref, claimed: sent.claimed, assistant_paused: sent.took_over } : { ok: false, delivered: false, ref: c.ref, error: sent.error }
       }),
   ]
-}
-
-function withinOneEdit(a, b) {
-  if (a === b) return true
-  if (Math.abs(a.length - b.length) > 1) return false
-  let i = 0
-  while (i < a.length && i < b.length && a[i] === b[i]) i++
-  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1)
-  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1)
 }

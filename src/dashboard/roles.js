@@ -98,6 +98,7 @@ const FIELD_ROUTES = [
   ['POST', new RegExp(`^${CASE}/transition$`), { access: 'write', transition: true }],
   ['POST', new RegExp(`^${CASE}/send-back$`), { access: 'signoff', tech: true }],
   ['POST', new RegExp(`^${CASE}/handoff$`), { access: 'write' }],
+  ['POST', new RegExp(`^${CASE}/handoff/withdraw$`), { access: 'write' }],
   ['GET', /^\/api\/my-day$/, 'open'],
 ]
 
@@ -208,7 +209,7 @@ export function roleGate({ store, UNCLAIMED_ASSIGNEE }) {
   }
 }
 
-const REF_GUARDED = /^\/api\/cases\/([^/]+)\/(intake|note|transition|reply|remind|location|send-back|relocate|handoff)$|^\/api\/cases\/([^/]+)$|^\/api\/cases\/([^/]+)\/events\/[^/]+\/translate$/
+const REF_GUARDED = /^\/api\/cases\/([^/]+)\/(intake|note|transition|reply|remind|location|send-back|relocate|handoff|handoff\/withdraw)$|^\/api\/cases\/([^/]+)$|^\/api\/cases\/([^/]+)\/events\/[^/]+\/translate$/
 export function expectedRefGuard({ store }) {
   return async (req, res, next) => {
     try {

@@ -54,7 +54,10 @@ function park(st, now) {
 
 async function findByWamid(store, wamid) {
   const rows = await store.t.list('event', { msg_id: wamid }, { limit: 3 })
-  return rows.find(r => r.kind === 'outbound') || null
+  const direct = rows.find(r => r.kind === 'outbound')
+  if (direct) return direct
+  const multipart = await store.t.list('event', { kind: 'outbound', data: { $like: `%${wamid}%` } }, { limit: 3 })
+  return multipart[0] || null
 }
 
 async function findByRecentSend(store, recent, wamid) {

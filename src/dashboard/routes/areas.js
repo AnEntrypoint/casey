@@ -3,7 +3,7 @@ import { isStaffAccount, isTechnician, resolveContact } from '../roles.js'
 import { isContactAssignee, contactIdOfAssignee } from '../../case-assignment.js'
 import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN } from '../../contact-tiers.js'
 import { staffLabel } from '../../hooks/staff-outbound.js'
-import { handoffToTechnician } from '../../signoff-desk.js'
+import { handoffToTechnician, withdrawHandoff } from '../../signoff-desk.js'
 import { myDay, keysForContact } from '../../my-day.js'
 import { AREA_FIELD } from '../../store/report-shape.js'
 import { isOpenCase } from '../../format.js'
@@ -135,6 +135,19 @@ export function postHandoff({ store, authed, actingOperator }) {
   }
 }
 
+export function postWithdrawHandoff({ store, authed, actingOperator }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const c = await store.getCase(req.params.id)
+    if (!c || c.channel === 'system') return res.status(404).json({ error: 'not found' })
+    const op = actingOperator(req)
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason : ''
+    const out = await withdrawHandoff(store, c.id, { by: op.name || op.id, user: op, data: { by: op.id }, reason, byRanger: true })
+    if (!out.ok) return res.status(400).json({ error: out.error, code: out.code })
+    res.json({ ok: true, ref: out.ref, withdrawn: out.was })
+  }
+}
+
 export function getMyDay({ store, authed, findAccountByUsername }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -176,6 +189,7 @@ const ROUTES = [
   ['delete', '/api/areas/:id', deleteArea],
   ['post', '/api/cases/:id/relocate', postRelocate],
   ['post', '/api/cases/:id/handoff', postHandoff],
+  ['post', '/api/cases/:id/handoff/withdraw', postWithdrawHandoff],
   ['get', '/api/my-day', getMyDay],
 ]
 

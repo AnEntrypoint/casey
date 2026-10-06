@@ -13,12 +13,12 @@ import { replyShape, strayContactDetails, singleAsk, jargonIn } from './plain-te
 import { loadDomainConfig } from '../config-loader.js'
 import { stripThinkingBlock, OPTED_OUT_TAG, detectContactIntent } from './heuristics.js'
 import { tagList, parseReport } from '../timestamp.js'
-import { setFocus } from '../team-focus.js'
 import { deskAuthorityOn } from '../case-tools-team-shared.js'
 import { composeAdviceRefusal } from '../advice-refusal.js'
 import { mutatingActions, hadSuccessfulWrite, refusedWrites, touchedRefs, controlRegistered } from './turn-results.js'
 import { staffNoticeNote } from '../staff-notices.js'
-import { refsIn } from '../team-focus.js'
+import { refsIn, setFocus, focusOf, proposeFocus, confusableHeldRefs, identifyingLine } from '../team-focus.js'
+import { messageId } from './case-intake.js'
 import { buildCaseToolset, hiddenToolNamesForTier } from '../case-tools.js'
 import { resolveContactTier, canQueryCases, canSignOff, TIER_REPORTER } from '../contact-tiers.js'
 import { FAILURE_REASONS } from '../degraded-turns.js'
@@ -76,7 +76,7 @@ export function classifyTurnError(message) {
 export function buildTurnRequest({
   prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
   resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-  staffSend = null, inboundRefs = [], inboundText = '', speaker = null, consent = null, ret = null,
+  staffSend = null, inboundRefs = [], inboundText = '', speaker = null, consent = null, ret = null, turnId = '', confirmRefs = [],
 }) {
   return {
 
@@ -106,8 +106,12 @@ export function buildTurnRequest({
 
       sendReply: staffSend?.sendReply || null,
       canSend: staffSend?.canSend || null,
+      sendImage: staffSend?.sendImage || null,
+      canSendImage: staffSend?.canSendImage || null,
 
       inboundRefs,
+      turnId,
+      confirmRefs,
 
       inboundText: String(inboundText || '').slice(0, 2000),
       store,
@@ -415,12 +419,22 @@ export async function runAgentTurn({
 
   if (canQueryCases(resolvedTier) && contact?.id) prompt += await staffNoticeNote(store, contact)
   const inboundRefs = refsIn(inboundText)
+  const turnId = String(messageId(msg) || '')
+  const confirmRefs = []
 
   if (canQueryCases(resolvedTier) && contact?.id && inboundRefs.length === 1) {
     try {
       const named = await store.getCaseByRef(inboundRefs[0])
-      if (named && named.channel !== 'system' && deskAuthorityOn({ contact, tier: resolvedTier }, named)) setFocus(contact.id, named)
-    } catch {  }
+      if (named && named.channel !== 'system' && deskAuthorityOn({ contact, tier: resolvedTier }, named)) {
+        const already = (await focusOf(store, contact.id))?.caseId === named.id
+        const lookalikes = already ? [] : await confusableHeldRefs(store, contact, named.ref)
+        if (lookalikes.length) {
+          confirmRefs.push(String(named.ref).toUpperCase())
+          await proposeFocus(store, contact.id, named, turnId)
+          prompt += `\n\n[System note: they typed ${named.ref} (${identifyingLine(named)}), which differs by one character from ${lookalikes.join(', ')} that they also hold. Nothing is recorded on it yet: say that record and what it is, ask "Is this the one?" as the last thing in your reply, and only after their yes in their NEXT message call case_focus with it and confirm true.]`
+        } else await setFocus(store, contact.id, named)
+      }
+    } catch (e) { log.warn?.('[casey] typed-reference focus failed', { caseId: fresh.id, error: e.message }) }
   }
 
   const lastOutboundText = [...events].reverse().find(e => e.kind === 'outbound')?.text || null
@@ -470,7 +484,7 @@ export async function runAgentTurn({
       result = await runTurn(buildTurnRequest({
         prompt, retryFeedback, completedActions, refusedActions, fresh, events, contact, turnCallLLM,
         resolvedTier, msg, external_id, channel, store, turnBinding, turnDedupeCache, timeoutMs,
-        staffSend, inboundRefs, inboundText, speaker, consent, ret,
+        staffSend, inboundRefs, inboundText, speaker, consent, ret, turnId, confirmRefs,
       }))
     } catch (e) {
       errored = true
