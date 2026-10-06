@@ -59,6 +59,12 @@ function openReport(id) { pushHash({ caseId: id }); setActiveId(id); }
 function openRef(ref) { const hit = [...fs.mine, ...fs.signoff].find((c) => c.ref === ref); if (hit) openReport(hit.id); }
 function closeReport() { pushHash({ caseId: null }); setActiveId(null); resetFieldCase(); refreshFieldLists(); }
 
+function holdState(c) {
+  if (!isOpen(c)) return 'Closed';
+  const holder = String(c.assignee || '').trim();
+  return holder && holder !== 'agent' ? 'Claimed' : 'Open';
+}
+
 function handedNote(c) {
   if (!tagsOf(c).includes('handed-off')) return '';
   if (isTechnician()) { const from = holderName(c.assignee); return from ? 'Sent by ' + from : 'Sent by a ranger'; }
@@ -74,6 +80,7 @@ function Row(c, { showMissing = true } = {}) {
   return KitRow({
     key: c.id, title: what || headline(c.subject || 'No details yet'),
     sub: [c.ref, stageLabel(c.status) + (c.last_event_at ? ' -- ' + rel(c.last_event_at) : ''), sentBack ? 'Sent back to you -- open it to see what is needed' : '', handedNote(c), need].filter(Boolean).join('. '),
+    meta: holdState(c),
     rail: sentBack ? 'flame' : (mandatory().length && !missing.length ? 'green' : undefined),
     onClick: () => openReport(c.id),
   });
@@ -98,6 +105,7 @@ function Home() {
   if (!fs.loaded) { refreshFieldLists(); return Skeleton({ count: 5, height: '1.6em' }); }
   const tech = isTechnician();
   const open = worstFirst(fs.mine.filter(isOpen));
+  const closed = fs.mine.filter((c) => !isOpen(c)).sort((a, b) => (Date.parse(b.last_event_at) || 0) - (Date.parse(a.last_event_at) || 0)).slice(0, 10);
   const body = [];
   if (fs.error) body.push(Alert({ kind: 'warn', children: fs.error }));
   if (fs.mineTotal > fs.mine.length) body.push(Alert({ kind: 'info', children: 'Showing the ' + fs.mine.length + ' most recently active of your ' + fs.mineTotal + ' ' + entityLabelPlural() + '. Ask an operator to hand some on if this is too many.' }));
@@ -107,6 +115,7 @@ function Home() {
     const rest = open.filter((c) => missingOf(c).length);
     body.push(List('Ready to sign off', worstFirst(ready), 'Nothing is waiting for sign-off right now.', { showMissing: false }));
     body.push(List('Your other ' + entityLabelPlural() + ', still being gathered', rest, 'You have no other open ' + entityLabelPlural() + '.'));
+    body.push(List('Recently closed', closed, 'Nothing you handled has been closed yet.', { showMissing: false }));
     body.push(MyDay({ onOpenRef: openRef, tech: true }));
     body.push(MyDay({ onOpenRef: openRef, tech: true, part: 'after' }));
   } else {
