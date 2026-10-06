@@ -151,10 +151,11 @@ export async function runViewerChecks(c) {
   }
   check(bad.length === 0, `no reference, id, name, subject, number, login or free-text marker in ${variants.length} viewer payloads (${forbidden.length} store values searched)`, bad.slice(0, 3).join(' ; ') || `${(sizes.reduce((a, b) => a + b, 0) / 1024).toFixed(0)} KB scanned, clean`)
   const map = JSON.parse(payloads.find(([p]) => p === '/api/reports/resolved-map')[1])
-  const allowedKeys = new Set(['lat', 'lon', 'disease', 'species', 'advice', 'resolved_at'])
+  const allowedKeys = new Set(['lat', 'lon', 'disease', 'species', 'status', 'advice', 'resolved_at'])
   const badKeys = map.points.filter((p) => Object.keys(p).some((k) => !allowedKeys.has(k)))
-  check(map.points.length > 100 && badKeys.length === 0, 'each map point carries only lat, lon, disease, species, advice kind and week', `${map.points.length} points; first ${JSON.stringify(map.points[0])}`)
-  check(map.points.every((p) => Math.abs(p.lat * 100 - Math.round(p.lat * 100)) < 1e-6 && Math.abs(p.lon * 100 - Math.round(p.lon * 100)) < 1e-6), 'every point is rounded to 0.01 degree (about 1 km)')
+  check(map.points.length > 100 && badKeys.length === 0, 'each map point carries only lat, lon, disease, species, status, advice kind and week', `${map.points.length} points; first ${JSON.stringify(map.points[0])}`)
+  check(map.points.every((p) => p.status === 'confirmed' || p.status === 'suspected'), 'a map point status is only confirmed or suspected, never ruled out')
+      check(map.points.every((p) => Math.abs(p.lat * 100 - Math.round(p.lat * 100)) < 1e-6 && Math.abs(p.lon * 100 - Math.round(p.lon * 100)) < 1e-6), 'every point is rounded to 0.01 degree (about 1 km)')
   check(map.points.every((p) => new Date(p.resolved_at + 'T00:00:00Z').getUTCDay() === 1), 'every point carries only the Monday of the week signed off, never the day')
   check(!map.points.some((p) => /Dlamini|0821/.test(p.disease)) && map.points.some((p) => p.disease === 'Other (rare)'), 'a disease label with a name and number typed into it is stripped of the number and shown as "Other (rare)"', [...new Set(map.points.map((p) => p.disease))].join(', ').slice(0, 200))
   const cellsOf = new Map()
@@ -256,7 +257,7 @@ export async function runViewerChecks(c) {
   await viewport('p')
   await asUser('-vw', '', 6000); await sleep(1500)
   const ph = JSON.parse(await evalJs(`JSON.stringify({ scrollW: document.documentElement.scrollWidth, innerW: innerWidth, dots: document.querySelectorAll('#rm-canvas path.leaflet-interactive').length,
-    small: [...document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea, [role=button]')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !e.closest('.leaflet-container') && !e.classList.contains('app-status-toggle') && (r.height < 43.5 || r.width < 43.5) }).map((e) => e.tagName + '.' + String(e.className).split(' ')[0] + ' ' + Math.round(e.getBoundingClientRect().width) + 'x' + Math.round(e.getBoundingClientRect().height)) })`))
+    small: [...document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea, [role=button]')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !e.closest('.leaflet-container') && !e.classList.contains('app-status-toggle') && (r.height < 43.5 || r.width < 43.5) }).map((e) => e.tagName + '.' + String(e.className).split(' ')[0] + ' ' + Math.round(e.getBoundingClientRect().width) + 'x' + Math.round(e.getBoundingClientRect().height) + ' "' + String(e.innerText || e.getAttribute('aria-label') || '').trim().slice(0, 30) + '"') })`))
   check(ph.scrollW <= ph.innerW, 'phone: no horizontal overflow on the viewer home', `${ph.scrollW} vs ${ph.innerW}`)
   check(ph.dots === map.count, 'phone: the map still shows every dot', String(ph.dots))
   check(ph.small.length === 0, 'phone: every control is at least 44px', ph.small.slice(0, 4).join(' ; '))

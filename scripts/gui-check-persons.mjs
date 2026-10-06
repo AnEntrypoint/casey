@@ -7,6 +7,7 @@ export async function runPersonsChecks(c) {
   const SMALL_JS = `JSON.stringify([...document.querySelectorAll('a[href], button, input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea, summary, [role=button]')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && !e.closest('.leaflet-container') && !e.classList.contains('app-status-toggle') && (r.height < 43.5 || r.width < 43.5) }).map((e) => e.tagName.toLowerCase() + '.' + String(e.className).split(' ')[0] + ' ' + Math.round(e.getBoundingClientRect().width) + 'x' + Math.round(e.getBoundingClientRect().height) + ' ' + (e.getAttribute('aria-label') || e.innerText || e.name || '').replace(/\\n/g, ' ').slice(0, 24)))`
   const { buildCaseToolset } = await import(path.join(SRC, 'case-tools.js'))
   const P = await import(path.join(SRC, 'phone-persons.js'))
+  const { recordConsent } = await import(path.join(SRC, 'phone-consent.js'))
   const consoleFrom = seenConsole.length
 
   const asApi = async (suffix, method, p, body) => {
@@ -30,6 +31,7 @@ export async function runPersonsChecks(c) {
   const PHONE = '27831230001', PHONE2 = '27831230002'
   const mkPhone = async (ext, name) => {
     const { case: k } = await store.findOrCreateCase({ channel: 'whatsapp', external_id: ext, contact: { display_name: name, handle: name }, subject: 'first message on this line' })
+    await recordConsent(store, k.id, true)
     return { k, contact: await store.getContact(k.contact_id) }
   }
   const ctxFor = (contact, bound) => ({ author: contact.external_id, channel: 'whatsapp', tier: 'reporter', store, contact: { id: contact.id, external_id: contact.external_id, channel: 'whatsapp', tier: 'reporter' }, activeCaseBinding: { id: bound.id, ref: bound.ref }, activeCaseId: bound.id, dedupeCache: new Map() })
