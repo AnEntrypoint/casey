@@ -147,7 +147,7 @@ async function driveAgentTurn(deps, {
   text = await correctOutboundRef({ store, fresh, text, result, inboundText, contact })
 
   if (text && channel === 'whatsapp') {
-    const plain = normaliseReply(text)
+    const plain = normaliseReply(text, { keepLists: atLeast(resolveContactTier(contact), TIER_FIELD_WORKER) })
     if (plain.changed) {
       text = plain.text
       try { await store.appendEvent(fresh.id, observation('REPLY-FORMAT-NORMALISED: markdown syntax rewritten for WhatsApp')) }

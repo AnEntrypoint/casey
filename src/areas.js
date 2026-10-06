@@ -150,6 +150,7 @@ async function normaliseInput(store, areas, input, existing) {
     if (!Number.isFinite(lat) || Math.abs(lat) > 90) throw new Error('that latitude is not a place on Earth')
     if (!Number.isFinite(lon) || Math.abs(lon) > 180) throw new Error('that longitude is not a place on Earth')
   }
+  const district = String(input.district ?? existing?.district ?? '').trim().replace(/\s+/g, ' ').slice(0, 80)
   return { name, primary, backups, aliases, lat, lon, district }
 }
 

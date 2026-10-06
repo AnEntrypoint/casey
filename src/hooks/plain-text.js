@@ -58,7 +58,7 @@ function flattenLists(lines) {
   return out
 }
 
-export function toPlainChat(input) {
+export function toPlainChat(input, { keepLists = false } = {}) {
   const text = String(input ?? '')
   if (!text) return text
   const lines = text.split('\n')
@@ -78,7 +78,7 @@ export function toPlainChat(input) {
     }
     out.push(line)
   }
-  let s = flattenLists(out).join('\n')
+  let s = (keepLists ? out.map(l => l.replace(/^\s{0,6}[*\u2022\u2013]\s+/, '- ')) : flattenLists(out)).join('\n')
   s = s.replace(BOLD, '*$2*')
   s = s.replace(/~~(?=\S)([^\n]*?\S)~~/g, '~$1~')
   s = s.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1 ($2)')
@@ -87,9 +87,9 @@ export function toPlainChat(input) {
   return s
 }
 
-export function normaliseReply(text) {
+export function normaliseReply(text, { keepLists = false } = {}) {
   const before = String(text ?? '')
-  const after = toPlainChat(before).trim()
+  const after = toPlainChat(before, { keepLists }).trim()
   return { text: after, changed: after !== before.trim() }
 }
 

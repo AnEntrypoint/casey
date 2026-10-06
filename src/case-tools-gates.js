@@ -6,7 +6,7 @@ import { atLeast, TIER_REPORTER, TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIA
 export const REPORT_ONLY_TOOLS = new Set(['case_report', 'case_stop', 'case_handoff', 'case_new', 'case_feedback', 'case_speaker', 'case_consent', 'case_clarify'])
 
 export const TOOL_MIN_TIER = {
-  case_pending: TIER_FIELD_WORKER, case_claim: TIER_FIELD_WORKER, case_release: TIER_FIELD_WORKER,
+  case_search: TIER_FIELD_WORKER, case_pending: TIER_FIELD_WORKER, case_claim: TIER_FIELD_WORKER, case_release: TIER_FIELD_WORKER,
   case_dispatch_reply: TIER_FIELD_WORKER, case_focus: TIER_FIELD_WORKER, case_gaps: TIER_FIELD_WORKER,
   case_contact: TIER_FIELD_WORKER, case_edit: TIER_FIELD_WORKER, case_stage: TIER_FIELD_WORKER,
   case_message: TIER_FIELD_WORKER,

@@ -64,6 +64,8 @@ function selfCheckLoadBearingPromptContent() {
     { name: 'operator cannot sign off', pattern: /CANNOT sign a/, from: TIER_OPERATOR },
     { name: 'phone-plain-text rule for team replies', pattern: /PLAIN TEXT FOR A PHONE/, from: TIER_FIELD_WORKER },
     { name: 'queue and handover answered as short plain lines', pattern: /QUEUE AND HANDOVER ANSWERS/, from: TIER_OPERATOR },
+    { name: 'case search phrasing and answer rules', pattern: /FINDING AND LISTING/, from: TIER_FIELD_WORKER },
+    { name: 'today date for relative ranges', pattern: /TODAY IS /, from: TIER_FIELD_WORKER },
   ]
   const composed = { reporter: text, [TIER_FIELD_WORKER]: workerText, [TIER_ANIMAL_HEALTH_TECHNICIAN]: signOffText, [TIER_OPERATOR]: operatorText }
   const rungs = [TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR]
@@ -152,7 +154,7 @@ function selfCheckLoadBearingPromptContent() {
     { name: 'case_switch multi-report line', pattern: /use case_switch to move to it/ },
     { name: 'case_update summary reminder', pattern: /Keep case_update summary current/ },
     { name: 'case_transition before-closing block', pattern: /case_transition to resolved/ },
-    { name: 'enquiry-tool paragraph', pattern: /case_today\/case_mine\/case_list\/case_get\) and answer/ },
+    { name: 'enquiry-tool paragraph', pattern: /case_search, or case_today\/case_mine\/case_list\/case_get\) and answer/ },
   ]
   for (const { name, pattern } of workerOnly) {
     if (!pattern.test(workerText)) {

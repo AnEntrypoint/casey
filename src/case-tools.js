@@ -8,6 +8,7 @@ import {
 } from './case-tools-shared.js'
 import { REPORT_ONLY_TOOLS, gateByTier, dedupeDuplicateCalls, toolVisibleToTier } from './case-tools-gates.js'
 import { buildLookupTools } from './case-tools-lookup.js'
+import { buildSearchTools } from './case-tools-search.js'
 import { buildRecordTools } from './case-tools-record.js'
 import { buildTriageTools } from './case-tools-triage.js'
 import { buildWorkerTools } from './case-tools-worker.js'
@@ -37,6 +38,7 @@ export function buildCaseToolset(storeOrNull) {
 
   const tools = [
     ...buildLookupTools(store, enums),
+    ...buildSearchTools(store, enums),
     ...buildRecordTools(store, enums),
     ...buildTriageTools(store),
     ...buildWorkerTools(store),

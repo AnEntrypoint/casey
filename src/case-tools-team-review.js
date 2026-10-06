@@ -11,16 +11,14 @@ import { AGENT_USER } from './case-store.js'
 import { MANDATORY_MINIMUM_FIELDS, REPORT_ENTITY_LABEL, missingMandatoryMinimum, fieldLabel } from './store/report-shape.js'
 import { evData } from './safe.js'
 import { writeGate, recordedOn, setFocus } from './team-focus.js'
-import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn, reporterExtras } from './case-tools-team-shared.js'
 import { recordSeen } from './stale-write-guard.js'
+import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn, reporterExtras, maskNumberFields } from './case-tools-team-shared.js'
 import { inSignOffQueue, withdrawHandoff, isHandedOff, sendBackToRanger } from './signoff-desk.js'
 import { mergeTag } from './hooks/heuristics.js'
 import { RANGER_NOTE, notesTagged } from './relay.js'
 
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
 const REVIEW_EVENT_CAP = 60
-
-const NUMBER_FIELDS = ['owner_contact', 'contact_fallback']
 
 const done = (c) => doneStages().includes(c.status)
 const isComplete = (c) => missingMandatoryMinimum(parseReport(c)).length === 0
@@ -68,7 +66,7 @@ export function buildTeamReviewTools(store) {
         const events = (await store().listEvents(c.id)).filter(e => !(e.kind === 'observation' && evData(e).announced_to))
         const slim = slimCase(c)
         if (slim.report) {
-          for (const k of NUMBER_FIELDS) if (slim.report[k]) slim.report[k] = 'recorded (not repeated here)'
+          slim.report = maskNumberFields(slim.report)
           for (const k of ['photos', 'audio']) if (slim.report[k]) slim.report[k] = stripSavedPaths(slim.report[k])
         }
         slim.assignee = publicAssignee(c.assignee, ctx.contact) || null
