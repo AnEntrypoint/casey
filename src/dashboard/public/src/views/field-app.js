@@ -35,6 +35,9 @@ const fs = { view: 'home', mine: [], signoff: [], mineTotal: 0, openTotal: 0, cl
 let searchTimer = null;
 
 
+const wantsClosed = () => isTechnician() || fs.pills.has('closed');
+
+
 export async function refreshFieldLists() {
   const gen = ++fs.gen;
   fs.loading = true;
@@ -43,15 +46,17 @@ export async function refreshFieldLists() {
     const [mine, signoff, closed] = await Promise.all([
       fetchFieldCases('mine', { q, state: 'open' }),
       isTechnician() ? fetchFieldCases('signoff', { q }) : Promise.resolve({ cases: [] }),
-      fetchFieldCases('mine', { q, state: 'closed', limit: CLOSED_PAGE }),
+      wantsClosed() ? fetchFieldCases('mine', { q, state: 'closed', limit: CLOSED_PAGE }) : Promise.resolve(null),
     ]);
     if (gen !== fs.gen) return;
     fs.mine = (mine && mine.cases) || [];
     fs.mineTotal = (mine && typeof mine.total === 'number') ? mine.total : fs.mine.length;
     if (!q) fs.openTotal = fs.mineTotal;
     fs.signoff = (signoff && signoff.cases) || [];
-    fs.closed = (closed && closed.cases) || [];
-    fs.closedTotal = (closed && typeof closed.total === 'number') ? closed.total : fs.closed.length;
+    if (closed) {
+      fs.closed = closed.cases || [];
+      fs.closedTotal = typeof closed.total === 'number' ? closed.total : fs.closed.length;
+    }
     fs.error = '';
   } catch (e) { if (gen === fs.gen) fs.error = word('ui.load_list_failed'); }
   if (gen !== fs.gen) return;
@@ -73,6 +78,7 @@ function togglePill(key) {
   else { next.add(key); if (EXCLUSIVE[key]) next.delete(EXCLUSIVE[key]); }
   fs.pills = next;
   schedule();
+  if (key === 'closed' && next.has(key) && !isTechnician()) refreshFieldLists();
 }
 
 function clearFilters() {
