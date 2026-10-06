@@ -56,6 +56,7 @@ export const VOCAB_BOT_KEYS = {
   photo_nudge: 'photoNudge.text',
   stop_confirm: 'stopConfirmText',
   location_confirm: 'locationConfirmNudge',
+  visit_mode: 'visitModeText',
   worker_catch_up: 'workerCatchUpText',
   casual_enquiry_blocked: 'casualReporterEnquiryBlockedText',
   returned_after_gap: 'returnedAfterGapText',

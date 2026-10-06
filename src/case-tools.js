@@ -18,6 +18,7 @@ import { buildFeedbackTools } from './case-tools-feedback.js'
 import { buildSpeakerTools } from './case-tools-speaker.js'
 import { buildConsentTools } from './case-tools-consent.js'
 import { buildClarifyTools } from './case-tools-clarify.js'
+import { buildVisitTools, withReadback } from './case-tools-visit.js'
 
 export function buildCaseToolset(storeOrNull) {
   const store = () => storeOrNull || getCaseStore()
@@ -42,7 +43,10 @@ export function buildCaseToolset(storeOrNull) {
     ...buildConsentTools(store),
     ...buildClarifyTools(store),
   ]
-  return tools.map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
+  const edit = withReadback(tools.find(t => t.name === 'case_edit'))
+  const withEdit = tools.map(t => (t.name === 'case_edit' ? edit : t))
+  withEdit.push(...buildVisitTools(store, edit))
+  return withEdit.map(gateByTier).map(t => dedupeDuplicateCalls(t, store))
 }
 
 function selfCheckLoadBearingToolDescriptions() {

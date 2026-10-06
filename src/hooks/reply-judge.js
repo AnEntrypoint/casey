@@ -171,6 +171,7 @@ export async function judgeReply(callLLM, replyText, { lastOutboundText = null, 
     ].join('\n') : null,
 
     ``,
+    `A short "Saved: ..." or "Visit logged: ..." read-back of what was just recorded, with or without the next question, is a genuine reply and CLEAN, in any language.`,
     `A reply that is a genuine, warm, on-topic message actually addressed TO the`,
     `person -- even if short, even if it asks a question, even if it is in a`,
     `language other than English -- is CLEAN. Only flag a reply that clearly`,
