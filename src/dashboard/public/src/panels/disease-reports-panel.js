@@ -53,6 +53,7 @@ export function DiseaseReportsPanel() {
       rd.loading ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, 'Updating the figures...') : null,
       empty ? Alert({ kind: 'info', children: 'No signed-off cases in this period yet. Figures appear here as technicians sign reports off.' }) : null,
       r.closed_without_diagnosis ? h('p', { class: 'casey-hint' }, r.closed_without_diagnosis + ' more cases were closed without a disease being recorded, so they are not counted in these figures.') : null,
+      r.total ? h('p', { class: 'casey-hint' }, r.with_photo + ' of ' + r.total + ' signed-off cases came with a photo.') : null,
       Kpi({ items: [
         [String(r.total), 'Signed-off cases'],
         ...(suspected ? [[String(r.total - suspected.count), 'Confirmed or not stated'], [String(suspected.count), 'Suspected only']] : []),

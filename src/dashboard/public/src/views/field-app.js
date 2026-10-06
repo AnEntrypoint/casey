@@ -79,7 +79,7 @@ function Row(c, { showMissing = true } = {}) {
   const need = showMissing && mandatory().length ? (missing.length ? 'Still needed: ' + missing.map((f) => f.label).join(', ') : 'Everything needed is recorded') : '';
   return KitRow({
     key: c.id, title: what || headline(c.subject || 'No details yet'),
-    sub: [c.ref, stageLabel(c.status) + (c.last_event_at ? ' -- ' + rel(c.last_event_at) : ''), sentBack ? 'Sent back to you -- open it to see what is needed' : '', handedNote(c), need].filter(Boolean).join('. '),
+    sub: [c.ref, stageLabel(c.status) + (c.last_event_at ? ' -- ' + rel(c.last_event_at) : ''), has(r, 'photos') ? 'Photo attached' : 'No photo yet', sentBack ? 'Sent back to you -- open it to see what is needed' : '', handedNote(c), need].filter(Boolean).join('. '),
     meta: holdState(c),
     rail: sentBack ? 'flame' : (mandatory().length && !missing.length ? 'green' : undefined),
     onClick: () => openReport(c.id),
