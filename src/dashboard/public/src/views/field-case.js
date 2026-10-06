@@ -6,8 +6,10 @@ import { toast, failMsg } from '../toasts.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 import { stageLabel, headline } from '../format.js';
 import { entityLabel, EntityLabel } from '../vocabulary.js';
+import { word } from '../words.js';
+import { PhotosStrip } from './field-photos.js';
 import { isTechnician, fetchFieldCase, postFieldNote, postFieldIntake, postFieldTransition, postFieldLocation, postSendBack, assigneeName } from '../api-roles.js';
-import { postHandoff } from '../api-team.js';
+import { postHandoff, postWithdrawHandoff } from '../api-team.js';
 import { holderName } from './field-names.js';
 import { CaseProgress } from './case-detail/progress.js';
 import { Timeline, reportLanguage } from './case-detail/timeline.js';
@@ -148,6 +150,14 @@ async function sendToTechnician(c) {
   } catch (e) { toast(await failed(e, c.ref + ' was not sent. Nothing changed -- try again.'), 'err'); await reload(); }
 }
 
+async function withdrawHandoff(c) {
+  const ok = await confirmDialog({ title: word('ui.field_withdraw_title', { ref: c.ref }), message: word('ui.field_withdraw_message', { ref: c.ref }), confirmLabel: word('ui.field_withdraw') });
+  if (ok === null || ok === undefined) return;
+  try { await postWithdrawHandoff(c.id, c.ref); toast(word('ui.field_withdraw_done', { ref: c.ref }), 'ok'); await reload(); }
+  catch (e) { toast(await failed(e, word('ui.field_withdraw_failed', { ref: c.ref })), 'err'); await reload(); }
+}
+
+
 function SignOffCard(c, data, r, write) {
   const tech = isTechnician();
   const missing = mandatory().filter((f) => !has(r, f.key));
@@ -163,7 +173,9 @@ function SignOffCard(c, data, r, write) {
     children: [
       Checklist(c, r),
       !mandatory().length ? h('p', { class: 'casey-hint' }, 'Nothing is required before sign-off on this deployment.') : null,
-      !tech && write && isHandedOver(c) ? h('p', { class: 'casey-hint' }, 'Sent to the technician for sign-off. They will sign it off, or send it back to you with what is missing. If you sent it by mistake, ask the technician or an operator to send it back.') : null,
+      !tech && write && isHandedOver(c) ? h('p', { class: 'casey-hint' }, 'Sent to the technician for sign-off. They will sign it off, or send it back to you with what is missing. If you sent it too soon, take it back and keep working on it.') : null,
+          !tech && write && isHandedOver(c) ? h('div', { class: 'casey-timeline-actions' },
+            Btn({ variant: 'ghost', class: 'field-withdraw', children: word('ui.field_withdraw'), 'aria-label': word('ui.field_withdraw') + ': ' + c.ref, onClick: () => withdrawHandoff(c) })) : null,
       !tech && write && !isHandedOver(c) && mandatory().length && !missing.length ? h('div', { class: 'casey-timeline-actions' },
         Btn({ variant: 'primary', class: 'field-handoff', children: 'Send to technician', 'aria-label': 'Send ' + c.ref + ' to the technician', onClick: () => sendToTechnician(c) })) : null,
       tech ? h('div', { class: 'casey-timeline-actions' },
@@ -202,8 +214,10 @@ async function saveRecord(c) {
   if (!Object.keys(fields).length && !note) { toast('Nothing to save yet -- fill in a line first.', 'warn'); return; }
   if (!(await confirmOnce(c))) return;
   fc.busy = true; schedule();
+  const report = parseReport(c.report);
+  const expected = Object.fromEntries(Object.keys(fields).map((k) => [k, has(report, k) ? String(report[k]) : '']));
   try {
-    if (Object.keys(fields).length) await postFieldIntake(c.id, c.ref, fields);
+    if (Object.keys(fields).length) await postFieldIntake(c.id, c.ref, fields, expected);
     if (note) await postFieldNote(c.id, c.ref, note, true);
     fc.draft = {}; fc.note = ''; fc.busy = false; resetOptionField();
     await reload();
@@ -211,7 +225,12 @@ async function saveRecord(c) {
     refocusSave();
   } catch (e) {
     fc.busy = false;
-    toast(await failed(e, 'Nothing was saved to ' + c.ref + '. What you typed is still here -- try again.'), 'err');
+    const conflicts = (e && e.status === 409 && e.body && Array.isArray(e.body.conflicted_fields)) ? e.body.conflicted_fields : [];
+    if (conflicts.length) {
+      const names = conflicts.map((k) => (fieldDefs().find((d) => d.key === k) || { label: k }).label).join(', ');
+      reload();
+      toast(word('ui.field_changed_by_other', { fields: names }), 'err');
+    } else toast(await failed(e, 'Nothing was saved to ' + c.ref + '. What you typed is still here -- try again.'), 'err');
     schedule();
     refocusSave();
   }
@@ -305,6 +324,7 @@ export function FieldCaseView({ id, onBack }) {
     editable ? RecordForm(c, r) : null,
     editable ? QuickActions(c) : null,
     Summary(c, r),
+    PhotosStrip(c, r),
     editable ? Transitions({ c, transitions: nonDone, onReload: reload1 }) : null,
     editable ? ReplyBox({ c, events, onReload: reload1 }) : null,
     editable ? h('details', {}, h('summary', {}, 'Change the title, priority or labels of ' + c.ref),

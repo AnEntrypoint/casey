@@ -17,6 +17,8 @@ export const deleteArea = (id) => json('/api/areas/' + seg(id), { method: 'DELET
 export const postRelocate = (id, body) => send('POST', '/api/cases/' + seg(id) + '/relocate', body);
 
 export const postHandoff = (id, ref, note) => send('POST', '/api/cases/' + seg(id) + '/handoff', { note: note || '', expected_ref: ref });
+export const postWithdrawHandoff = (id, ref) => send('POST', '/api/cases/' + seg(id) + '/handoff/withdraw', { expected_ref: ref });
+
 export const fetchMyDay = () => json('/api/my-day');
 
 export const postRolesImport = (csv, dryRun) => send('POST', '/api/roles/import', { csv, dry_run: !!dryRun });

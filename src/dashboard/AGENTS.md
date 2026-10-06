@@ -72,3 +72,5 @@ Imperatives for the operator console. Root `AGENTS.md` covers the access ladder,
 
 - Raw-copy fallback includes `-wal`/`-shm`; restore removes stale sidecars, refuses a non-empty target, and moves the live data dir aside.
 -> recall {query:"casey backup wal sidecar restore"}
+
+- Field screen (`field-app.js`): the search and pill bar is one stable keyed block that never unmounts on refresh; list refreshes are generation-guarded (last wins); Closed is a separate server-paged list; field logins get no undo toast (`/undo` reverts whichever operator move was latest, so it stays off `FIELD_ROUTES`); the photo strip reads only `(saved: media/<this case>/...)` image notes.

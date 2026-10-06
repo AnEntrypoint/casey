@@ -129,3 +129,5 @@ casey consumes thatcher via `file:deps/thatcher`, calling operator-where directl
 -> recall {query:"casey conventions sqlite handle db.sqlite cwd secrets-exec secret manager manifest"}
 
 - Opt-out is two-step: the first exact STOP (or a first `case_stop`) only sets the reserved tag `stop-pending:<unix s>` plus a STOP-CONFIRM event carrying the inbound event id; the same turn is told (`bot.stop_confirm`) to ask for confirmation. A later exact STOP within 24 h opts out; any other message cancels it (STOP-CANCELLED); `case_stop` opts out only from an earlier turn than the pending one, for every tier (it can only target the caller's own conversation). HELP resumes as before. See `src/hooks/stop-pending.js`.
+
+- Field console parity: `GET /api/cases?view=mine` takes `q` (accent-insensitive, all words AND over ref, subject, summary and every report value) and `state=open|closed` (closed sorted newest first, paged by `offset`), all still inside `caseAccess`; `POST /intake` takes `expected` (prior values, append fields exempt) and answers 409 with `conflicted_fields`.

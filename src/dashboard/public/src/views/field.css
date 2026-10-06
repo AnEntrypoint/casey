@@ -6,3 +6,13 @@
 .field-home { display: flex; flex-direction: column; gap: var(--space-4); }
 .field-day { display: flex; flex-direction: column; gap: var(--space-4); }
 .ds-247420 .casey-detail-pane .ds-section, .ds-247420 .field-home .panel { margin-block: 0; }
+
+.field-filters { display: flex; flex-direction: column; gap: var(--space-2); }
+.field-filters[hidden] { display: none; }
+.field-pills { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.ds-247420 .field-filters :is(.ds-filter-pill, .field-clear, .ds-search-clear, .ds-search-input) { min-height: 44px; }
+.ds-247420 .field-filters .ds-filter-pill { min-width: 44px; }
+.field-count { margin: 0; }
+.field-photos { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.ds-247420 .field-photo { display: block; min-width: 44px; min-height: 44px; }
+.field-photo img { display: block; width: 96px; height: 96px; object-fit: cover; border-radius: var(--r-2); }
