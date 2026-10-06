@@ -4,7 +4,9 @@ import { tagList } from '../timestamp.js'
 
 export const OPTED_OUT_TAG = 'opted-out'
 
-export const RESERVED_TAG = /^(opted-out|needs-human|draft-pending|ai-offline|flagged-reply|dispatch-suggested|handed-off|health:|intake_mode:)/i
+export const STOP_PENDING_PREFIX = 'stop-pending:'
+
+export const RESERVED_TAG = /^(opted-out|stop-pending:|needs-human|draft-pending|ai-offline|flagged-reply|dispatch-suggested|handed-off|health:|intake_mode:)/i
 
 export function truncate(s, n) { s = s || ''; return s.length > n ? s.slice(0, n - 1) + '...' : s }
 
@@ -57,13 +59,18 @@ function normalizeIntentText(text) {
 
 export function mergeTag(tags, tag) {
   const list = tagList({ tags })
-  if (!list.includes(tag)) list.push(tag)
-  return list.join(',')
+  const exclusive = tag.startsWith(STOP_PENDING_PREFIX)
+  const kept = exclusive ? list.filter(t => !t.startsWith(STOP_PENDING_PREFIX)) : list
+  if (!kept.includes(tag)) kept.push(tag)
+  return kept.join(',')
 }
 
+
 export function dropTag(tags, ...names) {
-  return tagList({ tags }).filter(t => !names.includes(t)).join(',')
+  const matches = (t) => names.some(n => n.endsWith(':') ? t.startsWith(n) : t === n)
+  return tagList({ tags }).filter(t => !matches(t)).join(',')
 }
+
 
 export function canAgentAct(caseRow, action = 'reply') {
   const mode = caseRow?.autonomy || 'auto'

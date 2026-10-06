@@ -54,6 +54,7 @@ export const VOCAB_BOT_KEYS = {
   staff_notice: 'staffNoticeText',
   new_person_notice: 'newPersonNoticeText',
   photo_nudge: 'photoNudge.text',
+  stop_confirm: 'stopConfirmText',
   location_confirm: 'locationConfirmNudge',
   worker_catch_up: 'workerCatchUpText',
   casual_enquiry_blocked: 'casualReporterEnquiryBlockedText',

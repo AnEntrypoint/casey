@@ -1,6 +1,6 @@
 import { normalizeMsisdn } from '../../role-invites.js'
 import { tagList, parseReport } from '../../timestamp.js'
-import { mergeTag, dropTag } from '../../hooks/heuristics.js'
+import { mergeTag, dropTag, STOP_PENDING_PREFIX } from '../../hooks/heuristics.js'
 import { fmtPhone27, markInvisibles } from '../../format.js'
 import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, hiddenFieldsFor, DIAGNOSIS_STATUS_KEY, DIAGNOSIS_STATUS_OPTIONS, normalizeDiagnosisStatus } from '../../store/report-shape.js'
 import { sendBackToRanger, isDone } from '../../signoff-desk.js'
@@ -332,6 +332,10 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
     if (!Object.keys(patch).length) return res.status(400).json({ error: 'no editable fields' })
     const patchReason = str(res, req.body, 'reason', { required: false }); if (patchReason === undefined) return
     let prior = await store.getCase(req.params.id)
+    if ('tags' in patch) {
+      const pendingOf = (list) => list.filter(t => t.startsWith(STOP_PENDING_PREFIX)).sort().join('|')
+      if (pendingOf(tagList(prior)) !== pendingOf(patch.tags.split(',').map(t => t.trim()))) return res.status(403).json({ error: 'That tag is set by the system itself and cannot be changed by hand.' })
+    }
     if (req.body && req.body.expected != null) {
       if (typeof req.body.expected !== 'object' || Array.isArray(req.body.expected)) {
         return res.status(400).json({ error: 'expected must be an object of field -> prior value' })

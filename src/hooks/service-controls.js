@@ -1,7 +1,8 @@
 
 
 import { tagList } from '../timestamp.js'
-import { mergeTag, dropTag, detectContactIntent, OPTED_OUT_TAG } from './heuristics.js'
+import { mergeTag, dropTag, detectContactIntent, OPTED_OUT_TAG, STOP_PENDING_PREFIX } from './heuristics.js'
+import { stopPendingState, stopPendingTag, stopConfirmEvent } from './stop-pending.js'
 import { observation } from './case-writes.js'
 import { controlActor, forgetSpeakerAfterHelp } from '../phone-persons.js'
 import { resolveTierValue, TIER_REPORTER } from '../contact-tiers.js'
@@ -40,11 +41,30 @@ export async function applyServiceControls({ store, log, llmStatus, caseRow, inb
     return { to: replyTo, text: '', platform, caseId: caseRow.id, optedOut: true }
   }
 
+  let tags = caseRow.tags
+  let confirmed = false
+  if (tagList(caseRow).some(t => t.startsWith(STOP_PENDING_PREFIX))) {
+    const pending = stopPendingState(caseRow, await store.listEvents(caseRow.id))
+    if (pending.valid && pending.sameTurn) return null
+    tags = dropTag(tags, STOP_PENDING_PREFIX)
+    confirmed = pending.valid && intent === 'stop'
+    if (!confirmed) {
+      await store.updateCase(caseRow.id, { tags })
+      if (pending.valid) await store.appendEvent(caseRow.id, observation('STOP-CANCELLED: contact sent another message instead of confirming; they are not opted out.', { stop_cancelled: true }))
+    }
+  }
+
   if (intent !== 'stop') return null
 
-  try { await store.updateCase(caseRow.id, { tags: mergeTag(caseRow.tags, OPTED_OUT_TAG) }) }
-  catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: caseRow.id, error: e.message }) }
   const stopActor = isPublicPhone(caseRow) ? await controlActor(store, caseRow.contact_id) : {}
+  if (!confirmed) {
+    await store.updateCase(caseRow.id, { tags: mergeTag(tags, stopPendingTag()) })
+    await store.appendEvent(caseRow.id, stopConfirmEvent(await store.listEvents(caseRow.id), stopActor))
+    return null
+  }
+
+  try { await store.updateCase(caseRow.id, { tags: mergeTag(tags, OPTED_OUT_TAG) }) }
+  catch (e) { log.warn?.('[casey] opt-out flag failed', { caseId: caseRow.id, error: e.message }) }
   try { await store.appendEvent(caseRow.id, observation('OPT-OUT: contact asked to stop messaging.', Object.keys(stopActor).length ? { opt_out: true, ...stopActor } : undefined)) }
   catch (e) { log.warn?.('[casey] opt-out audit event failed', { caseId: caseRow.id, error: e.message }) }
 
