@@ -12,6 +12,7 @@ const ALLOWED = [
   '/api/reports/resolved-map', '/api/reports/diseases', '/api/reports/heat', '/api/reports/areas', '/api/reports/heat?advice=Vaccination', '/api/reports/export.csv',
   '/api/reports/resolved-map?region=Upper%20Lambasi', '/api/reports/diseases?grain=quarter', '/api/reports/heat?scope=all',
   '/api/reports/diseases?from=2026-01-01&to=2026-06-30',
+  '/api/reports/diseases/print', '/api/reports/diseases/print?grain=quarter', '/api/reports/files',
 ]
 
 async function forbiddenValues(store) {
@@ -143,7 +144,7 @@ export async function runViewerChecks(c) {
     const r = await rawRequest(PORT, 'GET', p, cookie)
     payloads.push([p, r.body]); sizes.push(r.body.length)
     for (const f of forbidden) if (r.body.includes(f)) bad.push(`${p} contains "${f.slice(0, 30)}"`)
-    if (p === '/api/reports/export.csv') { if (PHONE.test(r.body)) bad.push(p + ' has a phone-like run') } else {
+    if (p === '/api/reports/export.csv' || p.startsWith('/api/reports/diseases/print')) { if (PHONE.test(r.body)) bad.push(p + ' has a phone-like run') } else {
       let j = null; try { j = JSON.parse(r.body) } catch {  }
       if (j) for (const s of stringsOf(j)) if (PHONE.test(s)) bad.push(`${p} string "${s.slice(0, 30)}" is phone-like`)
     }
