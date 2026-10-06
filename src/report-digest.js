@@ -64,6 +64,7 @@ export function digestText(rep, month) {
     lines.push(trendLine(rep, month))
     lines.push('Advice given: ' + (rep.by_conclusion.length ? rep.by_conclusion.map(c => `${c.conclusion} ${c.count}`).join(', ') : 'no group is large enough to show'))
   }
+  lines.push('With a photo: ' + (rep.total ? rep.with_photo + ' of ' + rep.total : `fewer than ${MIN_AGGREGATE_CELL} cases`))
   lines.push('Closed without a diagnosis: ' + (rep.closed_without_diagnosis ?? `fewer than ${MIN_AGGREGATE_CELL}`))
   if (rep.truncated) lines.push('Some reports could not be loaded, so figures leave some out.')
   lines.push(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined. No personal data is included.`)

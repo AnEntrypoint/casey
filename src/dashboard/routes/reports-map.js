@@ -113,7 +113,7 @@ export function resolvedRow(c, report, resolvedSec, areas = []) {
   const area = cleanLabel(statedArea(report), 60)
   const p = coords(c)
   return {
-    disease, species, region: area || 'unknown', district: districtOf(areas, report), sec: resolvedSec, status: statusOf(report),
+    disease, species, region: area || 'unknown', district: districtOf(areas, report), sec: resolvedSec, status: statusOf(report), photo: String(report.photos == null ? '' : report.photos).trim() !== '',
     conclusions: conclusionKinds(report[RESOLUTION_KEY]),
     ll: p ? { lat: round2(p.lat), lon: round2(p.lon) } : null,
   }
@@ -213,6 +213,7 @@ export function buildDiseaseReport(rows, { region = null, grain = 'month' } = {}
     by_species: rollup(inRegion, [(r) => r.species]).map(named(['species'])),
     by_conclusion: rollup(inRegion.flatMap(r => r.conclusions.map(k => ({ k }))), [(r) => r.k]).map(named(['conclusion'])),
     by_disease_conclusion: rollup(inRegion.flatMap(r => r.conclusions.map(k => ({ d: r.disease, k }))), [(r) => r.d, (r) => r.k]).map(named(['disease', 'conclusion'])),
+    with_photo: total ? inRegion.filter(r => r.photo).length : 0,
     with_conclusion: total ? inRegion.filter(r => r.conclusions[0] !== NO_CONCLUSION).length : 0,
     cells: cells.map(named(['disease', 'region', 'month'])),
     closed_without_diagnosis: !region && rows.undiagnosed >= MIN_AGGREGATE_CELL ? rows.undiagnosed : null,
@@ -318,7 +319,7 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
   const confirmedOrSuspected = rep.by_status.map(x => row([x.status, x.count])).join('') + (rep.ruled_out ? row(['ruled out, not counted above', rep.ruled_out]) : '')
   return `<h1>Disease report</h1>`
     + `<p class="meta">Generated ${esc(generated)}. Period: ${esc(period)}. Area: ${esc(region || 'all areas')}. Grouped by ${esc(rep.grain)}.</p>`
-    + `<h2>Totals</h2><table>${row(['signed-off cases', rep.total || `fewer than ${rep.k}`])}${row(['with advice recorded', rep.with_conclusion])}${row(['closed without a diagnosis', rep.closed_without_diagnosis ?? `fewer than ${rep.k}`])}</table>`
+    + `<h2>Totals</h2><table>${row(['signed-off cases', rep.total || `fewer than ${rep.k}`])}${row(['with advice recorded', rep.with_conclusion])}${row(['with a photo', rep.with_photo])}${row(['closed without a diagnosis', rep.closed_without_diagnosis ?? `fewer than ${rep.k}`])}</table>`
     + `<h2>Confirmed and suspected</h2>` + (confirmedOrSuspected ? `<table>${confirmedOrSuspected}</table>` : `<p>none</p>`)
     + `<h2>By disease</h2>` + list('Disease', rep.by_disease, 'disease')
     + `<h2>By area</h2>` + list('Area', rep.by_region, 'region')
