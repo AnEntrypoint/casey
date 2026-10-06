@@ -5,7 +5,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { truncate } from './heuristics.js'
 import { fetchWithTimeout } from '../adapters/webhook-platform-base.js'
-import { transcribeLocal, localSttEnabled } from './local-stt.js'
+import { transcribeLocal, localSttEnabled, localSttAvailable } from './local-stt.js'
+import { googleSttEnabled } from '../stt/config.js'
+import { transcribeGoogle } from '../stt/engine.js'
+import { recordStt } from '../stt/metrics.js'
+import { STT_FAILURE } from '../stt/errors.js'
+import { googleVoiceRepliesEnabled, voiceReplyEligible, synthesizeGoogle } from '../stt/tts.js'
+import { parseReport } from '../timestamp.js'
 import { dataPolicyMode, openrouterProviderField, auditWrite } from '../llm-data-policy.js'
 
 const MEDIA_TOOL_TIMEOUT_MS = Number(process.env.CASEY_MEDIA_TOOL_TIMEOUT_MS) || 12000
@@ -71,7 +77,36 @@ async function transcribeViaOpenrouterChat(buffer, mimeType, model, providerFiel
   return { text, error: '', served_by: j?.provider || null }
 }
 
-export async function transcribeAudioDetailed(buffer, mimeType) {
+const LOCAL_RESCUES = new Set([STT_FAILURE.UNAVAILABLE, STT_FAILURE.TIMEOUT, STT_FAILURE.AUTH, STT_FAILURE.QUOTA, STT_FAILURE.FFMPEG_MISSING])
+
+function failureKindFor(tr) {
+  if (/disabled/.test(tr.error || '')) return STT_FAILURE.DISABLED
+  if (/no audio bytes/.test(tr.error || '')) return STT_FAILURE.NO_AUDIO
+  if (/no intelligible speech/.test(tr.error || '')) return STT_FAILURE.NO_SPEECH
+  return STT_FAILURE.UNAVAILABLE
+}
+
+export async function transcribeAudioDetailed(buffer, mimeType, { hintLanguage = null } = {}) {
+  const t0 = Date.now()
+  let tr
+  if (googleSttEnabled() && process.env.CASEY_TRANSCRIBE_VOICE_NOTES !== '0' && buffer?.length) {
+    tr = await transcribeGoogle(buffer, mimeType, { hintLanguage })
+    if (!tr.text && LOCAL_RESCUES.has(tr.failureKind) && localSttAvailable()) {
+      const local = await transcribeLocal(buffer, mimeType)
+      tr = local.text
+        ? { ...local, engine: 'local', failureKind: '', ms: Date.now() - t0, rescued_from: tr.failureKind }
+        : { ...tr, error: [tr.error, local.error].filter(Boolean).join('; ') }
+    }
+  } else {
+    tr = await transcribeLegacy(buffer, mimeType)
+    if (tr.text) tr = { engine: tr.provider, failureKind: '', ...tr }
+    else tr = { ...tr, failureKind: tr.failureKind || failureKindFor(tr) }
+  }
+  recordStt(tr)
+  return tr
+}
+
+async function transcribeLegacy(buffer, mimeType) {
   const t0 = Date.now()
   if (process.env.CASEY_TRANSCRIBE_VOICE_NOTES === '0') return { text: '', provider: 'off', ms: 0, error: 'disabled (CASEY_TRANSCRIBE_VOICE_NOTES=0)' }
   if (!buffer?.length) return { text: '', provider: 'none', ms: 0, error: 'no audio bytes downloaded' }
@@ -133,7 +168,15 @@ export async function describePhoto(buffer, mimeType) {
   }
 }
 
-export async function synthesizeVoice(text) {
+async function synthesizeGoogleReply(text, caseRow, log) {
+  const language = parseReport(caseRow).language_detected
+  if (!voiceReplyEligible({ text, caseRow, language })) return null
+  try { return await synthesizeGoogle({ text: String(text).trim(), language }) }
+  catch (e) { log?.warn?.('[casey] voice reply not made; the text reply is sent alone', { caseId: caseRow?.id, error: e.message }); return null }
+}
+
+export async function synthesizeVoice(text, { caseRow = null, log = null } = {}) {
+  if (googleVoiceRepliesEnabled()) return synthesizeGoogleReply(text, caseRow, log)
   if (process.env.CASEY_VOICE_REPLIES !== '1') return null
   if (!process.env.OPENAI_API_KEY && !process.env.ELEVENLABS_API_KEY) return null
 

@@ -59,7 +59,7 @@ export async function sendAgentReply({
   })
   const reply = { to: replyTo, text, platform, caseId: fresh.id, ...(degraded ? { degraded: true } : {}) }
 
-  const audio = await synthesizeVoice(text)
+  const audio = await synthesizeVoice(text, { caseRow: fresh, log })
   if (audio) reply.audio = audio
 
   let delivered = false

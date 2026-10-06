@@ -2,7 +2,10 @@
 
 import { observation, flagNeedsHuman } from './case-writes.js'
 import { applyServiceControls, isLlmDown } from './service-controls.js'
-import { describeMedia, recordInboundMedia, recordInboundLocation, transcribeInboundAudio, VOICE_TRANSCRIBED } from './media-intake.js'
+import { describeMedia, recordInboundMedia, recordInboundLocation, transcribeInboundAudio, sttProvenance } from './media-intake.js'
+import { voiceNote, voiceFailureNote } from '../stt/readback.js'
+import { googleSttConfig } from '../stt/config.js'
+import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
 import { routeStaffArtifact, recordRelayedLocationPin, noteRoute } from './media-relay.js'
 import { staffLabel } from './staff-outbound.js'
 import { truncate, stripChannelMarkup, mergeTag, dropTag } from './heuristics.js'
@@ -65,7 +68,7 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
     inboundEvent = await store.recordInbound(caseRow, {
       channel,
       text: inboundText || (media ? `[${media}]` : '[empty message]'),
-      data: spoken ? { transcribed: true, transcribed_by: 'ai_helper' } : {}, msg_id: msgId,
+      data: spoken ? { transcribed: true, transcribed_by: 'ai_helper', stt: sttProvenance(msg._transcript) } : {}, msg_id: msgId,
     })
   } catch (e) {
 
@@ -82,6 +85,11 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
   return { caseRow, created, inboundText, media, msgId }
 }
 
+async function isTeamSender(store, caseRow) {
+  const contact = caseRow.contact_id ? await store.getContact(caseRow.contact_id) : null
+  return !!contact && atLeast(resolveContactTier(contact), TIER_FIELD_WORKER)
+}
+
 export async function applyInboundSideEffects({ store, log, caseRow, created, msg, channel, inboundText, media }) {
 
   if (tagList(caseRow).includes('draft-pending')) {
@@ -93,11 +101,11 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
 
   const route = await routeStaffArtifact({ store, log, caseRow, msg, inboundText, msgId: messageId(msg) })
   let promptNote = route ? await noteRoute({ store, log, caseRow, route, msg }) : ''
-  if (msg._transcript?.text) {
-    promptNote += VOICE_TRANSCRIBED
-
-    if (msg._transcript.languageSupported === false) promptNote += `\n\n[System note: the machine heard this voice note as ${String(msg._transcript.language || 'a language it does not follow reliably').slice(0, 30)}, which it cannot follow reliably, so the transcript is very likely wrong: do not act on it unless it is plainly clear, and keep the voice note saved for the team.]`
-  }
+  const tr = msg._transcript
+  if (tr?.text) {
+    const staff = await isTeamSender(store, caseRow)
+    promptNote += voiceNote(tr, { staff, minConfidence: googleSttConfig().minConfidence }).note
+  } else if (tr) promptNote += voiceFailureNote(tr)
   const ingressRecorded = route?.mode === 'relay'
   if (ingressRecorded) {
     const relay = { by: staffLabel(route.contact), contactId: route.contact.id }
