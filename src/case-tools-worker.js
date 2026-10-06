@@ -1,30 +1,19 @@
 
 
-import {
-  defTool, str, enquiryRow, mineRows, boundCase, isValidLatLon,
-} from './case-tools-shared.js'
+import { defTool, str, boundCase, isValidLatLon } from './case-tools-shared.js'
+import { searchCases } from './case-tools-search.js'
 import { toStorable } from './store/guards.js'
 
 export function buildWorkerTools(store) {
   return [
     defTool('case_mine', 'cases',
-      "List the asking worker's OWN open cases (their itinerary). PII-free.",
-      { type: 'object', properties: { limit: { type: 'number', default: 25 } } },
-      async ({ limit = 25 }, ctx) => {
-
-        const rows = await mineRows(store(), ctx, limit)
-        if (rows?.error) return rows
-        return { count: rows.length, cases: rows.map(enquiryRow) }
-      }),
+      "List the cases ASSIGNED to the asking worker that are still open, worst first (a thin wrapper over case_search with scope mine). PII-free. For anything with filters, free text or paging use case_search.",
+      { type: 'object', properties: { limit: { type: 'number', description: 'Rows, default 8, max 25' } } },
+      async ({ limit }, ctx) => searchCases(store(), ctx, { scope: 'mine', state: 'open', limit })),
     defTool('case_today', 'cases',
-      "List cases active today for the asking worker (today's list). PII-free.",
-      { type: 'object', properties: { limit: { type: 'number', default: 25 } } },
-      async ({ limit = 25 }, ctx) => {
-
-        const rows = await mineRows(store(), ctx, limit)
-        if (rows?.error) return rows
-        return { count: rows.length, cases: rows.map(enquiryRow) }
-      }),
+      "The asking worker's list for today: their assigned open cases, worst first (same rows as case_mine; a thin wrapper over case_search). PII-free.",
+      { type: 'object', properties: { limit: { type: 'number', description: 'Rows, default 8, max 25' } } },
+      async ({ limit }, ctx) => searchCases(store(), ctx, { scope: 'mine', state: 'open', limit })),
 
     defTool('case_checkin', 'cases',
       "Record the FIELD WORKER's own current location (not an animal report's location) -- call this when they say where they are now, e.g. 'I'm at the clinic', 'just arrived at the Bela-Bela farm', or share GPS. Shows them on the team's map and lets a later 'anything near me' question use this as the starting point.",

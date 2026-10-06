@@ -63,6 +63,19 @@ export async function reporterExtras(store, cases) {
   return { extra, text }
 }
 
+export const NUMBER_FIELDS = ['owner_contact', 'contact_fallback']
+
+const NUMBER_OR_REF = /(CASE-\d+-[a-z0-9]+)|(\+?\d[\d ()\-.]{5,}\d)/gi
+
+export const scrubNumbers = (text) => String(text ?? '').replace(NUMBER_OR_REF, (m, ref) => (ref ? m : '(number not shown)'))
+
+export function maskNumberFields(report) {
+  if (!report) return report
+  const out = { ...report }
+  for (const k of NUMBER_FIELDS) if (out[k]) out[k] = 'recorded (not repeated here)'
+  return out
+}
+
 export const stripSavedPaths = (text) => String(text || '').replace(/\s*\(saved: [^)]*\)/g, '')
 
 export const cleanRelayed = (v) => typeof v === 'string'

@@ -101,25 +101,6 @@ export function slimEvent(e) {
   return { kind: e.kind, actor: e.actor, text: e.text, at: e.created_at }
 }
 
-export async function mineRows(store, ctx, limit) {
-  const author = ctx?.author || ctx?.principal?.id
-
-  if (!author) return { error: 'no author on this turn -- cannot resolve "my cases"' }
-
-  const openStatuses = typeof store.getOpenStatuses === 'function'
-    ? store.getOpenStatuses()
-    : ['new', 'triaging', 'in_progress', 'waiting']
-
-  const scoped = await store.listCases({ status: { $in: openStatuses }, author_key: author }, { limit: Math.max(limit * 4, 100) })
-
-  if (scoped.length >= limit) return scoped.slice(0, limit)
-  const mineScanLimit = Number(process.env.CASEY_MINE_SCAN_LIMIT) || 1000
-  const legacyPool = await store.listCases({ status: { $in: openStatuses }, author_key: '' }, { limit: Math.max(limit * 10, mineScanLimit) })
-  const legacyMine = legacyPool.filter(c => ownsCase(c.external_id, author))
-  const seen = new Set(scoped.map(c => c.id))
-  const merged = [...scoped, ...legacyMine.filter(c => !seen.has(c.id))]
-  return merged.slice(0, limit)
-}
 export function pick(obj, keys) {
   const out = {}
   for (const k of keys) if (obj[k] !== undefined && obj[k] !== '' && String(obj[k]).trim() !== '') out[k] = obj[k]

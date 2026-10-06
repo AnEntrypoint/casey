@@ -39,7 +39,7 @@ export function headerSection(persona, caseRow, contact) {
     ...(isWorker ? [
       `A worker may ASK about existing reports (their own, today's list, reports in a place,`,
       `nearest report). When the message is such an ask, CALL the matching data tool`,
-      `(case_today/case_mine/case_list/case_get) and answer from what it returns -- never from`,
+      `(case_search, or case_today/case_mine/case_list/case_get) and answer from what it returns -- never from`,
       `memory. If a first message is an enquiry, answer it directly; don't force a greeting.`,
     ] : [persona.casualReporterEnquiryBlockedText]),
 
