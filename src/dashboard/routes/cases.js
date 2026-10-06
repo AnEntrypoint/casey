@@ -16,12 +16,23 @@ import { clearFocusForCase } from '../../team-focus.js'
 import { assigneeKeyFor, isContactAssignee, contactIdOfAssignee, isOwnConversation } from '../../case-assignment.js'
 import { atLeast, TIER_FIELD_WORKER } from '../../contact-tiers.js'
 import { findAccountByUsername } from '../auth.js'
-import { isFieldAccount, caseAccess, isAssignedTo, inSignOffQueue, detailForAccess, missingFor } from '../roles.js'
+import { isFieldAccount, caseAccess, isAssignedTo, inSignOffQueue, detailForAccess, missingFor, isDoneStatus } from '../roles.js'
+import { APPEND_FIELDS } from '../../store/report-shape.js'
 import { waLink } from '../wa-link.js'
 import { reporterFirstName, reporterSummary } from '../../phone-persons.js'
 import { prepareReminder, OPERATOR_REMINDER_FLAG } from '../../hooks/operator-reminder.js'
 
-const INTAKE_META_KEYS = new Set(['canonicalized', 'expected_ref'])
+const INTAKE_META_KEYS = new Set(['canonicalized', 'expected_ref', 'expected'])
+
+const foldText = (v) => String(v == null ? '' : v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+
+const queryWords = (raw) => foldText(raw).split(/\s+/).filter(Boolean)
+
+function caseMatchesWords(c, words, reportKeys, { withContact }) {
+  const r = parseReport(c)
+  const hay = foldText([c.ref, c.subject, c.summary, c.channel, withContact ? c.external_id : '', ...reportKeys.map(k => r[k])].join(' '))
+  return words.every(w => hay.includes(w))
+}
 
 function canonicalizedNote(raw, incoming) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
@@ -94,7 +105,9 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       const named = await assigneeNamer(store, casesWithFill, undefined, { logins: field })
       return res.json({ cases: casesWithFill.map(c => caseListProjection({ ...c }, named)), total: casesWithFill.length, limit: casesWithFill.length, offset: 0 })
     }
-    const q = req.query.q ? String(req.query.q).slice(0, 200).toLowerCase() : ''
+    const words = queryWords(req.query.q ? String(req.query.q).slice(0, 200) : '')
+    const doneFilter = field ? String(req.query.state || '') : ''
+    if (doneFilter && doneFilter !== 'open' && doneFilter !== 'closed') return res.status(400).json({ error: 'state must be open or closed' })
     const limit = clampLimit(req.query.limit, 50)
     const offset = offsetOf(req.query.offset)
     let cases, total
@@ -104,22 +117,14 @@ export function getCases({ store, authed, clampLimit, offsetOf, computeFillRate,
       const mine = all.filter(c => fieldView === 'mine' ? isAssignedTo(c, req.caseyAccount)
         : fieldView === 'signoff' ? (caseAccess(c, req.caseyAccount, key) !== 'none' && inSignOffQueue(c, UNCLAIMED_ASSIGNEE))
         : caseAccess(c, req.caseyAccount, key) !== 'none')
-      const filtered = q ? mine.filter(c => {
-        const hay = [c.ref, c.subject, c.summary, c.channel].join(' ').toLowerCase()
-        if (hay.includes(q)) return true
-        const r = parseReport(c)
-        return REPORT_KEY_LIST.some(k => r[k] != null && String(r[k]).toLowerCase().includes(q))
-      }) : mine
+      const byState = doneFilter ? mine.filter(c => isDoneStatus(c.status) === (doneFilter === 'closed')) : mine
+      const filtered = words.length ? byState.filter(c => caseMatchesWords(c, words, REPORT_KEY_LIST, { withContact: false })) : byState
+      if (doneFilter === 'closed') filtered.sort((a, b) => (Date.parse(b.last_event_at) || 0) - (Date.parse(a.last_event_at) || 0))
       total = filtered.length
       cases = filtered.slice(offset, offset + limit)
-    } else if (q) {
+    } else if (words.length) {
       const all = await store.listCases(where, { limit: 10000, offset: 0 })
-      const filtered = all.filter(c => {
-        const hay = [c.ref, c.subject, c.summary, c.external_id, c.channel].join(' ').toLowerCase()
-        if (hay.includes(q)) return true
-        const r = parseReport(c)
-        return REPORT_KEY_LIST.some(k => r[k] != null && String(r[k]).toLowerCase().includes(q))
-      })
+      const filtered = all.filter(c => caseMatchesWords(c, words, REPORT_KEY_LIST, { withContact: true }))
       total = filtered.length
       cases = filtered.slice(offset, offset + limit)
     } else {
@@ -285,6 +290,12 @@ export function postIntake({ store, authed, str, REPORT_KEY_LIST, REPORT_KEY_SET
     if (isDone(c) && SIGNOFF_DIAGNOSIS_FIELDS.some(k => k in incoming)) return res.status(409).json({ error: `${SIGNOFF_DIAGNOSIS_FIELDS.map(fieldLabel).join(' and ')} cannot be changed on a finished ${REPORT_ENTITY_LABEL}; reopen it first` })
     const op = actingOperator(req)
     const priorReport = parseReport(c)
+    if (req.body.expected != null) {
+      if (typeof req.body.expected !== 'object' || Array.isArray(req.body.expected)) return res.status(400).json({ error: 'expected must be an object of field -> prior value' })
+      const held = (v) => (v == null ? '' : String(v).trim())
+      const stale = Object.keys(incoming).filter(k => !APPEND_FIELDS.has(k) && k in req.body.expected && held(priorReport[k]) !== held(req.body.expected[k]))
+      if (stale.length) return res.status(409).json({ error: `this ${REPORT_ENTITY_LABEL} was changed by someone else (${stale.join(', ')}) -- reload and try again`, conflicted_fields: stale })
+    }
     const result = await store.mergeReport(c.id, incoming, op)
     if (result.error) return res.status(400).json({ error: result.error })
     if (isFieldAccount(req.caseyAccount) && tagList(c).includes('sent-back')) await store.updateCase(c.id, { tags: tagList(c).filter(t => t !== 'sent-back').join(',') }, op)

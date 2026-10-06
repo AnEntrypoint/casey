@@ -20,11 +20,17 @@ export const ROLE_NAME = { eco_ranger: 'Eco Ranger', animal_health_technician: '
 export const roleName = () => ROLE_NAME[currentRole()] || 'Field team';
 export { FIELD_ROLES };
 
-export const fetchFieldCases = (view) => json('/api/cases?limit=200' + (view ? '&view=' + view : ''));
+export function fetchFieldCases(view, { q = '', state: done = '', offset = 0, limit = 200 } = {}) {
+  const p = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  if (view) p.set('view', view);
+  if (q) p.set('q', q);
+  if (done) p.set('state', done);
+  return json('/api/cases?' + p.toString());
+}
 export const fetchFieldCase = (id) => json('/api/cases/' + seg(id));
 
 export const postFieldNote = (id, ref, text, relayed) => send('POST', '/api/cases/' + seg(id) + '/note', { text, relayed: !!relayed, expected_ref: ref });
-export const postFieldIntake = (id, ref, fields) => send('POST', '/api/cases/' + seg(id) + '/intake', { ...fields, expected_ref: ref });
+export const postFieldIntake = (id, ref, fields, expected) => send('POST', '/api/cases/' + seg(id) + '/intake', { ...fields, expected, expected_ref: ref });
 export const patchFieldCase = (id, ref, body) => send('PATCH', '/api/cases/' + seg(id), { ...body, expected_ref: ref });
 export const postFieldTransition = (id, ref, to, reason, extra) => send('POST', '/api/cases/' + seg(id) + '/transition', { ...(extra || {}), to, reason, expected_ref: ref });
 export const postFieldLocation = (id, ref, lat, lon) => send('POST', '/api/cases/' + seg(id) + '/location', { lat, lon, expected_ref: ref });

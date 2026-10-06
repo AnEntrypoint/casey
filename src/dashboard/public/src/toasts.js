@@ -1,6 +1,7 @@
 import { state, schedule } from './state.js';
 import { api } from './api.js';
 import { entityLabel } from './vocabulary.js';
+import { isFieldRole } from './api-roles.js';
 
 const UNDOABLE_TOAST_MS = 15000;
 
@@ -36,6 +37,7 @@ export async function failMsg(r, fallback) {
 }
 
 export function undoToast(caseId, label, onDone) {
+  if (isFieldRole()) return toast(label || 'Done.', 'ok');
   const id = nextId();
   const row = {
     id, msg: label || 'Done.', kind: 'ok', undo: {
