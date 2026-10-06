@@ -4,7 +4,7 @@ import { loadDomainConfig } from '../config-loader.js'
 import { MANDATORY_MINIMUM_FIELDS } from '../store/report-shape.js'
 import { buildPromptContext } from './prompt-context.js'
 import { consentManaged } from '../phone-consent.js'
-import { headerSection, caseContextSection, gatherSection, replySection, speakerSection, consentSection, returnSection } from './prompt-sections.js'
+import { headerSection, caseContextSection, gatherSection, replySection, speakerSection, consentSection, returnSection, stopConfirmSection } from './prompt-sections.js'
 import { roleSection, feedbackSection } from './prompt-roles.js'
 import { TIER_FIELD_WORKER, TIER_ANIMAL_HEALTH_TECHNICIAN, TIER_OPERATOR } from '../contact-tiers.js'
 
@@ -31,6 +31,8 @@ export function caseSystemPrompt(caseRow, events, contact, speaker = null, conse
     ...consentSection(persona, contact, consent),
 
     ...returnSection(persona, contact, ret, consent),
+
+    ...stopConfirmSection(persona, caseRow, events),
   ].join('\n')
 }
 

@@ -50,6 +50,7 @@ export async function runInboundTurn(receiver, deps, { platform, msg, channel, e
 
   const controlled = await applyPreTurnControls({ store, log, llmStatus, notifyHandoff, fresh, inboundText, channel, msg, replyTo, platform })
   if (controlled) return controlled
+  fresh = await store.getCase(fresh.id)
 
   const contact = fresh.contact_id ? await store.getContact(fresh.contact_id).catch(() => null) : null
   const events = await store.listEvents(fresh.id)

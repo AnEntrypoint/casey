@@ -4,6 +4,7 @@ import { pinAskOwed } from '../pin-confidence.js'
 import { tsMs } from '../timestamp.js'
 import { LOCATION_STALE_MS, fenced } from './prompt-context.js'
 import { canQueryCases } from '../contact-tiers.js'
+import { stopPendingState } from './stop-pending.js'
 import { fieldLabel } from '../store/report-shape.js'
 import { consentText } from '../phone-consent.js'
 
@@ -147,6 +148,12 @@ export function gatherSection(persona, caseRow, contact, { returnedAfterGap, rep
     ]),
   ]
 }
+
+export function stopConfirmSection(persona, caseRow, events) {
+  const pending = stopPendingState(caseRow, events)
+  return pending?.valid && pending.sameTurn ? ['', persona.stopConfirmText] : []
+}
+
 
 function photoNudgeLines(persona, reportObj) {
   if (!reportObj) return []

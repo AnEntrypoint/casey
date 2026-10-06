@@ -31,7 +31,7 @@ const OPTION_LABEL = {
 function labelled(values) {
     return values.map(v => ({ value: v, label: OPTION_LABEL[v] || v }));
 }
-const INTERNAL_TAG_PREFIXES = ['health:', 'intake_mode:', 'snoozed-until:'];
+const INTERNAL_TAG_PREFIXES = ['health:', 'intake_mode:', 'snoozed-until:', 'stop-pending:'];
 const INTERNAL_TAG_EXACT = new Set(['needs-human', 'draft-pending', 'unsent_draft', 'ai-offline', 'degraded-turn-seen', 'sent-back']);
 
 function isInternalTag(t) { return INTERNAL_TAG_EXACT.has(t) || INTERNAL_TAG_PREFIXES.some(p => t.startsWith(p)); }
