@@ -194,7 +194,7 @@ function derive() {
     rest = open.filter((c) => missingOf(c).length);
   }
   const shownIds = new Set([...(tech ? [...ready, ...rest] : open), ...closed].map((c) => c.id));
-  const loadedIds = new Set([...fs.mine, ...(tech ? fs.signoff : []), ...closedSource].map((c) => c.id));
+  const loadedIds = new Set([...fs.mine, ...(tech ? fs.signoff : [])].filter(passesHold).concat(closedSource).map((c) => c.id));
   return { tech, closedOn, open, closed, ready, rest, shown: shownIds.size, loaded: loadedIds.size, unloaded: Math.max(0, fs.mineTotal - fs.mine.length) };
 }
 
