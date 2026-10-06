@@ -5,6 +5,10 @@ import { observation } from './case-writes.js'
 import { transcribeAudioDetailed, describePhoto } from './media.js'
 import { isValidLatLon } from '../case-tools-shared.js'
 import { withoutIssuedCodes } from '../role-invites.js'
+import { parseReport } from '../timestamp.js'
+import { languageOf } from '../stt/languages.js'
+
+const FIELD_TRANSCRIPT_CHARS = 1500
 
 export function describeMedia(msg) {
   const r = msg.raw || {}
@@ -28,11 +32,26 @@ function inboundImageNote(msg) {
   return ''
 }
 
-function inboundAudioNote(msg, transcript = '', failure = '') {
+function heardSummary(tr) {
+  const lang = languageOf(tr.language)
+  const parts = [tr.provider || tr.engine || 'machine']
+  if (lang || tr.language) parts.push(lang ? lang.label : tr.language)
+  if (typeof tr.confidence === 'number') parts.push(`confidence ${tr.confidence.toFixed(2)}`)
+  if (tr.durationSec) parts.push(`${Math.round(tr.durationSec)}s`)
+  return parts.join(', ')
+}
+
+function transcriptTail(tr) {
+  const text = tr.text
+  const shown = text.length > FIELD_TRANSCRIPT_CHARS ? `${text.slice(0, FIELD_TRANSCRIPT_CHARS)} [... ${text.length - FIELD_TRANSCRIPT_CHARS} more characters: the full transcript is in the message on the timeline]` : text
+  return ` -- auto-transcript by the AI helper, HEARD not verified (${heardSummary(tr)}; may be wrong, listen to check): "${shown}"`
+}
+
+function inboundAudioNote(msg, tr = { text: '', error: '' }) {
   const r = msg.raw || {}
 
-  const tail = transcript ? ` -- auto-transcript by the AI helper (may be wrong, listen to check): "${truncate(transcript, 1500)}"`
-    : failure ? ` -- no auto-transcript could be made (${truncate(failure, 120)})` : ''
+  const tail = tr.text ? transcriptTail(tr)
+    : tr.error ? ` -- no auto-transcript could be made (${truncate(tr.error, 120)})` : ''
   const base = 'farmer sent a voice note (listen and record what it says)' + tail
   if (r.audio || r.voice || r.type === 'audio' || r.type === 'voice') return base
   const atts = Array.isArray(r.attachments) ? r.attachments : []
@@ -57,11 +76,25 @@ function pickMediaItem(msg, kind) {
   return list.find(m => m?.buffer && (m.type === 'audio') === wantAudio) || null
 }
 
+export function sttProvenance(tr) {
+  if (!tr?.text) return null
+  return {
+    engine: tr.engine || tr.provider, model: tr.model || null, language: tr.language || null, languages: tr.languages || undefined,
+    confidence: typeof tr.confidence === 'number' ? Number(tr.confidence.toFixed(3)) : null,
+    duration_s: tr.durationSec != null ? Math.round(tr.durationSec * 10) / 10 : null, chunks: tr.chunks || 1,
+  }
+}
+
+async function languageHint(store, log, caseId) {
+  try { return parseReport(await store.getCase(caseId)).language_detected || null }
+  catch (e) { log.warn?.('[casey] language hint unavailable for transcription', { caseId, error: e.message }); return null }
+}
+
 export async function transcribeInboundAudio({ store, log, caseId, msg }) {
   if (msg._transcript) return msg._transcript
   const audioItem = pickMediaItem(msg, 'audio')
   if (!audioItem) return { text: '', error: '' }
-  const tr = await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType)
+  const tr = await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType, { hintLanguage: await languageHint(store, log, caseId) })
   if (tr.text) {
     try { const clean = await withoutIssuedCodes(store, tr.text); if (clean != null) tr.text = clean }
     catch (e) { log.error?.('[casey] transcript code redaction failed', { caseId, error: e.message }); tr.text = ''; tr.error = tr.error || 'transcript withheld' }
@@ -94,7 +127,6 @@ async function recordArrival({ store, log, caseId, field, note, kind, mediaItem,
 }
 
 const PIN_STORED = '\n\n[System note: the location pin they shared was saved on the map as their exact position. Do not ask for coordinates, GPS numbers or another pin, and do not write that coordinates were unreadable; ask about the place only if a name or landmark is still missing.]'
-export const VOICE_TRANSCRIBED = '\n\n[System note: this message is an automatic transcript of a voice note, made by a machine, so it can be wrong, cut off or nonsense, and it may be in a language the machine cannot follow. The voice note itself is saved with the report whatever you decide. YOU decide whether the transcript makes enough sense to act on. If it is clear, treat it as what they said. If it is garbled, nonsensical, cut off, contradicts itself or you are unsure what they meant, do NOT act on it: record nothing from it (no case_report, no case_new, no case_consent or case_clarify answer) and never guess a meaning; tell them kindly, in their language, that you could not make out the voice note and ask them to say it again or type it, and say it is saved. If one word matters and looks wrong, check just that word with them in one short question before recording.]'
 const PIN_NOT_STORED = (why) => `\n\n[System note: the location pin they shared ${why}, so NO position was stored. Do not say you have their location; tell them plainly it did not come through and ask where the animals are (a town or farm name, or send the pin again).]`
 export async function recordInboundLocation({ store, log, caseId, msg }) {
   const pin = msg.location
@@ -140,9 +172,9 @@ export async function recordInboundMedia({ store, log, caseId, msg, relay = null
   const tr = audioItem ? await transcribeInboundAudio({ store, log, caseId, msg }) : { text: '', error: '' }
   if (audioItem) {
 
-    log.info?.('[casey] voice note received', { caseId, mime: audioItem.mimeType, bytes: audioItem.buffer?.length || 0, provider: tr.provider, transcribed: !!tr.text, transcriptChars: tr.text.length, ms: tr.ms, error: tr.error || undefined })
+    log.info?.('[casey] voice note received', { caseId, mime: audioItem.mimeType, bytes: audioItem.buffer?.length || 0, provider: tr.provider, transcribed: !!tr.text, transcriptChars: tr.text.length, language: tr.language || undefined, confidence: tr.confidence ?? undefined, durationSec: tr.durationSec ?? undefined, ms: tr.ms, failureKind: tr.failureKind || undefined, error: tr.error || undefined })
   }
-  const audioNote = inboundAudioNote(msg, tr.text, tr.error)
+  const audioNote = inboundAudioNote(msg, tr)
   if (audioNote) {
     await recordArrival({
       store, log, caseId, field: 'audio', note: audioNote, kind: 'audio',

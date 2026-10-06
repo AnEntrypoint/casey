@@ -1,5 +1,6 @@
 import { tagList, parseReport } from '../../timestamp.js'
 import { snapshotDroppedIntake } from '../../hooks/dropped-intake.js'
+import { snapshotStt } from '../../stt/metrics.js'
 import { calculateDegradationRate } from '../../degraded-turns.js'
 import { REPORT_ENTITY_LABEL, REPORT_SECTIONS, CRITICAL_FIELDS, SEVERITY_SIGNAL_FIELDS, fieldLabel, DASHBOARD_UI, TIER_LABELS, MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, FIELD_OPTIONS, hiddenFieldsFor, SYSTEM_SET_FIELDS } from '../../store/report-shape.js'
 import { KNOWN_VALUE_FIELDS, isKnownValueField, readKnownValues, canonicalizeFieldValue } from '../../field-values.js'
@@ -105,6 +106,7 @@ export function getHealth({ store, llmStatus, receiveStatus, queueStatus, runSwe
       alert_webhook: alertWebhookView(alertWebhookUrl, getWebhookDeliveryStatus),
       degradation_rate: degradationRate,
       dropped_inbound: snapshotDroppedIntake(),
+      stt: snapshotStt(),
     })
   }
 }

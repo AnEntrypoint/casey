@@ -90,6 +90,8 @@ Four independent layers; all four must agree on an outer bound. Every live turn 
 - Admission (`admission.js`) claims each contact SYNCHRONOUSLY; a burst is BUFFERED raw and replayed; a rate-limited inbound sends no reply. Agent-turn gates (`turn-attempts.js`) never leave a reply blank; `reply-judge.js` adjudicates against named fault shapes.
 -> recall {query:"inbound turn pipeline admission buffer turn-attempts reply-judge media normalization"}
 
+- Voice notes (`src/stt/`): `CASEY_STT_ENGINE=google` makes Google Cloud Speech-to-Text v2 (default `chirp_3`, location `us`, `language_codes=["auto"]`, plain REST with the VM service-account metadata token, no key, no SDK) the primary engine, with local whisper/omnilingual only as a rescue when Google is unreachable; notes over 50 s are cut on silence with ffmpeg (max `CASEY_STT_MAX_SECONDS`, whole intake bounded by `CASEY_STT_BUDGET_MS`, all BEFORE the turn clock). The transcript is HEARD text: `stt/readback.js` makes the model read back species, counts, location and diagnosis and wait for a yes before recording, and refuses to act on low-confidence or unsupported-language audio; failures become a truthful per-kind system note, `stt_*` counters are on `/api/health`, and `scripts/stt-eval.mjs` reports WER per language. Opt-in voice replies: `CASEY_VOICE_REPLIES=google` plus case tag `voice-replies`, only af-ZA and en-GB have voices.
+
 ### Top-level modules (`src/`)
 
 - `case-store.js` is the single chokepoint over thatcher; open-case lookup uses a `status:{$in:openStages}` ALLOWLIST, never `$ne:'closed'`. `retention.js` is OFF unless `CASEY_RETENTION_DAYS` is set, defaults ARCHIVE, frees no sqlite bytes (soft-delete).
