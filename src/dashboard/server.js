@@ -34,6 +34,7 @@ import { registerReportFiles } from './routes/report-files.js'
 import { registerOperations } from './routes/operations.js'
 import { registerTranslate } from './routes/translate.js'
 import { registerTiles, CLIENT_TILE_URL } from './routes/tiles.js'
+import { publicSiteDir, landingHandler } from './routes/public-site.js'
 const esc = escapeHtml
 import {
   COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
@@ -177,10 +178,11 @@ function injectModulePreloads(html, moduleUrls) {
   return html.slice(0, i) + tags + '\n' + html.slice(i)
 }
 
-function shellBuildId(publicDir, assetUrls) {
+function shellBuildId(publicDir, assetUrls, siteEnabled) {
   const h = createHash('sha256')
   h.update('brand:' + BRAND.name + ':' + BRAND.ground + '\n')
   h.update('tiles:' + CLIENT_TILE_URL + '\n')
+  h.update('site:' + siteEnabled + '\n')
   h.update('vocab:' + vocabularyJson() + '\n')
   const walk = (dir, rel) => {
     const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
@@ -291,7 +293,9 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   const SHELL_ASSET_URLS = SHELL_HTML_SOURCE ? shellAssetUrls(SHELL_HTML_SOURCE) : []
   const SHELL_MODULE_URLS = SHELL_HTML_SOURCE ? shellModuleGraph(SHELL_HTML_SOURCE, PUBLIC_DIR) : []
   const SHELL_HTML = SHELL_HTML_SOURCE ? vocabularyShellHead(tileShellHead(brandShellHead(injectModulePreloads(SHELL_HTML_SOURCE, SHELL_MODULE_URLS)))) : null
-  const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS])
+  const PUBLIC_SITE_ROOT = publicSiteDir()
+  const SHELL_BUILD_ID = shellBuildId(PUBLIC_DIR, [...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS], !!PUBLIC_SITE_ROOT)
+  const SHELL_ENTRY = PUBLIC_SITE_ROOT ? '/app' : '/'
   registerWhatsappWebhook(app, { express, resolveWhatsappAdapter })
   app.use(compressResponses)
   app.use(express.json())
@@ -362,6 +366,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   }
 
   const deps = {
+    PUBLIC_SITE_ROOT,
     store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR,
     COOKIE_NAME, parseCookies, sessionCookieHeader, clearCookieHeader,
     issueSession, verifySession, findAccountByUsername, verifyPassword,
@@ -409,7 +414,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
   app.get('/manifest.json', (_req, res) => {
     res.setHeader('Cache-Control', 'no-cache')
     res.json({
-      name: PWA_BRAND, short_name: PWA_BRAND, start_url: '/', scope: '/', display: 'standalone',
+      name: PWA_BRAND, short_name: PWA_BRAND, start_url: SHELL_ENTRY, scope: '/', display: 'standalone',
       background_color: '#ffffff', theme_color: PWA_THEME_COLOR,
       ...(BRAND.description ? { description: BRAND.description } : {}),
       icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }],
@@ -443,7 +448,7 @@ const CACHE = 'casey-shell-' + VERSION
 // operator pays request headers and a 304, not a body. That is what makes the
 // offline guarantee affordable rather than theoretical.
 const PRECACHE = ${JSON.stringify([
-      '/', '/offline.html', '/icon.svg', '/manifest.json',
+      SHELL_ENTRY, '/offline.html', '/icon.svg', '/manifest.json',
       ...SHELL_ASSET_URLS, ...SHELL_MODULE_URLS,
     ])}
 
@@ -508,6 +513,11 @@ self.addEventListener('fetch', (e) => {
   }
   // The update check must reach the network or the worker can never be replaced.
   if (url.pathname === '/sw.js') return
+  if (url.pathname === '/site' || url.pathname.startsWith('/site/')) return
+  if (${JSON.stringify(!!PUBLIC_SITE_ROOT)} && url.pathname === '/') {
+    e.respondWith(fetch(req).catch(() => caches.open(CACHE).then((c) => c.match(${JSON.stringify(SHELL_ENTRY)})).then((hit) => hit || offlineFallback(req))))
+    return
+  }
   // Basemap tiles: straight to the network, never into this cache. The bounded
   // cache is the server's; see the note above the /sw.js route. Left entirely
   // to the browser's own HTTP cache, which honours the Cache-Control the tile
@@ -602,7 +612,8 @@ a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);t
       res.setHeader('Cache-Control', 'no-cache')
       res.type('html').send(SHELL_HTML)
     }
-    app.get('/', sendShell)
+    app.get('/', PUBLIC_SITE_ROOT ? landingHandler(PUBLIC_SITE_ROOT, sendShell) : sendShell)
+    app.get('/app', sendShell)
     app.get('/index.html', sendShell)
   }
   app.use(express.static(PUBLIC_DIR, {
