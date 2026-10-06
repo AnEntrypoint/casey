@@ -1,6 +1,6 @@
 import { schedule } from '../state.js';
 import { word } from '../words.js';
-import { fetchResolvedMap, fetchDiseaseReport } from '../api-reports.js';
+import { fetchResolvedMap, fetchDiseaseReport, fetchReportFiles } from '../api-reports.js';
 
 export const PERIODS = [
   { id: 'all', label: 'All time', months: 0 },
@@ -35,7 +35,20 @@ export function reloadReports() {
     .catch(() => { if (gen === generation) { rd.error = word('ui.load_disease_reports_failed'); rd.report = null; rd.points = null; } })
     .finally(() => { if (gen === generation) { rd.loading = false; rd.loaded = true; schedule(); } });
 }
-export function ensureReports() { if (!rd.loaded && !rd.loading) reloadReports(); }
+export const rfiles = { list: null, error: false, requested: false };
+
+export function loadReportFiles() {
+  rfiles.requested = true;
+  fetchReportFiles()
+    .then((list) => { rfiles.list = list; rfiles.error = false; })
+    .catch(() => { rfiles.list = null; rfiles.error = true; })
+    .finally(schedule);
+}
+
+export function ensureReports() {
+  if (!rfiles.requested) loadReportFiles();
+  if (!rd.loaded && !rd.loading) reloadReports();
+}
 export function setRegion(v) { rf.region = v || ''; reloadReports(); schedule(); }
 export function setPeriod(v) { rf.period = v; reloadReports(); schedule(); }
 export function setGrain(v) { rf.grain = v; reloadReports(); schedule(); }

@@ -15,6 +15,8 @@ export const fetchResolvedMap = (params) => json('/api/reports/resolved-map' + q
 export const fetchDiseaseReport = (params) => json('/api/reports/diseases' + qs(params));
 export const fetchHeat = (params) => json('/api/reports/heat' + qs(params));
 export const fetchAreas = (params) => json('/api/reports/areas' + qs(params));
+export const fetchReportFiles = () => json('/api/reports/files');
+export const reportFileUrl = (name) => '/api/reports/files/' + encodeURIComponent(name);
 export const exportCsvUrl = (params) => '/api/reports/export.csv' + qs(params);
 
 export const printDiseaseUrl = (params) => '/api/reports/diseases/print' + qs(params);

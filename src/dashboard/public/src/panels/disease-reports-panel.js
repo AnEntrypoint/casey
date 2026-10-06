@@ -5,8 +5,8 @@ import { Kpi, BarChart } from '/design/src/components/content/charts.js';
 import { Table } from '/design/src/components/content/table.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { Lede } from '/design/src/components/shell/atoms.js';
-import { printDiseaseUrl } from '../api-reports.js';
-import { rd, ensureReports, reloadReports, nice, SPARSE, GRAINS, rf, windowParams } from './reports-data.js';
+import { printDiseaseUrl, reportFileUrl } from '../api-reports.js';
+import { rd, rfiles, ensureReports, reloadReports, nice, SPARSE, GRAINS, rf, windowParams } from './reports-data.js';
 import { ReportFilters } from './reports-filters.js';
 const h = webjsx.createElement;
 
@@ -25,10 +25,26 @@ export function WordCloud(rows) {
     }));
 }
 
+const FILE_KIND_LABELS = { csv: 'Spreadsheet (CSV)', text: 'Summary (text)' };
+
+
+export function SavedMonthlyReports() {
+  if (rfiles.error) return Section({ title: 'Saved monthly reports', children: Alert({ kind: 'warn', children: 'Could not load the saved monthly reports.' }) });
+  if (!rfiles.list) return null;
+  if (!rfiles.list.length) return Section({ title: 'Saved monthly reports', children: h('p', { class: 'casey-hint' }, 'Monthly reports appear here after the first of each month.') });
+  const months = [...new Set(rfiles.list.map((f) => f.month))];
+  return Section({ title: 'Saved monthly reports', children: h('ul', { class: 'rep-files' },
+    ...months.map((m) => h('li', { key: m },
+      h('strong', null, m + ': '),
+      ...rfiles.list.filter((f) => f.month === m).map((f) => h('a', { key: f.name, href: reportFileUrl(f.name), class: 'ds-link', download: f.name, style: 'margin-right:1em' }, FILE_KIND_LABELS[f.kind] || f.kind)))
+    )) });
+}
+
+
 export function DiseaseReportsPanel() {
   ensureReports();
   if (!rd.loaded) return Panel({ title: 'Disease reports', children: Skeleton({ count: 5, height: '1.6em' }) });
-  if (!rd.report) return Panel({ title: 'Disease reports', children: [ReportFilters({ grain: true }), Alert({ kind: 'warn', children: rd.error || 'Could not load the disease reports.' }), Btn({ children: 'Try again', onClick: reloadReports })] });
+  if (!rd.report) return Panel({ title: 'Disease reports', children: [ReportFilters({ grain: true }), Alert({ kind: 'warn', children: rd.error || 'Could not load the disease reports.' }), Btn({ children: 'Try again', onClick: reloadReports }), SavedMonthlyReports()] });
   const r = rd.report;
   const named = (list, key) => list.filter((x) => x[key] !== SPARSE);
   const diseases = named(r.by_disease, 'disease');
@@ -71,6 +87,7 @@ export function DiseaseReportsPanel() {
       r.by_month.length ? Section({ title: 'When they were signed off ' + '(' + grainName + ')', children: [BarChart({ items: r.by_month.slice().sort((a, b) => String(a.month).localeCompare(String(b.month))).map((x) => ({ label: nice(x.month), value: x.count })) })] }) : null,
       r.by_disease_region.length ? Section({ title: 'Disease by area', children: [Table({ headers: ['Disease', 'Area', 'Cases'], rows: r.by_disease_region.slice(0, 25).map((x) => [nice(x.disease), nice(x.region), String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet' })] }) : null,
       byDiseaseConclusion.length ? Section({ title: 'Advice by disease', children: [Table({ headers: ['Disease', 'Advice', 'Cases'], rows: byDiseaseConclusion.slice(0, 25).map((x) => [nice(x.disease), x.conclusion, String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet' })] }) : null,
-      sparse ? h('p', { class: 'casey-hint' }, '"Small groups combined" gathers every group of fewer than ' + r.k + ' cases into one line.') : null),
+      SavedMonthlyReports(),
+          sparse ? h('p', { class: 'casey-hint' }, '"Small groups combined" gathers every group of fewer than ' + r.k + ' cases into one line.') : null),
   });
 }
