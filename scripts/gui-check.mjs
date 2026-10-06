@@ -561,14 +561,16 @@ try {
   await evalJs(`(() => { const b = [...document.querySelectorAll('[role=dialog] button')].find((x) => /^Sign off/.test(x.innerText)); b.click(); return 1 })()`)
 
   const asked = []
-  for (const answer of ['Foot-and-mouth disease suspected', 'Isolate the herd and call the state vet']) {
+  for (const answer of ['Foot-and-mouth disease suspected', 'suspected', 'Isolate the herd and call the state vet']) {
     await sleep(700)
-    asked.push(await evalJs(`(() => { const d = document.querySelector('[role=dialog]'); if (!d) return 'none'; const i = d.querySelector('input, textarea'); if (i) { const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(i), 'value').set; set.call(i, ${JSON.stringify(answer)}); i.dispatchEvent(new Event('input', { bubbles: true })) } const b = [...d.querySelectorAll('button')].find((x) => /^Continue/.test(x.innerText)); if (b) b.click(); return d.querySelector('h1,h2,[class*=title]') ? d.querySelector('h1,h2,[class*=title]').innerText : 'dialog' })()`))
+    asked.push(await evalJs(`(() => { const d = document.querySelector('[role=dialog]'); if (!d) return 'none'; const i = d.querySelector('input, textarea, select'); if (i) { const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(i), 'value').set; set.call(i, ${JSON.stringify(answer)}); i.dispatchEvent(new Event('input', { bubbles: true })) } const b = [...d.querySelectorAll('button')].find((x) => /^Continue/.test(x.innerText)); if (b) b.click(); return d.querySelector('h1,h2,[class*=title]') ? d.querySelector('h1,h2,[class*=title]').innerText : 'dialog' })()`))
   }
-  check(asked.every((t) => /Disease identified|Recommended resolution/.test(t)), 'sign-off asks for the disease identified and the recommended resolution', JSON.stringify(asked))
+  check(asked.every((t) => /Disease identified|Diagnosis status|Recommended resolution/.test(t)) && asked.length === 3 && /Diagnosis status/.test(asked[1]), 'sign-off asks for the disease identified, the diagnosis status and the recommended resolution', JSON.stringify(asked))
   await sleep(2800)
   const so = await api('GET', '/api/cases/' + ids.G)
   check(so.j && so.j.case.status === 'resolved', 'a complete report is signed off (double click: one transition)', so.j && so.j.case.status)
+      const soReport = so.j && JSON.parse(so.j.case.report || '{}')
+      check(soReport && soReport.diagnosis_status === 'suspected' && /Foot-and-mouth/.test(soReport.identified_disease), 'the sign-off records the diagnosis status the technician picked', soReport && soReport.diagnosis_status)
   const after = JSON.parse(await evalJs(`JSON.stringify({ signed: /Signed off/.test(document.body.innerText), again: !![...document.querySelectorAll('button')].find((e) => /^Sign off CASE/.test(e.innerText)) })`))
   check(after.signed && !after.again, 'a signed-off report shows "Signed off" and no longer offers to be signed off again', JSON.stringify(after))
   await axeBoth('technician report (signed off)')

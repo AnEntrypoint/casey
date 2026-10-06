@@ -91,6 +91,7 @@ export async function runTeamChecks(c) {
 
   console.log('\noperator: Add many people at once (Reporters panel)')
   await asUser('', '#panel=contacts', 4000)
+  await evalJs(`(() => { const d = document.querySelector('details.ds-add-people'); if (d) d.open = true; return !!d })()`); await sleep(500)
   const before = await asApi('', 'GET', '/api/roles/roster')
   const LIST = 'name,phone,role,association,smartphone\nAnna Gui,079 123 4567,Eco Ranger,Vhembe,yes\nJohan Gui,082 555 0101,Eco Ranger,Soutpansberg,no\nBad Row,123,ranger,,yes\nAnna Gui Again,079 123 4567,Eco Ranger,Vhembe,yes'
   await setField('[name=bulk-text]', LIST)
@@ -116,6 +117,7 @@ export async function runTeamChecks(c) {
   await axeBoth('Reporters: bulk-add finished, rollout table')
   await viewport('p')
   await asUser('', '#panel=contacts', 4000)
+  await evalJs(`(() => { const d = document.querySelector('details.ds-add-people'); if (d) d.open = true; return !!d })()`); await sleep(500)
   await setField('[name=bulk-text]', LIST); await clickText('Check the list'); await sleep(1500)
   const smallB = JSON.parse(await evalJs(SMALL_JS))
   check(smallB.length === 0 && await noSideScroll(), 'phone: every control in the bulk-add preview is at least 44px and nothing scrolls sideways', smallB.slice(0, 3).join(' ; '))
