@@ -19,6 +19,8 @@ import { buildSpeakerTools } from './case-tools-speaker.js'
 import { buildConsentTools } from './case-tools-consent.js'
 import { buildClarifyTools } from './case-tools-clarify.js'
 import { buildVisitTools, withReadback } from './case-tools-visit.js'
+import { buildRelayTools } from './case-tools-relay.js'
+import { buildLanguageTools } from './case-tools-language.js'
 
 export function buildCaseToolset(storeOrNull) {
   const store = () => storeOrNull || getCaseStore()
@@ -42,6 +44,8 @@ export function buildCaseToolset(storeOrNull) {
     ...buildSpeakerTools(store),
     ...buildConsentTools(store),
     ...buildClarifyTools(store),
+    ...buildRelayTools(store),
+    ...buildLanguageTools(store),
   ]
   const edit = withReadback(tools.find(t => t.name === 'case_edit'))
   const withEdit = tools.map(t => (t.name === 'case_edit' ? edit : t))

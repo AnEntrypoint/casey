@@ -14,6 +14,7 @@ import { writeGate, recordedOn, setFocus } from './team-focus.js'
 import { NOT_ASSIGNED, doneStages, findCase, teamRow, actorData, stripSavedPaths, deskAuthorityOn, authorityOn, reporterExtras } from './case-tools-team-shared.js'
 import { inSignOffQueue, withdrawHandoff, isHandedOff, sendBackToRanger } from './signoff-desk.js'
 import { mergeTag } from './hooks/heuristics.js'
+import { RANGER_NOTE, notesTagged } from './relay.js'
 
 const NO_SUCH = { error: 'No such record. Ask for the reference again.' }
 const REVIEW_EVENT_CAP = 60
@@ -49,7 +50,10 @@ export function buildTeamReviewTools(store) {
         rows.sort((a, b) => (Number(a.last_event_at) || 0) - (Number(b.last_event_at) || 0))
         const n = Math.min(Math.max(Number(limit) || 15, 1), 50)
         const { extra: who } = await reporterExtras(store(), rows.slice(0, n))
-        return { total: rows.length, shown: Math.min(rows.length, n), cases: rows.slice(0, n).map(c => teamRow(c, ctx, { reporter_asked_us_to_stop: tagList(c).includes(OPTED_OUT_TAG), ...who(c) })) }
+        const notes = new Map()
+        for (const c of rows.slice(0, n)) notes.set(c.id, notesTagged(await store().listEvents(c.id), RANGER_NOTE))
+        const noteOf = (c) => (notes.get(c.id).length ? { ranger_notes: notes.get(c.id).length, latest_ranger_note: notes.get(c.id)[0].text } : {})
+        return { total: rows.length, shown: Math.min(rows.length, n), cases: rows.slice(0, n).map(c => teamRow(c, ctx, { reporter_asked_us_to_stop: tagList(c).includes(OPTED_OUT_TAG), ...who(c), ...noteOf(c) })) }
       }),
     defTool('case_review', 'cases',
       'Review ONE record in full before acting on it: every recorded fact, which required ones are missing, the timeline, and the photo and voice-note entries (with the voice-note transcripts). Photo files themselves cannot be shown over chat, only their notes. For records assigned to this person or unassigned.',
@@ -71,6 +75,7 @@ export function buildTeamReviewTools(store) {
           case: slim,
           required_missing: missingMandatoryMinimum(parseReport(c)).map(fieldLabel),
           ready_for_signoff: isComplete(c) && !done(c),
+          ranger_notes: notesTagged(events, RANGER_NOTE),
           reporter_asked_us_to_stop: tagList(c).includes(OPTED_OUT_TAG),
           timeline: events.slice(-REVIEW_EVENT_CAP).map(e => ({ kind: e.kind, actor: e.actor, at: e.created_at, text: stripSavedPaths(e.text).slice(0, 600) })),
           timeline_total: events.length,
