@@ -79,7 +79,7 @@ export async function confirmFocus(store, contactId, c, turn, now = Date.now()) 
 }
 
 export async function clearFocusForCase(store, caseId) {
-  const holders = await store.t.list('contact', { staff_state: { $like: `%${caseId}%` } }, { limit: 200 })
+  const holders = (await store.t.list('contact', {}, { limit: 2000 })).filter(h => typeof h.staff_state === 'string' && h.staff_state.includes(caseId))
   for (const h of holders) {
     await store.mutateStaffState(h.id, (st) => {
       if (st.focus?.caseId === caseId) delete st.focus

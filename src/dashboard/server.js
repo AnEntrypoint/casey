@@ -340,6 +340,7 @@ export function createDashboard(store, { port = 4000, sendReply = null, llmStatu
       try {
         await handler(req, res, next)
       } catch (e) {
+        console.error('[dashboard] handler error', req.method, String(req.path).slice(0, 120), String(e?.stack || e).split('\n').slice(0, 6).join(' | '))
         res.status(500).json({ error: e.message })
       }
     }
@@ -623,6 +624,7 @@ a{color:${PWA_ICON_INK};background:${PWA_THEME_COLOR};font-size:var(--fs-body);t
 
   app.use((err, req, res, next) => {
     if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'invalid request body' })
+    if (!err?.status || err.status >= 500) console.error('[dashboard] unhandled error', req.method, String(req.path).slice(0, 120), String(err?.stack || err).split('\n').slice(0, 6).join(' | '))
     res.status(err?.status || 500).json({ error: 'internal error' })
   })
 
