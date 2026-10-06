@@ -386,7 +386,7 @@ export function patchCase({ store, authed, str, AUTONOMY, PRIORITY, CASE_TYPE, a
           return res.status(400).json({ error: 'no team member or login by that name' })
         }
         const by = op.name || op.id
-        if (held) { await releaseCase({ store, caseRow: prior, by, user: op }); clearFocusForCase(prior.id) }
+        if (held) { await releaseCase({ store, caseRow: prior, by, user: op }); await clearFocusForCase(store, prior.id) }
         if (target) {
           await store.updateCase(prior.id, { assignee: target }, op)
           const data = { assignee: target, by }

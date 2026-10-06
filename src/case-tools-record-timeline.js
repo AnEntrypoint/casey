@@ -9,6 +9,7 @@ import { doneStages, authorityOn, actorData, cleanRelayed } from './case-tools-t
 import { isHandedOff } from './signoff-desk.js'
 import { staffLabel } from './hooks/staff-outbound.js'
 import { writeGate, recordedOn, clearFocusForCase } from './team-focus.js'
+import { checkStale, recordWrote } from './stale-write-guard.js'
 import {
   MANDATORY_MINIMUM_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES,
   missingMandatoryMinimum, fieldLabel, REPORT_TOOL_NAME, REPORT_ENTITY_LABEL,
@@ -87,8 +88,12 @@ export function buildCaseTimelineTools(store, { stageValues }) {
           return { error: `case ${id} does not belong to you -- cannot transition it` }
         }
         if (!owns && authority !== 'operator') {
-          const refused = writeGate(ctx, c, { confirm: !team })
+          const refused = await writeGate(store(), ctx, c, { confirm: !team })
           if (refused) return refused
+        }
+        if (!owns && team && !toDone) {
+          const stale = await checkStale(store(), ctx, c, ['col.status'])
+          if (stale) return stale
         }
 
         if (c.autonomy === 'observe' && !isAssignedTo(c, ctx?.contact)) return { error: 'case autonomy is "observe"; transitions are operator-only' }
@@ -134,7 +139,8 @@ export function buildCaseTimelineTools(store, { stageValues }) {
         try {
           await store().transition(id, to, { user: AGENT_USER, reason })
           const on = owns ? null : await recordedOn(store(), c, ctx)
-          if (doneStages().includes(to)) clearFocusForCase(c.id)
+          if (doneStages().includes(to)) await clearFocusForCase(store(), c.id)
+          else if (!owns && team) await recordWrote(store(), ctx?.contact?.id, await store().getCase(c.id), ['col.status'])
           return { ok: true, from: c.status, to, ...(on ? { recorded_on: on } : {}) }
         } catch (e) {
           return { error: e.message }

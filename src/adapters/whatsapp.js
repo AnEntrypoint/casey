@@ -1,11 +1,14 @@
 import { clientIp, webhookBlocked, recordWebhookFailure } from '../webhook-failure-limit.js'
 import crypto from 'node:crypto'
+import { splitForWhatsapp } from './whatsapp-chunks.js'
 import { EventEmitter } from 'node:events'
 import { fetchWithTimeout, timingSafeEqualStr, verifiedSend, emitWithDetachedMedia, verifyWebhookOr401 } from './webhook-platform-base.js'
 
 const SEND_TIMEOUT_MS = 15000
 const DISPLAY_TIMEOUT_MS = 4000
 const DISPLAY_RETRY_MS = 5 * 60e3
+const PARTIAL_SEND_TTL_MS = 30 * 60e3
+const PARTIAL_SEND_CAP = 200
 
 export const WEBHOOK_MAX_BODY_BYTES = 256 * 1024
 const DEFAULT_MAX_MESSAGE_AGE_HOURS = 168
@@ -26,6 +29,7 @@ export class WhatsappAdapter extends EventEmitter {
     this._displayTriedAt = 0
     this._displayInflight = null
     this.recentSends = new Map()
+    this.partialSends = new Map()
     this.draining = false
     this._pendingMedia = new Set()
     this.webhookStats = { posts: 0, messages: 0, statuses: 0, stale_dropped: 0, rejected_signature: 0, rejected_oversize: 0, rejected_malformed: 0, rejected_draining: 0, malformed_messages: 0, last_post_at: null, last_message_at: null, last_status_at: null }
@@ -125,28 +129,59 @@ export class WhatsappAdapter extends EventEmitter {
 
   stopTyping() {}
 
+  async _post(to, payload) {
+    const body = await verifiedSend(
+      () => fetchWithTimeout(`${this.api}/${this.phoneId}/messages`, { method: 'POST', headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', to, ...payload }) }, SEND_TIMEOUT_MS),
+      (b) => b?.messages?.[0]?.id,
+      'WhatsappAdapter',
+    )
+    const id = body.messages[0].id
+    this.recentSends.set(id, { to, text: payload.text?.body || '', at: Date.now() })
+    if (this.recentSends.size > 500) this.recentSends.delete(this.recentSends.keys().next().value)
+    return id
+  }
+
+  _partialFor(key, now) {
+    for (const [k, v] of this.partialSends) if (now - v.at > PARTIAL_SEND_TTL_MS) this.partialSends.delete(k)
+    let state = this.partialSends.get(key)
+    if (!state) {
+      if (this.partialSends.size >= PARTIAL_SEND_CAP) this.partialSends.delete(this.partialSends.keys().next().value)
+      state = { delivered: 0, wamids: [], at: now }
+      this.partialSends.set(key, state)
+    }
+    return state
+  }
+
   async send(reply) {
     if (!this.token) throw new Error('WhatsappAdapter: token required')
-    const wamids = []
-    const post = async (payload) => {
-      const body = await verifiedSend(
-        () => fetchWithTimeout(`${this.api}/${this.phoneId}/messages`, { method: 'POST', headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ messaging_product: 'whatsapp', to: reply.to, ...payload }) }, SEND_TIMEOUT_MS),
-        (b) => b?.messages?.[0]?.id,
-        'WhatsappAdapter',
-      )
-      const id = body.messages[0].id
-      wamids.push(id)
-      this.recentSends.set(id, { to: reply.to, text: payload.text?.body || '', at: Date.now() })
-      if (this.recentSends.size > 500) this.recentSends.delete(this.recentSends.keys().next().value)
-      return { ...body, wamids }
-    }
     const a = reply.audio
-    if (a && (a.link || a.data_base64)) {
-      const audioMsg = a.link ? { link: a.link } : { id: await this._uploadMedia(Buffer.from(a.data_base64, 'base64'), a.mime || 'audio/ogg') }
-      if (reply.text) await post({ text: { body: reply.text } })
-      return post({ type: 'audio', audio: audioMsg })
+    const hasAudio = !!(a && (a.link || a.data_base64))
+    const parts = (!hasAudio || reply.text ? splitForWhatsapp(reply.text).map(t => async () => ({ text: { body: t } })) : [])
+    if (hasAudio) {
+      parts.push(async () => ({ type: 'audio', audio: a.link ? { link: a.link } : { id: await this._uploadMedia(Buffer.from(a.data_base64, 'base64'), a.mime || 'audio/ogg') } }))
     }
-    return post({ text: { body: reply.text } })
+    const key = crypto.createHash('sha1').update(`${reply.to}\0${reply.text || ''}\0${hasAudio ? 'audio' : ''}`).digest('hex')
+    const state = this._partialFor(key, Date.now())
+    for (let i = state.delivered; i < parts.length; i++) {
+      try {
+        state.wamids.push(await this._post(reply.to, await parts[i]()))
+        state.delivered = i + 1
+        state.at = Date.now()
+      } catch (e) {
+        const err = new Error(`WhatsappAdapter: part ${i + 1} of ${parts.length} was not delivered (${state.delivered} already delivered and will not be resent on retry): ${e.message}`)
+        err.partial = { delivered: state.delivered, total: parts.length }
+        throw err
+      }
+    }
+    this.partialSends.delete(key)
+    return { messages: [{ id: state.wamids[0] }], wamids: state.wamids, parts: parts.length }
+  }
+
+  async sendImage({ to, buffer, mime, caption = '' }) {
+    if (!this.token) throw new Error('WhatsappAdapter: token required')
+    const id = await this._uploadMedia(buffer, mime)
+    const wamid = await this._post(to, { type: 'image', image: { id, ...(caption ? { caption: String(caption).slice(0, 1000) } : {}) } })
+    return { messages: [{ id: wamid }], wamids: [wamid] }
   }
 }
 

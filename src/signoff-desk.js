@@ -52,7 +52,7 @@ export async function handoffToTechnician(store, caseId, { by = 'a team member',
   })
 }
 
-export async function withdrawHandoff(store, caseId, { by = 'a team member', user, reason = '', data = {} } = {}) {
+export async function withdrawHandoff(store, caseId, { by = 'a team member', user, reason = '', data = {}, byRanger = false } = {}) {
   return store._withLock(`assign|${caseId}`, async () => {
     const c = await store.getCase(caseId)
     if (!c) return { ok: false, code: 'not_found', error: 'No such report.' }
@@ -60,8 +60,8 @@ export async function withdrawHandoff(store, caseId, { by = 'a team member', use
     await store.updateCase(c.id, { tags: dropTag(c.tags || '', HANDED_OFF_TAG) }, user)
     await store.appendEvent(c.id, {
       kind: 'action', actor: 'operator',
-      text: `HAND-OVER WITHDRAWN by ${by}${reason ? `: ${String(reason).slice(0, 400)}` : ''}`,
-      data: { ...data, by, handoff_withdrawn: true },
+      text: `${byRanger ? `HAND-OFF WITHDRAWN by ranger ${by}` : `HAND-OVER WITHDRAWN by ${by}`}${reason ? `: ${String(reason).slice(0, 400)}` : ''}`,
+      data: byRanger ? { ...data, by, handoff_withdrawn_by_ranger: true } : { ...data, by, handoff_withdrawn: true },
     })
     return { ok: true, was: true, ref: c.ref }
   })

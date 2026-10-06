@@ -409,7 +409,7 @@ export async function relocateCase(store, caseId, { area = '', association = '',
 
     let reassigned = false
     if (next && next.key !== had) {
-      if (had && had !== UNCLAIMED) { await releaseCase({ store, caseRow: c, by, user }); clearFocusForCase(c.id) }
+      if (had && had !== UNCLAIMED) { await releaseCase({ store, caseRow: c, by, user }); await clearFocusForCase(store, c.id) }
       await store.updateCase(c.id, { assignee: next.key }, user)
       reassigned = true
     }

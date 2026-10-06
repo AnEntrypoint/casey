@@ -2,7 +2,7 @@
 
 import { AGENT_USER, UNCLAIMED_ASSIGNEE } from './case-store.js'
 import { isOperator, canQueryCases, atLeast, TIER_ANIMAL_HEALTH_TECHNICIAN } from './contact-tiers.js'
-import { isAssignedTo, isOwnConversation, publicAssignee } from './case-assignment.js'
+import { isAssignedTo, isOwnConversation, publicAssignee, assigneeKeyFor } from './case-assignment.js'
 import { enquiryRow } from './case-tools-shared.js'
 import { staffLabel } from './hooks/staff-outbound.js'
 import { MANDATORY_MINIMUM_BLOCKED_STATUSES } from './store/report-shape.js'
@@ -68,3 +68,21 @@ export const stripSavedPaths = (text) => String(text || '').replace(/\s*\(saved:
 export const cleanRelayed = (v) => typeof v === 'string'
   ? v.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
   : v
+
+export function ownFiledAuthority(ctx, caseRow) {
+  return canQueryCases(ctx?.tier) && isAssignedTo(caseRow, ctx?.contact) && isOwnConversation(caseRow, ctx?.contact) ? 'own' : null
+}
+
+export async function claimSelfFiledReport(store, ctx, caseId) {
+  const me = ctx?.contact
+  if (!me?.id || !canQueryCases(ctx?.tier)) return false
+  return store._withLock(`assign|${caseId}`, async () => {
+    const c = await store.getCase(caseId)
+    if (!c || !isOwnConversation(c, me)) return false
+    const held = String(c.assignee || '').trim()
+    if (held && held !== UNCLAIMED_ASSIGNEE) return false
+    await store.updateCase(c.id, { assignee: assigneeKeyFor(me) }, AGENT_USER)
+    await store.appendEvent(c.id, { kind: 'action', actor: 'system', text: `Filed by ${staffLabel(me)}, a team member, and assigned to them`, data: { self_filed: true, by: staffLabel(me), staff_contact_id: me.id } })
+    return true
+  })
+}

@@ -58,7 +58,7 @@ export async function pendingDispatchesFor(store, contact, cases) {
 export async function staffNotices(store, contact, { mark = false, cap = NOTICE_CASE_CAP, tier = undefined } = {}) {
   const key = assigneeKeyFor(contact)
   if (!key) return { assigned: [], dispatches: [], handoffs: [], offers: [], counts: { assigned: 0, new_assignments: 0, new_replies: 0, dispatches: 0, undelivered: 0, sent_back: 0, new_handoffs: 0, handover_offers: 0, technician_notes: 0 } }
-  const mine = (await store.listCases({ assignee: key }, { limit: cap * 4 })).filter(isOpenCase).slice(0, cap)
+  const mine = (await store.listCases({ assignee: key }, { limit: cap * 4 })).filter(c => isOpenCase(c) && !isOwnConversation(c, contact)).slice(0, cap)
   const assigned = []
   for (const c of mine) {
     const events = await store.listEvents(c.id)
@@ -98,12 +98,28 @@ export async function staffNotices(store, contact, { mark = false, cap = NOTICE_
   }
 }
 
+export async function ownReplyUndelivered(store, contact, { mark = false } = {}) {
+  if (!contact?.id || !contact.external_id) return null
+  const cases = await store.listCases({ channel: contact.channel, external_id: contact.external_id }, { limit: 20 })
+  for (const c of cases) {
+    const events = await store.listEvents(c.id)
+    const iBad = lastIndex(events, e => e.kind === 'outbound' && dataOf(e).delivered === false)
+    const iAnnounced = lastIndex(events, e => e.kind === 'observation' && dataOf(e).undelivered_announced_to === contact.id)
+    if (iBad < 0 || iBad <= iAnnounced) continue
+    if (mark) await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: 'NOTICE ANNOUNCED: the last reply was not delivered', data: { undelivered_announced_to: contact.id }, touch: false })
+    return { reason: String(dataOf(events[iBad]).send_error || 'the channel refused it'), began: String(events[iBad].text || '').slice(0, 160) }
+  }
+  return null
+}
+
 export async function staffNoticeNote(store, contact) {
   let n
-  try { n = (await staffNotices(store, contact)).counts } catch { return '' }
+  let own = null
+  try { n = (await staffNotices(store, contact)).counts; own = await ownReplyUndelivered(store, contact, { mark: true }) } catch { return '' }
+  const ownNote = own ? `\n\n[System note: your previous reply to this person was NOT fully delivered by WhatsApp (${own.reason}); it began "${own.began}". Tell them so in one plain sentence before anything else and offer to send it again in shorter pieces.]` : ''
   const first = await firstTimeStaff(store, contact)
   const firstNote = first ? `\n\n[System note: this is the first time this team member has talked to you. After dealing with what they just said, call case_help and give them the short welcome it returns, in their language.]` : ''
-  if (!n.new_assignments && !n.new_replies && !n.dispatches && !n.undelivered && !n.sent_back && !n.new_handoffs && !n.handover_offers && !n.technician_notes) return firstNote
+  if (!n.new_assignments && !n.new_replies && !n.dispatches && !n.undelivered && !n.sent_back && !n.new_handoffs && !n.handover_offers && !n.technician_notes) return ownNote + firstNote
   const bits = []
   if (n.handover_offers) bits.push(`${n.handover_offers} hand-over offered to them by another ranger (accept or decline)`)
   if (n.technician_notes) bits.push(`${n.technician_notes} with a new note from the technician`)
@@ -113,5 +129,5 @@ export async function staffNoticeNote(store, contact) {
   if (n.sent_back) bits.push(`${n.sent_back} sent back to them by the technician`)
   if (n.new_handoffs) bits.push(`${n.new_handoffs} handed over to the sign-off desk by a ranger`)
   if (n.undelivered) bits.push(`${n.undelivered} where WhatsApp did not deliver the last reply (the reporter has to message first, or be phoned)`)
-  return `${firstNote}\n\n[System note: waiting for this team member: ${bits.join('; ')}. Call case_pending, and after dealing with what they just said, tell them briefly in your own words. It is queued news, not a new message from them.]`
+  return `${ownNote}${firstNote}\n\n[System note: waiting for this team member: ${bits.join('; ')}. Call case_pending, and after dealing with what they just said, tell them briefly in your own words. It is queued news, not a new message from them.]`
 }
