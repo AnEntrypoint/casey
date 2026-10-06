@@ -7,6 +7,7 @@ Imperatives for the operator console. Root `AGENTS.md` covers the access ladder,
 - `SHELL_BUILD_ID` must hash every input to the served shell (public/ size+mtime, linked bundles, module graph, brand, tile URL, vocabulary); the service-worker cache name carries it.
 - Rewrite brand, tile URL, vocabulary and the modulepreload block into the SERVED bytes only, never into `index.html` on disk.
 - Modulepreloads: no `crossorigin`, static imports only, never `/design/dist/247420.js` (no `/design-sdk-shim.js` route, no importmap entry for it).
+- Public site (`routes/public-site.js`): `/site/` is mounted BEFORE `authGate` and is GET/HEAD only; it never creates a session; the SW must bypass `/site/` and never serve the cached console for a `/` navigation when the site is on (the shell precaches `/app` instead).
 - Static files revalidate every time; `/api/`, `/report` and tiles are never in Cache Storage; keep `skipWaiting`.
 -> recall {query:"casey dashboard shell build id service worker cache modulepreload"}
 

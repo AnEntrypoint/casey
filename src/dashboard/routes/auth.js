@@ -4,6 +4,7 @@ import { vocabWord } from '../../config-loader.js'
 import { BRAND, TYPE_SCALE_CSS } from '../brand.js'
 import { parseReport } from '../../timestamp.js'
 import { mountRoutes } from './register.js'
+import { registerPublicSiteAssets } from './public-site.js'
 import { RUNTIME_STATES } from './operations.js'
 import { roleGate, roleOf, expectedRefGuard } from '../roles.js'
 
@@ -671,7 +672,7 @@ export function authGate() {
   return (req, res, next) => {
     if (req.path.startsWith('/design') || req.path.startsWith('/vendor')) return next()
     if (req.path === '/api/login' || req.path === '/api/logout' || req.path === '/api/whoami') return next()
-    if (req.path === '/' || req.path === '/index.html' || req.path === '/app.js' || req.path === '/app.css') return next()
+    if (req.path === '/' || req.path === '/app' || req.path === '/index.html' || req.path === '/app.js' || req.path === '/app.css') return next()
     if (req.path.startsWith('/src/')) return next()
     if (req.path === '/icon.svg' || req.path === '/manifest.json' || req.path === '/sw.js' || req.path === '/offline.html') return next()
     if (req.path.startsWith('/api/sync/')) return next()
@@ -693,7 +694,7 @@ const ROUTES = [
 ]
 
 export function registerAuth(app, deps) {
-  const { store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR, esc } = deps
+  const { store, express, path, DESIGN_DIR, LEAFLET_DIR, MARKERCLUSTER_DIR, esc, PUBLIC_SITE_ROOT } = deps
 
   app.use(sessionMiddleware(deps))
   app.use(csrfGuard())
@@ -703,6 +704,8 @@ export function registerAuth(app, deps) {
     app.get('/report', reportRateLimited, getReport(deps))
     app.post('/report', reportRateLimited, postReport(deps))
   }
+
+  if (PUBLIC_SITE_ROOT) registerPublicSiteAssets(app, PUBLIC_SITE_ROOT)
 
   mountRoutes(app, deps, ROUTES)
 

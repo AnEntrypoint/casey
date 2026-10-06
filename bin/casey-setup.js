@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { ROOT, bold, dim, green, red, cyan, ok, bad, warn, pkgVersion, hasCreds, partialCreds, portFree } from './casey-cli-ui.js'
 import { checkConfigDrift } from './casey-config-drift.js'
+import { publicSiteDir } from '../src/dashboard/routes/public-site.js'
 import { RawLog } from '../src/core/raw-log.js'
 import { runMetaChecks, runRoleChecks, runDataProcessorChecks, runVocabularyChecks } from './casey-doctor-checks.js'
 
@@ -45,6 +46,10 @@ ACPTOAPI_CHAIN_LINK_TIMEOUT_MS=30000
 # Public URL of this casey instance (optional). When set, the agent mentions it
 # to the contact on first message so they can fill in more details via the web form:
 #CASEY_PUBLIC_URL=https://your-domain.example.com
+# Absolute directory holding index.html plus assets for an optional public landing
+# page: / serves it to visitors without a session, /site/ serves its assets, and
+# staff sign in at /app. Unset, / is the staff console as before.
+#CASEY_PUBLIC_SITE_DIR=/srv/site
 # Set this to the real proxy hop count if a reverse proxy fronts casey, or the
 # public report form's rate limiter sees every reporter as one address:
 #CASEY_TRUST_PROXY_HOPS=1
@@ -201,6 +206,9 @@ export async function cmdDoctor({ flags }) {
   console.log(ok('dashboard requires per-operator login (no bearer-token bypass)'))
   if (process.env.CASEY_PUBLIC_URL && !process.env.CASEY_TRUST_PROXY_HOPS) {
     console.log(warn('CASEY_TRUST_PROXY_HOPS unset with CASEY_PUBLIC_URL set - if a reverse proxy fronts casey, the /report rate limiter will see every client as one IP; set CASEY_TRUST_PROXY_HOPS to the real proxy hop count'))
+  }
+  if (process.env.CASEY_PUBLIC_SITE_DIR) {
+    try { publicSiteDir(); console.log(ok(`CASEY_PUBLIC_SITE_DIR serves ${process.env.CASEY_PUBLIC_SITE_DIR}`)) } catch (e) { console.log(bad(e.message)); problems++ }
   }
   console.log(process.env.CASEY_PUBLIC_URL ? ok(`CASEY_PUBLIC_URL set (${process.env.CASEY_PUBLIC_URL})`) : dim('  CASEY_PUBLIC_URL unset - contacts will not receive a web form link (optional)'))
   if (process.env.CASEY_COOKIE_SECURE === '0' && /^https:/i.test(process.env.CASEY_PUBLIC_URL || '')) {
