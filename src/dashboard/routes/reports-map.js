@@ -291,10 +291,10 @@ export function getResolvedMap({ store, authed }) {
     if (region) rows = rows.filter(r => labelKey(r.region) === labelKey(region))
     if (species) rows = rows.filter(r => labelKey(r.species) === labelKey(species))
     const placed = rows.filter(r => r.ll)
-    const pointKey = (ll) => ll.lat + ':' + ll.lon
+    const cellKey = (ll) => Math.floor(ll.lat / HEAT_CELL_DEG) + ':' + Math.floor(ll.lon / HEAT_CELL_DEG)
     const cellCount = new Map()
-    for (const r of placed) { const key = pointKey(r.ll); cellCount.set(key, (cellCount.get(key) || 0) + 1) }
-    const points = placed.filter(r => cellCount.get(pointKey(r.ll)) >= MIN_AGGREGATE_CELL).map(r => ({
+    for (const r of placed) { const key = cellKey(r.ll); cellCount.set(key, (cellCount.get(key) || 0) + 1) }
+    const points = placed.filter(r => cellCount.get(cellKey(r.ll)) >= MIN_AGGREGATE_CELL).map(r => ({
       lat: r.ll.lat, lon: r.ll.lon, disease: r.disease, species: r.species, status: r.status, advice: r.conclusions, resolved_at: weekStartOf(r.sec),
     })).sort((a, b) => a.resolved_at < b.resolved_at ? -1 : a.resolved_at > b.resolved_at ? 1 : 0)
     res.json({ k: MIN_AGGREGATE_CELL, count: points.length, withheld: floored(placed.length - points.length), without_location: floored(rows.length - placed.length), precision_km: 1, truncated: rows.truncated === true, points })

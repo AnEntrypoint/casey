@@ -36,7 +36,7 @@ function onMountCanvas(el) {
 }
 
 function mapLegend() {
-    return h('div', { class: 'ds-map-legend' },
+    return h('div', { class: 'ds-map-legend', role: 'group', tabindex: '0', 'aria-label': 'Map key' },
         ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
             h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), stageLabel(k))),
         h('span', { key: 'urgent', class: 'ds-map-legend-item' },
