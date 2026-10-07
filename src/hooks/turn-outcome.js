@@ -65,7 +65,7 @@ export async function tagAiOffline({ store, log, fresh }) {
 
 export async function holdReplyForHuman({
   store, log, fresh, notifyHandoff, msg, channel, replyTo, platform,
-  text, isFallback, jargonReasons, falseConfirmReasons, adviceReasons,
+  text, isFallback, jargonReasons, falseConfirmReasons, adviceReasons, groupIds,
 }) {
   if (jargonReasons || falseConfirmReasons || adviceReasons) {
     const heldReasons = jargonReasons || falseConfirmReasons || adviceReasons
@@ -78,7 +78,7 @@ export async function holdReplyForHuman({
     await store.appendEvent(fresh.id, observation(holdNote))
     await store.appendEvent(fresh.id, {
       kind: 'draft', actor: 'agent', channel,
-      text, data: { to: replyTo, fallback: isFallback, draft: true, jargon: jargonReasons, falseConfirmation: falseConfirmReasons, advice: adviceReasons },
+      text, data: { to: replyTo, fallback: isFallback, draft: true, in_reply_to: groupIds, jargon: jargonReasons, falseConfirmation: falseConfirmReasons, advice: adviceReasons },
     })
     await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, extraTags: ['draft-pending'], flagLabel: 'reply-hold', notifyLabel: 'reply-hold' })
     return { to: replyTo, text: '', platform, caseId: fresh.id, drafted: true, jargonHeld: jargonReasons, falseConfirmationHeld: falseConfirmReasons, adviceHeld: adviceReasons }
@@ -86,7 +86,7 @@ export async function holdReplyForHuman({
   if (canAgentAct(fresh, 'reply') === 'draft') {
     await store.appendEvent(fresh.id, {
       kind: 'draft', actor: 'agent', channel,
-      text, data: { to: replyTo, fallback: isFallback, draft: true },
+      text, data: { to: replyTo, fallback: isFallback, draft: true, in_reply_to: groupIds },
     })
     await flagNeedsHuman({ store, log, caseRow: fresh, notifyHandoff, channel, from: msg.from, extraTags: ['draft-pending'], flagLabel: 'assisted draft', notifyLabel: 'assisted draft' })
     return { to: replyTo, text: '', platform, caseId: fresh.id, drafted: true }

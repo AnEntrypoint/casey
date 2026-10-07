@@ -15,9 +15,9 @@ export async function isLlmDown(llmStatus) {
   catch { return false }
 }
 
-export async function applyServiceControls({ store, log, llmStatus, caseRow, inboundText, channel, msg, replyTo, platform }) {
+export async function applyServiceControls({ store, log, llmStatus, caseRow, typedText, channel, msg, replyTo, platform }) {
   let optedOut = tagList(caseRow).includes(OPTED_OUT_TAG)
-  const intent = detectContactIntent(inboundText)
+  const intent = detectContactIntent(typedText)
 
   if (optedOut && intent === 'help') {
     try { await store.updateCase(caseRow.id, { tags: dropTag(caseRow.tags, OPTED_OUT_TAG) }) }

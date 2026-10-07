@@ -1,6 +1,7 @@
 
 
 import { recordDroppedInbound } from './dropped-intake.js'
+import { messageId } from './case-intake.js'
 
 export function makeAdmissionControl({ log = console, store = null } = {}) {
 
@@ -36,6 +37,11 @@ export function makeAdmissionControl({ log = console, store = null } = {}) {
 
     bufferBurst(id, msg, channel) {
       const buf = pendingBuffer.get(id) || []
+      const wamid = messageId(msg)
+      if (wamid && buf.some(m => messageId(m) === wamid)) {
+        log.info?.('[casey] redelivered message already buffered; dropped', { channel })
+        return false
+      }
       buf.push(msg)
       if (buf.length > BUFFER_CAP) {
         buf.shift()
@@ -44,6 +50,15 @@ export function makeAdmissionControl({ log = console, store = null } = {}) {
         recordDroppedInbound('burst_buffer_full', { channel, store, log })
       }
       pendingBuffer.set(id, buf)
+      return true
+    },
+
+    takeBufferedWhile(id, accept) {
+      const buf = pendingBuffer.get(id)
+      const taken = []
+      while (buf?.length && accept(buf[0])) taken.push(buf.shift())
+      if (buf && !buf.length) pendingBuffer.delete(id)
+      return taken
     },
 
     takeBuffered(id) {

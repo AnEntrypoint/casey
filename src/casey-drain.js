@@ -1,7 +1,7 @@
 
 
 import { tagList, tsMs } from './timestamp.js'
-import { splitExternalId } from './hooks/handler.js'
+import { replayMessage } from './hooks/replay-message.js'
 
 import { mergeTag } from './hooks/heuristics.js'
 
@@ -55,8 +55,7 @@ export async function drainQueuedTurnsBody({ store, log, gateway, adapters }, { 
       for (const [id, ev] of pending) {
         if (drained >= maxRedrives) break
 
-        const { container, author } = splitExternalId(c.external_id)
-        const msg = { from: author, text: ev.text || '', platform: c.channel, resume: true, queuedRedrive: true, raw: { channel_id: container, id, author: {} } }
+        const msg = replayMessage(c, ev, { resume: true, queuedRedrive: true })
         try {
           const res = await handle.call(gateway, c.channel, msg)
 

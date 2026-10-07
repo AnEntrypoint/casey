@@ -164,7 +164,7 @@ function jargonFeedback(words, ref) {
   return `\n\n[System note: your previous reply was not sent because it used internal system words this person must never read: ${words.join(', ')}. Say the same thing again, just as warmly, in their own plain language. If you were giving them their reference, keep it EXACTLY as ${ref} -- that token is required and is not one of the forbidden words. Otherwise never write "case", "ticket", "triage", "workflow", "status", "priority", "escalate", "transition" or "autonomy" -- speak about "your report", "what you told me", or "the animals" instead.]`
 }
 
-export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, returnOn = false, isStaff = false, isTechnician = false }) {
+export async function evaluateCandidate({ store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, typedText = '', turnCallLLM, priorAttemptWrote = false, systemPromptText = null, factsForJudge = null, staffRefs = [], consentOn = false, returnOn = false, isStaff = false, isTechnician = false }) {
 
   const offerThing = isStaff ? 'offer what is waiting for them (their assigned reports)' : 'offer the one thing you can help with: hearing about an animal that is sick or has died'
   const note = async (text) => {
@@ -234,7 +234,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
     await store.appendEvent(fresh.id, observation(`STRAY-CONTACT-DETAIL-BUT-SENT: reply carried ${stray.join(', ')}`))
   }
 
-  const controlNoted = controlRegistered(result) || detectContactIntent(inboundText) === 'stop'
+  const controlNoted = controlRegistered(result) || detectContactIntent(typedText) === 'stop'
 
   const wroteThisTurn = priorAttemptWrote || hadSuccessfulWrite(result) || controlNoted || controlRegistered(result, 'case_consent')
   const safetyNumbers = persona.safetyText ? strayContactDetails(persona.safetyText, [candidate]) : []
@@ -413,7 +413,7 @@ export async function evaluateCandidate({ store, log, fresh, candidate, attempt,
 }
 
 export async function runAgentTurn({
-  store, log, callLLM, msg, fresh, events, contact, inboundText, prompt,
+  store, log, callLLM, msg, fresh, events, contact, inboundText, typedText, prompt,
   channel, external_id, turnStartedAt, isBackgroundRedrive, staffSend = null, ingressRecorded = false,
 }) {
 
@@ -519,7 +519,7 @@ export async function runAgentTurn({
       continue
     }
     const verdict = await evaluateCandidate({
-      store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, turnCallLLM,
+      store, log, fresh, candidate, attempt, result, lastOutboundText, inboundText, typedText, turnCallLLM,
       priorAttemptWrote: turnWroteSomething || ingressRecorded, systemPromptText,
       staffRefs: canQueryCases(resolvedTier) ? touchedRefs(result) : [],
       consentOn, returnOn, isStaff: canQueryCases(resolvedTier), isTechnician: canSignOff(resolvedTier),
