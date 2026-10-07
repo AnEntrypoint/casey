@@ -261,13 +261,27 @@ export function getConfig({ store, authed, SAST_TZ, resolveWhatsappAdapter, fmtP
   }
 }
 
+const ATTENTION_OPEN_TTL_MS = 5000
+const attentionOpenMemo = new WeakMap()
+
+function openCasesMemo(store, isOpenCase) {
+  const hit = attentionOpenMemo.get(store)
+  if (hit && Date.now() - hit.at < ATTENTION_OPEN_TTL_MS) return hit.promise
+  const promise = store.listCases({}, { limit: 10000 }).then((rows) => rows.filter(isOpenCase)).catch((e) => {
+    attentionOpenMemo.delete(store)
+    throw e
+  })
+  attentionOpenMemo.set(store, { at: Date.now(), promise })
+  return promise
+}
+
 export function getAttention({ store, authed, isOpenCase, rankAttention }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { classifyCaseHealth } = await import('../../case-health.js')
     const now = Date.now()
     const thresholds = await store.resolveThresholds()
-    const open = (await store.listCases({}, { limit: 10000 })).filter(isOpenCase)
+    const open = await openCasesMemo(store, isOpenCase)
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500)
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
     const { total, items, atRisk, slaTargetMs } = rankAttention(open, now, { limit, offset })

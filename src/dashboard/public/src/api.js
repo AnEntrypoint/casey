@@ -73,7 +73,7 @@ export async function api(path, opts = {}) {
       timeoutController.signal.removeEventListener('abort', onAbort);
     }
   }
-  if (await isOfflineResponse(res)) {
+  if (await isOfflineResponse(res) || res.status >= 500) {
     setConnLost(true);
     return res;
   }
@@ -148,17 +148,23 @@ async function json(path, opts) {
 }
 
 const condCache = new Map();
+const CONDITIONAL_CACHE_MAX = 20;
 export function clearConditionalCache() { condCache.clear(); }
+function rememberConditional(path, entry) {
+  condCache.delete(path);
+  condCache.set(path, entry);
+  while (condCache.size > CONDITIONAL_CACHE_MAX) condCache.delete(condCache.keys().next().value);
+}
 
 async function conditional(path) {
   const prev = condCache.get(path);
   const r = await api(path, prev ? { headers: { 'if-none-match': prev.etag } } : {});
-  if (r.status === 304 && prev) return { body: prev.body, unchanged: true };
+  if (r.status === 304 && prev) { rememberConditional(path, prev); return { body: prev.body, unchanged: true }; }
   let body = null;
   try { body = await r.json(); } catch {  }
   if (!r.ok) { condCache.delete(path); throw new ApiError(r.status, body); }
   const etag = r.headers.get('etag');
-  if (etag) condCache.set(path, { etag, body }); else condCache.delete(path);
+  if (etag) rememberConditional(path, { etag, body }); else condCache.delete(path);
   return { body, unchanged: false };
 }
 const condBody = async (path) => (await conditional(path)).body;

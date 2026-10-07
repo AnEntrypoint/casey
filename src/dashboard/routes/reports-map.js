@@ -3,6 +3,7 @@ import { statedArea, loadAreas, resolveArea } from '../../areas.js'
 import { isDone } from '../../signoff-desk.js'
 import { SIGNOFF_DIAGNOSIS_FIELDS, DIAGNOSIS_STATUS_KEY, normalizeDiagnosisStatus } from '../../store/report-shape.js'
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY } from '../../privacy.js'
+import { fmtTimeSAST } from '../../format.js'
 import { mountRoutes } from './register.js'
 
 const POOL_CAP = 10000
@@ -61,6 +62,11 @@ export function parseBound(v, endOfDay = false) {
 
 const isoDate = (sec) => new Date(sec * 1000 + SAST_OFFSET_MS).toISOString().slice(0, 10)
 export const monthOf = (sec) => isoDate(sec).slice(0, 7)
+export function periodLabel(w) {
+  if (w.from == null && w.to == null) return 'all time'
+  const today = isoDate(Math.floor(Date.now() / 1000))
+  return `${w.from == null ? 'earliest record' : isoDate(w.from)} to ${w.to == null ? today : isoDate(w.to)} (SAST dates)`
+}
 export function periodOf(sec, grain = 'month') {
   const m = monthOf(sec)
   if (grain === 'year') return m.slice(0, 4)
@@ -316,7 +322,8 @@ export function getDiseases({ store, authed }) {
 }
 
 const PRINT_NAMES = { [SPARSE_BUCKET_KEY]: 'Small groups combined', [RARE_LABEL]: `Other diseases, each under ${MIN_AGGREGATE_CELL} cases`, unknown: 'Not stated' }
-const printName = (v) => PRINT_NAMES[v] || String(v)
+export const printName = (v) => PRINT_NAMES[v] || String(v)
+const STATUS_NAMES = { confirmed: 'Confirmed', suspected: 'Suspected' }
 
 const diseaseRows = (rep) => (rep.rare_diseases == null ? rep.by_disease : [...rep.by_disease, { disease: RARE_LABEL, count: rep.rare_diseases }])
 
@@ -330,7 +337,7 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
     ])))
     : trendNote + `<p>Not enough cases to compare with the period before.</p>`
   const byMonth = rep.by_month.slice().sort((a, b) => String(a.month).localeCompare(String(b.month)))
-  const confirmedOrSuspected = rep.by_status.map(x => row([x.status, x.count])).join('') + (rep.ruled_out ? row(['ruled out, not counted above', rep.ruled_out]) : '')
+  const statusRows = rep.by_status.map(x => row([STATUS_NAMES[x.status] || x.status, x.count])).concat(rep.ruled_out ? [row(['ruled out (not counted above)', rep.ruled_out])] : [])
   const totals = tbl(['Measure', 'Cases'], [
     row(['signed-off cases', orBelow(rep.total)]),
     row(['signed-off cases with advice recorded', orBelow(rep.with_conclusion)]),
@@ -340,7 +347,7 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
   return `<h1>Disease report</h1>`
     + `<p class="meta">Generated ${esc(generated)}. Period: ${esc(period)}. Area: ${esc(region || 'all areas')}. Grouped by ${esc(rep.grain)}.</p>`
     + `<h2>Totals</h2>${totals}`
-    + `<h2>Confirmed and suspected</h2>` + (confirmedOrSuspected ? `<table>${confirmedOrSuspected}</table>` : `<p>none</p>`)
+    + `<h2>Confirmed and suspected</h2>` + tbl(['Status', 'Cases'], statusRows)
     + `<h2>By disease</h2>` + list('Disease', diseaseRows(rep), 'disease')
     + `<h2>By area</h2>` + list('Area', rep.by_region, 'region')
     + `<h2>By district</h2>` + list('District', rep.by_district, 'district')
@@ -357,7 +364,7 @@ export function getDiseasesPrint(deps) {
     const w = windowOf(req, res); if (!w) return
     const region = asked(req.query.region)
     const rep = await diseaseReportFor(store, w, { region, grain: grainOf(req) })
-    const period = w.from == null && w.to == null ? 'all time' : `${asked(req.query.from) || 'start'} to ${asked(req.query.to) || 'now'}`
+    const period = periodLabel(w)
     const body = diseaseReportBody(rep, { period, region, generated: fmtTimeSAST(Math.floor(Date.now() / 1000)) }, { esc, row: printableReportRow, tbl: printableReportTable })
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(printableReport('Disease report', body))
@@ -469,6 +476,7 @@ export function getReportsCsv({ store, authed, csvCell }) {
     for (const c of rep.by_conclusion) emit('conclusion', { conclusion: c.conclusion, count: c.count })
     for (const c of rep.by_disease_conclusion) emit('disease_conclusion', { disease: c.disease, conclusion: c.conclusion, count: c.count })
     const note = (text) => emit('note', { note: text })
+    note(`Period: ${periodLabel(w)}. Generated ${fmtTimeSAST(Date.now())}.`)
     note(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under "${printName(SPARSE_BUCKET_KEY)}". No case-level or personal data is included.`)
     if (rep.truncated) { note('There are more reports than this export can load, so the figures leave some out.'); res.setHeader('X-Report-Truncated', '1') }
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')

@@ -15,11 +15,13 @@ const local = {
   notice: '',
   needCurrent: false,
   error: '', busy: false,
+  confirmMismatch: false,
 };
 
 function loginMessage(e) {
   if (isOfflineError(e)) return word('ui.login_check_failed');
   if (e instanceof ApiError && e.status === 401) return 'That username and password do not match. Check both and try again -- if you cannot get in, ask whoever set up your account.';
+  if (e instanceof ApiError && e.status === 429) return 'Too many log-in attempts from this connection. Wait a few minutes, then try again.';
   const status = (e instanceof ApiError && e.status) ? ' (error ' + e.status + ')' : '';
   return 'Your details were not checked -- the dashboard itself returned an error' + status + '. This is not your password. Try again in a moment, and tell whoever runs this deployment if it keeps happening.';
 }
@@ -52,6 +54,8 @@ async function enterApp() {
 async function submitLogin(e) {
   e.preventDefault();
   if (local.busy) return;
+  if (!local.username.trim()) { local.error = 'Enter your username.'; schedule(); return; }
+  if (!local.password) { local.error = 'Enter your password.'; schedule(); return; }
   local.busy = true; local.error = ''; local.notice = ''; state.sessionNotice = ''; schedule();
   try {
     await postJson('/api/login', { username: local.username, password: local.password });
@@ -75,10 +79,11 @@ async function submitChange(e) {
   if (local.busy) return;
   if (local.newPassword !== local.confirmPassword) {
     local.error = 'The two new passwords are not the same. Type the same one in both boxes.';
+    local.confirmMismatch = true;
     schedule();
     return;
   }
-  local.busy = true; local.error = ''; schedule();
+  local.busy = true; local.error = ''; local.confirmMismatch = false; schedule();
   try {
     await postJson('/api/change-password', {
       current_password: local.password,
@@ -117,6 +122,7 @@ export function LoginGate() {
   const messageNode = message
     ? h('div', {
       key: 'msg',
+      id: 'ds-login-msg',
       class: local.error ? 'ds-login-error' : 'ds-login-notice',
       role: local.error ? 'alert' : 'status',
     }, message)
@@ -131,7 +137,7 @@ export function LoginGate() {
           ? TextField({ key: 'cur', label: 'The password you were given', type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'current_password' })
           : null,
         TextField({ key: 'new', label: 'New password', type: 'password', value: local.newPassword, onInput: (v) => { local.newPassword = v; schedule(); }, name: 'new_password' }),
-        TextField({ key: 'confirm', label: 'Type the new password again', type: 'password', value: local.confirmPassword, onInput: (v) => { local.confirmPassword = v; schedule(); }, name: 'confirm_password' }),
+        TextField({ key: 'confirm', label: 'Type the new password again', type: 'password', value: local.confirmPassword, onInput: (v) => { local.confirmPassword = v; schedule(); }, name: 'confirm_password', 'aria-invalid': local.confirmMismatch ? 'true' : undefined, 'aria-describedby': local.confirmMismatch ? 'ds-login-msg' : undefined }),
         messageNode,
         submitButton('Save my new password', 'Saving...')
       )

@@ -15,17 +15,22 @@ const SPLIT_KIND = {
     observation: 'Observation',
 };
 
-function openSplitDialog(caseId) {
-    state._splitDialogFor = caseId;
-    state._splitSelected = new Set();
-    state._splitSubject = '';
-    state._splitReason = '';
+function loadSplitEvents(caseId) {
+    state._splitError = false;
     state._splitEvents = null;
     schedule();
     fetchCaseEvents(caseId, { limit: '200' }).then(r => {
         state._splitEvents = (r.events || []).filter(e => ['inbound', 'outbound', 'note', 'observation'].includes(e.kind));
         schedule();
-    }).catch(() => { state._splitEvents = []; schedule(); });
+    }).catch(() => { state._splitError = true; state._splitEvents = []; schedule(); });
+}
+
+function openSplitDialog(caseId) {
+    state._splitDialogFor = caseId;
+    state._splitSelected = new Set();
+    state._splitSubject = '';
+    state._splitReason = '';
+    loadSplitEvents(caseId);
 }
 
 export function SplitDialogTrigger({ caseId, key } = {}) {
@@ -59,6 +64,10 @@ export function SplitDialog({ onReload, key } = {}) {
             TextField({ key: 'subj', label: 'Subject for the new ' + entityLabel() + ' (optional)', value: state._splitSubject || '', placeholder: 'e.g. sheep Upington cluster', onInput: (v) => { state._splitSubject = v; schedule(); } }),
             h('div', { key: 'evbox', class: 'casey-split-evbox' },
                 events == null ? h('div', { class: 'casey-hint' }, 'Loading the timeline...') :
+                    state._splitError ? [
+                        h('div', { key: 'err', class: 'casey-hint' }, 'Could not load the timeline. Close this and try again.'),
+                        Btn({ key: 'retry', size: 'sm', variant: 'ghost', children: 'Try again', onClick: () => loadSplitEvents(caseId) }),
+                    ] :
                     !events.length ? h('div', { class: 'casey-hint' }, 'Nothing on this timeline can be moved to another ' + entityLabel() + '.') :
                         events.map(e => h('label', { key: e.id, class: 'casey-split-row' },
                             h('input', { type: 'checkbox', checked: selected.has(e.id), onchange: () => toggle(e.id) }),

@@ -76,7 +76,7 @@ export function Dialog({ open, title, onClose, children, wide = false, id, foote
 }
 
 let _confirmSeq = 0;
-export function confirmDialog({ title, message, inputLabel, inputPlaceholder, inputDefault, choices, confirmLabel = 'Confirm', danger = false }) {
+export function confirmDialog({ title, message, inputLabel, inputPlaceholder, inputDefault, choices, confirmLabel = 'Confirm', danger = false, requireInput = false }) {
   return new Promise((resolve) => {
     rememberOpener();
     const backdrop = document.createElement('div');
@@ -100,6 +100,7 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
       panel.appendChild(p);
     }
     let input = null;
+    let inputErr = null;
     if (inputLabel !== undefined) {
       const lbl = document.createElement('label');
       lbl.className = 'ds-field';
@@ -123,6 +124,14 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
       input.className = 'ds-dialog-input';
       lbl.appendChild(input);
       panel.appendChild(lbl);
+      if (requireInput && !choices) {
+        inputErr = document.createElement('p');
+        inputErr.className = 'ds-dialog-message';
+        inputErr.id = h2.id + '-input-err';
+        inputErr.setAttribute('role', 'alert');
+        inputErr.hidden = true;
+        panel.appendChild(inputErr);
+      }
     }
     const row = document.createElement('div');
     row.className = 'ds-dialog-actions';
@@ -139,7 +148,22 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
     backdrop.appendChild(panel);
     document.body.appendChild(backdrop);
     const close = (val) => { backdrop.remove(); restoreOpenerFocus(); resolve(val); };
-    okBtn.onclick = () => close(input ? input.value : '');
+    okBtn.onclick = () => {
+      if (inputErr && !input.value.trim()) {
+        inputErr.textContent = 'Write something before saving, or press Cancel.';
+        inputErr.hidden = false;
+        input.setAttribute('aria-invalid', 'true');
+        input.setAttribute('aria-describedby', inputErr.id);
+        input.focus();
+        return;
+      }
+      close(input ? input.value : '');
+    };
+    if (input && input.tagName === 'INPUT') {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); okBtn.click(); }
+      });
+    }
     cancelBtn.onclick = () => close(null);
     backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(null); });
     panel.addEventListener('keydown', (e) => {

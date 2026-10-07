@@ -117,7 +117,7 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
                 ? h('p', { class: 'casey-hint' }, 'Suggests a field worker for this ' + entityLabel() + '. ' + brandName() + ' never messages the worker directly -- they are told the next time they message in themselves.')
                 : null,
             Btn({ size: 'sm', variant: 'ghost', children: '+ Note', onClick: async () => {
-                const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Add a note to this ' + entityLabel() })) || '').trim();
+                const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Add a note to this ' + entityLabel(), confirmLabel: 'Save note', requireInput: true })) || '').trim();
                 if (!text) return;
                 try { await postNote(id, text); toast('Note added to the timeline.', 'ok'); await reload(id); }
                 catch (e) { toast(await failMsg(e, 'The note was not saved. Nothing was added to the timeline -- try again.'), 'err'); }

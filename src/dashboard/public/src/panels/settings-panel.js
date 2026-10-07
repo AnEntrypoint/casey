@@ -40,12 +40,16 @@ const loader = createPanelLoader({
 });
 
 async function save() {
-    saving = true; schedule();
     const patch = {};
     for (const [k, v] of Object.entries(draft)) {
         const n = parseFloat(v);
-        if (Number.isFinite(n)) patch[k] = Math.round(n * 3600000);
+        if (!Number.isFinite(n)) {
+            toast('Enter a number of hours for every deadline before saving. Nothing was saved.', 'err');
+            return;
+        }
+        patch[k] = Math.round(n * 3600000);
     }
+    saving = true; schedule();
     try {
         await putThresholds(patch);
         toast('Settings saved', 'ok');

@@ -8,6 +8,14 @@ import { brandName } from '../vocabulary.js';
 const brand = brandName;
 const h = webjsx.createElement;
 
+function openerSignature(el) {
+    return [
+        el.tagName,
+        (el.getAttribute('aria-label') || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+        (el.className || '').toString(),
+    ].join('|');
+}
+
 function haversineKm(lat1, lon1, lat2, lon2) {
     const R = 6371, toRad = (d) => (d * Math.PI) / 180;
     const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
@@ -19,13 +27,16 @@ function showWorkerPicker(title, message, workers) {
     return new Promise((resolve) => {
         let workerId = workers[0] ? workers[0].id : '', note = '';
         const returnFocus = document.activeElement;
+        const returnSig = returnFocus && returnFocus.tagName ? openerSignature(returnFocus) : '';
         const titleId = 'dispatch-picker-title';
         const overlay = document.createElement('div');
         overlay.className = 'ds-dialog-backdrop';
         overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-labelledby', titleId);
         const close = (confirmed) => {
             overlay.remove();
-            if (returnFocus && typeof returnFocus.focus === 'function') returnFocus.focus();
+            let target = returnFocus;
+            if (target && !target.isConnected) target = [...document.querySelectorAll(returnFocus.tagName)].find((c) => openerSignature(c) === returnSig) || null;
+            if (target && typeof target.focus === 'function') target.focus();
             resolve(confirmed ? { workerId, note } : null);
         };
         const workerLabel = (w) => (w.display_name || 'field worker')

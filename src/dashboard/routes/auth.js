@@ -66,7 +66,7 @@ const PUBLIC_FIELDS = (() => {
   return [...shown.filter(f => f.critical_for_visit).map(row), ...shown.filter(f => !f.critical_for_visit).map(row)]
 })()
 
-const CRITICAL_GROUP_TITLE = vocabWord('form.group_critical', 'Needed before a team can visit')
+const CRITICAL_GROUP_TITLE = vocabWord('form.group_critical', 'Needed for a field visit')
 const UNSECTIONED_GROUP_TITLE = vocabWord('form.group_other', 'More detail')
 const PUBLIC_GROUPS = (() => {
   const groups = []
@@ -109,7 +109,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
   const vcFilled = PUBLIC_FIELDS.filter(f => f.critical && report[f.key] != null && String(report[f.key]).trim() !== '').length
   const allFilled = vcTotal === 0 || vcFilled >= vcTotal
   const progressBar = (caseRow && vcTotal > 0) ? `<div class="progress-wrap">
-      <div class="progress-label">${allFilled ? 'All essential details filled. Thank you.' : `Essential details: ${vcFilled} of ${vcTotal} filled`}</div>
+      <div class="progress-label">${allFilled ? 'All details needed for a field visit are filled. Thank you.' : `Needed for a field visit: ${vcFilled} of ${vcTotal} filled`}</div>
       <div class="progress-track" aria-hidden="true"><div class="progress-bar${allFilled ? ' done' : ''}" style="width:${Math.round(vcFilled/vcTotal*100)}%"></div></div>
     </div>` : ''
   const fieldHtml = ({ key, label, hint, multiline, critical, options = [] }) => {
@@ -126,7 +126,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
       : multiline
       ? `<textarea id="${id}" name="${esc(key)}" rows="3"${placeholder}${describedBy} maxlength="${FIELD_MAXLEN}">${val}</textarea>`
       : `<input id="${id}" type="text" name="${esc(key)}"${placeholder}${describedBy} value="${val}" maxlength="500">`
-    const vcMark = critical ? ' <span class="req" aria-hidden="true">*</span><span class="vh"> (essential)</span>' : ''
+    const vcMark = critical ? ' <span class="req" aria-hidden="true">*</span><span class="vh"> (needed for a field visit)</span>' : ''
     const hintHtml = hint ? `<span class="vh" id="${hintId}">${esc(hint)}</span>` : ''
     return `<div class="field${critical ? ' vc' : ''}"><label for="${id}">${esc(label)}${vcMark}</label>${inp}${hintHtml}</div>`
   }
@@ -151,19 +151,19 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
     ? (none
       ? `<div class="banner ok" role="status">We found your ${esc(ENTITY)}. You did not fill in any answers this time, so nothing on it has changed.</div>`
       : `<div class="banner ok" role="status">Your answers are saved on ${esc(ENTITY === 'report' ? 'your report' : `your ${ENTITY}`)}. Keep your reference -- you can come back to this page and add more at any time.${heldNote}${cutNote}</div>`)
-    : err ? `<div class="banner err" role="alert">${errorSentence(err, ref, esc, retryAfter)}</div>` : ''
+    : err ? `<div class="banner err" id="form-err" role="alert">${errorSentence(err, ref, esc, retryAfter)}</div>` : ''
   const caseInfo = caseRow
     ? `<div class="case-info"><strong>Reference: ${esc(caseRow.ref)}</strong> &ndash; ${esc(caseRow.subject || `Field ${ENTITY}`)}
          <button type="button" class="copy-link-btn" data-ref="${esc(caseRow.ref)}">Share link</button></div>`
     : ''
   const refBlock = caseRow ? `<input type="hidden" name="ref" value="${esc(ref)}">` : `
       <section class="grp vc">
-      <h2 class="grp-head"><span class="grp-n" aria-hidden="true">1</span><span class="grp-title">Find your ${esc(ENTITY)}</span> <span class="grp-count">2 questions</span></h2>
+      <h2 class="grp-head"><span class="grp-n" aria-hidden="true">1</span><span class="grp-title">Find your ${esc(ENTITY)}: enter one of these two</span> <span class="grp-count">2 questions</span></h2>
       <div class="field"><label for="f-find-ref">Your reference number</label>
       <input id="f-find-ref" type="text" name="ref" value="${esc(ref)}" maxlength="50" aria-describedby="f-find-ref-hint">
       <div class="hint" id="f-find-ref-hint">Copy it from the message you were sent when you first reported. If you do not have it, enter your phone number below instead.</div></div>
       <div class="field"><label for="f-find-phone">Or your phone number</label>
-      <input id="f-find-phone" type="tel" name="phone" value="${esc(phone)}" placeholder="0821234567" maxlength="30" autocomplete="tel" aria-describedby="f-find-phone-hint">
+      <input id="f-find-phone" type="tel" name="phone" value="${esc(phone)}" placeholder="0821234567" maxlength="30" autocomplete="tel" aria-describedby="${err === 'phone_shape' ? 'f-find-phone-hint form-err' : 'f-find-phone-hint'}"${err === 'phone_shape' ? ' aria-invalid="true"' : ''}>
       <div class="hint" id="f-find-phone-hint">A South African number. We use this to find your ${esc(ENTITY)}.</div></div>
       </section>`
   return `<!doctype html><html lang="en"><head>
@@ -269,12 +269,12 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
        since a <footer> nested in <main> stops being a contentinfo landmark. -->
   <main>
   <h1>Your ${esc(ENTITY)} details</h1>
-  <p class="sub">Please fill in as many details as you can. Fields marked * are needed before a team can visit. You can leave anything you do not know blank.</p>
+  <p class="sub">Please fill in as many details as you can. Fields marked * are needed for a field visit. You can leave anything you do not know blank.</p>
   ${banner}${caseInfo}${progressBar}
   <form method="POST" action="/report">
     ${refBlock}
     ${groupCards}
-    <p class="req-note">* Essential for a field visit</p>
+    <p class="req-note">* Needed for a field visit</p>
     <p class="draft-note" id="draft-note" aria-live="polite">Your answers are kept in this tab until you send them. </p>
     <button type="submit">Send details</button>
     <p class="next">Your answers go onto your ${esc(ENTITY)} for the team who work these. If they need to ask you something they will use the phone number on it. You can open this page again with your reference number and add more whenever you find something out.</p>
@@ -371,6 +371,7 @@ export function publicFormHtml(esc, { ref = '', phone = '', caseRow = null, done
       clearBtn.className = 'draft-clear'
       clearBtn.textContent = 'Clear my answers'
       clearBtn.addEventListener('click', () => {
+        if (!window.confirm('Clear all answers you have typed here? This cannot be undone.')) return
         clearDraft()
         for (const el of fields()) el.value = ''
         draftNote.textContent = 'Cleared. Nothing you typed is kept on this phone. '

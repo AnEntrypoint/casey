@@ -30,6 +30,8 @@ function modalIsOpen() {
 }
 
 export function onGlobalKeyDown(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target && e.target.closest && e.target.closest('[role="menu"]')) return;
   if (isTypingTarget(document.activeElement)) {
     if (e.key !== 'Escape') return;
     document.activeElement.blur();

@@ -1,4 +1,4 @@
-import { api, ApiError } from './api.js';
+import { api, ApiError, pollCases } from './api.js';
 import { state } from './state.js';
 
 async function json(path, opts) {
@@ -20,13 +20,17 @@ export const ROLE_NAME = { eco_ranger: 'Eco Ranger', animal_health_technician: '
 export const roleName = () => ROLE_NAME[currentRole()] || 'Field team';
 export { FIELD_ROLES };
 
-export function fetchFieldCases(view, { q = '', state: done = '', offset = 0, limit = 200 } = {}) {
+function fieldCasesQuery(view, { q = '', state: done = '', offset = 0, limit = 200 } = {}) {
   const p = new URLSearchParams({ limit: String(limit), offset: String(offset) });
   if (view) p.set('view', view);
   if (q) p.set('q', q);
   if (done) p.set('state', done);
-  return json('/api/cases?' + p.toString());
+  return '?' + p.toString();
 }
+export function fetchFieldCases(view, opts) {
+  return json('/api/cases' + fieldCasesQuery(view, opts));
+}
+export const pollFieldCases = (view, opts) => pollCases(fieldCasesQuery(view, opts));
 export const fetchFieldCase = (id) => json('/api/cases/' + seg(id));
 
 export const postFieldNote = (id, ref, text, relayed) => send('POST', '/api/cases/' + seg(id) + '/note', { text, relayed: !!relayed, expected_ref: ref });
@@ -39,11 +43,13 @@ export const postSendBack = (id, ref, text, missing) => send('POST', '/api/cases
 export const fetchTeamMembers = () => json('/api/team-members');
 export const fetchNudges = () => json('/api/nudges');
 
+const ROSTER_RETRY_MS = 30000;
 let roster = null;
+let rosterRetryAt = 0;
 export function loadRoster(onDone) {
-  if (roster !== null) return;
+  if (roster !== null || Date.now() < rosterRetryAt) return;
   roster = [];
-  fetchTeamMembers().then((j) => { roster = (j && j.members) || []; if (onDone) onDone(); }).catch(() => { roster = []; });
+  fetchTeamMembers().then((j) => { roster = (j && j.members) || []; if (onDone) onDone(); }).catch(() => { roster = null; rosterRetryAt = Date.now() + ROSTER_RETRY_MS; });
 }
 export const teamRoster = () => roster || [];
 export function assigneeName(value) {

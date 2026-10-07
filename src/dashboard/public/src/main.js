@@ -89,6 +89,10 @@ function moveFocus(delta) {
   const next = Math.min(rows.length - 1, Math.max(0, curIdx + delta));
   state._focusRowId = rows[next].id;
   schedule();
+  setTimeout(() => {
+    const el = document.querySelector('[data-id="' + CSS.escape(String(state._focusRowId)) + '"]');
+    if (el) { el.focus(); el.scrollIntoView({ block: 'nearest' }); }
+  }, 0);
 }
 registerKeyboardHandlers({
   focusSearch: () => { const el = document.querySelector('.ds-search-input, input[type=search]'); if (el) el.focus(); },
@@ -142,14 +146,17 @@ async function refreshAttention() {
     const a = await api.fetchAttention();
     const rows = Array.isArray(a) ? a : (a && a.cases) || [];
     setAttention(rows);
-    setInboxBadge(rows.length);
+    setInboxBadge(a && typeof a.total === 'number' ? a.total : rows.length);
   } catch {  }
 }
 
+const settled = (p) => p.then((value) => ({ value }), () => ({ failed: true }));
 async function refreshHealth() {
-  try { setHealth({ ai: await api.fetchHealth() }); } catch { setHealth({ ai: { ok: false, label: 'AI helper: cannot be checked', detail: 'This browser could not reach the server to ask about the AI helper. Auto-replies may still be running.' } }); }
-  try { setHealth({ runtime: await api.fetchRuntime() }); } catch {  }
-  try { setHealth({ guardrails: await api.fetchFleetHealth() }); } catch {  }
+  const [ai, runtime, guardrails] = await Promise.all([api.fetchHealth(), api.fetchRuntime(), api.fetchFleetHealth()].map(settled));
+  const patch = { ai: ai.failed ? { ok: false, label: 'AI helper: cannot be checked', detail: 'This browser could not reach the server to ask about the AI helper. Auto-replies may still be running.' } : ai.value };
+  if (!runtime.failed) patch.runtime = runtime.value;
+  if (!guardrails.failed) patch.guardrails = guardrails.value;
+  setHealth(patch);
 }
 
 async function refreshDegradedTurns() {
@@ -217,7 +224,7 @@ initRouteSync((r) => {
 })();
 
 const onMapHome = () => !state.activePanel && state.homeView === 'map';
-const polling = () => state.authed && !isFieldRole() && !isViewerRole();
+const polling = () => state.authed && !isFieldRole() && !isViewerRole() && document.visibilityState === 'visible';
 const CASES_POLL_MS = 5000;
 const HEALTH_POLL_MS = 15000;
 const ATTENTION_POLL_MS = 30000;
@@ -239,7 +246,13 @@ function scheduleCasesPoll() {
 }
 scheduleCasesPoll();
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') casesPollMs = CASES_POLL_MS;
+  if (document.visibilityState !== 'visible') return;
+  casesPollMs = CASES_POLL_MS;
+  if (!polling()) return;
+  refreshHealth();
+  refreshAttention();
+  refreshDegradedTurns();
+  if (onMapHome()) refreshMapData();
 });
 const _healthIv = setInterval(() => { if (polling()) refreshHealth(); }, HEALTH_POLL_MS);
 const _attnIv = setInterval(() => { if (polling()) refreshAttention(); }, ATTENTION_POLL_MS);
