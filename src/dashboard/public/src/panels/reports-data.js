@@ -18,7 +18,13 @@ const isoDay = (d) => d.toISOString().slice(0, 10);
 export function windowParams() {
   const p = PERIODS.find((x) => x.id === rf.period) || PERIODS[0];
   const out = {};
-  if (p.months) { const d = new Date(); d.setUTCMonth(d.getUTCMonth() - p.months); out.from = isoDay(d); }
+  if (p.months) {
+    const now = new Date();
+    const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - p.months, 1));
+    const lastDay = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+    first.setUTCDate(Math.min(now.getUTCDate(), lastDay));
+    out.from = isoDay(first);
+  }
   if (rf.region) out.region = rf.region;
   return out;
 }

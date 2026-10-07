@@ -31,7 +31,7 @@ const SELF_WRAPPED_MODALS = new Set(['help', 'onboarding', 'skills']);
 function ModalMount() {
   const name = state.activeModal;
   if (!name || name === 'confirm-logout-everywhere' || name === 'feedback') return null;
-  const body = modalBodies[name] ? modalBodies[name]() : h('p', {}, 'Loading...');
+  const body = modalBodies[name] ? modalBodies[name]() : h('p', {}, 'This screen is not available in this deployment.');
   if (SELF_WRAPPED_MODALS.has(name)) return body;
   return Dialog({ open: true, title: modalTitle(name), onClose: closeModal, children: body, wide: WIDE_MODALS.has(name) });
 }

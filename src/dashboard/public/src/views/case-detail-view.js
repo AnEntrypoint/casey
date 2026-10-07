@@ -52,12 +52,9 @@ function LinkedReportsNote({ caseId }) {
     const names = note.reportedDiseaseNames.length
         ? ' -- as reported: ' + note.reportedDiseaseNames.join(', ')
         : '';
-    return h('div', {
-        class: 'casey-linked-reports',
-        title: names
-            ? 'Reports nearby that may be the same or a related situation. The names were given by the worker or farmer, not confirmed by a lab.'
-            : 'Reports nearby that may be the same or a related situation',
-    }, `Linked to ${countOf(note.others, 'other ' + entityLabel(), 'other ' + entityLabelPlural())} nearby${names}`);
+    return h('div', { class: 'casey-linked-reports' },
+        `Linked to ${countOf(note.others, 'other ' + entityLabel(), 'other ' + entityLabelPlural())} nearby${names}`,
+        names ? h('p', { class: 'casey-hint' }, 'Reports nearby that may be the same or a related situation. The names were given by the worker or farmer, not confirmed by a lab.') : null);
 }
 
 function pauseWhileEditing(el) {
@@ -85,10 +82,12 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
     if (state.caseDetailError) {
         return h('div', { key, class: 'casey-detail-error' },
             showBack ? backControl(onClose) : null,
-            h('p', { class: 'casey-hint' }, state.caseDetailError));
+            h('p', { class: 'casey-hint' }, state.caseDetailError),
+            h('div', { class: 'casey-timeline-actions' },
+                Btn({ size: 'sm', variant: 'primary', children: 'Try again', onClick: () => { _loadedFor = null; setCaseDetailError(null); loadCaseDetail(id); } })));
     }
     if (!state.caseDetail || state.caseDetail.case.id !== id) {
-        return h('div', { key, class: 'casey-detail-loading' }, Skeleton({ count: 6, height: '1.4em' }));
+        return h('div', { key, class: 'casey-detail-loading' }, Skeleton({ count: 6, height: '1.4em', label: 'loading the report' }));
     }
 
     const { case: c, events, transitions, events_total, suggested_assignee, case_type_source } = state.caseDetail;
@@ -111,9 +110,11 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
             canDispatchFor(id)
                 ? Btn({
                     size: 'sm', variant: 'ghost', children: 'Dispatch a worker',
-                    title: 'Suggest a field worker for this ' + entityLabel() + '. ' + brandName() + ' never messages the worker directly -- they are told the next time they message in themselves.',
                     onClick: () => dispatchWorkerFor(id),
                 })
+                : null,
+            canDispatchFor(id)
+                ? h('p', { class: 'casey-hint' }, 'Suggests a field worker for this ' + entityLabel() + '. ' + brandName() + ' never messages the worker directly -- they are told the next time they message in themselves.')
                 : null,
             Btn({ size: 'sm', variant: 'ghost', children: '+ Note', onClick: async () => {
                 const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Add a note to this ' + entityLabel() })) || '').trim();

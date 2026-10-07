@@ -47,7 +47,22 @@ export function BulkBar({ stages, onDone, onPromptTag, onPromptNote }) {
     Btn({ key: 'tag', size: 'sm', variant: 'ghost', onClick: () => onPromptTag && onPromptTag((tag) => runBulk('tag', { tag }, onDone)), children: 'Tag' }),
     Btn({ key: 'untag', size: 'sm', variant: 'ghost', onClick: () => onPromptTag && onPromptTag((tag) => runBulk('untag', { tag }, onDone)), children: 'Untag' }),
     Btn({ key: 'note', size: 'sm', variant: 'ghost', onClick: () => onPromptNote && onPromptNote((text) => runBulk('note', { text }, onDone)), children: 'Note' }),
-    Btn({ key: 'draft-approve', size: 'sm', variant: 'ghost', title: 'Send the waiting draft on each selected ' + entityLabel() + ', exactly as written', onClick: () => runBulk('draft_approve', null, onDone), children: 'Send drafts' }),
+    Btn({
+      key: 'draft-approve', size: 'sm', variant: 'ghost',
+      title: 'Send the waiting draft on each selected ' + entityLabel() + ', exactly as written',
+      onClick: async () => {
+        const n = state.bulkSelected.size;
+        if (!n) return;
+        if (await confirmDialog({
+          title: 'Send drafts to ' + n + ' ' + (n === 1 ? 'person' : 'people') + '?',
+          message: 'Sends the waiting draft on each of the ' + n + ' selected ' + (n === 1 ? entityLabel() : entityLabelPlural())
+            + ' to its contact, exactly as written. Drafts are not edited here. Each send is recorded on the timeline. A ' + entityLabel() + ' with no draft, or whose channel refuses it, is reported and left as it is.',
+          confirmLabel: 'Send the drafts',
+        }) === null) return;
+        runBulk('draft_approve', null, onDone);
+      },
+      children: 'Send drafts',
+    }),
     Btn({ key: 'draft-discard', size: 'sm', variant: 'ghost', title: 'Discard the waiting draft on each selected ' + entityLabel(), onClick: () => runBulk('draft_discard', null, onDone), children: 'Discard drafts' }),
     Btn({
       key: 'remind', size: 'sm', variant: 'ghost',

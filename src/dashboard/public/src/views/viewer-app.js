@@ -35,6 +35,8 @@ export function ViewerApp() {
       : [ResolvedMapPanel(), DiseaseReportsPanel()];
   const main = h('div', { class: 'field-main viewer-main' }, ViewTitle(TITLES[vs.view]), ...body);
   const total = rd.points ? rd.points.count : null;
+  const statusText = total != null ? total + (total === 1 ? ' signed-off case on the map' : ' signed-off cases on the map')
+    : (rd.error && !rd.loading ? 'Figures not loaded -- use Try again on the map' : 'Loading');
   return h('div', { class: 'ds-app-root viewer-app' },
     ConnectionBanner(),
     AppShell({
@@ -42,7 +44,7 @@ export function ViewerApp() {
       crumb: Crumb({ trail: [brand], leaf: 'Read-only viewer', right: [h('div', { key: 'appbar', class: 'ds-appbar' }, AccountMenu())] }),
       side: nav(),
       status: Status({
-        left: [h('span', { key: 'c' }, total == null ? 'Loading' : total + (total === 1 ? ' signed-off case on the map' : ' signed-off cases on the map'))],
+        left: [h('span', { key: 'c' }, statusText)],
         right: [h('span', { key: 'n' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected -- read-only, no personal details')],
         ariaLabel: 'Status bar',
       }),

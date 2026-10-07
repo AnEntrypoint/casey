@@ -1,5 +1,5 @@
 import * as webjsx from '/design/vendor/webjsx/index.js';
-import { Btn, Chip, Icon, IconButton } from '/design/src/components/shell.js';
+import { Btn, Chip, Icon } from '/design/src/components/shell.js';
 import { SearchInput, LogRow } from '/design/src/components/content.js';
 import { state, schedule, appendTimelineEvents, setTimelineSearch } from '../../state.js';
 import { fetchCaseEvents, postFlagReply, postTranslateEvent } from '../../api.js';
@@ -18,7 +18,7 @@ async function flagReply(caseId, e) {
         await postFlagReply(caseId, e.id, reason);
         e._flagged = true;
         schedule();
-    } catch {  }
+    } catch (err) { toast(await failMsg(err, 'The flag was not saved. Try again.'), 'err'); }
 }
 
 const ROW_LABEL = {
@@ -135,8 +135,8 @@ function TimelineRow({ e, caseId, caseRef, canTranslate, shown, language, key } 
                 children: (trState()[e.id] && trState()[e.id].busy) ? word('ui.translate_busy') : word('ui.translate_button'),
                 onClick: () => showInEnglish(caseId, caseRef, e) }))
             : e.kind === 'outbound' && !flagged
-            ? IconButton({ icon: Icon('warn', { size: 12 }), title: 'Flag this reply as bad/off-target', onClick: () => flagReply(caseId, e) })
-            : (e.kind === 'outbound' && flagged ? h('span', { class: 'casey-ev-flagged', title: 'Flagged for review' }, Icon('warn', { size: 12 })) : null),
+            ? Btn({ size: 'sm', variant: 'ghost', class: 'casey-flag-btn', 'aria-label': 'Flag this reply as bad or off-target: ' + reportValue(e.text || '').slice(0, 40), children: [Icon('warn', { size: 12 }), ' Flag'], onClick: () => flagReply(caseId, e) })
+            : (e.kind === 'outbound' && flagged ? h('span', { class: 'casey-ev-flagged' }, Icon('warn', { size: 12 }), ' Flagged for review') : null),
         meta: h('span', { title: fmtTime(e.created_at) }, rel(e.created_at)),
     });
 }
@@ -157,7 +157,7 @@ export function Timeline({ caseId, events, eventsTotal, key, canTranslate = fals
         try {
             const older = await fetchCaseEvents(caseId, { offset: String(off) });
             appendTimelineEvents(older.events || []);
-        } catch {  }
+        } catch (err) { toast(await failMsg(err, 'Older events did not load. Press Load older events to try again.'), 'err'); }
     };
 
     return h('div', { key, class: 'casey-timeline-wrap' },

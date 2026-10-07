@@ -42,7 +42,17 @@ function mapLegend() {
         h('span', { key: 'urgent', class: 'ds-map-legend-item' },
             h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-urgent', 'data-urgency': '3' }), queueName()),
         h('span', { key: 'loc-estimated', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-dashed' }), sentence(LOCATION_SOURCE_LABEL.estimated)));
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-dashed' }), sentence(LOCATION_SOURCE_LABEL.estimated)),
+        h('span', { key: 'ov-cluster', class: 'ds-map-legend-item' },
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-cluster' }), 'Related reports (Clusters overlay)'),
+        h('span', { key: 'ov-coverage', class: 'ds-map-legend-item' },
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-coverage' }), 'Area worked (Coverage overlay)'),
+        h('span', { key: 'ov-worker', class: 'ds-map-legend-item' },
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-worker' }), 'Field worker (Workers overlay)'),
+        h('span', { key: 'ov-overdue', class: 'ds-map-legend-item' },
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-overdue' }), 'Field worker, check-in overdue (red, larger)'),
+        h('span', { key: 'ov-report', class: 'ds-map-legend-item' },
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-report' }), 'Last reported from (Last reported overlay)'));
 }
 
 function mapStateNote() {

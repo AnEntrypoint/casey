@@ -42,7 +42,8 @@ function refetch(delay) {
     clearTimeout(timer);
     timer = setTimeout(async () => {
         const mine = ++seq;
-        try { const j = await query(); if (mine === seq) { state._contacts = j; schedule(); } } catch {  }
+        try { const j = await query(); if (mine === seq) { state._contacts = j; schedule(); } }
+        catch (e) { if (mine === seq) { toast(await failMsg(e, 'The list did not update. The rows shown may be out of date -- change the search to try again.'), 'err'); } }
     }, delay || 0);
 }
 
@@ -133,7 +134,7 @@ export function ContactsPanel() {
                 }),
                 TextField({ key: 'people-q', name: 'people-q', 'aria-label': 'Search by name or number', placeholder: 'Search by name or number', value: view.q, onInput: (v) => { view.q = v; refetch(300); } })),
             shown.length ? Table({
-                headers: ['Who', 'Channel', 'Role', 'Last check-in', ''],
+                headers: ['Who', 'Channel', 'Role', 'Last check-in', 'Actions'],
                 rows: shown.map((c) => {
                     const tier = tierValue(c.tier);
                     const erased = c.external_id_formatted === '[erased]';

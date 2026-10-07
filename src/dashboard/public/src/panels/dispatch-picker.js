@@ -18,21 +18,35 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 function showWorkerPicker(title, message, workers) {
     return new Promise((resolve) => {
         let workerId = workers[0] ? workers[0].id : '', note = '';
+        const returnFocus = document.activeElement;
+        const titleId = 'dispatch-picker-title';
         const overlay = document.createElement('div');
         overlay.className = 'ds-dialog-backdrop';
-        overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true');
-        const close = (confirmed) => { overlay.remove(); resolve(confirmed ? { workerId, note } : null); };
+        overlay.setAttribute('role', 'dialog'); overlay.setAttribute('aria-modal', 'true'); overlay.setAttribute('aria-labelledby', titleId);
+        const close = (confirmed) => {
+            overlay.remove();
+            if (returnFocus && typeof returnFocus.focus === 'function') returnFocus.focus();
+            resolve(confirmed ? { workerId, note } : null);
+        };
         const workerLabel = (w) => (w.display_name || 'field worker')
             + (w.km != null ? ` (${w.km.toFixed(1)}km${w.stale ? ', stale' : ''})` : (w.stale ? ' (stale)' : ''));
         webjsx.applyDiff(overlay, h('div', { class: 'ds-dialog-panel' },
-            h('div', { key: 'head', class: 'ds-dialog-head' }, h('h3', { class: 'ds-dialog-title' }, title)),
+            h('div', { key: 'head', class: 'ds-dialog-head' }, h('h3', { id: titleId, class: 'ds-dialog-title' }, title)),
             h('p', { key: 'msg', class: 'ds-dialog-message' }, message),
             Select({ key: 'who', label: 'Who should go', name: 'worker', value: workerId, options: workers.map((w) => ({ value: w.id, label: workerLabel(w) })), onChange: (v) => { workerId = v; } }),
             TextField({ key: 'note', label: 'Optional note for the team', name: 'note', multiline: true, rows: 2, value: '', onInput: (v) => { note = v; } }),
             h('div', { key: 'foot', class: 'ds-dialog-foot-row' },
                 Btn({ variant: 'ghost', children: 'Cancel', onClick: () => close(false) }),
                 Btn({ variant: 'primary', children: 'Suggest dispatch', onClick: () => close(true) }))));
-        overlay.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(false); });
+        overlay.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.stopPropagation(); close(false); return; }
+            if (e.key !== 'Tab') return;
+            const focusable = [...overlay.querySelectorAll('button, select, textarea, input, [href], [tabindex]:not([tabindex="-1"])')].filter((el) => !el.disabled);
+            if (!focusable.length) return;
+            const first = focusable[0], last = focusable[focusable.length - 1];
+            if (e.shiftKey && (document.activeElement === first || !overlay.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && (document.activeElement === last || !overlay.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+        });
         document.body.appendChild(overlay);
         setTimeout(() => { const sel = overlay.querySelector('select'); if (sel) sel.focus(); }, 60);
     });

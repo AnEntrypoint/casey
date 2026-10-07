@@ -11,7 +11,13 @@ import { BulkBar } from './case-list/bulk-bar.js';
 import { VirtualizedCaseList, PlainCaseList, VIRTUALIZE_THRESHOLD } from './case-list/virtualized-list.js';
 import { confirmDialog } from '../components/dialog-shell.js';
 import { FilterChip, ClearChip, QueueMore } from '../components/filter-chip.js';
+import { Alert } from 'ds/components/content.js';
+import { Btn } from 'ds/components/shell.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
+
+let listError = '';
+export function setListError(msg) { listError = msg || ''; }
 
 function parseReportJson(raw) {
   try { return raw ? JSON.parse(raw) : {}; } catch { return {}; }
@@ -89,8 +95,8 @@ export function anyFilterActive() {
 
 const PAGE = 200;
 const OVERLAP = 10;
-const more = { rows: [], want: 0, busy: false };
-const wide = { key: '', rows: null, total: 0, timer: null, at: 0 };
+const more = { rows: [], want: 0, busy: false, failed: false };
+const wide = { key: '', rows: null, total: 0, timer: null, at: 0, failed: false };
 
 function loadedRows() {
   if (!more.rows.length) return state.allCases || [];
@@ -100,7 +106,7 @@ function loadedRows() {
 
 async function showMore(refresh) {
   if (more.busy) return;
-  more.busy = true; schedule();
+  more.busy = true; more.failed = false; schedule();
   try {
     if (!refresh) more.want += PAGE;
     const first = (state.allCases || []).length;
@@ -115,7 +121,7 @@ async function showMore(refresh) {
       if (page.length === 0) break;
     }
     more.rows = rows;
-  } catch {  }
+  } catch { more.failed = true; }
   more.busy = false; schedule();
 }
 
@@ -127,7 +133,7 @@ function ensureWide(now) {
   const stale = key === wide.key && now - wide.at > TOTAL_PROBE_MS;
   if (key === wide.key && !stale) return;
   const sameKey = key === wide.key;
-  wide.key = key; wide.at = now;
+  wide.key = key; wide.at = now; wide.failed = false;
   if (!sameKey) wide.rows = null;
   clearTimeout(wide.timer);
   wide.timer = setTimeout(async () => {
@@ -136,7 +142,10 @@ function ensureWide(now) {
       if (wide.key !== key) return;
       wide.rows = (r && r.cases) || []; wide.total = (r && r.total) || wide.rows.length;
       schedule();
-    } catch {  }
+    } catch {
+      if (wide.key !== key) return;
+      wide.failed = true; schedule();
+    }
   }, sameKey ? 0 : 300);
 }
 
@@ -182,6 +191,7 @@ function listBody(shown) {
     return h('div', { class: 'ds-case-list-empty empty' },
       'Focus mode is on, so only the queue above is loaded. Use "Also load every other report" above, or the Focus button in the top bar, to see the rest.');
   }
+  if (!(state.allCases || []).length && listError) return null;
   if (!(state.allCases || []).length) {
     return h('div', { class: 'ds-case-list-empty empty' },
       'No reports yet. They arrive here as soon as a field worker sends one.');
@@ -204,12 +214,20 @@ export function CaseListView({ onPromptTag, onPromptNote, onReloadCases }) {
   return h('div', { class: 'case-list-view' },
     InboxPanel(),
 
+    listError ? h('div', { key: 'lerr' }, Alert({ kind: 'warn', children: h('div', {}, listError + ' ', Btn({ size: 'sm', variant: 'ghost', children: 'Try again', onClick: () => onReloadCases && onReloadCases() })) })) : null,
+
     h('div', { key: 'lhead', class: 'ds-cl-section-head' },
       h('h2', { class: 'ds-cl-section-title' }, 'All reports'),
       h('span', { class: 'ds-cl-range' }, pageRangeText()),
       (!state.inboxMode && !wide.rows && state.allCasesTotal > loadedRows().length && !narrowing())
         ? QueueMore({ key: 'more', onClick: () => showMore(false),
           children: more.busy ? 'Loading...' : 'Show ' + Math.min(PAGE, state.allCasesTotal - loadedRows().length) + ' more' })
+        : null,
+      more.failed
+        ? Btn({ key: 'more-retry', size: 'sm', variant: 'ghost', children: 'Could not load more. Try again', onClick: () => showMore(true) })
+        : null,
+      wide.failed
+        ? Btn({ key: 'wide-retry', size: 'sm', variant: 'ghost', children: 'Search failed. Try again', onClick: () => { wide.key = ''; wide.failed = false; schedule(); } })
         : null,
       anyFilterActive()
         ? h('span', { class: 'ds-cl-match' }, shown.length + ' match the filters you have on'

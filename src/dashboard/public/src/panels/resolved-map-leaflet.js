@@ -1,3 +1,5 @@
+import { schedule } from '../state.js';
+
 const L = () => window.L;
 
 function tileUrl() {
@@ -16,6 +18,16 @@ export function cssColour(el, token) {
     return v || '#888888';
 }
 
+const TILE_FAIL_RUN = 4;
+export const DISEASE_MARKS = [
+    { fill: true, dash: null },
+    { fill: false, dash: null },
+    { fill: false, dash: '1 3' },
+    { fill: false, dash: '6 3' },
+    { fill: false, dash: '2 2 6 2' },
+    { fill: false, dash: '8 3 1 3' },
+];
+
 export function mountResolvedMap(canvas, prev) {
     if (!canvas || !L()) return null;
     if (prev && prev.canvas === canvas) return prev;
@@ -23,18 +35,25 @@ export function mountResolvedMap(canvas, prev) {
     canvas.innerHTML = '';
     const map = L().map(canvas, { zoomControl: true });
     map.setView(HOME_VIEW[0], HOME_VIEW[1]);
-    L().tileLayer(tileUrl(), { maxZoom: 14, attribution: '(c) OpenStreetMap contributors' }).addTo(map);
-    const layer = L().layerGroup().addTo(map);
-    return { canvas, map, layer, fitted: '' };
+    const drv = { canvas, map, layer: null, fitted: '', tilesFailing: false };
+    const tiles = L().tileLayer(tileUrl(), { maxZoom: 14, attribution: '(c) OpenStreetMap contributors' }).addTo(map);
+    let tileFails = 0;
+    tiles.on('tileerror', () => { tileFails += 1; if (tileFails >= TILE_FAIL_RUN && !drv.tilesFailing) { drv.tilesFailing = true; schedule(); } });
+    tiles.on('tileload', () => { tileFails = 0; if (drv.tilesFailing) { drv.tilesFailing = false; schedule(); } });
+    L().control.scale({ imperial: false }).addTo(map);
+    drv.layer = L().layerGroup().addTo(map);
+    return drv;
 }
 
-export function drawDots(drv, dots, colourFor) {
+export function drawDots(drv, dots, styleFor) {
     drv.layer.clearLayers();
     const memo = new Map();
-    const colourOf = (d) => { if (!memo.has(d)) memo.set(d, colourFor(d)); return memo.get(d); };
+    const styleOf = (d) => { if (!memo.has(d)) memo.set(d, styleFor(d)); return memo.get(d); };
     for (const p of dots) {
+        const s = styleOf(p.disease);
         L().circleMarker([p.lat, p.lon], {
-            radius: 6, weight: 1, color: colourOf(p.disease), fillColor: colourOf(p.disease), fillOpacity: 0.75,
+            radius: 6, weight: s.mark.fill ? 1 : 3, color: s.colour, fillColor: s.colour,
+            fillOpacity: s.mark.fill ? 0.75 : 0, dashArray: s.mark.dash,
         }).bindTooltip(`${p.disease} - ${p.species}${p.advice && p.advice[0] !== 'Not stated' ? ' - advice: ' + p.advice.join(', ') : ''} - week of ${p.resolved_at}`).addTo(drv.layer);
     }
 }
