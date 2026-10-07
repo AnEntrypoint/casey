@@ -119,7 +119,7 @@ const csvCell = (v) => {
     if (/^[=+\-@]/.test(t)) t = "'" + t;
     return '"' + t.replace(/"/g, '""') + '"';
 };
-const csvText = (codes) => ['label,code,expires'].concat(codes.map((c) => [c.label, c.code, fmtTime(c.expires_at)].map(csvCell).join(','))).join('\r\n');
+const csvText = (codes) => ['# Generated ' + fmtTime(Date.now()), 'label,code,expires'].concat(codes.map((c) => [c.label, c.code, fmtTime(c.expires_at)].map(csvCell).join(','))).join('\r\n');
 
 function downloadCsv(codes) {
     const text = csvText(codes);
@@ -149,6 +149,7 @@ function printSlips(codes) {
         add('p', 'casey-slip-code', c.code);
         add('p', 'casey-slip-send', 'Send this code on WhatsApp to ' + (num || 'the ' + brandName() + ' number'));
         add('p', 'casey-slip-meta', 'Works until ' + fmtTime(c.expires_at) + (c.label ? ' - ' + c.label : ''));
+        add('p', 'casey-slip-meta', 'Printed ' + fmtTime(Date.now()));
         host.appendChild(slip);
     }
     document.body.appendChild(host);

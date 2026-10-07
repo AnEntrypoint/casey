@@ -216,6 +216,11 @@ function derive() {
 
 const filtersActive = () => fs.q.trim() !== '' || fs.pills.size > 0;
 
+export function fieldMapShown() {
+  if (fs.view === 'map') return true;
+  return fs.view === 'home' && fs.loaded && !isTechnician() && derive().open.length > 0;
+}
+
 function Filters(d) {
   const showing = d ? word('ui.field_showing', { shown: d.shown, loaded: d.loaded }) + (d.unloaded ? '. ' + word('ui.field_unloaded', { n: d.unloaded }) : '') : '';
   return h('div', { key: 'filters', class: 'field-filters', role: 'search', hidden: !d },

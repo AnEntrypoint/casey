@@ -1,4 +1,5 @@
 import { tagList } from '../../timestamp.js'
+import { fmtTimeSAST } from '../../format.js'
 import { BRAND } from '../brand.js'
 
 const brandSlug = () => (BRAND.name || 'casey').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'casey'
@@ -133,6 +134,7 @@ export function getReportCsv(deps) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { report: r } = await gatherReport(deps, reportDays(req))
     const lines = []
+    lines.push('# Generated ' + fmtTimeSAST(Date.now()))
     lines.push(['section', 'key', 'value'].join(','))
     lines.push(['totals', 'all', csvCell(r.totals.all)].join(','))
     lines.push(['totals', 'open', csvCell(r.totals.open)].join(','))
@@ -197,6 +199,7 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
     for (const e of rows) { const d = evData(e); held.push(d.claimed_by, d.was) }
     const named = await assigneeNamer(store, held, (v) => v)
     const lines = []
+    lines.push('# Generated ' + fmtTimeSAST(Date.now()))
     lines.push(['case_ref', 'timestamp_sast', 'actor', 'action', 'field', 'old_value', 'new_value', 'reason'].join(','))
     for (const e of rows) {
       const d = evData(e)

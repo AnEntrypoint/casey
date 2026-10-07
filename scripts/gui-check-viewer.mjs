@@ -173,7 +173,7 @@ export async function runViewerChecks(c) {
   const heat = JSON.parse(payloads.find(([p]) => p === '/api/reports/heat')[1])
   check(heat.cells.length > 3 && heat.cells.every((x) => x.count >= heat.k), 'every heat cell holds at least the floor of cases', `${heat.cells.length} cells`)
   const csv = payloads.find(([p]) => p === '/api/reports/export.csv')[1]
-  check(/^﻿?view,disease,region,district,period_month,status,conclusion,note,cases\r?\n/.test(csv) && csv.split('\n').length > 10, 'the viewer export is the released rollups only', csv.split('\n').slice(0, 3).join(' / '))
+  check(/^﻿?view,disease,region,district,period_month,status,conclusion,note,cases,previous,change\r?\n/.test(csv) && csv.split('\n').length > 10, 'the viewer export is the released rollups only', csv.split('\n').slice(0, 3).join(' / '))
   const signed = Number((await store.listCases({}, { limit: 10000 })).filter((x) => ['resolved', 'closed'].includes(x.status) && /identified_disease/.test(x.report || '')).length)
   const closedNoDx = (await store.listCases({}, { limit: 10000 })).filter((x) => x.status === 'closed' && !/identified_disease/.test(x.report || '')).length
   check(map.count + map.withheld + map.without_location === signed && closedNoDx > 0, 'the resolved map holds exactly the signed-off cases (closed-without-diagnosis and open ones are absent)', `${map.count} + ${map.without_location} no-location = ${signed} signed off; ${closedNoDx} closed without a diagnosis left off`)

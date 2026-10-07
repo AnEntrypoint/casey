@@ -8,6 +8,9 @@ function countryCode() { return (state.config && state.config.country_code) || '
 
 const MS_NOT_SECONDS = 1e11;
 
+export const NO_TIME_TEXT = 'not recorded';
+export const FILTERED_EMPTY_TEXT = 'No reports match the filters you have on. Clear them to see the rest.';
+
 export function toDate(v) {
   if (v == null || v === '') return null;
   if (!(typeof v === 'number' || /^\d+$/.test(String(v)))) {

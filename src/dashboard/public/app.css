@@ -234,7 +234,9 @@ html.ds-247420[data-casey-theme="herd-ink"] { background: var(--ink); }
 .case-row.selected { box-shadow: inset 3px 0 0 var(--accent-ink); }
 
 .case-row.kbd-focused { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
-.case-row:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
+.case-row-main { flex: 1; min-width: 0; cursor: pointer; }
+.case-row-main:focus-visible { outline: var(--focus-w) solid var(--focus-color); outline-offset: -2px; }
+.case-row > .ds-guardrail-toggle-btn { flex: 0 0 auto; margin-top: 0; }
 .case-row-body { flex: 1; min-width: 0; }
 
 .case-row-top {

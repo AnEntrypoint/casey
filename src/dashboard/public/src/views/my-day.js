@@ -4,7 +4,7 @@ import { Row, DetailRow } from '/design/src/components/content/row.js';
 import { Kpi } from '/design/src/components/content/charts.js';
 import { Alert, Skeleton } from '/design/src/components/content/feedback.js';
 import { schedule } from '../state.js';
-import { fetchMyDay } from '../api-team.js';
+import { pollMyDay } from '../api-team.js';
 import { stageLabel } from '../format.js';
 import { entityLabelPlural } from '../vocabulary.js';
 const h = webjsx.createElement;
@@ -14,9 +14,17 @@ const md = { data: null, loading: false, loaded: false, error: '' };
 export async function refreshMyDay() {
   if (md.loading) return;
   md.loading = true;
-  try { md.data = await fetchMyDay(); md.error = ''; }
-  catch { md.error = 'Could not load your day. The lists below are still right.'; }
-  md.loading = false; md.loaded = true; schedule();
+  const hadError = md.error;
+  let changed = !md.loaded;
+  try {
+    const { body, unchanged } = await pollMyDay();
+    if (!unchanged) { md.data = body; changed = true; }
+    md.error = '';
+  }
+  catch { md.error = 'Could not load your day. The lists below are still right.'; changed = true; }
+  if (md.error !== hadError) changed = true;
+  md.loading = false; md.loaded = true;
+  if (changed) schedule();
 }
 
 const stages = (by) => Object.entries(by || {}).sort((a, b) => b[1] - a[1]).map(([k, n]) => stageLabel(k) + ': ' + n).join('. ');

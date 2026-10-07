@@ -1,6 +1,6 @@
 import { setActiveId } from '../state.js';
 import { LOCATION_SOURCE_LABEL } from '../map-model.js';
-import { fmtDur } from '../format.js';
+import { rel, NO_TIME_TEXT } from '../format.js';
 import { countOf } from '../vocabulary.js';
 import { fetchMapWorkers, fetchMapLastReports, fetchOperatorIdentities } from '../api.js';
 
@@ -62,7 +62,7 @@ export async function renderMapWorkers(mapState) {
         mapState.workers = j.workers || [];
         const layer = window.L.layerGroup();
         for (const w of (j.workers || [])) {
-            const ageText = w.age_ms != null ? fmtDur(w.age_ms) + ' ago' : null;
+            const ageText = w.age_ms != null ? rel(Date.now() - w.age_ms) : null;
             const staleNote = w.stale
                 ? (ageText ? ` (stale: ${ageText})` : ' (stale)')
                 : (ageText ? ` (here now, ${ageText})` : ' (here now)');
@@ -94,7 +94,7 @@ export async function renderMapLastReports(mapState) {
         for (const rpt of (j.reports || [])) {
             const reportColor = cssVar('--green');
             const marker = window.L.circleMarker([rpt.lat, rpt.lon], { radius: 7, color: reportColor, weight: 2, fillColor: reportColor, fillOpacity: 0.55 });
-            const when = rpt.last_report_at ? fmtDur(Date.now() - Number(rpt.last_report_at) * 1000) + ' ago' : 'unknown time';
+            const when = rpt.last_report_at ? rel(Number(rpt.last_report_at) * 1000) : NO_TIME_TEXT;
             marker.bindTooltip(esc(rpt.location || '') + ' -- ' + when);
             marker.on('click', () => { if (rpt.case_id) setActiveId(rpt.case_id); });
             marker.addTo(layer);

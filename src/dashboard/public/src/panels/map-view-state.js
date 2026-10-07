@@ -14,6 +14,7 @@ let summary = { unresolvedCount: 0, unresolved: [], truncated: false, cap: 0, to
 let error = null;
 let loadedOnce = false;
 let lastUpdatedAt = null;
+let summarySig = '';
 
 export const QUEUE_PAGE = 8;
 let queueShown = QUEUE_PAGE;
@@ -37,10 +38,16 @@ export function refresh() {
     lastAttemptAt = Date.now();
     inFlight = true;
     inFlightSince = Date.now();
-    error = null;
+    if (error) { error = null; schedule(); }
     loadMap(mapStateRef, document.getElementById('ds-map-canvas'), state.mapFilter, state.mapFilter.days, {
         onOptions: (o) => { options = o; schedule(); },
-        onSummary: (s) => { summary = s; loadedOnce = true; lastUpdatedAt = Date.now(); schedule(); },
+        onSummary: (s) => {
+            const sig = JSON.stringify(s);
+            const changed = sig !== summarySig || !loadedOnce;
+            summarySig = sig;
+            summary = s; loadedOnce = true; lastUpdatedAt = Date.now();
+            if (changed) schedule();
+        },
         onError: (msg) => { error = msg; loadedOnce = true; schedule(); },
     }).finally(() => { inFlight = false; });
 }
@@ -91,10 +98,18 @@ export function isStale() {
 }
 
 let wasStale = false;
+let wasAgeKey = null;
+function ageKey() {
+    if (lastUpdatedAt == null) return null;
+    const age = Date.now() - lastUpdatedAt;
+    return age < 60e3 ? 'fresh' : Math.round(age / 60e3);
+}
 setInterval(() => {
     const now = isStale();
-    if (now === wasStale) return;
+    const key = ageKey();
+    if (now === wasStale && key === wasAgeKey) return;
     wasStale = now;
+    wasAgeKey = key;
     schedule();
 }, 30e3);
 

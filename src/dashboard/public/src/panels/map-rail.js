@@ -15,17 +15,9 @@ import { toggleClusters, refilterMarkers, toggleCoverage, toggleWorkers, toggleL
 import { GeoPanel } from './geo-panel.js';
 import { ClustersPanel } from './clusters-panel.js';
 import { FilterChip, ClearChip, QueueMore, PillButton } from '../components/filter-chip.js';
-import { headline } from '../format.js';
+import { headline, rel, FILTERED_EMPTY_TEXT } from '../format.js';
 
 const h = webjsx.createElement;
-
-function agoText(ms) {
-    const s = Math.round((Date.now() - ms) / 1000);
-    if (s < 10) return 'just now';
-    if (s < 60) return s + 's ago';
-    const m = Math.round(s / 60);
-    return m < 60 ? m + 'm ago' : Math.round(m / 60) + 'h ago';
-}
 
 function applyFilterToMap() {
     if (mapStateRef.current) refilterMarkers(mapStateRef.current, state.mapFilter);
@@ -80,7 +72,7 @@ function attentionFeed() {
     if (!all.length && !hasLoadedOnce()) return h('div', { class: 'triage' }, h('div', { class: 'calm', role: 'status' }, 'Loading the queue...'));
     if (!all.length) {
         const why = filterIsActive(state.mapFilter)
-            ? 'No reports match the filters you have on. Clear them to see the rest.'
+            ? FILTERED_EMPTY_TEXT
             : 'Nothing needs attention right now.';
         return h('div', { class: 'triage' }, h('div', { class: 'calm' }, why));
     }
@@ -192,8 +184,8 @@ export function MapRail() {
             class: 'ds-map-updated' + (stale ? ' is-stale' : ''),
             role: stale ? 'status' : null,
         }, (stale
-            ? 'Not refreshing -- last updated ' + agoText(at) + '. Reload the page to get the current picture.'
-            : 'Updated ' + agoText(at)))
+            ? 'Not refreshing -- last updated ' + rel(at) + '. Reload the page to get the current picture.'
+            : 'Updated ' + rel(at)))
         : null;
     return h('div', { class: 'ds-map-rail' },
         h('div', { class: 'ds-rail-head' },

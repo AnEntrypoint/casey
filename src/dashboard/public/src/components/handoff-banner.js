@@ -91,7 +91,7 @@ export function HandoffBanner() {
     class: 'ds-handoff-banner', id: 'handoff', tabindex: '0', role: 'button',
     'aria-label': 'Open ' + entityLabel() + ' ' + (c.ref || '') + ' - someone needs a person',
     onclick: () => openCaseRoute(c.id),
-    onkeydown: (ev) => { if (ev.key === ' ' || ev.key === 'Enter') { ev.preventDefault(); openCaseRoute(c.id); } },
+    onkeydown: (ev) => { if (ev.target === ev.currentTarget && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); openCaseRoute(c.id); } },
   },
     Alert({
       kind: 'warn',

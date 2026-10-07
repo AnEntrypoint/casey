@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchNudges } from '../api-roles.js';
 import { entityLabel, entityLabelPlural } from '../vocabulary.js';
+import { rel, NO_TIME_TEXT } from '../format.js';
 
 const h = webjsx.createElement;
 let data = { people: [], capped: false };
@@ -23,16 +24,11 @@ const loader = createPanelLoader({
     apply: (j) => { data = j || { people: [], capped: false }; },
 });
 
-const ago = (hours, none) => {
-    if (hours == null) return none;
-    if (hours < 1) return 'less than an hour ago';
-    if (hours < 48) return Math.round(hours) === 1 ? '1 hour ago' : Math.round(hours) + ' hours ago';
-    return Math.round(hours / 24) + ' days ago';
-};
+const ago = (hours, none) => (hours == null ? none : rel(Date.now() - hours * 3600e3));
 const safeWa = (u) => (typeof u === 'string' && u.startsWith('https://wa.me/') ? u : null);
 
 function caseRow(c) {
-    const sub = 'Given to them: ' + ago(c.hours_assigned, 'time not recorded')
+    const sub = 'Given to them: ' + ago(c.hours_assigned, NO_TIME_TEXT)
         + '. Their last update on it: ' + ago(c.hours_since_activity, 'none yet')
         + '. The reporter last wrote: ' + ago(c.hours_since_reporter, 'never') + '. '
         + (c.missing.length ? 'Still needed: ' + c.missing.join(', ') + '.' : 'Nothing is missing.');

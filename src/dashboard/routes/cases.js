@@ -1,7 +1,7 @@
 import { normalizeMsisdn } from '../../role-invites.js'
 import { tagList, parseReport } from '../../timestamp.js'
 import { mergeTag, dropTag, STOP_PENDING_PREFIX } from '../../hooks/heuristics.js'
-import { fmtPhone27, markInvisibles } from '../../format.js'
+import { fmtPhone27, markInvisibles, fmtTimeSAST } from '../../format.js'
 import { fieldLabel, REPORT_FIELD_DEFS, REPORT_ENTITY_LABEL, SIGNOFF_DIAGNOSIS_FIELDS, MANDATORY_MINIMUM_BLOCKED_STATUSES, hiddenFieldsFor, DIAGNOSIS_STATUS_KEY, DIAGNOSIS_STATUS_OPTIONS, normalizeDiagnosisStatus } from '../../store/report-shape.js'
 import { sendBackToRanger, isDone } from '../../signoff-desk.js'
 import { APPEND_FIELD_MAX_LEN } from '../../store/report-merge.js'
@@ -199,7 +199,7 @@ export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
       const intakeSrc = tagArr.includes('intake_mode:manual') ? 'manual' : tagArr.includes('intake_mode:public_form') ? 'public_form' : tagArr.includes('intake_mode:channel') ? 'channel' : 'unknown'
       return [...META.map(k => csvCell(c[k])), csvCell(intakeSrc), ...REPORT_KEY_LIST.map(k => csvCell(r[k]))].join(',')
     })
-    const csv = [headers.join(','), ...rows].join('\n')
+    const csv = ['# Generated ' + fmtTimeSAST(Date.now()), headers.join(','), ...rows].join('\n')
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', 'attachment; filename="casey-cases.csv"')
     res.send(csv)
@@ -920,22 +920,24 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
       const telLink = /^[+0-9]{7,}$/.test(phone.replace(/[\s\-()]/g, '')) ? `tel:${phone.replace(/[\s\-()]/g, '')}` : null
       const extraCss = `body{max-width:700px;margin:var(--space-5) auto}`
         + `table{width:100%}th{width:40%;font-weight:600;vertical-align:top}td{vertical-align:top}`
-        + `.maplink{font-size:var(--fs-micro)}`
+        + `.maplink{font-size:var(--fs-micro)}.printonly{display:none}`
         + `.act{display:flex;gap:var(--space-2-75);flex-wrap:wrap;margin:var(--space-2-5) 0 var(--space-4)}`
         + `.act a{background:${BRAND.ground};color:${BRAND.ink};padding:var(--space-2) var(--space-3);border-radius:6px;text-decoration:none;font-size:var(--fs-xs);font-weight:600}`
         + `.act a:hover{background:${BRAND.hover}}`
-        + `@media print{.act{display:none}}`
+        + `@media print{.act{display:none}.printonly{display:block}}`
       const who = await reporterSummary(store, c.contact_id, c.id).catch(() => null)
       const whoLine = who && who.people > 1
         ? `<p><strong>Reported by:</strong> ${esc(who.reported_by ? who.reported_by.name : 'not recorded')}, shared phone: ${who.people} people</p>` : ''
       const body = `<h1>Field briefing: ${esc(c.ref||c.id)}</h1>
 <p><strong>Subject:</strong> ${esc(c.subject||'')}</p>${whoLine}
 <p><strong>Status:</strong> ${esc(c.status||'')} &nbsp; <strong>Channel:</strong> ${esc(c.channel||'')}</p>
+<p class="meta">Generated ${esc(fmtTimeSAST(Date.now()))}.</p>
 <div class="act">
   <a href="javascript:window.print()">Print this page</a>
   ${mapsUrl ? `<a href="${esc(mapsUrl)}" target="_blank" rel="noopener">Open in Maps</a>` : ''}
   ${telLink ? `<a href="${esc(telLink)}">Call contact</a>` : ''}
 </div>
+${mapsUrl ? `<p class="printonly"><strong>Map:</strong> ${esc(mapsUrl)}</p>` : ''}
 <table>${rows}</table>`
       res.type('html').send(printableReport(`Case ${c.ref||c.id} briefing`, body, extraCss))
     } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || 'unknown error')) + '</p>') }

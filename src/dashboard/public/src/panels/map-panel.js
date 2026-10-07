@@ -8,7 +8,7 @@ import {
     unresolvedSummaryText,
 } from './map-view-state.js';
 import { countOf } from '../vocabulary.js';
-import { stageLabel } from '../format.js';
+import { stageLabel, FILTERED_EMPTY_TEXT } from '../format.js';
 const sentence = (s) => String(s || '').charAt(0).toUpperCase() + String(s || '').slice(1);
 
 const h = webjsx.createElement;
@@ -70,7 +70,7 @@ function mapStateNote() {
             ? { kind: 'info', text: `No reports in the last ${days} days. Widen the time window to see older ones.` }
             : { kind: 'info', text: 'No reports have come in yet -- nothing has been reported.' };
     }
-    if (!c.visible) return { kind: 'info', text: 'No reports match the filters you have on.' };
+    if (!c.visible) return { kind: 'info', text: FILTERED_EMPTY_TEXT };
     if (mapStateRef.current && mapStateRef.current.tilesFailing) {
         return { kind: 'warn', text: 'The map background is not loading. The pins and the list below come from this dashboard and are unaffected -- only the map picture behind them is missing.' };
     }
