@@ -2,9 +2,8 @@
 
 import { observation, flagNeedsHuman } from './case-writes.js'
 import { applyServiceControls, isLlmDown } from './service-controls.js'
-import { describeMedia, recordInboundMedia, recordInboundLocation, transcribeInboundAudio, sttProvenance } from './media-intake.js'
+import { describeMedia, recordInboundMedia, recordInboundLocation, transcribeInboundAudio, inboundAudioData } from './media-intake.js'
 import { voiceNote, voiceFailureNote } from '../stt/readback.js'
-import { googleSttConfig } from '../stt/config.js'
 import { atLeast, resolveContactTier, TIER_FIELD_WORKER } from '../contact-tiers.js'
 import { routeStaffArtifact, recordRelayedLocationPin, noteRoute, routeChoices } from './media-relay.js'
 import { staffLabel } from './staff-outbound.js'
@@ -61,16 +60,18 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
     return { done: { to: replyTo, text: '', platform, error: e.message } }
   }
 
-  const spoken = (await transcribeInboundAudio({ store, log, caseId: caseRow.id, msg }).catch(() => null))?.text || ''
-  const inboundText = [stripChannelMarkup(msg.text || ''), spoken].filter(Boolean).join('\n')
-  const media = describeMedia(msg)
+  const tr = await transcribeInboundAudio({ store, log, caseId: caseRow.id, msg })
+  const typedText = stripChannelMarkup(msg.text || '')
+  const spoken = tr.unheard ? '' : tr.text
+  const inboundText = [typedText, spoken].filter(Boolean).join('\n')
+  const media = describeMedia(msg) || (msg._transcript ? 'an audio message' : '')
   let inboundEvent
   try {
 
     inboundEvent = await store.recordInbound(caseRow, {
       channel,
       text: inboundText || (media ? `[${media}]` : '[empty message]'),
-      data: spoken ? { transcribed: true, transcribed_by: 'ai_helper', stt: sttProvenance(msg._transcript) } : {}, msg_id: msgId,
+      data: inboundAudioData(msg, typedText), msg_id: msgId,
     })
   } catch (e) {
 
@@ -80,11 +81,11 @@ export async function openCaseForInbound({ store, log, msg, channel, external_id
     return { done: { to: replyTo, text: '', platform, caseId: caseRow.id, error: e.message } }
   }
 
-  if (!inboundEvent && !msg.resume && !msg.burstReplay) {
+  if (!inboundEvent && !msg.resume) {
     log.info?.('[casey] duplicate inbound dropped', { caseId: caseRow.id, msgId })
     return { done: { to: replyTo, text: '', platform, caseId: caseRow.id, duplicate: true } }
   }
-  return { caseRow, created, inboundText, media, msgId }
+  return { caseRow, created, inboundText, typedText, media, msgId }
 }
 
 async function isTeamSender(store, caseRow) {
@@ -108,10 +109,8 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   promptNote += await tapNote(store, caseRow.contact_id, msg)
   let inboundChoices = routeChoices(route)
   const tr = msg._transcript
-  if (tr?.text) {
-    const staff = await isTeamSender(store, caseRow)
-    promptNote += voiceNote(tr, { staff, minConfidence: googleSttConfig().minConfidence }).note
-  } else if (tr) promptNote += voiceFailureNote(tr)
+  if (tr && !tr.unheard) promptNote += voiceNote(tr, { staff: await isTeamSender(store, caseRow) })
+  else if (tr) promptNote += voiceFailureNote(tr.unheard)
   const ingressRecorded = route?.mode === 'relay'
   if (ingressRecorded) {
     const relay = { by: staffLabel(route.contact), contactId: route.contact.id }
@@ -147,10 +146,10 @@ export async function applyInboundSideEffects({ store, log, caseRow, created, ms
   return { promptNote, ingressRecorded, inboundChoices }
 }
 
-export async function applyPreTurnControls({ store, log, llmStatus, notifyHandoff, fresh, inboundText, channel, msg, replyTo, platform }) {
+export async function applyPreTurnControls({ store, log, llmStatus, notifyHandoff, fresh, typedText, channel, msg, replyTo, platform }) {
   const controlled = await applyServiceControls({
     store, log, llmStatus,
-    caseRow: fresh, inboundText, channel, msg, replyTo, platform,
+    caseRow: fresh, typedText, channel, msg, replyTo, platform,
   })
   if (controlled) return controlled
 

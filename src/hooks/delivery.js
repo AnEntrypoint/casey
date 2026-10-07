@@ -4,6 +4,7 @@ import { observation } from './case-writes.js'
 import { attachWamids } from '../delivery-status.js'
 import { synthesizeVoice } from './media.js'
 import { fitChoices, appendFallback, stampChoices, rememberChoices } from '../choices.js'
+import { isRealReplyFor, isFallbackFor, recordedFor } from './reply-key.js'
 import { TURN_SOFT_DEADLINE_MS, STILL_WORKING_TEXT, TURN_TIMEOUT_TEXT } from './turn-deadlines.js'
 
 export function resolveAdapter(receiver, platform) {
@@ -12,14 +13,18 @@ export function resolveAdapter(receiver, platform) {
 
 export async function sendGuaranteedFallback({
   store, log, adapter, fresh, channel, replyTo, platform,
-  turnStartedAt, stopTyping,
+  turnStartedAt, stopTyping, groupIds, startedOnId,
 }) {
+  if (await recordedFor(store, [fresh.id, startedOnId], isFallbackFor(groupIds))) {
+    stopTyping?.()
+    return { to: replyTo, text: '', platform, caseId: fresh.id, degraded: true, duplicate: true }
+  }
 
   const elapsedMs = Date.now() - turnStartedAt
   const fallbackText = elapsedMs >= TURN_SOFT_DEADLINE_MS ? TURN_TIMEOUT_TEXT : STILL_WORKING_TEXT
   const fallbackEvent = await store.appendEvent(fresh.id, {
     kind: 'outbound', actor: 'system', channel,
-    text: fallbackText, data: { to: replyTo, fallback: true, guaranteedFallback: true },
+    text: fallbackText, data: { to: replyTo, fallback: true, guaranteedFallback: true, in_reply_to: groupIds },
   })
   stopTyping?.()
   const fallbackReply = { to: replyTo, text: fallbackText, platform, caseId: fresh.id, degraded: true, guaranteedFallback: true }
@@ -67,13 +72,17 @@ async function presentChoices({ store, log, fresh, text, offered }) {
 
 
 export async function sendAgentReply({
-  store, log, adapter, fresh, channel, replyTo, platform, text: plainText, isFallback, degraded, offered = null,
+  store, log, adapter, fresh, channel, replyTo, platform, text: plainText, isFallback, degraded, offered = null, groupIds, startedOnId,
 }) {
+  if (await recordedFor(store, [fresh.id, startedOnId], isRealReplyFor(groupIds))) {
+    log.warn?.('[casey] a reply for these messages is already recorded; this one was not sent', { caseId: fresh.id })
+    return { reply: { to: replyTo, text: '', platform, caseId: fresh.id, duplicate: true }, delivered: false }
+  }
   const { text, choices } = await presentChoices({ store, log, fresh, text: plainText, offered })
 
   const outboundEvent = await store.appendEvent(fresh.id, {
     kind: 'outbound', actor: 'agent', channel,
-    text, data: { to: replyTo, fallback: isFallback },
+    text, data: { to: replyTo, fallback: isFallback, in_reply_to: groupIds },
   })
   const reply = { to: replyTo, text, platform, caseId: fresh.id, ...(degraded ? { degraded: true } : {}), ...(choices ? { choices } : {}) }
 

@@ -80,6 +80,10 @@ export function routeChoices(route) {
 }
 
 
+const heardAsk = (msg) => (msg._transcript?.text && !msg._transcript.unheard
+  ? ' The transcript of the voice note is heard text and is not recorded on any record either: write nothing from it to a record until they confirm which record it belongs to, and ask that in this same single reply.'
+  : '')
+
 export async function noteRoute({ store, log, caseRow, route, msg, barePin = false }) {
   const what = whatArrived(msg)
   let text
@@ -88,7 +92,7 @@ export async function noteRoute({ store, log, caseRow, route, msg, barePin = fal
     if (msg.location && !barePin) text += ` The pin was recorded as THEIR OWN position (the record's own position is unchanged). Ask if that pin is also where the animals are; only if they say yes, record it with case_edit using EXACTLY lat ${msg.location.lat}, lon ${msg.location.lon} and location_source gps (never a position guessed from a place name).`
   } else {
     const list = route.candidates.map(cand).join('; ')
-    text = `MEDIA NOT FILED ON A TEAM RECORD: ${what} they just sent stayed on this chat only. ${route.reason} Candidate${route.candidates.length > 1 ? 's' : ''}: ${list}${route.more > 0 ? ` (and ${route.more} more)` : ''}. Never say it was saved, filed or received on a record: say plainly that it is NOT on the record yet. Ask which record it belongs to, naming the candidate, as the last thing in your reply; do not guess. Only after they answer yes in their NEXT message call case_focus with that record and confirm set to true; nothing already sent is moved automatically, so it must be sent again after they confirm (an operator can also move it).`
+    text = `MEDIA NOT FILED ON A TEAM RECORD: ${what} they just sent stayed on this chat only. ${route.reason} Candidate${route.candidates.length > 1 ? 's' : ''}: ${list}${route.more > 0 ? ` (and ${route.more} more)` : ''}. Never say it was saved, filed or received on a record: say plainly that it is NOT on the record yet. Ask which record it belongs to, naming the candidate, as the last thing in your reply; do not guess. Only after they answer yes in their NEXT message call case_focus with that record and confirm set to true; nothing already sent is moved automatically, so it must be sent again after they confirm (an operator can also move it).${heardAsk(msg)}`
   }
   try { await store.appendEvent(caseRow.id, observation(text, { media_route: route.mode })) }
   catch (e) { log.warn?.('[casey] media route note failed', { caseId: caseRow.id, error: e.message }) }

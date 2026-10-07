@@ -1,7 +1,7 @@
 
 
 import { mergeTag } from './hooks/heuristics.js'
-import { splitExternalId } from './hooks/handler.js'
+import { replayMessage } from './hooks/replay-message.js'
 
 export async function deadLetterExhaustedCase(store, log, c) {
   try {
@@ -21,20 +21,9 @@ export async function markResumeAttempted(store, log, c, msgId) {
   }
 }
 
-function resumeMessage(c, pending) {
-  const { container, author } = splitExternalId(c.external_id)
-  return {
-    from: author,
-    text: pending.ev.text || '',
-    platform: c.channel,
-    resume: true,
-    raw: { channel_id: container, id: pending.id, author: {} },
-  }
-}
-
 export async function redrivePendingTurn({ store, log, gateway, handle }, c, pending) {
   try {
-    const res = await handle.call(gateway, c.channel, resumeMessage(c, pending))
+    const res = await handle.call(gateway, c.channel, replayMessage(c, pending.ev, { resume: true }))
 
     if (res && res.buffered) {
       log?.info?.('[casey] resume re-drive was buffered behind a live turn; not counted as resumed', { caseId: c.id, channel: c.channel })
