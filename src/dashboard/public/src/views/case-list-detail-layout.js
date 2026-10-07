@@ -44,7 +44,7 @@ async function promptTag(onTag) {
 }
 
 async function promptNote(onNote) {
-  const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Note' })) || '').trim();
+  const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Note', confirmLabel: 'Save note', requireInput: true })) || '').trim();
   if (!text) return;
   onNote(text);
 }

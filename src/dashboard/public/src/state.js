@@ -102,11 +102,12 @@ export function onAttentionChange(fn) {
   return () => attentionListeners.delete(fn);
 }
 export function setAttention(rows) {
+  const same = JSON.stringify(rows) === JSON.stringify(state.attention);
   state.attention = rows;
   for (const fn of attentionListeners) {
     try { fn(rows); } catch {  }
   }
-  schedule();
+  if (!same) schedule();
 }
 export function setFilt(partial) { Object.assign(state.filt, partial); state.page = 1; schedule(); }
 export function setMineOnly(v) { state.mineOnly = !!v; state.filt.mine = !!v; state.page = 1; schedule(); }
@@ -140,7 +141,11 @@ export function setConnLost(v) {
 export function setSessionRestored(v) { state.sessionRestored = !!v; schedule(); }
 export function setHealth(patch) { Object.assign(state.health, patch); schedule(); }
 export function setHandoffQueue(q) { state.handoffQueue = q; schedule(); }
-export function setDegradedTurns(rows) { state.degradedTurns = rows; schedule(); }
+export function setDegradedTurns(rows) {
+  const same = JSON.stringify(rows) === JSON.stringify(state.degradedTurns);
+  state.degradedTurns = rows;
+  if (!same) schedule();
+}
 export function setOfflineQueueCount(n) { state.offlineQueueCount = n; schedule(); }
 
 export function setCaseDetailLoading(v) { state.caseDetailLoading = v; schedule(); }

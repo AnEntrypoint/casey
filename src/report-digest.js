@@ -1,14 +1,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { loadResolved, buildDiseaseReport, monthStartOf, monthEndOf, monthOf, previousPeriod, parseBound } from './dashboard/routes/reports-map.js'
+import { loadResolved, buildDiseaseReport, monthStartOf, monthEndOf, monthOf, previousPeriod, parseBound, periodLabel, printName } from './dashboard/routes/reports-map.js'
 import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY } from './privacy.js'
+import { fmtTimeSAST } from './format.js'
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/
 const TOP_DISEASES = 5
 const WEBHOOK_TIMEOUT_MS = 10000
 export const DIGEST_STATUS_FILE = 'casey-digest-status.json'
-const DISPLAY_NAMES = { [SPARSE_BUCKET_KEY]: 'Small groups combined', unknown: 'Not stated' }
-const label = (v) => DISPLAY_NAMES[v] ?? v
+const CSV_COLUMNS = ['view', 'disease', 'region', 'district', 'period', 'conclusion', 'note', 'cases']
 
 export function recordDigestStatus(dir, month, entry) {
   const file = path.join(dir, DIGEST_STATUS_FILE)
@@ -38,20 +38,27 @@ export function monthWindow(month) {
   return { from: start, to: monthEndOf(start) }
 }
 
-export function digestCsv(rep) {
-  const lines = [['view', 'disease', 'region', 'period', 'cases'].join(',')]
-  const add = (view, list, cols) => { for (const c of list) lines.push([view, ...cols.map(k => csvCell(c[k] ?? 'all')), csvCell(c.count)].join(',')) }
-  add('disease', rep.by_disease, ['disease', 'region', 'month'])
-  add('disease_by_region', rep.by_disease_region, ['disease', 'region', 'month'])
-  add('disease_by_period', rep.by_disease_month, ['disease', 'region', 'month'])
-  add('disease_region_period', rep.cells, ['disease', 'region', 'month'])
-  lines.push(...rep.by_district.map(c => ['district', 'all', csvCell(c.district), 'all', csvCell(c.count)].join(',')))
-  lines.push(...rep.by_conclusion.map(c => ['conclusion', 'all', 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
-  lines.push(...rep.by_disease_conclusion.map(c => ['disease_conclusion', csvCell(c.disease), 'all', csvCell(c.conclusion), csvCell(c.count)].join(',')))
-  const note = (text) => lines.push(['note', 'all', 'all', csvCell(text), ''].join(','))
-  note(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under ${SPARSE_BUCKET_KEY}. No case-level or personal data is included.`)
-  if (rep.truncated) note('INCOMPLETE: there are more reports than this export can load, so the figures leave some out.')
-  return lines.join('\n') + '\n'
+export function digestCsv(rep, month) {
+  const lines = [CSV_COLUMNS.join(',')]
+  const cell = (v) => csvCell(printName(v ?? 'all'))
+  const emit = (view, f) => lines.push(CSV_COLUMNS.map(col => (
+    col === 'view' ? view
+      : col === 'cases' ? csvCell(f.count ?? '')
+      : col === 'note' ? csvCell(f.note ?? '')
+      : cell(col === 'period' ? (f.period ?? f.month) : f[col])
+  )).join(','))
+  for (const c of rep.by_disease) emit('disease', c)
+  for (const c of rep.by_disease_region) emit('disease_by_region', c)
+  for (const c of rep.by_disease_month) emit('disease_by_period', c)
+  for (const c of rep.cells) emit('disease_region_period', c)
+  for (const c of rep.by_district) emit('district', { district: c.district, count: c.count })
+  for (const c of rep.by_conclusion) emit('conclusion', { conclusion: c.conclusion, count: c.count })
+  for (const c of rep.by_disease_conclusion) emit('disease_conclusion', { disease: c.disease, conclusion: c.conclusion, count: c.count })
+  const note = (text) => emit('note', { note: text })
+  note(`Period: ${periodLabel(monthWindow(month))}. Generated ${fmtTimeSAST(Date.now())}.`)
+  note(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under "${printName(SPARSE_BUCKET_KEY)}". No case-level or personal data is included.`)
+  if (rep.truncated) note('There are more reports than this export can load, so the figures leave some out.')
+  return '\uFEFF' + lines.join('\r\n') + '\r\n'
 }
 
 function trendLine(rep, month) {
@@ -59,15 +66,18 @@ function trendLine(rep, month) {
   const diseases = rep.trend && rep.trend.period === month ? rep.trend.diseases : []
   if (!diseases.length) return `Trend against ${before}: not enough cases to compare.`
   const parts = diseases.slice(0, TOP_DISEASES).map(d => {
-    if (d.change == null) return `${label(d.disease)} (no comparable figure for ${before})`
+    if (d.change == null) return `${printName(d.disease)} (no comparable figure for ${before})`
     const sign = d.change > 0 ? '+' : ''
-    return `${label(d.disease)} ${sign}${d.change} (${d.previous} in ${before})`
+    return `${printName(d.disease)} ${sign}${d.change} (${d.previous} in ${before})`
   })
   return `Trend against ${before}: ${parts.join('; ')}.`
 }
 
 export function digestText(rep, month) {
-  const lines = [`Casey monthly disease digest, ${month}${rep.truncated ? ' (INCOMPLETE)' : ''}`]
+  const lines = [
+    `Casey monthly disease digest, ${month}${rep.truncated ? ' (INCOMPLETE)' : ''}`,
+    `Generated ${fmtTimeSAST(Date.now())}. Months are SAST calendar months.`,
+  ]
   if (!rep.total) {
     lines.push(`Fewer than ${MIN_AGGREGATE_CELL} resolved cases this month, so no figures are published.`)
   } else {
@@ -75,10 +85,10 @@ export function digestText(rep, month) {
     const suspected = rep.by_status.find(x => x.status === 'suspected')
     if (suspected) lines.push(`Of which suspected, not confirmed: ${suspected.count}`)
     if (rep.ruled_out) lines.push(`Ruled out, not counted: ${rep.ruled_out}`)
-    lines.push('Top diseases: ' + rep.by_disease.slice(0, TOP_DISEASES).map(d => `${label(d.disease)} ${d.count}`).join(', '))
-    lines.push('By district: ' + (rep.by_district.length ? rep.by_district.map(d => `${label(d.district)} ${d.count}`).join(', ') : 'no district is large enough to show'))
+    lines.push('Top diseases: ' + rep.by_disease.slice(0, TOP_DISEASES).map(d => `${printName(d.disease)} ${d.count}`).join(', '))
+    lines.push('By district: ' + (rep.by_district.length ? rep.by_district.map(d => `${printName(d.district)} ${d.count}`).join(', ') : 'no district is large enough to show'))
     lines.push(trendLine(rep, month))
-    lines.push('Advice given: ' + (rep.by_conclusion.length ? rep.by_conclusion.map(c => `${label(c.conclusion)} ${c.count}`).join(', ') : 'no group is large enough to show'))
+    lines.push('Advice given: ' + (rep.by_conclusion.length ? rep.by_conclusion.map(c => `${printName(c.conclusion)} ${c.count}`).join(', ') : 'no group is large enough to show'))
   }
   lines.push('With a photo: ' + (rep.total && rep.with_photo != null ? rep.with_photo + ' of ' + rep.total : `fewer than ${MIN_AGGREGATE_CELL} cases`))
   lines.push('Closed without a diagnosis: ' + (rep.closed_without_diagnosis ?? `fewer than ${MIN_AGGREGATE_CELL}`))
@@ -97,7 +107,7 @@ export async function buildDigest(store, month = lastCompletedMonth()) {
   inMonth.ruledOut = monthRows.ruledOut
   const rep = buildDiseaseReport(inMonth)
   rep.trend = buildDiseaseReport(wide, { to }).trend
-  return { month, rep, csv: digestCsv(rep), text: digestText(rep, month) }
+  return { month, rep, csv: digestCsv(rep, month), text: digestText(rep, month) }
 }
 
 export async function postDigest(webhookUrl, text) {

@@ -58,6 +58,7 @@
 
 .casey-rep-value{min-width:0;overflow-wrap:anywhere}
 .casey-rep-editable:hover,.casey-rep-editable:focus{background:var(--bg-2);outline:none}
+.casey-rep-editable:focus-visible{outline:var(--focus-w) solid var(--focus-color);outline-offset:-2px}
 .casey-rep-edit-actions{display:flex;gap:var(--space-1-75)}
 
 .casey-detail-pane .casey-rep-note-btn{background:transparent;border:0;color:var(--accent-ink);cursor:pointer;padding:0;height:var(--ctl-sm);font-size:var(--fs-pico);align-self:flex-start}

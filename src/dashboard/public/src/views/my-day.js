@@ -77,6 +77,7 @@ export function MyDay({ onOpenRef, part = 'top', tech = false }) {
   if (!md.data) return part === 'top' && md.error ? Alert({ kind: 'warn', children: md.error }) : null;
   const d = md.data;
   const needs = d.needs || [];
+  const stale = part === 'top' && md.error ? Alert({ kind: 'warn', children: 'Could not refresh your day just now. The figures below may be out of date.' }) : null;
   if (part === 'after') {
     return h('div', { class: 'field-day' },
       Panel({ key: 'changed', title: 'My day: what changed since it began', children: Changed(d) }),
@@ -88,5 +89,5 @@ export function MyDay({ onOpenRef, part = 'top', tech = false }) {
         ].filter(Boolean),
       }) : null);
   }
-  return h('div', { class: 'field-day' }, tech ? null : AreaPanel(d), YoursPanel(d, tech), SignOffDesk(d));
+  return h('div', { class: 'field-day' }, stale, tech ? null : AreaPanel(d), YoursPanel(d, tech), SignOffDesk(d));
 }

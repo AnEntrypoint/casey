@@ -5,7 +5,7 @@ import { Table } from '/design/src/components/content/table.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { Slider } from '/design/src/components/slider.js';
 import { Icon } from '/design/src/components/shell.js';
-import { schedule } from '../state.js';
+import { schedule, state } from '../state.js';
 import { word } from '../words.js';
 import { fetchHeat, fetchAreas } from '../api-reports.js';
 import { rd, rf, ensureReports, reloadReports, windowParams } from './reports-data.js';
@@ -23,7 +23,8 @@ const PAL = ['--sky', '--flame', '--purple-2', '--green', '--amber', '--danger']
 const OTHER = '--fg-3';
 const PLAY_MS = 500;
 
-const rm = { mode: 'dots', disease: '', idx: null, playing: false, drv: null, heat: null, heatBusy: false, seen: null, advice: '', species: '', status: '', wantKey: '' };
+const HEAT_CACHE_MAX = 12;
+const rm = { mode: 'dots', disease: '', idx: null, playing: false, drv: null, heat: null, heatBusy: false, seen: null, advice: '', species: '', status: '', wantKey: '', heatCache: new Map(), paintKey: null, paintPts: null, paintEl: null };
 let timer = null;
 
 const weeksOf = (pts) => [...new Set(pts.map((p) => p.resolved_at))].sort();
@@ -52,17 +53,25 @@ function togglePlay(weeks) {
   schedule();
 }
 
+function rememberHeat(entry) {
+  rm.heatCache.delete(entry.key);
+  rm.heatCache.set(entry.key, entry);
+  if (rm.heatCache.size > HEAT_CACHE_MAX) rm.heatCache.delete(rm.heatCache.keys().next().value);
+}
+
 function ensureHeat(untilIso) {
   const key = [rm.mode, untilIso, rf.region, rf.period, rm.disease, rm.advice, rm.species, rm.status].join('|');
   rm.wantKey = key;
   if (rm.heat && rm.heat.key === key) return;
+  const cached = rm.heatCache.get(key);
+  if (cached) { rememberHeat(cached); rm.heat = cached; return; }
   if (rm.heatBusy) return;
   rm.heatBusy = true;
   const w = windowParams();
   const p = { from: w.from, to: untilIso, region: rf.region, species: rm.species, status: rm.status };
   if (rm.mode === 'all') p.scope = 'all'; else { p.scope = 'resolved'; if (rm.disease) p.disease = rm.disease; if (rm.advice) p.advice = rm.advice; }
   (rm.mode === 'areas' ? fetchAreas({ from: w.from, to: untilIso, region: rf.region, species: rm.species, status: rm.status }) : fetchHeat(p))
-    .then((data) => { rm.heat = { key, data, error: '' }; })
+    .then((data) => { rm.heat = { key, data, error: '' }; rememberHeat(rm.heat); })
     .catch(() => { rm.heat = { key, data: null, error: 'Could not load the heat map.' }; })
     .finally(() => { rm.heatBusy = false; schedule(); });
 }
@@ -71,7 +80,7 @@ const liveHeat = () => (rm.heat && rm.heat.key === rm.wantKey ? rm.heat : null);
 
 function paint(canvas, dots, weeks) {
   rm.drv = mountResolvedMap(canvas, rm.drv);
-  if (!rm.drv) return;
+  if (!rm.drv) return false;
   const fitKey = [rf.region, rf.period, rm.mode].join('|');
   const ranked = diseaseRank(rd.points.points);
   const styleFor = (d) => {
@@ -89,6 +98,7 @@ function paint(canvas, dots, weeks) {
     drawHeat(rm.drv, liveHeat().data.cells, liveHeat().data.cell_deg, cssColour(canvas, '--flame'));
     fitOnce(rm.drv, fitKey, liveHeat().data.cells);
   } else rm.drv.layer.clearLayers();
+  return true;
 }
 
 function tableAlternative(dots) {
@@ -154,7 +164,7 @@ export function ResolvedMapPanel() {
   if (rd.error && !rd.points) return Panel({ title: 'Resolved cases map', children: [ReportFilters(), Alert({ kind: 'warn', children: rd.error }), Btn({ children: 'Try again', onClick: reloadReports })] });
   const all = rd.points.points;
   const weeks = weeksOf(all);
-  if (rm.seen !== rd.points) { rm.seen = rd.points; rm.idx = null; rm.heat = null; stop(); }
+  if (rm.seen !== rd.points) { rm.seen = rd.points; rm.idx = null; rm.heat = null; rm.heatCache.clear(); stop(); }
   const knownDiseases = diseaseRank(rd.points.points).slice(0, 8);
   if (rm.disease && !knownDiseases.includes(rm.disease)) rm.disease = '';
   if (rm.advice && !rd.points.points.some((p) => (p.advice || []).includes(rm.advice))) rm.advice = '';
@@ -172,7 +182,14 @@ export function ResolvedMapPanel() {
   if (rm.mode !== 'dots' && untilEnd) ensureHeat(untilEnd);
 
   const canvas = h('div', { id: 'rm-canvas', key: 'rm-canvas', class: 'ds-map-canvas rep-map', role: 'region', 'aria-label': 'Map of signed-off cases', 'aria-describedby': 'rm-summary' });
-  queueMicrotask(() => { const c = document.getElementById('rm-canvas'); if (c) paint(c, dots, weeks); });
+  const paintKey = [rm.mode, until, rm.disease, rm.species, rm.status, rm.advice, rf.region, rf.period, state.theme, liveHeat() ? rm.wantKey : ''].join('|');
+  const pts = rd.points;
+  queueMicrotask(() => {
+    const c = document.getElementById('rm-canvas');
+    if (!c || (rm.paintEl === c && rm.paintPts === pts && rm.paintKey === paintKey)) return;
+    if (!paint(c, dots, weeks)) return;
+    rm.paintEl = c; rm.paintPts = pts; rm.paintKey = paintKey;
+  });
 
   const heatNote = rm.mode !== 'dots' && liveHeat() && liveHeat().error ? Alert({ kind: 'warn', children: [liveHeat().error, ' ', Btn({ children: 'Try again', onClick: () => { rm.heat = null; schedule(); } })] }) : null;
   const tileNote = rm.drv && rm.drv.tilesFailing ? Alert({ kind: 'warn', children: 'The map background is not loading. The dots, areas and figures come from this dashboard and are unaffected -- only the picture behind them is missing.' }) : null;

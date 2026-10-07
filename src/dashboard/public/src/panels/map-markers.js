@@ -38,18 +38,34 @@ function markerSignature(mapState, filters, urgency) {
 
 export function renderMapMarkers(mapState, filters) {
     const { map } = mapState;
-    const sig = markerSignature(mapState, filters, urgencyByCaseId());
+    const urgency = urgencyByCaseId();
+    const sig = markerSignature(mapState, filters, urgency);
     if (mapState.markerLayer && sig === mapState.markerSig) return;
     mapState.markerSig = sig;
-    if (mapState.markerLayer) map.removeLayer(mapState.markerLayer);
-    const urgency = urgencyByCaseId();
+    if (!mapState.markerLayer || !map.hasLayer(mapState.markerLayer)) {
+        mapState.markerLayer = window.L.markerClusterGroup({ maxClusterRadius: 40 });
+        mapState.markerById = new Map();
+        map.addLayer(mapState.markerLayer);
+    }
+    const layer = mapState.markerLayer;
     const filtered = mapState.pins.filter((p) => pinMatches(p, filters, urgency, null));
-    const layer = window.L.markerClusterGroup({ maxClusterRadius: 40 });
-    mapState.markerById = new Map();
+    const wanted = new Set(filtered.map((p) => p.id));
+    const stale = [];
+    for (const [id, entry] of mapState.markerById) {
+        if (wanted.has(id)) continue;
+        stale.push(entry.marker);
+        mapState.markerById.delete(id);
+    }
+    const fresh = [];
     for (const p of filtered) {
         const u = urgency.get(p.id) || 0;
+        const selected = mapState.selectedId === p.id;
+        const iconSig = [p.ref, p.status, p.location_source, p.location_confidence, p.lat, p.lon, u, selected ? 1 : 0].join('|');
+        const prev = mapState.markerById.get(p.id);
+        if (prev && prev.sig === iconSig) continue;
+        if (prev) stale.push(prev.marker);
         const m = window.L.marker([p.lat, p.lon], {
-            icon: mapMarkerIcon(STATUS_TOKEN[p.status] || '--fg-3', p.location_source, u, mapState.selectedId === p.id),
+            icon: mapMarkerIcon(STATUS_TOKEN[p.status] || '--fg-3', p.location_source, u, selected),
             zIndexOffset: u * 1000,
             title: `${p.ref} -- ${stageLabel(p.status)}${Number.isFinite(p.location_confidence) ? ` -- pin ${p.location_confidence}% sure` : ''}`,
         });
@@ -58,11 +74,11 @@ export function renderMapMarkers(mapState, filters) {
             if (el) el.setAttribute('aria-label', `${EntityLabel()} ${p.ref}, ${stageLabel(p.status)}${Number.isFinite(p.location_confidence) ? `, pin ${p.location_confidence}% sure` : ''}`);
         });
         m.on('click', () => setActiveId(p.id));
-        mapState.markerById.set(p.id, m);
-        layer.addLayer(m);
+        mapState.markerById.set(p.id, { marker: m, sig: iconSig });
+        fresh.push(m);
     }
-    map.addLayer(layer);
-    mapState.markerLayer = layer;
+    if (stale.length) layer.removeLayers(stale);
+    if (fresh.length) layer.addLayers(fresh);
     renderClusterLines(mapState, filtered);
 }
 
@@ -73,7 +89,8 @@ export function setSelectedCase(mapState, id) {
     mapState.selectedId = id;
     for (const target of [prev, id]) {
         if (target == null) continue;
-        const m = mapState.markerById && mapState.markerById.get(target);
+        const entry = mapState.markerById && mapState.markerById.get(target);
+        const m = entry && entry.marker;
         if (!m) continue;
         const el = m.getElement && m.getElement();
         const dot = el && el.querySelector('.ds-map-marker-dot');

@@ -18,6 +18,8 @@ export async function checkSession() {
         return state.currentUser;
       }
       setConnLost(true);
+    } else {
+      state.sessionNotice = 'The dashboard did not answer. Your session was not checked.';
     }
     setAuthed(false, null);
     setSessionRestored(false);

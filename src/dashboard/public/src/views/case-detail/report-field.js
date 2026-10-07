@@ -51,7 +51,20 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             if (box) { box.focus(); if (box.select) box.select(); }
         }, 0);
     };
-    const cancelEdit = () => { state._reportFieldEditing = null; schedule(); };
+    const focusTrigger = () => setTimeout(() => {
+        const lost = !document.activeElement || document.activeElement === document.body;
+        const row = document.querySelector('[data-field="' + CSS.escape(k) + '"]');
+        const trigger = row && row.querySelector('.casey-rep-editable');
+        if (lost && trigger) trigger.focus();
+    }, 0);
+    const cancelEdit = () => { state._reportFieldEditing = null; schedule(); focusTrigger(); };
+    const onEditKeydown = (e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault(); e.stopPropagation();
+        delete draftMap[editKey];
+        delete errMap[editKey];
+        cancelEdit();
+    };
 
     const write = async (stored, canonInfo) => {
         const body = { [k]: stored };
@@ -64,7 +77,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
 
     const save = async () => {
         const val = draftMap[editKey] != null ? draftMap[editKey] : '';
-        if (val === (value || '')) { state._reportFieldEditing = null; schedule(); return; }
+        if (val === (value || '')) { state._reportFieldEditing = null; schedule(); focusTrigger(); return; }
         if (!val.trim() && value) {
             errMap[editKey] = 'To remove a value, use the full edit form.';
             schedule();
@@ -86,6 +99,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             if (notice) { canonMap[editKey] = resolved; toast(notice, 'warn', { ms: 9000 }); }
             else { delete canonMap[editKey]; toast('Saved.', 'ok'); }
             if (onSaved) await onSaved();
+            focusTrigger();
         } catch (e) {
             savingSet.delete(editKey);
             checkingSet.delete(editKey);
@@ -95,7 +109,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
     };
 
     const addNote = async () => {
-        const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Note for: ' + label })) || '').trim();
+        const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Note for: ' + label, confirmLabel: 'Save note', requireInput: true })) || '').trim();
         if (!text) return;
         try {
             await postNote(caseId, text, k);
@@ -177,7 +191,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
 
     return DetailRow({
         key, field: k, label,
-        value: valueNode,
+        value: editing ? h('span', { key: 'edit-scope', onkeydown: onEditKeydown }, valueNode) : valueNode,
         trailing: editing
             ? h('div', { class: 'casey-rep-edit-actions' },
                 Btn({ size: 'sm', variant: 'primary', disabled: savingSet.has(editKey), children: savingSet.has(editKey) ? 'Saving...' : 'Save', onClick: save }),

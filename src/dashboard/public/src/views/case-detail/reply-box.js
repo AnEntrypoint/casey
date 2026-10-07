@@ -60,7 +60,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
             else if (j.sent) toast('Saved to the timeline, but the channel refused it. The contact has NOT received this. Check the timeline.', 'warn');
             else toast('Saved to the timeline only. This screen is not connected to WhatsApp, so nothing was sent to the contact.', 'warn');
             if (onReload) await onReload(c.id);
-        } catch (e) { state._replySending = false; toast('The reply did not go out. ' + e.message, 'err'); schedule(); }
+        } catch (e) { state._replySending = false; toast(await failMsg(e, 'The reply did not go out. Your text is still in the box -- try again.'), 'err'); schedule(); }
     };
 
     const cans = cannedReplies(c);
@@ -108,10 +108,10 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
                 onInput: setText,
             })),
         cans.length ? h('div', { class: 'casey-canned-wrap' },
-            h('p', { class: 'casey-canned-lab' }, 'Or tap a ready-made reply to start with:'),
+            h('p', { class: 'casey-canned-lab' }, text.trim() ? 'Or tap a ready-made reply to add to the end:' : 'Or tap a ready-made reply to start with:'),
             h('div', { class: 'casey-canned' }, ...cans.map((t, i) => h('button', {
                 key: i, type: 'button', class: 'casey-canned-btn',
-                onclick: () => setText(t)
+                onclick: () => { const cur = state._replyDraft || ''; setText(cur.trim() ? cur.replace(/\s+$/, '') + '\n\n' + t : t); }
             }, t)))
         ) : null,
         h('div', {

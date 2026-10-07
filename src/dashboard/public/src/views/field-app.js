@@ -11,7 +11,7 @@ import { MapPanel } from '../panels/map-panel.js';
 import { PillButton, QueueMore } from '../components/filter-chip.js';
 import { toast, failMsg } from '../toasts.js';
 import { createCase } from '../api.js';
-import { fetchFieldCases, isTechnician, roleName } from '../api-roles.js';
+import { fetchFieldCases, pollFieldCases, isTechnician, roleName } from '../api-roles.js';
 import { pushHash } from '../route.js';
 import { setActiveId } from '../state.js';
 import { stageLabel, headline, rel } from '../format.js';
@@ -42,25 +42,29 @@ export async function refreshFieldLists() {
   const gen = ++fs.gen;
   fs.loading = true;
   const q = fs.q.trim();
+  let changed = true;
   try {
     const [mine, signoff, closed] = await Promise.all([
-      fetchFieldCases('mine', { q, state: 'open' }),
-      isTechnician() ? fetchFieldCases('signoff', { q }) : Promise.resolve({ cases: [] }),
-      wantsClosed() ? fetchFieldCases('mine', { q, state: 'closed', limit: CLOSED_PAGE }) : Promise.resolve(null),
+      pollFieldCases('mine', { q, state: 'open' }),
+      isTechnician() ? pollFieldCases('signoff', { q }) : Promise.resolve({ body: { cases: [] }, unchanged: true }),
+      wantsClosed() ? pollFieldCases('mine', { q, state: 'closed', limit: CLOSED_PAGE }) : Promise.resolve(null),
     ]);
     if (gen !== fs.gen) return;
-    fs.mine = (mine && mine.cases) || [];
-    fs.mineTotal = (mine && typeof mine.total === 'number') ? mine.total : fs.mine.length;
+    changed = !fs.loaded || !mine.unchanged || !signoff.unchanged || !!(closed && !closed.unchanged);
+    const m = mine.body, s = signoff.body, c = closed && closed.body;
+    fs.mine = (m && m.cases) || [];
+    fs.mineTotal = (m && typeof m.total === 'number') ? m.total : fs.mine.length;
     if (!q) fs.openTotal = fs.mineTotal;
-    fs.signoff = (signoff && signoff.cases) || [];
-    if (closed) {
-      fs.closed = closed.cases || [];
-      fs.closedTotal = typeof closed.total === 'number' ? closed.total : fs.closed.length;
+    fs.signoff = (s && s.cases) || [];
+    if (c) {
+      fs.closed = c.cases || [];
+      fs.closedTotal = typeof c.total === 'number' ? c.total : fs.closed.length;
     }
     fs.error = '';
   } catch (e) { if (gen === fs.gen) fs.error = word('ui.load_list_failed'); }
   if (gen !== fs.gen) return;
-  fs.loading = false; fs.loaded = true; schedule();
+  fs.loading = false; fs.loaded = true;
+  if (changed) schedule();
   refreshMyDay();
 }
 
@@ -108,15 +112,27 @@ async function showMoreClosed() {
 function parseReport(raw) { try { return raw ? JSON.parse(raw) : {}; } catch { return {}; } }
 const has = (r, k) => r[k] != null && String(r[k]).trim() !== '';
 const mandatory = () => ((state.config || {}).mandatory_minimum || {}).fields || [];
-const doneSet = () => new Set(['resolved', 'closed', ...((((state.config || {}).mandatory_minimum) || {}).blocks_transition_to || [])]);
+let doneCache = { cfg: undefined, set: null };
+const doneSet = () => {
+  if (doneCache.cfg !== state.config) doneCache = { cfg: state.config, set: new Set(['resolved', 'closed', ...((((state.config || {}).mandatory_minimum) || {}).blocks_transition_to || [])]) };
+  return doneCache.set;
+};
 const isOpen = (c) => !doneSet().has(c.status);
-const missingOf = (c) => { const r = parseReport(c.report); return mandatory().filter((f) => !has(r, f.key)); };
+const missingCache = new WeakMap();
+const missingOf = (c) => {
+  const hit = missingCache.get(c);
+  if (hit && hit.cfg === state.config) return hit.missing;
+  const r = parseReport(c.report);
+  const missing = mandatory().filter((f) => !has(r, f.key));
+  missingCache.set(c, { cfg: state.config, missing });
+  return missing;
+};
 const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
 const tagsOf = (c) => String(c.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
 
 function worstFirst(list) {
   const key = (c) => [tagsOf(c).includes('sent-back') ? 0 : 1, PRIORITY_RANK[c.priority] ?? 2, -missingOf(c).length, Date.parse(c.last_event_at) || 0];
-  return [...list].sort((a, b) => { const x = key(a), y = key(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; });
+  return list.map((c) => [key(c), c]).sort((a, b) => { const x = a[0], y = b[0]; for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; }).map(([, c]) => c);
 }
 
 function openReport(id) { pushHash({ caseId: id }); setActiveId(id); }

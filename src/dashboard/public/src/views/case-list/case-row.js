@@ -82,7 +82,10 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
     'aria-current': active ? 'true' : undefined,
     'aria-label': c.ref + ': ' + (band ? (URGENCY_BAND_LABEL[band] + ' -- ') : '') + lead,
     onclick: (e) => { if (e.target.closest && e.target.closest('.case-row-cb, .case-row-cbwrap')) return; open(); },
-    onkeydown: (e) => { if (e.key === 'Enter') open(); },
+    onkeydown: (e) => {
+      if (e.key === 'Enter') open();
+      else if ((e.key === ' ' || e.key === 'Spacebar') && e.target === e.currentTarget) { e.preventDefault(); open(); }
+    },
   },
     h('label', { key: 'cbw', class: 'case-row-cbwrap', onclick: (e) => e.stopPropagation() },
       h('input', {
