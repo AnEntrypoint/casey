@@ -36,7 +36,11 @@ export function SavedMonthlyReports() {
   return Section({ title: 'Saved monthly reports', children: h('ul', { class: 'rep-files' },
     ...months.map((m) => h('li', { key: m },
       h('strong', null, m + ': '),
-      ...rfiles.list.filter((f) => f.month === m).map((f) => h('a', { key: f.name, href: reportFileUrl(f.name), class: 'ds-link', download: f.name, style: 'margin-right:1em' }, FILE_KIND_LABELS[f.kind] || f.kind)))
+      ...(() => {
+        const files = rfiles.list.filter((f) => f.month === m && f.name);
+        if (!files.length) return [h('span', { class: 'casey-hint' }, 'No saved file for this month.')];
+        return files.map((f) => h('a', { key: f.name, href: reportFileUrl(f.name), class: 'ds-link', download: f.name, style: 'margin-right:1em' }, FILE_KIND_LABELS[f.kind] || f.kind));
+      })())
     )) });
 }
 

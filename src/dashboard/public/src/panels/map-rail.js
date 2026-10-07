@@ -7,7 +7,7 @@ import {
 } from '../state.js';
 import { urgencyByCaseId, filterIsActive, URGENCY_BAND_LABEL, queueName } from '../map-model.js';
 import {
-    mapStateRef, refresh, counts, queueRows, filterOptions, loadSummary,
+    mapStateRef, refresh, counts, queueRows, filterOptions, loadSummary, loadError, hasLoadedOnce,
     unresolvedSummaryText, unresolvedNoteText, isStale, updatedAt,
     QUEUE_PAGE, queueShownCount, setQueueShown,
 } from './map-view-state.js';
@@ -31,6 +31,8 @@ function applyFilterToMap() {
     if (mapStateRef.current) refilterMarkers(mapStateRef.current, state.mapFilter);
     schedule();
 }
+
+const OVERLAY_HELP = 'Clusters: dashed red lines join reports that look like one event. Coverage: large faint rings show areas an operator has worked. Workers: amber dots are field workers, red and larger when a check-in is overdue. Last reported: green dots show where each contact last reported from.';
 
 function timeControl() {
     const opts = [{ v: '0', label: 'All time' }, { v: '7', label: 'This week' }, { v: '30', label: 'This month' }];
@@ -73,6 +75,9 @@ export function visibleQueueRows() { return queueRows(); }
 
 function attentionFeed() {
     const all = queueRows();
+    const error = loadError();
+    if (!all.length && error) return h('div', { class: 'triage' }, h('div', { class: 'calm', role: 'alert' }, 'The queue could not load: ' + error));
+    if (!all.length && !hasLoadedOnce()) return h('div', { class: 'triage' }, h('div', { class: 'calm', role: 'status' }, 'Loading the queue...'));
     if (!all.length) {
         const why = filterIsActive(state.mapFilter)
             ? 'No reports match the filters you have on. Clear them to see the rest.'
@@ -96,7 +101,7 @@ function attentionFeed() {
                 },
             },
                 h('div', { class: 'tcase-why' }, headline(c.subject || c.ref)),
-                h('div', { class: 'tcase-meta' }, c.ref),
+                h('div', { class: 'tcase-meta' }, c.ref, band > 1 ? ' ' : '', band > 1 ? h('span', { class: 'tcase-flag flag-' + band }, URGENCY_BAND_LABEL[band] || '') : null),
                 c.reason ? h('div', { class: 'tcase-reason' }, c.reason) : null);
         }),
         all.length > rows.length
@@ -186,10 +191,9 @@ export function MapRail() {
         ? h('div', {
             class: 'ds-map-updated' + (stale ? ' is-stale' : ''),
             role: stale ? 'status' : null,
-            title: stale
-                ? 'This view has stopped refreshing. Reload the page to get the current picture.'
-                : null,
-        }, (stale ? 'Not refreshing -- last updated ' : 'Updated ') + agoText(at))
+        }, (stale
+            ? 'Not refreshing -- last updated ' + agoText(at) + '. Reload the page to get the current picture.'
+            : 'Updated ' + agoText(at)))
         : null;
     return h('div', { class: 'ds-map-rail' },
         h('div', { class: 'ds-rail-head' },
@@ -203,6 +207,6 @@ export function MapRail() {
             mode.body(),
             h('details', { class: 'ds-rail-disclosure' },
                 h('summary', {}, 'Map options'),
-                h('div', { class: 'ds-rail-disclosure-body' }, mapFilterRow(), mapOverlayRow())),
+                h('div', { class: 'ds-rail-disclosure-body' }, mapFilterRow(), mapOverlayRow(), h('p', { class: 'casey-hint' }, OVERLAY_HELP))),
             ...mapUnresolvedDisclosure()));
 }

@@ -10,7 +10,7 @@ import { word } from '../words.js';
 import { fetchHeat, fetchAreas } from '../api-reports.js';
 import { rd, rf, ensureReports, reloadReports, windowParams } from './reports-data.js';
 import { ReportFilters } from './reports-filters.js';
-import { mountResolvedMap, drawDots, drawHeat, drawBubbles, fitOnce, cssColour } from './resolved-map-leaflet.js';
+import { mountResolvedMap, drawDots, drawHeat, drawBubbles, fitOnce, cssColour, DISEASE_MARKS } from './resolved-map-leaflet.js';
 const h = webjsx.createElement;
 
 const MODES = [
@@ -74,9 +74,13 @@ function paint(canvas, dots, weeks) {
   if (!rm.drv) return;
   const fitKey = [rf.region, rf.period, rm.mode].join('|');
   const ranked = diseaseRank(rd.points.points);
-  const colourFor = (d) => cssColour(canvas, ranked.indexOf(d) >= 0 && ranked.indexOf(d) < PAL.length ? PAL[ranked.indexOf(d)] : OTHER);
+  const styleFor = (d) => {
+    const i = ranked.indexOf(d);
+    const known = i >= 0 && i < PAL.length;
+    return { colour: cssColour(canvas, known ? PAL[i] : OTHER), mark: known ? DISEASE_MARKS[i] : DISEASE_MARKS[0] };
+  };
   if (rm.mode === 'dots') {
-    drawDots(rm.drv, dots, colourFor);
+    drawDots(rm.drv, dots, styleFor);
     fitOnce(rm.drv, fitKey, rd.points.points);
   } else if (rm.mode === 'areas' && liveHeat() && liveHeat().data) {
     drawBubbles(rm.drv, liveHeat().data.areas, cssColour(canvas, '--sky'));
@@ -108,11 +112,30 @@ function tableAlternative(dots) {
 }
 
 
+function mark(i) {
+  const c = cssColour(document.documentElement, PAL[i]);
+  const m = DISEASE_MARKS[i];
+  return h('svg', { class: 'rep-mark', width: 14, height: 14, viewBox: '0 0 14 14', 'aria-hidden': 'true' },
+    h('circle', { cx: 7, cy: 7, r: 5, fill: m.fill ? c : 'none', 'fill-opacity': 0.75, stroke: c, 'stroke-width': m.fill ? 1 : 3, 'stroke-dasharray': m.dash || 'none' }));
+}
+
+function heatRamp(max, rgb) {
+  const colour = cssColour(document.documentElement, rgb);
+  const steps = [0.2, 0.4, 0.6, 0.8, 1];
+  return h('ul', { class: 'rep-legend rep-ramp', 'aria-label': 'Colour scale' },
+    ...steps.map((f) => h('li', { key: String(f), class: 'rep-legend-item' },
+      h('svg', { class: 'rep-mark', width: 14, height: 14, viewBox: '0 0 14 14', 'aria-hidden': 'true' },
+        h('rect', { x: 0, y: 0, width: 14, height: 14, fill: colour, 'fill-opacity': 0.15 + 0.7 * f })),
+      'up to ' + Math.ceil(max * f))));
+}
+
 function Legend(ranked) {
   const data = liveHeat() && liveHeat().data;
   if (rm.mode === 'heat' || rm.mode === 'all') {
     const max = data && data.cells.length ? Math.max(...data.cells.map((c) => c.count)) : 0;
-    return max ? h('p', { class: 'casey-hint' }, `Darker squares have more ${rm.mode === 'all' ? 'reports' : 'signed-off cases'}: from ${data.cells.reduce((m, c) => Math.min(m, c.count), max)} in the lightest to ${max} in the darkest. Each square is about 11 km across.`) : null;
+    return max ? h('div', { class: 'rep-stack' },
+      h('p', { class: 'casey-hint' }, `Darker squares have more ${rm.mode === 'all' ? 'reports' : 'signed-off cases'}: from ${data.cells.reduce((m, c) => Math.min(m, c.count), max)} in the lightest to ${max} in the darkest. Each square is about 11 km across.`),
+      heatRamp(max, '--flame')) : null;
   }
   if (rm.mode === 'areas') {
     const max = data && data.areas.length ? Math.max(...data.areas.map((a) => a.count)) : 0;
@@ -121,7 +144,7 @@ function Legend(ranked) {
   if (rm.mode !== 'dots') return null;
   const shown = ranked.slice(0, PAL.length);
   return h('ul', { class: 'rep-legend', 'aria-label': word('legend.disease_colours') },
-    ...shown.map((d, i) => h('li', { key: d, class: 'rep-legend-item' }, h('span', { class: 'rep-sw rep-sw-' + i, 'aria-hidden': 'true' }), d)),
+    ...shown.map((d, i) => h('li', { key: d, class: 'rep-legend-item' }, mark(i), d)),
     ranked.length > PAL.length ? h('li', { key: '_o', class: 'rep-legend-item' }, h('span', { class: 'rep-sw rep-sw-o', 'aria-hidden': 'true' }), word('legend.other_diseases')) : null);
 }
 
@@ -152,6 +175,7 @@ export function ResolvedMapPanel() {
   queueMicrotask(() => { const c = document.getElementById('rm-canvas'); if (c) paint(c, dots, weeks); });
 
   const heatNote = rm.mode !== 'dots' && liveHeat() && liveHeat().error ? Alert({ kind: 'warn', children: [liveHeat().error, ' ', Btn({ children: 'Try again', onClick: () => { rm.heat = null; schedule(); } })] }) : null;
+  const tileNote = rm.drv && rm.drv.tilesFailing ? Alert({ kind: 'warn', children: 'The map background is not loading. The dots, areas and figures come from this dashboard and are unaffected -- only the picture behind them is missing.' }) : null;
   const total = rm.mode === 'dots' ? dots.length : (liveHeat() && liveHeat().data ? liveHeat().data.total : 0);
   const summary = rm.mode === 'dots'
     ? `${dots.length} signed-off ${dots.length === 1 ? 'case' : 'cases'} shown${until ? ', up to the week of ' + say(until) : ''}. Each dot is placed only to about 1 km, and only where at least 5 signed-off cases share the area.`
@@ -173,6 +197,7 @@ export function ResolvedMapPanel() {
       (rm.mode === 'dots' || rm.mode === 'heat') && adviceKinds.length ? FilterPills({ label: 'Technician advice', options: [{ id: '', label: 'Any advice' }, ...adviceKinds.map((k) => ({ id: k, label: k }))], selected: rm.advice, onSelect: (v) => { rm.advice = v; rm.heat = null; schedule(); } }) : null,
       noDots,
       heatNote,
+      tileNote,
       canvas,
       Legend(ranked),
       tableAlternative(dots),

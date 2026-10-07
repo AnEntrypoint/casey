@@ -151,7 +151,7 @@ function Row(c, { showMissing = true } = {}) {
 }
 
 function List(title, rows, empty, opts) {
-  return Panel({ title, count: rows.length || undefined, children: rows.length ? rows.map((c) => Row(c, opts)) : h('p', { class: 'casey-hint' }, empty) });
+  return Panel({ title, count: rows.length || undefined, children: rows.length ? rows.map((c) => Row(c, opts)) : (fs.error ? [] : h('p', { class: 'casey-hint' }, empty)) });
 }
 
 async function addReport() {
@@ -217,13 +217,13 @@ function ClosedList(d) {
   const more = d.closedOn && fs.closed.length < fs.closedTotal
     ? [QueueMore({ key: 'more', onClick: showMoreClosed, children: word('ui.field_show_more') })] : [];
   const rows = d.closed.map((c) => Row(c, { showMissing: false }));
-  return Panel({ title, count: d.closed.length || undefined, children: [rows.length ? h('div', { key: 'rows' }, ...rows) : h('p', { key: 'empty', class: 'casey-hint' }, d.closedOn ? word('ui.field_closed_empty') : 'Nothing you handled has been closed yet.'), ...more] });
+  return Panel({ title, count: d.closed.length || undefined, children: [rows.length ? h('div', { key: 'rows' }, ...rows) : (fs.error ? null : h('p', { key: 'empty', class: 'casey-hint' }, d.closedOn ? word('ui.field_closed_empty') : 'Nothing you handled has been closed yet.')), ...more].filter(Boolean) });
 }
 
 function Home(d) {
   if (!fs.loaded) { if (!fs.loading) refreshFieldLists(); return h('div', { key: 'home', class: 'field-home' }, Skeleton({ count: 5, height: '1.6em' })); }
   const body = [];
-  if (fs.error) body.push(Alert({ kind: 'warn', children: fs.error }));
+  if (fs.error) body.push(Alert({ kind: 'warn', children: h('div', {}, fs.error + ' ', Btn({ size: 'sm', variant: 'ghost', children: 'Try again', onClick: refreshFieldLists })) }));
   if (d.tech) {
     body.push(List('Ready to sign off', d.ready, 'Nothing is waiting for sign-off right now.', { showMissing: false }));
     body.push(List('Your other ' + entityLabelPlural() + ', still being gathered', d.rest, 'You have no other open ' + entityLabelPlural() + '.'));
@@ -293,7 +293,7 @@ export function FieldApp() {
     ConnectionBanner(),
     AppShell({
       topbar: Topbar({ brand, leaf: roleName(), items: [], themeToggle: false }), crumb, side: nav(),
-      status: Status({ left: [h('span', { key: 'c' }, 'You have ' + countOf(fs.openTotal))], right: [h('span', { key: 'n' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected')], ariaLabel: 'Status bar' }),
+      status: Status({ left: [h('span', { key: 'c' }, !fs.loaded ? 'Loading your reports...' : (fs.error ? 'Count not available' : 'You have ' + countOf(fs.openTotal)))], right: [h('span', { key: 'n' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected')], ariaLabel: 'Status bar' }),
       main: [main], bannerLabel: 'Top bar', mainLabelledby: VIEW_TITLE_ID,
     }),
     FieldHelp(),

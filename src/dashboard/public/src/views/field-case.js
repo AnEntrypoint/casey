@@ -70,11 +70,15 @@ const safeWa = (u) => (typeof u === 'string' && u.startsWith('https://wa.me/') ?
 function Header(c, data, write) {
   const r = parseReport(c.report);
   const where = [has(r, 'species') ? String(r.species) : '', has(r, 'location') ? String(r.location) : ''].filter(Boolean);
-  const holder = write ? 'You' : (holderName(c.assignee) || assigneeName(c.assignee) || 'Nobody yet');
+  const holderText = holderName(c.assignee) || assigneeName(c.assignee);
+  const hold = doneStages().has(c.status) ? 'Closed'
+    : (write ? 'Claimed by you' : (holderText ? 'Claimed by ' + holderText : 'Open'));
   return h('div', { class: 'casey-case-header', role: 'region', 'aria-label': 'Which ' + entityLabel() + ' this is' },
     h('div', { class: 'casey-case-header-top' }, h('span', { class: 'casey-case-ref-text' }, c.ref + ' -- ' + (where.length ? where.join(' in ') : headline(c.subject || 'No details yet')))),
     h('div', { class: 'casey-meta-id casey-hint' },
-      'Reporter: ' + (data.reporter_first_name || (write ? 'name not given' : 'not shown')) + (data.reporter && data.reporter.shared_phone ? ' (shared phone, ' + data.reporter.people_on_phone + ' people)' : '') + ' | Held by: ' + holder + ' | Stage: ' + stageLabel(c.status)));
+      h('span', {}, 'Reporter: ' + (data.reporter_first_name || (write ? 'name not given' : 'not shown')) + (data.reporter && data.reporter.shared_phone ? ' (shared phone, ' + data.reporter.people_on_phone + ' people)' : '')),
+      h('span', {}, 'Hold: ' + hold),
+      h('span', {}, 'Stage: ' + stageLabel(c.status))));
 }
 
 function Checklist(c, r) {
@@ -182,6 +186,7 @@ function SignOffCard(c, data, r, write) {
         Btn({ variant: 'primary', disabled: !canSign, children: 'Sign off ' + c.ref, onClick: () => signOff(c, data), title: canSign ? 'Finish this ' + entityLabel() : 'Not ready: ' + (missing.length ? 'something is still missing' : 'it cannot move to done from here') }),
         Btn({ variant: 'ghost', children: 'Send back to ranger', onClick: () => sendBack(c, r) })) : null,
       tech && !canSign && missing.length ? h('p', { class: 'casey-hint' }, 'Sign off is unavailable until: ' + missing.map((f) => f.label).join(', ') + ' are recorded.') : null,
+      tech && !canSign && !missing.length ? h('p', { class: 'casey-hint' }, 'Sign off is unavailable: this ' + entityLabel() + ' cannot move to done from where it is now.') : null,
     ].filter(Boolean),
   });
 }
@@ -298,8 +303,9 @@ function Summary(c, r) {
 export function FieldCaseView({ id, onBack }) {
   if (fc.id !== id && !fc.loading) load(id);
   const back = Btn({ variant: 'link', size: 'sm', class: 'casey-back-btn', 'aria-label': 'Back to the list', onClick: onBack, children: [Icon('chevron-left', { size: 14 }), ' Back to the list'] });
-  if (fc.error) return h('div', { class: 'casey-detail-pane' }, back, h('p', { class: 'casey-hint' }, fc.error));
-  if (!fc.data || fc.data.case.id !== id) return h('div', { class: 'casey-detail-pane' }, back, Skeleton({ count: 5, height: '1.4em' }));
+  if (fc.error) return h('div', { class: 'casey-detail-pane' }, back, h('p', { class: 'casey-hint' }, fc.error),
+    h('div', { class: 'casey-timeline-actions' }, Btn({ variant: 'primary', size: 'sm', children: 'Try again', onClick: () => load(id) })));
+  if (!fc.data || fc.data.case.id !== id) return h('div', { class: 'casey-detail-pane' }, back, Skeleton({ count: 5, height: '1.4em', label: 'loading the report' }));
   if (fc.lost) {
     const typed = [...Object.values(fc.draft), fc.note].map((v) => String(v || '').trim()).filter(Boolean);
     return h('div', { class: 'casey-detail-pane', key: 'field-case-lost-' + id },

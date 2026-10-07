@@ -101,11 +101,12 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
             ? 'Reply to contact on ' + replyChannelLabel(c.channel)
             : 'Reply to contact'),
         replyChannelLabel(c.channel) ? null : Alert({ kind: 'warn', children: 'This ' + entityLabel() + ' came in ' + channelLabel(c.channel) + ', so there is no app to reply on. Anything sent here is recorded on the timeline only -- reach the person another way.' }),
-        TextField({
-            multiline: true, rows: 3, value: text, maxLength: REPLY_MAXLEN,
-            placeholder: 'Type your reply here. Ctrl+Enter sends it.',
-            onInput: setText,
-        }),
+        h('div', { onkeydown: (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); send(); } } },
+            TextField({
+                multiline: true, rows: 3, value: text, maxLength: REPLY_MAXLEN,
+                placeholder: 'Type your reply here. Ctrl+Enter sends it.',
+                onInput: setText,
+            })),
         cans.length ? h('div', { class: 'casey-canned-wrap' },
             h('p', { class: 'casey-canned-lab' }, 'Or tap a ready-made reply to start with:'),
             h('div', { class: 'casey-canned' }, ...cans.map((t, i) => h('button', {
@@ -115,7 +116,6 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
         ) : null,
         h('div', {
             class: 'casey-reply-send-row',
-            onkeydown: (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); send(); } }
         },
             Btn({ variant: 'primary', disabled: sending || !text.trim(), children: sending ? 'Sending...' : 'Send reply', onClick: send }),
             Btn({

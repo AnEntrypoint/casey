@@ -47,12 +47,13 @@ function InboxRow(e) {
   const band = urgencyBand(Number(e.score)) || 1;
   const open = () => { setActiveId(e.id); pushHash({ caseId: e.id }); };
 
+  const name = [e.ref + ': ' + (URGENCY_BAND_LABEL[band] || 'can wait'), e.subject || '(no subject)', e.reason || 'This one is worth a look.', breachDetail, waiting ? 'waiting ' + waiting : '', owner ? (mine ? 'claimed by you' : 'claimed by ' + owner) : ''].filter(Boolean).join('. ');
   return h('div', {
     key: e.id, class: 'tcase heat-' + band + (otherClaim ? ' claimed-other' : '') + (active ? ' active' : ''),
-    'data-id': e.id, role: 'listitem', tabindex: '0',
-    'aria-label': e.ref + ': ' + (URGENCY_BAND_LABEL[band] || 'can wait'),
+    'data-id': e.id, role: 'button', tabindex: '0',
+    'aria-label': name,
     onclick: open,
-    onkeydown: (ev) => { if (ev.key === 'Enter') open(); },
+    onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); } },
   },
     h('div', { key: 'why', class: 'tcase-why' },
       h('span', { key: 's' }, e.subject || '(no subject)'),
@@ -86,7 +87,7 @@ export function InboxPanel() {
       Heading({ level: 2, children: queueName() }),
       Badge({ tone: 'blue', children: String(ranked.length) })
     ),
-    h('div', { key: 'rows', class: 'triage-rows', role: 'list', 'aria-label': queueName() }, ...shown.map(InboxRow)),
+    h('div', { key: 'rows', class: 'triage-rows' }, ...shown.map(InboxRow)),
     ranked.length > shown.length
       ? QueueMore({ key: 'more', onClick: () => { inboxShown = ranked.length; schedule(); }, children: 'Show all ' + ranked.length + ' that need a person' })
       : (!state.inboxMode && shown.length > INBOX_PAGE

@@ -5,7 +5,7 @@ import { rankAttention } from '../src/attn.js'
 import { parseReport, tsMs } from '../src/timestamp.js'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
-import { writeFileSync, mkdirSync, renameSync } from 'node:fs'
+import { writeFileSync, mkdirSync, renameSync, openSync, writeSync, fsyncSync, closeSync, unlinkSync } from 'node:fs'
 import { bold, dim, green, red, cyan, bad, say, closeAndExit } from './casey-cli-ui.js'
 
 async function openStore() {
@@ -573,33 +573,54 @@ export async function cmdOperators({ flags, rest }) {
 }
 
 
-function writeFileAtomic(target, content) {
-  const temp = `${target}.${process.pid}.tmp`
-  writeFileSync(temp, content)
-  renameSync(temp, target)
+function writeFilesAtomic(pairs) {
+  const temps = []
+  try {
+    for (const [target, content] of pairs) {
+      const temp = `${target}.${process.pid}.tmp`
+      temps.push(temp)
+      const fd = openSync(temp, 'w')
+      try { writeSync(fd, content); fsyncSync(fd) } finally { closeSync(fd) }
+    }
+  } catch (e) {
+    for (const temp of temps) { try { unlinkSync(temp) } catch {} }
+    throw e
+  }
+  pairs.forEach(([target], i) => renameSync(temps[i], target))
 }
 
 export async function cmdReportDigest({ flags }) {
-  const { buildDigest, lastCompletedMonth, postDigest } = await import('../src/report-digest.js')
+  const { buildDigest, lastCompletedMonth, postDigest, recordDigestStatus } = await import('../src/report-digest.js')
   const month = flags.month === undefined ? lastCompletedMonth() : flags.month
   const webhook = process.env.CASEY_ALERT_WEBHOOK
   if (flags['out-dir'] !== undefined && flags.out !== undefined) { say(bad('--out and --out-dir cannot be used together.')); process.exit(1) }
   if (flags['out-dir'] !== undefined && typeof flags['out-dir'] !== 'string') { say(bad('--out-dir needs a directory.')); process.exit(1) }
   if (flags.post && !webhook) { say(bad('--post needs CASEY_ALERT_WEBHOOK to be set.')); process.exit(1) }
+  const outDir = typeof flags['out-dir'] === 'string' ? flags['out-dir'] : null
   const store = await openStore()
   let digest
-  try { digest = await buildDigest(store, month) } catch (e) { say(bad(e.message)); await closeAndExit(store, 1) }
-  const csvPath = typeof flags['out-dir'] === 'string' ? path.join(flags['out-dir'], `casey-digest-${digest.month}.csv`)
+  try { digest = await buildDigest(store, month) } catch (e) {
+    if (outDir) recordDigestStatus(outDir, month, { ok: false, incomplete: false, error: e.message })
+    say(bad(e.message)); await closeAndExit(store, 1)
+  }
+  const csvPath = outDir ? path.join(outDir, `casey-digest-${digest.month}.csv`)
     : typeof flags.out === 'string' ? flags.out : `casey-digest-${digest.month}.csv`
   const textPath = csvPath.replace(/\.csv$/i, '') + '.txt'
   mkdirSync(path.dirname(csvPath), { recursive: true })
-  writeFileAtomic(csvPath, digest.csv)
-  writeFileAtomic(textPath, digest.text + '\n')
+  try {
+    writeFilesAtomic([[csvPath, digest.csv], [textPath, digest.text + '\n']])
+  } catch (e) {
+    if (outDir) recordDigestStatus(outDir, digest.month, { ok: false, incomplete: false, error: `could not write: ${e.message}` })
+    say(bad(`could not write the digest: ${e.message}`)); await closeAndExit(store, 1)
+  }
+  const incomplete = Boolean(digest.rep.truncated)
+  if (outDir) recordDigestStatus(outDir, digest.month, { ok: true, incomplete, error: null })
   console.log(digest.text)
   say(dim(`wrote ${csvPath} and ${textPath}`))
   if (flags.post) {
     try { await postDigest(webhook, digest.text); say(green('posted to CASEY_ALERT_WEBHOOK.')) }
     catch (e) { say(bad(`post failed: ${e.message}`)); await closeAndExit(store, 1) }
   }
+  if (incomplete) { say(bad(`digest ${digest.month} is incomplete: some reports could not be loaded.`)); await closeAndExit(store, 1) }
   await closeAndExit(store, 0)
 }

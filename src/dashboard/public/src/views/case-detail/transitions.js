@@ -39,6 +39,11 @@ export function Transitions({ c, transitions, onReload, key } = {}) {
         Dialog({
             open, title: target ? 'Move this to ' + stageLabel(target) : 'Move this ' + entityLabel(), onClose: close,
             children: [
+                h('p', { key: 'notice', class: 'casey-hint' }, target
+                    ? (CASEY_NOTIFIED_STAGES.includes(target)
+                        ? 'Moving to ' + stageLabel(target) + ' queues a short note to the contact.'
+                        : 'The contact will not be told about this move.')
+                    : ''),
                 TextField({ key: 'reason', label: 'Reason (optional)', multiline: true, rows: 2, value: reason, placeholder: 'e.g. operator contacted farmer directly', onInput: (v) => { state._transitionReason = v; schedule(); } }),
                 h('div', { key: 'acts', class: 'ds-dialog-actions' },
                     Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: close }),

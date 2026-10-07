@@ -3,11 +3,12 @@ import { state, schedule, setActiveId, setCases } from '../state.js';
 import * as api from '../api.js';
 import { toast, failMsg } from '../toasts.js';
 import { entityLabel, EntityLabel, EntityLabelPlural } from '../vocabulary.js';
-import { CaseListView } from './case-list-view.js';
+import { CaseListView, setListError } from './case-list-view.js';
 import { CaseDetailView } from './case-detail-view.js';
 import { ViewTitle } from './view-title.js';
 import { panelTitle } from './nav-config.js';
 import { confirmDialog } from '../components/dialog-shell.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 function closeCase() {
@@ -52,8 +53,12 @@ async function reloadCases() {
   try {
     const rows = await api.fetchCases();
     const list = Array.isArray(rows) ? rows : (rows && rows.cases) || [];
+    setListError('');
     setCases(list, rows && typeof rows.total === 'number' ? rows.total : list.length);
-  } catch {  }
+  } catch {
+    setListError(word('ui.load_list_failed'));
+    schedule();
+  }
 }
 
 export function CaseListDetailLayout() {
