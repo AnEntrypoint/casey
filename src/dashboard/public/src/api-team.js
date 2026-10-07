@@ -1,4 +1,4 @@
-import { api, ApiError } from './api.js';
+import { api, ApiError, conditional } from './api.js';
 
 async function json(path, opts) {
   const r = await api(path, opts);
@@ -20,6 +20,7 @@ export const postHandoff = (id, ref, note) => send('POST', '/api/cases/' + seg(i
 export const postWithdrawHandoff = (id, ref) => send('POST', '/api/cases/' + seg(id) + '/handoff/withdraw', { expected_ref: ref });
 
 export const fetchMyDay = () => json('/api/my-day');
+export const pollMyDay = () => conditional('/api/my-day');
 
 export const postRolesImport = (csv, dryRun) => send('POST', '/api/roles/import', { csv, dry_run: !!dryRun });
 export const fetchRoster = () => json('/api/roles/roster');

@@ -74,18 +74,20 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
 
   const open = () => { setActiveId(c.id); pushHash({ caseId: c.id }); };
 
+  const guardrailToggle = guardrailTags(c).length
+    ? h('button', {
+      key: 'grd-toggle', type: 'button', class: 'btn-link ds-guardrail-toggle-btn',
+      'aria-expanded': expandedGuardrails ? 'true' : 'false',
+      onclick: (e) => { e.stopPropagation(); onToggleGuardrails && onToggleGuardrails(c.id); },
+    }, expandedGuardrails ? 'Hide flags' : 'Show flags')
+    : null;
+
   return h('div', {
     key: c.id,
     class: 'case-row' + (band ? ' band-' + band : '')
       + (active ? ' active' : '') + (selected ? ' selected' : '') + (kbdFocused ? ' kbd-focused' : ''),
-    'data-id': c.id, role: 'listitem', tabindex: '0',
-    'aria-current': active ? 'true' : undefined,
-    'aria-label': c.ref + ': ' + (band ? (URGENCY_BAND_LABEL[band] + ' -- ') : '') + lead,
-    onclick: (e) => { if (e.target.closest && e.target.closest('.case-row-cb, .case-row-cbwrap')) return; open(); },
-    onkeydown: (e) => {
-      if (e.key === 'Enter') open();
-      else if ((e.key === ' ' || e.key === 'Spacebar') && e.target === e.currentTarget) { e.preventDefault(); open(); }
-    },
+    role: 'listitem',
+    onclick: (e) => { if (e.target.closest && e.target.closest('.case-row-cbwrap, .ds-guardrail-toggle-btn')) return; open(); },
   },
     h('label', { key: 'cbw', class: 'case-row-cbwrap', onclick: (e) => e.stopPropagation() },
       h('input', {
@@ -94,30 +96,35 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
         checked: selected,
         onclick: (e) => { e.stopPropagation(); toggleBulkSelect(c.id, e.target.checked); },
       })),
-    h('div', { key: 'body', class: 'case-row-body' },
-      h('div', { key: 'lead', class: 'case-row-lead' }, lead),
-      h('div', { key: 'top', class: 'case-row-top' },
-        h('span', { key: 'ref', class: 'case-row-ref' }, c.ref),
-        Chip({ key: 'stage', tone: stageTone(c.status), size: 'sm', children: stageLabel(c.status) }),
-        c.priority === 'urgent' || c.priority === 'high'
-          ? Chip({ key: 'pri', tone: 'warn', size: 'sm', children: priorityLabel(c.priority) })
-          : null,
-        owner ? Chip({ key: 'own', tone: mine ? 'accent' : '', size: 'sm', children: mine ? 'you' : ownerName(owner) }) : null,
-        h('span', { key: 'when', class: 'case-row-when', title: fmtTime(c.updated_at || c.created_at) }, rel(c.updated_at || c.created_at))
-      ),
-      h('div', { key: 'sub', class: 'case-row-sub' },
-        src ? Chip({ key: 'src', tone: src.tone, size: 'sm', tag: true, children: src.label }) : null,
-        h('span', { key: 'meta' }, lead === subject ? channelLabel(c.channel) : channelLabel(c.channel) + ' - ' + subject),
-        fillPill(c.fill_rate),
-        GuardrailChip({ c, expanded: expandedGuardrails })
-      ),
-      guardrailTags(c).length
-        ? h('button', {
-          key: 'grd-toggle', type: 'button', class: 'btn-link ds-guardrail-toggle-btn',
-          'aria-expanded': expandedGuardrails ? 'true' : 'false',
-          onclick: (e) => { e.stopPropagation(); onToggleGuardrails && onToggleGuardrails(c.id); },
-        }, expandedGuardrails ? 'Hide flags' : 'Show flags')
-        : null
-    )
+    h('div', {
+      key: 'main', class: 'case-row-main', role: 'group', tabindex: '0',
+      'data-id': c.id,
+      'aria-current': active ? 'true' : undefined,
+      'aria-label': c.ref + ': ' + (band ? (URGENCY_BAND_LABEL[band] + ' -- ') : '') + lead,
+      onkeydown: (e) => {
+        if (e.key === 'Enter' && e.target === e.currentTarget) open();
+        else if ((e.key === ' ' || e.key === 'Spacebar') && e.target === e.currentTarget) { e.preventDefault(); open(); }
+      },
+    },
+      h('div', { key: 'body', class: 'case-row-body' },
+        h('div', { key: 'lead', class: 'case-row-lead' }, lead),
+        h('div', { key: 'top', class: 'case-row-top' },
+          h('span', { key: 'ref', class: 'case-row-ref' }, c.ref),
+          Chip({ key: 'stage', tone: stageTone(c.status), size: 'sm', children: stageLabel(c.status) }),
+          c.priority === 'urgent' || c.priority === 'high'
+            ? Chip({ key: 'pri', tone: 'warn', size: 'sm', children: priorityLabel(c.priority) })
+            : null,
+          owner ? Chip({ key: 'own', tone: mine ? 'accent' : '', size: 'sm', children: mine ? 'you' : ownerName(owner) }) : null,
+          h('span', { key: 'when', class: 'case-row-when', title: fmtTime(c.updated_at || c.created_at) }, rel(c.updated_at || c.created_at))
+        ),
+        h('div', { key: 'sub', class: 'case-row-sub' },
+          src ? Chip({ key: 'src', tone: src.tone, size: 'sm', tag: true, children: src.label }) : null,
+          h('span', { key: 'meta' }, lead === subject ? channelLabel(c.channel) : channelLabel(c.channel) + ' - ' + subject),
+          fillPill(c.fill_rate),
+          GuardrailChip({ c, expanded: expandedGuardrails })
+        )
+      )
+    ),
+    guardrailToggle
   );
 }

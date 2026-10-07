@@ -37,6 +37,7 @@ export function reloadReports() {
     .then(([report, map]) => {
       if (gen !== generation) return;
       rd.report = report; rd.points = map; rd.error = '';
+      rd.generatedAt = report.generated_at || null; rd.asOf = report.as_of || null;
     })
     .catch(() => { if (gen === generation) { rd.error = word('ui.load_disease_reports_failed'); rd.report = null; rd.points = null; } })
     .finally(() => { if (gen === generation) { rd.loading = false; rd.loaded = true; schedule(); } });
@@ -60,4 +61,5 @@ export function setPeriod(v) { rf.period = v; reloadReports(); schedule(); }
 export function setGrain(v) { rf.grain = v; reloadReports(); schedule(); }
 
 export const SPARSE = 'other/sparse';
-export const nice = (v) => (v === SPARSE ? 'Small groups combined' : (v === 'unknown' ? 'Area not stated' : v));
+export const RARE = 'Other (rare)';
+export const nice = (v) => (v === SPARSE ? 'Small groups combined' : v === RARE ? 'Other diseases, each under ' + (rd.report && rd.report.k || 5) + ' cases' : (v === 'unknown' ? 'Not stated' : v));

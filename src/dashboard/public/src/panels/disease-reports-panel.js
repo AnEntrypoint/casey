@@ -6,7 +6,8 @@ import { Table } from '/design/src/components/content/table.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { Lede } from '/design/src/components/shell/atoms.js';
 import { printDiseaseUrl, reportFileUrl } from '../api-reports.js';
-import { rd, rfiles, ensureReports, reloadReports, nice, SPARSE, GRAINS, rf, windowParams } from './reports-data.js';
+import { fmtTime } from '../format.js';
+import { rd, rfiles, ensureReports, reloadReports, nice, SPARSE, RARE, GRAINS, rf, windowParams } from './reports-data.js';
 import { ReportFilters } from './reports-filters.js';
 const h = webjsx.createElement;
 
@@ -52,9 +53,12 @@ export function DiseaseReportsPanel() {
   const r = rd.report;
   const named = (list, key) => list.filter((x) => x[key] !== SPARSE);
   const diseases = named(r.by_disease, 'disease');
-  const areas = named(r.by_region, 'region').filter((x) => x.region !== 'unknown');
+  const areas = named(r.by_region, 'region');
+  const namedAreas = areas.filter((x) => x.region !== 'unknown');
   const top = diseases[0];
-  const districts = named(r.by_district || [], 'district').filter((x) => x.district !== 'unknown');
+  const districts = named(r.by_district || [], 'district');
+  const orBelow = (v) => (v == null ? 'fewer than ' + r.k : String(v));
+  const rareRow = r.rare_diseases == null ? [] : [{ disease: RARE, count: r.rare_diseases }];
   const sparse = [r.by_disease, r.by_region, r.by_district || [], r.by_month].some((l) => l.some((x) => Object.values(x).includes(SPARSE)));
   const grainName = (GRAINS.find((g) => g.id === rf.grain) || GRAINS[0]).label.toLowerCase();
   const empty = !r.total && !diseases.length;
@@ -68,29 +72,31 @@ export function DiseaseReportsPanel() {
     children: h('div', { class: 'rep-stack' },
       ReportFilters({ grain: true }),
       h('p', { class: 'casey-hint' }, h('a', { href: printDiseaseUrl({ ...windowParams(), grain: rf.grain }), class: 'ds-link', target: '_blank', rel: 'noopener', 'aria-label': 'Print this report with the current filters (opens in a new tab)' }, 'Print this report')),
+      rd.generatedAt ? h('p', { class: 'casey-hint' }, 'Figures as of ' + (rd.asOf ? fmtTime(rd.asOf) : 'all records to date') + ' (generated ' + fmtTime(rd.generatedAt) + ').') : null,
       Lede({ children: 'Every figure counts reports that an animal health technician has looked at and signed off with the disease they identified. Groups of fewer than ' + r.k + ' are combined so that no single report can be picked out.' }),
+      h('p', { class: 'casey-hint' }, 'Groups under ' + r.k + ' cases are not shown, so rows may not add up to the total.'),
       r.truncated ? Alert({ kind: 'warn', children: 'There are more reports than this page can load, so the figures leave some out.' }) : null,
       rd.loading ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, 'Updating the figures...') : null,
       empty ? Alert({ kind: 'info', children: 'No signed-off cases in this period yet. Figures appear here as technicians sign reports off.' }) : null,
       r.closed_without_diagnosis ? h('p', { class: 'casey-hint' }, r.closed_without_diagnosis + ' more cases were closed without a disease being recorded, so they are not counted in these figures.') : null,
-      r.total ? h('p', { class: 'casey-hint' }, r.with_photo + ' of ' + r.total + ' signed-off cases came with a photo.') : null,
-      Kpi({ items: [
-        [String(r.total), 'Signed-off cases'],
-        ...(suspected ? [[String(r.total - suspected.count), 'Confirmed or not stated'], [String(suspected.count), 'Suspected only']] : []),
+      r.total ? h('p', { class: 'casey-hint' }, orBelow(r.with_photo) + ' of ' + r.total + ' signed-off cases came with a photo.') : null,
+      empty ? null : Kpi({ items: [
+        [orBelow(r.total), 'Signed-off cases'],
+        ...(suspected && r.total != null ? [[String(r.total - suspected.count), 'Confirmed or not stated'], [String(suspected.count), 'Suspected only']] : []),
         [String(diseases.length), 'Diseases found'],
         [top ? top.disease : '--', 'Most common'],
-        [String(areas.length), 'Areas with enough cases to name'],
+        [String(namedAreas.length), 'Areas with enough cases to name'],
       ] }),
       r.ruled_out ? h('p', { class: 'casey-hint' }, r.ruled_out + ' signed-off cases had the disease ruled out, so they are not counted in these figures.') : null,
       suspected ? Section({ title: 'How certain the diagnoses are', children: [BarChart({ items: statuses.map((x) => ({ label: STATUS_LABELS[x.status] || nice(x.status), value: x.count })) }), h('p', { class: 'casey-hint' }, 'Suspected means the technician signed off on a working diagnosis that is not yet proven. A signed-off case with no certainty recorded counts as confirmed.')] }) : null,
-      diseases.length ? Section({ title: 'Diseases found', children: h('div', { class: 'rep-stack' }, WordCloud(diseases), BarChart({ items: bars(diseases.slice(0, 12), 'disease') })) }) : null,
-      conclusions.length ? Section({ title: 'What technicians advised at sign-off', children: [BarChart({ items: bars(conclusions, 'conclusion') }), h('p', { class: 'casey-hint' }, r.with_conclusion + ' of ' + r.total + ' signed-off cases recorded advice. Advice is grouped by the words the technician used, so one case can count under more than one heading.')] }) : null,
+      diseases.length ? Section({ title: 'Diseases found', children: h('div', { class: 'rep-stack' }, WordCloud(diseases), BarChart({ items: bars([...diseases, ...rareRow].slice(0, 12), 'disease') })) }) : null,
+      conclusions.length ? Section({ title: 'What technicians advised at sign-off', children: [BarChart({ items: bars(conclusions, 'conclusion') }), h('p', { class: 'casey-hint' }, orBelow(r.with_conclusion) + ' of ' + orBelow(r.total) + ' signed-off cases recorded advice. Advice is grouped by the words the technician used, so one case can count under more than one heading.')] }) : null,
       areas.length ? Section({ title: 'Where they were found', children: [BarChart({ items: bars(areas.slice(0, 12), 'region') })] }) : null,
       districts.length ? Section({ title: 'By district', children: [BarChart({ items: bars(districts.slice(0, 12), 'district') }), h('p', { class: 'casey-hint' }, 'Each district adds up the areas the team has placed in it.')] }) : null,
-      r.trend && r.trend.diseases.length ? Section({ title: 'Compared with the period before (' + nice(r.trend.previous_period) + ' to ' + nice(r.trend.period) + ')', children: [Table({ headers: ['Disease', nice(r.trend.period), nice(r.trend.previous_period), 'Change'], rows: r.trend.diseases.map((x) => [nice(x.disease), String(x.count), x.previous == null ? 'fewer than ' + r.k : String(x.previous), x.change == null ? '--' : (x.change > 0 ? 'up ' : x.change < 0 ? 'down ' : 'no change ') + (x.change ? Math.abs(x.change) : '')]), striped: true, compact: true, emptyText: 'Nothing to show yet' }), h('p', { class: 'casey-hint' }, 'Only diseases with at least ' + r.k + ' cases in the latest period are listed. The earlier period is hidden when it had fewer than ' + r.k + '.')] }) : null,
+      r.trend && (r.trend.diseases.length || r.trend.partial) ? Section({ title: 'Compared with the period before (' + nice(r.trend.previous_period) + ' to ' + nice(r.trend.period) + ')', children: [Table({ headers: ['Disease', nice(r.trend.period), nice(r.trend.previous_period), 'Change'], rows: r.trend.diseases.map((x) => [nice(x.disease), String(x.count), x.previous == null ? 'fewer than ' + r.k : String(x.previous), x.change == null ? '--' : (x.change > 0 ? 'up ' : x.change < 0 ? 'down ' : 'no change ') + (x.change ? Math.abs(x.change) : '')]), striped: true, compact: true, emptyText: 'Nothing to show yet.' }), h('p', { class: 'casey-hint' }, 'Only diseases with at least ' + r.k + ' cases in the latest period are listed. The earlier period is hidden when it had fewer than ' + r.k + '.'), r.trend.partial ? h('p', { class: 'casey-hint' }, 'The period ' + nice(r.trend.period) + ' is not finished, so no change is shown.') : null] }) : null,
       r.by_month.length ? Section({ title: 'When they were signed off ' + '(' + grainName + ')', children: [BarChart({ items: r.by_month.slice().sort((a, b) => String(a.month).localeCompare(String(b.month))).map((x) => ({ label: nice(x.month), value: x.count })) })] }) : null,
-      r.by_disease_region.length ? Section({ title: 'Disease by area', children: [Table({ headers: ['Disease', 'Area', 'Cases'], rows: r.by_disease_region.slice(0, 25).map((x) => [nice(x.disease), nice(x.region), String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet' })] }) : null,
-      byDiseaseConclusion.length ? Section({ title: 'Advice by disease', children: [Table({ headers: ['Disease', 'Advice', 'Cases'], rows: byDiseaseConclusion.slice(0, 25).map((x) => [nice(x.disease), x.conclusion, String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet' })] }) : null,
+      r.by_disease_region.length ? Section({ title: 'Disease by area', children: [Table({ headers: ['Disease', 'Area', 'Cases'], rows: r.by_disease_region.slice(0, 25).map((x) => [nice(x.disease), nice(x.region), String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet.' })] }) : null,
+      byDiseaseConclusion.length ? Section({ title: 'Advice by disease', children: [Table({ headers: ['Disease', 'Advice', 'Cases'], rows: byDiseaseConclusion.slice(0, 25).map((x) => [nice(x.disease), x.conclusion, String(x.count)]), striped: true, compact: true, emptyText: 'Nothing to show yet.' })] }) : null,
       SavedMonthlyReports(),
           sparse ? h('p', { class: 'casey-hint' }, '"Small groups combined" gathers every group of fewer than ' + r.k + ' cases into one line.') : null),
   });

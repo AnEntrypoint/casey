@@ -33,7 +33,7 @@ import { FeedbackPanel } from './panels/feedback-panel.js';
 import { isFieldRole, isViewerRole } from './api-roles.js';
 import { ResolvedMapPanel } from './panels/resolved-map-panel.js';
 import { DiseaseReportsPanel } from './panels/disease-reports-panel.js';
-import { refreshFieldLists } from './views/field-app.js';
+import { refreshFieldLists, fieldMapShown } from './views/field-app.js';
 import { resetFieldCase } from './views/field-case.js';
 
 import { OnboardingOverlay, onboarded, markOnboarded } from './components/onboarding-overlay.js';
@@ -143,7 +143,8 @@ async function loadCases() {
 
 async function refreshAttention() {
   try {
-    const a = await api.fetchAttention();
+    const { body: a, unchanged } = await api.pollAttention();
+    if (unchanged) return;
     const rows = Array.isArray(a) ? a : (a && a.cases) || [];
     setAttention(rows);
     setInboxBadge(a && typeof a.total === 'number' ? a.total : rows.length);
@@ -161,7 +162,8 @@ async function refreshHealth() {
 
 async function refreshDegradedTurns() {
   try {
-    const rows = await api.fetchDegradedTurns();
+    const { body: rows, unchanged } = await api.pollDegradedTurns();
+    if (unchanged) return;
     setDegradedTurns(Array.isArray(rows) ? rows : (rows && rows.rows) || []);
   } catch {  }
 }
@@ -245,9 +247,15 @@ function scheduleCasesPoll() {
   }, casesPollMs);
 }
 scheduleCasesPoll();
+const fieldPollable = () => state.authed && isFieldRole() && !state.activeId;
+function refreshFieldPolls() {
+  refreshFieldLists();
+  if (fieldMapShown()) refreshMapData();
+}
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   casesPollMs = CASES_POLL_MS;
+  if (fieldPollable()) refreshFieldPolls();
   if (!polling()) return;
   refreshHealth();
   refreshAttention();
@@ -259,7 +267,7 @@ const _attnIv = setInterval(() => { if (polling()) refreshAttention(); }, ATTENT
 const _mapIv = setInterval(() => { if (polling() && onMapHome()) refreshMapData(); }, MAP_POLL_MS);
 const _degradedIv = setInterval(() => { if (polling()) refreshDegradedTurns(); }, DEGRADED_POLL_MS);
 const FIELD_POLL_MS = 30000;
-const _fieldIv = setInterval(() => { if (state.authed && isFieldRole() && !state.activeId) refreshFieldLists(); }, FIELD_POLL_MS);
+const _fieldIv = setInterval(() => { if (fieldPollable() && document.visibilityState === 'visible') refreshFieldPolls(); }, FIELD_POLL_MS);
 const _stopConnWatch = api.startConnectionWatch();
 window.addEventListener('beforeunload', () => {
   clearTimeout(_casesTimer); clearInterval(_healthIv); clearInterval(_attnIv);

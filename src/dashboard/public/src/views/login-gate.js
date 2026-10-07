@@ -1,5 +1,4 @@
 import * as webjsx from 'webjsx';
-import { TextField } from 'ds/components/content.js';
 import { api, ApiError, isOfflineError, fetchBranding } from '../api.js';
 import { checkSession } from '../auth.js';
 import { state, schedule, setAuthed, setConfig } from '../state.js';
@@ -116,6 +115,16 @@ function submitButton(label, busyLabel) {
   }, local.busy ? busyLabel : label);
 }
 
+function loginField({ key, label, type = 'text', name, value, autocomplete, onInput, invalid, describedBy }) {
+  return h('label', { key, class: 'ds-field' },
+    h('span', { key: 'l', class: 'ds-field-label' }, label),
+    h('input', {
+      key: 'i', type, name, value, autocomplete,
+      oninput: (e) => onInput(e.target.value),
+      ...(invalid ? { 'aria-invalid': 'true', 'aria-describedby': describedBy } : {}),
+    }));
+}
+
 export function LoginGate() {
   const brand = brandName();
   const message = local.error || local.notice || state.sessionNotice || '';
@@ -134,10 +143,10 @@ export function LoginGate() {
         h('h1', { key: 'brand', class: 'ds-login-brand' }, brand),
         h('p', { key: 'why' }, 'Before you can use ' + brand + ', please choose your own password. The one you were given works only for this first log in.'),
         local.needCurrent
-          ? TextField({ key: 'cur', label: 'The password you were given', type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'current_password' })
+          ? loginField({ key: 'cur', label: 'The password you were given', type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'current_password', autocomplete: 'current-password' })
           : null,
-        TextField({ key: 'new', label: 'New password', type: 'password', value: local.newPassword, onInput: (v) => { local.newPassword = v; schedule(); }, name: 'new_password' }),
-        TextField({ key: 'confirm', label: 'Type the new password again', type: 'password', value: local.confirmPassword, onInput: (v) => { local.confirmPassword = v; schedule(); }, name: 'confirm_password', 'aria-invalid': local.confirmMismatch ? 'true' : undefined, 'aria-describedby': local.confirmMismatch ? 'ds-login-msg' : undefined }),
+        loginField({ key: 'new', label: 'New password', type: 'password', value: local.newPassword, onInput: (v) => { local.newPassword = v; schedule(); }, name: 'new_password', autocomplete: 'new-password' }),
+        loginField({ key: 'confirm', label: 'Type the new password again', type: 'password', value: local.confirmPassword, onInput: (v) => { local.confirmPassword = v; schedule(); }, name: 'confirm_password', autocomplete: 'new-password', invalid: local.confirmMismatch, describedBy: local.confirmMismatch ? 'ds-login-msg' : undefined }),
         messageNode,
         submitButton('Save my new password', 'Saving...')
       )
@@ -147,8 +156,8 @@ export function LoginGate() {
   return h('div', { class: 'ds-login-gate' },
     h('form', { key: 'login', class: 'ds-login-form', onsubmit: submitLogin },
       h('h1', { key: 'brand', class: 'ds-login-brand' }, brand),
-      TextField({ key: 'user', label: 'Username', value: local.username, onInput: (v) => { local.username = v; schedule(); }, name: 'username' }),
-      TextField({ key: 'pass', label: 'Password', type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'password' }),
+      loginField({ key: 'user', label: 'Username', value: local.username, onInput: (v) => { local.username = v; schedule(); }, name: 'username', autocomplete: 'username' }),
+      loginField({ key: 'pass', label: 'Password', type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'password', autocomplete: 'current-password' }),
       messageNode,
       submitButton('Log in', 'Logging in...')
     )

@@ -7,7 +7,7 @@ import { TextField, Select } from '/design/src/components/content/fields.js';
 import { state, schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchContacts, postContactTier, postContactErase } from '../api.js';
-import { fmtTime, channelLabel } from '../format.js';
+import { fmtTime, channelLabel, NO_TIME_TEXT } from '../format.js';
 import { countOf, entityLabelPlural, tierLabel, tierValue, TIER_ORDER } from '../vocabulary.js';
 import { glossaryLookup } from '../glossary.js';
 import { toast, failMsg } from '../toasts.js';
@@ -94,7 +94,7 @@ async function erase(c) {
 function who(c) {
     if (c.named) return c.display_name;
     if (c.has_number) return c.external_id_formatted;
-    const arrived = c.created_at ? fmtTime(c.created_at) : 'date unknown';
+    const arrived = c.created_at ? fmtTime(c.created_at) : NO_TIME_TEXT;
     const via = c.channel === 'web' ? 'Public form' : (c.channel ? 'Via ' + channelLabel(c.channel) : 'Channel not recorded');
     return h('div', { class: 'ds-contact-anon' },
         h('span', {}, 'No name or number given'),
@@ -148,7 +148,7 @@ export function ContactsPanel() {
                         withPeople(c, who(c)),
                         channelLabel(c.channel),
                         chip,
-                        c.last_location_at ? fmtTime(c.last_location_at) : 'never',
+                        c.last_location_at ? fmtTime(c.last_location_at) : NO_TIME_TEXT,
                         h('div', { class: 'ds-contact-actions' },
                             Select({ key: 'role-' + c.id, name: 'role-' + c.id, size: 'sm', value: tier, options: all, 'aria-label': 'Role for ' + (c.named ? c.display_name : (c.has_number ? c.external_id_formatted : 'this person')), onChange: (v, e) => setTier(c, v, e && e.target) }),
                             (isAdmin && !erased) ? Btn({ size: 'sm', variant: 'link', class: 'ds-contact-erase', disabled: busyIds.has(c.id), children: 'Erase personal details', onClick: () => erase(c) }) : null),

@@ -41,9 +41,11 @@ const SAST_OFFSET_MS = 2 * 3600e3
 const HEAT_CELL_DEG = 0.1
 const POINT_ROUND = 100
 
+const PHONE_OR_REF_RUN = /\+?\d(?:[\s.\/_-]?\d){6,}/g
+
 export function cleanLabel(raw, max = 60) {
   return String(raw == null ? '' : raw)
-    .replace(/[^\p{L}\s'()\-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim()
+    .replace(PHONE_OR_REF_RUN, ' ').replace(/[^\p{L}\p{Nd}\s'()\-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, max).trim()
 }
 
 const labelKey = (label) => label.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase()
@@ -280,6 +282,7 @@ function windowOf(req, res) {
   if (Number.isNaN(from) || Number.isNaN(to)) { res.status(400).json({ error: 'from and to must be a date like 2026-03-31 or unix seconds' }); return null }
   return { from, to }
 }
+const stamp = (w) => ({ generated_at: new Date().toISOString(), as_of: w.to == null ? null : new Date(w.to * 1000).toISOString() })
 const grainOf = (req) => (['month', 'quarter', 'year'].includes(req.query.grain) ? req.query.grain : 'month')
 const statusAsked = (req) => normalizeDiagnosisStatus(req.query.status)
 
@@ -293,6 +296,7 @@ export function getResolvedMap({ store, authed }) {
     const species = asked(req.query.species)
     const status = statusAsked(req)
     let rows = await loadResolved(store, w)
+    const truncated = rows.truncated === true
     if (status) rows = rows.filter(r => r.status === status)
     if (region) rows = rows.filter(r => labelKey(r.region) === labelKey(region))
     if (species) rows = rows.filter(r => labelKey(r.species) === labelKey(species))
@@ -303,7 +307,7 @@ export function getResolvedMap({ store, authed }) {
     const points = placed.filter(r => cellCount.get(cellKey(r.ll)) >= MIN_AGGREGATE_CELL).map(r => ({
       lat: r.ll.lat, lon: r.ll.lon, disease: r.disease, species: r.species, status: r.status, advice: r.conclusions, resolved_at: weekStartOf(r.sec),
     })).sort((a, b) => a.resolved_at < b.resolved_at ? -1 : a.resolved_at > b.resolved_at ? 1 : 0)
-    res.json({ k: MIN_AGGREGATE_CELL, count: points.length, withheld: floored(placed.length - points.length), without_location: floored(rows.length - placed.length), precision_km: 1, truncated: rows.truncated === true, points })
+    res.json({ ...stamp(w), k: MIN_AGGREGATE_CELL, count: points.length, withheld: floored(placed.length - points.length), without_location: floored(rows.length - placed.length), precision_km: 1, truncated, points })
   }
 }
 
@@ -317,7 +321,7 @@ export function getDiseases({ store, authed }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const w = windowOf(req, res); if (!w) return
-    res.json(await diseaseReportFor(store, w, { region: asked(req.query.region), grain: grainOf(req) }))
+    res.json({ ...stamp(w), ...(await diseaseReportFor(store, w, { region: asked(req.query.region), grain: grainOf(req) })) })
   }
 }
 
@@ -342,10 +346,11 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
     row(['signed-off cases', orBelow(rep.total)]),
     row(['signed-off cases with advice recorded', orBelow(rep.with_conclusion)]),
     row(['signed-off cases with a photo', orBelow(rep.with_photo)]),
-    row(['closed without a diagnosis', orBelow(rep.closed_without_diagnosis)]),
+    row(['closed without a diagnosis', region ? 'not shown for one area' : orBelow(rep.closed_without_diagnosis)]),
   ])
   return `<h1>Disease report</h1>`
     + `<p class="meta">Generated ${esc(generated)}. Period: ${esc(period)}. Area: ${esc(region || 'all areas')}. Grouped by ${esc(rep.grain)}.</p>`
+    + `<p class="meta">Groups under ${rep.k} cases are not shown, so rows may not add up to the total.</p>`
     + `<h2>Totals</h2>${totals}`
     + `<h2>Confirmed and suspected</h2>` + tbl(['Status', 'Cases'], statusRows)
     + `<h2>By disease</h2>` + list('Disease', diseaseRows(rep), 'disease')
@@ -353,6 +358,7 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
     + `<h2>By district</h2>` + list('District', rep.by_district, 'district')
     + `<h2>Compared with the period before</h2>` + trend
     + `<h2>Advice given at sign-off</h2>` + list('Advice', rep.by_conclusion, 'conclusion')
+    + `<p class="meta">One case can count under more than one kind of advice, so these rows can add up to more than the cases with advice.</p>`
     + `<h2>By ${esc(rep.grain)}</h2>` + list('Period', byMonth, 'month')
     + `<p class="meta">Groups of fewer than ${rep.k} cases are combined under "${printName(SPARSE_BUCKET_KEY)}" so no single report can be picked out. No case-level or personal data is included.${rep.truncated ? ' There are more reports than could be loaded, so the figures leave some out.' : ''}</p>`
 }
@@ -365,9 +371,10 @@ export function getDiseasesPrint(deps) {
     const region = asked(req.query.region)
     const rep = await diseaseReportFor(store, w, { region, grain: grainOf(req) })
     const period = periodLabel(w)
-    const body = diseaseReportBody(rep, { period, region, generated: fmtTimeSAST(Math.floor(Date.now() / 1000)) }, { esc, row: printableReportRow, tbl: printableReportTable })
+    const generated = fmtTimeSAST(Math.floor(Date.now() / 1000))
+    const body = diseaseReportBody(rep, { period, region, generated }, { esc, row: printableReportRow, tbl: printableReportTable })
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
-    res.send(printableReport('Disease report', body))
+    res.send(printableReport('Disease report', body, '', `Generated ${generated}`))
   }
 }
 
@@ -421,7 +428,8 @@ export function getHeat({ store, authed }) {
       lon: Math.round((g.j + 0.5) * HEAT_CELL_DEG * 1000) / 1000,
       count: g.count,
     })).sort((a, b) => b.count - a.count)
-    res.json({ k: MIN_AGGREGATE_CELL, scope, truncated, cell_deg: HEAT_CELL_DEG, total: released.reduce((s, c) => s + c.count, 0), cells: released })
+    const date_basis = scope === 'all' ? 'reported' : 'resolved'
+    res.json({ ...stamp(w), k: MIN_AGGREGATE_CELL, scope, date_basis, truncated, cell_deg: HEAT_CELL_DEG, total: released.reduce((s, c) => s + c.count, 0), cells: released })
   }
 }
 
@@ -448,10 +456,41 @@ export function getAreas({ store, authed }) {
     const region = asked(req.query.region)
     const species = asked(req.query.species)
     const status = statusAsked(req)
-    const rows = (await loadResolved(store, w)).filter(r => (!species || labelKey(r.species) === labelKey(species)) && (!status || r.status === status))
+    const loaded = await loadResolved(store, w)
+    const rows = loaded.filter(r => (!species || labelKey(r.species) === labelKey(species)) && (!status || r.status === status))
     const areas = areaBubbles(region ? rows.filter(r => labelKey(r.region) === labelKey(region)) : rows)
-    res.json({ k: MIN_AGGREGATE_CELL, precision_km: 10, truncated: rows.truncated === true, total: areas.reduce((s, a) => s + a.count, 0), areas })
+    res.json({ ...stamp(w), k: MIN_AGGREGATE_CELL, precision_km: 10, truncated: loaded.truncated === true, total: areas.reduce((s, a) => s + a.count, 0), areas })
   }
+}
+
+export function reportCsvLines(rep, period, csvCell) {
+  const columns = ['view', 'disease', 'region', 'district', 'period', 'status', 'conclusion', 'note', 'cases', 'previous', 'change']
+  const lines = [columns.map(c => (c === 'period' ? `period_${rep.grain}` : c)).join(',')]
+  const cell = (v) => csvCell(printName(v ?? 'all'))
+  const num = (v) => (v == null ? '' : String(v))
+  const emit = (view, f) => lines.push(columns.map(col => (
+    col === 'view' ? view
+      : col === 'cases' ? csvCell(f.count ?? '')
+      : col === 'note' ? csvCell(f.note ?? '')
+      : col === 'previous' ? num(f.previous)
+      : col === 'change' ? num(f.change)
+      : cell(col === 'period' ? (f.period ?? f.month) : f[col])
+  )).join(','))
+  for (const c of diseaseRows(rep)) emit('disease', c)
+  for (const c of rep.by_disease_region) emit('disease_by_region', c)
+  for (const c of rep.by_disease_month) emit('disease_by_period', c)
+  for (const c of rep.cells) emit('disease_region_period', c)
+  if (rep.trend) for (const d of rep.trend.diseases) emit('trend', { disease: d.disease, period: rep.trend.period, count: d.count, previous: d.previous, change: d.change })
+  for (const c of rep.by_status) emit('status', { status: c.status, count: c.count })
+  if (rep.ruled_out) emit('status', { status: RULED_OUT, count: rep.ruled_out })
+  for (const c of rep.by_district) emit('district', { district: c.district, count: c.count })
+  for (const c of rep.by_conclusion) emit('conclusion', { conclusion: c.conclusion, count: c.count })
+  for (const c of rep.by_disease_conclusion) emit('disease_conclusion', { disease: c.disease, conclusion: c.conclusion, count: c.count })
+  const note = (text) => emit('note', { note: text })
+  note(`Period: ${period}. Generated ${fmtTimeSAST(Date.now())}.`)
+  note(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under "${printName(SPARSE_BUCKET_KEY)}". No case-level or personal data is included.`)
+  if (rep.truncated) note('There are more reports than this export can load, so the figures leave some out.')
+  return lines
 }
 
 export function getReportsCsv({ store, authed, csvCell }) {
@@ -459,26 +498,8 @@ export function getReportsCsv({ store, authed, csvCell }) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const w = windowOf(req, res); if (!w) return
     const rep = await diseaseReportFor(store, w, { region: asked(req.query.region), grain: grainOf(req) })
-    const columns = ['view', 'disease', 'region', 'district', 'period', 'status', 'conclusion', 'note', 'cases']
-    const lines = [columns.map(c => (c === 'period' ? `period_${rep.grain}` : c)).join(',')]
-    const cell = (v) => csvCell(printName(v ?? 'all'))
-    const emit = (view, f) => lines.push(columns.map(col => (
-      col === 'view' ? view : col === 'cases' ? csvCell(f.count ?? '') : col === 'note' ? csvCell(f.note ?? '') : cell(f[col])
-    )).join(','))
-    for (const c of diseaseRows(rep)) emit('disease', c)
-    for (const c of rep.by_disease_region) emit('disease_by_region', c)
-    for (const c of rep.by_disease_month) emit('disease_by_period', { ...c, period: c.month })
-    for (const c of rep.cells) emit('disease_region_period', { ...c, period: c.month })
-    if (rep.trend) for (const d of rep.trend.diseases) emit('trend', { disease: d.disease, period: rep.trend.period, count: d.count })
-    for (const c of rep.by_status) emit('status', { status: c.status, count: c.count })
-    if (rep.ruled_out) emit('status', { status: RULED_OUT, count: rep.ruled_out })
-    for (const c of rep.by_district) emit('district', { district: c.district, count: c.count })
-    for (const c of rep.by_conclusion) emit('conclusion', { conclusion: c.conclusion, count: c.count })
-    for (const c of rep.by_disease_conclusion) emit('disease_conclusion', { disease: c.disease, conclusion: c.conclusion, count: c.count })
-    const note = (text) => emit('note', { note: text })
-    note(`Period: ${periodLabel(w)}. Generated ${fmtTimeSAST(Date.now())}.`)
-    note(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under "${printName(SPARSE_BUCKET_KEY)}". No case-level or personal data is included.`)
-    if (rep.truncated) { note('There are more reports than this export can load, so the figures leave some out.'); res.setHeader('X-Report-Truncated', '1') }
+    const lines = reportCsvLines(rep, periodLabel(w), csvCell)
+    if (rep.truncated) res.setHeader('X-Report-Truncated', '1')
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')
     res.setHeader('Content-Disposition', 'attachment; filename="resolved-cases-by-disease.csv"')
     res.send('\uFEFF' + lines.join('\r\n'))

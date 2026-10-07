@@ -156,7 +156,7 @@ function rememberConditional(path, entry) {
   while (condCache.size > CONDITIONAL_CACHE_MAX) condCache.delete(condCache.keys().next().value);
 }
 
-async function conditional(path) {
+export async function conditional(path) {
   const prev = condCache.get(path);
   const r = await api(path, prev ? { headers: { 'if-none-match': prev.etag } } : {});
   if (r.status === 304 && prev) { rememberConditional(path, prev); return { body: prev.body, unchanged: true }; }
@@ -289,6 +289,7 @@ export const postClaim = (id) => post('/api/cases/bulk', { ids: [id], action: 'c
 export const postDispatch = (id, body) => post('/api/cases/' + encodeURIComponent(id) + '/dispatch', body);
 
 export const fetchAttention = (params) => json('/api/attention' + qs(params));
+export const pollAttention = (params) => conditional('/api/attention' + qs(params));
 export const fetchStats = () => json('/api/stats');
 export const fetchThresholds = () => json('/api/thresholds');
 export const putThresholds = (body) => put('/api/thresholds', body);
@@ -313,6 +314,7 @@ export const fetchOperatorWorkload = () => json('/api/operators/workload');
 export const fetchSecretaryQueue = (params) => json('/api/secretary/queue' + qs(params));
 
 export const fetchMapCases = (params) => condBody('/api/map/cases' + qs(params));
+export const pollMapCases = (params) => conditional('/api/map/cases' + qs(params));
 export const fetchMapWorkers = () => json('/api/map/workers');
 export const fetchMapLastReports = () => json('/api/map/last-reports');
 export const fetchOperatorIdentities = () => json('/api/operators/identities');
@@ -327,6 +329,7 @@ export const postPersonMerge = (contactId, body) => post('/api/contacts/' + enco
 export const postPersonErase = (contactId, body) => post('/api/contacts/' + encodeURIComponent(contactId) + '/persons/erase', body);
 
 export const fetchDegradedTurns = (params) => json('/api/turns/degraded' + qs(params));
+export const pollDegradedTurns = (params) => conditional('/api/turns/degraded' + qs(params));
 export const postContactRegister = (phone, name, tier) => post('/api/contacts/register', { phone, name, tier });
 
 export const fetchRoleInvites = () => json('/api/role-invites');

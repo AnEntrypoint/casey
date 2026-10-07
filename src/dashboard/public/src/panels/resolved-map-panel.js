@@ -16,7 +16,7 @@ const h = webjsx.createElement;
 const MODES = [
   { id: 'dots', label: 'Each signed-off case' },
   { id: 'heat', label: 'Heat map of signed-off cases' },
-  { id: 'all', label: 'Heat map of all reports' },
+  { id: 'all', label: 'Heat map of all reports (by date reported)' },
   { id: 'areas', label: 'Cases by area' },
 ];
 const PAL = ['--sky', '--flame', '--purple-2', '--green', '--amber', '--danger'];
@@ -118,7 +118,7 @@ function tableAlternative(dots) {
   } else return null;
   return h('details', { class: 'rep-table-alt' },
     h('summary', null, 'Show these figures as a table'),
-    Table({ headers, rows, striped: true, compact: true, emptyText: 'Nothing to show yet' }));
+    Table({ headers, rows, striped: true, compact: true, emptyText: 'Nothing to show yet.' }));
 }
 
 
@@ -195,10 +195,10 @@ export function ResolvedMapPanel() {
   const tileNote = rm.drv && rm.drv.tilesFailing ? Alert({ kind: 'warn', children: 'The map background is not loading. The dots, areas and figures come from this dashboard and are unaffected -- only the picture behind them is missing.' }) : null;
   const total = rm.mode === 'dots' ? dots.length : (liveHeat() && liveHeat().data ? liveHeat().data.total : 0);
   const summary = rm.mode === 'dots'
-    ? `${dots.length} signed-off ${dots.length === 1 ? 'case' : 'cases'} shown${until ? ', up to the week of ' + say(until) : ''}. Each dot is placed only to about 1 km, and only where at least 5 signed-off cases share the area.`
+    ? `${dots.length} signed-off ${dots.length === 1 ? 'case' : 'cases'} shown${until ? ', up to the week of ' + say(until) : ''}. Each dot is placed only to about 1 km, and only where at least 5 signed-off cases share a map square.`
     : rm.mode === 'areas'
       ? `${total} signed-off cases in ${liveHeat() && liveHeat().data ? liveHeat().data.areas.length : 0} named areas with at least 5, up to ${untilEnd ? say(untilEnd) : 'now'}. A bubble sits near the middle of an area's cases, rounded to about 10 km, and its size shows how many.`
-      : `Heat map: ${total} ${rm.mode === 'all' ? 'reports' : 'signed-off cases'} in areas with at least 5, up to the end of the month of ${untilEnd ? say(untilEnd) : 'now'}. Areas with fewer than 5 are not shown.`;
+      : `Heat map${rm.mode === 'all' ? ', by date reported' : ', by date signed off'}: ${total} ${rm.mode === 'all' ? 'reports' : 'signed-off cases'} in map squares with at least 5, up to ${until ? 'the end of the week of ' + say(until) : 'now'}. Squares with fewer than 5 are not shown.`;
   const truncatedNote = rd.points.truncated || (liveHeat() && liveHeat().data && liveHeat().data.truncated) ? Alert({ kind: 'warn', children: 'There are more reports than this map can load, so the figures leave some out.' }) : null;
   const noDots = !all.length ? Alert({ kind: 'info', children: 'No signed-off case with a place on the map yet in this period. A case appears here once an animal health technician has signed it off with the disease they identified.' }) : null;
 
@@ -222,6 +222,6 @@ export function ResolvedMapPanel() {
         Btn({ key: 'play', variant: rm.playing ? 'primary' : 'default', children: [Icon(rm.playing ? 'pause' : 'play', { size: 15 }), rm.playing ? ' Pause' : ' Play time-lapse'], onClick: () => togglePlay(weeks), 'aria-label': rm.playing ? 'Pause the time-lapse' : 'Play the time-lapse from the first week' }),
         Slider({ key: 'sl', label: 'Show cases signed off up to ' + (until ? say(until) : 'now'), min: 0, max: weeks.length - 1, step: 1, value: rm.idx, onChange: (v) => { stop(); rm.idx = Math.round(v); schedule(); } })) : null,
       truncatedNote,
-          h('p', { id: 'rm-summary', class: 'casey-hint', 'aria-live': rm.playing ? 'off' : 'polite' }, summary + (rd.points.withheld ? ` ${rd.points.withheld} more are held back because fewer than ${rd.points.k} signed-off cases share their area.` : ''))),
+          h('p', { id: 'rm-summary', class: 'casey-hint', 'aria-live': rm.playing ? 'off' : 'polite' }, summary + (rd.points.withheld ? ` ${rd.points.withheld} more are held back because fewer than ${rd.points.k} signed-off cases share their map square.` : ''))),
   });
 }

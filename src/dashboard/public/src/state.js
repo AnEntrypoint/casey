@@ -102,12 +102,12 @@ export function onAttentionChange(fn) {
   return () => attentionListeners.delete(fn);
 }
 export function setAttention(rows) {
-  const same = JSON.stringify(rows) === JSON.stringify(state.attention);
+  if (JSON.stringify(rows) === JSON.stringify(state.attention)) return;
   state.attention = rows;
   for (const fn of attentionListeners) {
     try { fn(rows); } catch {  }
   }
-  if (!same) schedule();
+  schedule();
 }
 export function setFilt(partial) { Object.assign(state.filt, partial); state.page = 1; schedule(); }
 export function setMineOnly(v) { state.mineOnly = !!v; state.filt.mine = !!v; state.page = 1; schedule(); }
@@ -139,7 +139,11 @@ export function setConnLost(v) {
   schedule();
 }
 export function setSessionRestored(v) { state.sessionRestored = !!v; schedule(); }
-export function setHealth(patch) { Object.assign(state.health, patch); schedule(); }
+export function setHealth(patch) {
+  const before = JSON.stringify(state.health);
+  Object.assign(state.health, patch);
+  if (JSON.stringify(state.health) !== before) schedule();
+}
 export function setHandoffQueue(q) { state.handoffQueue = q; schedule(); }
 export function setDegradedTurns(rows) {
   const same = JSON.stringify(rows) === JSON.stringify(state.degradedTurns);

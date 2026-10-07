@@ -1,6 +1,6 @@
 import * as webjsx from 'webjsx';
 import { state, schedule, setMineOnly, setCases } from '../state.js';
-import { tagList, isMine } from '../format.js';
+import { tagList, isMine, FILTERED_EMPTY_TEXT } from '../format.js';
 import * as api from '../api.js';
 import { loadRoster } from '../api-roles.js';
 import { toast } from '../toasts.js';
@@ -198,7 +198,7 @@ function listBody(shown) {
   }
   if (!shown.length) {
     return h('div', { class: 'ds-case-list-empty empty' },
-      'No reports match the filters you have on. Clear them to see the rest.');
+      FILTERED_EMPTY_TEXT);
   }
   return shown.length > VIRTUALIZE_THRESHOLD
     ? VirtualizedCaseList({ cases: shown, expandedGuardrails: expandedGuardrailId, onToggleGuardrails: toggleGuardrails })

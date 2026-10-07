@@ -42,7 +42,7 @@ function showWorkerPicker(title, message, workers) {
         const workerLabel = (w) => (w.display_name || 'field worker')
             + (w.km != null ? ` (${w.km.toFixed(1)}km${w.stale ? ', stale' : ''})` : (w.stale ? ' (stale)' : ''));
         webjsx.applyDiff(overlay, h('div', { class: 'ds-dialog-panel' },
-            h('div', { key: 'head', class: 'ds-dialog-head' }, h('h3', { id: titleId, class: 'ds-dialog-title' }, title)),
+            h('div', { key: 'head', class: 'ds-dialog-head' }, h('h2', { id: titleId, class: 'ds-dialog-title' }, title)),
             h('p', { key: 'msg', class: 'ds-dialog-message' }, message),
             Select({ key: 'who', label: 'Who should go', name: 'worker', value: workerId, options: workers.map((w) => ({ value: w.id, label: workerLabel(w) })), onChange: (v) => { workerId = v; } }),
             TextField({ key: 'note', label: 'Optional note for the team', name: 'note', multiline: true, rows: 2, value: '', onInput: (v) => { note = v; } }),

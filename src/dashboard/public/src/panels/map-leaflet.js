@@ -1,6 +1,6 @@
 import { setMapExtent, schedule } from '../state.js';
 import { filterOptionsFrom } from '../map-model.js';
-import { fetchMapCases } from '../api.js';
+import { pollMapCases } from '../api.js';
 import { renderMapMarkers } from './map-markers.js';
 import { renderMapCoverage, renderMapWorkers, renderMapLastReports } from './map-overlays.js';
 
@@ -119,14 +119,23 @@ function autoFitToReports(mapState) {
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => requestAnimationFrame(fit)); else fit();
 }
 
+async function refreshOverlays(mapState) {
+    try {
+        if (mapState.showWorkers) await renderMapWorkers(mapState);
+        if (mapState.showLastReports) await renderMapLastReports(mapState);
+    } catch {  }
+}
+
 export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     if (!canvas) return null;
-    const j = await fetchMapCases({ days }).catch(() => null);
+    const polled = await pollMapCases({ days }).catch(() => null);
+    const j = polled && polled.body;
     if (!j) {
         if (callbacks && callbacks.onError) callbacks.onError('Could not load the reports. The map could not reach this dashboard\'s own server, so what you see may be out of date.');
         return mapStateRef.current;
     }
-    if (!mapStateRef.current) {
+    const created = !mapStateRef.current;
+    if (created) {
         const { map, tiles } = createFramedMap(canvas, j.pins);
         mapStateRef.current = {
             map, markerLayer: null, clusterLines: null, coverageLayer: null, workersLayer: null, lastReportsLayer: null,
@@ -139,11 +148,14 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     const mapState = mapStateRef.current;
     observeCanvasSize(mapState);
 
-    mapState.pins = j.pins || [];
-    mapState.clusters = j.clusters || [];
-    if (callbacks && callbacks.onOptions) callbacks.onOptions(filterOptionsFrom(mapState.pins));
-    renderMapMarkers(mapState, filters);
-    autoFitToReports(mapState);
+    if (created || !polled.unchanged || mapState.loadedDays !== days) {
+        mapState.loadedDays = days;
+        mapState.pins = j.pins || [];
+        mapState.clusters = j.clusters || [];
+        if (callbacks && callbacks.onOptions) callbacks.onOptions(filterOptionsFrom(mapState.pins));
+        renderMapMarkers(mapState, filters);
+        autoFitToReports(mapState);
+    }
     if (callbacks && callbacks.onSummary) {
         callbacks.onSummary({
             unresolvedCount: j.unresolved_count || 0,
@@ -151,6 +163,7 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
             truncated: j.truncated, cap: j.cap, totalConsidered: j.total_considered,
         });
     }
+    await refreshOverlays(mapState);
     return mapState;
 }
 
