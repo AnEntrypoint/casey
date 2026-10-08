@@ -899,6 +899,28 @@ function fillLinesHtml(key) {
   return `<span class="ds-fill-lines" aria-hidden="true">${'<span class="ds-fill-line"></span>'.repeat(n)}</span>`
 }
 
+const HEALTH_WARNING_LABEL = {
+  'health:stale': 'Going cold (no recent activity)',
+  'health:stuck': 'Stuck in this stage too long',
+  'health:unanswered_handoff': 'A person was asked for and not yet answered',
+  'health:abandoned_intake': 'Intake left with on-site facts missing',
+  'health:incomplete_critical': 'Working but visit-critical facts still missing',
+  'health:never_closed': 'Resolved but never closed',
+  'health:timestamp_corrupt': 'Case time data looks wrong',
+  'health:unanswered_handoff_escalated': 'Still waiting for a person, well past the first deadline',
+  'health:unsent_draft': 'A reply is written but nobody has sent it',
+  'health:premature_complete': 'Marked done with facts a field visit needs still blank',
+  'needs-human': 'Waiting for a person to look',
+  'draft-pending': 'Reply written but not sent',
+  'ai-offline': 'Automatic replies are paused',
+  'degraded-turn-seen': 'A reply had to be retried',
+}
+const GUARDRAIL_INTERNAL_TAGS = new Set(['needs-human', 'draft-pending', 'unsent_draft', 'ai-offline', 'degraded-turn-seen'])
+const warningKey = (t) => 'ui.warn_' + t.replace(/^health:/, '').replace(/[^a-z0-9]+/g, '_')
+const guardrailWarnings = (c) => tagList(c)
+  .filter(t => t.startsWith('health:') || GUARDRAIL_INTERNAL_TAGS.has(t))
+  .map(t => vocabWord(warningKey(t)) || HEALTH_WARNING_LABEL[t] || vocabWord('ui.warn_needs_check', 'Needs a check'))
+
 export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableReport }) {
   return async (req, res) => {
     try {
@@ -929,7 +951,7 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
       const telLink = /^[+0-9]{7,}$/.test(dial) ? `tel:${dial}` : null
       const extraCss = `body{max-width:700px;margin:var(--space-5) auto}`
         + `table{width:100%}th{width:40%;font-weight:600;vertical-align:top}td{vertical-align:top}`
-        + `.maplink{font-size:var(--fs-micro)}.printonly{display:none}`
+        + `.maplink{font-size:var(--fs-micro)}.printonly{display:none}.ds-print-warn{break-inside:avoid}`
         + `.act{display:flex;gap:var(--space-2-75);flex-wrap:wrap;margin:var(--space-2-5) 0 var(--space-4)}`
         + `.act a{background:${BRAND.ground};color:${BRAND.ink};padding:var(--space-2) var(--space-3);border-radius:6px;text-decoration:none;font-size:var(--fs-xs);font-weight:600}`
         + `.act a:hover{background:${BRAND.hover}}`
@@ -937,9 +959,12 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
       const who = await reporterSummary(store, c.contact_id, c.id).catch(() => null)
       const whoLine = who && who.people > 1
         ? `<p><strong>Reported by:</strong> ${esc(who.reported_by ? who.reported_by.name : 'not recorded')}, shared phone: ${who.people} people</p>` : ''
+      const warnings = guardrailWarnings(c)
+      const warnLine = warnings.length
+        ? `<div class="ds-print-warn"><p><strong>Warnings:</strong></p><ul>${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''
       const body = `<h1>Field briefing: ${esc(c.ref||c.id)}</h1>
 <p><strong>Subject:</strong> ${esc(c.subject||'')}</p>${whoLine}
-<p><strong>Status:</strong> ${esc(c.status||'')} &nbsp; <strong>Channel:</strong> ${esc(c.channel||'')}</p>
+<p><strong>Status:</strong> ${esc(c.status||'')} &nbsp; <strong>Channel:</strong> ${esc(c.channel||'')}</p>${warnLine}
 <p class="meta">Generated ${esc(fmtTimeSAST(Date.now()))}.</p>
 <div class="act">
   <a href="javascript:window.print()">Print this page</a>

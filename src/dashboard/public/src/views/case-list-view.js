@@ -177,7 +177,7 @@ function listChips() {
   return h('div', { class: 'ds-filter-pills' },
     chip('attn', 'need a person', needCount, attentionOnly,
       () => { attentionOnly = !attentionOnly; schedule(); },
-      'Show only the reports the guardrails are chasing'),
+      'Show only the reports that need a check'),
     chip('mine', 'yours', mineCount, state.mineOnly,
       () => setMineOnly(!state.mineOnly),
       'Show only the reports you have claimed'),

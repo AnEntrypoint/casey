@@ -75,7 +75,7 @@ export function SettingsPanel() {
         });
     });
     return h('div', { class: 'ds-settings-panel' },
-        h('p', { class: 'ds-settings-state' }, 'These are the deadlines the guardrail sweep checks every case against. Every value is in hours: 24 is a day, 168 is a week. Decimals are allowed, so 0.5 is thirty minutes.'),
+        h('p', { class: 'ds-settings-state' }, 'These are the deadlines the automatic check measures every case against. Every value is in hours: 24 is a day, 168 is a week. Decimals are allowed, so 0.5 is thirty minutes.'),
         ...rows,
         h('div', { class: 'ds-settings-actions' },
             Btn({ variant: 'primary', children: saving ? 'Saving...' : 'Save', disabled: saving, onClick: save }),

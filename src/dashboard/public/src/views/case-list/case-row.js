@@ -4,6 +4,7 @@ import { state, toggleBulkSelect, setActiveId } from '../../state.js';
 import { rel, fmtTime, tagList, stageLabel, stageTone, healthLabel, channelLabel, priorityLabel } from '../../format.js';
 import { urgencyBand, URGENCY_BAND_LABEL } from '../../map-model.js';
 import { entityLabel } from '../../vocabulary.js';
+import { word } from '../../words.js';
 import { pushHash } from '../../route.js';
 import { teamRoster } from '../../api-roles.js';
 const h = webjsx.createElement;
@@ -40,11 +41,27 @@ function GuardrailChip({ c, expanded }) {
   if (!expanded) {
     return Chip({
       key: 'grd', tone: 'warn', size: 'sm',
-      children: [h('span', { key: 'gc' }, tags.length + ' guardrail flag' + (tags.length === 1 ? '' : 's'))],
+      children: [h('span', { key: 'gc' }, checkCount(tags.length))],
     });
   }
   return h('span', { key: 'grd-x', class: 'ds-guardrail-expanded' },
     ...tags.map((t, i) => Chip({ key: 'g' + i, tone: 'warn', size: 'sm', children: healthLabel(t) })));
+}
+
+function checkCount(n) {
+  return word(n === 1 ? 'ui.check_count_one' : 'ui.check_count_many', { n });
+}
+
+function flagWords(c, expanded) {
+  const words = [];
+  if (c.priority === 'urgent' || c.priority === 'high') words.push(priorityLabel(c.priority));
+  const tags = guardrailTags(c);
+  if (tags.length) {
+    words.push(expanded
+      ? tags.map((t) => healthLabel(t)).join(', ')
+      : checkCount(tags.length));
+  }
+  return words;
 }
 
 function fillPill(rfr) {
@@ -79,7 +96,7 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
       key: 'grd-toggle', type: 'button', class: 'btn-link ds-guardrail-toggle-btn',
       'aria-expanded': expandedGuardrails ? 'true' : 'false',
       onclick: (e) => { e.stopPropagation(); onToggleGuardrails && onToggleGuardrails(c.id); },
-    }, expandedGuardrails ? 'Hide flags' : 'Show flags')
+    }, expandedGuardrails ? word('ui.checks_hide') : word('ui.checks_show'))
     : null;
 
   return h('div', {
@@ -100,7 +117,11 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
       key: 'main', class: 'case-row-main', role: 'group', tabindex: '0',
       'data-id': c.id,
       'aria-current': active ? 'true' : undefined,
-      'aria-label': c.ref + ': ' + (band ? (URGENCY_BAND_LABEL[band] + ' -- ') : '') + lead,
+      'aria-label': c.ref + ': ' + [
+        band ? URGENCY_BAND_LABEL[band] : '',
+        stageLabel(c.status),
+        owner ? (mine ? 'you' : ownerName(owner)) : '',
+      ].concat(flagWords(c, expandedGuardrails)).filter(Boolean).join(', '),
       onkeydown: (e) => {
         if (e.key === 'Enter' && e.target === e.currentTarget) open();
         else if ((e.key === ' ' || e.key === 'Spacebar') && e.target === e.currentTarget) { e.preventDefault(); open(); }

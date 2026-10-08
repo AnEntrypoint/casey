@@ -24,7 +24,7 @@ export function toDate(v) {
 
 export function rel(v) {
   const d = toDate(v);
-  if (!d) return '';
+  if (!d) return NO_TIME_TEXT;
   const s = Math.round((Date.now() - d.getTime()) / 1000);
   if (s < 45) return 'just now';
   if (s < 90) return '1m ago';
