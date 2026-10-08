@@ -4,6 +4,7 @@ import { Dialog } from './dialog-shell.js';
 import { glossary } from '../glossary.js';
 import { brandName } from '../vocabulary.js';
 import { queueName } from '../map-model.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 const KEY = 'casey_help_seen';
@@ -20,60 +21,60 @@ function KeyRow({ k, desc }) {
     return h('li', { key: k }, h('kbd', { class: 'ds-kbd' }, k), ' - ', desc);
 }
 
-const TERM_WORD = { sla: 'SLA', external_id: 'external ID' };
-function termWord(term) { return TERM_WORD[term] || term.replace(/_/g, ' '); }
+const TERM_WORD = { sla: 'ui.help_overlay_term_sla', external_id: 'ui.help_overlay_term_external_id' };
+function termWord(term) { return TERM_WORD[term] ? word(TERM_WORD[term]) : term.replace(/_/g, ' '); }
 
 export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
     const brand = brandName();
     return Dialog({
         open, onClose,
         id: 'help',
-        title: 'How this screen works',
+        title: word('ui.help_overlay_title'),
         wide: true,
         footer: h('div', { class: 'ds-dialog-foot-row' },
-            onShowOnboarding ? Btn({ variant: 'ghost', onClick: onShowOnboarding, children: 'Show me the first-shift steps again' }) : null,
-            Btn({ variant: 'primary', onClick: onClose, children: 'Got it' })
+            onShowOnboarding ? Btn({ variant: 'ghost', onClick: onShowOnboarding, children: word('ui.help_overlay_show_onboarding') }) : null,
+            Btn({ variant: 'primary', onClick: onClose, children: word('ui.help_overlay_got_it') })
         ),
         children: [
-            Lede({ children: `${brand} reads the messages people send on WhatsApp and Discord, writes down what they report, and puts the ones that need you at the top of this screen. Here is what you are looking at, in plain words.` }),
+            Lede({ children: word('ui.help_overlay_intro', { brand }) }),
 
-            h('h3', { key: 'h-queue' }, `The "${queueName()}" list`),
-            h('p', { key: 'p-queue' }, 'It is the list beside the map, and it is the whole job: the report that needs somebody most is at the top. Each row leads with what the report is about, then the reference code, then one line saying why it is in the list. Tap a row to open it.'),
-            h('p', { key: 'p-band' }, 'A coloured stripe runs down the left edge of a row. Red means it needs a person now, amber means it needs a look today, grey means it can wait. The map beside the list marks the same reports the same way, and the legend on the map says what every pin colour and outline means.'),
+            h('h3', { key: 'h-queue' }, word('ui.help_overlay_queue_heading', { queue: queueName() })),
+            h('p', { key: 'p-queue' }, word('ui.help_overlay_queue_body')),
+            h('p', { key: 'p-band' }, word('ui.help_overlay_band_body')),
 
-            h('h3', { key: 'h-open' }, 'What you can do on an open report'),
+            h('h3', { key: 'h-open' }, word('ui.help_overlay_open_heading')),
             h('ul', { key: 'ul-buttons' },
-                h('li', { key: '1' }, h('b', {}, 'Claim'), ' - takes it as yours, so nobody else answers the same person. Once it is yours the button is replaced by the word ', h('b', {}, 'Yours'), '; on somebody else\'s report it says who has it.'),
-                h('li', { key: '2' }, h('b', {}, 'Snooze'), ' - hides it from the list for a set number of minutes. A report where someone asked for a real person is never hidden.'),
-                h('li', { key: '3' }, h('b', {}, 'Change the stage'), ' - the row of arrow buttons under the report, one per stage it can move to next, such as ', h('b', {}, '-> Done'), '. Moving it by hand does not message the person.'),
-                h('li', { key: '4' }, h('b', {}, 'Reply to contact on WhatsApp'), ' - the message box further down. It names whichever app they wrote from, so on a Discord report it reads ', h('b', {}, 'Reply to contact on Discord'), ', and on one entered by hand or through the public form it reads just ', h('b', {}, 'Reply to contact'), ' and warns you there is no app to reply on. Type there and press ', h('b', {}, 'Send reply'), ', then read the note that comes back: it says whether the message reached them.'),
-                h('li', { key: '5' }, h('b', {}, 'note'), ' - the small button at the end of every report line. It attaches a note to that one fact without changing it.'),
-                h('li', { key: '6' }, h('b', {}, 'Save edits'), ' - the form near the bottom, where you set ', h('b', {}, 'Priority'), ' (how urgent), ', h('b', {}, 'Who answers'), ' (', h('b', {}, 'Answer on its own'), ', ', h('b', {}, 'Draft, then I send'), ' or ', h('b', {}, 'Log only, I reply'), '), the assignee, the subject and your own tags.')
+                h('li', { key: '1' }, h('b', {}, word('ui.help_overlay_claim_name')), word('ui.help_overlay_claim_desc'), h('b', {}, word('ui.help_overlay_yours')), word('ui.help_overlay_claim_other')),
+                h('li', { key: '2' }, h('b', {}, word('ui.help_overlay_snooze_name')), word('ui.help_overlay_snooze_desc')),
+                h('li', { key: '3' }, h('b', {}, word('ui.help_overlay_stage_name')), word('ui.help_overlay_stage_desc'), h('b', {}, word('ui.help_overlay_stage_example')), word('ui.help_overlay_stage_note')),
+                h('li', { key: '4' }, h('b', {}, word('ui.help_overlay_reply_name')), word('ui.help_overlay_reply_desc'), h('b', {}, word('ui.help_overlay_reply_discord')), word('ui.help_overlay_reply_manual'), h('b', {}, word('ui.help_overlay_reply_contact')), word('ui.help_overlay_reply_warn'), h('b', {}, word('ui.help_overlay_send_reply')), word('ui.help_overlay_reply_note')),
+                h('li', { key: '5' }, h('b', {}, word('ui.help_overlay_note_name')), word('ui.help_overlay_note_desc')),
+                h('li', { key: '6' }, h('b', {}, word('ui.help_overlay_save_name')), word('ui.help_overlay_save_desc'), h('b', {}, word('ui.help_overlay_priority')), word('ui.help_overlay_priority_desc'), h('b', {}, word('ui.help_overlay_who_answers')), ' (', h('b', {}, word('ui.help_overlay_answer_own')), ', ', h('b', {}, word('ui.help_overlay_draft_send')), word('ui.help_overlay_or'), h('b', {}, word('ui.help_overlay_log_only')), word('ui.help_overlay_save_tail'))
             ),
 
-            h('h3', { key: 'h-answer' }, 'How do I answer someone?'),
-            h('p', { key: 'p-answer' }, 'Open the report. Scroll to ', h('b', {}, 'Reply to contact'), ', type your message, and press ', h('b', {}, 'Send reply'), '. It goes out on whichever app they wrote from, and the note that appears afterwards tells you whether it actually reached them. Read it: a reply is always added to the timeline, even on the occasions it could not be delivered.'),
-            h('p', { key: 'p-draft' }, 'When ', h('b', {}, 'Who answers'), ' is set to ', h('b', {}, 'Draft, then I send'), ', ' + brand + ' writes the reply and holds it. A banner at the top of the message box shows the draft with ', h('b', {}, 'Approve & send'), ' and ', h('b', {}, 'Discard'), '. Nothing goes out until you press one.'),
+            h('h3', { key: 'h-answer' }, word('ui.help_overlay_answer_heading')),
+            h('p', { key: 'p-answer' }, word('ui.help_overlay_answer_1'), h('b', {}, word('ui.help_overlay_reply_contact')), word('ui.help_overlay_answer_2'), h('b', {}, word('ui.help_overlay_send_reply')), word('ui.help_overlay_answer_3')),
+            h('p', { key: 'p-draft' }, word('ui.help_overlay_draft_1'), h('b', {}, word('ui.help_overlay_who_answers')), word('ui.help_overlay_draft_2'), h('b', {}, word('ui.help_overlay_draft_send')), ', ', word('ui.help_overlay_draft_3', { brand }), h('b', {}, word('ui.help_overlay_approve')), word('ui.help_overlay_and'), h('b', {}, word('ui.help_overlay_discard')), word('ui.help_overlay_draft_4')),
 
-            h('h3', { key: 'h-keys' }, 'Keyboard shortcuts (for fast triage)'),
+            h('h3', { key: 'h-keys' }, word('ui.help_overlay_keys_heading')),
             h('ul', { key: 'ul-keys', class: 'ds-help-keys' },
-                KeyRow({ k: 'j / k', desc: 'move down / up the list' }),
-                KeyRow({ k: 'o / Enter', desc: 'open the highlighted report' }),
-                KeyRow({ k: 'c', desc: 'claim the open report as yours' }),
-                KeyRow({ k: 'e', desc: 'jump to the reply box' }),
-                KeyRow({ k: '/', desc: 'search' }),
-                KeyRow({ k: 'n', desc: 'new report' }),
-                KeyRow({ k: 'Esc', desc: 'back / close' }),
-                KeyRow({ k: '?', desc: 'show this help' })
+                KeyRow({ k: 'j / k', desc: word('ui.help_overlay_key_move') }),
+                KeyRow({ k: 'o / Enter', desc: word('ui.help_overlay_key_open') }),
+                KeyRow({ k: 'c', desc: word('ui.help_overlay_key_claim') }),
+                KeyRow({ k: 'e', desc: word('ui.help_overlay_key_reply') }),
+                KeyRow({ k: '/', desc: word('ui.help_overlay_key_search') }),
+                KeyRow({ k: 'n', desc: word('ui.help_overlay_key_new') }),
+                KeyRow({ k: 'Esc', desc: word('ui.help_overlay_key_back') }),
+                KeyRow({ k: '?', desc: word('ui.help_overlay_key_help') })
             ),
 
-            h('h3', { key: 'h-who' }, 'Who you are'),
-            h('p', { key: 'p-who' }, 'Your name is taken from the account you signed in with, and every reply and claim is recorded against it. There is nothing to pick and nothing to type: if the name at the top right is not yours, sign out from that menu and sign in again.'),
+            h('h3', { key: 'h-who' }, word('ui.help_overlay_who_heading')),
+            h('p', { key: 'p-who' }, word('ui.help_overlay_who_body')),
 
-            h('h3', { key: 'h-lang' }, 'Language'),
-            h('p', { key: 'p-lang' }, 'The buttons, the labels and this help are only in English. When ' + brand + ' replies to a person, it writes back in whatever language they wrote in; that mirroring happens only in the conversation itself, never in this dashboard.'),
+            h('h3', { key: 'h-lang' }, word('ui.help_overlay_lang_heading')),
+            h('p', { key: 'p-lang' }, word('ui.help_overlay_lang_body', { brand })),
 
-            h('h3', { key: 'h-gloss' }, 'Words this screen uses'),
+            h('h3', { key: 'h-gloss' }, word('ui.help_overlay_gloss_heading')),
             h('dl', { key: 'dl-gloss', class: 'ds-help-glossary' },
                 ...Object.entries(glossary()).map(([term, explain]) => [
                     h('dt', { key: 'dt-' + term }, termWord(term)),
@@ -81,7 +82,7 @@ export function HelpOverlay({ open, onClose, onShowOnboarding } = {}) {
                 ]).flat()
             ),
 
-            h('p', { key: 'p-foot', class: 'ds-dialog-foot-note' }, 'You can open this help again any time with the ', h('b', {}, '?'), ' button at the top, or by pressing ', h('b', {}, '?'), ' on the keyboard.')
+            h('p', { key: 'p-foot', class: 'ds-dialog-foot-note' }, word('ui.help_overlay_foot_1'), h('b', {}, '?'), word('ui.help_overlay_foot_2'), h('b', {}, '?'), word('ui.help_overlay_foot_3'))
         ]
     });
 }

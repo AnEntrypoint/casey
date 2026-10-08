@@ -7,29 +7,30 @@ import { toast, failMsg } from '../../toasts.js';
 import { patchCaseApi, fetchCase } from '../../api.js';
 import { patchFieldCase, teamRoster, loadRoster } from '../../api-roles.js';
 import { brandName, entityLabel, EntityLabel } from '../../vocabulary.js';
+import { word } from '../../words.js';
 const h = webjsx.createElement;
 
 const DEFAULT_PRIORITIES = ['low', 'normal', 'high', 'urgent'];
 const DEFAULT_CASE_TYPES = ['unset', 'outbreak', 'follow_up', 'lab_sample', 'import_alert'];
 const AUTONOMY_OPTS = ['auto', 'assisted', 'observe'];
 
-const OPTION_LABEL = {
-    unset: 'Not set yet',
-    outbreak: 'Symptom cluster',
-    follow_up: 'Follow-up',
-    lab_sample: 'Lab sample',
-    import_alert: 'Import alert',
-    low: 'Low',
-    normal: 'Normal',
-    high: 'High',
-    urgent: 'Urgent',
-    auto: 'Answer on its own',
-    assisted: 'Draft, then I send',
-    observe: 'Log only, I reply',
+const OPTION_LABEL_KEY = {
+    unset: 'ui.fields_editor_opt_unset',
+    outbreak: 'ui.fields_editor_opt_outbreak',
+    follow_up: 'ui.fields_editor_opt_follow_up',
+    lab_sample: 'ui.fields_editor_opt_lab_sample',
+    import_alert: 'ui.fields_editor_opt_import_alert',
+    low: 'ui.fields_editor_opt_low',
+    normal: 'ui.fields_editor_opt_normal',
+    high: 'ui.fields_editor_opt_high',
+    urgent: 'ui.fields_editor_opt_urgent',
+    auto: 'ui.fields_editor_opt_auto',
+    assisted: 'ui.fields_editor_opt_assisted',
+    observe: 'ui.fields_editor_opt_observe',
 };
 
 function labelled(values) {
-    return values.map(v => ({ value: v, label: OPTION_LABEL[v] || v }));
+    return values.map(v => ({ value: v, label: OPTION_LABEL_KEY[v] ? word(OPTION_LABEL_KEY[v]) : v }));
 }
 const INTERNAL_TAG_PREFIXES = ['health:', 'intake_mode:', 'snoozed-until:', 'stop-pending:'];
 const INTERNAL_TAG_EXACT = new Set(['needs-human', 'draft-pending', 'unsent_draft', 'ai-offline', 'degraded-turn-seen', 'sent-back']);
@@ -49,18 +50,18 @@ function SourceNote({ source }) {
     const brand = brandName();
     if (source !== 'agent') return null;
     return h('p', { class: 'casey-source-note casey-hint' },
-        brand + ' filled this in from what the reporter said. Nobody has checked it yet.');
+        word('ui.fields_editor_source_note', { brand }));
 }
 
 function assigneeControl(d, set) {
     const roster = teamRoster();
-    if (!roster.length) return h('div', { key: 'assignee-text' }, TextField({ label: 'Assignee', value: d.assignee, onInput: (v) => set('assignee', v) }));
-    const opts = [{ value: '', label: 'Nobody yet' }, ...roster.filter((m) => !m.alias_of).map((m) => ({ value: m.key, label: m.name + ' (' + m.role + ', ' + m.via + ')' }))];
+    if (!roster.length) return h('div', { key: 'assignee-text' }, TextField({ label: word('ui.fields_editor_assignee'), value: d.assignee, onInput: (v) => set('assignee', v) }));
+    const opts = [{ value: '', label: word('ui.fields_editor_nobody') }, ...roster.filter((m) => !m.alias_of).map((m) => ({ value: m.key, label: word('ui.fields_editor_roster', { name: m.name, role: m.role, via: m.via }) }))];
     const held = d.assignee === 'agent' ? '' : (d.assignee || '');
     const aliasOf = (roster.find((m) => m.key === held) || {}).alias_of;
     const current = aliasOf || held;
     if (current && !opts.some((o) => o.value === current)) opts.push({ value: current, label: d.assignee_label || current });
-    return h('div', { key: 'assignee-pick' }, Select({ label: 'Assigned to', value: current, options: opts, onChange: (v) => set('assignee', v) }));
+    return h('div', { key: 'assignee-pick' }, Select({ label: word('ui.fields_editor_assigned_to'), value: current, options: opts, onChange: (v) => set('assignee', v) }));
 }
 
 export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false, expectedRef = null, beforeSave = null, titleNote = null } = {}) {
@@ -100,14 +101,14 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false,
             }
             if (!Object.keys(patch).length) {
                 state._fieldsSaving = false;
-                toast('Nothing to save -- no field was changed.', 'ok');
+                toast(word('ui.fields_editor_nothing_to_save'), 'ok');
                 schedule();
                 return;
             }
             if (expectedRef) await patchFieldCase(c.id, expectedRef, { ...patch, expected });
             else await patchCaseApi(c.id, { ...patch, expected });
             state._fieldsSaving = false;
-            toast(expectedRef ? 'Your edits are saved to ' + expectedRef + '.' : 'Your edits are saved.', 'ok');
+            toast(expectedRef ? word('ui.fields_editor_saved_ref', { ref: expectedRef }) : word('ui.fields_editor_saved'), 'ok');
             if (onSaved) await onSaved();
             state._fieldsDraft = null;
             state._fieldsBase = null;
@@ -115,14 +116,14 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false,
         } catch (e) {
             state._fieldsSaving = false;
             if (e && e.status === 409) {
-                toast(await failMsg(e, 'Somebody else edited this ' + entityLabel() + ' while you were typing. Your edits were not saved -- their values are on screen now, so check them and edit again if you still need to.'), 'warn');
+                toast(await failMsg(e, word('ui.fields_editor_conflict', { entity: entityLabel() })), 'warn');
                 if (onSaved) await onSaved();
                 state._fieldsDraft = null;
                 state._fieldsBase = null;
                 schedule();
                 return;
             }
-            toast(await failMsg(e, 'Your edits were not saved. They are still on the form, so press Save edits again.'), 'err');
+            toast(await failMsg(e, word('ui.fields_editor_not_saved')), 'err');
             schedule();
         }
     };
@@ -130,24 +131,24 @@ export function FieldsEditor({ c, caseTypeSource, onSaved, key, limited = false,
     return h('div', { key, class: 'casey-fields-editor' },
         titleNote ? h('p', { class: 'casey-hint field-editing-note' }, titleNote) : null,
         h('div', { class: 'casey-fields-row' },
-            Select({ label: 'Priority', value: d.priority, options: labelled(priorities), onChange: (v) => set('priority', v) }),
+            Select({ label: word('ui.fields_editor_priority'), value: d.priority, options: labelled(priorities), onChange: (v) => set('priority', v) }),
             limited ? null : Select({
-                label: 'Who answers', value: d.autonomy, options: labelled(AUTONOMY_OPTS),
+                label: word('ui.fields_editor_who_answers'), value: d.autonomy, options: labelled(AUTONOMY_OPTS),
                 onChange: (v) => set('autonomy', v), hint: autonomyExplanation(d.autonomy)
             }),
             limited ? null : assigneeControl(d, set),
             h('div', {},
                 Select({
-                    label: EntityLabel() + ' type', value: d.case_type, options: labelled(caseTypes),
+                    label: word('ui.fields_editor_type_label', { entity: EntityLabel() }), value: d.case_type, options: labelled(caseTypes),
                     onChange: (v) => set('case_type', v),
-                    hint: 'Groups this ' + entityLabel() + ' in the totals. Changing it is written to the timeline.'
+                    hint: word('ui.fields_editor_type_hint', { entity: entityLabel() })
                 }),
                 SourceNote({ source: caseTypeSource })
             )
         ),
-        TextField({ label: 'Subject', value: d.subject, onInput: (v) => set('subject', v) }),
-        TextField({ label: 'Tags', value: d.tags, onInput: (v) => set('tags', v), hint: 'Your own labels for this ' + entityLabel() + '. The ones the system keeps for itself are held separately and cannot be lost by editing here.' }),
-        TextField({ label: 'Summary', multiline: true, rows: 3, value: d.summary, onInput: (v) => set('summary', v) }),
-        Btn({ variant: 'primary', disabled: saving, children: saving ? 'Saving...' : 'Save edits', onClick: save })
+        TextField({ label: word('ui.fields_editor_subject'), value: d.subject, onInput: (v) => set('subject', v) }),
+        TextField({ label: word('ui.fields_editor_tags'), value: d.tags, onInput: (v) => set('tags', v), hint: word('ui.fields_editor_tags_hint', { entity: entityLabel() }) }),
+        TextField({ label: word('ui.fields_editor_summary'), multiline: true, rows: 3, value: d.summary, onInput: (v) => set('summary', v) }),
+        Btn({ variant: 'primary', disabled: saving, children: saving ? word('ui.fields_editor_saving') : word('ui.fields_editor_save'), onClick: save })
     );
 }

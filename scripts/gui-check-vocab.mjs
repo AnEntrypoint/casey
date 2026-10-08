@@ -24,7 +24,7 @@ export async function runVocabChecks(c) {
   const UHH = process.env.CASEY_CONFIG_DIR || path.join(ROOT, '..', '..', 'config')
   cpSync(UHH, cfg, { recursive: true })
   let vocab = readFileSync(path.join(cfg, 'vocabulary.yml'), 'utf8')
-  vocab = vocab.replace('waiting: "Waiting"', 'waiting: "On hold"').replace(/^ {2}other_diseases: .*\n/m, '')
+  vocab = vocab.replace(/^  waiting: "Waiting"/m, '  waiting: "On hold"').replace(/^ {2}other_diseases: .*\n/m, '')
   writeFileSync(path.join(cfg, 'vocabulary.yml'), vocab)
   let rf = readFileSync(path.join(cfg, 'report-fields.yml'), 'utf8')
   rf = rf.replace(/hidden_fields:\n(?: {4}.*\n)+/, `hidden_fields:

@@ -3,6 +3,7 @@ import { LOCATION_SOURCE_LABEL } from '../map-model.js';
 import { rel, NO_TIME_TEXT } from '../format.js';
 import { countOf } from '../vocabulary.js';
 import { fetchMapWorkers, fetchMapLastReports, fetchOperatorIdentities } from '../api.js';
+import { word } from '../words.js';
 
 function cssVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || name;
@@ -44,7 +45,7 @@ export async function renderMapCoverage(mapState) {
             const lat = matched.reduce((s, p) => s + p.lat, 0) / matched.length;
             const lon = matched.reduce((s, p) => s + p.lon, 0) / matched.length;
             window.L.circle([lat, lon], { radius: 25000, color: cssVar('--accent'), weight: 1, fillOpacity: .06 })
-                .bindTooltip(esc(idOp.name) + ' -- ' + countOf(idOp.case_count, 'action', 'actions') + ' here')
+                .bindTooltip(esc(idOp.name) + ' -- ' + word('ui.map_overlays_here', { count: countOf(idOp.case_count, word('ui.map_overlays_action'), word('ui.map_overlays_actions')) }))
                 .addTo(layer);
         }
         layer.addTo(map);
@@ -64,12 +65,12 @@ export async function renderMapWorkers(mapState) {
         for (const w of (j.workers || [])) {
             const ageText = w.age_ms != null ? rel(Date.now() - w.age_ms) : null;
             const staleNote = w.stale
-                ? (ageText ? ` (stale: ${ageText})` : ' (stale)')
-                : (ageText ? ` (here now, ${ageText})` : ' (here now)');
-            const overdueNote = w.overdue_checkin ? ' OVERDUE check-in' : '';
+                ? (ageText ? word('ui.map_overlays_stale_age', { age: ageText }) : word('ui.map_overlays_stale'))
+                : (ageText ? word('ui.map_overlays_here_now_age', { age: ageText }) : word('ui.map_overlays_here_now'));
+            const overdueNote = w.overdue_checkin ? word('ui.map_overlays_overdue') : '';
             const locSrc = w.location_source || 'unset';
             const srcNote = LOCATION_SOURCE_LABEL[locSrc] ? ` -- ${LOCATION_SOURCE_LABEL[locSrc]}` : '';
-            const label = esc(w.display_name || 'field worker') + staleNote + overdueNote + srcNote;
+            const label = esc(w.display_name || word('ui.map_overlays_field_worker')) + staleNote + overdueNote + srcNote;
             const color = w.overdue_checkin ? cssVar('--danger') : cssVar('--amber');
             const fillOpacity = w.overdue_checkin ? 0.8 : (w.stale ? 0.15 : 0.7);
             window.L.circleMarker([w.lat, w.lon], {

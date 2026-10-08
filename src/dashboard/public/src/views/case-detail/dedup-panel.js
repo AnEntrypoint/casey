@@ -6,6 +6,7 @@ import { state, schedule, setDuplicateSuggestions } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { fetchSuggestions, postMerge } from '../../api.js';
 import { brandName, entityLabel, entityLabelPlural } from '../../vocabulary.js';
+import { word } from '../../words.js';
 const h = webjsx.createElement;
 
 export function loadDuplicateSuggestions(caseId) {
@@ -24,29 +25,29 @@ export function DedupPanel({ caseId, onReload, key } = {}) {
         try {
             const res = await postMerge(caseId, target.id, (state._mergeReason || '').trim());
             toast(res.alreadyMerged
-                ? 'These two were already merged, so nothing changed.'
-                : 'Merged ' + target.ref + ' into this one. ' + (res.movedEvents || 0) + ' timeline entries moved across.', 'ok');
+                ? word('ui.dedup_panel_already')
+                : word('ui.dedup_panel_merged', { ref: target.ref, count: res.movedEvents || 0 }), 'ok');
             closeMerge();
             if (onReload) await onReload(caseId);
-        } catch (e) { toast(await failMsg(e, 'The merge did not go through, so both are still separate. Try again, or check the timeline to see if part of it landed.'), 'err'); }
+        } catch (e) { toast(await failMsg(e, word('ui.dedup_panel_failed')), 'err'); }
     };
 
     return h('div', { key, class: 'casey-dedup-panel' },
-        h('h3', {}, 'Possibly the same ' + entityLabel()),
-        h('p', { class: 'casey-hint' }, brandName() + ' thinks these ' + entityLabelPlural() + ' may be about the same event. Merging folds the other one into this one; nothing is lost and the whole merge is written to the timeline.'),
+        h('h3', {}, word('ui.dedup_panel_heading', { entity: entityLabel() })),
+        h('p', { class: 'casey-hint' }, word('ui.dedup_panel_lead', { brand: brandName(), entity_plural: entityLabelPlural() })),
         ...suggestions.map(s => h('div', { key: s.id, class: 'casey-dup-row' },
             h('b', {}, s.ref), ' ', s.subject || '',
-            h('span', { class: 'casey-hint' }, ' -- ' + (s.reasons || []).join(', ')),
-            Btn({ size: 'sm', variant: 'danger', children: 'Merge ' + s.ref + ' into this', onClick: () => openMerge(s) })
+            h('span', { class: 'casey-hint' }, word('ui.dedup_panel_reasons', { reasons: (s.reasons || []).join(', ') })),
+            Btn({ size: 'sm', variant: 'danger', children: word('ui.dedup_panel_merge_into', { ref: s.ref }), onClick: () => openMerge(s) })
         )),
         Dialog({
-            open: mergeOpen, title: 'Merge ' + (target.ref || '') + ' into this ' + entityLabel() + '?', onClose: closeMerge,
+            open: mergeOpen, title: word('ui.dedup_panel_dialog_title', { ref: target.ref || '', entity: entityLabel() }), onClose: closeMerge,
             children: [
-                h('p', { key: 'lead' }, 'The other ' + entityLabel() + ' becomes a redirect to this one. Nothing is deleted, and the merge is written to the timeline where you can read it back.'),
-                TextField({ key: 'reason', label: 'Why are these the same event? (optional)', multiline: true, rows: 2, placeholder: 'e.g. same farm, same symptoms reported separately', value: state._mergeReason || '', onInput: (v) => { state._mergeReason = v; schedule(); } }),
+                h('p', { key: 'lead' }, word('ui.dedup_panel_dialog_lead', { entity: entityLabel() })),
+                TextField({ key: 'reason', label: word('ui.dedup_panel_reason_label'), multiline: true, rows: 2, placeholder: word('ui.dedup_panel_reason_placeholder'), value: state._mergeReason || '', onInput: (v) => { state._mergeReason = v; schedule(); } }),
                 h('div', { key: 'acts', class: 'ds-dialog-actions' },
-                    Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: closeMerge }),
-                    Btn({ key: 'ok', variant: 'danger', children: 'Merge ' + entityLabelPlural(), onClick: confirmMerge })
+                    Btn({ key: 'cancel', variant: 'ghost', children: word('ui.dedup_panel_cancel'), onClick: closeMerge }),
+                    Btn({ key: 'ok', variant: 'danger', children: word('ui.dedup_panel_merge_plural', { entity_plural: entityLabelPlural() }), onClick: confirmMerge })
                 )
             ]
         })

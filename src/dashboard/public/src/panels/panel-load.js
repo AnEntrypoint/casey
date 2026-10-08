@@ -3,6 +3,7 @@ import { Spinner, Alert } from '/design/src/components/content/feedback.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { schedule } from '../state.js';
 import { panelError } from './panel-error.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 export function createPanelLoader({ what, label, fetch, apply }) {
@@ -43,7 +44,7 @@ export function createPanelLoader({ what, label, fetch, apply }) {
 
         slot(content) {
             if (loading && !loaded) return Spinner({ label: resolve(label) });
-            if (error) return Alert({ kind: 'error', children: h('div', {}, error + ' ', Btn({ size: 'sm', variant: 'ghost', children: 'Try again', onClick: () => loader.reload() })) });
+            if (error) return Alert({ kind: 'error', children: h('div', {}, error + ' ', Btn({ size: 'sm', variant: 'ghost', children: word('ui.panel_load_try_again'), onClick: () => loader.reload() })) });
             return content();
         },
     };

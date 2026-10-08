@@ -2,12 +2,13 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, Lede } from '/design/src/components/shell/atoms.js';
 import { Checkbox } from '/design/src/components/form-primitives.js';
 import { Dialog } from './dialog-shell.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 export const SKILLS = [
-    { id: 'keys', label: 'Work the list without the mouse: j and k move through it, Enter opens, c claims, e jumps straight to the reply box.' },
-    { id: 'mine', label: 'The "yours" filter under the list narrows it to the reports you have claimed, so you can clear your own before anyone else\'s.' },
-    { id: 'focus', label: 'The Focus button in the top bar drops everything except the queue, and the button under the list brings the rest back.' },
+    { id: 'keys', get label() { return word('ui.skills_overlay_keys'); } },
+    { id: 'mine', get label() { return word('ui.skills_overlay_mine'); } },
+    { id: 'focus', get label() { return word('ui.skills_overlay_focus'); } },
 ];
 
 function skillsKey(operatorId) { return 'casey_skills_' + (operatorId || 'default'); }
@@ -38,13 +39,13 @@ export function SkillsOverlay({ open, operatorId, onClose, onAllDone } = {}) {
     return Dialog({
         open, onClose,
         id: 'skills',
-        title: 'Ways to work faster',
-        footer: Btn({ onClick: onClose, children: 'Close' }),
+        title: word('ui.skills_overlay_title'),
+        footer: Btn({ onClick: onClose, children: word('ui.skills_overlay_close') }),
         children: [
-            Lede({ children: 'You already know the job. These are the shortcuts for doing it faster. Tick each one as you pick it up; the list is yours alone, kept on this device, and it stops appearing once you finish or close it.' }),
-            h('div', { key: 'list', role: 'group', 'aria-label': 'Skills checklist' },
+            Lede({ children: word('ui.skills_overlay_lede') }),
+            h('div', { key: 'list', role: 'group', 'aria-label': word('ui.skills_overlay_group_aria') },
                 ...SKILLS.map((s) => Checkbox({ key: s.id, checked: !!state[s.id], label: s.label, onChange: () => toggle(s.id) }))),
-            h('p', { key: 'foot', class: 'ds-dialog-foot-note' }, 'Nothing here changes what you can do, only how many steps it takes.')
+            h('p', { key: 'foot', class: 'ds-dialog-foot-note' }, word('ui.skills_overlay_foot'))
         ]
     });
 }

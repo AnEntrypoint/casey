@@ -14,10 +14,10 @@ import { mountResolvedMap, drawDots, drawHeat, drawBubbles, fitOnce, cssColour, 
 const h = webjsx.createElement;
 
 const MODES = [
-  { id: 'dots', label: 'Each signed-off case' },
-  { id: 'heat', label: 'Heat map of signed-off cases' },
-  { id: 'all', label: 'Heat map of all reports (by date reported)' },
-  { id: 'areas', label: 'Cases by area' },
+  { id: 'dots', get label() { return word('ui.resolved_map_panel_mode_dots'); } },
+  { id: 'heat', get label() { return word('ui.resolved_map_panel_mode_heat'); } },
+  { id: 'all', get label() { return word('ui.resolved_map_panel_mode_all'); } },
+  { id: 'areas', get label() { return word('ui.resolved_map_panel_mode_areas'); } },
 ];
 const PAL = ['--sky', '--flame', '--purple-2', '--green', '--amber', '--danger'];
 const OTHER = '--fg-3';
@@ -72,7 +72,7 @@ function ensureHeat(untilIso) {
   if (rm.mode === 'all') p.scope = 'all'; else { p.scope = 'resolved'; if (rm.disease) p.disease = rm.disease; if (rm.advice) p.advice = rm.advice; }
   (rm.mode === 'areas' ? fetchAreas({ from: w.from, to: untilIso, region: rf.region, species: rm.species, status: rm.status }) : fetchHeat(p))
     .then((data) => { rm.heat = { key, data, error: '' }; rememberHeat(rm.heat); })
-    .catch(() => { rm.heat = { key, data: null, error: 'Could not load the heat map.' }; })
+    .catch(() => { rm.heat = { key, data: null, error: word('ui.resolved_map_panel_heat_failed') }; })
     .finally(() => { rm.heatBusy = false; schedule(); });
 }
 
@@ -107,18 +107,18 @@ function tableAlternative(dots) {
   if (rm.mode === 'dots') {
     const n = new Map();
     for (const p of dots) n.set(p.disease + '\u0000' + p.species, (n.get(p.disease + '\u0000' + p.species) || 0) + 1);
-    headers = ['Disease', 'Animal', 'Cases shown'];
+    headers = [word('ui.resolved_map_panel_h_disease'), word('ui.resolved_map_panel_h_animal'), word('ui.resolved_map_panel_h_cases_shown')];
     rows = [...n.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, c]) => [...k.split('\u0000'), String(c)]);
   } else if (rm.mode === 'areas' && heat) {
-    headers = ['Area', 'Cases', 'Most common disease'];
+    headers = [word('ui.resolved_map_panel_h_area'), word('ui.resolved_map_panel_h_cases'), word('ui.resolved_map_panel_h_top_disease')];
     rows = heat.areas.map((a) => [a.region, String(a.count), a.top_disease || '--']);
   } else if (heat) {
-    headers = ['Near (latitude, longitude)', 'Reports'];
+    headers = [word('ui.resolved_map_panel_h_near'), word('ui.resolved_map_panel_h_reports')];
     rows = heat.cells.slice(0, 40).map((c) => [c.lat.toFixed(2) + ', ' + c.lon.toFixed(2), String(c.count)]);
   } else return null;
   return h('details', { class: 'rep-table-alt' },
-    h('summary', null, 'Show these figures as a table'),
-    Table({ headers, rows, striped: true, compact: true, emptyText: 'Nothing to show yet.' }));
+    h('summary', null, word('ui.resolved_map_panel_show_table')),
+    Table({ headers, rows, striped: true, compact: true, emptyText: word('ui.resolved_map_panel_nothing') }));
 }
 
 
@@ -132,11 +132,11 @@ function mark(i) {
 function heatRamp(max, rgb) {
   const colour = cssColour(document.documentElement, rgb);
   const steps = [0.2, 0.4, 0.6, 0.8, 1];
-  return h('ul', { class: 'rep-legend rep-ramp', 'aria-label': 'Colour scale' },
+  return h('ul', { class: 'rep-legend rep-ramp', 'aria-label': word('ui.resolved_map_panel_color_scale') },
     ...steps.map((f) => h('li', { key: String(f), class: 'rep-legend-item' },
       h('svg', { class: 'rep-mark', width: 14, height: 14, viewBox: '0 0 14 14', 'aria-hidden': 'true' },
         h('rect', { x: 0, y: 0, width: 14, height: 14, fill: colour, 'fill-opacity': 0.15 + 0.7 * f })),
-      'up to ' + Math.ceil(max * f))));
+      word('ui.resolved_map_panel_up_to', { count: Math.ceil(max * f) }))));
 }
 
 function Legend(ranked) {
@@ -144,12 +144,16 @@ function Legend(ranked) {
   if (rm.mode === 'heat' || rm.mode === 'all') {
     const max = data && data.cells.length ? Math.max(...data.cells.map((c) => c.count)) : 0;
     return max ? h('div', { class: 'rep-stack' },
-      h('p', { class: 'casey-hint' }, `Darker squares have more ${rm.mode === 'all' ? 'reports' : 'signed-off cases'}: from ${data.cells.reduce((m, c) => Math.min(m, c.count), max)} in the lightest to ${max} in the darkest. Each square is about 11 km across.`),
+      h('p', { class: 'casey-hint' }, word('ui.resolved_map_panel_darker', {
+        noun: rm.mode === 'all' ? word('ui.resolved_map_panel_reports') : word('ui.resolved_map_panel_signed_cases'),
+        low: data.cells.reduce((m, c) => Math.min(m, c.count), max),
+        high: max,
+      })),
       heatRamp(max, '--flame')) : null;
   }
   if (rm.mode === 'areas') {
     const max = data && data.areas.length ? Math.max(...data.areas.map((a) => a.count)) : 0;
-    return max ? h('p', { class: 'casey-hint' }, `Bigger bubbles have more signed-off cases: the largest area has ${max}.`) : null;
+    return max ? h('p', { class: 'casey-hint' }, word('ui.resolved_map_panel_bigger', { max })) : null;
   }
   if (rm.mode !== 'dots') return null;
   const shown = ranked.slice(0, PAL.length);
@@ -160,8 +164,8 @@ function Legend(ranked) {
 
 export function ResolvedMapPanel() {
   ensureReports();
-  if (!rd.loaded) return Panel({ title: 'Resolved cases map', children: Skeleton({ count: 4, height: '1.6em' }) });
-  if (rd.error && !rd.points) return Panel({ title: 'Resolved cases map', children: [ReportFilters(), Alert({ kind: 'warn', children: rd.error }), Btn({ children: 'Try again', onClick: reloadReports })] });
+  if (!rd.loaded) return Panel({ title: word('ui.resolved_map_panel_title'), children: Skeleton({ count: 4, height: '1.6em' }) });
+  if (rd.error && !rd.points) return Panel({ title: word('ui.resolved_map_panel_title'), children: [ReportFilters(), Alert({ kind: 'warn', children: rd.error }), Btn({ children: word('ui.resolved_map_panel_try_again'), onClick: reloadReports })] });
   const all = rd.points.points;
   const weeks = weeksOf(all);
   if (rm.seen !== rd.points) { rm.seen = rd.points; rm.idx = null; rm.heat = null; rm.heatCache.clear(); stop(); }
@@ -181,7 +185,7 @@ export function ResolvedMapPanel() {
   const ranked = diseaseRank(all);
   if (rm.mode !== 'dots' && untilEnd) ensureHeat(untilEnd);
 
-  const canvas = h('div', { id: 'rm-canvas', key: 'rm-canvas', class: 'ds-map-canvas rep-map', role: 'region', 'aria-label': 'Map of signed-off cases', 'aria-describedby': 'rm-summary' });
+  const canvas = h('div', { id: 'rm-canvas', key: 'rm-canvas', class: 'ds-map-canvas rep-map', role: 'region', 'aria-label': word('ui.resolved_map_panel_map_aria'), 'aria-describedby': 'rm-summary' });
   const paintKey = [rm.mode, until, rm.disease, rm.species, rm.status, rm.advice, rf.region, rf.period, state.theme, liveHeat() ? rm.wantKey : ''].join('|');
   const pts = rd.points;
   queueMicrotask(() => {
@@ -191,27 +195,37 @@ export function ResolvedMapPanel() {
     rm.paintEl = c; rm.paintPts = pts; rm.paintKey = paintKey;
   });
 
-  const heatNote = rm.mode !== 'dots' && liveHeat() && liveHeat().error ? Alert({ kind: 'warn', children: [liveHeat().error, ' ', Btn({ children: 'Try again', onClick: () => { rm.heat = null; schedule(); } })] }) : null;
-  const tileNote = rm.drv && rm.drv.tilesFailing ? Alert({ kind: 'warn', children: 'The map background is not loading. The dots, areas and figures come from this dashboard and are unaffected -- only the picture behind them is missing.' }) : null;
+  const heatNote = rm.mode !== 'dots' && liveHeat() && liveHeat().error ? Alert({ kind: 'warn', children: [liveHeat().error, ' ', Btn({ children: word('ui.resolved_map_panel_try_again'), onClick: () => { rm.heat = null; schedule(); } })] }) : null;
+  const tileNote = rm.drv && rm.drv.tilesFailing ? Alert({ kind: 'warn', children: word('ui.resolved_map_panel_tiles_failing') }) : null;
   const total = rm.mode === 'dots' ? dots.length : (liveHeat() && liveHeat().data ? liveHeat().data.total : 0);
+  const caseNoun = dots.length === 1 ? word('ui.resolved_map_panel_case') : word('ui.resolved_map_panel_cases');
   const summary = rm.mode === 'dots'
-    ? `${dots.length} signed-off ${dots.length === 1 ? 'case' : 'cases'} shown${until ? ', up to the week of ' + say(until) : ''}. Each dot is placed only to about 1 km, and only where at least 5 signed-off cases share a map square.`
+    ? word('ui.resolved_map_panel_dots_summary', { count: dots.length, cases: caseNoun, upto: until ? word('ui.resolved_map_panel_upto_week', { date: say(until) }) : '' })
     : rm.mode === 'areas'
-      ? `${total} signed-off cases in ${liveHeat() && liveHeat().data ? liveHeat().data.areas.length : 0} named areas with at least 5, up to ${untilEnd ? say(untilEnd) : 'now'}. A bubble sits near the middle of an area's cases, rounded to about 10 km, and its size shows how many.`
-      : `Heat map${rm.mode === 'all' ? ', by date reported' : ', by date signed off'}: ${total} ${rm.mode === 'all' ? 'reports' : 'signed-off cases'} in map squares with at least 5, up to ${until ? 'the end of the week of ' + say(until) : 'now'}. Squares with fewer than 5 are not shown.`;
-  const truncatedNote = rd.points.truncated || (liveHeat() && liveHeat().data && liveHeat().data.truncated) ? Alert({ kind: 'warn', children: 'There are more reports than this map can load, so the figures leave some out.' }) : null;
-  const noDots = !all.length ? Alert({ kind: 'info', children: 'No signed-off case with a place on the map yet in this period. A case appears here once an animal health technician has signed it off with the disease they identified.' }) : null;
+      ? word('ui.resolved_map_panel_areas_summary', {
+        total,
+        areas: liveHeat() && liveHeat().data ? liveHeat().data.areas.length : 0,
+        upto: untilEnd ? say(untilEnd) : word('ui.resolved_map_panel_now'),
+      })
+      : word('ui.resolved_map_panel_heat_summary', {
+        basis: rm.mode === 'all' ? word('ui.resolved_map_panel_basis_reported') : word('ui.resolved_map_panel_basis_signed'),
+        total,
+        noun: rm.mode === 'all' ? word('ui.resolved_map_panel_reports') : word('ui.resolved_map_panel_signed_cases'),
+        upto: until ? word('ui.resolved_map_panel_upto_end', { date: say(until) }) : word('ui.resolved_map_panel_now'),
+      });
+  const truncatedNote = rd.points.truncated || (liveHeat() && liveHeat().data && liveHeat().data.truncated) ? Alert({ kind: 'warn', children: word('ui.resolved_map_panel_truncated') }) : null;
+  const noDots = !all.length ? Alert({ kind: 'info', children: word('ui.resolved_map_panel_no_dots') }) : null;
 
   return Panel({
-    title: 'Resolved cases map',
+    title: word('ui.resolved_map_panel_title'),
     children: h('div', { class: 'rep-stack' },
       ReportFilters(),
-      rd.loading ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, 'Updating the map...') : null,
-      FilterPills({ label: 'What the map shows', options: MODES, selected: rm.mode, onSelect: (v) => { rm.mode = v; rm.heat = null; schedule(); } }),
-      rm.mode !== 'all' && speciesKinds.length > 1 ? FilterPills({ label: 'Animal', options: [{ id: '', label: 'Every animal' }, ...speciesKinds.map((k) => ({ id: k, label: k }))], selected: rm.species, onSelect: (v) => { rm.species = v; rm.heat = null; schedule(); } }) : null,
-      rm.mode !== 'all' && statusKinds.length > 1 ? FilterPills({ label: 'Diagnosis', options: [{ id: '', label: 'Confirmed and suspected' }, ...statusKinds.map((k) => ({ id: k, label: k === 'suspected' ? 'Suspected only' : 'Confirmed only' }))], selected: rm.status, onSelect: (v) => { rm.status = v; rm.heat = null; schedule(); } }) : null,
-      rm.mode === 'heat' || rm.mode === 'dots' ? FilterPills({ label: 'Disease', options: [{ id: '', label: 'Every disease' }, ...ranked.slice(0, 8).map((d) => ({ id: d, label: d }))], selected: rm.disease, onSelect: (v) => { rm.disease = v; rm.heat = null; schedule(); } }) : null,
-      (rm.mode === 'dots' || rm.mode === 'heat') && adviceKinds.length ? FilterPills({ label: 'Technician advice', options: [{ id: '', label: 'Any advice' }, ...adviceKinds.map((k) => ({ id: k, label: k }))], selected: rm.advice, onSelect: (v) => { rm.advice = v; rm.heat = null; schedule(); } }) : null,
+      rd.loading ? h('p', { class: 'casey-hint', 'aria-live': 'polite' }, word('ui.resolved_map_panel_updating')) : null,
+      FilterPills({ label: word('ui.resolved_map_panel_what_shows'), options: MODES, selected: rm.mode, onSelect: (v) => { rm.mode = v; rm.heat = null; schedule(); } }),
+      rm.mode !== 'all' && speciesKinds.length > 1 ? FilterPills({ label: word('ui.resolved_map_panel_animal'), options: [{ id: '', label: word('ui.resolved_map_panel_every_animal') }, ...speciesKinds.map((k) => ({ id: k, label: k }))], selected: rm.species, onSelect: (v) => { rm.species = v; rm.heat = null; schedule(); } }) : null,
+      rm.mode !== 'all' && statusKinds.length > 1 ? FilterPills({ label: word('ui.resolved_map_panel_diagnosis'), options: [{ id: '', label: word('ui.resolved_map_panel_confirmed_and_suspected') }, ...statusKinds.map((k) => ({ id: k, label: k === 'suspected' ? word('ui.resolved_map_panel_suspected_only') : word('ui.resolved_map_panel_confirmed_only') }))], selected: rm.status, onSelect: (v) => { rm.status = v; rm.heat = null; schedule(); } }) : null,
+      rm.mode === 'heat' || rm.mode === 'dots' ? FilterPills({ label: word('ui.resolved_map_panel_disease'), options: [{ id: '', label: word('ui.resolved_map_panel_every_disease') }, ...ranked.slice(0, 8).map((d) => ({ id: d, label: d }))], selected: rm.disease, onSelect: (v) => { rm.disease = v; rm.heat = null; schedule(); } }) : null,
+      (rm.mode === 'dots' || rm.mode === 'heat') && adviceKinds.length ? FilterPills({ label: word('ui.resolved_map_panel_advice'), options: [{ id: '', label: word('ui.resolved_map_panel_any_advice') }, ...adviceKinds.map((k) => ({ id: k, label: k }))], selected: rm.advice, onSelect: (v) => { rm.advice = v; rm.heat = null; schedule(); } }) : null,
       noDots,
       heatNote,
       tileNote,
@@ -219,9 +233,9 @@ export function ResolvedMapPanel() {
       Legend(ranked),
       tableAlternative(dots),
       weeks.length > 1 ? h('div', { class: 'rep-slider' },
-        Btn({ key: 'play', variant: rm.playing ? 'primary' : 'default', children: [Icon(rm.playing ? 'pause' : 'play', { size: 15 }), rm.playing ? ' Pause' : ' Play time-lapse'], onClick: () => togglePlay(weeks), 'aria-label': rm.playing ? 'Pause the time-lapse' : 'Play the time-lapse from the first week' }),
-        Slider({ key: 'sl', label: 'Show cases signed off up to ' + (until ? say(until) : 'now'), min: 0, max: weeks.length - 1, step: 1, value: rm.idx, onChange: (v) => { stop(); rm.idx = Math.round(v); schedule(); } })) : null,
+        Btn({ key: 'play', variant: rm.playing ? 'primary' : 'default', children: [Icon(rm.playing ? 'pause' : 'play', { size: 15 }), rm.playing ? word('ui.resolved_map_panel_pause') : word('ui.resolved_map_panel_play')], onClick: () => togglePlay(weeks), 'aria-label': rm.playing ? word('ui.resolved_map_panel_pause_aria') : word('ui.resolved_map_panel_play_aria') }),
+        Slider({ key: 'sl', label: word('ui.resolved_map_panel_slider', { when: until ? say(until) : word('ui.resolved_map_panel_now') }), min: 0, max: weeks.length - 1, step: 1, value: rm.idx, onChange: (v) => { stop(); rm.idx = Math.round(v); schedule(); } })) : null,
       truncatedNote,
-          h('p', { id: 'rm-summary', class: 'casey-hint', 'aria-live': rm.playing ? 'off' : 'polite' }, summary + (rd.points.withheld ? ` ${rd.points.withheld} more are held back because fewer than ${rd.points.k} signed-off cases share their map square.` : ''))),
+          h('p', { id: 'rm-summary', class: 'casey-hint', 'aria-live': rm.playing ? 'off' : 'polite' }, summary + (rd.points.withheld ? word('ui.resolved_map_panel_withheld', { count: rd.points.withheld, k: rd.points.k }) : ''))),
   });
 }

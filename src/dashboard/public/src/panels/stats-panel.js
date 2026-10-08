@@ -5,14 +5,16 @@ import { Alert } from '/design/src/components/content/feedback.js';
 import { state } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchStats } from '../api.js';
+import { word } from '../words.js';
 
 const h = webjsx.createElement;
 
-const MODE_LABEL = { channel: 'AI (channel)', manual: 'Operator entry', public_form: 'Public form', unknown: 'Untagged' };
+const MODE_KEY = { channel: 'ui.stats_panel_mode_channel', manual: 'ui.stats_panel_mode_manual', public_form: 'ui.stats_panel_mode_public_form', unknown: 'ui.stats_panel_mode_unknown' };
+const modeLabel = (m) => (MODE_KEY[m] ? word(MODE_KEY[m]) : m);
 
 const loader = createPanelLoader({
-    what: 'the summary numbers',
-    label: 'loading stats',
+    what: () => word('ui.stats_panel_what'),
+    label: () => word('ui.stats_panel_loading'),
     fetch: fetchStats,
     apply: (j) => { state._stats = j; },
 });
@@ -23,7 +25,7 @@ function statRow(mode, s) {
     const vcAlarm = s.count > 0 && s.vc_complete === 0;
     const essentialPct = s.vc_total ? Math.round(((s.avg_vc_filled ?? 0) / s.vc_total) * 100) : 0;
     return [
-        MODE_LABEL[mode] || mode,
+        modeLabel(mode),
         String(s.count),
         `${s.avg_filled ?? '-'}/${s.total_fields} (${fieldsPct}%)`,
         (vcAlarm ? '0' : String(s.vc_complete)) + `/${s.count} (${vcPct}%)`,
@@ -36,11 +38,11 @@ export function StatsPanel() {
     const body = loader.slot(() => {
         const j = state._stats;
         const modes = j ? Object.keys(j.by_mode || {}) : [];
-        if (!modes.length) return Alert({ kind: 'info', children: 'No intake data yet. Fill-rate breakdown shows up here once reports start coming in.' });
+        if (!modes.length) return Alert({ kind: 'info', children: word('ui.stats_panel_none') });
         return Table({
-            headers: ['Source', 'Count', 'Fields', 'Visit-ready', 'Essential'],
+            headers: [word('ui.stats_panel_h_source'), word('ui.stats_panel_h_count'), word('ui.stats_panel_h_fields'), word('ui.stats_panel_h_visit_ready'), word('ui.stats_panel_h_essential')],
             rows: modes.map((m) => statRow(m, j.by_mode[m])),
         });
     });
-    return Panel({ title: 'Intake stats', children: [body] });
+    return Panel({ title: word('ui.stats_panel_title'), children: [body] });
 }

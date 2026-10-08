@@ -19,18 +19,18 @@ const local = {
 
 function loginMessage(e) {
   if (isOfflineError(e)) return word('ui.login_check_failed');
-  if (e instanceof ApiError && e.status === 401) return 'That username and password do not match. Check both and try again -- if you cannot get in, ask whoever set up your account.';
-  if (e instanceof ApiError && e.status === 429) return 'Too many log-in attempts from this connection. Wait a few minutes, then try again.';
-  const status = (e instanceof ApiError && e.status) ? ' (error ' + e.status + ')' : '';
-  return 'Your details were not checked -- the dashboard itself returned an error' + status + '. This is not your password. Try again in a moment, and tell whoever runs this deployment if it keeps happening.';
+  if (e instanceof ApiError && e.status === 401) return word('ui.login_gate_bad_credentials');
+  if (e instanceof ApiError && e.status === 429) return word('ui.login_gate_rate_limited');
+  const status = (e instanceof ApiError && e.status) ? word('ui.login_gate_error_status', { status: e.status }) : '';
+  return word('ui.login_gate_server_error', { status });
 }
 
 function changeMessage(e) {
   if (isOfflineError(e)) return word('ui.login_password_failed');
-  if (e instanceof ApiError && e.status === 401) return 'The password you were given is not right. Check it and try again.';
+  if (e instanceof ApiError && e.status === 401) return word('ui.login_gate_wrong_given');
   if (e instanceof ApiError && e.body && e.body.error) return e.body.error;
-  const status = (e instanceof ApiError && e.status) ? ' (error ' + e.status + ')' : '';
-  return 'The new password was not set' + status + ', so the one you were given still works. Try again in a moment, and tell whoever runs this deployment if it keeps happening.';
+  const status = (e instanceof ApiError && e.status) ? word('ui.login_gate_error_status', { status: e.status }) : '';
+  return word('ui.login_gate_change_failed', { status });
 }
 
 async function postJson(path, body) {
@@ -53,8 +53,8 @@ async function enterApp() {
 async function submitLogin(e) {
   e.preventDefault();
   if (local.busy) return;
-  if (!local.username.trim()) { local.error = 'Enter your username.'; schedule(); return; }
-  if (!local.password) { local.error = 'Enter your password.'; schedule(); return; }
+  if (!local.username.trim()) { local.error = word('ui.login_gate_enter_username'); schedule(); return; }
+  if (!local.password) { local.error = word('ui.login_gate_enter_password'); schedule(); return; }
   local.busy = true; local.error = ''; local.notice = ''; state.sessionNotice = ''; schedule();
   try {
     await postJson('/api/login', { username: local.username, password: local.password });
@@ -77,7 +77,7 @@ async function submitChange(e) {
   e.preventDefault();
   if (local.busy) return;
   if (local.newPassword !== local.confirmPassword) {
-    local.error = 'The two new passwords are not the same. Type the same one in both boxes.';
+    local.error = word('ui.login_gate_mismatch');
     local.confirmMismatch = true;
     schedule();
     return;
@@ -97,7 +97,7 @@ async function submitChange(e) {
       local.password = '';
       local.newPassword = '';
       local.confirmPassword = '';
-      local.notice = 'Your new password is saved. Please log in with it now.';
+      local.notice = word('ui.login_gate_saved_notice');
     }
   } catch (e2) {
     local.error = changeMessage(e2);
@@ -141,14 +141,14 @@ export function LoginGate() {
     return h('div', { class: 'ds-login-gate' },
       h('form', { key: 'change', class: 'ds-login-form', onsubmit: submitChange },
         h('h1', { key: 'brand', class: 'ds-login-brand' }, brand),
-        h('p', { key: 'why' }, 'Before you can use ' + brand + ', please choose your own password. The one you were given works only for this first log in.'),
+        h('p', { key: 'why' }, word('ui.login_gate_choose_intro', { brand })),
         local.needCurrent
-          ? loginField({ key: 'cur', label: 'The password you were given', type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'current_password', autocomplete: 'current-password' })
+          ? loginField({ key: 'cur', label: word('ui.login_gate_given_label'), type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'current_password', autocomplete: 'current-password' })
           : null,
-        loginField({ key: 'new', label: 'New password', type: 'password', value: local.newPassword, onInput: (v) => { local.newPassword = v; schedule(); }, name: 'new_password', autocomplete: 'new-password' }),
-        loginField({ key: 'confirm', label: 'Type the new password again', type: 'password', value: local.confirmPassword, onInput: (v) => { local.confirmPassword = v; schedule(); }, name: 'confirm_password', autocomplete: 'new-password', invalid: local.confirmMismatch, describedBy: local.confirmMismatch ? 'ds-login-msg' : undefined }),
+        loginField({ key: 'new', label: word('ui.login_gate_new_label'), type: 'password', value: local.newPassword, onInput: (v) => { local.newPassword = v; schedule(); }, name: 'new_password', autocomplete: 'new-password' }),
+        loginField({ key: 'confirm', label: word('ui.login_gate_confirm_label'), type: 'password', value: local.confirmPassword, onInput: (v) => { local.confirmPassword = v; schedule(); }, name: 'confirm_password', autocomplete: 'new-password', invalid: local.confirmMismatch, describedBy: local.confirmMismatch ? 'ds-login-msg' : undefined }),
         messageNode,
-        submitButton('Save my new password', 'Saving...')
+        submitButton(word('ui.login_gate_save_button'), word('ui.login_gate_saving'))
       )
     );
   }
@@ -156,10 +156,10 @@ export function LoginGate() {
   return h('div', { class: 'ds-login-gate' },
     h('form', { key: 'login', class: 'ds-login-form', onsubmit: submitLogin },
       h('h1', { key: 'brand', class: 'ds-login-brand' }, brand),
-      loginField({ key: 'user', label: 'Username', value: local.username, onInput: (v) => { local.username = v; schedule(); }, name: 'username', autocomplete: 'username' }),
-      loginField({ key: 'pass', label: 'Password', type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'password', autocomplete: 'current-password' }),
+      loginField({ key: 'user', label: word('ui.login_gate_username'), value: local.username, onInput: (v) => { local.username = v; schedule(); }, name: 'username', autocomplete: 'username' }),
+      loginField({ key: 'pass', label: word('ui.login_gate_password'), type: 'password', value: local.password, onInput: (v) => { local.password = v; schedule(); }, name: 'password', autocomplete: 'current-password' }),
       messageNode,
-      submitButton('Log in', 'Logging in...')
+      submitButton(word('ui.login_gate_login_button'), word('ui.login_gate_logging_in'))
     )
   );
 }

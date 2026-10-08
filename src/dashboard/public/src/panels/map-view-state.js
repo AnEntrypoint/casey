@@ -6,6 +6,7 @@ import { urgencyByCaseId, mapCounts, queueRows as queueRowsFor } from '../map-mo
 import { loadMap, focusCaseOnMap, refilterMarkers } from './map-leaflet.js';
 import { setSelectedCase } from './map-markers.js';
 import { openDispatchPicker } from './dispatch-picker.js';
+import { word } from '../words.js';
 
 export const mapStateRef = { current: null };
 
@@ -79,15 +80,15 @@ export function queueRows() { return queueRowsFor(livePins(), mapBounds()); }
 
 export function unresolvedSummaryText() {
     const parts = [];
-    if (summary.unresolvedCount) parts.push(`Reports with no location (${summary.unresolvedCount})`);
-    if (summary.truncated) parts.push(`Only ${summary.cap} of ${summary.totalConsidered} reports loaded`);
+    if (summary.unresolvedCount) parts.push(word('ui.map_view_state_no_location', { count: summary.unresolvedCount }));
+    if (summary.truncated) parts.push(word('ui.map_view_state_loaded_only', { cap: summary.cap, total: summary.totalConsidered }));
     return parts.join(' -- ');
 }
 
 export function unresolvedNoteText() {
     const parts = [];
-    if (summary.unresolvedCount) parts.push('No GPS, and the location text did not match a known area, so these cannot be drawn on the map.');
-    if (summary.truncated) parts.push('The rest are not loaded at all, so they are not on this screen and not in the list below.');
+    if (summary.unresolvedCount) parts.push(word('ui.map_view_state_no_gps'));
+    if (summary.truncated) parts.push(word('ui.map_view_state_not_loaded'));
     return parts.join(' ');
 }
 

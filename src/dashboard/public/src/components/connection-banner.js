@@ -30,14 +30,14 @@ export function ConnectionBanner() {
   }
   const lines = [
     h('div', { key: 'signed' },
-      who ? `Still signed in as ${who}` : 'Still signed in',
+      who ? word('ui.connection_banner_signed_in_as', { who }) : word('ui.connection_banner_signed_in'),
       state.sessionRestored
-        ? ' -- carried over from the last time this device reached the dashboard, and re-checked automatically when the link returns.'
-        : ' -- your session is unaffected.'),
+        ? word('ui.connection_banner_carried_over')
+        : word('ui.connection_banner_session_unaffected')),
     h('div', { key: 'data' }, since
-      ? `Showing the last data received, at ${since}. Nothing on this screen is updating.`
-      : 'Showing the last data received. Nothing on this screen is updating.'),
-    h('div', { key: 'recover' }, 'No need to reload or log in again -- the page catches up on its own once the link comes back.'),
+      ? word('ui.connection_banner_last_data_at', { since })
+      : word('ui.connection_banner_last_data')),
+    h('div', { key: 'recover' }, word('ui.connection_banner_no_reload')),
   ];
   return h('div', {
     class: 'ds-conn-banner is-offline', id: 'conn',

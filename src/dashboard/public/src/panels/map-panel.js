@@ -9,6 +9,7 @@ import {
 } from './map-view-state.js';
 import { countOf } from '../vocabulary.js';
 import { stageLabel, FILTERED_EMPTY_TEXT } from '../format.js';
+import { word } from '../words.js';
 const sentence = (s) => String(s || '').charAt(0).toUpperCase() + String(s || '').slice(1);
 
 const h = webjsx.createElement;
@@ -36,7 +37,7 @@ function onMountCanvas(el) {
 }
 
 function mapLegend() {
-    return h('div', { class: 'ds-map-legend', role: 'group', tabindex: '0', 'aria-label': 'Map key' },
+    return h('div', { class: 'ds-map-legend', role: 'group', tabindex: '0', 'aria-label': word('ui.map_panel_key_aria') },
         ...Object.entries(STATUS_TOKEN).map(([k, tok]) =>
             h('span', { key: k, class: 'ds-map-legend-item' }, h('span', { class: 'ds-map-legend-sw', 'data-status-token': tok }), stageLabel(k))),
         h('span', { key: 'urgent', class: 'ds-map-legend-item' },
@@ -44,15 +45,15 @@ function mapLegend() {
         h('span', { key: 'loc-estimated', class: 'ds-map-legend-item' },
             h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-dashed' }), sentence(LOCATION_SOURCE_LABEL.estimated)),
         h('span', { key: 'ov-cluster', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-cluster' }), 'Related reports (Clusters overlay)'),
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-cluster' }), word('ui.map_panel_legend_clusters')),
         h('span', { key: 'ov-coverage', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-coverage' }), 'Area worked (Coverage overlay)'),
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-coverage' }), word('ui.map_panel_legend_coverage')),
         h('span', { key: 'ov-worker', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-worker' }), 'Field worker (Workers overlay)'),
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-worker' }), word('ui.map_panel_legend_worker')),
         h('span', { key: 'ov-overdue', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-overdue' }), 'Field worker, check-in overdue (red, larger)'),
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-overdue' }), word('ui.map_panel_legend_overdue')),
         h('span', { key: 'ov-report', class: 'ds-map-legend-item' },
-            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-report' }), 'Last reported from (Last reported overlay)'));
+            h('span', { class: 'ds-map-legend-sw ds-map-legend-sw-report' }), word('ui.map_panel_legend_report')));
 }
 
 function mapStateNote() {
@@ -63,37 +64,41 @@ function mapStateNote() {
     if (!c.plotted) {
         const summary = loadSummary();
         if (summary.unresolvedCount) {
-            return { kind: 'info', text: `Nothing can be placed on the map yet -- all ${countOf(summary.unresolvedCount)} ${summary.unresolvedCount === 1 ? 'is' : 'are'} missing a usable location. They are listed below.` };
+            const n = summary.unresolvedCount;
+            return { kind: 'info', text: word('ui.map_panel_nothing_placed', { count: countOf(n), verb: word(n === 1 ? 'ui.map_panel_is' : 'ui.map_panel_are') }) };
         }
         const days = state.mapFilter.days;
         return days && days !== '0'
-            ? { kind: 'info', text: `No reports in the last ${days} days. Widen the time window to see older ones.` }
-            : { kind: 'info', text: 'No reports have come in yet -- nothing has been reported.' };
+            ? { kind: 'info', text: word('ui.map_panel_no_reports_days', { days }) }
+            : { kind: 'info', text: word('ui.map_panel_no_reports') };
     }
     if (!c.visible) return { kind: 'info', text: FILTERED_EMPTY_TEXT };
     if (mapStateRef.current && mapStateRef.current.tilesFailing) {
-        return { kind: 'warn', text: 'The map background is not loading. The pins and the list below come from this dashboard and are unaffected -- only the map picture behind them is missing.' };
+        return { kind: 'warn', text: word('ui.map_panel_tiles_failing') };
     }
     return null;
 }
 
 function mapTextEquivalent() {
     const error = loadError();
-    if (error) return 'The map could not load: ' + error;
-    if (!hasLoadedOnce()) return 'The map is still loading.';
+    if (error) return word('ui.map_panel_could_not_load', { error });
+    if (!hasLoadedOnce()) return word('ui.map_panel_still_loading');
     const c = counts();
-    const parts = ['Map of where reports came from. Each pin is one report: its colour is the report status, its size and ring say how urgent it is, and a dashed border means the location is an estimate rather than a GPS reading.'];
-    parts.push(c.plotted === 1 ? '1 report is plotted.' : c.plotted + ' reports are plotted.');
-    if (c.visible !== c.plotted) parts.push(c.visible + ' of them match the filters you have on.');
-    if (c.inView != null) parts.push(c.inView + ' are inside the part of the map now on screen.');
+    const parts = [word('ui.map_panel_text_intro')];
+    parts.push(word(c.plotted === 1 ? 'ui.map_panel_plotted_one' : 'ui.map_panel_plotted_many', { count: c.plotted }));
+    if (c.visible !== c.plotted) parts.push(word('ui.map_panel_match_filters', { count: c.visible }));
+    if (c.inView != null) parts.push(word('ui.map_panel_in_view', { count: c.inView }));
     if (c.visible) {
-        parts.push('By urgency: '
-            + [3, 2, 1].map((b) => c.bands[b] + ' marked "' + URGENCY_BAND_LABEL[b] + '"').join(', ')
-            + ', and ' + c.bands[0] + ' with nothing chasing them.');
+        parts.push(word('ui.map_panel_by_urgency', {
+            bands: [3, 2, 1].map((b) => word('ui.map_panel_marked', { count: c.bands[b], band: URGENCY_BAND_LABEL[b] })).join(', '),
+            none: c.bands[0],
+        }));
     }
-    parts.push(countOf(c.attention) + (c.attention === 1 ? ' is' : ' are') + ' in the "' + queueName() + '" list beside the map, and ' + c.today + ' came in today.');
+    parts.push(word(c.attention === 1 ? 'ui.map_panel_attention_one' : 'ui.map_panel_attention_many', {
+        count: countOf(c.attention), queue: queueName(), today: c.today,
+    }));
     const missing = unresolvedSummaryText();
-    if (missing) parts.push(missing + ' -- these are not on the map.');
+    if (missing) parts.push(word('ui.map_panel_missing', { missing }));
     const note = mapStateNote();
     if (note) parts.push(note.text);
     return parts.join(' ');
@@ -102,7 +107,7 @@ function mapTextEquivalent() {
 export function MapPanel() {
     const note = mapStateNote();
     return h('div', { class: 'ds-map-shell' },
-        h('h2', { id: MAP_HEADING_ID, class: 'sr-only' }, 'Where the reports are'),
+        h('h2', { id: MAP_HEADING_ID, class: 'sr-only' }, word('ui.map_panel_heading')),
         h('p', { id: MAP_SUMMARY_ID, class: 'sr-only', 'data-map-text-equivalent': '' }, mapTextEquivalent()),
         mapCanvas(),
         h('div', { class: 'ds-map-chrome' }, mapLegend()),

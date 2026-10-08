@@ -3,9 +3,8 @@ import { Select, TextField } from '/design/src/components/content/fields.js';
 import { Btn } from '/design/src/components/shell/atoms.js';
 import { toast } from '../toasts.js';
 import { postDispatch } from '../api.js';
-import { brandName } from '../vocabulary.js';
+import { word } from '../words.js';
 
-const brand = brandName;
 const h = webjsx.createElement;
 
 function openerSignature(el) {
@@ -39,16 +38,18 @@ function showWorkerPicker(title, message, workers) {
             if (target && typeof target.focus === 'function') target.focus();
             resolve(confirmed ? { workerId, note } : null);
         };
-        const workerLabel = (w) => (w.display_name || 'field worker')
-            + (w.km != null ? ` (${w.km.toFixed(1)}km${w.stale ? ', stale' : ''})` : (w.stale ? ' (stale)' : ''));
+        const workerLabel = (w) => (w.display_name || word('ui.dispatch_picker_field_worker'))
+            + (w.km != null
+                ? ' (' + word('ui.dispatch_picker_km', { km: w.km.toFixed(1) }) + (w.stale ? word('ui.dispatch_picker_stale_suffix') : '') + ')'
+                : (w.stale ? ' (' + word('ui.dispatch_picker_stale') + ')' : ''));
         webjsx.applyDiff(overlay, h('div', { class: 'ds-dialog-panel' },
             h('div', { key: 'head', class: 'ds-dialog-head' }, h('h2', { id: titleId, class: 'ds-dialog-title' }, title)),
             h('p', { key: 'msg', class: 'ds-dialog-message' }, message),
-            Select({ key: 'who', label: 'Who should go', name: 'worker', value: workerId, options: workers.map((w) => ({ value: w.id, label: workerLabel(w) })), onChange: (v) => { workerId = v; } }),
-            TextField({ key: 'note', label: 'Optional note for the team', name: 'note', multiline: true, rows: 2, value: '', onInput: (v) => { note = v; } }),
+            Select({ key: 'who', label: word('ui.dispatch_picker_who'), name: 'worker', value: workerId, options: workers.map((w) => ({ value: w.id, label: workerLabel(w) })), onChange: (v) => { workerId = v; } }),
+            TextField({ key: 'note', label: word('ui.dispatch_picker_note'), name: 'note', multiline: true, rows: 2, value: '', onInput: (v) => { note = v; } }),
             h('div', { key: 'foot', class: 'ds-dialog-foot-row' },
-                Btn({ variant: 'ghost', children: 'Cancel', onClick: () => close(false) }),
-                Btn({ variant: 'primary', children: 'Suggest dispatch', onClick: () => close(true) }))));
+                Btn({ variant: 'ghost', children: word('ui.dispatch_picker_cancel'), onClick: () => close(false) }),
+                Btn({ variant: 'primary', children: word('ui.dispatch_picker_suggest'), onClick: () => close(true) }))));
         overlay.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') { e.stopPropagation(); close(false); return; }
             if (e.key !== 'Tab') return;
@@ -66,19 +67,19 @@ function showWorkerPicker(title, message, workers) {
 export async function openDispatchPicker(mapState, caseId, caseLat, caseLon) {
     const workers = mapState.workers || [];
     if (!workers.length) {
-        toast('No field-worker locations loaded yet. Turn on the Workers overlay first, so there is someone to pick from.', 'warn');
+        toast(word('ui.dispatch_picker_no_workers'), 'warn');
         return;
     }
     const withDist = workers.map((w) => ({ ...w, km: (caseLat != null && caseLon != null && Number.isFinite(w.lat) && Number.isFinite(w.lon)) ? haversineKm(caseLat, caseLon, w.lat, w.lon) : null }))
         .sort((a, b) => (a.km ?? Infinity) - (b.km ?? Infinity));
     const picked = await showWorkerPicker(
-        'Dispatch a worker to this case',
-        'This only records a suggestion. ' + brand() + ' never messages a worker unprompted; they will hear about it the next time they message in.',
+        word('ui.dispatch_picker_title'),
+        word('ui.dispatch_picker_message'),
         withDist);
     if (!picked) return;
     const worker = withDist.find((w) => w.id === picked.workerId);
     try {
         await postDispatch(caseId, { worker_id: picked.workerId, note: picked.note });
-        toast('Dispatch suggested. ' + ((worker && worker.display_name) || 'The worker') + ' will hear about it on their own next reply-in.', 'ok');
-    } catch (e) { toast('The suggestion was not recorded, so nobody has been told. Try again, or contact the worker directly.', 'err'); }
+        toast(word('ui.dispatch_picker_suggested', { name: (worker && worker.display_name) || word('ui.dispatch_picker_the_worker') }), 'ok');
+    } catch (e) { toast(word('ui.dispatch_picker_failed'), 'err'); }
 }

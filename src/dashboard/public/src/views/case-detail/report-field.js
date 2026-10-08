@@ -17,10 +17,10 @@ const REPORT_FIELD_MAXLEN = 2000;
 const TYPING_PAUSE_MS = 600;
 let typingTimer = null;
 
-const SOURCE_WORDS = {
-    ai: 'AI collected',
-    manual: 'Operator entered',
-    both: 'AI, then checked',
+const SOURCE_WORD_KEYS = {
+    ai: 'ui.report_field_source_ai',
+    manual: 'ui.report_field_source_manual',
+    both: 'ui.report_field_source_both',
 };
 
 function fieldEditKey(caseId, k) { return caseId + ':' + k; }
@@ -79,7 +79,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
         const val = draftMap[editKey] != null ? draftMap[editKey] : '';
         if (val === (value || '')) { state._reportFieldEditing = null; schedule(); focusTrigger(); return; }
         if (!val.trim() && value) {
-            errMap[editKey] = 'To remove a value, use the full edit form.';
+            errMap[editKey] = word('ui.report_field_remove_hint');
             schedule();
             return;
         }
@@ -97,25 +97,25 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             delete errMap[editKey];
             const notice = matchNotice(resolved, label);
             if (notice) { canonMap[editKey] = resolved; toast(notice, 'warn', { ms: 9000 }); }
-            else { delete canonMap[editKey]; toast('Saved.', 'ok'); }
+            else { delete canonMap[editKey]; toast(word('ui.report_field_saved'), 'ok'); }
             if (onSaved) await onSaved();
             focusTrigger();
         } catch (e) {
             savingSet.delete(editKey);
             checkingSet.delete(editKey);
-            errMap[editKey] = (e && e.body && e.body.error) || 'Not saved -- your text is still here, press Save again.';
+            errMap[editKey] = (e && e.body && e.body.error) || word('ui.report_field_not_saved');
             schedule();
         }
     };
 
     const addNote = async () => {
-        const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Note for: ' + label, confirmLabel: 'Save note', requireInput: true })) || '').trim();
+        const text = ((await confirmDialog({ title: word('ui.report_field_note_title'), inputLabel: word('ui.report_field_note_input', { label }), confirmLabel: word('ui.report_field_note_save'), requireInput: true })) || '').trim();
         if (!text) return;
         try {
             await postNote(caseId, text, k);
-            toast('Note added to this field.', 'ok');
+            toast(word('ui.report_field_note_added'), 'ok');
             if (onSaved) await onSaved();
-        } catch (e) { toast(await failMsg(e, 'The note was not saved, so nothing was added to this field. Try again.'), 'err'); }
+        } catch (e) { toast(await failMsg(e, word('ui.report_field_note_failed')), 'err'); }
     };
 
     const keepTyped = async () => {
@@ -126,12 +126,12 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
         try {
             await write(r.typed, null);
             savingSet.delete(editKey);
-            toast('Kept "' + r.typed + '" as its own value.', 'ok');
+            toast(word('ui.report_field_kept', { typed: r.typed }), 'ok');
             if (onSaved) await onSaved();
         } catch (e) {
             savingSet.delete(editKey);
             canonMap[editKey] = r;
-            toast(await failMsg(e, 'Could not put "' + r.typed + '" back. The matched value is still saved.'), 'err');
+            toast(await failMsg(e, word('ui.report_field_put_back_failed', { typed: r.typed })), 'err');
         }
         schedule();
     };
@@ -141,7 +141,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
         ' ',
         Btn({
             size: 'sm', variant: 'ghost', disabled: savingSet.has(editKey),
-            children: 'Keep "' + canonMap[editKey].typed + '" instead', onClick: keepTyped,
+            children: word('ui.report_field_keep_typed', { typed: canonMap[editKey].typed }), onClick: keepTyped,
         })) : null;
 
     const valueNode = editing && opts.length
@@ -162,8 +162,8 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             suggestions: combo ? knownValues(k) : null,
             hint: combo
                 ? (checkingSet.has(editKey)
-                    ? 'Checking whether this is already on record...'
-                    : 'Pick one already in use, or type a new one.')
+                    ? word('ui.report_field_checking')
+                    : word('ui.report_field_pick_hint'))
                 : null,
             onInput: (v) => {
                 draftMap[editKey] = v;
@@ -177,7 +177,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
         })
         : h('span', {
             class: 'casey-rep-editable', tabindex: '0', role: 'button',
-            title: 'Click to edit', 'aria-label': 'Edit ' + label,
+            title: word('ui.report_field_click_edit'), 'aria-label': word('ui.report_field_edit_label', { label }),
             onclick: startEdit,
             onkeydown: (e) => {
                 if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); startEdit(); }
@@ -186,7 +186,7 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
             value ? h('span', { class: 'casey-rep-value' }, reportValue(value)) : (sayMissing ? h('span', { class: 'casey-rep-missing ds-print-blank' }, word('ui.not_given_yet')) : null),
             value ? null : FillLines({ lines: multiline ? 3 : 1 }),
             Icon('pencil', { size: 12 }),
-            source ? Chip({ size: 'sm', tone: source === 'ai' ? 'accent' : (source === 'manual' ? 'ok' : ''), children: SOURCE_WORDS[source] || SOURCE_LABEL[source] || source }) : null
+            source ? Chip({ size: 'sm', tone: source === 'ai' ? 'accent' : (source === 'manual' ? 'ok' : ''), children: SOURCE_WORD_KEYS[source] ? word(SOURCE_WORD_KEYS[source]) : (SOURCE_LABEL[source] || source) }) : null
         );
 
     return DetailRow({
@@ -194,10 +194,10 @@ export function ReportField({ caseId, k, label, value, source, notes, multiline,
         value: editing ? h('span', { key: 'edit-scope', onkeydown: onEditKeydown }, valueNode) : valueNode,
         trailing: editing
             ? h('div', { class: 'casey-rep-edit-actions' },
-                Btn({ size: 'sm', variant: 'primary', disabled: savingSet.has(editKey), children: savingSet.has(editKey) ? 'Saving...' : 'Save', onClick: save }),
-                Btn({ size: 'sm', variant: 'ghost', children: 'Cancel', onClick: cancelEdit })
+                Btn({ size: 'sm', variant: 'primary', disabled: savingSet.has(editKey), children: savingSet.has(editKey) ? word('ui.report_field_saving') : word('ui.report_field_save'), onClick: save }),
+                Btn({ size: 'sm', variant: 'ghost', children: word('ui.report_field_cancel'), onClick: cancelEdit })
             )
-            : h('button', { type: 'button', class: 'casey-rep-note-btn', 'aria-label': 'Add a note to ' + label, title: 'Add a note to ' + label, onclick: addNote }, Icon('pencil', { size: 11 }), ' note'),
+            : h('button', { type: 'button', class: 'casey-rep-note-btn', 'aria-label': word('ui.report_field_note_label', { label }), title: word('ui.report_field_note_label', { label }), onclick: addNote }, Icon('pencil', { size: 11 }), word('ui.report_field_note_btn')),
         notes: [
             canonNote,
             ...(notes || []).map((n, i) => h('div', { key: 'n' + i, class: 'casey-rep-field-note' }, n.text)),

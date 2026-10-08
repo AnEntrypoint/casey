@@ -86,7 +86,7 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
 
   const a = attentionFor(c.id);
   const band = a ? urgencyBand(Number(a.score)) : 0;
-  const subject = c.subject || '(no subject)';
+  const subject = c.subject || word('ui.case_row_no_subject');
   const lead = a && a.reason ? a.reason : subject;
 
   const open = () => { setActiveId(c.id); pushHash({ caseId: c.id }); };
@@ -108,8 +108,8 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
   },
     h('label', { key: 'cbw', class: 'case-row-cbwrap', onclick: (e) => e.stopPropagation() },
       h('input', {
-        type: 'checkbox', class: 'case-row-cb', title: 'Select for a bulk action',
-        'aria-label': 'Select ' + entityLabel() + ' ' + c.ref + ' for a bulk action',
+        type: 'checkbox', class: 'case-row-cb', title: word('ui.case_row_select_title'),
+        'aria-label': word('ui.case_row_select_aria', { entity: entityLabel(), ref: c.ref }),
         checked: selected,
         onclick: (e) => { e.stopPropagation(); toggleBulkSelect(c.id, e.target.checked); },
       })),
@@ -117,11 +117,14 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
       key: 'main', class: 'case-row-main', role: 'group', tabindex: '0',
       'data-id': c.id,
       'aria-current': active ? 'true' : undefined,
-      'aria-label': c.ref + ': ' + [
-        band ? URGENCY_BAND_LABEL[band] : '',
-        stageLabel(c.status),
-        owner ? (mine ? 'you' : ownerName(owner)) : '',
-      ].concat(flagWords(c, expandedGuardrails)).filter(Boolean).join(', '),
+      'aria-label': word('ui.case_row_aria_label', {
+        ref: c.ref,
+        parts: [
+          band ? URGENCY_BAND_LABEL[band] : '',
+          stageLabel(c.status),
+          owner ? (mine ? word('ui.case_row_you') : ownerName(owner)) : '',
+        ].concat(flagWords(c, expandedGuardrails)).filter(Boolean).join(word('ui.case_row_sep_comma')),
+      }),
       onkeydown: (e) => {
         if (e.key === 'Enter' && e.target === e.currentTarget) open();
         else if ((e.key === ' ' || e.key === 'Spacebar') && e.target === e.currentTarget) { e.preventDefault(); open(); }
@@ -135,12 +138,12 @@ export function CaseRow({ c, expandedGuardrails, onToggleGuardrails }) {
           c.priority === 'urgent' || c.priority === 'high'
             ? Chip({ key: 'pri', tone: 'warn', size: 'sm', children: priorityLabel(c.priority) })
             : null,
-          owner ? Chip({ key: 'own', tone: mine ? 'accent' : '', size: 'sm', children: mine ? 'you' : ownerName(owner) }) : null,
+          owner ? Chip({ key: 'own', tone: mine ? 'accent' : '', size: 'sm', children: mine ? word('ui.case_row_you') : ownerName(owner) }) : null,
           h('span', { key: 'when', class: 'case-row-when', title: fmtTime(c.updated_at || c.created_at) }, rel(c.updated_at || c.created_at))
         ),
         h('div', { key: 'sub', class: 'case-row-sub' },
           src ? Chip({ key: 'src', tone: src.tone, size: 'sm', tag: true, children: src.label }) : null,
-          h('span', { key: 'meta' }, lead === subject ? channelLabel(c.channel) : channelLabel(c.channel) + ' - ' + subject),
+          h('span', { key: 'meta' }, lead === subject ? channelLabel(c.channel) : word('ui.case_row_channel_subject', { channel: channelLabel(c.channel), subject })),
           fillPill(c.fill_rate),
           GuardrailChip({ c, expanded: expandedGuardrails })
         )

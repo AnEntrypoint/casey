@@ -5,6 +5,7 @@ import { state, setSiteHistory } from '../../state.js';
 import { fetchSiteHistory } from '../../api.js';
 import { rel, stageLabel, channelLabel } from '../../format.js';
 import { brandName, entityLabelPlural } from '../../vocabulary.js';
+import { word } from '../../words.js';
 const h = webjsx.createElement;
 
 export function loadSiteHistory(caseId) {
@@ -17,12 +18,12 @@ export function SiteHistoryPanel({ onOpenCase, key } = {}) {
     const brand = brandName();
     const rows = visits.map(v => [
         Btn({ variant: 'link', size: 'sm', onClick: () => onOpenCase && onOpenCase(v.id), children: v.ref }),
-        channelLabel(v.channel) + ' - ' + (v.status ? stageLabel(v.status) : '') + ' - reported ' + rel(v.reported_at),
+        word('ui.site_history_row', { channel: channelLabel(v.channel), stage: v.status ? stageLabel(v.status) : '', when: rel(v.reported_at) }),
         (v.reasons || []).join(', ')
     ]);
     return h('div', { key, class: 'casey-site-history' },
-        h('h3', {}, 'Visit history for this site'),
-        h('p', { class: 'casey-hint' }, 'Other ' + entityLabelPlural() + ' ' + brand + ' thinks are the same place, most recent first -- any reporter may have visited, not only whoever opened this one.'),
-        Table({ headers: ['Reference', 'When', 'Why it matched'], rows })
+        h('h3', {}, word('ui.site_history_heading')),
+        h('p', { class: 'casey-hint' }, word('ui.site_history_lead', { entity_plural: entityLabelPlural(), brand })),
+        Table({ headers: [word('ui.site_history_col_ref'), word('ui.site_history_col_when'), word('ui.site_history_col_why')], rows })
     );
 }

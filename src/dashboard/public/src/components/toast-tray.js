@@ -3,6 +3,7 @@ import { Alert } from 'ds/components/content.js';
 import { Btn } from 'ds/components/shell.js';
 import { state } from '../state.js';
 import { dismissToast } from '../toasts.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 const TOAST_KIND = { err: 'error', warn: 'warn' };
@@ -18,9 +19,9 @@ export function ToastTray() {
           t.undo ? Btn({
             key: 'u', size: 'sm', variant: 'ghost',
             disabled: !!t.undo.busy,
-            title: t.undo.busy ? 'Working...' : null,
+            title: t.undo.busy ? word('ui.toast_tray_working') : null,
             onClick: () => { if (!t.undo.busy) t.undo.run(); },
-            children: t.undo.label || 'Undo',
+            children: t.undo.label || word('ui.toast_tray_undo'),
           }) : null,
         ].filter(Boolean),
       })

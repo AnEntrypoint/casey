@@ -39,7 +39,7 @@ export async function loadCaseDetail(id) {
         for (const f of knownValueFields()) loadKnownValues(f).then(schedule);
     } catch (e) {
         setCaseDetailError((e && e.status === 404)
-            ? 'This ' + entityLabel() + ' is not here any more. It may have been merged or removed -- go back to the list and open it again.'
+            ? word('ui.case_detail_view_not_here', { entity: entityLabel() })
             : word('ui.load_one_failed'));
     }
 }
@@ -50,11 +50,14 @@ function LinkedReportsNote({ caseId }) {
     const note = clusterNoteFor(caseId);
     if (!note) return null;
     const names = note.reportedDiseaseNames.length
-        ? ' -- as reported: ' + note.reportedDiseaseNames.join(', ')
+        ? word('ui.case_detail_view_as_reported', { names: note.reportedDiseaseNames.join(', ') })
         : '';
+    const others = countOf(note.others,
+        word('ui.case_detail_view_other_one', { entity: entityLabel() }),
+        word('ui.case_detail_view_other_many', { entity_plural: entityLabelPlural() }));
     return h('div', { class: 'casey-linked-reports' },
-        `Linked to ${countOf(note.others, 'other ' + entityLabel(), 'other ' + entityLabelPlural())} nearby${names}`,
-        names ? h('p', { class: 'casey-hint' }, 'Reports nearby that may be the same or a related situation. The names were given by the worker or farmer, not confirmed by a lab.') : null);
+        word('ui.case_detail_view_linked', { count: others, names }),
+        names ? h('p', { class: 'casey-hint' }, word('ui.case_detail_view_nearby_hint')) : null);
 }
 
 function pauseWhileEditing(el) {
@@ -65,17 +68,17 @@ function pauseWhileEditing(el) {
 }
 
 function backControl(onClose) {
-    return Btn({ variant: 'link', size: 'sm', class: 'casey-back-btn', 'aria-label': 'Back to the list', onClick: onClose,
-        children: [Icon('chevron-left', { size: 14 }), ' Back to the list'] });
+    return Btn({ variant: 'link', size: 'sm', class: 'casey-back-btn', 'aria-label': word('ui.case_detail_view_back_label'), onClick: onClose,
+        children: [Icon('chevron-left', { size: 14 }), word('ui.case_detail_view_back')] });
 }
 
 export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {}) {
     const id = state.activeId;
     if (!id) return h('div', { key, class: 'casey-detail-empty' },
         Icon('paw', { size: 32 }),
-        h('h2', { class: 'casey-detail-empty-title' }, 'No report open yet'),
-        h('p', { class: 'casey-hint' }, 'Tap a pin on the map, or a report in the list, to read it and reply.'),
-        h('p', { class: 'casey-hint casey-empty-kbd-hint' }, 'Keyboard (optional): ', h('span', { class: 'ds-kbd' }, 'j'), '/', h('span', { class: 'ds-kbd' }, 'k'), ' moves through the list, ', h('span', { class: 'ds-kbd' }, 'Enter'), ' opens it.'));
+        h('h2', { class: 'casey-detail-empty-title' }, word('ui.case_detail_view_empty_title')),
+        h('p', { class: 'casey-hint' }, word('ui.case_detail_view_empty_hint')),
+        h('p', { class: 'casey-hint casey-empty-kbd-hint' }, word('ui.case_detail_view_kbd_intro'), h('span', { class: 'ds-kbd' }, word('ui.case_detail_view_key_j')), '/', h('span', { class: 'ds-kbd' }, word('ui.case_detail_view_key_k')), word('ui.case_detail_view_kbd_moves'), h('span', { class: 'ds-kbd' }, word('ui.case_detail_view_key_enter')), word('ui.case_detail_view_kbd_opens')));
 
     if (_loadedFor !== id && !state.caseDetailLoading) loadCaseDetail(id);
 
@@ -84,10 +87,10 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
             showBack ? backControl(onClose) : null,
             h('p', { class: 'casey-hint' }, state.caseDetailError),
             h('div', { class: 'casey-timeline-actions' },
-                Btn({ size: 'sm', variant: 'primary', children: 'Try again', onClick: () => { _loadedFor = null; setCaseDetailError(null); loadCaseDetail(id); } })));
+                Btn({ size: 'sm', variant: 'primary', children: word('ui.case_detail_view_try_again'), onClick: () => { _loadedFor = null; setCaseDetailError(null); loadCaseDetail(id); } })));
     }
     if (!state.caseDetail || state.caseDetail.case.id !== id) {
-        return h('div', { key, class: 'casey-detail-loading' }, Skeleton({ count: 6, height: '1.4em', label: 'loading the report' }));
+        return h('div', { key, class: 'casey-detail-loading' }, Skeleton({ count: 6, height: '1.4em', label: word('ui.case_detail_view_loading') }));
     }
 
     const { case: c, events, transitions, events_total, suggested_assignee, case_type_source } = state.caseDetail;
@@ -109,18 +112,18 @@ export function CaseDetailView({ onClose, onOpenCase, key, showBack = true } = {
             SplitDialogTrigger({ caseId: id }),
             canDispatchFor(id)
                 ? Btn({
-                    size: 'sm', variant: 'ghost', children: 'Dispatch a worker',
+                    size: 'sm', variant: 'ghost', children: word('ui.case_detail_view_dispatch'),
                     onClick: () => dispatchWorkerFor(id),
                 })
                 : null,
             canDispatchFor(id)
-                ? h('p', { class: 'casey-hint' }, 'Suggests a field worker for this ' + entityLabel() + '. ' + brandName() + ' never messages the worker directly -- they are told the next time they message in themselves.')
+                ? h('p', { class: 'casey-hint' }, word('ui.case_detail_view_dispatch_hint', { entity: entityLabel(), brand: brandName() }))
                 : null,
-            Btn({ size: 'sm', variant: 'ghost', children: '+ Note', onClick: async () => {
-                const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Add a note to this ' + entityLabel(), confirmLabel: 'Save note', requireInput: true })) || '').trim();
+            Btn({ size: 'sm', variant: 'ghost', children: word('ui.case_detail_view_note_button'), onClick: async () => {
+                const text = ((await confirmDialog({ title: word('ui.case_detail_view_note_title'), inputLabel: word('ui.case_detail_view_note_input', { entity: entityLabel() }), confirmLabel: word('ui.case_detail_view_note_save'), requireInput: true })) || '').trim();
                 if (!text) return;
-                try { await postNote(id, text); toast('Note added to the timeline.', 'ok'); await reload(id); }
-                catch (e) { toast(await failMsg(e, 'The note was not saved. Nothing was added to the timeline -- try again.'), 'err'); }
+                try { await postNote(id, text); toast(word('ui.case_detail_view_note_added'), 'ok'); await reload(id); }
+                catch (e) { toast(await failMsg(e, word('ui.case_detail_view_note_failed')), 'err'); }
             } })
         ),
         Timeline({ caseId: id, events, eventsTotal: events_total, canTranslate: true, caseRef: c.ref, language: reportLanguage(c) }),
