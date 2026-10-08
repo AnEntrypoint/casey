@@ -42,7 +42,15 @@ import { HelpOverlay, helpSeen, markHelpSeen } from './components/help-overlay.j
 
 const root = document.getElementById('app');
 const { render, schedule } = mountKit({ root, view: App, screen: 'dashboard' });
-setSchedule(schedule);
+let focusedRowId = null;
+document.addEventListener('focusin', (e) => { const row = e.target.closest && e.target.closest('.case-row-main'); if (row) focusedRowId = row.dataset.id || null; });
+document.addEventListener('pointerdown', (e) => { if (!(e.target.closest && e.target.closest('.case-row-main'))) focusedRowId = null; }, true);
+function keepRowFocus() {
+  if (!focusedRowId || (document.activeElement && document.activeElement !== document.body)) return;
+  const row = document.querySelector('.case-row-main[data-id="' + CSS.escape(focusedRowId) + '"]');
+  if (row) row.focus({ preventScroll: true });
+}
+setSchedule(() => { schedule(); setTimeout(keepRowFocus, 0); });
 
 initTheme();
 
