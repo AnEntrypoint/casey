@@ -19,6 +19,21 @@ version: 1
 # --- Shown on screen when the phone or computer has lost its network. -----------
 # The team's decision: say "network", the word the community knows, not "signal".
 ui:
+  warn_stale: "Going cold (no recent activity)"
+  warn_stuck: "Stuck in this stage too long"
+  warn_unanswered_handoff: "A person was asked for and not yet answered"
+  warn_abandoned_intake: "Intake left with on-site facts missing"
+  warn_incomplete_critical: "Working but visit-critical facts still missing"
+  warn_never_closed: "Resolved but never closed"
+  warn_timestamp_corrupt: "Case time data looks wrong"
+  warn_unanswered_handoff_escalated: "Still waiting for a person, well past the first deadline"
+  warn_unsent_draft: "A reply is written but nobody has sent it"
+  warn_premature_complete: "Marked done with facts a field visit needs still blank"
+  warn_needs_human: "Waiting for a person to look"
+  warn_draft_pending: "Reply written but not sent"
+  warn_ai_offline: "Automatic replies are paused"
+  warn_degraded_turn_seen: "A reply had to be retried"
+  warn_needs_check: "Needs a check"
   offline_title: "Offline -- no network"
   offline_login_line: "This device cannot reach the dashboard, so signing in will not work yet."
   offline_login_wait: "Leave this page open -- the form works again as soon as the network comes back. Nothing here is broken and nothing has been lost."
@@ -52,6 +67,10 @@ ui:
   field_withdraw_message: "This takes {ref} back from the technician. They will no longer see it waiting for sign-off, and you can keep working on it."
   field_withdraw_done: "{ref} is back with you."
   field_withdraw_failed: "{ref} was not taken back. Nothing changed -- try again."
+  check_count_one: "{n} needs a check"
+  check_count_many: "{n} need checks"
+  checks_show: "Show what needs a check"
+  checks_hide: "Hide what needs a check"
   # --- On a report's page and on the paper form. ---
   not_given_yet: "not given yet"
   missing_for_visit_title: "Still missing for a visit"
@@ -88,7 +107,7 @@ glossary:
   claim: Marking a {entity} as yours, so the rest of the team knows you have it and does not answer the same person twice.
   reference: The short code (like CASE-1042-4KGBXQ7M) that identifies this {entity}. Share it with the person if they ask.
   inbox: 'The "Needs a person" list: {entity_plural} ranked worst-first by how urgently they need a reply.'
-  guardrail: An automatic check that flags a {entity} which may be stuck or overdue, so a person notices it.
+  needs a check: An automatic check that flags a {entity} which may be stuck or overdue, so a person notices it.
   external_id: The internal address {brand} uses to message this person on their channel. Never shown to a field worker, for privacy.
   field_worker: 'A reporter an operator has trusted with extra access: their own open {entity_plural}, "near me" lookups, and location check-ins.'
   reporter: The default access level for anyone who messages {brand}. Report-only, casual, public.

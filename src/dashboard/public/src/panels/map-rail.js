@@ -51,7 +51,7 @@ function filterChips() {
     return h('div', { class: 'ds-filter-pills' },
         chip('attn', 'need a person', attentionCount, f.band === 'attention',
             () => { setMapFilter({ band: f.band === 'attention' ? null : 'attention' }); applyFilterToMap(); },
-            'Show only the reports the guardrails are chasing'),
+            'Show only the reports that need a check'),
         chip('today', 'new today', newToday, f.band === 'today',
             () => { setMapFilter({ band: f.band === 'today' ? null : 'today' }); applyFilterToMap(); },
             'Show only reports that came in today'),
