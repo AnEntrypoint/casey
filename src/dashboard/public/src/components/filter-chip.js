@@ -1,5 +1,6 @@
 import * as webjsx from 'webjsx';
 import { Btn } from 'ds/components/shell/atoms.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 export function FilterChip({ key, label, count, on, onClick, title }) {
@@ -19,7 +20,7 @@ export function PillButton({ key, active, empty, title, onClick, class: cls, chi
 }
 
 export function ClearChip({ onClick }) {
-  return Btn({ key: 'clr', variant: 'link', size: 'sm', onClick, children: 'Clear' });
+  return Btn({ key: 'clr', variant: 'link', size: 'sm', onClick, children: word('ui.filter_chip_clear') });
 }
 
 export function QueueMore({ key, onClick, children }) {

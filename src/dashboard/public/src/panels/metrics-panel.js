@@ -9,16 +9,23 @@ import { createPanelLoader } from './panel-load.js';
 import { fetchOverview, fetchReportJson, fetchSlaAtRiskByType } from '../api.js';
 import { fmtDur, stageLabel, NO_TIME_TEXT } from '../format.js';
 import { entityLabelPlural } from '../vocabulary.js';
+import { word } from '../words.js';
 
 const h = webjsx.createElement;
 
-const CASE_TYPE_LABEL = { unset: 'Unclassified', outbreak: 'Symptom cluster', follow_up: 'Follow-up', lab_sample: 'Lab sample', import_alert: 'Import alert' };
-const ctLabel = (t) => CASE_TYPE_LABEL[t] || t;
+const CASE_TYPE_KEY = {
+    unset: 'ui.metrics_panel_ct_unset',
+    outbreak: 'ui.metrics_panel_ct_outbreak',
+    follow_up: 'ui.metrics_panel_ct_follow_up',
+    lab_sample: 'ui.metrics_panel_ct_lab_sample',
+    import_alert: 'ui.metrics_panel_ct_import_alert',
+};
+const ctLabel = (t) => (CASE_TYPE_KEY[t] ? word(CASE_TYPE_KEY[t]) : t);
 const slaMetPct = (s) => (s && s.considered ? Math.round(((s.met_count || 0) / s.considered) * 100) + '%' : NO_TIME_TEXT);
 
 const loader = createPanelLoader({
-    what: 'the trends',
-    label: 'loading metrics -- scans every open case, can take several seconds',
+    what: () => word('ui.metrics_panel_what'),
+    label: () => word('ui.metrics_panel_loading'),
     fetch: () => Promise.all([
         fetchOverview(14).catch(() => null),
         fetchReportJson(14).catch(() => null),
@@ -31,11 +38,11 @@ function summaryCards(j) {
     const fr = j.first_response_ms || {};
     const dwell = j.dwell_ms_median || {}, backlog = j.backlog_by_stage || {};
     const cards = [
-        [ 'Usual time to a first reply', fmtDur(fr.median), (fr.p90 == null ? `Not enough replies yet (${fr.n || 0} answered)` : `9 in 10 within ${fmtDur(fr.p90)} (${fr.n || 0} answered)`) ],
-        [ 'Open', String(j.cases ? j.cases.open : 0), entityLabelPlural() ],
-        [ 'Closed', String(j.cases ? j.cases.closed : 0), entityLabelPlural() ],
-        ...Object.keys(dwell).map((s) => [stageLabel(s), fmtDur(dwell[s]), 'usual time in this stage']),
-        ...Object.keys(backlog).map((s) => [stageLabel(s), String(backlog[s]), 'open now']),
+        [ word('ui.metrics_panel_first_reply'), fmtDur(fr.median), (fr.p90 == null ? word('ui.metrics_panel_not_enough', { answered: fr.n || 0 }) : word('ui.metrics_panel_nine_in_ten', { time: fmtDur(fr.p90), answered: fr.n || 0 })) ],
+        [ word('ui.metrics_panel_open'), String(j.cases ? j.cases.open : 0), entityLabelPlural() ],
+        [ word('ui.metrics_panel_closed'), String(j.cases ? j.cases.closed : 0), entityLabelPlural() ],
+        ...Object.keys(dwell).map((s) => [stageLabel(s), fmtDur(dwell[s]), word('ui.metrics_panel_usual_stage')]),
+        ...Object.keys(backlog).map((s) => [stageLabel(s), String(backlog[s]), word('ui.metrics_panel_open_now')]),
     ];
     return Kpi({ items: cards.map(([lab, val, sub]) => [val, sub ? lab + ' - ' + sub : lab]) });
 }
@@ -50,7 +57,7 @@ function atRiskByType(risk) {
         if (i) parts.push(h('span', { key: 'sep' + i }, ', '));
         parts.push(h('b', { key: 'n' + t }, String(bt[t])), h('span', { key: 'l' + t }, ' ' + ctLabel(t)));
     });
-    return Section({ title: `At risk now (reply target ${tgt})`, children: [
+    return Section({ title: word('ui.metrics_panel_at_risk', { target: tgt }), children: [
         h('div', { class: 'ds-risk-strip' }, ...parts)
     ]});
 }
@@ -69,22 +76,26 @@ function byTypeTable(report) {
             fmtDur(m ? m.first_response_ms_median : null), m && m.closed_pct != null ? m.closed_pct + '%' : NO_TIME_TEXT];
     };
     const rows = types.map((t) => row(ctLabel(t), sbt[t], met[t]));
-    if (ov) rows.push(row('Overall', ov, null));
-    return Section({ title: 'By type of report', children: [
-        Table({ headers: ['Type', 'Reports', 'Replied in time', 'Replied late', 'Never replied', 'First reply', 'Closed'], rows })
+    if (ov) rows.push(row(word('ui.metrics_panel_overall'), ov, null));
+    return Section({ title: word('ui.metrics_panel_by_type'), children: [
+        Table({ headers: [
+            word('ui.metrics_panel_h_type'), word('ui.metrics_panel_h_reports'), word('ui.metrics_panel_h_in_time'),
+            word('ui.metrics_panel_h_late'), word('ui.metrics_panel_h_never'), word('ui.metrics_panel_h_first_reply'),
+            word('ui.metrics_panel_h_closed'),
+        ], rows })
     ]});
 }
 
 export function MetricsPanel() {
     loader.ensureLoaded();
     const exportLinks = h('div', { class: 'ds-btn-row' },
-        Btn({ href: '/api/report.csv?days=14', variant: 'ghost', size: 'sm', children: 'Export CSV' }),
-        Btn({ href: '/api/report.html?days=14', variant: 'ghost', size: 'sm', children: 'Export HTML' }),
-        Btn({ href: '/api/audit.csv?days=14', variant: 'ghost', size: 'sm', children: 'Audit trail CSV' }));
+        Btn({ href: '/api/report.csv?days=14', variant: 'ghost', size: 'sm', children: word('ui.metrics_panel_export_csv') }),
+        Btn({ href: '/api/report.html?days=14', variant: 'ghost', size: 'sm', children: word('ui.metrics_panel_export_html') }),
+        Btn({ href: '/api/audit.csv?days=14', variant: 'ghost', size: 'sm', children: word('ui.metrics_panel_export_audit') }));
     const body = loader.slot(() => {
         const { overview, report, risk } = state._metrics || {};
         return h('div', {},
-            overview ? summaryCards(overview) : Alert({ kind: 'warn', children: 'Could not load metrics.' }),
+            overview ? summaryCards(overview) : Alert({ kind: 'warn', children: word('ui.metrics_panel_load_failed') }),
             risk ? atRiskByType(risk) : null,
             report ? byTypeTable(report) : null);
     });

@@ -16,6 +16,7 @@ import { GeoPanel } from './geo-panel.js';
 import { ClustersPanel } from './clusters-panel.js';
 import { FilterChip, ClearChip, QueueMore, PillButton } from '../components/filter-chip.js';
 import { headline, rel, FILTERED_EMPTY_TEXT } from '../format.js';
+import { word } from '../words.js';
 
 const h = webjsx.createElement;
 
@@ -24,21 +25,19 @@ function applyFilterToMap() {
     schedule();
 }
 
-const OVERLAY_HELP = 'Clusters: dashed red lines join reports that look like one event. Coverage: large faint rings show areas an operator has worked. Workers: amber dots are field workers, red and larger when a check-in is overdue. Last reported: green dots show where each contact last reported from.';
-
 function timeControl() {
-    const opts = [{ v: '0', label: 'All time' }, { v: '7', label: 'This week' }, { v: '30', label: 'This month' }];
+    const opts = [{ v: '0', key: 'ui.map_rail_all_time' }, { v: '7', key: 'ui.map_rail_this_week' }, { v: '30', key: 'ui.map_rail_this_month' }];
     return h('div', { class: 'ds-rail-controls' },
         FilterPills({
-            label: 'Time window', selected: state.mapFilter.days,
-            options: opts.map((o) => ({ id: o.v, label: o.label })),
+            label: word('ui.map_rail_time_window'), selected: state.mapFilter.days,
+            options: opts.map((o) => ({ id: o.v, label: word(o.key) })),
             onSelect: (v) => { if (state.mapFilter.days === v) return; setMapFilter({ days: v }); refresh(); },
         }),
         Btn({
             key: 'reset', variant: 'ghost', size: 'sm',
-            title: 'Move the map back to show every report',
+            title: word('ui.map_rail_show_all_title'),
             onClick: () => { resetMapView(mapStateRef.current); },
-            children: 'Show all',
+            children: word('ui.map_rail_show_all'),
         }));
 }
 
@@ -49,15 +48,15 @@ function filterChips() {
 
     const f = state.mapFilter;
     return h('div', { class: 'ds-filter-pills' },
-        chip('attn', 'need a person', attentionCount, f.band === 'attention',
+        chip('attn', word('ui.map_rail_chip_attention'), attentionCount, f.band === 'attention',
             () => { setMapFilter({ band: f.band === 'attention' ? null : 'attention' }); applyFilterToMap(); },
-            'Show only the reports that need a check'),
-        chip('today', 'new today', newToday, f.band === 'today',
+            word('ui.map_rail_chip_attention_title')),
+        chip('today', word('ui.map_rail_chip_today'), newToday, f.band === 'today',
             () => { setMapFilter({ band: f.band === 'today' ? null : 'today' }); applyFilterToMap(); },
-            'Show only reports that came in today'),
-        inViewCount == null ? null : chip('view', 'in this view', inViewCount, f.inView,
+            word('ui.map_rail_chip_today_title')),
+        inViewCount == null ? null : chip('view', word('ui.map_rail_chip_view'), inViewCount, f.inView,
             () => { setMapFilter({ inView: !f.inView }); applyFilterToMap(); },
-            'Narrow the list to the part of the map you are looking at'),
+            word('ui.map_rail_chip_view_title')),
         filterIsActive(f)
             ? ClearChip({ onClick: () => { clearMapFilter(); applyFilterToMap(); } })
             : null);
@@ -68,12 +67,12 @@ export function visibleQueueRows() { return queueRows(); }
 function attentionFeed() {
     const all = queueRows();
     const error = loadError();
-    if (!all.length && error) return h('div', { class: 'triage' }, h('div', { class: 'calm', role: 'alert' }, 'The queue could not load: ' + error));
-    if (!all.length && !hasLoadedOnce()) return h('div', { class: 'triage' }, h('div', { class: 'calm', role: 'status' }, 'Loading the queue...'));
+    if (!all.length && error) return h('div', { class: 'triage' }, h('div', { class: 'calm', role: 'alert' }, word('ui.map_rail_queue_error', { error })));
+    if (!all.length && !hasLoadedOnce()) return h('div', { class: 'triage' }, h('div', { class: 'calm', role: 'status' }, word('ui.map_rail_loading_queue')));
     if (!all.length) {
         const why = filterIsActive(state.mapFilter)
             ? FILTERED_EMPTY_TEXT
-            : 'Nothing needs attention right now.';
+            : word('ui.map_rail_nothing_needs');
         return h('div', { class: 'triage' }, h('div', { class: 'calm' }, why));
     }
     const shown = queueShownCount();
@@ -87,7 +86,7 @@ function attentionFeed() {
                 key: c.id, class: 'tcase heat-' + band + (state.activeId === c.id ? ' active' : ''),
                 onclick: () => pick(c.id),
                 role: 'button', tabindex: '0',
-                'aria-label': `${c.ref}: ${URGENCY_BAND_LABEL[band] || ''}`,
+                'aria-label': word('ui.map_rail_row_aria', { ref: c.ref, band: URGENCY_BAND_LABEL[band] || '' }),
                 onkeydown: (e) => {
                     if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); pick(c.id); }
                 },
@@ -97,9 +96,9 @@ function attentionFeed() {
                 c.reason ? h('div', { class: 'tcase-reason' }, c.reason) : null);
         }),
         all.length > rows.length
-            ? QueueMore({ key: 'more', onClick: () => { setQueueShown(all.length); }, children: `Show all ${all.length}` })
+            ? QueueMore({ key: 'more', onClick: () => { setQueueShown(all.length); }, children: word('ui.map_rail_show_all_count', { count: all.length }) })
             : (shown > QUEUE_PAGE && all.length > QUEUE_PAGE
-                ? QueueMore({ key: 'less', onClick: () => { setQueueShown(QUEUE_PAGE); }, children: 'Show fewer' })
+                ? QueueMore({ key: 'less', onClick: () => { setQueueShown(QUEUE_PAGE); }, children: word('ui.map_rail_show_fewer') })
                 : null));
 }
 
@@ -108,15 +107,15 @@ function mapFilterRow() {
     const options = filterOptions();
     return h('div', { class: 'ds-btn-row ds-map-filters' },
         Select({
-            key: 'sp', placeholder: 'all species', value: f.species,
+            key: 'sp', placeholder: word('ui.map_rail_all_species'), value: f.species,
             options: options.species, onChange: (v) => { setMapFilter({ species: v }); applyFilterToMap(); },
         }),
         Select({
-            key: 'ty', placeholder: 'all types', value: f.type,
+            key: 'ty', placeholder: word('ui.map_rail_all_types'), value: f.type,
             options: options.types, onChange: (v) => { setMapFilter({ type: v }); applyFilterToMap(); },
         }),
         Select({
-            key: 'st', placeholder: 'all statuses', value: f.status,
+            key: 'st', placeholder: word('ui.map_rail_all_statuses'), value: f.status,
             options: options.statuses, onChange: (v) => { setMapFilter({ status: v }); applyFilterToMap(); },
         }));
 }
@@ -125,13 +124,13 @@ function mapOverlayRow() {
     const ms = mapStateRef.current;
     const tog = (key, label, title, on, onClick) => PillButton({ key, title, active: on, onClick, children: label });
     return h('div', { class: 'ds-btn-row ds-map-overlays' },
-        tog('cl', 'Clusters', 'Draw a line between reports that look like the same event',
+        tog('cl', word('ui.map_rail_ov_clusters'), word('ui.map_rail_ov_clusters_title'),
             !!(ms && ms.showClusters), () => { toggleClusters(ms, state.mapFilter); schedule(); }),
-        tog('cov', 'Coverage', 'Ring the areas each operator has been working in',
+        tog('cov', word('ui.map_rail_ov_coverage'), word('ui.map_rail_ov_coverage_title'),
             !!(ms && ms.showCoverage), async () => { await toggleCoverage(ms); schedule(); }),
-        tog('wk', 'Workers', 'Show where field workers last checked in from',
+        tog('wk', word('ui.map_rail_ov_workers'), word('ui.map_rail_ov_workers_title'),
             !!(ms && ms.showWorkers), async () => { await toggleWorkers(ms); schedule(); }),
-        tog('lr', 'Last reported', 'Show the last place each contact reported from',
+        tog('lr', word('ui.map_rail_ov_last_reported'), word('ui.map_rail_ov_last_reported_title'),
             !!(ms && ms.showLastReports), async () => { await toggleLastReports(ms); schedule(); }));
 }
 
@@ -160,9 +159,9 @@ function mapUnresolvedDisclosure() {
 }
 
 const RAIL_MODES = {
-    queue: { label: queueName(), body: attentionFeed },
-    clusters: { label: 'Related reports', body: () => ClustersPanel({ railed: true }) },
-    geo: { label: 'Hotspots', body: () => GeoPanel({ railed: true }) },
+    queue: { label: () => queueName(), body: attentionFeed },
+    clusters: { label: () => word('ui.map_rail_mode_clusters'), body: () => ClustersPanel({ railed: true }) },
+    geo: { label: () => word('ui.map_rail_mode_geo'), body: () => GeoPanel({ railed: true }) },
 };
 
 function railModeTabs() {
@@ -170,7 +169,7 @@ function railModeTabs() {
     return h('div', { class: 'ds-rail-back' },
         Btn({
             variant: 'ghost',
-            children: 'Back to the queue',
+            children: word('ui.map_rail_back'),
             onClick: () => { setRailMode('queue'); },
         }));
 }
@@ -184,13 +183,13 @@ export function MapRail() {
             class: 'ds-map-updated' + (stale ? ' is-stale' : ''),
             role: stale ? 'status' : null,
         }, (stale
-            ? 'Not refreshing -- last updated ' + rel(at) + '. Reload the page to get the current picture.'
-            : 'Updated ' + rel(at)))
+            ? word('ui.map_rail_stale', { time: rel(at) })
+            : word('ui.map_rail_updated', { time: rel(at) })))
         : null;
     return h('div', { class: 'ds-map-rail' },
         h('div', { class: 'ds-rail-head' },
             h('div', { class: 'ds-rail-head-top' },
-                h('h2', { class: 'ds-rail-title' }, mode.label),
+                h('h2', { class: 'ds-rail-title' }, mode.label()),
                 lastUpdatedNote),
             timeControl(),
             filterChips()),
@@ -198,7 +197,7 @@ export function MapRail() {
         h('div', { class: 'ds-rail-body' },
             mode.body(),
             h('details', { class: 'ds-rail-disclosure' },
-                h('summary', {}, 'Map options'),
-                h('div', { class: 'ds-rail-disclosure-body' }, mapFilterRow(), mapOverlayRow(), h('p', { class: 'casey-hint' }, OVERLAY_HELP))),
+                h('summary', {}, word('ui.map_rail_options')),
+                h('div', { class: 'ds-rail-disclosure-body' }, mapFilterRow(), mapOverlayRow(), h('p', { class: 'casey-hint' }, word('ui.map_rail_overlay_help')))),
             ...mapUnresolvedDisclosure()));
 }

@@ -3,6 +3,7 @@ import { urgencyByCaseId, pinMatches, LOCATION_SOURCE_VALUES } from '../map-mode
 import { renderClusterLines } from './map-overlays.js';
 import { stageLabel } from '../format.js';
 import { EntityLabel } from '../vocabulary.js';
+import { word } from '../words.js';
 
 export const STATUS_TOKEN = {
     new: '--sky',
@@ -64,14 +65,20 @@ export function renderMapMarkers(mapState, filters) {
         const prev = mapState.markerById.get(p.id);
         if (prev && prev.sig === iconSig) continue;
         if (prev) stale.push(prev.marker);
+        const pinSure = Number.isFinite(p.location_confidence);
         const m = window.L.marker([p.lat, p.lon], {
             icon: mapMarkerIcon(STATUS_TOKEN[p.status] || '--fg-3', p.location_source, u, selected),
             zIndexOffset: u * 1000,
-            title: `${p.ref} -- ${stageLabel(p.status)}${Number.isFinite(p.location_confidence) ? ` -- pin ${p.location_confidence}% sure` : ''}`,
+            title: `${p.ref} -- ${stageLabel(p.status)}` + (pinSure ? word('ui.map_markers_pin_sure', { confidence: p.location_confidence }) : ''),
         });
         m.on('add', () => {
             const el = m.getElement();
-            if (el) el.setAttribute('aria-label', `${EntityLabel()} ${p.ref}, ${stageLabel(p.status)}${Number.isFinite(p.location_confidence) ? `, pin ${p.location_confidence}% sure` : ''}`);
+            if (el) el.setAttribute('aria-label', word('ui.map_markers_aria', {
+                entity: EntityLabel(),
+                ref: p.ref,
+                stage: stageLabel(p.status),
+                pin: pinSure ? word('ui.map_markers_pin_aria', { confidence: p.location_confidence }) : '',
+            }));
         });
         m.on('click', () => setActiveId(p.id));
         mapState.markerById.set(p.id, { marker: m, sig: iconSig });

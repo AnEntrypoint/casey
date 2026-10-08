@@ -63,13 +63,13 @@ export function ReportSections({ c, events, onSaved, key } = {}) {
 
     const audioVal = has(r, 'audio') ? String(r.audio).trim() : '';
     const audioBanner = audioVal && audioVal.toLowerCase() !== 'no'
-        ? Alert({ kind: 'warn', title: 'Voice note on record', children: audioVal + ' -- listen and update the fields below from what you hear.' })
+        ? Alert({ kind: 'warn', title: word('ui.report_sections_voice_title'), children: word('ui.report_sections_audio_hint', { audio: audioVal }) })
         : null;
 
-    const entityLabel = activeConfig()?.entity_label || 'report';
+    const entityLabel = activeConfig()?.entity_label || word('ui.report_sections_entity_fallback');
     return h('div', { key, class: 'casey-report' },
         h('div', { class: 'casey-report-head' }, `${EntityLabel()} ${word('ui.details_heading_suffix')}`),
-        any ? null : h('p', { class: 'casey-hint' }, 'Nothing has been recorded on this ' + entityLabel + ' yet. Tap any line below to fill it in.'),
+        any ? null : h('p', { class: 'casey-hint' }, word('ui.report_sections_none', { entity: entityLabel })),
         readyBanner, audioBanner,
         ...sections.map(sec => h('div', { key: sec.title }, Section({
             title: sec.title,

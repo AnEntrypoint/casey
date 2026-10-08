@@ -3,33 +3,42 @@ import { Btn } from '/design/src/components/shell/atoms.js';
 import { api, setViewAs, viewAsId } from '../api.js';
 import { state } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
+import { word } from '../words.js';
 
 const h = webjsx.createElement;
 let accounts = [];
-const ROLE_WORD = { admin: 'Admin', operator: 'Operator', secretary: 'Operator', eco_ranger: 'Eco ranger', animal_health_technician: 'Animal health technician', viewer: 'Viewer' };
+const ROLE_KEY = {
+    admin: 'ui.view_as_panel_role_admin',
+    operator: 'ui.view_as_panel_role_operator',
+    secretary: 'ui.view_as_panel_role_operator',
+    eco_ranger: 'ui.view_as_panel_role_eco_ranger',
+    animal_health_technician: 'ui.view_as_panel_role_technician',
+    viewer: 'ui.view_as_panel_role_viewer',
+};
+const roleName = (role) => (ROLE_KEY[role] ? word(ROLE_KEY[role]) : role);
 const ORDER = ['operator', 'secretary', 'animal_health_technician', 'eco_ranger', 'viewer', 'admin'];
 
 const loader = createPanelLoader({
-    what: () => 'the logins',
-    label: 'loading logins',
+    what: () => word('ui.view_as_panel_what'),
+    label: () => word('ui.view_as_panel_loading'),
     fetch: async () => { const r = await api('/api/accounts'); if (!r.ok) throw new Error('accounts ' + r.status); return r.json(); },
     apply: (j) => { accounts = (j && j.accounts) || []; },
 });
 
 export function ViewAsPanel() {
     const isAdmin = state.currentUser && state.currentUser.role === 'admin' && !viewAsId();
-    if (!isAdmin) return h('p', { class: 'casey-hint' }, 'Only an admin can look at the dashboard as another login.');
+    if (!isAdmin) return h('p', { class: 'casey-hint' }, word('ui.view_as_panel_admin_only'));
     loader.ensureLoaded();
     return loader.slot(() => {
         const live = accounts.filter(a => !a.disabled && a.role !== 'admin');
         const roles = ORDER.filter(r => live.some(a => a.role === r));
         return h('div', { class: 'field-home' },
-            h('p', { class: 'casey-hint' }, 'Pick a login to see the dashboard the way that person sees it: the same screens, the same reports, the same limits. It is read-only, so nothing you do there changes anything. A bar at the top lets you leave.'),
+            h('p', { class: 'casey-hint' }, word('ui.view_as_panel_lede')),
             roles.length ? roles.map(role => h('div', { key: role, class: 'ds-view-as-group' },
-                h('h3', {}, ROLE_WORD[role] || role),
+                h('h3', {}, roleName(role)),
                 live.filter(a => a.role === role).map(a => h('div', { key: a.id, class: 'ds-contact-actions' },
                     h('span', {}, (a.display_name || a.username) + (a.display_name && a.display_name !== a.username ? ' (' + a.username + ')' : '')),
-                    Btn({ size: 'sm', variant: 'ghost', children: 'See as them', 'aria-label': 'See the dashboard as ' + (a.display_name || a.username), onClick: () => setViewAs(a.id) }))))) : h('p', {}, 'There are no other logins to look at yet.'),
-            Btn({ variant: 'ghost', children: 'Refresh', onClick: () => loader.reload() }));
+                    Btn({ size: 'sm', variant: 'ghost', children: word('ui.view_as_panel_see_as'), 'aria-label': word('ui.view_as_panel_see_aria', { name: a.display_name || a.username }), onClick: () => setViewAs(a.id) }))))) : h('p', {}, word('ui.view_as_panel_none')),
+            Btn({ variant: 'ghost', children: word('ui.view_as_panel_refresh'), onClick: () => loader.reload() }));
     });
 }

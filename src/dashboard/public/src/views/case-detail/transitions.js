@@ -7,6 +7,7 @@ import { toast, undoToast, failMsg } from '../../toasts.js';
 import { postTransition } from '../../api.js';
 import { stageLabel } from '../../format.js';
 import { entityLabel } from '../../vocabulary.js';
+import { word } from '../../words.js';
 const h = webjsx.createElement;
 
 const CASEY_NOTIFIED_STAGES = ['in_progress', 'waiting', 'resolved'];
@@ -23,31 +24,36 @@ export function Transitions({ c, transitions, onReload, key } = {}) {
         try {
             const updated = await postTransition(c.id, target, reason || undefined);
             close();
-            undoToast(c.id, CASEY_NOTIFIED_STAGES.includes(updated.status) ? 'Moved to ' + stageLabel(target) + '. A short note was queued to the contact.' : 'Moved to ' + stageLabel(target) + '. The contact was not told.');
+            undoToast(c.id, CASEY_NOTIFIED_STAGES.includes(updated.status)
+                ? word('ui.transitions_moved_notified', { stage: stageLabel(target) })
+                : word('ui.transitions_moved_silent', { stage: stageLabel(target) }));
             if (onReload) await onReload(c.id);
-        } catch (e) { toast(await failMsg(e, 'The stage was not changed, so this is still at ' + stageLabel(c.status) + '. Nothing was sent to the contact -- try again.'), 'err'); }
+        } catch (e) { toast(await failMsg(e, word('ui.transitions_not_changed', { stage: stageLabel(c.status) })), 'err'); }
     };
 
     return h('div', { key, class: 'casey-transitions' },
-        h('label', {}, 'Change the stage'),
+        h('label', {}, word('ui.transitions_label')),
         transitions && transitions.length
             ? h('div', { class: 'casey-transition-btns' }, ...transitions.map(t => Btn({
-                key: t, size: 'sm', variant: 'ghost', children: '-> ' + stageLabel(t), title: 'Move this ' + entityLabel() + ' to ' + stageLabel(t),
+                key: t, size: 'sm', variant: 'ghost', children: word('ui.transitions_button', { stage: stageLabel(t) }),
+                title: word('ui.transitions_button_title', { entity: entityLabel(), stage: stageLabel(t) }),
                 onClick: () => openFor(t)
             })))
-            : h('span', { class: 'casey-hint' }, 'There is nowhere for this one to move from here.'),
+            : h('span', { class: 'casey-hint' }, word('ui.transitions_nowhere')),
         Dialog({
-            open, title: target ? 'Move this to ' + stageLabel(target) : 'Move this ' + entityLabel(), onClose: close,
+            open, title: target
+                ? word('ui.transitions_dialog_stage', { stage: stageLabel(target) })
+                : word('ui.transitions_dialog_plain', { entity: entityLabel() }), onClose: close,
             children: [
                 h('p', { key: 'notice', class: 'casey-hint' }, target
                     ? (CASEY_NOTIFIED_STAGES.includes(target)
-                        ? 'Moving to ' + stageLabel(target) + ' queues a short note to the contact.'
-                        : 'The contact will not be told about this move.')
+                        ? word('ui.transitions_notice_notified', { stage: stageLabel(target) })
+                        : word('ui.transitions_notice_silent'))
                     : ''),
-                TextField({ key: 'reason', label: 'Reason (optional)', multiline: true, rows: 2, value: reason, placeholder: 'e.g. operator contacted farmer directly', onInput: (v) => { state._transitionReason = v; schedule(); } }),
+                TextField({ key: 'reason', label: word('ui.transitions_reason_label'), multiline: true, rows: 2, value: reason, placeholder: word('ui.transitions_reason_placeholder'), onInput: (v) => { state._transitionReason = v; schedule(); } }),
                 h('div', { key: 'acts', class: 'ds-dialog-actions' },
-                    Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: close }),
-                    Btn({ key: 'ok', variant: 'primary', children: target ? 'Move to ' + stageLabel(target) : 'Move', onClick: confirm })
+                    Btn({ key: 'cancel', variant: 'ghost', children: word('ui.transitions_cancel'), onClick: close }),
+                    Btn({ key: 'ok', variant: 'primary', children: target ? word('ui.transitions_move_to', { stage: stageLabel(target) }) : word('ui.transitions_move'), onClick: confirm })
                 )
             ]
         })

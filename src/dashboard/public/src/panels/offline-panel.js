@@ -6,13 +6,13 @@ import { state, setActiveId, setOfflineQueueCount } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchUnreplied } from '../api.js';
 import { fmtTime, channelLabel } from '../format.js';
-import { entityLabelPlural } from '../vocabulary.js';
+import { word } from '../words.js';
 
 const h = webjsx.createElement;
 
 const loader = createPanelLoader({
-    what: 'the offline queue',
-    label: 'loading offline queue',
+    what: () => word('ui.offline_panel_what'),
+    label: () => word('ui.offline_panel_loading'),
     fetch: fetchUnreplied,
     apply: (j) => {
         state._offline = j;
@@ -25,13 +25,13 @@ export function OfflinePanel() {
     const body = loader.slot(() => {
         const j = state._offline;
         const rows = (j && j.items) || [];
-        if (!rows.length) return Alert({ kind: 'info', children: 'Nothing is waiting for a first reply. This list holds ' + entityLabelPlural() + ' that arrived and have had no answer yet.' });
+        if (!rows.length) return Alert({ kind: 'info', children: word('ui.offline_panel_none') });
         const capped = j.total > rows.length;
         return h('div', {},
-            capped ? Alert({ kind: 'info', children: `Showing the newest ${rows.length} of ${j.total}. Use Search, or claim these first, to bring the rest into view.` }) : null,
+            capped ? Alert({ kind: 'info', children: word('ui.offline_panel_capped', { shown: rows.length, total: j.total }) }) : null,
             Table({
-                headers: ['Ref', 'Subject', 'Channel', 'Owner', 'Last event'],
-                rows: rows.map((r) => [r.ref || '', r.subject || '(no subject)', channelLabel(r.channel), (r.assignee && r.assignee !== 'agent') ? r.assignee : '', fmtTime(r.last_event_at)]),
+                headers: [word('ui.offline_panel_h_ref'), word('ui.offline_panel_h_subject'), word('ui.offline_panel_h_channel'), word('ui.offline_panel_h_owner'), word('ui.offline_panel_h_last_event')],
+                rows: rows.map((r) => [r.ref || '', r.subject || word('ui.offline_panel_no_subject'), channelLabel(r.channel), (r.assignee && r.assignee !== 'agent') ? r.assignee : '', fmtTime(r.last_event_at)]),
                 onRowClick: (i) => { if (rows[i].id) setActiveId(rows[i].id); },
             }));
     });

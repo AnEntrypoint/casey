@@ -19,33 +19,35 @@ import { CaseListDetailLayout } from './case-list-detail-layout.js';
 import { MapCommandCenter } from './map-command-center.js';
 import { ViewTitle, VIEW_TITLE_ID } from './view-title.js';
 import { brandName, EntityLabelPlural, countOf } from '../vocabulary.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 const modalBodies = {};
 export function registerModalBody(name, renderFn) { modalBodies[name] = renderFn; }
+const MODAL_TITLE_KEY = { settings: 'ui.app_view_settings', stats: 'ui.app_view_stats', help: 'ui.app_view_help_screen', onboarding: 'ui.app_view_onboarding', skills: 'ui.app_view_skills' };
 function modalTitle(name) {
-  return { settings: 'Settings', stats: 'Stats', help: 'How this screen works', onboarding: 'Your first shift', skills: 'Ways to work faster' }[name] || name;
+  return MODAL_TITLE_KEY[name] ? word(MODAL_TITLE_KEY[name]) : name;
 }
 const WIDE_MODALS = new Set(['settings', 'stats']);
 const SELF_WRAPPED_MODALS = new Set(['help', 'onboarding', 'skills']);
 function ModalMount() {
   const name = state.activeModal;
   if (!name || name === 'confirm-logout-everywhere' || name === 'feedback') return null;
-  const body = modalBodies[name] ? modalBodies[name]() : h('p', {}, 'This screen is not available in this deployment.');
+  const body = modalBodies[name] ? modalBodies[name]() : h('p', {}, word('ui.app_view_unavailable'));
   if (SELF_WRAPPED_MODALS.has(name)) return body;
   return Dialog({ open: true, title: modalTitle(name), onClose: closeModal, children: body, wide: WIDE_MODALS.has(name) });
 }
 
 const panelBodies = {};
 export function registerPanelBody(name, renderFn) { panelBodies[name] = renderFn; }
-function panelPageTitle(name) { return panelTitle(name) || 'Screen not available'; }
+function panelPageTitle(name) { return panelTitle(name) || word('ui.app_view_screen_unavailable'); }
 function PanelSwap() {
   const name = state.activePanel;
   const known = !!panelBodies[name];
   const body = known
     ? panelBodies[name]()
-    : h('p', {}, 'This screen is not available in this deployment.');
-  const backLabel = state.homeView === 'cases' ? 'Back to ' + EntityLabelPlural().toLowerCase() : 'Back to the map';
+    : h('p', {}, word('ui.app_view_unavailable'));
+  const backLabel = state.homeView === 'cases' ? word('ui.app_view_back_cases', { entity_plural: EntityLabelPlural().toLowerCase() }) : word('ui.app_view_back_map');
   return h('div', { class: 'ds-panel-swap' },
     h('div', { class: 'ds-panel-swap-head' },
       Btn({ variant: 'ghost', children: backLabel, onClick: backToCases }),
@@ -84,12 +86,12 @@ function ActionRow() {
 
 function AttentionLead() {
   const n = (state.attention || []).length;
-  const label = n === 0 ? 'Nothing needs a person' : (n + (n === 1 ? ' needs a person' : ' need a person'));
+  const label = n === 0 ? word('ui.app_view_nothing_needs') : word(n === 1 ? 'ui.app_view_one_needs' : 'ui.app_view_many_need', { n });
   return h('button', {
     type: 'button',
     class: 'ds-attn-lead' + (n ? ' is-waiting' : ''),
-    title: 'Open the "' + queueName() + '" list',
-    'aria-label': label + ', open the ' + queueName() + ' list',
+    title: word('ui.app_view_open_queue_title', { queue: queueName() }),
+    'aria-label': word('ui.app_view_open_queue_aria', { label, queue: queueName() }),
     onclick: openQueue,
   },
     h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('activity', { size: 15 })),
@@ -100,14 +102,14 @@ function StatusBar() {
   const total = state.allCasesTotal || (state.allCases || []).length;
   const hl = state.health.ai;
   const gw = hl && hl.gateway;
-  const left = [h('span', { key: 'c' }, `${countOf(total)} loaded`)];
+  const left = [h('span', { key: 'c' }, word('ui.app_view_loaded', { count: countOf(total) }))];
   const right = [
     hl && hl.source === 'unwired'
-      ? h('span', { key: 'mode' }, 'Replies are not sent from this screen')
-      : (gw && gw.ok ? h('span', { key: 'rx' }, 'Receiving reports') : null),
-    h('span', { key: 'conn' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected'),
+      ? h('span', { key: 'mode' }, word('ui.app_view_replies_not_sent'))
+      : (gw && gw.ok ? h('span', { key: 'rx' }, word('ui.app_view_receiving')) : null),
+    h('span', { key: 'conn' }, state.connLost ? word('ui.app_view_not_connected') : word('ui.app_view_connected')),
   ].filter(Boolean);
-  return Status({ left, right, ariaLabel: 'Status bar' });
+  return Status({ left, right, ariaLabel: word('ui.app_view_status_aria') });
 }
 
 function MainContent() {
@@ -135,13 +137,13 @@ export function App() {
     ActionRow(),
     NotificationsCenter(),
     h('span', { key: 'help', class: 'ds-action-common ds-appbar-overflow' },
-      Btn({ variant: 'ghost', title: 'What does this screen mean?', 'aria-label': 'Help: what does this screen mean?', onClick: () => openModal('help'),
-        children: [h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('help')), h('span', { key: 'l', class: 'ds-action-label' }, 'Help')] })),
+      Btn({ variant: 'ghost', title: word('ui.app_view_help_hint'), 'aria-label': word('ui.app_view_help_aria'), onClick: () => openModal('help'),
+        children: [h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('help')), h('span', { key: 'l', class: 'ds-action-label' }, word('ui.app_view_help'))] })),
     AccountMenu(),
     h('span', { key: 'more', class: 'ds-appbar-more' },
-      Btn({ variant: 'ghost', 'aria-expanded': state._appbarMore ? 'true' : 'false', title: 'Show or hide the other buttons',
-        'aria-label': state._appbarMore ? 'Fewer buttons' : 'More buttons', onClick: () => { state._appbarMore = !state._appbarMore; schedule(); },
-        children: [h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('chevron-down')), h('span', { key: 'l', class: 'ds-action-label' }, state._appbarMore ? 'Fewer' : 'More')] })),
+      Btn({ variant: 'ghost', 'aria-expanded': state._appbarMore ? 'true' : 'false', title: word('ui.app_view_more_title'),
+        'aria-label': state._appbarMore ? word('ui.app_view_fewer_buttons') : word('ui.app_view_more_buttons'), onClick: () => { state._appbarMore = !state._appbarMore; schedule(); },
+        children: [h('span', { key: 'g', class: 'ds-action-glyph', 'aria-hidden': 'true' }, Icon('chevron-down')), h('span', { key: 'l', class: 'ds-action-label' }, state._appbarMore ? word('ui.app_view_fewer') : word('ui.app_view_more'))] })),
   ].filter(Boolean);
   const crumb = Crumb({
     trail: [brand],
@@ -155,7 +157,7 @@ export function App() {
     ConnectionBanner(),
     ...HealthNotices(),
     HandoffBanner(),
-    AppShell({ topbar, crumb, side, status, main: [MainContent()], bannerLabel: 'Top bar', mainLabelledby: VIEW_TITLE_ID }),
+    AppShell({ topbar, crumb, side, status, main: [MainContent()], bannerLabel: word('ui.app_view_top_bar'), mainLabelledby: VIEW_TITLE_ID }),
     ModalMount(),
     FeedbackDialog(),
     LogoutEverywhereConfirmDialog(),

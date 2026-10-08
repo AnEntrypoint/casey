@@ -7,6 +7,7 @@ import { toast, failMsg } from '../../toasts.js';
 import { postSnooze } from '../../api.js';
 import { entityLabel } from '../../vocabulary.js';
 import { queueName } from '../../map-model.js';
+import { word } from '../../words.js';
 const h = webjsx.createElement;
 
 export function openSnoozeDialog(c) { state._snoozeDialogFor = c.id; state._snoozeMinutes = ''; schedule(); }
@@ -17,22 +18,22 @@ export function SnoozeDialog({ onReload, key } = {}) {
     const close = () => { state._snoozeDialogFor = null; schedule(); };
     const confirm = async () => {
         const minutes = parseInt(state._snoozeMinutes, 10);
-        if (!Number.isFinite(minutes) || minutes <= 0) { toast('Enter a positive number of minutes', 'warn'); return; }
+        if (!Number.isFinite(minutes) || minutes <= 0) { toast(word('ui.snooze_dialog_positive'), 'warn'); return; }
         try {
             await postSnooze(caseId, minutes);
-            toast('Snoozed. It is out of the "' + queueName() + '" list until then.');
+            toast(word('ui.snooze_dialog_done', { queue: queueName() }));
             close();
             if (onReload) await onReload(caseId);
-        } catch (e) { toast(await failMsg(e, 'The snooze was not set, so this is still in the "' + queueName() + '" list. Try again.'), 'warn'); }
+        } catch (e) { toast(await failMsg(e, word('ui.snooze_dialog_failed', { queue: queueName() })), 'warn'); }
     };
     return Dialog({
-        key, open, title: 'Snooze this ' + entityLabel(), onClose: close,
+        key, open, title: word('ui.snooze_dialog_title', { entity: entityLabel() }), onClose: close,
         children: !open ? null : [
-            h('p', { key: 'lead' }, 'Hide it from the "' + queueName() + '" list for a while without losing it. A ' + entityLabel() + ' where someone asked for a person is never hidden, even snoozed.'),
-            TextField({ key: 'minutes', label: 'Minutes from now (e.g. 60 for 1 hour, 1440 for a day)', type: 'number', value: state._snoozeMinutes || '', placeholder: '240', onInput: (v) => { state._snoozeMinutes = v; schedule(); } }),
+            h('p', { key: 'lead' }, word('ui.snooze_dialog_lead', { queue: queueName(), entity: entityLabel() })),
+            TextField({ key: 'minutes', label: word('ui.snooze_dialog_minutes_label'), type: 'number', value: state._snoozeMinutes || '', placeholder: word('ui.snooze_dialog_minutes_placeholder'), onInput: (v) => { state._snoozeMinutes = v; schedule(); } }),
             h('div', { key: 'acts', class: 'ds-dialog-actions' },
-                Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: close }),
-                Btn({ key: 'ok', variant: 'primary', children: 'Snooze', onClick: confirm })
+                Btn({ key: 'cancel', variant: 'ghost', children: word('ui.snooze_dialog_cancel'), onClick: close }),
+                Btn({ key: 'ok', variant: 'primary', children: word('ui.snooze_dialog_confirm'), onClick: confirm })
             )
         ]
     });

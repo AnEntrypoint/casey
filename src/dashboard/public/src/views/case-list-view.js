@@ -42,11 +42,11 @@ function probeTotal() {
 function pageRangeText() {
   const loaded = loadedRows().length;
   const total = state.allCasesTotal;
-  if (state.inboxMode) return 'Not loaded (Focus mode)';
-  if (wide.rows) return 'Searched all ' + total + ' reports';
-  if (!total) return loaded ? loaded + ' loaded so far' : 'Nothing loaded yet';
-  if (total > loaded) return 'Showing ' + loaded + ' of ' + total + ' reports';
-  return 'All ' + total + ' report' + (total === 1 ? '' : 's');
+  if (state.inboxMode) return word('ui.case_list_view_not_loaded');
+  if (wide.rows) return word('ui.case_list_view_searched_all', { total });
+  if (!total) return loaded ? word('ui.case_list_view_loaded_so_far', { n: loaded }) : word('ui.case_list_view_nothing_loaded');
+  if (total > loaded) return word('ui.case_list_view_showing', { loaded, total });
+  return word(total === 1 ? 'ui.case_list_view_all_one' : 'ui.case_list_view_all_many', { total });
 }
 
 let expandedGuardrailId = null;
@@ -157,12 +157,12 @@ export function visibleCases() {
 }
 
 async function promptSaveView() {
-  const name = ((await confirmDialog({ title: 'Save this view', inputLabel: 'Name this view (e.g. "my urgent", "Musina handoffs"):' })) || '').trim();
+  const name = ((await confirmDialog({ title: word('ui.case_list_view_save_title'), inputLabel: word('ui.case_list_view_save_label') })) || '').trim();
   if (!name) return;
   const r = saveCurrentView(name);
   if (!r.ok) { toast(r.error, 'err'); return; }
   refreshSavedViews();
-  toast('Saved view "' + name + '"', 'ok');
+  toast(word('ui.case_list_view_saved', { name }), 'ok');
   schedule();
 }
 
@@ -175,12 +175,12 @@ function listChips() {
   const chip = (key, label, count, on, onClick, title) => FilterChip({ key, label, count, on, onClick, title });
 
   return h('div', { class: 'ds-filter-pills' },
-    chip('attn', 'need a person', needCount, attentionOnly,
+    chip('attn', word('ui.case_list_view_need_person'), needCount, attentionOnly,
       () => { attentionOnly = !attentionOnly; schedule(); },
-      'Show only the reports that need a check'),
-    chip('mine', 'yours', mineCount, state.mineOnly,
+      word('ui.case_list_view_need_title')),
+    chip('mine', word('ui.case_list_view_yours'), mineCount, state.mineOnly,
       () => setMineOnly(!state.mineOnly),
-      'Show only the reports you have claimed'),
+      word('ui.case_list_view_yours_title')),
     (attentionOnly || state.mineOnly)
       ? ClearChip({ onClick: () => { attentionOnly = false; setMineOnly(false); } })
       : null);
@@ -189,12 +189,12 @@ function listChips() {
 function listBody(shown) {
   if (state.inboxMode) {
     return h('div', { class: 'ds-case-list-empty empty' },
-      'Focus mode is on, so only the queue above is loaded. Use "Also load every other report" above, or the Focus button in the top bar, to see the rest.');
+      word('ui.case_list_view_focus_on'));
   }
   if (!(state.allCases || []).length && listError) return null;
   if (!(state.allCases || []).length) {
     return h('div', { class: 'ds-case-list-empty empty' },
-      'No reports yet. They arrive here as soon as a field worker sends one.');
+      word('ui.case_list_view_empty'));
   }
   if (!shown.length) {
     return h('div', { class: 'ds-case-list-empty empty' },
@@ -214,31 +214,31 @@ export function CaseListView({ onPromptTag, onPromptNote, onReloadCases }) {
   return h('div', { class: 'case-list-view' },
     InboxPanel(),
 
-    listError ? h('div', { key: 'lerr' }, Alert({ kind: 'warn', children: h('div', {}, listError + ' ', Btn({ size: 'sm', variant: 'ghost', children: 'Try again', onClick: () => onReloadCases && onReloadCases() })) })) : null,
+    listError ? h('div', { key: 'lerr' }, Alert({ kind: 'warn', children: h('div', {}, listError + ' ', Btn({ size: 'sm', variant: 'ghost', children: word('ui.case_list_view_try_again'), onClick: () => onReloadCases && onReloadCases() })) })) : null,
 
     h('div', { key: 'lhead', class: 'ds-cl-section-head' },
-      h('h2', { class: 'ds-cl-section-title' }, 'All reports'),
+      h('h2', { class: 'ds-cl-section-title' }, word('ui.case_list_view_all_reports')),
       h('span', { class: 'ds-cl-range' }, pageRangeText()),
       (!state.inboxMode && !wide.rows && state.allCasesTotal > loadedRows().length && !narrowing())
         ? QueueMore({ key: 'more', onClick: () => showMore(false),
-          children: more.busy ? 'Loading...' : 'Show ' + Math.min(PAGE, state.allCasesTotal - loadedRows().length) + ' more' })
+          children: more.busy ? word('ui.case_list_view_loading') : word('ui.case_list_view_show_more', { n: Math.min(PAGE, state.allCasesTotal - loadedRows().length) }) })
         : null,
       more.failed
-        ? Btn({ key: 'more-retry', size: 'sm', variant: 'ghost', children: 'Could not load more. Try again', onClick: () => showMore(true) })
+        ? Btn({ key: 'more-retry', size: 'sm', variant: 'ghost', children: word('ui.case_list_view_more_failed'), onClick: () => showMore(true) })
         : null,
       wide.failed
-        ? Btn({ key: 'wide-retry', size: 'sm', variant: 'ghost', children: 'Search failed. Try again', onClick: () => { wide.key = ''; wide.failed = false; schedule(); } })
+        ? Btn({ key: 'wide-retry', size: 'sm', variant: 'ghost', children: word('ui.case_list_view_search_failed'), onClick: () => { wide.key = ''; wide.failed = false; schedule(); } })
         : null,
       anyFilterActive()
-        ? h('span', { class: 'ds-cl-match' }, shown.length + ' match the filters you have on'
-          + (wide.rows && wide.total > wide.rows.length ? ' (the first ' + wide.rows.length + ' of ' + wide.total + ' -- narrow the search to see the rest)' : ''))
+        ? h('span', { class: 'ds-cl-match' }, word('ui.case_list_view_matches', { n: shown.length })
+          + (wide.rows && wide.total > wide.rows.length ? word('ui.case_list_view_matches_partial', { first: wide.rows.length, total: wide.total }) : ''))
         : null),
     listChips(),
 
     SearchBar({ resultCount: shown.length }),
     StagePills(),
     h('details', { class: 'ds-rail-disclosure ds-cl-more' },
-      h('summary', {}, 'More ways to narrow this'),
+      h('summary', {}, word('ui.case_list_view_more_ways')),
       h('div', { class: 'ds-rail-disclosure-body' },
         MoreFilters({
           onOpenSavedViews: (name) => { applyNamedView(name); onReloadCases && onReloadCases(); },

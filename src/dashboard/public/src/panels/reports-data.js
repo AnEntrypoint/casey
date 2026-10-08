@@ -3,12 +3,16 @@ import { word } from '../words.js';
 import { fetchResolvedMap, fetchDiseaseReport, fetchReportFiles } from '../api-reports.js';
 
 export const PERIODS = [
-  { id: 'all', label: 'All time', months: 0 },
-  { id: '12', label: 'Last 12 months', months: 12 },
-  { id: '6', label: 'Last 6 months', months: 6 },
-  { id: '3', label: 'Last 3 months', months: 3 },
+  { id: 'all', get label() { return word('ui.reports_data_period_all'); }, months: 0 },
+  { id: '12', get label() { return word('ui.reports_data_period_12'); }, months: 12 },
+  { id: '6', get label() { return word('ui.reports_data_period_6'); }, months: 6 },
+  { id: '3', get label() { return word('ui.reports_data_period_3'); }, months: 3 },
 ];
-export const GRAINS = [{ id: 'month', label: 'By month' }, { id: 'quarter', label: 'By quarter' }, { id: 'year', label: 'By year' }];
+export const GRAINS = [
+  { id: 'month', get label() { return word('ui.reports_data_grain_month'); } },
+  { id: 'quarter', get label() { return word('ui.reports_data_grain_quarter'); } },
+  { id: 'year', get label() { return word('ui.reports_data_grain_year'); } },
+];
 
 export const rf = { region: '', period: 'all', grain: 'month' };
 export const rd = { report: null, points: null, error: '', loading: false, loaded: false };
@@ -62,4 +66,4 @@ export function setGrain(v) { rf.grain = v; reloadReports(); schedule(); }
 
 export const SPARSE = 'other/sparse';
 export const RARE = 'Other (rare)';
-export const nice = (v) => (v === SPARSE ? 'Small groups combined' : v === RARE ? 'Other diseases, each under ' + (rd.report && rd.report.k || 5) + ' cases' : (v === 'unknown' ? 'Not stated' : v));
+export const nice = (v) => (v === SPARSE ? word('ui.reports_data_sparse') : v === RARE ? word('ui.reports_data_rare_under', { k: (rd.report && rd.report.k) || 5 }) : (v === 'unknown' ? word('ui.reports_data_not_stated') : v));

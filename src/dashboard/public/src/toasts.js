@@ -2,6 +2,7 @@ import { state, schedule } from './state.js';
 import { api } from './api.js';
 import { entityLabel } from './vocabulary.js';
 import { isFieldRole } from './api-roles.js';
+import { word } from './words.js';
 
 const UNDOABLE_TOAST_MS = 15000;
 
@@ -30,18 +31,18 @@ export async function failMsg(r, fallback) {
   let status = r && typeof r === 'object' ? r.status : 0;
   if (r && typeof r === 'object' && 'body' in r && !('json' in r)) msg = (r.body && r.body.error) || '';
   else { try { msg = (await r.json()).error || ''; } catch { msg = ''; } }
-  if (status === 401) return 'You were signed out. Log in again, then repeat that. Nothing was saved.';
-  if (status === 404 && (!msg || /^not found$/i.test(msg))) return 'That ' + entityLabel() + ' is no longer available to you. It may have been given to someone else or removed. Nothing was saved -- refresh and check.';
+  if (status === 401) return word('ui.toasts_signed_out');
+  if (status === 404 && (!msg || /^not found$/i.test(msg))) return word('ui.toasts_not_available', { entity: entityLabel() });
   if (/^(unauthorized|forbidden|not found|internal(?: server)? error|bad request)$/i.test(msg)) return fallback;
   return msg || fallback;
 }
 
 export function undoToast(caseId, label, onDone) {
-  if (isFieldRole()) return toast(label || 'Done.', 'ok');
+  if (isFieldRole()) return toast(label || word('ui.toasts_done'), 'ok');
   const id = nextId();
   const row = {
-    id, msg: label || 'Done.', kind: 'ok', undo: {
-      label: 'Undo',
+    id, msg: label || word('ui.toasts_done'), kind: 'ok', undo: {
+      label: word('ui.toasts_undo'),
       busy: false,
       run: async () => {
         row.undo.busy = true; schedule();
@@ -49,12 +50,12 @@ export function undoToast(caseId, label, onDone) {
           const r = await api('/api/cases/' + encodeURIComponent(caseId) + '/undo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
           if (r.ok) {
             const j = await r.json().catch(() => ({}));
-            toast(j.summary ? ('Undone -- ' + j.summary) : 'Undone', 'ok');
+            toast(j.summary ? word('ui.toasts_undone_summary', { summary: j.summary }) : word('ui.toasts_undone'), 'ok');
             if (onDone) await onDone();
           } else {
-            toast(await failMsg(r, 'Nothing to undo (the window may have passed)'), 'err');
+            toast(await failMsg(r, word('ui.toasts_nothing_to_undo')), 'err');
           }
-        } catch (e) { toast(await failMsg(e, 'Nothing was undone. Try again.'), 'err'); }
+        } catch (e) { toast(await failMsg(e, word('ui.toasts_undo_failed')), 'err'); }
         dismissToast(id);
       },
     },
@@ -68,8 +69,8 @@ export function undoToast(caseId, label, onDone) {
 export function replyUndoToast(caseId, onDone) {
   const id = nextId();
   const row = {
-    id, msg: 'Reply sent. "Send a correction" sends a second message to the contact saying to ignore the first. The first message cannot be unsent.', kind: 'ok', undo: {
-      label: 'Send a correction',
+    id, msg: word('ui.toasts_reply_sent_undo'), kind: 'ok', undo: {
+      label: word('ui.toasts_send_correction'),
       busy: false,
       run: async () => {
         row.undo.busy = true; schedule();
@@ -78,12 +79,12 @@ export function replyUndoToast(caseId, onDone) {
           const r = await api('/api/cases/' + encodeURIComponent(caseId) + '/reply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: correction }) });
           if (r.ok) {
             await api('/api/cases/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: [caseId], action: 'tag', tag: 'needs-human' }) }).catch(() => {});
-            toast('Correction sent and this case is flagged for a person. The first message cannot be unsent.', 'ok');
+            toast(word('ui.toasts_correction_sent'), 'ok');
             if (onDone) await onDone();
           } else {
-            toast(await failMsg(r, 'The correction was not sent. Try again.'), 'err');
+            toast(await failMsg(r, word('ui.toasts_correction_failed')), 'err');
           }
-        } catch (e) { toast(await failMsg(e, 'The correction was not sent. Try again.'), 'err'); }
+        } catch (e) { toast(await failMsg(e, word('ui.toasts_correction_failed')), 'err'); }
         dismissToast(id);
       },
     },

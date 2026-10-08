@@ -27,24 +27,24 @@ function openCase(id) {
 }
 
 async function promptNewCase() {
-  const subject = ((await confirmDialog({ title: 'New ' + entityLabel(), inputLabel: 'What is it about? (e.g. "sick cattle near Musina")' })) || '').trim();
+  const subject = ((await confirmDialog({ title: word('ui.case_list_detail_layout_new_title', { entity: entityLabel() }), inputLabel: word('ui.case_list_detail_layout_subject_label') })) || '').trim();
   if (!subject) return;
   try {
     const created = await api.createCase({ subject });
-    toast(EntityLabel() + ' created.', 'ok');
+    toast(word('ui.case_list_detail_layout_created', { entity: EntityLabel() }), 'ok');
     await reloadCases();
     if (created && created.id) openCase(created.id);
-  } catch (e) { toast(await failMsg(e, 'The ' + entityLabel() + ' was not created. Nothing was saved -- try again.'), 'err'); }
+  } catch (e) { toast(await failMsg(e, word('ui.case_list_detail_layout_not_created', { entity: entityLabel() })), 'err'); }
 }
 
 async function promptTag(onTag) {
-  const tag = ((await confirmDialog({ title: 'Add a tag', inputLabel: 'Tag' })) || '').trim();
+  const tag = ((await confirmDialog({ title: word('ui.case_list_detail_layout_add_tag'), inputLabel: word('ui.case_list_detail_layout_tag_label') })) || '').trim();
   if (!tag) return;
   onTag(tag);
 }
 
 async function promptNote(onNote) {
-  const text = ((await confirmDialog({ title: 'Add a note', inputLabel: 'Note', confirmLabel: 'Save note', requireInput: true })) || '').trim();
+  const text = ((await confirmDialog({ title: word('ui.case_list_detail_layout_add_note'), inputLabel: word('ui.case_list_detail_layout_note_label'), confirmLabel: word('ui.case_list_detail_layout_save_note'), requireInput: true })) || '').trim();
   if (!text) return;
   onNote(text);
 }
@@ -72,7 +72,7 @@ export function CaseListDetailLayout() {
         onReloadCases: reloadCases,
       })
     ),
-    h('div', Object.assign({ class: 'case-detail-pane', key: 'detail' }, hasActive ? {} : { tabindex: '0', role: 'region', 'aria-label': EntityLabel() + ' details' }),
+    h('div', Object.assign({ class: 'case-detail-pane', key: 'detail' }, hasActive ? {} : { tabindex: '0', role: 'region', 'aria-label': word('ui.case_list_detail_layout_details_aria', { entity: EntityLabel() }) }),
       CaseDetailView({ onClose: closeCase, onOpenCase: openCase, key: 'detail-view' })
     )
   );

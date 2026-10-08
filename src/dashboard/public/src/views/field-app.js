@@ -142,6 +142,7 @@ function openReport(id) { pushHash({ caseId: id }); setActiveId(id); }
 function openRef(ref) { const hit = [...fs.mine, ...fs.signoff, ...fs.closed].find((c) => c.ref === ref); if (hit) openReport(hit.id); }
 function closeReport() { pushHash({ caseId: null }); setActiveId(null); resetFieldCase(); refreshFieldLists(); }
 
+const HOLD_KEY = { Closed: 'ui.field_app_hold_closed', Claimed: 'ui.field_app_hold_claimed', Open: 'ui.field_app_hold_open' };
 function holdState(c) {
   if (!isOpen(c)) return 'Closed';
   const holder = String(c.assignee || '').trim();
@@ -150,20 +151,20 @@ function holdState(c) {
 
 function handedNote(c) {
   if (!tagsOf(c).includes('handed-off')) return '';
-  if (isTechnician()) { const from = holderName(c.assignee); return from ? 'Sent by ' + from : 'Sent by a ranger'; }
-  return 'With the technician for sign-off';
+  if (isTechnician()) { const from = holderName(c.assignee); return from ? word('ui.field_app_sent_by', { name: from }) : word('ui.field_app_sent_by_ranger'); }
+  return word('ui.field_app_with_technician');
 }
 
 function Row(c, { showMissing = true } = {}) {
   const r = parseReport(c.report);
   const missing = missingOf(c);
-  const what = [has(r, 'species') ? String(r.species) : '', has(r, 'location') ? 'in ' + String(r.location) : ''].filter(Boolean).join(' ');
+  const what = [has(r, 'species') ? String(r.species) : '', has(r, 'location') ? word('ui.field_app_in_location', { location: String(r.location) }) : ''].filter(Boolean).join(' ');
   const sentBack = tagsOf(c).includes('sent-back');
-  const need = showMissing && mandatory().length ? (missing.length ? 'Still needed: ' + missing.map((f) => f.label).join(', ') : 'Everything needed is recorded') : '';
+  const need = showMissing && mandatory().length ? (missing.length ? word('ui.field_app_still_needed', { list: missing.map((f) => f.label).join(word('ui.field_app_sep_comma')) }) : word('ui.field_app_all_recorded')) : '';
   return KitRow({
-    key: c.id, title: what || headline(c.subject || 'No details yet'),
-    sub: [c.ref, stageLabel(c.status) + (c.last_event_at ? ' -- ' + rel(c.last_event_at) : ''), has(r, 'photos') ? 'Photo attached' : 'No photo yet', sentBack ? 'Sent back to you -- open it to see what is needed' : '', handedNote(c), need].filter(Boolean).join('. '),
-    meta: holdState(c),
+    key: c.id, title: what || headline(c.subject || word('ui.field_app_no_details')),
+    sub: [c.ref, (c.last_event_at ? word('ui.field_app_stage_since', { stage: stageLabel(c.status), when: rel(c.last_event_at) }) : stageLabel(c.status)), has(r, 'photos') ? word('ui.field_app_photo_attached') : word('ui.field_app_no_photo'), sentBack ? word('ui.field_app_sent_back_hint') : '', handedNote(c), need].filter(Boolean).join(word('ui.field_app_sep_sentence')),
+    meta: word(HOLD_KEY[holdState(c)]),
     rail: sentBack ? 'flame' : (mandatory().length && !missing.length ? 'green' : undefined),
     onClick: () => openReport(c.id),
   });
@@ -174,14 +175,14 @@ function List(title, rows, empty, opts) {
 }
 
 async function addReport() {
-  const subject = ((await confirmDialog({ title: 'New ' + entityLabel(), inputLabel: 'What is it about? (e.g. "sick cattle near Musina")' })) || '').trim();
+  const subject = ((await confirmDialog({ title: word('ui.field_app_new_title', { entity: entityLabel() }), inputLabel: word('ui.field_app_subject_label') })) || '').trim();
   if (!subject) return;
   try {
     const created = await createCase({ subject });
-    toast('Started ' + (created && created.ref ? created.ref : 'a new ' + entityLabel()) + '. It is assigned to you.', 'ok');
+    toast(word('ui.field_app_started', { ref: created && created.ref ? created.ref : word('ui.field_app_a_new', { entity: entityLabel() }) }), 'ok');
     await refreshFieldLists();
     if (created && created.id) openReport(created.id);
-  } catch (e) { toast(await failMsg(e, 'The ' + entityLabel() + ' was not started. Nothing was saved -- try again.'), 'err'); }
+  } catch (e) { toast(await failMsg(e, word('ui.field_app_not_started', { entity: entityLabel() })), 'err'); }
 }
 
 function passesAttributes(c) {
@@ -225,7 +226,7 @@ export function fieldMapShown() {
 }
 
 function Filters(d) {
-  const showing = d ? word('ui.field_showing', { shown: d.shown, loaded: d.loaded }) + (d.unloaded ? '. ' + word('ui.field_unloaded', { n: d.unloaded }) : '') : '';
+  const showing = d ? word('ui.field_showing', { shown: d.shown, loaded: d.loaded }) + (d.unloaded ? word('ui.field_app_sep_sentence') + word('ui.field_unloaded', { n: d.unloaded }) : '') : '';
   return h('div', { key: 'filters', class: 'field-filters', role: 'search', hidden: !d },
     h('div', { key: 'search', class: 'field-search' }, SearchInput({
       value: fs.q, label: word('ui.field_search_label'), placeholder: word('ui.field_search_placeholder'), onInput: setQuery,
@@ -241,25 +242,25 @@ function ClosedList(d) {
   const more = d.closedOn && fs.closed.length < fs.closedTotal
     ? [QueueMore({ key: 'more', onClick: showMoreClosed, children: word('ui.field_show_more') })] : [];
   const rows = d.closed.map((c) => Row(c, { showMissing: false }));
-  return Panel({ title, count: d.closed.length || undefined, children: [rows.length ? h('div', { key: 'rows' }, ...rows) : (fs.error ? null : h('p', { key: 'empty', class: 'casey-hint' }, d.closedOn ? word('ui.field_closed_empty') : 'Nothing you handled has been closed yet.')), ...more].filter(Boolean) });
+  return Panel({ title, count: d.closed.length || undefined, children: [rows.length ? h('div', { key: 'rows' }, ...rows) : (fs.error ? null : h('p', { key: 'empty', class: 'casey-hint' }, d.closedOn ? word('ui.field_closed_empty') : word('ui.field_app_nothing_closed'))), ...more].filter(Boolean) });
 }
 
 function Home(d) {
   if (!fs.loaded) { if (!fs.loading) refreshFieldLists(); return h('div', { key: 'home', class: 'field-home' }, Skeleton({ count: 5, height: '1.6em' })); }
   const body = [];
-  if (fs.error) body.push(Alert({ kind: 'warn', children: h('div', {}, fs.error + ' ', Btn({ size: 'sm', variant: 'ghost', children: 'Try again', onClick: refreshFieldLists })) }));
+  if (fs.error) body.push(Alert({ kind: 'warn', children: h('div', {}, fs.error + ' ', Btn({ size: 'sm', variant: 'ghost', children: word('ui.field_app_try_again'), onClick: refreshFieldLists })) }));
   if (d.tech) {
-    body.push(List('Ready to sign off', d.ready, 'Nothing is waiting for sign-off right now.', { showMissing: false }));
-    body.push(List('Your other ' + entityLabelPlural() + ', still being gathered', d.rest, 'You have no other open ' + entityLabelPlural() + '.'));
+    body.push(List(word('ui.field_app_ready_sign_off'), d.ready, word('ui.field_app_nothing_waiting'), { showMissing: false }));
+    body.push(List(word('ui.field_app_your_other', { entity_plural: entityLabelPlural() }), d.rest, word('ui.field_app_no_other_open', { entity_plural: entityLabelPlural() })));
     body.push(ClosedList(d));
     body.push(MyDay({ onOpenRef: openRef, tech: true }));
     body.push(MyDay({ onOpenRef: openRef, tech: true, part: 'after' }));
   } else {
     body.push(MyDay({ onOpenRef: openRef }));
-    body.push(List('My ' + entityLabelPlural(), d.open, 'No ' + entityLabel() + ' is assigned to you right now. When an operator gives you one it shows up here.'));
+    body.push(List(word('ui.field_app_my_entity', { entity_plural: entityLabelPlural() }), d.open, word('ui.field_app_no_assigned', { entity: entityLabel() })));
     if (d.closedOn) body.push(ClosedList(d));
     body.push(MyDay({ onOpenRef: openRef, part: 'after' }));
-    if (d.open.length) body.push(Panel({ title: 'Where mine are', children: h('div', { class: 'field-map-small' }, MapPanel()) }));
+    if (d.open.length) body.push(Panel({ title: word('ui.field_app_where_mine'), children: h('div', { class: 'field-map-small' }, MapPanel()) }));
   }
   return h('div', { key: 'home', class: 'field-home' }, ...body.filter(Boolean));
 }
@@ -272,13 +273,13 @@ function MapView() {
 function nav() {
   const tech = isTechnician();
   const go = (v) => (e) => { if (e && e.preventDefault) e.preventDefault(); if (state.activeId) closeReport(); fs.view = v; schedule(); };
-  const home = tech ? 'Ready to sign off' : 'My ' + entityLabelPlural();
+  const home = tech ? word('ui.field_app_ready_sign_off') : word('ui.field_app_my_entity', { entity_plural: entityLabelPlural() });
   return Side({
     sections: [{
-      group: 'Your work',
+      group: word('ui.field_app_group_work'),
       items: [
         { key: 'home', glyph: Icon(tech ? 'check' : 'rows', { size: 15 }), label: home, onClick: go('home'), active: fs.view === 'home' && !state.activeId },
-        { key: 'map', glyph: Icon('globe', { size: 15 }), label: 'Map', onClick: go('map'), active: fs.view === 'map' && !state.activeId },
+        { key: 'map', glyph: Icon('globe', { size: 15 }), label: word('ui.field_app_map'), onClick: go('map'), active: fs.view === 'map' && !state.activeId },
       ],
     }],
   });
@@ -287,12 +288,12 @@ function nav() {
 function FieldHelp() {
   const tech = isTechnician();
   return Dialog({
-    open: state.activeModal === 'help', title: 'How this screen works', onClose: closeModal,
+    open: state.activeModal === 'help', title: word('ui.field_app_help_title'), onClose: closeModal,
     children: [
-      h('p', { key: 'a' }, 'You only see the ' + entityLabelPlural() + ' that were given to you' + (tech ? ', plus the ones that are complete and waiting for someone to sign them off.' : '.')),
-      h('p', { key: 'b' }, 'Open one to see what is still needed, message the person who reported it on WhatsApp, and record what they tell you. Before anything is saved, the screen shows you the reference so you never write to the wrong one.'),
-      tech ? h('p', { key: 'c' }, 'Sign off only when help has been given and everything needed is recorded. If something is missing, use Send back to ranger and say what.') : null,
-      h('p', { key: 'd' }, 'If a ' + entityLabel() + ' you expect is not here, ask an operator to give it to you.'),
+      h('p', { key: 'a' }, word(tech ? 'ui.field_app_only_see_tech' : 'ui.field_app_only_see', { entity_plural: entityLabelPlural() })),
+      h('p', { key: 'b' }, word('ui.field_app_help_open')),
+      tech ? h('p', { key: 'c' }, word('ui.field_app_help_signoff')) : null,
+      h('p', { key: 'd' }, word('ui.field_app_help_missing', { entity: entityLabel() })),
     ].filter(Boolean),
   });
 }
@@ -302,14 +303,14 @@ export function FieldApp() {
   const tech = isTechnician();
   const open = state.activeId != null;
   const derived = open || fs.view !== 'home' ? null : derive();
-  const title = open ? 'One ' + entityLabel() : (fs.view === 'map' ? 'Map' : (tech ? 'Ready to sign off' : 'My ' + entityLabelPlural()));
+  const title = open ? word('ui.field_app_one_entity', { entity: entityLabel() }) : (fs.view === 'map' ? word('ui.field_app_map') : (tech ? word('ui.field_app_ready_sign_off') : word('ui.field_app_my_entity', { entity_plural: entityLabelPlural() })));
   const main = open
     ? FieldCaseView({ id: state.activeId, onBack: closeReport })
     : h('div', { class: 'field-main' },
       ViewTitle(title),
       h('div', { class: 'casey-timeline-actions' },
-        Btn({ variant: 'primary', children: [Icon('plus', { size: 15 }), ' New ' + entityLabel()], onClick: addReport, 'aria-label': 'Start a new ' + entityLabel() }),
-        Btn({ variant: 'ghost', children: 'Refresh', onClick: refreshFieldLists })),
+        Btn({ variant: 'primary', children: [Icon('plus', { size: 15 }), word('ui.field_app_new_button', { entity: entityLabel() })], onClick: addReport, 'aria-label': word('ui.field_app_start_new_aria', { entity: entityLabel() }) }),
+        Btn({ variant: 'ghost', children: word('ui.field_app_refresh'), onClick: refreshFieldLists })),
       Filters(fs.view === 'home' && fs.loaded ? derived : null),
       fs.view === 'map' ? MapView() : Home(derived));
   const crumb = Crumb({ trail: [brand], leaf: roleName(), right: [h('div', { key: 'appbar', class: 'ds-appbar' }, AccountMenu())] });
@@ -317,8 +318,8 @@ export function FieldApp() {
     ConnectionBanner(),
     AppShell({
       topbar: Topbar({ brand, leaf: roleName(), items: [], themeToggle: false }), crumb, side: nav(),
-      status: Status({ left: [h('span', { key: 'c' }, !fs.loaded ? 'Loading your reports...' : (fs.error ? 'Count not available' : 'You have ' + countOf(fs.openTotal)))], right: [h('span', { key: 'n' }, state.connLost ? 'Not connected -- showing the last data received' : 'Connected')], ariaLabel: 'Status bar' }),
-      main: [main], bannerLabel: 'Top bar', mainLabelledby: VIEW_TITLE_ID,
+      status: Status({ left: [h('span', { key: 'c' }, !fs.loaded ? word('ui.field_app_loading_reports') : (fs.error ? word('ui.field_app_count_unavailable') : word('ui.field_app_you_have', { count: countOf(fs.openTotal) })))], right: [h('span', { key: 'n' }, state.connLost ? word('ui.field_app_not_connected') : word('ui.field_app_connected'))], ariaLabel: word('ui.field_app_status_aria') }),
+      main: [main], bannerLabel: word('ui.field_app_top_bar'), mainLabelledby: VIEW_TITLE_ID,
     }),
     FieldHelp(),
     FeedbackDialog(),

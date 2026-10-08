@@ -3,6 +3,7 @@ import { Section, Spinner, Alert } from '/design/src/components/content.js';
 import { Icon } from '/design/src/components/shell.js';
 import { schedule } from '../../state.js';
 import { fetchRunNotes } from '../../api.js';
+import { word } from '../../words.js';
 const h = webjsx.createElement;
 
 let _notesFor = null;
@@ -30,7 +31,7 @@ export async function loadResearchNotes(caseId) {
 
 function notePreview(text) {
     const stripped = String(text || '').replace(/<!--[\s\S]*?-->/g, '').trim();
-    const firstLine = stripped.split('\n').find(l => l.trim()) || '(empty note)';
+    const firstLine = stripped.split('\n').find(l => l.trim()) || word('ui.research_notes_empty');
     return firstLine.replace(/^#+\s*/, '').slice(0, 120);
 }
 
@@ -38,7 +39,7 @@ function NoteRow({ note, key } = {}) {
     const isOpen = _expanded.has(note.name);
     if (note.error) {
         return h('div', { key, class: 'casey-research-note casey-research-note--error' },
-            Alert({ kind: 'error', children: `Could not read this note: ${note.error}` }));
+            Alert({ kind: 'error', children: word('ui.research_notes_read_error', { error: note.error }) }));
     }
     return h('div', { key, class: 'casey-research-note' },
         h('button', {
@@ -58,9 +59,9 @@ export function ResearchNotesPanel({ case: c, key } = {}) {
 
     return h('div', { key, class: 'casey-research-notes' },
         Section({
-            title: `Research notes (${_notes.length})`,
+            title: word('ui.research_notes_title', { count: _notes.length }),
             children: _loading
-                ? Spinner({ label: 'loading notes' })
+                ? Spinner({ label: word('ui.research_notes_loading') })
                 : h('div', { class: 'casey-research-notes-list' }, ..._notes.map((note, i) => NoteRow({ note, key: note.name || i }))),
         })
     );

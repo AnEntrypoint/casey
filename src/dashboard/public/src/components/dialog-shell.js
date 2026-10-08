@@ -1,6 +1,7 @@
 import * as webjsx from 'webjsx';
 import { trapTab } from 'ds/components/overlay-primitives.js';
 import { Icon } from 'ds/components/shell.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 const DIALOG_FOCUSABLE_SEL = 'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
@@ -67,7 +68,7 @@ export function Dialog({ open, title, onClose, children, wide = false, id, foote
     },
       h('div', { class: 'ds-dialog-head' },
         h('h2', { id: titleId, class: 'ds-dialog-title' }, title || ''),
-        h('button', { type: 'button', class: 'ds-dialog-x ds-dialog-close', 'aria-label': 'Close', onclick: close }, Icon('x'))
+        h('button', { type: 'button', class: 'ds-dialog-x ds-dialog-close', 'aria-label': word('ui.dialog_shell_close'), onclick: close }, Icon('x'))
       ),
       h('div', { class: 'ds-dialog-body' }, ...(Array.isArray(children) ? children : [children])),
       footer ? h('div', { class: 'ds-dialog-foot' }, footer) : null
@@ -76,7 +77,7 @@ export function Dialog({ open, title, onClose, children, wide = false, id, foote
 }
 
 let _confirmSeq = 0;
-export function confirmDialog({ title, message, inputLabel, inputPlaceholder, inputDefault, choices, confirmLabel = 'Confirm', danger = false, requireInput = false }) {
+export function confirmDialog({ title, message, inputLabel, inputPlaceholder, inputDefault, choices, confirmLabel = word('ui.dialog_shell_confirm'), danger = false, requireInput = false }) {
   return new Promise((resolve) => {
     rememberOpener();
     const backdrop = document.createElement('div');
@@ -89,7 +90,7 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
     panel.tabIndex = -1;
     const h2 = document.createElement('h2');
     h2.className = 'ds-dialog-title';
-    h2.textContent = title || 'Confirm';
+    h2.textContent = title || word('ui.dialog_shell_confirm');
     h2.id = 'ds-confirm-title-' + (++_confirmSeq);
     panel.setAttribute('aria-labelledby', h2.id);
     panel.appendChild(h2);
@@ -138,7 +139,7 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
     cancelBtn.className = 'btn-ghost';
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = word('ui.dialog_shell_cancel');
     const okBtn = document.createElement('button');
     okBtn.type = 'button';
     okBtn.className = danger ? 'btn-primary danger' : 'btn-primary';
@@ -150,7 +151,7 @@ export function confirmDialog({ title, message, inputLabel, inputPlaceholder, in
     const close = (val) => { backdrop.remove(); restoreOpenerFocus(); resolve(val); };
     okBtn.onclick = () => {
       if (inputErr && !input.value.trim()) {
-        inputErr.textContent = 'Write something before saving, or press Cancel.';
+        inputErr.textContent = word('ui.dialog_shell_write_something');
         inputErr.hidden = false;
         input.setAttribute('aria-invalid', 'true');
         input.setAttribute('aria-describedby', inputErr.id);

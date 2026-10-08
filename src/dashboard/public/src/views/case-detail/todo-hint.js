@@ -1,27 +1,28 @@
 import { ageHoursOf } from '../../format.js';
 import { state } from '../../state.js';
 import { brandName } from '../../vocabulary.js';
+import { word } from '../../words.js';
 
 function tagList(c) { return String(c.tags || '').split(',').map(t => t.trim()).filter(Boolean); }
 
 export function todoHintText(c) {
     const brand = brandName();
     const tags = tagList(c);
-    if (tags.includes('opted-out')) return 'This person asked to stop. Do not message them. Leave this one alone.';
-    if (c.status === 'closed') return 'This one is finished. Nothing to do.';
-    if (tags.includes('needs-human')) return 'This person asked for a real person. Reply to them below.';
-    if (tags.includes('draft-pending')) return `${brand} drafted a reply -- review it before it sends. Approve or discard it below.`;
-    if (tags.includes('health:unanswered_handoff_escalated')) return 'A person was asked for a long time ago and still no one has replied. Step in below.';
-    if (tags.includes('health:unanswered_handoff')) return 'A person was asked for and no one has replied. Reply below to take this one on.';
-    if (tags.includes('health:incomplete_critical')) return 'Some critical facts are still missing and this one is still active. Try to reach the reporter now -- once they move on some facts cannot be recovered.';
-    if (tags.includes('health:abandoned_intake')) return 'Critical facts are still missing and the reporter may be gone. Check if they are still reachable and ask for the most important detail.';
-    if (c.status === 'waiting' && ageHoursOf(c) >= 24) return 'No answer for over a day. A check-in may help -- reply below.';
-    if (tags.includes('health:stuck')) return 'This one has been in the same stage for a while. Check if it needs a push or can be closed.';
-    if (tags.includes('health:stale')) return 'No activity for a while. Check if anything needs following up.';
-    if (c.autonomy === 'observe') return `This one is waiting for you. Read it and reply, or set Who answers to "Answer on its own" so ${brand} can handle it.`;
-    if (c.autonomy === 'assisted') return `${brand} can draft, but you send. Open it and check the draft.`;
-    if (c.status === 'resolved') return 'This one is marked done. Close it if you are finished.';
-    if (c.status === 'waiting') return 'Waiting on the person to reply. Nothing to do until they answer.';
-    if (c.status === 'new' || c.status === 'triaging') return `A new message came in. ${brand} is sorting it out.`;
-    return `${brand} is handling this one on its own. Step in only if you need to.`;
+    if (tags.includes('opted-out')) return word('ui.todo_hint_opted_out');
+    if (c.status === 'closed') return word('ui.todo_hint_closed');
+    if (tags.includes('needs-human')) return word('ui.todo_hint_needs_human');
+    if (tags.includes('draft-pending')) return word('ui.todo_hint_draft', { brand });
+    if (tags.includes('health:unanswered_handoff_escalated')) return word('ui.todo_hint_escalated');
+    if (tags.includes('health:unanswered_handoff')) return word('ui.todo_hint_handoff');
+    if (tags.includes('health:incomplete_critical')) return word('ui.todo_hint_incomplete');
+    if (tags.includes('health:abandoned_intake')) return word('ui.todo_hint_abandoned');
+    if (c.status === 'waiting' && ageHoursOf(c) >= 24) return word('ui.todo_hint_waiting_day');
+    if (tags.includes('health:stuck')) return word('ui.todo_hint_stuck');
+    if (tags.includes('health:stale')) return word('ui.todo_hint_stale');
+    if (c.autonomy === 'observe') return word('ui.todo_hint_observe', { brand });
+    if (c.autonomy === 'assisted') return word('ui.todo_hint_assisted', { brand });
+    if (c.status === 'resolved') return word('ui.todo_hint_resolved');
+    if (c.status === 'waiting') return word('ui.todo_hint_waiting');
+    if (c.status === 'new' || c.status === 'triaging') return word('ui.todo_hint_new', { brand });
+    return word('ui.todo_hint_default', { brand });
 }

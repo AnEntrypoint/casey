@@ -6,13 +6,14 @@ import { state, schedule } from '../../state.js';
 import { toast, failMsg } from '../../toasts.js';
 import { fetchCaseEvents, postSplit } from '../../api.js';
 import { entityLabel } from '../../vocabulary.js';
+import { word } from '../../words.js';
 const h = webjsx.createElement;
 
-const SPLIT_KIND = {
-    inbound: 'From the reporter',
-    outbound: 'Reply sent',
-    note: 'Note',
-    observation: 'Observation',
+const SPLIT_KIND_KEY = {
+    inbound: 'ui.split_dialog_kind_reporter',
+    outbound: 'ui.split_dialog_kind_reply',
+    note: 'ui.split_dialog_kind_note',
+    observation: 'ui.split_dialog_kind_observation',
 };
 
 function loadSplitEvents(caseId) {
@@ -34,7 +35,7 @@ function openSplitDialog(caseId) {
 }
 
 export function SplitDialogTrigger({ caseId, key } = {}) {
-    return Btn({ key, size: 'sm', variant: 'ghost', children: 'Split', onClick: () => openSplitDialog(caseId) });
+    return Btn({ key, size: 'sm', variant: 'ghost', children: word('ui.split_dialog_trigger'), onClick: () => openSplitDialog(caseId) });
 }
 
 export function SplitDialog({ onReload, key } = {}) {
@@ -48,36 +49,36 @@ export function SplitDialog({ onReload, key } = {}) {
 
     const confirm = async () => {
         const event_ids = [...selected];
-        if (!event_ids.length) { toast('Select at least one event to move', 'warn'); return; }
+        if (!event_ids.length) { toast(word('ui.split_dialog_positive'), 'warn'); return; }
         try {
             const sj = await postSplit(caseId, event_ids, (state._splitSubject || '').trim(), (state._splitReason || '').trim());
-            toast('Split done. ' + sj.moved_events + ' timeline entries moved to a new ' + entityLabel() + ', ' + sj.new_case_ref + '.', 'ok');
+            toast(word('ui.split_dialog_done', { moved: sj.moved_events, entity: entityLabel(), ref: sj.new_case_ref }), 'ok');
             close();
             if (onReload) await onReload(caseId);
-        } catch (e) { toast(await failMsg(e, 'Nothing was split. Every entry is still on this ' + entityLabel() + ' -- try again.'), 'err'); }
+        } catch (e) { toast(await failMsg(e, word('ui.split_dialog_failed', { entity: entityLabel() })), 'err'); }
     };
 
     return Dialog({
-        key, open, title: 'Split ' + entityLabel(), wide: true, onClose: close,
+        key, open, title: word('ui.split_dialog_title', { entity: entityLabel() }), wide: true, onClose: close,
         children: !open ? null : [
-            h('p', { key: 'lead', class: 'casey-hint' }, 'Select the timeline entries to move into a new ' + entityLabel() + '. The rest stay here.'),
-            TextField({ key: 'subj', label: 'Subject for the new ' + entityLabel() + ' (optional)', value: state._splitSubject || '', placeholder: 'e.g. sheep Upington cluster', onInput: (v) => { state._splitSubject = v; schedule(); } }),
+            h('p', { key: 'lead', class: 'casey-hint' }, word('ui.split_dialog_lead', { entity: entityLabel() })),
+            TextField({ key: 'subj', label: word('ui.split_dialog_subject_label', { entity: entityLabel() }), value: state._splitSubject || '', placeholder: word('ui.split_dialog_subject_placeholder'), onInput: (v) => { state._splitSubject = v; schedule(); } }),
             h('div', { key: 'evbox', class: 'casey-split-evbox' },
-                events == null ? h('div', { class: 'casey-hint' }, 'Loading the timeline...') :
+                events == null ? h('div', { class: 'casey-hint' }, word('ui.split_dialog_loading')) :
                     state._splitError ? [
-                        h('div', { key: 'err', class: 'casey-hint' }, 'Could not load the timeline. Close this and try again.'),
-                        Btn({ key: 'retry', size: 'sm', variant: 'ghost', children: 'Try again', onClick: () => loadSplitEvents(caseId) }),
+                        h('div', { key: 'err', class: 'casey-hint' }, word('ui.split_dialog_load_failed')),
+                        Btn({ key: 'retry', size: 'sm', variant: 'ghost', children: word('ui.split_dialog_retry'), onClick: () => loadSplitEvents(caseId) }),
                     ] :
-                    !events.length ? h('div', { class: 'casey-hint' }, 'Nothing on this timeline can be moved to another ' + entityLabel() + '.') :
+                    !events.length ? h('div', { class: 'casey-hint' }, word('ui.split_dialog_nothing', { entity: entityLabel() })) :
                         events.map(e => h('label', { key: e.id, class: 'casey-split-row' },
                             h('input', { type: 'checkbox', checked: selected.has(e.id), onchange: () => toggle(e.id) }),
-                            h('span', {}, SPLIT_KIND[e.kind] || e.kind, ': ', (e.text || '').slice(0, 120))
+                            h('span', {}, SPLIT_KIND_KEY[e.kind] ? word(SPLIT_KIND_KEY[e.kind]) : e.kind, ': ', (e.text || '').slice(0, 120))
                         ))
             ),
-            TextField({ key: 'reason', label: 'Reason (optional)', multiline: true, rows: 2, value: state._splitReason || '', placeholder: 'e.g. different species, separate location', onInput: (v) => { state._splitReason = v; schedule(); } }),
+            TextField({ key: 'reason', label: word('ui.split_dialog_reason_label'), multiline: true, rows: 2, value: state._splitReason || '', placeholder: word('ui.split_dialog_reason_placeholder'), onInput: (v) => { state._splitReason = v; schedule(); } }),
             h('div', { key: 'acts', class: 'ds-dialog-actions' },
-                Btn({ key: 'cancel', variant: 'ghost', children: 'Cancel', onClick: close }),
-                Btn({ key: 'ok', variant: 'primary', children: 'Split ' + entityLabel(), onClick: confirm })
+                Btn({ key: 'cancel', variant: 'ghost', children: word('ui.split_dialog_cancel'), onClick: close }),
+                Btn({ key: 'ok', variant: 'primary', children: word('ui.split_dialog_confirm', { entity: entityLabel() }), onClick: confirm })
             )
         ]
     });

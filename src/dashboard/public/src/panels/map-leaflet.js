@@ -3,6 +3,7 @@ import { filterOptionsFrom } from '../map-model.js';
 import { pollMapCases } from '../api.js';
 import { renderMapMarkers } from './map-markers.js';
 import { renderMapCoverage, renderMapWorkers, renderMapLastReports } from './map-overlays.js';
+import { word } from '../words.js';
 
 function createFramedMap(canvas, pins) {
     canvas.innerHTML = '';
@@ -15,7 +16,7 @@ function createFramedMap(canvas, pins) {
             map.fitBounds(window.L.latLngBounds(located.map((p) => [p.lat, p.lon])), { maxZoom: 11, padding: [24, 24], animate: false });
         } catch { map.setView([-28.5, 25], 5); }
     }
-    const tiles = window.L.tileLayer(tileUrl(), { maxZoom: 18, attribution: '(c) OpenStreetMap contributors' });
+    const tiles = window.L.tileLayer(tileUrl(), { maxZoom: 18, attribution: word('ui.map_leaflet_attribution') });
     tiles.addTo(map);
     return { map, tiles };
 }
@@ -131,7 +132,7 @@ export async function loadMap(mapStateRef, canvas, filters, days, callbacks) {
     const polled = await pollMapCases({ days }).catch(() => null);
     const j = polled && polled.body;
     if (!j) {
-        if (callbacks && callbacks.onError) callbacks.onError('Could not load the reports. The map could not reach this dashboard\'s own server, so what you see may be out of date.');
+        if (callbacks && callbacks.onError) callbacks.onError(word('ui.map_leaflet_load_failed'));
         return mapStateRef.current;
     }
     const created = !mapStateRef.current;

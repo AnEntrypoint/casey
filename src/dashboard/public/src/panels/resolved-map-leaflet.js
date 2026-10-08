@@ -1,4 +1,5 @@
 import { schedule } from '../state.js';
+import { word } from '../words.js';
 
 const L = () => window.L;
 
@@ -36,7 +37,7 @@ export function mountResolvedMap(canvas, prev) {
     const map = L().map(canvas, { zoomControl: true });
     map.setView(HOME_VIEW[0], HOME_VIEW[1]);
     const drv = { canvas, map, layer: null, fitted: '', tilesFailing: false };
-    const tiles = L().tileLayer(tileUrl(), { maxZoom: 14, attribution: '(c) OpenStreetMap contributors' }).addTo(map);
+    const tiles = L().tileLayer(tileUrl(), { maxZoom: 14, attribution: word('ui.resolved_map_leaflet_attribution') }).addTo(map);
     let tileFails = 0;
     tiles.on('tileerror', () => { tileFails += 1; if (tileFails >= TILE_FAIL_RUN && !drv.tilesFailing) { drv.tilesFailing = true; schedule(); } });
     tiles.on('tileload', () => { tileFails = 0; if (drv.tilesFailing) { drv.tilesFailing = false; schedule(); } });
@@ -54,7 +55,12 @@ export function drawDots(drv, dots, styleFor) {
         L().circleMarker([p.lat, p.lon], {
             radius: 6, weight: s.mark.fill ? 1 : 3, color: s.colour, fillColor: s.colour,
             fillOpacity: s.mark.fill ? 0.75 : 0, dashArray: s.mark.dash,
-        }).bindTooltip(`${p.disease} - ${p.species}${p.advice && p.advice[0] !== 'Not stated' ? ' - advice: ' + p.advice.join(', ') : ''} - week of ${p.resolved_at}`).addTo(drv.layer);
+        }).bindTooltip(word('ui.resolved_map_leaflet_dot', {
+            disease: p.disease,
+            species: p.species,
+            advice: p.advice && p.advice[0] !== 'Not stated' ? word('ui.resolved_map_leaflet_advice', { advice: p.advice.join(', ') }) : '',
+            week: p.resolved_at,
+        })).addTo(drv.layer);
     }
 }
 
@@ -65,7 +71,7 @@ export function drawHeat(drv, cells, cellDeg, colour) {
     for (const c of cells) {
         L().rectangle([[c.lat - half, c.lon - half], [c.lat + half, c.lon + half]], {
             weight: 0, color: colour, fillColor: colour, fillOpacity: 0.15 + 0.7 * (c.count / max),
-        }).bindTooltip(`${c.count} in this area`).addTo(drv.layer);
+        }).bindTooltip(word('ui.resolved_map_leaflet_in_area', { count: c.count })).addTo(drv.layer);
     }
 }
 
@@ -75,7 +81,12 @@ export function drawBubbles(drv, areas, colour) {
     for (const a of areas) {
         L().circleMarker([a.lat, a.lon], {
             radius: 8 + 28 * Math.sqrt(a.count / max), weight: 2, color: colour, fillColor: colour, fillOpacity: 0.35,
-        }).bindTooltip(`${a.region}: ${a.count} signed-off ${a.count === 1 ? 'case' : 'cases'}${a.top_disease ? ', mostly ' + a.top_disease : ''}`).addTo(drv.layer);
+        }).bindTooltip(word('ui.resolved_map_leaflet_bubble', {
+            region: a.region,
+            count: a.count,
+            cases: word(a.count === 1 ? 'ui.resolved_map_leaflet_case' : 'ui.resolved_map_leaflet_cases'),
+            mostly: a.top_disease ? word('ui.resolved_map_leaflet_mostly', { disease: a.top_disease }) : '',
+        })).addTo(drv.layer);
     }
 }
 

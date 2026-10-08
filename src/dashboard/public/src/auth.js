@@ -1,6 +1,7 @@
 import { state, schedule, setAuthed, setConnLost, setSessionRestored } from './state.js';
 import * as api from './api.js';
 import { syncPreviewBar } from './preview-bar.js';
+import { word } from './words.js';
 
 export async function checkSession() {
   try {
@@ -19,7 +20,7 @@ export async function checkSession() {
       }
       setConnLost(true);
     } else {
-      state.sessionNotice = 'The dashboard did not answer. Your session was not checked.';
+      state.sessionNotice = word('ui.auth_no_answer');
     }
     setAuthed(false, null);
     setSessionRestored(false);
@@ -37,7 +38,7 @@ api.onSessionLost(async () => {
   sessionCheckBusy = true;
   try {
     await checkSession();
-    if (!state.authed) state.sessionNotice = 'You were signed out (your session ended). Log in again to carry on. Anything you had typed is still on the page.';
+    if (!state.authed) state.sessionNotice = word('ui.auth_signed_out');
     schedule();
   } finally { sessionCheckBusy = false; }
 });

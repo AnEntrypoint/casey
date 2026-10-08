@@ -5,6 +5,7 @@ import { state, setHandoffQueue } from '../state.js';
 import { channelLabel } from '../format.js';
 import { entityLabel } from '../vocabulary.js';
 import { openCaseRoute } from '../route.js';
+import { word } from '../words.js';
 const h = webjsx.createElement;
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -37,7 +38,7 @@ function flashTitle(on) {
     if (titleTimer) return;
     titleTimer = setInterval(() => {
       titleFlip = !titleFlip;
-      document.title = titleFlip ? (state.handoffQueue.length + ' waiting for you') : countTitle();
+      document.title = titleFlip ? word('ui.handoff_banner_waiting_title', { count: state.handoffQueue.length }) : countTitle();
     }, 1100);
   } else {
     clearInterval(titleTimer); titleTimer = null; document.title = countTitle();
@@ -86,20 +87,20 @@ export function HandoffBanner() {
   const q = state.handoffQueue;
   if (!q.length) return null;
   const c = q[q.length - 1];
-  const extra = q.length > 1 ? (' (and ' + (q.length - 1) + ' more)') : '';
+  const extra = q.length > 1 ? word('ui.handoff_banner_and_more', { count: q.length - 1 }) : '';
   return h('div', {
     class: 'ds-handoff-banner', id: 'handoff', tabindex: '0', role: 'button',
-    'aria-label': 'Open ' + entityLabel() + ' ' + (c.ref || '') + ' - someone needs a person',
+    'aria-label': word('ui.handoff_banner_open_aria', { entity: entityLabel(), ref: c.ref || '' }),
     onclick: () => openCaseRoute(c.id),
     onkeydown: (ev) => { if (ev.target === ev.currentTarget && (ev.key === ' ' || ev.key === 'Enter')) { ev.preventDefault(); openCaseRoute(c.id); } },
   },
     Alert({
       kind: 'warn',
-      title: 'Someone needs a person',
+      title: word('ui.handoff_banner_title'),
       children: [
-        h('span', { key: 'm', dangerouslySetInnerHTML: { __html: esc(c.ref) + ' - ' + esc(c.subject || channelLabel(c.channel)) + esc(extra) + '. Click to open it.' } }),
+        h('span', { key: 'm', dangerouslySetInnerHTML: { __html: word('ui.handoff_banner_body', { ref: esc(c.ref), subject: esc(c.subject || channelLabel(c.channel)), extra: esc(extra) }) } }),
       ],
     }),
-    Btn({ size: 'sm', variant: 'ghost', class: 'ds-handoff-banner-hide', 'aria-label': 'Hide this message', onClick: (e) => { e.stopPropagation(); clearHandoffQueue(); }, children: 'Hide' })
+    Btn({ size: 'sm', variant: 'ghost', class: 'ds-handoff-banner-hide', 'aria-label': word('ui.handoff_banner_hide_aria'), onClick: (e) => { e.stopPropagation(); clearHandoffQueue(); }, children: word('ui.handoff_banner_hide') })
   );
 }
