@@ -280,6 +280,7 @@ export const postSplit = (id, bodyOrEventIds, subject, reason) => {
 };
 export const postDraftApprove = (id, text) => post('/api/cases/' + encodeURIComponent(id) + '/draft/approve', text != null && typeof text !== 'object' ? { text } : (text || {}));
 export const postDraftDiscard = (id) => post('/api/cases/' + encodeURIComponent(id) + '/draft/discard', {});
+export const postInstruct = (id, instruction, expectedRef) => post('/api/cases/' + encodeURIComponent(id) + '/instruct', expectedRef ? { instruction, expected_ref: expectedRef } : { instruction });
 export const postCaseRemind = (id, text) => post('/api/cases/' + encodeURIComponent(id) + '/remind', text != null && String(text).trim() ? { text } : {});
 export const fetchSuggestions = (id) => json('/api/cases/' + encodeURIComponent(id) + '/suggestions');
 export const fetchSiteHistory = (id) => json('/api/cases/' + encodeURIComponent(id) + '/site-history');

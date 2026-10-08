@@ -11,7 +11,8 @@ import { isKnownValueField, invalidateKnownValues } from '../../field-values.js'
 import { BRAND } from '../brand.js'
 import { mountRoutes } from './register.js'
 import { assigneeNamer, nameEventAssignees } from '../assignee-names.js'
-import { appendReplyEvent, pendingDraft, releaseCase } from '../../hooks/staff-outbound.js'
+import { appendReplyEvent, pendingDraft, releaseCase, STAFF_TEXT_MAX_LEN } from '../../hooks/staff-outbound.js'
+import { draftFromInstruction } from '../../hooks/operator-instruction.js'
 import { clearFocusForCase } from '../../team-focus.js'
 import { assigneeKeyFor, isContactAssignee, contactIdOfAssignee, isOwnConversation } from '../../case-assignment.js'
 import { atLeast, TIER_FIELD_WORKER } from '../../contact-tiers.js'
@@ -816,6 +817,27 @@ export function postReply({ store, authed, str, actingOperator, sendReply, UNCLA
   }
 }
 
+export function postInstruct({ store, authed, str, actingOperator, sendReply, llmStatus, callLLM }) {
+  return async (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
+    const raw = str(res, req.body, 'instruction'); if (raw === undefined) return
+    const instruction = raw.trim()
+    if (!instruction) return res.status(400).json({ error: 'Say what the reply should tell them.' })
+    if (instruction.length > STAFF_TEXT_MAX_LEN) return res.status(413).json({ error: `instruction too long (max ${STAFF_TEXT_MAX_LEN})` })
+    const expected = req.body.expected_ref == null ? null : str(res, req.body, 'expected_ref', { required: false }); if (expected === undefined) return
+    const c = await store.getCase(req.params.id)
+    if (!c) return res.status(404).json({ error: 'not found' })
+    if (expected && expected !== c.ref) return res.status(409).json({ error: 'This record changed while you were typing. Reload it and try again.' })
+    if (tagList(c).includes('opted-out')) return res.status(409).json({ error: 'This person asked us to stop messaging them, so nothing was sent.' })
+    if (!sendReply || c.channel === 'system') return res.status(409).json({ error: 'nothing was sent: this conversation is not attached to a messaging channel right now' })
+    const op = actingOperator(req)
+    await store.appendEvent(c.id, { kind: 'note', actor: 'operator', channel: c.channel, text: `Instruction for the reply: ${instruction}`, data: { instruction: true, by: op.id } })
+    const outcome = await draftFromInstruction({ store, log: console, llmStatus, callLLM, caseRow: c, instruction, operator: op })
+    if (!outcome.ok) return res.status(503).json({ error: `The assistant could not write a draft (${outcome.error}). Nothing was sent. Try again, or type the reply yourself.` })
+    res.json({ ok: true, drafted: true, recorded: 'draft' })
+  }
+}
+
 export function postRemind({ store, authed, str, actingOperator, sendReply }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
@@ -1001,6 +1023,7 @@ const ROUTES = [
   ['post', '/api/cases/:id/split', postSplit],
   ['post', '/api/cases/:id/reply', postReply],
   ['post', '/api/cases/:id/remind', postRemind],
+  ['post', '/api/cases/:id/instruct', postInstruct],
   ['post', '/api/cases/:id/draft/approve', postDraftApprove],
   ['post', '/api/cases/:id/draft/discard', postDraftDiscard],
   ['get', '/api/cases/:id/report.html', getReportHtml, { raw: true }],

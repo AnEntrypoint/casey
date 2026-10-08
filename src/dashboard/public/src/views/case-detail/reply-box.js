@@ -3,7 +3,7 @@ import { Btn } from '/design/src/components/shell.js';
 import { TextField, Alert } from '/design/src/components/content.js';
 import { state, schedule } from '../../state.js';
 import { toast, replyUndoToast, failMsg } from '../../toasts.js';
-import { api, postDraftApprove, postDraftDiscard, postCaseRemind } from '../../api.js';
+import { api, postDraftApprove, postDraftDiscard, postCaseRemind, postInstruct } from '../../api.js';
 import { confirmDialog } from '../../components/dialog-shell.js';
 import { channelLabel, replyChannelLabel } from '../../format.js';
 import { entityLabel } from '../../vocabulary.js';
@@ -16,25 +16,6 @@ function tagList(c) { return String(c && c.tags || '').split(',').map(t => t.tri
 function caseHasDraft(c) { return tagList(c).includes('draft-pending'); }
 function latestDraft(events) { const d = (events || []).filter(e => e.kind === 'draft'); return d.length ? d[d.length - 1] : null; }
 function draftText(c, events) { if (!caseHasDraft(c)) return ''; const d = latestDraft(events); return (d && d.text) || ''; }
-
-function cannedReplies(c) {
-    const tags = tagList(c);
-    if (tags.includes('opted-out')) return [];
-    if (tags.includes('needs-human')) return [
-        word('ui.reply_box_canned_human_hi'),
-        word('ui.reply_box_canned_human_help'),
-        word('ui.reply_box_canned_human_wait'),
-    ];
-    if (c.status === 'waiting') return [
-        word('ui.reply_box_canned_waiting_checkin'),
-        word('ui.reply_box_canned_waiting_norush'),
-    ];
-    return [
-        word('ui.reply_box_canned_thanks'),
-        word('ui.reply_box_canned_got'),
-        word('ui.reply_box_canned_more'),
-    ];
-}
 
 export function ReplyBox({ c, events, onReload, key } = {}) {
     const draftKey = 'reply:' + c.id;
@@ -64,7 +45,6 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
         } catch (e) { state._replySending = false; toast(await failMsg(e, word('ui.reply_box_reply_failed')), 'err'); schedule(); }
     };
 
-    const cans = cannedReplies(c);
     const draftPending = caseHasDraft(c);
 
     const draftBanner = draftPending
@@ -96,6 +76,26 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
         })
         : null;
 
+    const instructText = state._instructFor === c.id ? (state._instruct || '') : '';
+    const sendInstruct = async () => {
+        const t = instructText.trim();
+        if (!t || sending || state._instructSending) return;
+        state._instructSending = true; schedule();
+        try {
+            await postInstruct(c.id, t, c.ref);
+            state._instructSending = false; state._instruct = ''; state._instructFor = c.id;
+            toast(word('ui.reply_box_instruct_ready'), 'ok');
+            if (onReload) await onReload(c.id);
+        } catch (e) { state._instructSending = false; toast(await failMsg(e, word('ui.reply_box_instruct_failed')), 'err'); schedule(); }
+    };
+    const instructBlock = h('div', { class: 'casey-instruct' },
+        TextField({
+            label: word('ui.reply_box_instruct_label'), size: 'sm', value: instructText, maxLength: REPLY_MAXLEN,
+            placeholder: word('ui.reply_box_instruct_placeholder'),
+            onInput: (v) => { state._instruct = v; state._instructFor = c.id; schedule(); },
+        }),
+        Btn({ size: 'sm', variant: 'ghost', disabled: sending || state._instructSending || !instructText.trim(), children: state._instructSending ? word('ui.reply_box_sending') : word('ui.reply_box_instruct_send'), onClick: sendInstruct }));
+
     return h('div', { key, class: 'casey-reply-box' },
         draftBanner,
         h('label', { class: 'casey-reply-label' }, replyChannelLabel(c.channel)
@@ -108,13 +108,7 @@ export function ReplyBox({ c, events, onReload, key } = {}) {
                 placeholder: word('ui.reply_box_placeholder'),
                 onInput: setText,
             })),
-        cans.length ? h('div', { class: 'casey-canned-wrap' },
-            h('p', { class: 'casey-canned-lab' }, text.trim() ? word('ui.reply_box_tap_add') : word('ui.reply_box_tap_start')),
-            h('div', { class: 'casey-canned' }, ...cans.map((t, i) => h('button', {
-                key: i, type: 'button', class: 'casey-canned-btn',
-                onclick: () => { const cur = state._replyDraft || ''; setText(cur.trim() ? cur.replace(/\s+$/, '') + '\n\n' + t : t); }
-            }, t)))
-        ) : null,
+        instructBlock,
         h('div', {
             class: 'casey-reply-send-row',
         },
