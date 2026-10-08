@@ -5,7 +5,7 @@ import { Alert } from '/design/src/components/content/feedback.js';
 import { state } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchGeo } from '../api.js';
-import { fmtTime } from '../format.js';
+import { fmtTime, NO_TIME_TEXT } from '../format.js';
 
 const h = webjsx.createElement;
 
@@ -34,7 +34,7 @@ export function GeoPanel({ railed = false } = {}) {
         return places.length
             ? Table({
                 headers: ['Place', 'Count', 'Species mix', 'Latest'],
-                rows: places.map((p) => [placeLabel(p.place), String(p.count), mixOf(p), p.latest ? fmtTime(p.latest) : '']),
+                rows: places.map((p) => [placeLabel(p.place), String(p.count), mixOf(p), fmtTime(p.latest) || NO_TIME_TEXT]),
             })
             : Alert({ kind: 'info', children: 'No location data yet.' });
     });

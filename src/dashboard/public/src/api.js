@@ -160,11 +160,11 @@ export async function conditional(path) {
   const prev = condCache.get(path);
   const r = await api(path, prev ? { headers: { 'if-none-match': prev.etag } } : {});
   if (r.status === 304 && prev) { rememberConditional(path, prev); return { body: prev.body, unchanged: true }; }
-  let body = null;
-  try { body = await r.json(); } catch {  }
+  let body = null, parsed = false;
+  try { body = await r.json(); parsed = true; } catch {  }
   if (!r.ok) { condCache.delete(path); throw new ApiError(r.status, body); }
   const etag = r.headers.get('etag');
-  if (etag) rememberConditional(path, { etag, body }); else condCache.delete(path);
+  if (etag && parsed) rememberConditional(path, { etag, body }); else condCache.delete(path);
   return { body, unchanged: false };
 }
 const condBody = async (path) => (await conditional(path)).body;

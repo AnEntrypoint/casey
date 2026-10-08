@@ -46,7 +46,7 @@ export function waitFmt(ms) {
 }
 
 export function fmtDur(ms) {
-  if (ms == null || !Number.isFinite(ms)) return '--';
+  if (ms == null || !Number.isFinite(ms)) return NO_TIME_TEXT;
   const s = Math.round(ms / 1000);
   const m = Math.round(s / 60);
   if (m < 60) return m + 'm';
@@ -92,8 +92,12 @@ const HEALTH_LABEL = {
   'health:unanswered_handoff_escalated': 'Still waiting for a person, well past the first deadline',
   'health:unsent_draft': 'A reply is written but nobody has sent it',
   'health:premature_complete': 'Marked done with facts a field visit needs still blank',
+  'needs-human': 'Waiting for a person to look',
+  'draft-pending': 'Reply written but not sent',
+  'ai-offline': 'Automatic replies are paused',
+  'degraded-turn-seen': 'A reply had to be retried',
 };
-export function healthLabel(t) { return HEALTH_LABEL[t] || t; }
+export function healthLabel(t) { return HEALTH_LABEL[t] || 'Needs a check'; }
 
 function deSnake(s) { return String(s || '').replace(/_/g, ' '); }
 

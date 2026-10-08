@@ -54,7 +54,7 @@ export function undoToast(caseId, label, onDone) {
           } else {
             toast(await failMsg(r, 'Nothing to undo (the window may have passed)'), 'err');
           }
-        } catch (e) { toast('Undo error: ' + e.message, 'err'); }
+        } catch (e) { toast(await failMsg(e, 'Nothing was undone. Try again.'), 'err'); }
         dismissToast(id);
       },
     },
@@ -68,8 +68,8 @@ export function undoToast(caseId, label, onDone) {
 export function replyUndoToast(caseId, onDone) {
   const id = nextId();
   const row = {
-    id, msg: 'Reply sent.', kind: 'ok', undo: {
-      label: 'Take it back',
+    id, msg: 'Reply sent. "Send a correction" sends a second message to the contact saying to ignore the first. The first message cannot be unsent.', kind: 'ok', undo: {
+      label: 'Send a correction',
       busy: false,
       run: async () => {
         row.undo.busy = true; schedule();
@@ -78,12 +78,12 @@ export function replyUndoToast(caseId, onDone) {
           const r = await api('/api/cases/' + encodeURIComponent(caseId) + '/reply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: correction }) });
           if (r.ok) {
             await api('/api/cases/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: [caseId], action: 'tag', tag: 'needs-human' }) }).catch(() => {});
-            toast('Sent a correction and flagged this for a person -- a reply cannot be unsent.', 'ok');
+            toast('Correction sent and this case is flagged for a person. The first message cannot be unsent.', 'ok');
             if (onDone) await onDone();
           } else {
-            toast(await failMsg(r, 'Could not send the correction'), 'err');
+            toast(await failMsg(r, 'The correction was not sent. Try again.'), 'err');
           }
-        } catch (e) { toast('Correction error: ' + e.message, 'err'); }
+        } catch (e) { toast(await failMsg(e, 'The correction was not sent. Try again.'), 'err'); }
         dismissToast(id);
       },
     },

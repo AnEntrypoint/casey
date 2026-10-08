@@ -56,10 +56,13 @@ export async function refreshFieldLists() {
     fs.mineTotal = (m && typeof m.total === 'number') ? m.total : fs.mine.length;
     if (!q) fs.openTotal = fs.mineTotal;
     fs.signoff = (s && s.cases) || [];
-    if (c) {
+    if (c && (!closed.unchanged || fs.closedQ !== q)) {
       fs.closed = c.cases || [];
       fs.closedTotal = typeof c.total === 'number' ? c.total : fs.closed.length;
+      fs.closedQ = q;
+      changed = true;
     }
+    if (fs.error) changed = true;
     fs.error = '';
   } catch (e) { if (gen === fs.gen) fs.error = word('ui.load_list_failed'); }
   if (gen !== fs.gen) return;

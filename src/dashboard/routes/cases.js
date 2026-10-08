@@ -190,7 +190,9 @@ export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
       if (typeof req.query.channel !== 'string') return res.status(400).json({ error: 'invalid channel' })
       where.channel = req.query.channel
     }
-    const cases = await store.listCases(where, { limit: 10000, offset: 0 })
+    const fetched = await store.listCases(where, { limit: 10001, offset: 0 })
+    const truncated = fetched.length > 10000
+    const cases = fetched.slice(0, 10000)
     const META = ['ref', 'subject', 'status', 'priority', 'channel', 'created_at']
     const headers = [...META, 'intake_source', ...REPORT_KEY_LIST]
     const rows = cases.map(c => {
@@ -199,7 +201,13 @@ export function getCasesCsv({ store, authed, csvCell, REPORT_KEY_LIST }) {
       const intakeSrc = tagArr.includes('intake_mode:manual') ? 'manual' : tagArr.includes('intake_mode:public_form') ? 'public_form' : tagArr.includes('intake_mode:channel') ? 'channel' : 'unknown'
       return [...META.map(k => csvCell(c[k])), csvCell(intakeSrc), ...REPORT_KEY_LIST.map(k => csvCell(r[k]))].join(',')
     })
-    const csv = ['# Generated ' + fmtTimeSAST(Date.now()), headers.join(','), ...rows].join('\n')
+    const trailer = []
+    if (truncated) {
+      trailer.push('# TRUNCATED: more than 10000 cases match; narrow the status or channel filter for a complete export')
+      res.setHeader('X-Cases-Truncated', 'true')
+    }
+    trailer.push('# Generated ' + fmtTimeSAST(Date.now()))
+    const csv = [headers.join(','), ...rows, ...trailer].join('\n')
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', 'attachment; filename="casey-cases.csv"')
     res.send(csv)
@@ -916,8 +924,9 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
         return `<tr><th>${esc(fieldLabel(k))}</th><td>${val}</td></tr>`
       }).join('')
       const mapsUrl = r.location ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(String(r.location))}` : null
-      const phone = c.external_id || ''
-      const telLink = /^[+0-9]{7,}$/.test(phone.replace(/[\s\-()]/g, '')) ? `tel:${phone.replace(/[\s\-()]/g, '')}` : null
+      const phone = c.external_id ? fmtPhone27(c.external_id) : ''
+      const dial = phone.replace(/[\s\-()]/g, '')
+      const telLink = /^[+0-9]{7,}$/.test(dial) ? `tel:${dial}` : null
       const extraCss = `body{max-width:700px;margin:var(--space-5) auto}`
         + `table{width:100%}th{width:40%;font-weight:600;vertical-align:top}td{vertical-align:top}`
         + `.maplink{font-size:var(--fs-micro)}.printonly{display:none}`
@@ -938,6 +947,7 @@ export function getReportHtml({ store, authed, esc, REPORT_KEY_LIST, printableRe
   ${telLink ? `<a href="${esc(telLink)}">Call contact</a>` : ''}
 </div>
 ${mapsUrl ? `<p class="printonly"><strong>Map:</strong> ${esc(mapsUrl)}</p>` : ''}
+${telLink ? `<p class="printonly"><strong>Phone:</strong> ${esc(phone)}</p>` : ''}
 <table>${rows}</table>`
       res.type('html').send(printableReport(`Case ${c.ref||c.id} briefing`, body, extraCss))
     } catch (e) { res.status(500).send('<p>Error: ' + esc(String(e.message || 'unknown error')) + '</p>') }

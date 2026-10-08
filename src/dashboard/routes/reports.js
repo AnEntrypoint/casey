@@ -134,7 +134,6 @@ export function getReportCsv(deps) {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const { report: r } = await gatherReport(deps, reportDays(req))
     const lines = []
-    lines.push('# Generated ' + fmtTimeSAST(Date.now()))
     lines.push(['section', 'key', 'value'].join(','))
     lines.push(['totals', 'all', csvCell(r.totals.all)].join(','))
     lines.push(['totals', 'open', csvCell(r.totals.open)].join(','))
@@ -155,6 +154,7 @@ export function getReportCsv(deps) {
       lines.push(['by_operator', k('first_reply_hours'), csvCell(msToHrs(o.first_reply_ms_median))].join(','))
       lines.push(['by_operator', k('oldest_waiting_hours'), csvCell(msToHrs(o.oldest_waiting_ms))].join(','))
     }
+    lines.push('# Generated ' + fmtTimeSAST(Date.now()))
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', `attachment; filename="${brandSlug()}-management-report.csv"`)
     res.send(lines.join('\n'))
@@ -199,7 +199,6 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
     for (const e of rows) { const d = evData(e); held.push(d.claimed_by, d.was) }
     const named = await assigneeNamer(store, held, (v) => v)
     const lines = []
-    lines.push('# Generated ' + fmtTimeSAST(Date.now()))
     lines.push(['case_ref', 'timestamp_sast', 'actor', 'action', 'field', 'old_value', 'new_value', 'reason'].join(','))
     for (const e of rows) {
       const d = evData(e)
@@ -225,6 +224,7 @@ export function getAuditCsv({ store, authed, csvCell, fmtTimeSAST }) {
       lines.push(`# TRUNCATED: more than 100000 events in this window; export a shorter --days range for a complete trail`)
       res.setHeader('X-Audit-Truncated', 'true')
     }
+    lines.push('# Generated ' + fmtTimeSAST(Date.now()))
     res.setHeader('Content-Type', 'text/csv')
     res.setHeader('Content-Disposition', `attachment; filename="${brandSlug()}-audit-trail.csv"`)
     res.send(lines.join('\n'))
@@ -239,6 +239,7 @@ export function getReportHtml(deps) {
     const row = (k, v) => printableReportRow([k, v])
     const stageRows = Object.entries(r.by_stage).map(([s, n]) => row(s, n)).join('')
     const areaRows = r.by_area.slice(0, 20).map(a => row(a.place, a.count)).join('')
+    const areaNote = r.by_area.length > 20 ? `<p class="meta">Showing 20 of ${esc(r.by_area.length)} areas. The CSV export lists all of them.</p>` : ''
     const breachRows = Object.entries(r.breaches).map(([b, n]) => row(b, n)).join('') || row('none', 0)
     const opHead = printableReportRow(['operator', 'open', 'stale claims', 'replies 24h', 'first reply (hrs)', 'oldest waiting (hrs)'])
     const opRows = r.by_operator.map(o =>
@@ -250,7 +251,7 @@ export function getReportHtml(deps) {
       + `<h2>Totals</h2><table>${row('all cases', r.totals.all)}${row('open', r.totals.open)}${row('closed', r.totals.closed)}${row('opened this period', r.opened_this_period)}${row('closed this period', r.closed_this_period)}</table>`
       + `<h2>Response time</h2><table>${row('median first reply (hours)', msToHrs(r.median_first_response_ms))}${row('p90 first reply (hours)', msToHrs(r.p90_first_response_ms))}</table>`
       + `<h2>By stage</h2><table>${stageRows}</table>`
-      + `<h2>Hotspots by area</h2><table>${areaRows || row('none', 0)}</table>`
+      + `<h2>Hotspots by area</h2><table>${areaRows || row('none', 0)}</table>${areaNote}`
       + `<h2>Team workload</h2><table>${opHead}${opRows}</table>`
       + `<h2>Current health breaches</h2><table>${breachRows}</table>`
     res.setHeader('Content-Type', 'text/html; charset=utf-8')

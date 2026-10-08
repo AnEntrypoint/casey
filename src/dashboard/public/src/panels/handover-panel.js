@@ -6,7 +6,7 @@ import { state, schedule, setActiveId } from '../state.js';
 import { assigneeName, loadRoster } from '../api-roles.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchHandover, postStartShift } from '../api.js';
-import { fmtTime, eventKindLabel, actorLabel } from '../format.js';
+import { fmtTime, eventKindLabel, actorLabel, NO_TIME_TEXT } from '../format.js';
 import { entityLabel } from '../vocabulary.js';
 import { queueName } from '../map-model.js';
 import { toast } from '../toasts.js';
@@ -69,7 +69,7 @@ function handoverBody(j) {
         hoSection('Changed this shift', j.touched, (r, i) => h('div', { key: i, class: 'ds-ho-row' },
             refLink(r.ref, r.id), ' ', h('span', { class: 'ds-muted' }, r.subject || ''),
             ' ', h('span', { class: 'ds-ho-why' }, (r.last_kind ? eventKindLabel(r.last_kind) : '') + (r.last_actor ? ' by ' + actorLabel(r.last_actor) : '')),
-            ' ', h('span', { class: 'ds-act-when' }, r.at ? fmtTime(r.at) : ''))));
+            ' ', h('span', { class: 'ds-act-when' }, fmtTime(r.at) || NO_TIME_TEXT))));
 }
 
 export function HandoverPanel() {
