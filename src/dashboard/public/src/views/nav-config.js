@@ -15,8 +15,8 @@ export function registerRefreshAll(fn) { _refreshAll = fn; }
 export function runRefreshAll() { return _refreshAll(); }
 
 export async function runSweep() {
-  try { await api.runSweepApi(); toast('Sweep started.'); }
-  catch (e) { toast(await failMsg(e, 'The sweep did not run, so nothing was re-checked. The flags on screen are unchanged. Try again in a moment.'), 'err'); }
+  try { await api.runSweepApi(); toast('Re-check started.'); }
+  catch (e) { toast(await failMsg(e, 'The re-check did not run, so no reports were re-checked. The warnings on screen are unchanged. Try again in a moment.'), 'err'); }
 }
 
 export function toggleInboxMode() { setInboxMode(!state.inboxMode); }
@@ -81,7 +81,7 @@ function rawActionItems({ refreshAll } = {}) {
     { key: 'new_case', glyph: Icon('plus', { size: 15 }), label: 'New ' + entityLabel(), onClick: openIntakeNew, ariaLabel: 'Add a ' + entityLabel() + ' by hand', primary: true },
     { key: 'focus', glyph: Icon('activity', { size: 15 }), label: 'Focus', onClick: toggleInboxMode, active: state.inboxMode, ariaLabel: 'Show only what needs attention' },
     { key: 'export', glyph: Icon('download', { size: 15 }), label: 'Export', href: '/api/cases/export.csv' },
-    { key: 'sweep', glyph: Icon('refresh', { size: 15 }), label: 'Sweep now', onClick: runSweep, ariaLabel: 'Run health-guardrail sweep now' },
+    { key: 'sweep', glyph: Icon('refresh', { size: 15 }), label: 'Re-check all reports', onClick: runSweep, ariaLabel: 'Re-check all reports now' },
     { key: 'refresh', glyph: Icon('refresh', { size: 15 }), label: 'Refresh', onClick: refreshAll || _refreshAll },
   ];
 }

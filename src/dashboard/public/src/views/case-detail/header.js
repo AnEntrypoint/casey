@@ -2,7 +2,7 @@ import * as webjsx from '/design/vendor/webjsx/index.js';
 import { Btn, IconButton, Icon, Heading } from '/design/src/components/shell.js';
 import { state, schedule } from '../../state.js';
 import { toast, undoToast } from '../../toasts.js';
-import { fmtTime, rel, healthLabel, headline, channelLabel } from '../../format.js';
+import { fmtTime, rel, healthLabel, headline, channelLabel, NO_TIME_TEXT } from '../../format.js';
 import { entityLabel } from '../../vocabulary.js';
 import { teamRoster } from '../../api-roles.js';
 import { postClaim, postSnooze } from '../../api.js';
@@ -99,7 +99,7 @@ export function CaseHeader({ c, suggestedAssignee, reporter, onReload, onOpenSha
 
     const snoozeBtn = snoozeUntil
         ? Btn({
-            size: 'sm', variant: 'ghost', children: 'Snoozed', 'aria-label': 'Snoozed until ' + fmtTime(snoozeUntil) + ' -- click to clear',
+            size: 'sm', variant: 'ghost', children: 'Snoozed', 'aria-label': 'Snoozed until ' + (fmtTime(snoozeUntil) || NO_TIME_TEXT) + ' -- click to clear',
             onClick: async () => {
                 try { await postSnooze(c.id, 0); toast('Snooze cleared -- this is back in the queue.'); await reloadCase(c.id, onReload); }
                 catch (e) { toast('The snooze could not be cleared, so this is still hidden from the queue. Try again.', 'warn'); }

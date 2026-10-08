@@ -169,6 +169,7 @@ async function refreshDegradedTurns() {
 }
 
 export async function refreshAll() {
+  resetCasesPoll();
   if (isViewerRole()) { await loadCaseyConfig(); return; }
   if (isFieldRole()) { await Promise.all([loadCaseyConfig(), refreshFieldLists()]); return; }
   await Promise.all([loadCaseyConfig(), loadCases(), refreshAttention(), refreshHealth(), refreshDegradedTurns()]);
@@ -235,16 +236,28 @@ const DEGRADED_POLL_MS = 60000;
 
 const CASES_POLL_MAX_MS = ATTENTION_POLL_MS;
 let casesPollMs = CASES_POLL_MS;
+let casesPollGen = 0;
+let casesPollBusy = false;
 let _casesTimer = null;
 function scheduleCasesPoll() {
   _casesTimer = setTimeout(async () => {
+    const gen = casesPollGen;
+    casesPollBusy = true;
     if (!polling() || state.inboxMode || onMapHome()) casesPollMs = CASES_POLL_MS;
     else {
       const unchanged = await loadCases();
-      casesPollMs = unchanged ? Math.min(CASES_POLL_MAX_MS, casesPollMs * 2) : CASES_POLL_MS;
+      casesPollMs = unchanged && gen === casesPollGen ? Math.min(CASES_POLL_MAX_MS, casesPollMs * 2) : CASES_POLL_MS;
     }
+    casesPollBusy = false;
     scheduleCasesPoll();
   }, casesPollMs);
+}
+function resetCasesPoll() {
+  casesPollGen++;
+  casesPollMs = CASES_POLL_MS;
+  if (casesPollBusy) return;
+  clearTimeout(_casesTimer);
+  scheduleCasesPoll();
 }
 scheduleCasesPoll();
 const fieldPollable = () => state.authed && isFieldRole() && !state.activeId;
@@ -254,7 +267,7 @@ function refreshFieldPolls() {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  casesPollMs = CASES_POLL_MS;
+  resetCasesPoll();
   if (fieldPollable()) refreshFieldPolls();
   if (!polling()) return;
   refreshHealth();

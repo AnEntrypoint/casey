@@ -294,12 +294,16 @@ export function getResolvedMap({ store, authed }) {
     const w = windowOf(req, res); if (!w) return
     const region = asked(req.query.region)
     const species = asked(req.query.species)
+    const disease = asked(req.query.disease) ? cleanLabel(req.query.disease) : null
+    const advice = asked(req.query.advice)
     const status = statusAsked(req)
     let rows = await loadResolved(store, w)
     const truncated = rows.truncated === true
     if (status) rows = rows.filter(r => r.status === status)
     if (region) rows = rows.filter(r => labelKey(r.region) === labelKey(region))
     if (species) rows = rows.filter(r => labelKey(r.species) === labelKey(species))
+    if (disease) rows = rows.filter(r => labelKey(r.disease) === labelKey(disease))
+    if (advice) rows = rows.filter(r => r.conclusions.some(k => labelKey(k) === labelKey(advice)))
     const placed = rows.filter(r => r.ll)
     const cellKey = (ll) => Math.floor(ll.lat / HEAT_CELL_DEG) + ':' + Math.floor(ll.lon / HEAT_CELL_DEG)
     const cellCount = new Map()
@@ -349,7 +353,7 @@ export function diseaseReportBody(rep, { period, region, generated }, { esc, row
     row(['closed without a diagnosis', region ? 'not shown for one area' : orBelow(rep.closed_without_diagnosis)]),
   ])
   return `<h1>Disease report</h1>`
-    + `<p class="meta">Generated ${esc(generated)}. Period: ${esc(period)}. Area: ${esc(region || 'all areas')}. Grouped by ${esc(rep.grain)}.</p>`
+    + `<p class="meta">Generated ${esc(generated)}. Period: ${esc(period)}, by the date each case was resolved. Area:${esc(region || 'all areas')}. Grouped by ${esc(rep.grain)}.</p>`
     + `<p class="meta">Groups under ${rep.k} cases are not shown, so rows may not add up to the total.</p>`
     + `<h2>Totals</h2>${totals}`
     + `<h2>Confirmed and suspected</h2>` + tbl(['Status', 'Cases'], statusRows)
@@ -487,7 +491,7 @@ export function reportCsvLines(rep, period, csvCell) {
   for (const c of rep.by_conclusion) emit('conclusion', { conclusion: c.conclusion, count: c.count })
   for (const c of rep.by_disease_conclusion) emit('disease_conclusion', { disease: c.disease, conclusion: c.conclusion, count: c.count })
   const note = (text) => emit('note', { note: text })
-  note(`Period: ${period}. Generated ${fmtTimeSAST(Date.now())}.`)
+  note(`Period: ${period}, by the date each case was resolved. Generated ${fmtTimeSAST(Date.now())}.`)
   note(`Groups of fewer than ${MIN_AGGREGATE_CELL} cases are combined under "${printName(SPARSE_BUCKET_KEY)}". No case-level or personal data is included.`)
   if (rep.truncated) note('There are more reports than this export can load, so the figures leave some out.')
   return lines

@@ -7,7 +7,7 @@ import { Btn, Chip } from '/design/src/components/shell/atoms.js';
 import { schedule } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchRoleInvites, postRoleInvite, deleteRoleInvite } from '../api.js';
-import { fmtTime } from '../format.js';
+import { fmtTime, NO_TIME_TEXT } from '../format.js';
 import { tierLabel, brandName, botNumber } from '../vocabulary.js';
 import { toast, failMsg } from '../toasts.js';
 import { confirmDialog } from '../components/dialog-shell.js';
@@ -111,7 +111,7 @@ async function cancelGroup() {
 function sendText(inv, { bare = false } = {}) {
     return 'Hi' + (!bare && inv.label ? ' ' + inv.label : '') + ', to join ' + brandName() + ' as ' + tierLabel(inv.tier)
         + ', send this code as a WhatsApp message to the ' + brandName() + ' number' + (botNumber() ? ' (' + botNumber() + ')' : '') + ' from your own phone: ' + inv.code
-        + '. It works until ' + fmtTime(inv.expires_at) + '.';
+        + (fmtTime(inv.expires_at) ? '. It works until ' + fmtTime(inv.expires_at) + '.' : '.');
 }
 
 const csvCell = (v) => {
@@ -119,7 +119,7 @@ const csvCell = (v) => {
     if (/^[=+\-@]/.test(t)) t = "'" + t;
     return '"' + t.replace(/"/g, '""') + '"';
 };
-const csvText = (codes) => ['# Generated ' + fmtTime(Date.now()), 'label,code,expires'].concat(codes.map((c) => [c.label, c.code, fmtTime(c.expires_at)].map(csvCell).join(','))).join('\r\n');
+const csvText = (codes) => ['# Generated ' + fmtTime(Date.now()), 'label,code,expires'].concat(codes.map((c) => [c.label, c.code, fmtTime(c.expires_at) || NO_TIME_TEXT].map(csvCell).join(','))).join('\r\n');
 
 function downloadCsv(codes) {
     const text = csvText(codes);
@@ -148,7 +148,7 @@ function printSlips(codes) {
         add('p', 'casey-slip-brand', brandName());
         add('p', 'casey-slip-code', c.code);
         add('p', 'casey-slip-send', 'Send this code on WhatsApp to ' + (num || 'the ' + brandName() + ' number'));
-        add('p', 'casey-slip-meta', 'Works until ' + fmtTime(c.expires_at) + (c.label ? ' - ' + c.label : ''));
+        add('p', 'casey-slip-meta', 'Works until ' + (fmtTime(c.expires_at) || NO_TIME_TEXT) + (c.label ? ' - ' + c.label : ''));
         add('p', 'casey-slip-meta', 'Printed ' + fmtTime(Date.now()));
         host.appendChild(slip);
     }
@@ -166,7 +166,7 @@ function freshBlock() {
         String(i + 1),
         h('span', { class: 'ds-invite-code', 'data-invite-code': c.code }, c.code),
         c.label || '',
-        fmtTime(c.expires_at),
+        fmtTime(c.expires_at) || NO_TIME_TEXT,
         Btn({ size: 'sm', variant: 'ghost', 'aria-label': 'Copy the code' + (c.label ? ' for ' + c.label : ' number ' + (i + 1)), children: 'Copy', onClick: () => copy(c.code, 'The code') }),
     ]);
     return h('div', { class: 'ds-invite-fresh' },
@@ -214,7 +214,7 @@ export function InviteCodes({ isAdmin }) {
                         Chip({ tone: st.tone, children: st.text }),
                         v.uses + ' of ' + v.max_uses,
                         v.created_by || '',
-                        fmtTime(v.expires_at),
+                        fmtTime(v.expires_at) || NO_TIME_TEXT,
                         v.status === 'active'
                             ? Btn({ size: 'sm', variant: 'ghost', disabled: busyIds.has(v.id), children: 'Cancel code', 'aria-label': 'Cancel code' + (v.label ? ' for ' + v.label : ''), onClick: () => revoke(v) })
                             : null,

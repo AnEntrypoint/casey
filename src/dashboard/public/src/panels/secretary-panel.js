@@ -9,7 +9,7 @@ import { state, setActiveId, schedule } from '../state.js';
 import { assigneeName, loadRoster } from '../api-roles.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchSecretaryQueue } from '../api.js';
-import { fmtDur, fmtTime, channelLabel } from '../format.js';
+import { fmtDur, fmtTime, channelLabel, NO_TIME_TEXT } from '../format.js';
 
 const h = webjsx.createElement;
 
@@ -60,7 +60,7 @@ function caseValues(c) {
         assigneeName(c.assignee) || h('span', { class: 'ds-muted' }, 'unassigned'),
         fmtDur(c.wait_ms),
         c.reason || '',
-        c.updated_at ? fmtTime(c.updated_at) : '',
+        fmtTime(c.updated_at) || NO_TIME_TEXT,
     ];
 }
 

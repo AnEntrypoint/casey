@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { loadResolved, buildDiseaseReport, reportCsvLines, monthStartOf, monthEndOf, monthOf, previousPeriod, parseBound, periodLabel, printName } from './dashboard/routes/reports-map.js'
-import { MIN_AGGREGATE_CELL } from './privacy.js'
+import { MIN_AGGREGATE_CELL, SPARSE_BUCKET_KEY } from './privacy.js'
 import { fmtTimeSAST } from './format.js'
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/
@@ -58,14 +58,17 @@ export function digestText(rep, month) {
     `Casey monthly disease digest, ${month}${rep.truncated ? ' (INCOMPLETE)' : ''}`,
     `Generated ${fmtTimeSAST(Date.now())}. Months are SAST calendar months.`,
   ]
-  if (!rep.total) {
+  if (rep.month_cases < MIN_AGGREGATE_CELL) {
     lines.push(`Fewer than ${MIN_AGGREGATE_CELL} resolved cases this month, so no figures are published.`)
+  } else if (!rep.total) {
+    lines.push(`Fewer than ${MIN_AGGREGATE_CELL} cases with a diagnosis this month, so no disease figures are published.`)
   } else {
     lines.push(`Signed-off cases with a diagnosis: ${rep.total}`)
     const suspected = rep.by_status.find(x => x.status === 'suspected')
     if (suspected) lines.push(`Of which suspected, not confirmed: ${suspected.count}`)
     if (rep.ruled_out) lines.push(`Ruled out, not counted: ${rep.ruled_out}`)
-    lines.push('Top diseases: ' + rep.by_disease.slice(0, TOP_DISEASES).map(d => `${printName(d.disease)} ${d.count}`).join(', '))
+    const named = rep.by_disease.filter(d => d.disease !== SPARSE_BUCKET_KEY).slice(0, TOP_DISEASES)
+    lines.push('Top diseases: ' + (named.length ? named.map(d => `${printName(d.disease)} ${d.count}`).join(', ') : 'no disease is large enough to show'))
     lines.push('By district: ' + (rep.by_district.length ? rep.by_district.map(d => `${printName(d.district)} ${d.count}`).join(', ') : 'no district is large enough to show'))
     lines.push(trendLine(rep, month))
     lines.push('Advice given (one case can count under more than one kind): ' + (rep.by_conclusion.length ? rep.by_conclusion.map(c => `${printName(c.conclusion)} ${c.count}`).join(', ') : 'no group is large enough to show'))
@@ -87,6 +90,7 @@ export async function buildDigest(store, month = lastCompletedMonth()) {
   inMonth.ruledOut = monthRows.ruledOut
   const rep = buildDiseaseReport(inMonth)
   rep.trend = buildDiseaseReport(wide, { to }).trend
+  rep.month_cases = inMonth.length + inMonth.undiagnosed
   return { month, rep, csv: digestCsv(rep, month), text: digestText(rep, month) }
 }
 

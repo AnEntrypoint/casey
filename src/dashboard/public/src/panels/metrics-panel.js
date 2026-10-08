@@ -7,14 +7,14 @@ import { Btn } from '/design/src/components/shell/atoms.js';
 import { state } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchOverview, fetchReportJson, fetchSlaAtRiskByType } from '../api.js';
-import { fmtDur, stageLabel } from '../format.js';
+import { fmtDur, stageLabel, NO_TIME_TEXT } from '../format.js';
 import { entityLabelPlural } from '../vocabulary.js';
 
 const h = webjsx.createElement;
 
 const CASE_TYPE_LABEL = { unset: 'Unclassified', outbreak: 'Symptom cluster', follow_up: 'Follow-up', lab_sample: 'Lab sample', import_alert: 'Import alert' };
 const ctLabel = (t) => CASE_TYPE_LABEL[t] || t;
-const slaMetPct = (s) => (s && s.considered ? Math.round(((s.met_count || 0) / s.considered) * 100) + '%' : '--');
+const slaMetPct = (s) => (s && s.considered ? Math.round(((s.met_count || 0) / s.considered) * 100) + '%' : NO_TIME_TEXT);
 
 const loader = createPanelLoader({
     what: 'the trends',
@@ -31,7 +31,7 @@ function summaryCards(j) {
     const fr = j.first_response_ms || {};
     const dwell = j.dwell_ms_median || {}, backlog = j.backlog_by_stage || {};
     const cards = [
-        [ 'Usual time to a first reply', fmtDur(fr.median), `9 in 10 within ${fmtDur(fr.p90)} (${fr.n || 0} answered)` ],
+        [ 'Usual time to a first reply', fmtDur(fr.median), (fr.p90 == null ? `Not enough replies yet (${fr.n || 0} answered)` : `9 in 10 within ${fmtDur(fr.p90)} (${fr.n || 0} answered)`) ],
         [ 'Open', String(j.cases ? j.cases.open : 0), entityLabelPlural() ],
         [ 'Closed', String(j.cases ? j.cases.closed : 0), entityLabelPlural() ],
         ...Object.keys(dwell).map((s) => [stageLabel(s), fmtDur(dwell[s]), 'usual time in this stage']),
@@ -64,9 +64,9 @@ function byTypeTable(report) {
     const row = (label, s, m) => {
         const late = s && s.breached_by_reason && s.breached_by_reason.answered_late;
         const never = s && s.breached_by_reason && s.breached_by_reason.never_answered;
-        return [label, s && s.considered != null ? String(s.considered) : '--', slaMetPct(s),
-            late != null ? String(late) : '--', never != null ? String(never) : '--',
-            fmtDur(m ? m.first_response_ms_median : null), m && m.closed_pct != null ? m.closed_pct + '%' : '--'];
+        return [label, s && s.considered != null ? String(s.considered) : NO_TIME_TEXT, slaMetPct(s),
+            late != null ? String(late) : NO_TIME_TEXT, never != null ? String(never) : NO_TIME_TEXT,
+            fmtDur(m ? m.first_response_ms_median : null), m && m.closed_pct != null ? m.closed_pct + '%' : NO_TIME_TEXT];
     };
     const rows = types.map((t) => row(ctLabel(t), sbt[t], met[t]));
     if (ov) rows.push(row('Overall', ov, null));

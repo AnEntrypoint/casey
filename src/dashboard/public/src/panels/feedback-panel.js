@@ -6,7 +6,7 @@ import { Alert } from '/design/src/components/content/feedback.js';
 import { state } from '../state.js';
 import { createPanelLoader } from './panel-load.js';
 import { fetchFeedback, fetchOperatorNames } from '../api-team.js';
-import { fmtTime } from '../format.js';
+import { fmtTime, NO_TIME_TEXT } from '../format.js';
 import { tierLabel } from '../vocabulary.js';
 
 const h = webjsx.createElement;
@@ -47,7 +47,7 @@ export function FeedbackPanel() {
       Panel({
         key: 'items', title: 'Comments, newest first', count: f.total,
         children: [
-          ...f.items.map((i) => DetailRow({ key: i.id, label: (i.from || 'Someone') + ' (' + roleWord(i.tier) + '), ' + fmtTime(i.at) + (i.source === 'gui' ? ', from the dashboard' : ', on WhatsApp'), value: i.text })),
+          ...f.items.map((i) => DetailRow({ key: i.id, label: (i.from || 'Someone') + ' (' + roleWord(i.tier) + '), ' + (fmtTime(i.at) || NO_TIME_TEXT) + (i.source === 'gui' ? ', from the dashboard' : ', on WhatsApp'), value: i.text })),
           f.total > f.items.length ? h('p', { key: 'more', class: 'casey-hint' }, 'Showing the newest ' + f.items.length + ' of ' + f.total + '.') : null,
         ].filter(Boolean),
       }));
