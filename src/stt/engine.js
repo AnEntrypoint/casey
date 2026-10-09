@@ -4,6 +4,7 @@ import { oggOpusDurationSeconds } from './ogg.js'
 import { splitAudio } from './chunker.js'
 import { recognizeChunk, mergeSegments } from './google-recognize.js'
 import { languageOf, longModelLanguage } from './languages.js'
+import { specialistFor, transcribeSpecialist } from './specialist.js'
 
 const MAX_INLINE_BYTES = 9 * 1024 * 1024
 
@@ -51,6 +52,12 @@ export async function transcribeGoogle(buffer, mimeType, { hintLanguage = null, 
       ...base, ms: Date.now() - t0, durationSec, chunks: chunks.length,
       language: merged.language || (target.hinted ? target.languageCodes[0] : null), languageKey: lang?.key || null,
       languages: merged.languages, languageSupported: !!lang, confidence: merged.confidence, segments: merged.segments,
+    }
+    const specialistUrl = merged.text && lang ? specialistFor(lang.key, env) : null
+    if (specialistUrl) {
+      const s = await transcribeSpecialist(specialistUrl, buffer, mimeType, { timeoutMs: cfg.requestTimeoutMs, env })
+      if (s.text) return { ...common, engine: 'specialist', provider: `specialist-${lang.key}`, text: s.text, error: '', failureKind: '', google_text: merged.text, specialist_language: lang.key }
+      return { ...common, text: merged.text, error: '', failureKind: '', specialist_error: s.error }
     }
     if (!merged.text) return { ...common, text: '', error: 'no intelligible speech', failureKind: STT_FAILURE.NO_SPEECH }
     return { ...common, text: merged.text, error: '', failureKind: '' }
