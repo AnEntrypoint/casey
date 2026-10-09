@@ -61,6 +61,7 @@ function storedTranslations(events) {
     }
     return out;
 }
+const TRANSLATE_MAX_CHARS = 2000;
 const isContactMessage = (e) => e.kind === 'inbound' && e.actor === 'contact';
 export function reportLanguage(c) {
     try { const r = c && c.report ? JSON.parse(c.report) : {}; const l = r && r.language_detected; return typeof l === 'string' ? l.trim().slice(0, 40) : ''; } catch { return ''; }
@@ -70,6 +71,7 @@ function trState() { return state._translate || (state._translate = {}); }
 async function showInEnglish(caseId, caseRef, e) {
     const tr = trState();
     if (tr[e.id] && tr[e.id].busy) return;
+    if (String(e.text || '').length > TRANSLATE_MAX_CHARS) { toast(word('ui.translate_too_long'), 'warn'); return; }
     tr[e.id] = { busy: true }; schedule();
     try {
         const r = await postTranslateEvent(caseId, e.id, caseRef);

@@ -4,6 +4,7 @@ import { flagNeedsHuman, observation } from './case-writes.js'
 import { correctOutboundRef } from './turn-outcome.js'
 import { stripThinkingBlock } from './heuristics.js'
 import { isLlmDown } from './service-controls.js'
+import { judgeReply } from './reply-judge.js'
 
 const TURN_TIMEOUT_MS = Number(process.env.CASEY_LLM_TURN_TIMEOUT_MS) || 120000
 
@@ -34,6 +35,8 @@ export async function draftFromInstruction({ store, log, llmStatus = null, callL
   catch (e) { return fail(`the assistant turn failed (${e.message})`) }
   const text = stripThinkingBlock(String(result?.result || '').trim())
   if (result?.error || !text) return fail(`the assistant gave no reply (${result?.error || 'empty reply'})`)
+  const verdict = await judgeReply(callLLM, text, { latestInbound: instruction })
+  if (!verdict.clean && verdict.reasons?.length) return fail(`the draft did not pass the reply check (${verdict.reasons.join('; ')})`)
 
   const drafted = await correctOutboundRef({ store, fresh: caseRow, text, result, inboundText: instruction, contact })
   await store.appendEvent(caseRow.id, {
