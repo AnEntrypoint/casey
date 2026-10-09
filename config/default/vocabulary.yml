@@ -121,8 +121,6 @@ ui:
   reply_box_reply_to: "Reply to contact"
   reply_box_no_app: "This {entity} came in {channel}, so there is no app to reply on. Anything sent here is recorded on the timeline only -- reach the person another way."
   reply_box_placeholder: "Type your reply here. Ctrl+Enter sends it."
-  reply_box_tap_add: "Or tap a ready-made reply to add to the end:"
-  reply_box_tap_start: "Or tap a ready-made reply to start with:"
   reply_box_send: "Send reply"
   reply_box_ask_report: "Ask them to report back"
   reply_box_instruct_label: "Tell the assistant what to say"
