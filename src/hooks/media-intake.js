@@ -104,17 +104,19 @@ export function inboundAudioData(msg, typedText) {
   const tr = msg._transcript
   if (!tr) return {}
   const base = { typed_chars: typedText.length }
-  if (tr.unheard) return { ...base, stt_verdict: tr.text ? 'unheard' : 'failed', stt_failure: tr.unheard }
-  return { ...base, stt_verdict: 'heard', transcribed: true, transcribed_by: 'ai_helper', stt: sttProvenance(tr) }
+  const candidates = Array.isArray(tr.candidates) ? { stt_candidates: tr.candidates, stt_choice: tr.stt_choice || null } : {}
+  if (tr.unheard) return { ...base, ...candidates, stt_verdict: tr.text ? 'unheard' : 'failed', stt_failure: tr.unheard }
+  return { ...base, ...candidates, stt_verdict: 'heard', transcribed: true, transcribed_by: 'ai_helper', stt: sttProvenance(tr) }
 }
 
-export async function transcribeInboundAudio({ store, log, caseId, msg }) {
+export async function transcribeInboundAudio({ store, log, caseId, msg, callLLM = null }) {
   if (msg._transcript) return msg._transcript
   const audioItem = pickMediaItem(msg, 'audio')
   if (!audioItem) return { text: '', error: '' }
   let tr
   try {
-    tr = await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType, { hintLanguage: await languageHint(store, log, caseId) })
+    const redact = (text) => withoutIssuedCodes(store, text).then(clean => (clean != null ? clean : text))
+    tr = await transcribeAudioDetailed(audioItem.buffer, audioItem.mimeType, { hintLanguage: await languageHint(store, log, caseId), callLLM, redact })
     if (tr.text) {
       try { const clean = await withoutIssuedCodes(store, tr.text); if (clean != null) tr.text = clean }
       catch (e) { log.error?.('[casey] transcript code redaction failed', { caseId, error: e.message }); tr.text = ''; tr.error = tr.error || 'transcript withheld' }

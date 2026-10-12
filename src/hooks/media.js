@@ -8,6 +8,7 @@ import { fetchWithTimeout } from '../adapters/webhook-platform-base.js'
 import { transcribeLocal, localSttEnabled, localSttAvailable } from './local-stt.js'
 import { googleSttEnabled } from '../stt/config.js'
 import { transcribeGoogle } from '../stt/engine.js'
+import { arbitrateVoiceNote } from '../stt/arbitrate.js'
 import { recordStt } from '../stt/metrics.js'
 import { STT_FAILURE } from '../stt/errors.js'
 import { googleVoiceRepliesEnabled, voiceReplyEligible, synthesizeGoogle } from '../stt/tts.js'
@@ -86,15 +87,26 @@ function failureKindFor(tr) {
   return STT_FAILURE.UNAVAILABLE
 }
 
-export async function transcribeAudioDetailed(buffer, mimeType, { hintLanguage = null } = {}) {
+async function redactTranscripts(tr, redact) {
+  if (!redact) return tr
+  const text = tr.text ? await redact(tr.text) : tr.text
+  const candidates = Array.isArray(tr.candidates)
+    ? await Promise.all(tr.candidates.map(async (c) => (c.text ? { ...c, text: await redact(c.text) } : c)))
+    : tr.candidates
+  return { ...tr, text, candidates }
+}
+
+export async function transcribeAudioDetailed(buffer, mimeType, { hintLanguage = null, callLLM = null, redact = null } = {}) {
   const t0 = Date.now()
   let tr
   if (googleSttEnabled() && process.env.CASEY_TRANSCRIBE_VOICE_NOTES !== '0' && buffer?.length) {
     tr = await transcribeGoogle(buffer, mimeType, { hintLanguage })
+    tr = await redactTranscripts(tr, redact)
+    tr = await arbitrateVoiceNote(tr, { callLLM, caseLanguage: tr.language || hintLanguage || null })
     if (!tr.text && LOCAL_RESCUES.has(tr.failureKind) && localSttAvailable()) {
       const local = await transcribeLocal(buffer, mimeType)
       tr = local.text
-        ? { ...local, engine: 'local', failureKind: '', ms: Date.now() - t0, rescued_from: tr.failureKind }
+        ? { ...local, engine: 'local', failureKind: '', ms: Date.now() - t0, rescued_from: tr.failureKind, candidates: tr.candidates, stt_choice: tr.stt_choice }
         : { ...tr, error: [tr.error, local.error].filter(Boolean).join('; ') }
     }
   } else {

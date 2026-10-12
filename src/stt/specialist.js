@@ -48,7 +48,13 @@ export async function cloudRunIdentityToken(url, { now = Date.now, fetchImpl = f
   return token
 }
 
+export const SPECIALIST_KEYS = Object.freeze(['xh', 'zu', 'af'])
+
+const COLD_STATUS = 503
+
 export async function transcribeSpecialist(url, buffer, mimeType, { timeoutMs = 25000, env = process.env } = {}) {
+  const t0 = Date.now()
+  const done = (fields) => ({ text: '', error: '', status: null, cold: false, ...fields, ms: Date.now() - t0 })
   const headers = { 'content-type': mimeType || 'audio/ogg' }
   try {
     if (isCloudRunUrl(url)) {
@@ -58,15 +64,28 @@ export async function transcribeSpecialist(url, buffer, mimeType, { timeoutMs = 
       if (token) headers.authorization = `Bearer ${token}`
     }
   } catch (e) {
-    return { text: '', error: `specialist identity: ${String(e?.message || e)}` }
+    return done({ error: `specialist identity: ${String(e?.message || e)}` })
   }
   try {
     const res = await fetch(url, { method: 'POST', headers, body: buffer, signal: AbortSignal.timeout(timeoutMs) })
-    if (!res.ok) return { text: '', error: `specialist answered HTTP ${res.status}` }
+    if (!res.ok) return done({ error: `specialist answered HTTP ${res.status}`, status: res.status, cold: res.status === COLD_STATUS })
     const body = await res.json()
     const text = String(body?.text ?? '').trim()
-    return text ? { text, error: '' } : { text: '', error: 'specialist returned no text' }
+    return text ? done({ text, status: res.status }) : done({ error: 'specialist returned no text', status: res.status })
   } catch (e) {
-    return { text: '', error: `specialist: ${String(e?.message || e)}` }
+    return done({ error: `specialist: ${String(e?.message || e)}` })
   }
+}
+
+export async function runSpecialists(buffer, mimeType, { timeoutMs = 25000, env = process.env } = {}) {
+  const endpoints = specialistEndpoints(env)
+  return Promise.all(SPECIALIST_KEYS.map(async (key) => {
+    const id = key
+    const base = { id, engine: 'specialist', provider: `specialist-${key}` }
+    const url = endpoints.get(key)
+    if (!url) return { ...base, text: '', error: 'no specialist endpoint configured in CASEY_STT_SPECIALISTS', status: null, cold: false, ms: 0 }
+    if (!buffer?.length) return { ...base, text: '', error: 'no audio bytes to send', status: null, cold: false, ms: 0 }
+    const r = await transcribeSpecialist(url, buffer, mimeType, { timeoutMs, env })
+    return { ...base, text: r.text, error: r.error, status: r.status, cold: r.cold, ms: r.ms }
+  }))
 }
