@@ -74,12 +74,10 @@ export function replyUndoToast(caseId, onDone) {
       busy: false,
       run: async () => {
         row.undo.busy = true; schedule();
-        const correction = 'Sorry, please disregard my last message.';
         try {
-          const r = await api('/api/cases/' + encodeURIComponent(caseId) + '/reply', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: correction }) });
+          const r = await api('/api/cases/' + encodeURIComponent(caseId) + '/instruct', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ instruction: word('ui.toasts_correction_instruction') }) });
           if (r.ok) {
-            await api('/api/cases/bulk', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids: [caseId], action: 'tag', tag: 'needs-human' }) }).catch(() => {});
-            toast(word('ui.toasts_correction_sent'), 'ok');
+            toast(word('ui.toasts_correction_drafted'), 'ok');
             if (onDone) await onDone();
           } else {
             toast(await failMsg(r, word('ui.toasts_correction_failed')), 'err');

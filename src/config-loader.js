@@ -157,6 +157,10 @@ export function vocabWord(key, fallback = '') {
   return typeof v === 'string' ? v : (Array.isArray(v) ? v.join(' ') : fallback)
 }
 
+export function vocabText(key, fallback, vars = {}) {
+  return vocabWord(key, fallback).replace(/\{([a-z_]+)\}/g, (m, name) => (vars[name] != null ? String(vars[name]) : m))
+}
+
 export function clientVocabulary() {
   const out = {}
   for (const [k, v] of Object.entries(loadDomainConfig().vocabulary.words)) {

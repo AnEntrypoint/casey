@@ -8,6 +8,7 @@ import { evData } from '../safe.js'
 import { REPORT_ENTITY_LABEL } from '../store/report-shape.js'
 import { proactiveRefusal } from '../proactive-sends.js'
 import { reporterFirstName } from '../phone-persons.js'
+import { vocabText, vocabWord } from '../config-loader.js'
 
 export const REMINDER_MAX_LEN = 4000
 
@@ -30,6 +31,17 @@ function priorReminder(recent) {
   return (recent || []).find(e => e.kind === 'outbound' && !!evData(e)[OPERATOR_REMINDER_FLAG]) || null
 }
 
+export function reminderInstruction(caseRow, { quietForMs = null, breaches = [], name = '' } = {}) {
+  const facts = []
+  if (name) facts.push(vocabText('ui.remind_fact_name', 'Their first name is {name}.', { name }))
+  const quiet = Number.isFinite(quietForMs) && quietForMs >= QUIET_WORTH_MENTIONING_MS
+  if (quiet) facts.push(vocabText('ui.remind_fact_quiet', 'They have not written to us for about {duration}.', { duration: hoursSince(quietForMs) }))
+  const silence = breaches.find(b => b === 'stale' || b === 'unanswered_handoff' || b === 'unanswered_handoff_escalated')
+  if (silence && !quiet) facts.push(vocabText('ui.remind_fact_stale', 'This report {state}.', { state: BREACH_LABEL[silence] }))
+  const factText = facts.length ? facts.join(' ') : vocabWord('ui.remind_facts_none', 'No other facts are on record.')
+  return vocabText('ui.remind_instruction', 'Ask this person, in the language they have been using, whether anything has changed about their report {ref}. Keep it to one short message. Ask them to reply here, and to say so if there is nothing to add. Facts you may use: {facts}', { ref: caseRow?.ref || '', facts: factText })
+}
+
 export function composeReminderText(caseRow, { quietForMs = null, breaches = [], name = '' } = {}) {
   const ref = caseRow?.ref ? ` (${caseRow.ref})` : ''
   const quiet = Number.isFinite(quietForMs) && quietForMs >= QUIET_WORTH_MENTIONING_MS
@@ -44,7 +56,7 @@ export function composeReminderText(caseRow, { quietForMs = null, breaches = [],
     + ` If there is nothing to add, that is also worth knowing -- just say so.`
 }
 
-export async function prepareReminder({ store, caseRow, overrideText = null, now = Date.now() }) {
+export async function prepareReminder({ store, caseRow, overrideText = null, draft = false, now = Date.now() }) {
   if (!caseRow) return { ok: false, status: 404, error: 'not found' }
   const noStart = proactiveRefusal({ kind: 'message' })
   if (noStart) return { ok: false, status: 409, error: noStart }
@@ -88,6 +100,10 @@ export async function prepareReminder({ store, caseRow, overrideText = null, now
   const inboundAt = inbound ? tsMs(inbound.created_at) : null
   const quietForMs = Number.isFinite(inboundAt) ? Math.max(0, now - inboundAt) : null
   const breaches = tagList(caseRow).filter(t => t.startsWith('health:')).map(t => t.slice('health:'.length))
+  if (draft) {
+    const name = await reporterFirstName(store, caseRow)
+    return { ok: true, instruction: reminderInstruction(caseRow, { quietForMs, breaches, name }), quietForMs, breaches, operator_authored: false }
+  }
   const text = overrideText != null && String(overrideText).trim()
     ? String(overrideText).trim()
     : composeReminderText(caseRow, { quietForMs, breaches, name: await reporterFirstName(store, caseRow) })

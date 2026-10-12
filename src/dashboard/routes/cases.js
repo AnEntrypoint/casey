@@ -22,6 +22,8 @@ import { APPEND_FIELDS } from '../../store/report-shape.js'
 import { waLink } from '../wa-link.js'
 import { reporterFirstName, reporterSummary } from '../../phone-persons.js'
 import { prepareReminder, OPERATOR_REMINDER_FLAG } from '../../hooks/operator-reminder.js'
+import { vocabText } from '../../config-loader.js'
+import { evData } from '../../safe.js'
 
 const INTAKE_META_KEYS = new Set(['canonicalized', 'expected_ref', 'expected'])
 
@@ -542,7 +544,7 @@ export function postBulk({ store, authed, actingOperator, sendReply }) {
             try { await sendReply(c, text); delivered = true }
             catch (e) { await store.appendEvent(id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
           }
-          await store.appendEvent(id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id, bulk: true } })
+          await store.appendEvent(id, { kind: 'outbound', actor: 'operator', channel: c.channel, text, data: { to: c.external_id, from_draft: true, by: op.id, bulk: true, ...draftReminderFlag(draft) } })
           if (delivered) {
             await store.updateCase(id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
           } else {
@@ -838,7 +840,11 @@ export function postInstruct({ store, authed, str, actingOperator, sendReply, ll
   }
 }
 
-export function postRemind({ store, authed, str, actingOperator, sendReply }) {
+function draftReminderFlag(draft) {
+  return evData(draft)[OPERATOR_REMINDER_FLAG] ? { [OPERATOR_REMINDER_FLAG]: true } : {}
+}
+
+export function postRemind({ store, authed, str, actingOperator, sendReply, llmStatus, callLLM }) {
   return async (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' })
     const c = await store.getCase(req.params.id)
@@ -847,6 +853,19 @@ export function postRemind({ store, authed, str, actingOperator, sendReply }) {
     if (req.body && typeof req.body.text === 'string' && req.body.text.trim()) {
       const edited = str(res, req.body, 'text', { required: false }); if (edited === undefined) return
       override = edited
+    }
+    if (!override) {
+      if (!sendReply || c.channel === 'system') return res.status(409).json({ error: vocabText('ui.remind_no_channel', 'nothing was sent: this conversation is not attached to a messaging channel right now') })
+      if (await pendingDraft(store, c)) return res.status(409).json({ error: vocabText('ui.remind_draft_waiting', 'A draft is already waiting for this person. Approve or discard it first, then ask again.') })
+      const plan = await prepareReminder({ store, caseRow: c, draft: true })
+      if (!plan.ok) return res.status(plan.status).json({ error: plan.error, ...(plan.reminded_at ? { reminded_at: plan.reminded_at } : {}) })
+      const op = actingOperator(req)
+      const outcome = await draftFromInstruction({
+        store, log: console, llmStatus, callLLM, caseRow: c, instruction: plan.instruction, operator: op,
+        draftData: { [OPERATOR_REMINDER_FLAG]: true, operator_authored: false, quiet_for_ms: plan.quietForMs, breaches: plan.breaches },
+      })
+      if (!outcome.ok) return res.status(503).json({ error: vocabText('ui.remind_draft_failed', 'The assistant could not write the reminder ({reason}). Nothing was sent. Try again, or type the message yourself.', { reason: outcome.error }) })
+      return res.json({ ok: true, drafted: true, sent: false, delivered: false, recorded: 'draft' })
     }
     const plan = await prepareReminder({ store, caseRow: c, overrideText: override })
     if (!plan.ok) return res.status(plan.status).json({ error: plan.error, ...(plan.reminded_at ? { reminded_at: plan.reminded_at } : {}) })
@@ -889,7 +908,7 @@ export function postDraftApprove({ store, authed, str, actingOperator, sendReply
       catch (e) { await store.appendEvent(c.id, { kind: 'observation', actor: 'system', text: `Failed to send approved draft on channel: ${e.message || 'unknown error'}` }) }
     }
     const op = actingOperator(req)
-    await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel', extra: { from_draft: true } })
+    await appendReplyEvent(store, c, text, op, { delivered, reason: sendReply ? 'send_failed' : 'no_channel', extra: { from_draft: true, ...draftReminderFlag(draft) } })
     if (delivered) {
       await store.updateCase(c.id, { tags: dropTag(c.tags, 'draft-pending', 'needs-human') }, op)
     }
