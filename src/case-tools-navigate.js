@@ -1,3 +1,4 @@
+import { vocabText } from './config-loader.js'
 import { defTool, str } from './case-tools-shared.js'
 import { parseReport } from './timestamp.js'
 import { staffLabel } from './hooks/staff-outbound.js'
@@ -45,7 +46,7 @@ export function buildNavigateTools(store) {
         const pinIs = PIN_KIND[c.location_source] || 'of unrecorded origin, so treat it as approximate'
         const link = mapsLink(pin)
         const mine = ctx.activeCaseId ? await store().getCase(ctx.activeCaseId) : null
-        if (!mine) return { error: 'Could not tell which chat to send the pin to, so nothing was sent.' }
+        if (!mine) return { error: vocabText('ui.pin_send_no_chat', 'Could not tell which chat to send the pin to, so nothing was sent.') }
         const place = String(parseReport(c).location || '').slice(0, 180)
         const canSend = typeof ctx.sendLocation === 'function' && ctx.canSendLocation?.(ctx.channel)
         if (!canSend) return { ok: true, ref: c.ref, sent: false, pin_is: pinIs, maps_link: link, note: 'This channel cannot send a location message: give them the maps link as text.' }

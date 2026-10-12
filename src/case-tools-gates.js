@@ -13,7 +13,7 @@ export const TOOL_MIN_TIER = {
   signoff_queue: TIER_ANIMAL_HEALTH_TECHNICIAN, case_review: TIER_ANIMAL_HEALTH_TECHNICIAN,
   case_reopen: TIER_ANIMAL_HEALTH_TECHNICIAN, case_ask_ranger: TIER_ANIMAL_HEALTH_TECHNICIAN,
   team_queue: TIER_OPERATOR, team_handover: TIER_OPERATOR, team_assign: TIER_OPERATOR,
-  team_draft: TIER_OPERATOR, team_remind: TIER_OPERATOR, team_invite: TIER_OPERATOR,
+  team_draft: TIER_OPERATOR, team_invite: TIER_OPERATOR,
   team_register: TIER_OPERATOR, team_roster: TIER_OPERATOR, team_quiet_staff: TIER_OPERATOR,
   team_nudge_staff: TIER_OPERATOR, team_feedback: TIER_OPERATOR,
   case_handoff_to_technician: TIER_FIELD_WORKER, case_my_day: TIER_FIELD_WORKER,

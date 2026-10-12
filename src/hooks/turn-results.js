@@ -5,7 +5,7 @@ import { offeredFromResult } from '../choices.js'
 
 const MUTATING_TOOLS = new Set(['case_new', 'case_report', 'case_update', 'case_transition', 'case_switch', 'case_speaker'])
 
-const TEAM_WRITE_TOOLS = ['case_edit', 'case_stage', 'case_message', 'case_claim', 'case_release', 'case_dispatch_reply', 'case_reopen', 'case_ask_ranger', 'team_assign', 'team_draft', 'team_remind', 'team_register', 'team_invite', 'team_nudge_staff']
+const TEAM_WRITE_TOOLS = ['case_edit', 'case_stage', 'case_message', 'case_claim', 'case_release', 'case_dispatch_reply', 'case_reopen', 'case_ask_ranger', 'team_assign', 'team_draft', 'team_register', 'team_invite', 'team_nudge_staff']
 const WRITE_TOOLS = new Set(['case_report', 'case_update', 'case_new', ...TEAM_WRITE_TOOLS])
 
 function toolNamesById(result) {
